@@ -158,6 +158,19 @@ test('a Disconnect while a refresh waits on GitHub stays disconnected, and the n
   assert.equal(userSettings.view('octocat').github.connected, false);
 });
 
+test('a Disconnect that starts while a refresh waits on GitHub, and still deletes the stored token when it answers, keeps nothing', async () => {
+  const { user, userSettings, values, github, advance } = setup({ removeMs: 30 });
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
+  advance(9 * HOUR);
+  let disconnecting;
+  github.onRefresh = () => { disconnecting = user.disconnect('octocat'); };
+  assert.equal(await user.tokenFor('octocat'), null, 'the record still says connected, and still the new token is not handed out');
+  await disconnecting;
+  assert.ok(github.revoked.includes('ghu_1'), 'the token GitHub just answered with ends');
+  assert.equal(values.has('users/octocat/github'), false, 'nothing is written back after the delete');
+  assert.equal(userSettings.view('octocat').github.connected, false);
+});
+
 const TOOLS = { repo: 'acme/tools', permissions: { contents: 'write', pull_requests: 'write', metadata: 'read' } };
 
 test('a scoped token reaches one repo with the given permissions, is made once and kept until it nears its expiry', async () => {

@@ -385,8 +385,8 @@ session. A connected owner's private session then:
   on another project gets it scoped down by GitHub to that project's repo and
   the permissions sessions get (`POST /applications/{client_id}/token/scoped`,
   with the App's client secret; `githubUser.mjs`, `scopedTokenFor`), made once
-  per person and repo and kept until it nears its expiry; Disconnect ends those
-  at GitHub too, with the full token. When GitHub makes none
+  per person and repo and kept until it nears its expiry; Disconnect revokes each
+  of those at GitHub too, along with the full token. When GitHub makes none
   (no client secret, or it refuses), that session gets the project's App token,
   which reaches its repo alone: its commits are still authored as the owner (the
   git identity below), but pushed and opened as the App;

@@ -90,8 +90,8 @@ export function createGitHubUser({
       throw shown(`GitHub no longer accepts @${login}'s authorization: connect GitHub again on My settings`);
     }
     const next = credentialsFrom(answer, now());
-    // A Disconnect while GitHub was answering: saving now would connect them again.
-    if (!userSettings.view(login).github.connected) {
+    // A Disconnect while GitHub was answering, finished or still deleting the secret: saving now would connect them again.
+    if (disconnecting.has(loginKey(login)) || !userSettings.view(login).github.connected) {
       console.log('githubUser: disconnected during a refresh, dropping the new token', { login });
       cache.delete(loginKey(login));
       await revoke(login, next.accessToken);
