@@ -1,9 +1,9 @@
 name: Claude review
 
 # A review by Claude on pull requests from the team: their branch is in this repository, which only people with write
-# access can push, and their author is a member of the organization (or the Woodshed Cloud App, which opens shared
-# sessions' pull requests). An outside collaborator with write access does not run it either. A pull request from a
-# fork never runs it, and never gets the API key: this uses pull_request, not pull_request_target. It runs when the last commit's message has [woodshed-review], so a push to a
+# access can push, and neither their author nor whoever pushed is an outside collaborator, so write access given to
+# someone outside the organization does not run it either. A pull request from a fork never runs it, and never gets
+# the API key: this uses pull_request, not pull_request_target. It runs when the last commit's message has [woodshed-review], so a push to a
 # draft or a work in progress does not spend a review. Its verdict is a formal review: APPROVE counts as the pull
 # request's approval, which needs "Allow GitHub Actions to create and approve pull requests" on in the repository's
 # Actions settings. A push after it dismisses the approval, so the next push asks again with [woodshed-review].
@@ -22,11 +22,7 @@ concurrency:
 jobs:
   review:
     name: Claude review
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.draft == false &&
-      (contains(fromJSON('["OWNER","MEMBER"]'), github.event.pull_request.author_association) ||
-       github.event.pull_request.user.login == 'woodshed-cloud[bot]')
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -40,16 +36,35 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Check for the [woodshed-review] tag
+      - name: Check for the [woodshed-review] tag, and that no outside collaborator is involved
         id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          PUSHER: ${{ github.actor }}
         run: |
-          # Gate: review only when the last commit asks for it
-          if git log -1 --format=%B | grep -qiF '[woodshed-review]'; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
+          # Gate: review only when the last commit asks for it, and the author and pusher are the organization's
+          if ! git log -1 --format=%B | grep -qiF '[woodshed-review]'; then
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "No [woodshed-review] in the last commit's message: no review"
+            exit 0
           fi
+          # Outside collaborators are people given access to this repository without being in the organization. A
+          # failed read reviews nothing, so a token that cannot read the list never lets one through.
+          if ! outside=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators?affiliation=outside&per_page=100" --paginate --jq '.[].login'); then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Could not read the outside collaborators: no review"
+            exit 0
+          fi
+          for login in "$AUTHOR" "$PUSHER"; do
+            if printf '%s\n' "$outside" | grep -qixF -- "$login"; then
+              echo "run=false" >> "$GITHUB_OUTPUT"
+              echo "@${login} is an outside collaborator: no review"
+              exit 0
+            fi
+          done
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          echo "Reviewing: tagged, by @${AUTHOR}, pushed by @${PUSHER}, neither an outside collaborator"
 
       - name: Gather the pull request's discussion and linked issues
         if: steps.gate.outputs.run == 'true'
