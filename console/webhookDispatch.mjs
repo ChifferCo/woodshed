@@ -13,17 +13,19 @@ import { defaultProject, projectForRepo } from './projects.mjs';
  */
 export function messageToTrigger(message, { label }) {
   if (message?.source !== 'github' || !Number.isInteger(message.number) || !message.login) return null;
+  // Another project's issue or pull request: its #12 is not the default project's #12.
+  const project = message.project ? { project: message.project } : {};
   if (message.type === 'label') {
     if (message.label !== label) return null;
     return {
       trigger: 'label', number: message.number, title: message.title ?? '', kind: message.kind === 'pr' ? 'pr' : 'issue',
-      login: message.login, at: message.receivedAt,
+      login: message.login, at: message.receivedAt, ...project,
     };
   }
   if (message.type === 'comment') {
     const command = parseCommand(message.body);
     if (!command || !message.commentId) return null;
-    return { trigger: 'comment', number: message.number, login: message.login, text: command.text, commentId: message.commentId };
+    return { trigger: 'comment', number: message.number, login: message.login, text: command.text, commentId: message.commentId, ...project };
   }
   return null;
 }
@@ -35,30 +37,30 @@ export function messageToTrigger(message, { label }) {
  *   `events` keeps what happened to each message (webhookEvents.mjs); without `asks`, a Slack mention is dropped, and
  *   without `pulls` a pull request change; a result with `unrecorded` is left out of `events`. `appIdentity`
  *   (appIdentity.mjs) says whose comment a session's "Needs a human:" must be; without one, those are dropped.
- *   `config` names the console's projects: a GitHub message about another repo than the default project's is dropped,
- *   since everything here acts on the default repo's issue and pull request numbers
+ *   `config` names the console's projects: a GitHub message about a repo that is no project's is dropped, and one
+ *   about another project's repo is handed on naming that project (`project`), so it acts on that repo's numbers
  * @returns {{dispatch: (message: {text: string, id?: string|null, attempt?: string|null}) => Promise<boolean>, alive: () => void}}
  *   `dispatch` takes one message's raw body, and `attempt` is how the source counts its tries ("try 2 of 3"), for the
  *   events log. It resolves true when the source may forget the message, false to have it come back for a retry.
  *   `alive` is called on each receive, so the fleet knows webhooks are arriving.
  */
 export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null }) {
-  // Every GitHub message below acts on an issue or pull request number of the default project's repo, so one about
-  // another repo must never reach them: its #12 is not the default repo's #12. A message with no repo was queued by a
-  // Lambda from before it named one, during a deploy, and is the default project's, as every message was then: so the
-  // Lambda and the console can be deployed in either order.
+  // Every GitHub message below acts on an issue or pull request number, which means nothing without its repo: another
+  // project's #12 is not the default project's #12. So a message about another project's repo carries that project's
+  // name from here on (`project`), and one about a repo that is no project's is dropped. A message with no repo was
+  // queued by a Lambda from before it named one, during a deploy, and is the default project's, as every message was
+  // then: so the Lambda and the console can be deployed in either order.
+  // Returns the message to hand on, or null to drop it.
   function routed(body) {
-    if (!config || !body.repo) return true;
+    if (!config || !body.repo) return body;
     const project = projectForRepo(config, body.repo);
     if (!project) {
       console.log('webhooks: message from a repo that is not a project, dropped', { repo: String(body.repo).slice(0, 100), type: body.type ?? null });
-      return false;
+      return null;
     }
-    if (project.name !== defaultProject(config).name) {
-      console.log('webhooks: message for another project, not routed yet, dropped', { project: project.name, type: body.type ?? null, number: body.number ?? null });
-      return false;
-    }
-    return true;
+    if (project.name === defaultProject(config).name) return body;
+    console.log('webhooks: message for another project', { project: project.name, type: body.type ?? null, number: body.number ?? null });
+    return { ...body, project: project.name };
   }
 
   async function dispatch({ text, id = null, attempt = null }) {
@@ -71,7 +73,10 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return true;
     }
     if (body?.source === 'slack') return dispatchSlack(body, attempt);
-    if (body?.source === 'github' && !routed(body)) return true;
+    if (body?.source === 'github') {
+      body = routed(body);
+      if (!body) return true;
+    }
     if (body?.source === 'github' && body.type === 'needsHuman') {
       // Anyone could type the words; only the App's own comment is a session asking. Left out of the events log, as
       // any other comment that is not for the console is.

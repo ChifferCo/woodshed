@@ -28,11 +28,13 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
 
 /**
  * @param {{store: {state: object, save: () => void}, github: object, slack: {available: boolean, postPr: Function}|null,
- *          gates?: () => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
+ *          githubOf?: ((project: string) => object)|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
  *                    feedback?: (item: object, text: string) => Promise<void>|void,
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
- *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs), null for a repo with none,
+ *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs) of the pull request's project
+ *   (null for the default project's), null for a repo with none; `githubOf` is another project's GitHub client, for a
+ *   pull request a session on that project opened (an item with `project`),
  *   and throws when the file could not be read, which leaves each pull request waiting for its next check;
  *   `giveUpMs` is how long a pull request may wait, and `qaWaitMs` how long an approved, green one waits for its QA
  *   check, both read at each check (the Console settings page's numbers); `events` tells the fleet a pull request stopped
@@ -42,17 +44,21 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *   a deadline of its own, which is still read every minute
  */
 export function createPrAnnouncer({
-  store, github, slack, gates: gatesOf = async () => null, now = Date.now, giveUpMs = () => DEFAULT_RETENTION.slackGiveUpMs,
+  store, github, githubOf = null, slack, gates: gatesOf = async () => null, now = Date.now, giveUpMs = () => DEFAULT_RETENTION.slackGiveUpMs,
   qaWaitMs = () => DEFAULT_RETENTION.qaWaitMs, events = {}, webhooksFlowing = () => false, fallbackMs = CHECK_EVERY_MS,
 }) {
   const { state } = store;
   // When each waiting pull request was last read, by number. Not kept: after a restart each is read at once.
   const checkedAt = new Map();
   const pending = () => (state.slackPending ??= []);
+  // A pull request is its repo's: another project's #12 is not the default project's #12. Items of the default
+  // project carry no `project`, as they did before projects.
+  const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
+  const gh = (item) => (item.project && githubOf ? githubOf(item.project) : github);
 
   async function drop(item, why) {
     state.slackPending = pending().filter((p) => p !== item);
-    checkedAt.delete(item.number);
+    checkedAt.delete(keyOf(item.number, item.project));
     store.save();
     console.log('slack: pull request no longer waiting', { number: item.number, why });
     await events.dropped?.(item, why);
@@ -61,18 +67,21 @@ export function createPrAnnouncer({
   /**
    * Once per session, and only for a pull request it opened: a resumed branch or a PR's own session finds one
    * older than the session. The URL is the session's word, so only its number is used.
+   * @param {object} session
+   * @param {{name: string, default?: boolean}|null} [project]  the session's project: its pull request is on that repo
    * @throws {Error}  when GitHub could not be read, which is worth trying again
    */
-  async function track(session) {
+  async function track(session, project = null) {
     const number = Number(/\/pull\/(\d+)$/.exec(session.prUrl ?? '')?.[1]);
     if (!number) return false;
-    const pull = await github.pull(number);
+    const other = project && !project.default ? project.name : null;
+    const pull = await gh({ project: other }).pull(number);
     if (Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
       console.log('slack: pull request older than the session, not posted', { id: session.id, number });
       return false;
     }
-    if (!pending().some((p) => p.number === number)) {
-      pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString() });
+    if (!pending().some((p) => p.number === number && (p.project ?? null) === other)) {
+      pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}) });
       store.save();
       console.log('slack: pull request waiting for its review and suites', { id: session.id, number });
     }
@@ -120,7 +129,7 @@ export function createPrAnnouncer({
     const targets = ticket && ticket !== item.number ? [item.number, ticket] : [item.number];
     for (const number of targets) {
       try {
-        await github.comment(number, number === item.number ? body : `${body} The pull request is #${item.number}: ${pull.html_url}`);
+        await gh(item).comment(number, number === item.number ? body : `${body} The pull request is #${item.number}: ${pull.html_url}`);
         console.log('slack: told a thread why the pull request gave up', {
           number, pull: item.number, tagged: Boolean(starter), review: review?.state ?? null, suites: suites.map((s) => s.outcome),
         });
@@ -134,7 +143,7 @@ export function createPrAnnouncer({
   // waited for, as one that runs.
   async function filtersOf(item, suite) {
     try {
-      const text = await github.defaultBranchFile(suite.workflow);
+      const text = await gh(item).defaultBranchFile(suite.workflow);
       if (text === null) throw new Error('the workflow file is not on the default branch');
       return pullRequestFilters(text);
     } catch (err) {
@@ -147,7 +156,7 @@ export function createPrAnnouncer({
   // them. Kept for each head commit, unless a workflow could not be read, which is tried again at the next check.
   async function suitesNeverRunning(item, sha, gates) {
     if (item.suitesPathsSha === sha) return new Set(item.suitesNever);
-    const files = await github.pullFiles(item.number);
+    const files = await gh(item).pullFiles(item.number);
     const never = [];
     let unread = false;
     for (const suite of gates.suites) {
@@ -195,10 +204,10 @@ export function createPrAnnouncer({
   async function writeBriefComment(item, comments, body) {
     const existing = comments.find((c) => c.id === item.briefCommentId) ?? briefCommentIn(comments);
     if (existing) {
-      await github.updateComment(existing.id, body);
+      await gh(item).updateComment(existing.id, body);
       return { id: existing.id, updated: true };
     }
-    const id = await github.comment(item.number, body);
+    const id = await gh(item).comment(item.number, body);
     item.briefCommentId = id;
     store.save();
     return { id, updated: false };
@@ -208,7 +217,7 @@ export function createPrAnnouncer({
   async function reviewRunsFor(item, runs, sha, gates) {
     const trusted = new Set();
     for (const id of mergeRiskRunIds(runs, sha, gates?.mergeRisk?.check ?? null)) {
-      const run = await github.workflowRun(id);
+      const run = await gh(item).workflowRun(id);
       const path = String(run?.path ?? '').split('@')[0];
       // The run's own commit too, so a link to the review of another pull request does not pass.
       if (path === gates.review.workflow && run?.head_sha === sha) trusted.add(id);
@@ -218,7 +227,7 @@ export function createPrAnnouncer({
   }
 
   async function announce(item, { pull, review, runs, suites, qa, gates }) {
-    const [comments, reviewRuns] = await Promise.all([github.issueComments(item.number), reviewRunsFor(item, runs, pull.head.sha, gates)]);
+    const [comments, reviewRuns] = await Promise.all([gh(item).issueComments(item.number), reviewRunsFor(item, runs, pull.head.sha, gates)]);
     const args = { pull, review, runs, comments: comments ?? [], suites, qa, gates, reviewRuns };
     const written = await writeBriefComment(item, comments ?? [], buildBrief(args).comment);
     const brief = buildBrief({ ...args, commentUrl: written.id ? `${pull.html_url}#issuecomment-${written.id}` : null });
@@ -242,7 +251,7 @@ export function createPrAnnouncer({
       const settled = runs.length > 0 || now() - Date.parse(item.since) >= NO_CHECKS_WAIT_MS;
       return { passed: !pull.draft && settled && checksPass(runs), review: null, suites: [] };
     }
-    const reviews = gates.review ? await github.reviews(item.number) : [];
+    const reviews = gates.review ? await gh(item).reviews(item.number) : [];
     const review = reviewVerdict(reviews, gates.review);
     const suites = await suiteOutcomes(item, pull.head.sha, runs, gates);
     // An approval of an older commit does not cover a fix pushed since: wait for the review of the head.
@@ -251,11 +260,11 @@ export function createPrAnnouncer({
   }
 
   async function checkOne(item) {
-    const gates = await gatesOf();
-    const pull = await github.pull(item.number);
+    const gates = await gatesOf(item.project ?? null);
+    const pull = await gh(item).pull(item.number);
     if (pull.state !== 'open') return drop(item, 'closed');
     const gaveUp = now() - Date.parse(item.since) > giveUpMs();
-    const runs = await github.checkRuns(pull.head.sha);
+    const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
     if (gaveUp && !passed) {
       await escalate(item, pull, review, suites, gates);
@@ -280,7 +289,7 @@ export function createPrAnnouncer({
   }
 
   function due(item) {
-    const last = checkedAt.get(item.number);
+    const last = checkedAt.get(keyOf(item.number, item.project));
     if (last === undefined) return true;
     const everyMs = webhooksFlowing() && !waitsOnTheClock(item) ? Math.max(fallbackMs, CHECK_EVERY_MS) : CHECK_EVERY_MS;
     return now() - last >= everyMs;
@@ -288,11 +297,13 @@ export function createPrAnnouncer({
 
   /**
    * A webhook said these pull requests changed: each one waiting is read at the next check.
+   * @param {number[]} numbers
+   * @param {string|null} [project]  another project's name, for its repo's pull requests; none for the default project's
    * @returns {number[]}  the numbers that are waiting
    */
-  function stale(numbers) {
-    const marked = numbers.filter((n) => pending().some((p) => p.number === n));
-    for (const n of marked) checkedAt.delete(n);
+  function stale(numbers, project = null) {
+    const marked = numbers.filter((n) => pending().some((p) => p.number === n && (p.project ?? null) === project));
+    for (const n of marked) checkedAt.delete(keyOf(n, project));
     return marked;
   }
 
@@ -300,7 +311,7 @@ export function createPrAnnouncer({
   async function check() {
     if (!slack?.available) return;
     for (const item of pending().filter(due)) {
-      checkedAt.set(item.number, now());
+      checkedAt.set(keyOf(item.number, item.project), now());
       try {
         await checkOne(item);
       } catch (err) {

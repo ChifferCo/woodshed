@@ -29,3 +29,12 @@ test('webhooks are flowing for half an hour after any pull request change, track
   clock += 1;
   assert.equal(pulls.flowing(), false, 'a quiet half hour: back to full speed');
 });
+
+test('a message about another project\'s repo hands its project to each reader', () => {
+  const pulls = createPullWebhooks();
+  const seen = [];
+  pulls.watch({ name: 'r', stale: (numbers, project) => { seen.push([numbers, project]); return numbers; } });
+  pulls.handle({ number: 4 });
+  pulls.handle({ number: 4, project: 'tools' });
+  assert.deepEqual(seen, [[[4], null], [[4], 'tools']]);
+});
