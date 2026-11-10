@@ -250,7 +250,7 @@ An installation works on one repo, and nothing in this folder names one. To set 
 
 - **The default branch** is whatever the remote says (`HEAD`), read at each session's start into `DEFAULT_BRANCH`, so a repo
   may use `main`, `trunk` or any name. The image workflow's `if`s read `github.event.repository.default_branch`; the infra
-  workflow's `push` trigger cannot, so a repo whose default is not `master` edits its `branches:` line.
+  workflow's `push` trigger cannot, so a repo whose default is not `main` edits its `branches:` line.
 - **Which services a session needs** follow the project file: its `databases`, and Redis, started only when its
   `env` or `envFiles` mention `REDIS_URL` (`usesVariable` in `shared/project.mjs`; the start logs `Redis started` or
   `Redis not started`, and Data ▾ offers Redis only then). A shared service is the installation's: an env file line needing a variable that is not set

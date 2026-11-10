@@ -47,7 +47,7 @@ modules an install builds.
 
 Everything that is the same for every repository and changes at most weekly (the system packages, the CLIs and
 Chromium) is the Dockerfile's `runtime` stage. `.github/workflows/sessionRuntime.yml` publishes it, for x86 and Arm, as
-`ghcr.io/chifferco/woodshed-session-runtime:<commit>`, and `:latest` from master, when the Dockerfile changes and every
+`ghcr.io/chifferco/woodshed-session-runtime:<commit>`, and `:latest` from main, when the Dockerfile changes and every
 Monday. `--build-arg RUNTIME=ghcr.io/chifferco/woodshed-session-runtime:latest` builds a repository's image on it:
 only the installs, the editor, Claude, the checkout and Woodshed's own files are built, which spares a small machine
 most of the work. Claude stays out of the runtime because it changes daily: the installs are built on the runtime, so a
@@ -138,7 +138,7 @@ user. Only the db-admin task runs it (`session/dbAdmin.mjs`), after emptying it.
 | `STARTED_BY`, `BRANCH` | session | The GitHub login credited in the PR body, and an explicit branch name |
 | `SESSION_URL` | session | The session's page on the console (`WOODSHED_CLOUD_PUBLIC_URL`, or localhost for a local console), linked from the PR body. A console from before it sends none, and the line names Woodshed Cloud unlinked; a session on another project's repo drops it too, since that repo may be public |
 | Each install secret, by the variable the installation names for it, and `WOODSHED_INSTALL_SECRETS` | session | What the repo's installs read, such as a registry's token (`install_secrets` in Terraform), in the variable its tools read, as it arrives: a reinstall and claude's terminal have it there. `WOODSHED_INSTALL_SECRETS` lists those variables, space-separated. Only needed when an install runs again |
-| `SESSION_MODE`, `ASKED_BY` | session | `ask` for a question from Slack: master checked out detached, no databases, Redis, viewers or env files, the env files' secrets and each install secret `WOODSHED_INSTALL_SECRETS` lists unset before claude starts, and `session/ask.md` in place of `prompt.md`. `PROMPT` is the question and `ASKED_BY` the asker's Slack name |
+| `SESSION_MODE`, `ASKED_BY` | session | `ask` for a question from Slack: the default branch checked out detached, no databases, Redis, viewers or env files, the env files' secrets and each install secret `WOODSHED_INSTALL_SECRETS` lists unset before claude starts, and `session/ask.md` in place of `prompt.md`. `PROMPT` is the question and `ASKED_BY` the asker's Slack name |
 
 ## statusd
 

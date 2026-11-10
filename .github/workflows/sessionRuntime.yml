@@ -4,12 +4,12 @@ name: Session runtime image
 # as ghcr.io/chifferco/woodshed-session-runtime: `:latest` and `:<commit>`, for x86 and Arm. install.sh builds a
 # repository's session image on it, so a machine builds only the checkout and its installs. Built again when the
 # Dockerfile changes and every Monday, for the week's system packages (BASE_WEEK). Claude is not in it: it changes
-# daily, and the installs built on the runtime would then run again daily too. `:latest` comes from master alone; a run
+# daily, and the installs built on the runtime would then run again daily too. `:latest` comes from main alone; a run
 # by hand from another branch publishes only `:<commit>`.
 
 on:
   push:
-    branches: [master]
+    branches: [main]
     paths:
       - session/Dockerfile
       - .github/workflows/sessionRuntime.yml
@@ -106,9 +106,9 @@ jobs:
       - name: Tag both architectures as one image
         working-directory: /tmp/digests
         run: |
-          # :<commit>, and :latest from master only, name the x86 and Arm builds together
+          # :<commit>, and :latest from main only, name the x86 and Arm builds together
           tags=(-t "$IMAGE:$GITHUB_SHA")
-          if [ "$GITHUB_REF" = refs/heads/master ]; then tags+=(-t "$IMAGE:latest"); fi
+          if [ "$GITHUB_REF" = refs/heads/main ]; then tags+=(-t "$IMAGE:latest"); fi
           # shellcheck disable=SC2046 # one digest per file name
           docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
           docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA"
