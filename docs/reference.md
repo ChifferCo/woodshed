@@ -301,7 +301,9 @@ its own review. The repo's Actions settings must allow GitHub Actions to create 
 approval is refused. On an approval, the review resolves its own threads that later commits made outdated, so a
 ruleset that requires conversation resolution is not blocked by fixed findings; a person's thread, and one of the
 review's still on current code, stay open. That runs in a job of its own, with no checkout and no Claude, because
-resolving a thread needs `contents: write`, which the calling job grants and the reviewer's job never takes. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
+resolving a thread needs `contents: write`, which the calling job grants and the reviewer's job never takes. A repo
+that already calls the review adds `contents: write` to its calling job when it moves to a commit with this job: GitHub
+refuses to start a called workflow whose job asks for more than the caller grants. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.
 
 ## Databases

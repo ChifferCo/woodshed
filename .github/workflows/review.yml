@@ -325,7 +325,7 @@ jobs:
   resolve-threads:
     name: Resolve the review's outdated threads
     needs: review
-    if: needs.review.outputs.verdict == 'APPROVED'
+    if: needs.review.outputs.verdict == 'APPROVE'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     continue-on-error: true
