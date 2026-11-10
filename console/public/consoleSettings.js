@@ -164,7 +164,7 @@
       title: `Add ${repo}?`,
       before: 'not a project',
       after: 'a project sessions can start on',
-      effect: 'The console checks that the GitHub App is installed on it. A My Woodshed session can then start on it from New session. Shared sessions, the image and the databases stay the default project\'s.',
+      effect: 'The console checks that the GitHub App is installed on it. A My Woodshed session can then start on it from New session, and a label or /woodshed comment on its issues starts a shared session on it. Questions from Slack, the image and the databases stay the default project\'s.',
       word: 'add',
       goLabel: 'Add repo',
       run: async () => {
@@ -180,7 +180,7 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what shared sessions use. The GitHub App must be installed on a repo before it is added here. An added repo applies at once, with no restart.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be installed on a repo before it is added here. An added repo applies at once, with no restart.'),
       h('div', { class: 'data-list' }, data.projects.map(projectRow)),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
         h('div', null,
