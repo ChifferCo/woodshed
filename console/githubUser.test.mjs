@@ -229,3 +229,24 @@ test('a scoped token GitHub returns while Disconnect still deletes the stored to
   assert.deepEqual([...github.revoked].sort(), ['ghu_first', 'ghu_scoped_1']);
   assert.equal(await user.scopedTokenFor('octocat', TOOLS), null);
 });
+
+test('a scoped token asked for after Disconnect starts, while it still deletes the stored token, is not made', async () => {
+  const { user, github } = setup({ removeMs: 30 });
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
+  const disconnecting = user.disconnect('octocat');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(await user.scopedTokenFor('octocat', TOOLS), null, 'the record still says connected, and still nothing is handed out');
+  await disconnecting;
+  assert.deepEqual(github.scoped, [], 'GitHub was not asked');
+  assert.deepEqual(github.revoked, ['ghu_first']);
+  assert.equal(await user.scopedTokenFor('octocat', TOOLS), null);
+});
+
+test('after a Disconnect ends, connecting again scopes tokens again', async () => {
+  const { user, github } = setup();
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
+  await user.disconnect('octocat');
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_again', expires_in: 28800, refresh_token: 'ghr_again' } });
+  assert.equal((await user.scopedTokenFor('octocat', TOOLS)).token, 'ghu_scoped_1');
+  assert.equal(github.scoped[0].access_token, 'ghu_again');
+});
