@@ -73,7 +73,8 @@ test('the import scan sees every form, so an empty answer means something', () =
 // What is that repo's goes in its own .woodshed/ (docs/reference.md, "Using it on another repo"). Each exception below is work
 // still to do, with the follow-up that removes it; one that no longer occurs fails too, so the list only shrinks.
 // The copyright holder, ChifferCo, Inc., is not the repo: the license files and the CLA name it, so its full legal name passes.
-const NAMED = /chiffer(?!co, inc\.)|woodrow|taskforce|\bsubscript\b|backend-env|agent-env|backend_env|agent_env|backend\/\.env|agent\/\.env|auth0|aws_s3_test|gotenberg|claude-review|playwright-agent|claude-qa|claude qa|playwright agent|joelbraga|joel braga|c03g108jpg8|c01fkny15hn/gi;
+// ChifferCo is Woodshed's own home (its GitHub org, its images, the company); chiffer alone is the repo it grew up in.
+const NAMED = /chiffer(?!co\b)|woodrow|taskforce|\bsubscript\b|backend-env|agent-env|backend_env|agent_env|backend\/\.env|agent\/\.env|auth0|aws_s3_test|gotenberg|claude-review|playwright-agent|claude-qa|claude qa|playwright agent|joelbraga|joel braga|c03g108jpg8|c01fkny15hn/gi;
 // And its app's conventions: its start script and Procfile, its folders as paths (not `/agent/` in a URL or
 // `user-agent/`), its database scripts, its skills, and the folder its standalone shed lives in (Hetzner the hosting
 // company is fine to name).
@@ -122,4 +123,10 @@ test('the guard sees the app\'s conventions, and not words that only look like t
     ['agent/', 'backend/db', '/implement', '/servers']);
   assert.deepEqual(seen('user-agent/1.0, GET /api/agent/runs, ~/.cache/servers/x, src/implement.mjs, the agent pane, /implementation'), []);
   assert.deepEqual(seen("the shed in scripts/hetzner/woodshed, on Hetzner Cloud or Hetzner's DNS"), ['scripts/hetzner']);
+});
+
+test('the guard lets Woodshed name its own home, ChifferCo, and still sees the repo it grew up in', () => {
+  const seen = (text) => (text.match(NAMED_OR_CONVENTION) ?? []).map((t) => t.toLowerCase());
+  assert.deepEqual(seen('github.com/ChifferCo/woodshed, ghcr.io/chifferco/woodshed-session-runtime, ChifferCo, Inc.'), []);
+  assert.deepEqual(seen('github.com/ChifferCo/chiffer, the chiffer repo'), ['chiffer', 'chiffer']);
 });

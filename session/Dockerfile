@@ -15,9 +15,20 @@
 # Woodshed's pane classifier and the files the project file's installs depend on (woodshed-deps/) come from the
 # context (Dockerfile.dockerignore).
 #
+# The `runtime` stage is everything that is the same for every repository: the system packages, the CLIs, Chromium and
+# Claude. .github/workflows/sessionRuntime.yml publishes it as ghcr.io/chifferco/woodshed-session-runtime, and
+# --build-arg RUNTIME=<that image> builds the repository's part on it instead of building the runtime here, which is
+# most of the time and memory a first build takes (install.sh does this). Without RUNTIME the stage is built here.
+#
 # The image workflow builds with a layer cache in ECR. These build args decide
 # what it rebuilds: BASE_WEEK the system packages, CLAUDE_DAY the Claude CLI and
 # BUILD_SHA the checkout. The repo's installs run again only when their files or the project file's installs change.
+
+ARG RUNTIME=runtime
+# Global, so the editor's layer, built on a published runtime, gets the same pins.
+ARG OPENVSCODE_VERSION=1.109.5
+ARG OPENVSCODE_SHA256_AMD64=b433bf4f0227321a7014d8460d10a8f958adc0f45aa79bd889e84e65e8f88363
+ARG OPENVSCODE_SHA256_ARM64=36d9c14036489b63de84ebace837fcacf7e60e669a0dc715802c5443684ea4dc
 
 FROM node:22.16.0-bookworm-slim AS base
 
@@ -29,10 +40,6 @@ ARG TARGETARCH
 ARG PLAYWRIGHT_MCP_VERSION=0.0.83
 ARG CODEX_VERSION=0.167.0
 ARG REDIS_COMMANDER_VERSION=0.9.0
-# The Editor button's VS Code (startCodeEditor in entrypoint.sh): Gitpod's MIT-licensed build, with its own Node.
-ARG OPENVSCODE_VERSION=1.109.5
-ARG OPENVSCODE_SHA256_AMD64=b433bf4f0227321a7014d8460d10a8f958adc0f45aa79bd889e84e65e8f88363
-ARG OPENVSCODE_SHA256_ARM64=36d9c14036489b63de84ebace837fcacf7e60e669a0dc715802c5443684ea4dc
 # AWS's RDS CA bundle, so Postgres connections can verify the server (PGSSLMODE=verify-full in the task
 # definition). Pinned: when AWS changes the bundle the build fails here, rather than trusting what it got.
 ARG RDS_CA_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
@@ -69,7 +76,33 @@ ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/rds-global-bundle.pem
 COPY --link --from=sosedoff/pgweb:0.17.0@sha256:a5256d416e2e8b92d69a4459058e3eca33a9f075d8325491644411d0bc3bd70b /usr/bin/pgweb /usr/local/bin/pgweb
 COPY --link --from=mongo-express:1.0.2-20-alpine3.19@sha256:1aae0077525133249133d42980ba23998712a1077e02ac0ac295b50a7a79d550 /app /opt/mongo-express
 
-FROM base AS deps
+FROM base AS runtime
+
+RUN npm install -g npm@10.9.0 "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" "redis-commander@${REDIS_COMMANDER_VERSION}" "@openai/codex@${CODEX_VERSION}" \
+  && cd "$(npm root -g)/@playwright/mcp" && npx playwright install-deps chromium \
+  && npm cache clean --force && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /work && chown node:node /work
+
+# The session should not be root: the node image's own uid 1000 user runs everything below.
+USER node
+ENV PATH=/home/node/.local/bin:$PATH
+# Without a UTF-8 locale, Debian's tmux shows every non-ASCII character as `_`.
+ENV LANG=C.UTF-8
+
+# Claude, Chromium, the checkout and each node_modules are separate layers on purpose: BuildKit gzips layers in
+# parallel, and gzipping one layer that held them all was most of the image workflow's time.
+# --no-shell: the MCP runs the full Chromium even when headless, so the separate headless shell is never used.
+RUN cd "$(npm root -g)/@playwright/mcp" && npx playwright install --no-shell chromium
+
+# After Chromium, so a new Claude each day does not download Chromium again.
+ARG CLAUDE_DAY=
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+  && claude mcp add --scope user playwright -- npx "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" --headless --browser chromium
+
+# On the runtime rather than base, so a build on a published runtime builds none of Woodshed's own layers.
+FROM ${RUNTIME} AS deps
+
+USER root
 
 # The repo's checkout folder, /work/<name>.
 ARG REPO_DIR
@@ -91,16 +124,18 @@ RUN --mount=type=secret,id=install_env,uid=1000,required=false \
   && INSTALL_ENV_FILE=/run/secrets/install_env bash /tmp/woodshed-deps.sh install /tmp/woodshed-installs /woodshed-out \
   && rm -rf "$HOME"
 
-FROM base
+FROM ${RUNTIME}
 
-RUN npm install -g npm@10.9.0 "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" "redis-commander@${REDIS_COMMANDER_VERSION}" "@openai/codex@${CODEX_VERSION}" \
-  && cd "$(npm root -g)/@playwright/mcp" && npx playwright install-deps chromium \
-  && npm cache clean --force && rm -rf /var/lib/apt/lists/* \
-  && mkdir -p /work && chown node:node /work
-
+# The runtime ends as node; the editor goes under /opt.
+USER root
+# The Editor button's VS Code (startCodeEditor in entrypoint.sh): Gitpod's MIT-licensed build, with its own Node.
 # The project file's `editor` (true or false), which stageDeps.sh writes beside woodshed-deps/: false leaves the editor
 # out. Mounted, not copied, so the layer is built again only when that one value changes. Its own layer, about 75 MB,
 # so SOCI fetches it only in a session whose editor someone opens.
+ARG TARGETARCH
+ARG OPENVSCODE_VERSION
+ARG OPENVSCODE_SHA256_AMD64
+ARG OPENVSCODE_SHA256_ARM64
 RUN --mount=type=bind,source=woodshed-deps.editor,target=/tmp/woodshed-editor \
   editor=$(cat /tmp/woodshed-editor) \
   && if [ "$editor" != true ]; then echo "editor left out: the project file's editor is ${editor:-empty}"; exit 0; fi \
@@ -114,21 +149,7 @@ RUN --mount=type=bind,source=woodshed-deps.editor,target=/tmp/woodshed-editor \
   && mkdir -p /opt/openvscode-server && tar -xzf /tmp/openvscode.tgz -C /opt/openvscode-server --strip-components=1 \
   && rm /tmp/openvscode.tgz
 
-# The session should not be root: the node image's own uid 1000 user runs everything below.
 USER node
-ENV PATH=/home/node/.local/bin:$PATH
-# Without a UTF-8 locale, Debian's tmux shows every non-ASCII character as `_`.
-ENV LANG=C.UTF-8
-
-# Claude, Chromium, the checkout and each node_modules are separate layers on purpose: BuildKit gzips layers in
-# parallel, and gzipping one layer that held them all was most of the image workflow's time.
-# --no-shell: the MCP runs the full Chromium even when headless, so the separate headless shell is never used.
-RUN cd "$(npm root -g)/@playwright/mcp" && npx playwright install --no-shell chromium
-
-# After Chromium, so a new Claude each day does not download Chromium again.
-ARG CLAUDE_DAY=
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-  && claude mcp add --scope user playwright -- npx "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" --headless --browser chromium
 
 # The clone's own words never change, so without this a cached build would ship an old checkout. The clone is then
 # moved to that commit, the one the build context and the image's tag come from, should the default branch have moved since.
