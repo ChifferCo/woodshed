@@ -80,6 +80,15 @@ test('consoleLinks is the file\'s, true with no file, and null, not a guess, whe
   assert.equal(await reader(async () => { throw new Error('gh api failed: HTTP 502'); }).consoleLinks(), null);
 });
 
+test('githubAccess is the file\'s, full with no file or none written, and null when the file could not be read', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const reader = (projectFile) => createProjectReader({ github: { projectFile } });
+  assert.equal(await reader(async () => `${PROJECT}githubAccess: repo\n`).githubAccess(), 'repo');
+  assert.equal(await reader(async () => PROJECT).githubAccess(), 'full', 'left out');
+  assert.equal(await reader(async () => null).githubAccess(), 'full', 'no project file');
+  assert.equal(await reader(async () => { throw new Error('gh api failed: HTTP 502'); }).githubAccess(), null);
+});
+
 test('files asked for at once share one read, and none of them sees an empty answer', async () => {
   let reads = 0;
   const github = { projectFile: async () => { reads += 1; await new Promise((r) => setTimeout(r, 20)); return PROJECT; } };

@@ -84,6 +84,15 @@ export function createProjectReader({ github, now = Date.now }) {
       return project?.consoleLinks ?? true;
     },
     /**
+     * @returns {Promise<'full'|'repo'|null>}  how far a private session's GitHub token reaches (`githubAccess`, full with no
+     *   project file); null when the file could not be read
+     */
+    async githubAccess() {
+      const { project, error } = await read();
+      if (error) return null;
+      return project?.githubAccess ?? 'full';
+    },
+    /**
      * @returns {Promise<{engine: string, migrate: string|null, migrationsTable: object|null, dump: object}[]|null>}  the project's databases ([] with no project file); null when the file
      *   could not be read, which refuses nothing: the session checks its own copy at start
      */

@@ -88,15 +88,31 @@ function sessionForToken(given, sessions) {
  *          githubUser?: {tokenFor: (login: string) => Promise<{token: string, expiresAt: number}|null>}|null,
  *          askTokens?: {token: () => Promise<{token: string, expiresAt: number}>}|null,
  *          tokensFor?: ((session: object) => {project: string, default: boolean, sessions: object, asks: object})|null,
- *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null}} opts
+ *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
+ *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null}} opts
+  *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>}
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null,
 }) {
+  // `full` or `repo`, from the session's project file. One that cannot be read errs toward less: `full` on the default
+  // project, as before the setting, and `repo` on any other, whose repo may be public.
+  async function accessFor(session, own) {
+    const fallback = !own || own.default ? 'full' : 'repo';
+    let access = fallback;
+    if (githubAccess && own) {
+      const read = await githubAccess(own.project).catch(() => null);
+      access = read ?? fallback;
+      if (!read) console.warn('sessionApi: project file not read, githubAccess from the project', { sessionId: session.id, project: own.project, access });
+    }
+    console.log('sessionApi: github access for a private session', { sessionId: session.id, project: own?.project ?? null, access });
+    return access;
+  }
+
   return async function handle(req, res) {
     const pathname = new URL(req.url, 'http://console').pathname;
     if (anthropic?.isProxyPath(pathname)) {
@@ -128,23 +144,24 @@ export function createSessionApi({
       return homeReply(req, res, session, { homes, userSettings, restore: pathname === '/home/restore', periodic });
     }
     const own = tokensFor?.(session);
-    // The owner's own token reaches every repo the App is on that they can write to, not only the session's project's.
-    // So only a session on the default project gets it as it is; one on another project gets it scoped by GitHub to
-    // that project's repo alone, and when GitHub makes none, that project's App token, which reaches its repo alone.
-    const ownerToken = session.owner && githubUser && (!own || own.default);
-    if (session.owner && githubUser && !ownerToken && !isAsk(session) && githubUser.scopedTokenFor) {
+    // A private session acts as its owner. Their own token reaches every repo the App is on that they can write to; the
+    // project file's githubAccess says whether the session gets it as it is (`full`) or scoped by GitHub to the project's
+    // repo (`repo`), for a repo whose content outsiders write. Read from its default branch, as the console's other gates are.
+    const access = session.owner && githubUser && !isAsk(session) ? await accessFor(session, own) : null;
+    const ownerToken = access === 'full';
+    if (access === 'repo' && githubUser.scopedTokenFor) {
       let scopedToken;
       try {
-        scopedToken = await githubUser.scopedTokenFor(session.owner, { repo: own.repo, permissions: own.permissions });
+        scopedToken = await githubUser.scopedTokenFor(session.owner, { repo: own?.repo, permissions: own?.permissions });
       } catch (err) {
         if (!err.shown) throw err;
         return reply(res, 409, { error: err.message });
       }
       if (scopedToken) {
-        console.log('sessionApi: owner\'s github token handed out, scoped to the project', { sessionId: session.id, owner: session.owner, project: own.project, token: 'owner-scoped' });
+        console.log('sessionApi: owner\'s github token handed out, scoped to the project', { sessionId: session.id, owner: session.owner, project: own?.project ?? null, token: 'owner-scoped' });
         return reply(res, 200, { token: scopedToken.token, expiresAt: new Date(scopedToken.expiresAt).toISOString() });
       }
-      console.log('sessionApi: no scoped owner token for the session\'s project, the App\'s instead', { sessionId: session.id, project: own.project, token: 'installation' });
+      console.log('sessionApi: no scoped owner token for the session\'s project, the App\'s instead', { sessionId: session.id, project: own?.project ?? null, token: 'installation' });
     }
     if (ownerToken) {
       let user;

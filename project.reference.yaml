@@ -107,6 +107,12 @@ editor: true
 # repo, whose readers are not the installation's.
 consoleLinks: false
 
+# Default: full. How far a private session's GitHub token reaches; a private session acts as its owner either way.
+# full is the owner's token as GitHub issued it, reaching every repo they can write to that the GitHub App is on. repo
+# has GitHub scope it to this repo and the permissions sessions get, for a repo whose content outsiders write, such as
+# public issues and comments. Shared sessions and questions use the App's token, whatever this says.
+githubAccess: repo
+
 # Default: null. Files in the repo: its rules for sessions, added after Woodshed Cloud's own, and its environment notes.
 rules: .woodshed/rules.md
 setup: .woodshed/setup.md

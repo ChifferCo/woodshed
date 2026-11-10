@@ -385,14 +385,16 @@ in Secrets Manager at `woodshed-cloud/users/<login>/github` and never reaches a
 session. A connected owner's private session then:
 - gets their own token from the session API's `/github-token`, which an
   installation token answers for everyone else, so it pushes and opens pull
-  requests as them. The owner's token reaches every repo the App is on that they
-  can write to, so only a session on the default project gets it as it is. One
-  on another project gets it scoped down by GitHub to that project's repo and
-  the permissions sessions get (`POST /applications/{client_id}/token/scoped`,
-  with the App's client secret; `githubUser.mjs`, `scopedTokenFor`), made once
+  requests as them, on any project. The owner's token reaches every repo the App
+  is on that they can write to, and the project file's `githubAccess` decides
+  how much of that the session gets (`sessionApi: github access for a private
+  session` logs it): `full`, the default, hands it over as it is; `repo` has it
+  scoped down by GitHub to that project's repo and the permissions sessions get
+  (`POST /applications/{client_id}/token/scoped`, with the App's client secret;
+  `githubUser.mjs`, `scopedTokenFor`), made once
   per person and repo and kept until it nears its expiry; Disconnect revokes each
   of those at GitHub too, along with the full token. When GitHub makes none
-  (no client secret, or it refuses), that session gets the project's App token,
+  (no client secret, or it refuses), a `repo` session gets the project's App token,
   which reaches its repo alone: its commits are still authored as the owner (the
   git identity below), but pushed and opened as the App;
 - commits with their name and `<id>+<login>@users.noreply.github.com`, which
