@@ -195,11 +195,23 @@ test('a scoped token GitHub refuses, cannot be reached for, or a console with no
   assert.deepEqual(noSecret.github.scoped, [], 'GitHub is not asked without the secret');
 });
 
-test('Disconnect drops scoped tokens too, so none outlives the connection', async () => {
+test('Disconnect ends the scoped tokens at GitHub too, so a session that cached one cannot push with it', async () => {
   const { user, github } = setup();
   await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
   await user.scopedTokenFor('octocat', TOOLS);
+  await user.scopedTokenFor('octocat', { ...TOOLS, repo: 'acme/other' });
   await user.disconnect('octocat');
+  assert.deepEqual(github.revoked, ['ghu_first', 'ghu_scoped_1', 'ghu_scoped_2']);
   assert.equal(await user.scopedTokenFor('octocat', TOOLS), null);
-  assert.equal(github.scoped.length, 1);
+  assert.equal(github.scoped.length, 2, 'no new one after Disconnect');
+});
+
+test('a scoped token GitHub makes while Disconnect runs is ended, and never handed out', async () => {
+  const { user, github } = setup();
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
+  const asking = user.scopedTokenFor('octocat', TOOLS);
+  await user.disconnect('octocat');
+  assert.equal(await asking, null);
+  assert.deepEqual(github.revoked, ['ghu_first', 'ghu_scoped_1']);
+  assert.equal(await user.scopedTokenFor('octocat', TOOLS), null, 'nothing kept for the next ask');
 });

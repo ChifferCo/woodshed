@@ -126,9 +126,16 @@ export function createGitHubUser({
     return { token: credentials.accessToken, expiresAt: credentials.expiresAt ?? now() + NO_EXPIRY_CACHE_MS };
   }
 
+  /** Drops the person's scoped tokens, and answers them, so Disconnect can end each one at GitHub. */
   function forgetScoped(login) {
     const prefix = `${loginKey(login)}\n`;
-    for (const key of scoped.keys()) if (key.startsWith(prefix)) scoped.delete(key);
+    const held = [];
+    for (const [key, value] of scoped) {
+      if (!key.startsWith(prefix)) continue;
+      held.push(value.token);
+      scoped.delete(key);
+    }
+    return held;
   }
 
   async function makeScoped(login, from, { repo, permissions }) {
@@ -183,7 +190,16 @@ export function createGitHubUser({
     const key = `${loginKey(login)}\n${scope.repo.toLowerCase()}`;
     const held = scoped.get(key);
     if (held && held.from === from.token && held.expiresAt - now() >= REFRESH_MARGIN_MS) return { token: held.token, expiresAt: held.expiresAt };
-    if (!scoping.has(key)) scoping.set(key, makeScoped(login, from, scope).finally(() => scoping.delete(key)));
+    if (!scoping.has(key)) {
+      // A Disconnect while GitHub was answering: the new token is ended, not kept, as a refresh's is.
+      const making = makeScoped(login, from, scope).then(async (made) => {
+        if (!made || userSettings.view(login).github.connected) return made;
+        console.log('githubUser: disconnected while a scoped token was made, ending it', { login, repo: scope.repo });
+        await revoke(login, made.token);
+        return null;
+      });
+      scoping.set(key, making.finally(() => scoping.delete(key)));
+    }
     const made = await scoping.get(key);
     if (!made) return null;
     scoped.set(key, made);
@@ -216,15 +232,20 @@ export function createGitHubUser({
     console.log('githubUser: token revoked', { login });
   }
 
-  /** Disconnect and Remove My Woodshed: the stored token goes first, then GitHub ends the one sessions may hold. */
+  /**
+   * Disconnect and Remove My Woodshed: the stored token goes first, then GitHub ends the ones sessions may hold, the
+   * scoped copies included.
+   */
   async function disconnect(login) {
     const key = loginKey(login);
     const held = cache.get(key) ?? (await userSettings.githubCredentials(login));
     cache.delete(key);
-    forgetScoped(login);
+    const scopedHeld = forgetScoped(login);
     await userSettings.forgetGitHub(login);
     if (held?.accessToken) await revoke(login, held.accessToken);
-    console.log('githubUser: disconnected', { login, heldToken: Boolean(held?.accessToken) });
+    // Each scoped token is a token of its own, which a session on another project may have cached.
+    for (const token of scopedHeld) await revoke(login, token);
+    console.log('githubUser: disconnected', { login, heldToken: Boolean(held?.accessToken), scopedTokens: scopedHeld.length });
   }
 
   return { connect, tokenFor, scopedTokenFor, disconnect };
