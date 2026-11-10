@@ -383,3 +383,12 @@ test('the CLI reads the installation\'s file from WOODSHED_CLOUD_PROJECT_FILES_D
   assert.equal(cli(['get', 'from']), 'none\n');
   assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: '' }), 'none\n');
 });
+
+// The image runs as uid 1000, which need not own the installation's files.
+test('an installation file this user cannot read says so, naming it, rather than reading as none', (t) => {
+  if (process.getuid?.() === 0) return t.skip('root reads any file');
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject() });
+  fs.chmodSync(path.join(dir, 'acme/app.yaml'), 0o000);
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /^Error: the installation's project file .*acme\/app\.yaml cannot be read by uid \d+: make it readable by everyone$/);
+});

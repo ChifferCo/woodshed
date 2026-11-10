@@ -14,7 +14,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Read on their own: a failure inside a command substitution in a for list would not stop the script.
 manifest=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" installs) || { echo "stageDeps: the project file's dependencies could not be read" >&2; exit 1; }
 editor=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get editor) || { echo "stageDeps: the project file's editor could not be read" >&2; exit 1; }
-from=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get from)
+from=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get from) || { echo "stageDeps: the project file could not be read" >&2; exit 1; }
 
 rm -rf "$dest"
 mkdir -p "$dest"

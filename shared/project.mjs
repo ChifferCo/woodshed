@@ -415,7 +415,13 @@ export function installationProjectFile({ dir, repo }) {
   const ownerDir = entryIn(dir, owner);
   const file = ownerDir && entryIn(ownerDir, `${name}.yaml`);
   if (!file || !fs.statSync(file).isFile()) return null;
-  return { text: fs.readFileSync(file, 'utf8'), path: file };
+  try {
+    return { text: fs.readFileSync(file, 'utf8'), path: file };
+  } catch (err) {
+    // A session and the db-admin task read it as the image's node user, whose uid need not own it.
+    if (err.code === 'EACCES') throw new Error(`the installation's project file ${file} cannot be read by uid ${process.getuid?.()}: make it readable by everyone`);
+    throw err;
+  }
 }
 
 // The repo's own file, or else the installation's. A folder is named only by WOODSHED_CLOUD_PROJECT_FILES_DIR, so

@@ -190,8 +190,8 @@ file from`). It is read and refused as a repo's file is, with its path named in 
 missing folder, or no file for the repo, is an empty project. The repo is told from the checkout's `origin` on GitHub.
 Every reader gets it: `install.sh` (`WOODSHED_PROJECT_FILES_DIR`, which it saves in `stack.env` as this setting) for its
 own reading and the image build's `stageDeps.sh`, the console, and, on the local provider, each session and db-admin
-container, given the files they need read-only (`providers/local/README.md`). The AWS provider does not hand it to its
-tasks yet, so there it is for the console alone. The files hold no secrets, as a committed one holds none, and must be
+container, given the files they need read-only (`providers/local/README.md`). The AWS provider does not hand the files to
+its tasks yet, so its console refuses to start with the setting, rather than read a file its sessions would not. The files hold no secrets, as a committed one holds none, and must be
 readable by the session image's `node` user (uid 1000).
 
 Only `version` must be written. A field that can be none (`null`, `[]`, `{}`, or `false` for `editor`) may be left

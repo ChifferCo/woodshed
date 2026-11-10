@@ -235,3 +235,16 @@ test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read
   assert.deepEqual({ ...readEnvFile(file) }, { ...written, WOODSHED_CLOUD_PROJECT_FILES_DIR: '/srv/project-files' });
   assert.equal(runInstallFunction(`savedSetting "${file}" WOODSHED_CLOUD_PROJECT_FILES_DIR`), '/srv/project-files\n', 'a second run reads it back');
 });
+
+// An install made before the installation had the repo's file keeps settings of no project file: install.sh says so.
+test('a stack.env written for another project file is named, and one written for this one is not', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-stale-'));
+  const file = path.join(home, 'stack.env');
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app '' '' none ''`);
+  const now = "$'api-env=api/.env\\napi-env\\npostgres'";
+  assert.match(runInstallFunction(`warnStaleStackEnv "${file}" ${now} postgres none`), /stack\.env was written for another project file/);
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${file}" $'\\n\\nnone' none none`), '');
+  const current = path.join(home, 'current.env');
+  runInstallFunction(`writeStackEnv "${current}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env 'mongo postgres' woodshed`);
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" $'api-env=api/.env\\napi-env\\nmongo postgres' 'mongo postgres' 'postgres mongo'`), '');
+});

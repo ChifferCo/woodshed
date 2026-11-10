@@ -265,6 +265,17 @@ saveProjectFilesDir() {
   )
 }
 
+# stack.env is written once, so what a project file names after the first run (the repo's own, changed, or a file the
+# installation supplies only now) does not reach it. Said rather than mended: the file may hold changes of its owner's.
+warnStaleStackEnv() {
+  local file=$1 settings=$2 engines=$3 hosted=$4 wanted
+  wanted=$(tr ' ' '\n' <<<"$engines" | sed '/^none$/d' | sort | paste -sd ' ' -)
+  [ "$(savedSetting "$file" WOODSHED_CLOUD_ENV_FILES)" != "$(sed -n 1p <<<"$settings")" ] \
+    || [ "$(savedSetting "$file" WOODSHED_CLOUD_DB_ENV_SECRETS)" != "$(sed -n 2p <<<"$settings")" ] \
+    || [ "$wanted" != "$(tr ' ' '\n' <<<"$hosted" | sed '/^none$/d' | sort | paste -sd ' ' -)" ] || return 0
+  say "$file was written for another project file: its env files, seed secrets or database engines are not the ones it names now. providers/local/README.md, \"Project files the installation supplies\", says what to change"
+}
+
 # An install works on one repository: its stack.env, image and databases are that repository's.
 refuseOtherRepo() {
   local file=$1 repo=$2 saved
@@ -353,6 +364,7 @@ main() {
   mkdir -p "$WOODSHED_LOCAL_SECRETS_DIR" "$WOODSHED_LOCAL_HOMES_DIR" "$WOODSHED_CLOUD_STATE_DIR"
   local hosted engine files=()
   hosted=$(hostedEngines)
+  warnStaleStackEnv "$stackEnv" "$settings" "$engines" "$hosted"
   if [ "$hosted" != none ]; then
     say "Starting $hosted, for a copy of the databases in each session"
     mkdir -p "$WOODSHED_LOCAL_DATA_DIR"
