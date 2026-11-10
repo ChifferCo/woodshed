@@ -3,7 +3,9 @@ name: Session runtime image
 # Publishes session/Dockerfile's `runtime` stage, everything in the session image that is the same for every repository,
 # as ghcr.io/chifferco/woodshed-session-runtime: `:latest` and `:<commit>`, for x86 and Arm. install.sh builds a
 # repository's session image on it, so a machine builds only the checkout and its installs. Built again when the
-# Dockerfile changes and every morning, for a new Claude CLI (CLAUDE_DAY) and, weekly, the system packages (BASE_WEEK).
+# Dockerfile changes and every Monday, for the week's system packages (BASE_WEEK). Claude is not in it: it changes
+# daily, and the installs built on the runtime would then run again daily too. `:latest` comes from master alone; a run
+# by hand from another branch publishes only `:<commit>`.
 
 on:
   push:
@@ -12,7 +14,7 @@ on:
       - session/Dockerfile
       - .github/workflows/sessionRuntime.yml
   schedule:
-    - cron: '0 6 * * *'
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -52,8 +54,7 @@ jobs:
       - name: Pick the build args
         id: args
         run: |
-          # The day and ISO week decide which cached layers are built again
-          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          # The ISO week decides when the system packages are built again
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push the runtime by digest
@@ -65,7 +66,6 @@ jobs:
           target: runtime
           platforms: linux/${{ matrix.arch }}
           build-args: |
-            CLAUDE_DAY=${{ steps.args.outputs.day }}
             BASE_WEEK=${{ steps.args.outputs.week }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=runtime-${{ matrix.arch }}
@@ -106,8 +106,9 @@ jobs:
       - name: Tag both architectures as one image
         working-directory: /tmp/digests
         run: |
-          # :latest and :<commit> name the x86 and Arm builds together
+          # :<commit>, and :latest from master only, name the x86 and Arm builds together
+          tags=(-t "$IMAGE:$GITHUB_SHA")
+          if [ "$GITHUB_REF" = refs/heads/master ]; then tags+=(-t "$IMAGE:latest"); fi
           # shellcheck disable=SC2046 # one digest per file name
-          docker buildx imagetools create -t "$IMAGE:latest" -t "$IMAGE:$GITHUB_SHA" \
-            $(printf "$IMAGE@sha256:%s " *)
-          docker buildx imagetools inspect "$IMAGE:latest"
+          docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA"

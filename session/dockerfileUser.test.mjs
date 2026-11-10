@@ -54,3 +54,11 @@ test('the repository\'s stages are built on the runtime the RUNTIME build arg na
   const runtime = DOCKERFILE.slice(DOCKERFILE.indexOf('FROM base AS runtime'), DOCKERFILE.indexOf('FROM ${RUNTIME}'));
   assert.doesNotMatch(runtime, /^(COPY(?! --link --from=)|ARG REPO)/m);
 });
+
+// The installs (the `deps` stage) are built on the runtime, so whatever the runtime changes on runs them again: a
+// daily Claude there reran every repository's installs every day.
+test('nothing in the runtime changes daily', () => {
+  const runtime = DOCKERFILE.slice(DOCKERFILE.indexOf('FROM base AS runtime'), DOCKERFILE.indexOf('FROM ${RUNTIME}'));
+  assert.doesNotMatch(runtime, /CLAUDE_DAY|BUILD_SHA|claude\.ai\/install/);
+  assert.match(DOCKERFILE.slice(DOCKERFILE.lastIndexOf('FROM ${RUNTIME}')), /^ARG CLAUDE_DAY=$/m);
+});

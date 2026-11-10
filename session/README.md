@@ -45,13 +45,15 @@ change, and the build fails if the context's files are not the cloned commit's (
 as one of the 5 images ECR keeps. It is built on `node:22-bookworm-slim`, with a compiler added back for native
 modules an install builds.
 
-Everything that is the same for every repository (the system packages, the CLIs, Chromium and Claude) is the
-Dockerfile's `runtime` stage. `.github/workflows/sessionRuntime.yml` publishes it, for x86 and Arm, as
-`ghcr.io/chifferco/woodshed-session-runtime:latest` and `:<commit>`, when the Dockerfile changes and every morning.
-`--build-arg RUNTIME=ghcr.io/chifferco/woodshed-session-runtime:latest` builds a repository's image on it: only the
-installs, the editor, the checkout and Woodshed's own files are built, which is most of what a small machine is
-spared. `install.sh` does this whenever it can pull the image, and builds the stage itself otherwise; without the
-build arg the stage is built here, as before.
+Everything that is the same for every repository and changes at most weekly (the system packages, the CLIs and
+Chromium) is the Dockerfile's `runtime` stage. `.github/workflows/sessionRuntime.yml` publishes it, for x86 and Arm, as
+`ghcr.io/chifferco/woodshed-session-runtime:<commit>`, and `:latest` from master, when the Dockerfile changes and every
+Monday. `--build-arg RUNTIME=ghcr.io/chifferco/woodshed-session-runtime:latest` builds a repository's image on it:
+only the installs, the editor, Claude, the checkout and Woodshed's own files are built, which spares a small machine
+most of the work. Claude stays out of the runtime because it changes daily: the installs are built on the runtime, so a
+daily runtime would run them again every day. `install.sh` builds on the published runtime whenever it can pull it,
+and builds the stage itself otherwise; without the build arg the stage is built here, as before. `:latest` trails a
+change to the stage by the workflow's run, about the time the build takes.
 
 ## What a container does
 

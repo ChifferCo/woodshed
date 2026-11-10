@@ -145,8 +145,8 @@ and what tripped up the first install on a plain VM (Ubuntu 24.04, for a repo wi
   the origin through `WOODSHED_CLOUD_SESSION_ENV_FILE`, which every session gets, so the machine's name stays out of
   the repo.
 - **The session image is built on the machine**, for the repo `WOODSHED_CLOUD_REPO` names, and nothing rebuilds it:
-  build it again when an install's files or `.woodshed/project.yaml` change, or every session reinstalls. Built on the
-  published runtime, a rebuild also picks up the morning's Claude CLI and Chromium.
+  build it again when an install's files or `.woodshed/project.yaml` change, or every session reinstalls. A rebuild
+  also picks up the day's Claude CLI and, on the published runtime, the week's system packages.
 - **Claude tokens.** Each person saves theirs on My settings, made with `claude setup-token`. A token copied across a
   wrapped line can lose a character and still look right: claude in the session then says `OAuth access token is
   invalid`. Save it again, then start a new session.

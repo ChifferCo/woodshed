@@ -15,8 +15,8 @@
 # Woodshed's pane classifier and the files the project file's installs depend on (woodshed-deps/) come from the
 # context (Dockerfile.dockerignore).
 #
-# The `runtime` stage is everything that is the same for every repository: the system packages, the CLIs, Chromium and
-# Claude. .github/workflows/sessionRuntime.yml publishes it as ghcr.io/chifferco/woodshed-session-runtime, and
+# The `runtime` stage is everything that is the same for every repository and changes at most weekly: the system
+# packages, the CLIs and Chromium. .github/workflows/sessionRuntime.yml publishes it as ghcr.io/chifferco/woodshed-session-runtime, and
 # --build-arg RUNTIME=<that image> builds the repository's part on it instead of building the runtime here, which is
 # most of the time and memory a first build takes (install.sh does this). Without RUNTIME the stage is built here.
 #
@@ -25,7 +25,8 @@
 # BUILD_SHA the checkout. The repo's installs run again only when their files or the project file's installs change.
 
 ARG RUNTIME=runtime
-# Global, so the editor's layer, built on a published runtime, gets the same pins.
+# Global, so the stages built on a published runtime (the editor's layer, Claude's MCP) get the same pins.
+ARG PLAYWRIGHT_MCP_VERSION=0.0.83
 ARG OPENVSCODE_VERSION=1.109.5
 ARG OPENVSCODE_SHA256_AMD64=b433bf4f0227321a7014d8460d10a8f958adc0f45aa79bd889e84e65e8f88363
 ARG OPENVSCODE_SHA256_ARM64=36d9c14036489b63de84ebace837fcacf7e60e669a0dc715802c5443684ea4dc
@@ -37,7 +38,7 @@ ARG TTYD_SHA256_AMD64=8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7
 ARG TTYD_SHA256_ARM64=b38acadd89d1d396a0f5649aa52c539edbad07f4bc7348b27b4f4b7219dd4165
 # Set by BuildKit to the platform being built (amd64 or arm64), which is also Debian's name for it.
 ARG TARGETARCH
-ARG PLAYWRIGHT_MCP_VERSION=0.0.83
+ARG PLAYWRIGHT_MCP_VERSION
 ARG CODEX_VERSION=0.167.0
 ARG REDIS_COMMANDER_VERSION=0.9.0
 # AWS's RDS CA bundle, so Postgres connections can verify the server (PGSSLMODE=verify-full in the task
@@ -94,11 +95,6 @@ ENV LANG=C.UTF-8
 # --no-shell: the MCP runs the full Chromium even when headless, so the separate headless shell is never used.
 RUN cd "$(npm root -g)/@playwright/mcp" && npx playwright install --no-shell chromium
 
-# After Chromium, so a new Claude each day does not download Chromium again.
-ARG CLAUDE_DAY=
-RUN curl -fsSL https://claude.ai/install.sh | bash \
-  && claude mcp add --scope user playwright -- npx "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" --headless --browser chromium
-
 # On the runtime rather than base, so a build on a published runtime builds none of Woodshed's own layers.
 FROM ${RUNTIME} AS deps
 
@@ -150,6 +146,13 @@ RUN --mount=type=bind,source=woodshed-deps.editor,target=/tmp/woodshed-editor \
   && rm /tmp/openvscode.tgz
 
 USER node
+
+# Claude changes every day, so it is here rather than in the runtime: on the runtime, the installs built on it would run
+# again each day too. After the editor, which changes less often.
+ARG PLAYWRIGHT_MCP_VERSION
+ARG CLAUDE_DAY=
+RUN curl -fsSL https://claude.ai/install.sh | bash \
+  && claude mcp add --scope user playwright -- npx "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" --headless --browser chromium
 
 # The clone's own words never change, so without this a cached build would ship an old checkout. The clone is then
 # moved to that commit, the one the build context and the image's tag come from, should the default branch have moved since.
