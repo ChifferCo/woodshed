@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -348,7 +348,7 @@ test('a malformed installation file stops the read as a malformed repo file does
   const dir = fixtureProjectFiles(scratch(t), { 'acme/app': 'version: 1\nenvfiles: []\n' });
   const file = path.join(dir, 'acme/app.yaml');
   assert.throws(() => loadProject(checkout, { projectFilesDir: dir }),
-    { message: `the installation's project file ${file}: has envfiles, which is not a field (expected version, dependencies, env, envFiles, databases, app, editor, rules, setup, pullRequests)` });
+    { message: `the installation's project file ${file}: has envfiles, which is not a field (expected ${PROJECT_FIELDS[''].join(', ')})` });
   fs.writeFileSync(file, '# nothing yet\n');
   assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /the installation's project file .*app\.yaml: is empty: write version: 1 at least/);
   fs.writeFileSync(file, 'version: 2\n');
