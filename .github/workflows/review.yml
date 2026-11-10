@@ -92,6 +92,18 @@ jobs:
           } > /tmp/review-context.md 2>&1 || true
           wc -l /tmp/review-context.md
 
+      - name: Take the review's rules from the base branch
+        if: steps.gate.outputs.run == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # The rules come from the branch the pull request merges into, so a pull request cannot soften its own review
+          mkdir -p /tmp/base-rules
+          for f in CLAUDE.md .woodshed/rules.md CONTRIBUTING.md; do
+            git show "${BASE_SHA}:${f}" > "/tmp/base-rules/$(basename "$f")" 2>/dev/null || echo "not on the base branch: $f"
+          done
+          ls -l /tmp/base-rules
+
       - name: Review
         if: steps.gate.outputs.run == 'true'
         uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1
@@ -100,16 +112,19 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Shared Woodshed Cloud sessions open pull requests as this App; the action refuses bots it is not told of.
+          allowed_bots: 'woodshed-cloud'
           use_sticky_comment: true
-          show_full_output: true
           prompt: |
             You are reviewing a pull request to Woodshed, an open-source, dependency-free Node ESM project with no build
             step. This repository is public. Your verdict is the pull request's approval, so be careful, and fair.
 
             1. Read `/tmp/review-context.md`: the pull request's description, its discussion and the issues it closes.
                It says what the change is meant to do and what was already decided. Review against that intent.
-            2. Read `CLAUDE.md`, `.woodshed/rules.md` and `CONTRIBUTING.md`, then the README of each folder the pull
-               request changes (`docs/reference.md` lists them).
+            2. Read the repository's rules from `/tmp/base-rules/`: `CLAUDE.md`, `rules.md` (`.woodshed/rules.md`) and
+               `CONTRIBUTING.md`, as they are on the branch this merges into. Judge the change by those, even if it
+               edits them. Then read the README of each folder the pull request changes (`docs/reference.md` lists
+               them).
             3. Run `gh pr diff $PR_NUMBER`. Read the changed files around each change, not only the diff. A pull
                request is large when it changes 5 or more files or 200 or more lines: then also trace each changed
                function's callers, and check the tests cover the paths that changed.
@@ -118,7 +133,7 @@ jobs:
                - Security: anything that hands a session or a visitor more than it should get (tokens, secrets, another
                  person's or another project's data), a missing sign-in, origin or write-access check, a path
                  traversal, a secret that could reach a log, a page or a pull request.
-               - The rules in `CLAUDE.md`: a variable a session reads that is missing from `PER_SESSION_ENV`; a change
+               - The rules in `/tmp/base-rules/CLAUDE.md`: a variable a session reads that is missing from `PER_SESSION_ENV`; a change
                  to how a session starts with no proof from the real image; a visible change to the console that
                  skips `console/designSystem/`.
                - Tests: new behaviour without a test, or a test that would pass without the change.
@@ -144,7 +159,7 @@ jobs:
                  makes that someone should agree with, and where to look first.
           claude_args: |
             --model opus
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(cat:*),Bash(ls:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Read(*),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(cat:*),Bash(ls:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(printenv:*),Read(*),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
 
       - name: Post the verdict
         if: steps.gate.outputs.run == 'true'
