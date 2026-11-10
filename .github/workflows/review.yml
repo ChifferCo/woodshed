@@ -152,11 +152,20 @@ jobs:
                - REQUEST_CHANGES: a bug, a security problem, a broken rule from step 4, or missing tests for new
                  behaviour.
                - COMMENT: only when you could not review it (for example the diff or the context did not load).
-            7. Write the verdict, one word, to `/tmp/claude-verdict.txt`. Write to `/tmp/review-summary.md`:
-               - three to six sentences: what the pull request does, what you checked, and what must change, if
-                 anything;
-               - for a large pull request, a "For the human reviewer" list: the areas it touches, the decisions it
-                 makes that someone should agree with, and where to look first.
+            7. Write the verdict, one word, to `/tmp/claude-verdict.txt`.
+            8. Write to `/tmp/review-summary.md` three to six sentences: what the pull request does, what you checked,
+               and what must change, if anything. It goes on the approval or request for changes.
+            9. Write the full review to `/tmp/review-full.md`, in Markdown, with these sections (leave out one with
+               nothing in it):
+               - `### Overview`: what the pull request does and how, in a short paragraph.
+               - `### Key findings`: each problem, with the file and line, what goes wrong and the fix, marked
+                 blocking or optional. Say "None" when there are none.
+               - `### What I checked`: the paths, rules and risks you verified and found fine, so a reader knows what
+                 the review covered.
+               - `### Positive notes`: what the change does well, briefly.
+               - `### For the human reviewer`: the areas it touches, the decisions someone should agree with, and
+                 where to look first. Always for a large pull request, otherwise only when there is something to say.
+               It is posted on the pull request as a comment.
           claude_args: |
             --model opus
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read(./**),Read(//tmp/**),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
@@ -166,20 +175,43 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Post the reviewer's verdict as the pull request's review: an APPROVE is its approval
+          # Post the full review as one comment, updated in place, then the verdict as the pull request's review
           if [ ! -f /tmp/claude-verdict.txt ]; then
             echo "::warning::The reviewer wrote no verdict, so no review was posted"
             exit 0
           fi
           verdict=$(tr -d '[:space:]' < /tmp/claude-verdict.txt | tr '[:lower:]' '[:upper:]')
+          marker='<!-- woodshed-review -->'
+          comment_url=""
+          if [ -s /tmp/review-full.md ]; then
+            {
+              echo "$marker"
+              echo "## Claude review: ${verdict}"
+              echo "<sub>On ${HEAD_SHA:0:7} · [view the run](${RUN_URL})</sub>"
+              echo
+              cat /tmp/review-full.md
+            } > /tmp/review-comment.md
+            existing=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+              --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" | head -1)
+            if [ -n "$existing" ]; then
+              comment_url=$(gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" \
+                -F body=@/tmp/review-comment.md --jq .html_url)
+            else
+              comment_url=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+                -F body=@/tmp/review-comment.md --jq .html_url)
+            fi
+            cat /tmp/review-comment.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           {
             echo "## Claude review: ${verdict}"
             echo
             cat /tmp/review-summary.md 2>/dev/null || true
             echo
-            echo "<sub>[View the run](${RUN_URL})</sub>"
+            if [ -n "$comment_url" ]; then echo "[The full review](${comment_url}) · <sub>[view the run](${RUN_URL})</sub>"
+            else echo "<sub>[View the run](${RUN_URL})</sub>"; fi
           } > /tmp/review-body.md
           case "$verdict" in
             APPROVE) gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --approve --body-file /tmp/review-body.md ;;
@@ -187,4 +219,3 @@ jobs:
               gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --request-changes --body-file /tmp/review-body.md ;;
             *) gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment --body-file /tmp/review-body.md ;;
           esac
-          echo "### Claude review: \`${verdict}\`" >> "$GITHUB_STEP_SUMMARY"
