@@ -145,7 +145,8 @@ default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local
 | --- | --- |
 | Commits | `woodshed-bot <woodshed-bot@users.noreply.github.com>`; in a private session whose owner connected GitHub, the owner's name and noreply address |
 | Pushes, PRs, comments, reactions | The installation's GitHub App, as `<slug>[bot]` ; a connected owner's private session pushes and opens PRs as them, "via `<slug>`" |
-| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)" |
+| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)". On another project's repo, which may be public, the console is not linked: "Started by @<login> via Woodshed Cloud." |
+| Attribution | Claude Code's own `Co-Authored-By` trailer and PR footer, unless the repo's `.claude/settings.json` turns them off (`attribution`), as this one does |
 
 The only long-lived GitHub credential is the App's private key, in
 `woodshed-cloud/github-app-key`, which only the console reads (it never touches
