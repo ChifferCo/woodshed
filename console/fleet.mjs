@@ -82,13 +82,16 @@ export async function callStatusd(session, method, path, { body, timeoutMs = STA
 }
 
 /**
- * The console's address for a comment on a project's repo: the default project's repo is the installation's own, and
- * another project's may be public, where the console's address would be published. Without one, a comment names no
- * link to the console or a session's app.
+ * The console's address for a comment on a project's repo, as its project file's `consoleLinks` says. A file that could
+ * not be read (null) keeps the default project's links, as before the setting, and leaves another project's out: its
+ * repo may be public. Without one, a comment names no link to the console or a session's app.
+ * @param {{publicUrl: string, project: {default?: boolean}|null, consoleLinks: boolean|null}} args
  * @returns {string|null}
  */
-export function commentConsoleUrl(config, project) {
-  return project?.default === false ? null : config.publicUrl;
+export function commentConsoleUrl({ publicUrl, project, consoleLinks }) {
+  if (consoleLinks === true) return publicUrl;
+  if (consoleLinks === false) return null;
+  return project?.default === false ? null : publicUrl;
 }
 
 /**
@@ -177,6 +180,7 @@ export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
+  consoleLinks = async () => true,
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -481,7 +485,7 @@ export function createFleet({
   async function announceFailure(session) {
     if (!session.commentId) return;
     const project = projectFor(config, session);
-    const body = failedComment({ session, publicUrl: commentConsoleUrl(config, project) });
+    const body = failedComment({ session, publicUrl: await consoleUrlOf(project) });
     const posted = await safely('failure comment', () => githubOf(project).comment(session.number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -947,8 +951,9 @@ export function createFleet({
     }
     if (!announce) return session;
     await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
+    const publicUrl = await consoleUrlOf(project);
     const posted = await safely('start comment', () => gh.comment(number, startComment({
-      session, publicUrl: commentConsoleUrl(config, project), maxRunning: config.maxRunning, appDomain: config.appDomain,
+      session, publicUrl, maxRunning: config.maxRunning, appDomain: config.appDomain,
     })));
     if (posted) {
       update(session, { commentId: posted });
@@ -1012,6 +1017,14 @@ export function createFleet({
   // What a log line adds for another project's session or event: nothing for the default project's, as before projects.
   function projectField(project) {
     return project.default ? {} : { project: project.name };
+  }
+
+  // The console's address for a comment on a project's repo, as that repo's project file says (commentConsoleUrl).
+  async function consoleUrlOf(project) {
+    const links = await consoleLinks(project.name);
+    const url = commentConsoleUrl({ publicUrl: config.publicUrl, project, consoleLinks: links });
+    if (!url) console.log('fleet: comment names no console address', { ...projectField(project), why: links === false ? 'consoleLinks' : 'project file not read' });
+    return url;
   }
 
   /**
@@ -1214,7 +1227,7 @@ export function createFleet({
     const member = Boolean(members?.isMember?.(login));
     console.log('fleet: trigger ignored, no sessions from GitHub', { number, login, trigger, member });
     const unlabeled = trigger === 'label' ? await safely('label removal', () => gh.removeLabel(number, config.label)) : null;
-    const body = refusalComment({ login, label: config.label, unlabeled: Boolean(unlabeled), member, publicUrl: commentConsoleUrl(config, project) });
+    const body = refusalComment({ login, label: config.label, unlabeled: Boolean(unlabeled), member, publicUrl: await consoleUrlOf(project) });
     const posted = await safely('refusal comment', () => gh.comment(number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -1228,7 +1241,8 @@ export function createFleet({
     const message = text || `Carry on with ${session.kind === 'pr' ? 'PR ' : ''}#${session.number}: the ${config.label} label was added again.`;
     await resumeShared(session, { text: message, by: login, why: trigger });
     await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
-    const posted = await safely('resume comment', () => gh.comment(number, resumeComment({ session, publicUrl: commentConsoleUrl(config, projectFor(config, session)) })));
+    const publicUrl = await consoleUrlOf(projectFor(config, session));
+    const posted = await safely('resume comment', () => gh.comment(number, resumeComment({ session, publicUrl })));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();

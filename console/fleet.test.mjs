@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createFleet, failedComment, refusalComment, resumeComment, startComment } from './fleet.mjs';
+import { commentConsoleUrl, createFleet, failedComment, refusalComment, resumeComment, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
@@ -94,7 +94,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => PULL_GATES, databasesRefusal, githubFor,
+    pings, pullRequests: async () => PULL_GATES, databasesRefusal, githubFor, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -1686,7 +1686,7 @@ test('a private session on another project records it, clones its repo, and read
 });
 
 // Another project's issues and pull requests are its repo's: its #12 is not the default project's #12.
-function twoProjects({ toolWriters = ['joel'], ...options } = {}) {
+function twoProjects({ toolWriters = ['joel'], links = { r: true, tools: false }, ...options } = {}) {
   const projects = [{ name: 'r', repo: 'o/r', default: true }, { name: 'tools', repo: 'o/tools', default: false }];
   const toolCalls = { comments: [], reactions: [], canWrite: [], issues: [], pulls: [] };
   const tools = {
@@ -1699,7 +1699,7 @@ function twoProjects({ toolWriters = ['joel'], ...options } = {}) {
     async removeLabel() { return true; },
     async issueProjectItems() { return []; },
   };
-  const ctx = setup({ ...options, projects, githubFor: (project) => (project.name === 'tools' ? tools : null) });
+  const ctx = setup({ ...options, projects, githubFor: (project) => (project.name === 'tools' ? tools : null), consoleLinks: async (name) => links[name] });
   return { ...ctx, projects, tools, toolCalls };
 }
 
@@ -1798,7 +1798,32 @@ test('the console\'s comments link to it on the default project\'s repo, word fo
   }
 });
 
-test('a resume and a failure on another project\'s issue name no console address there', async () => {
+test('the console\'s address in a comment follows the repo\'s project file, not whether the project is the default', async () => {
+  // Another project whose file says nothing keeps the links.
+  const open = twoProjects({ links: { r: true, tools: true } });
+  await open.fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  assert.match(open.toolCalls.comments.at(-1).body, /https:\/\/console\.test\/s\//);
+  // The default project's file can say no too.
+  const closed = twoProjects({ links: { r: false, tools: true } });
+  await closed.fleet.handleTrigger({ number: 3, login: 'joel', trigger: 'label', title: 'Default 3', kind: 'issue' });
+  assert.doesNotMatch(closed.calls.comments.at(-1).body, /console\.test|https?:/);
+  // A file that could not be read: the default project keeps its links, another project's are left out.
+  const unread = twoProjects({ links: { r: null, tools: null } });
+  await unread.fleet.handleTrigger({ number: 3, login: 'joel', trigger: 'label', title: 'Default 3', kind: 'issue' });
+  await unread.fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  assert.match(unread.calls.comments.at(-1).body, /https:\/\/console\.test\/s\//);
+  assert.doesNotMatch(unread.toolCalls.comments.at(-1).body, /console\.test|https?:/);
+});
+
+test('commentConsoleUrl reads consoleLinks, and an unread file keeps only the default project\'s address', () => {
+  const publicUrl = 'https://console.test';
+  assert.equal(commentConsoleUrl({ publicUrl, project: { default: false }, consoleLinks: true }), publicUrl);
+  assert.equal(commentConsoleUrl({ publicUrl, project: { default: true }, consoleLinks: false }), null);
+  assert.equal(commentConsoleUrl({ publicUrl, project: { default: true }, consoleLinks: null }), publicUrl);
+  assert.equal(commentConsoleUrl({ publicUrl, project: { default: false }, consoleLinks: null }), null);
+});
+
+test('a resume and a failure on a repo whose project file says consoleLinks: false name no console address there', async () => {
   const { fleet, calls, toolCalls, statuses, alive } = twoProjects();
   const started = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
   const session = fleet.find(started.sessionId);
@@ -1824,7 +1849,7 @@ test('a resume and a failure on another project\'s issue name no console address
   assert.match(calls.comments.at(-1).body, /failed to start[\s\S]*https:\/\/console\.test\/s\//);
 });
 
-test('a start and a refusal on another project\'s issue name no console address there', async () => {
+test('a start and a refusal on a repo whose project file says consoleLinks: false name no console address there', async () => {
   const { fleet, calls, toolCalls } = twoProjects({ toolWriters: ['joel', 'sam'], githubSessions: ['joel'], writers: ['joel', 'sam'] });
   const started = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
   assert.equal(started.outcome, 'started');

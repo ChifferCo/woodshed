@@ -102,6 +102,11 @@ app:
 # Default: false. VS Code in the browser on each session's checkout (Editor ↗).
 editor: true
 
+# Default: true. false keeps the installation's console address out of what is posted to this repo: the console's
+# comments (a session started, resumed or failed, a refusal) and the session's link in its pull requests. For a public
+# repo, whose readers are not the installation's.
+consoleLinks: false
+
 # Default: null. Files in the repo: its rules for sessions, added after Woodshed Cloud's own, and its environment notes.
 rules: .woodshed/rules.md
 setup: .woodshed/setup.md

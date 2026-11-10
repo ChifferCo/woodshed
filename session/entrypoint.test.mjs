@@ -33,7 +33,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main' }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -43,6 +43,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
     fn('taskText'),
     // The function writes and reads under /tmp; point both at this test's own folder.
     fn('writePrompt').replaceAll('/tmp/', `${tmp}/`),
+    fn('leaveOutConsoleLinks'),
     fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
     'writePrompt',
     'writeRules',
@@ -52,7 +53,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}) },
     });
     return {
       out,
@@ -113,6 +114,25 @@ test('the project\'s rules follow Woodshed Cloud\'s, and its notes go inline in 
   assert.match(own.rules, /Environment notes .* are in `[^`]*\/woodshed-setup\.md`/);
   assert.ok(!own.rules.includes(PROJECT_NOTE));
   assert.ok(own.setup.includes(PROJECT_NOTE));
+});
+
+test('a project file with consoleLinks: false keeps the session\'s link out of its pull requests, on any repo', () => {
+  const url = 'https://console.example/s/0a1b2c3d';
+  const linked = writePrompt({ attachments: false, sessionUrl: url });
+  assert.ok(linked.rules.includes(`Started by @octocat via [Woodshed Cloud](${url}).`), 'left out, the link stays');
+  assert.doesNotMatch(linked.out, /Session link left out/);
+
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-nolinks-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ consoleLinks: false }));
+    const unlinked = writePrompt({ attachments: false, sessionUrl: url, repoDir: repo });
+    assert.match(unlinked.out, /Session link left out of pull requests \(the project file's consoleLinks\)/);
+    assert.ok(unlinked.rules.includes('Started by @octocat via Woodshed Cloud.'));
+    assert.doesNotMatch(unlinked.rules, /console\.example/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
 
 test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no notes', (t) => {
@@ -554,8 +574,7 @@ test('a session on another project clones its repo next to the image\'s checkout
   assert.match(run.stdout, /Installation secrets withheld \(another project\) \(variables: NPM_TOKEN API_ENV\)/);
   assert.match(run.stdout, /secrets: npm=unset api=unset other=kept/, 'the installation\'s install and env file secrets are gone');
   assert.doesNotMatch(run.stdout, /s3cret/, 'no value is ever printed');
-  assert.match(run.stdout, /Session link left out of pull requests \(another project\)/);
-  assert.match(run.stdout, /session link: unset/, 'its pull requests do not link the installation\'s console');
+  assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'the project file decides the link, in writeRules');
 });
 
 test('a session on the image\'s own repo, or with no project named, keeps the image\'s checkout', () => {

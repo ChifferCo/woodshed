@@ -1798,6 +1798,7 @@ export async function startConsole({ provider, config: given = null }) {
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
+    consoleLinks: (name) => readerOf(name).consoleLinks(),
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });

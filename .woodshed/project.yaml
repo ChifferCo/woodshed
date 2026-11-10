@@ -8,4 +8,7 @@ version: 1
 # VS Code in the browser on each session's checkout (Editor ↗).
 editor: true
 
+# This repo is public: what is posted here names no installation's console address.
+consoleLinks: false
+
 rules: .woodshed/rules.md
