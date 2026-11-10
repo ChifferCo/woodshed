@@ -272,7 +272,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   review:
-    permissions: { contents: read, pull-requests: write, issues: read, id-token: write, checks: write }
+    permissions: { contents: write, pull-requests: write, issues: read, id-token: write, checks: write }
     uses: <woodshed's repo>/.github/workflows/review.yml@<commit>
     with:
       tag: '[review]'
@@ -300,7 +300,8 @@ An input left empty takes its default. The rules, the instructions and the risk 
 its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
 approval is refused. On an approval, the review resolves its own threads that later commits made outdated, so a
 ruleset that requires conversation resolution is not blocked by fixed findings; a person's thread, and one of the
-review's still on current code, stay open. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
+review's still on current code, stay open. That runs in a job of its own, with no checkout and no Claude, because
+resolving a thread needs `contents: write`, which the calling job grants and the reviewer's job never takes. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.
 
 ## Databases
