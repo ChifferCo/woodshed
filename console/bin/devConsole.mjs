@@ -44,6 +44,9 @@ const sessions = [
   // one. Mine needs a signed-in octocat, which a stub of the page's data call gives.
   session('abcd7777', 26627, 'Merge Shared and My Woodshed tabs', { status: 'running', state: 'done', stoppedAt: null, stopReason: null, assignee: 'octocat' }),
   session('bcde8888', 26590, 'Fix CSV upload for large files', { kind: 'issue', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, startedBy: 'ana-dev', assignee: 'octocat' }),
+  // On a second project: the rail names it when the console has two, as with
+  // WOODSHED_CLOUD_PROJECTS='[{"name":"example-repo","repo":"example-org/example-repo","default":true},{"name":"example-api","repo":"example-org/example-api"}]'.
+  session('beef4242', 26631, 'Rate limit the public API', { project: 'example-api', repo: 'example-org/example-api', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   // Its project uses no Redis, so Data ▾ has only the databases.
   session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.

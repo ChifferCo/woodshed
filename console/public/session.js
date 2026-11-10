@@ -452,12 +452,14 @@
     const starting = s.status === 'starting' && s.startedAt ? W.startProgress(s).current : null;
     const place = W.linePlace(s, data.sessions);
     const who = cardPerson(s);
-    const sub = starting ? [word, ` · ${starting.short} · ${W.clock(s.startedAt)}`]
-      : place ? [word, ` · ${W.lineText(place)}`]
-      : live ? [word, who && [' · ', who], pauses && [' · ', h('span', { class: 'timer' }, pauses)], ownPlan]
-      : W.isResumable(s) ? [word, ` · ${W.keptLine(s)}`, who && [' · ', who]]
-        : W.isPrivate(s) ? [word, ` · ${W.privateStopLine(s, data.login)}`]
-          : [word, who && [' · ', who]];
+    // The session's project, right after the status word, where the installation has more than one.
+    const head = data.projects?.length > 1 && s.project ? [word, ' · ', h('span', { class: 'rproject', title: `Project ${s.project}` }, s.project)] : word;
+    const sub = starting ? [head, ` · ${starting.short} · ${W.clock(s.startedAt)}`]
+      : place ? [head, ` · ${W.lineText(place)}`]
+      : live ? [head, who && [' · ', who], pauses && [' · ', h('span', { class: 'timer' }, pauses)], ownPlan]
+      : W.isResumable(s) ? [head, ` · ${W.keptLine(s)}`, who && [' · ', who]]
+        : W.isPrivate(s) ? [head, ` · ${W.privateStopLine(s, data.login)}`]
+          : [head, who && [' · ', who]];
     const href = sessionHref(s);
     return h('div', {
       class: `rcard is-${st.key}${live ? '' : ' is-stopped'}`,
