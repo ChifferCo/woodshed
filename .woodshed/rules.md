@@ -10,3 +10,7 @@
   anything about the installation you run in: links to its console, Slack, Notion or other private repos, its log
   lines, account ids, domains and people's emails, and screenshots that show its data. Prove a change with the dev
   console's made-up sessions and with tests; where the proof needs the installation, say what you checked in words.
+- Commit messages and pull request titles are one line in Conventional Commits form, `type(scope): summary` (`feat`,
+  `fix`, `docs`, `refactor`, `test`, `chore`, `ci` or `perf`), lowercase and imperative. No body unless a reader
+  needs the why, and no trailers: no `Co-Authored-By`, no session links, no generated-by footers. Pull requests are
+  squash-merged with their title as the commit message, so the title is what the history keeps.

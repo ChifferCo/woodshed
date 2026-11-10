@@ -20,6 +20,10 @@ request from someone who has not agreed to it is not merged.
 
 The checks on a pull request from a fork run after a maintainer approves them.
 
+Title your pull request in [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) form,
+`type(scope): summary`, such as `fix(console): keep the rail open on reload`. Pull requests are squash-merged, and the
+title becomes the commit message.
+
 ## Licenses
 
 Woodshed is copyright ChifferCo, Inc., and licensed in two parts ([COPYRIGHT](COPYRIGHT) says which covers what):
