@@ -287,7 +287,7 @@ jobs:
 - `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default
   `woodshed-cloud`).
 
-The rules and the instructions are read from the branch the pull request merges into, so a pull request cannot soften
+An input left empty takes its default. The rules and the instructions are read from the branch the pull request merges into, so a pull request cannot soften
 its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
 approval is refused. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.

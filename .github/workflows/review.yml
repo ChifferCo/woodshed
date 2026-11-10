@@ -128,6 +128,8 @@ jobs:
         run: |
           # The rules come from the branch the pull request merges into, so a pull request cannot soften its own review
           mkdir -p /tmp/base-rules
+          # Split on spaces only: a name is a path, never a glob.
+          set -f
           for f in $RULES; do
             mkdir -p "/tmp/base-rules/$(dirname "$f")"
             git show "${BASE_SHA}:${f}" > "/tmp/base-rules/${f}" 2>/dev/null || { rm -f "/tmp/base-rules/${f}"; echo "not on the base branch: $f"; }
