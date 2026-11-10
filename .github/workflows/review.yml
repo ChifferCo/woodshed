@@ -3,7 +3,9 @@ name: Claude review
 # A review by Claude on pull requests from the team: those whose branch is in this repository, which only people with
 # write access can push. A pull request from a fork never runs it, and never gets the API key: this uses
 # pull_request, not pull_request_target. It runs when the last commit's message has [woodshed-review], so a push to a
-# draft or a work in progress does not spend a review. Its verdict is a comment review: a person still approves.
+# draft or a work in progress does not spend a review. Its verdict is a formal review: APPROVE counts as the pull
+# request's approval, which needs "Allow GitHub Actions to create and approve pull requests" on in the repository's
+# Actions settings. A push after it dismisses the approval, so the next push asks again with [woodshed-review].
 
 on:
   pull_request:
@@ -25,6 +27,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: read
       id-token: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -43,6 +46,32 @@ jobs:
             echo "No [woodshed-review] in the last commit's message: no review"
           fi
 
+      - name: Gather the pull request's discussion and linked issues
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Context for the reviewer: what the pull request is for, what people said on it, and the issues it closes
+          {
+            echo "# Pull request #${PR_NUMBER}"
+            gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json title,body,author \
+              --template '{{.title}} (by {{.author.login}}){{"\n\n"}}{{.body}}{{"\n"}}'
+            echo
+            echo "# Discussion"
+            gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json comments \
+              --template '{{range .comments}}{{.author.login}}: {{.body}}{{"\n\n"}}{{end}}'
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/comments" \
+              --jq '.[] | "\(.user.login) on \(.path):\(.line // .original_line): \(.body)\n"'
+            echo "# Linked issues"
+            for issue in $(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json closingIssuesReferences \
+                --jq '.closingIssuesReferences[].number'); do
+              gh issue view "$issue" --repo "$GITHUB_REPOSITORY" --comments
+              echo
+            done
+          } > /tmp/review-context.md 2>&1 || true
+          wc -l /tmp/review-context.md
+
       - name: Review
         if: steps.gate.outputs.run == 'true'
         uses: anthropics/claude-code-action@4fa93a88de49bbef68b10eb15aabedf28ca0e1ed # v1
@@ -54,13 +83,16 @@ jobs:
           use_sticky_comment: true
           prompt: |
             You are reviewing a pull request to Woodshed, an open-source, dependency-free Node ESM project with no build
-            step. This repository is public.
+            step. This repository is public. Your verdict is the pull request's approval, so be careful, and fair.
 
-            1. Read `CLAUDE.md`, `.woodshed/rules.md` and `CONTRIBUTING.md`, then the README of each folder the pull
-               request changes (`docs/reference.md` says where each one is).
-            2. Run `gh pr view $PR_NUMBER` and `gh pr diff $PR_NUMBER`. Read the changed files around each change, not
-               only the diff.
-            3. Look for, in this order:
+            1. Read `/tmp/review-context.md`: the pull request's description, its discussion and the issues it closes.
+               It says what the change is meant to do and what was already decided. Review against that intent.
+            2. Read `CLAUDE.md`, `.woodshed/rules.md` and `CONTRIBUTING.md`, then the README of each folder the pull
+               request changes (`docs/reference.md` lists them).
+            3. Run `gh pr diff $PR_NUMBER`. Read the changed files around each change, not only the diff. A pull
+               request is large when it changes 5 or more files or 200 or more lines: then also trace each changed
+               function's callers, and check the tests cover the paths that changed.
+            4. Look for, in this order:
                - Bugs: wrong behaviour, a broken edge case, a race, an error swallowed without a log line.
                - Security: anything that hands a session or a visitor more than it should get (tokens, secrets, another
                  person's or another project's data), a missing sign-in, origin or write-access check, a path
@@ -69,17 +101,26 @@ jobs:
                  to how a session starts with no proof from the real image; a visible change to the console that
                  skips `console/designSystem/`.
                - Tests: new behaviour without a test, or a test that would pass without the change.
-               - This repository is public: flag anything about an installation in the diff, the description or the
-                 commit messages (links to a private console, Slack, Notion or private repositories, log lines,
-                 account ids, emails, screenshots with data).
+               - This repository is public: anything about an installation in the diff, the description or the commit
+                 messages (links to a private console, Slack, Notion or private repositories, log lines, account ids,
+                 emails, screenshots with data).
                - The pull request title and commit messages: one line in Conventional Commits form, no trailers.
-            4. Post an inline comment (mcp__github_inline_comment__create_inline_comment) on the line of each real
-               problem, saying what goes wrong and how to fix it. Skip style preferences and anything a test or the
-               author already covers.
-            5. Write your verdict to `/tmp/claude-verdict.txt`: APPROVE when nothing blocks merging, REQUEST_CHANGES
-               for a bug, a security problem or a broken rule, COMMENT when unsure. Write a summary of three to six
-               sentences to `/tmp/review-summary.md`: what the pull request does, what you checked, and what, if
-               anything, must change.
+            5. Inline comments (mcp__github_inline_comment__create_inline_comment): only for a real problem you can show,
+               on the line where it is, saying what goes wrong (the input, the state, the result) and how to fix it.
+               Not for style, naming taste, or something a test, the description or the discussion already covers. If
+               you are not sure it is a problem, say so in the summary instead of commenting. Three precise comments
+               beat ten vague ones.
+            6. Decide the verdict:
+               - APPROVE: nothing blocks merging. Minor or optional suggestions are still APPROVE. When in doubt
+                 between APPROVE and COMMENT, choose APPROVE.
+               - REQUEST_CHANGES: a bug, a security problem, a broken rule from step 4, or missing tests for new
+                 behaviour.
+               - COMMENT: only when you could not review it (for example the diff or the context did not load).
+            7. Write the verdict, one word, to `/tmp/claude-verdict.txt`. Write to `/tmp/review-summary.md`:
+               - three to six sentences: what the pull request does, what you checked, and what must change, if
+                 anything;
+               - for a large pull request, a "For the human reviewer" list: the areas it touches, the decisions it
+                 makes that someone should agree with, and where to look first.
           claude_args: |
             --model opus
             --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Read(*),Grep(*),Glob(*),Write(//tmp/**)"
@@ -91,9 +132,9 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Post the reviewer's verdict as a comment review; a person approves the pull request
+          # Post the reviewer's verdict as the pull request's review: an APPROVE is its approval
           if [ ! -f /tmp/claude-verdict.txt ]; then
-            echo "::warning::The reviewer wrote no verdict"
+            echo "::warning::The reviewer wrote no verdict, so no review was posted"
             exit 0
           fi
           verdict=$(tr -d '[:space:]' < /tmp/claude-verdict.txt | tr '[:lower:]' '[:upper:]')
@@ -104,6 +145,10 @@ jobs:
             echo
             echo "<sub>[View the run](${RUN_URL})</sub>"
           } > /tmp/review-body.md
-          gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment --body-file /tmp/review-body.md
+          case "$verdict" in
+            APPROVE) gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --approve --body-file /tmp/review-body.md ;;
+            REQUEST_CHANGES | REQUESTCHANGES)
+              gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --request-changes --body-file /tmp/review-body.md ;;
+            *) gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment --body-file /tmp/review-body.md ;;
+          esac
           echo "### Claude review: \`${verdict}\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ "$verdict" = REQUEST_CHANGES ]; then exit 1; fi
