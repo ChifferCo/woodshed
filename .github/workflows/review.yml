@@ -101,6 +101,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
           use_sticky_comment: true
+          show_full_output: true
           prompt: |
             You are reviewing a pull request to Woodshed, an open-source, dependency-free Node ESM project with no build
             step. This repository is public. Your verdict is the pull request's approval, so be careful, and fair.
@@ -143,7 +144,7 @@ jobs:
                  makes that someone should agree with, and where to look first.
           claude_args: |
             --model opus
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Read(*),Grep(*),Glob(*),Write(//tmp/**)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(cat:*),Bash(ls:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Read(*),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
 
       - name: Post the verdict
         if: steps.gate.outputs.run == 'true'
