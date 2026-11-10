@@ -183,6 +183,24 @@ test('editor is true or false, and off when left out, so a branch from before it
   assert.throws(() => parseProject({ ...EMPTY_PROJECT, editr: true }), /has editr, which is not a field/);
 });
 
+test('githubAccess is full or repo, and full when left out', () => {
+  assert.equal(parseProject({ ...EMPTY_PROJECT, githubAccess: 'repo' }).githubAccess, 'repo');
+  assert.equal(parseProject({ ...EMPTY_PROJECT, githubAccess: 'full' }).githubAccess, 'full');
+  const { githubAccess, ...without } = EMPTY_PROJECT;
+  assert.equal(parseProject(without).githubAccess, 'full');
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, githubAccess: 'scoped' }), /githubAccess must be one of full, repo \(it is "scoped"\)/);
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, githubAccess: true }), /githubAccess must be one of full, repo/);
+});
+
+test('consoleLinks is true or false, and on when left out, so the console links as it did before the setting', () => {
+  assert.equal(parseProject({ ...EMPTY_PROJECT, consoleLinks: false }).consoleLinks, false);
+  assert.equal(parseProject({ ...EMPTY_PROJECT, consoleLinks: true }).consoleLinks, true);
+  const { consoleLinks, ...without } = EMPTY_PROJECT;
+  assert.equal(parseProject(without).consoleLinks, true);
+  assert.equal(EMPTY_PROJECT.consoleLinks, true, 'a repo with no project file');
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, consoleLinks: 'no' }), /consoleLinks must be true or false/);
+});
+
 test('pullRequests left out is none, and another version is named before its fields', () => {
   const { pullRequests, ...without } = EMPTY_PROJECT;
   assert.equal(parseProject(without).pullRequests, null);

@@ -43,7 +43,7 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'editor', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'lines'],
@@ -82,6 +82,15 @@ function fields(value, field, names, defaults = {}) {
 
 function boolean(value, field) {
   if (typeof value !== 'boolean') fail(`${field} must be true or false`);
+  return value;
+}
+
+// How far a private session's GitHub token reaches: `full` is its owner's token as GitHub issued it, `repo` that token
+// scoped by GitHub to this repo and the session permissions.
+export const GITHUB_ACCESS = Object.freeze(['full', 'repo']);
+
+function githubAccess(value) {
+  if (!GITHUB_ACCESS.includes(value)) fail(`githubAccess must be one of ${GITHUB_ACCESS.join(', ')} (it is ${JSON.stringify(value)})`);
   return value;
 }
 
@@ -294,7 +303,8 @@ function pullRequests(value) {
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, rules: null, setup: null, pullRequests: null,
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true, githubAccess: 'full', rules: null,
+  setup: null, pullRequests: null,
 };
 
 /**
@@ -302,7 +312,7 @@ const TOP_DEFAULTS = {
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, lines: string[]}[], databases: object[], app: object|null,
- *   editor: boolean, rules: string|null, setup: string|null, pullRequests: object|null}}
+ *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
  */
 export function parseProject(raw) {
@@ -320,6 +330,8 @@ export function parseProject(raw) {
     databases: databases(project.databases, envFiles.map((f) => f.secret).filter(Boolean)),
     app: nullable(project.app, 'app', app),
     editor: boolean(project.editor, 'editor'),
+    consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
+    githubAccess: githubAccess(project.githubAccess),
     rules: nullable(project.rules, 'rules', repoPath),
     setup: nullable(project.setup, 'setup', repoPath),
     pullRequests: nullable(project.pullRequests, 'pullRequests', pullRequests),
@@ -328,8 +340,8 @@ export function parseProject(raw) {
 
 /** What a repo with no project file gets: Woodshed Cloud's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
-  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, rules: null, setup: null,
-  pullRequests: null,
+  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true,
+  githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 
 // The default branch's copy, or null when it has no such file. Anything else git fails on (no remote branch, not a

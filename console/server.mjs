@@ -1711,11 +1711,12 @@ async function untilAppKey(appKey, everyMs) {
   }
 }
 
-function startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks }) {
+function startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks, githubAccess }) {
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   if (!config.sessionApi.host) return;
   const handle = createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
+    githubAccess,
   });
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -1798,6 +1799,7 @@ export async function startConsole({ provider, config: given = null }) {
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
+    consoleLinks: (name) => readerOf(name).consoleLinks(),
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -1882,7 +1884,10 @@ export async function startConsole({ provider, config: given = null }) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
   });
-  startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks });
+  startSessionApi({
+    config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks,
+    githubAccess: (name) => readerOf(name).githubAccess(),
+  });
   await startTlsAsk({ config, sessions: () => fleet.sessions() });
   every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
   every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());

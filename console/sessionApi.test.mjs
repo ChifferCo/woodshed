@@ -428,7 +428,7 @@ test('a session gets the token of the project it runs on', async (t) => {
   assert.equal((await request(port, { authorization: 'Bearer asking-tools' })).body.token, 'ghs_tools_read', 'an ask session gets its project\'s read-only one');
 });
 
-test('an owner\'s sessions push as them: their own token on the default project, scoped to the repo on another', async (t) => {
+test('with no project file read, an owner\'s sessions push as them: their own token on the default project, scoped on another', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'mine-on-app', owner: 'mia', project: 'app', repo: 'acme/app' },
     { id: 'bbbbbbbb', status: 'running', token: 'mine-on-tools', owner: 'mia', project: 'tools', repo: 'other/tools' },
@@ -468,4 +468,43 @@ test('an owner\'s sessions push as them: their own token on the default project,
   const refused = await request(port, { authorization: 'Bearer gone-on-tools' });
   assert.equal(refused.status, 409, 'an owner GitHub no longer accepts is told so, as on the default project');
   assert.match(refused.body.error, /no longer accepts/);
+});
+
+test('the project file\'s githubAccess decides how far a private session\'s token reaches, on any project', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', project: 'app', repo: 'acme/app' },
+    { id: 'bbbbbbbb', status: 'running', token: 'on-tools', owner: 'mia', project: 'tools', repo: 'other/tools' },
+    { id: 'cccccccc', status: 'running', token: 'on-locked', owner: 'mia', project: 'locked', repo: 'other/locked' },
+    { id: 'dddddddd', status: 'running', token: 'on-unread', owner: 'mia', project: 'unread', repo: 'other/unread' },
+    { id: 'eeeeeeee', status: 'running', token: 'shared-on-locked', project: 'locked', repo: 'other/locked' },
+    { id: 'ffffffff', status: 'running', token: 'ask-on-locked', project: 'locked', repo: 'other/locked', kind: 'ask' },
+  ];
+  const source = (token) => ({ token: async () => ({ token, expiresAt: Date.parse('2026-11-10T13:00:00Z') }) });
+  const permissions = { contents: 'write' };
+  const project = (name, isDefault, repo) => ({ project: name, default: isDefault, repo, permissions, sessions: source(`ghs_${name}`), asks: source(`ghs_${name}_read`) });
+  const byProject = { app: project('app', true, 'acme/app'), tools: project('tools', false, 'other/tools'), locked: project('locked', false, 'other/locked'), unread: project('unread', false, 'other/unread') };
+  // tools leaves githubAccess out (full); locked says repo; unread's file cannot be read.
+  const files = { app: 'full', tools: 'full', locked: 'repo', unread: null };
+  const githubUser = {
+    tokenFor: async (login) => ({ token: `ghu_${login}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') }),
+    scopedTokenFor: async (login, scope) => ({ token: `ghu_${login}_scoped_${scope.repo}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') }),
+  };
+  const handle = createSessionApi({
+    fleet: { sessions: () => sessions }, tokens: source('unused'), githubUser, tokensFor: (session) => byProject[session.project],
+    githubAccess: async (name) => files[name],
+  });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const tokenOf = async (bearer) => (await request(port, { authorization: `Bearer ${bearer}` })).body.token;
+
+  assert.equal(await tokenOf('on-app'), 'ghu_mia', 'the default project, full: the owner\'s own token');
+  assert.equal(await tokenOf('on-tools'), 'ghu_mia', 'another project, githubAccess left out: full, the owner\'s own token');
+  assert.equal(await tokenOf('on-locked'), 'ghu_mia_scoped_other/locked', 'githubAccess: repo scopes it to the project\'s repo');
+  assert.equal(await tokenOf('on-unread'), 'ghu_mia_scoped_other/unread', 'a file that cannot be read errs toward repo off the default project');
+  files.app = 'repo';
+  assert.equal(await tokenOf('on-app'), 'ghu_mia_scoped_acme/app', 'repo applies on the default project too');
+  assert.equal(await tokenOf('shared-on-locked'), 'ghs_locked', 'a shared session: the App\'s token, whatever the file says');
+  assert.equal(await tokenOf('ask-on-locked'), 'ghs_locked_read', 'a question: the read-only App token');
 });
