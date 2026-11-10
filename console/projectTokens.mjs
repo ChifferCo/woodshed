@@ -1,7 +1,12 @@
 // The GitHub App tokens of each project: the console's own, a coding session's and an ask session's. Each reaches its
 // project's repo alone, from the project's installation of the App. The default project's keep the labels they had
 // before there were projects, so a console with one project logs what it did.
+//
+// A console that borrows its GitHub access (githubBroker.mjs) has no App to narrow a token with: the console and its
+// coding sessions get the broker's token for the repo, and an ask session, whose token must read and write nothing,
+// gets none.
 
+import { createGitHubBroker } from './githubBroker.mjs';
 import { createTokenSource } from './githubApp.mjs';
 import { defaultProject, installationIdFor, projectFor } from './projects.mjs';
 
@@ -13,9 +18,16 @@ export const SESSION_PERMISSIONS = {
 // An ask session (asks.mjs) reads the code, its history and its pull requests, and writes nothing.
 const ASK_PERMISSIONS = { contents: 'read', pull_requests: 'read', issues: 'read', metadata: 'read' };
 
-function sourcesFor({ config, privateKey, fetchImpl, now, project }) {
-  const app = { appId: config.githubApp.appId, installationId: installationIdFor(config, project), repo: project.repo, privateKey, fetchImpl, now };
+function sourcesFor({ config, privateKey, fetchImpl, now, project, broker }) {
   const suffix = project.default ? '' : `:${project.name}`;
+  if (broker) {
+    return {
+      console: broker.tokenSource({ repo: project.repo, label: `console${suffix}` }),
+      sessions: broker.tokenSource({ repo: project.repo, label: `sessions${suffix}` }),
+      asks: null,
+    };
+  }
+  const app = { appId: config.githubApp.appId, installationId: installationIdFor(config, project), repo: project.repo, privateKey, fetchImpl, now };
   return {
     console: createTokenSource({ ...app, label: `console${suffix}` }),
     sessions: createTokenSource({ ...app, permissions: SESSION_PERMISSIONS, label: `sessions${suffix}` }),
@@ -28,17 +40,19 @@ function sourcesFor({ config, privateKey, fetchImpl, now, project }) {
  * @returns {null|{console: object, sessions: object, asks: object,
  *   forSession: (session: object) => {project: string, default: boolean, repo: string, permissions: object,
  *     console: object, sessions: object, asks: object}}}
- *   the default project's sources, and `forSession` for the project a session runs on; null without a GitHub App
+ *   the default project's sources, and `forSession` for the project a session runs on; null without a GitHub App or
+ *   a broker. `asks` is null with a broker
  */
 export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
-  if (!config.githubApp) return null;
+  if (!config.githubApp && !config.githubBroker) return null;
+  const broker = config.githubBroker ? createGitHubBroker({ ...config.githubBroker, fetchImpl, now }) : null;
   const main = defaultProject(config);
-  const byName = new Map([[main.name, sourcesFor({ config, privateKey, fetchImpl, now, project: main })]]);
+  const byName = new Map([[main.name, sourcesFor({ config, privateKey, fetchImpl, now, project: main, broker })]]);
   return {
     ...byName.get(main.name),
     forSession(session) {
       const project = projectFor(config, session);
-      if (!byName.has(project.name)) byName.set(project.name, sourcesFor({ config, privateKey, fetchImpl, now, project }));
+      if (!byName.has(project.name)) byName.set(project.name, sourcesFor({ config, privateKey, fetchImpl, now, project, broker }));
       return {
         project: project.name, default: project.name === main.name, repo: project.repo, permissions: SESSION_PERMISSIONS,
         ...byName.get(project.name),

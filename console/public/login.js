@@ -81,6 +81,12 @@
       visitorCard(me);
       return;
     }
+    // The service that hosts this console signs people in, with every request it passes on: nothing to do here.
+    if (me.hosted) {
+      card(h('p', { class: 'sub' }, 'This console is signed in to through the service that hosts it, and that sign-in did not reach it.'),
+        h('p', { class: 'sub' }, 'Open the console again from the service. If this page keeps coming back, ask whoever runs it.'));
+      return;
+    }
     if (!me.available && me.signIn) {
       card(h('p', { class: 'sub' }, 'Nobody can sign in: this console requires GitHub sign-in, and the GitHub App’s client secret is not set.'),
         h('p', { class: 'sub' }, 'Put it in the console’s secret store as ', h('code', null, 'github-app-client-secret'), ' and restart the console. woodshed/console/README.md, “Sign-in”, has the steps.'));

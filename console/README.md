@@ -1035,6 +1035,72 @@ redirect.
   whose `Sec-Fetch-Site` says another site sent it. A typed URL or a
   bookmark still works; a link to a viewer from Slack does not.
 
+## Hosted mode
+
+A service can host a console for an organization: it has already connected the organization's GitHub (its own GitHub
+App, installed on their repos) and signs people in itself, in front of the console. Two settings hand both to it, so
+nobody makes a second App at `/setup/github` or signs in with GitHub again. Each is off unless set, and a self-hosted
+console is as it was.
+
+**Borrowed GitHub access** (`WOODSHED_CLOUD_GITHUB_BROKER_URL` and `WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE`, both or
+neither; `console/githubBroker.mjs`). The console has no GitHub App of its own, and refuses to start with
+`WOODSHED_CLOUD_GITHUB_APP_ID` set too. Every installation token, for its own GitHub calls and polls and for what
+sessions get from `POST /github-token`, comes from the host:
+
+```
+POST <url>
+Authorization: Bearer <the file's contents, trimmed>
+Content-Type: application/json
+
+{"repo": "owner/name"}            ({} when the token is for no one repo)
+
+-> 200 {"token": "ghs_...", "expiresAt": "<ISO 8601>"}
+   anything else is a refusal; its JSON body may say {"error": "..."}
+```
+
+Each repo's token is kept until 5 minutes before `expiresAt`, and shared by the console and its sessions. The file is
+read at each ask, so the host can rotate it, and its contents are never logged. The console logs `githubBroker: token
+borrowed` with the repo, the expiry and how long the ask took, or `githubBroker: token refused` with the status and
+the host's `error`, or `not reached`. With no App to narrow a token, a coding session gets the same token as the
+console, and a question from Slack, whose token must read and write nothing, gets none (`sessionApi: no read-only
+token for an ask session`). There is no `/setup/github` (404), no GitHub sign-in through the App, no **Connect
+GitHub** on My settings (private sessions push with the broker's token), and no webhook: the console polls
+(`console: webhooks off, GitHub access is borrowed`), and the Secrets & webhooks page keeps every secret but the
+App's own. Commits are `woodshed-bot`'s, as with an App ("Who commits" in `docs/reference.md`).
+
+**Sign-in from a trusted proxy** (`WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET`, at least 32 characters;
+`console/trustedIdentity.mjs`). The proxy signs each request it passes on, page loads, API calls and websocket
+upgrades alike, on the console's name and on the session apps' names, with a fresh header good for about a minute:
+
+```
+X-Woodshed-Identity: <payload>.<sig>
+  payload  base64url(JSON {"login": "<github login, lowercase>", "role": "owner" | "member", "exp": <ms since epoch>})
+  sig      base64url(HMAC-SHA256(secret, payload))
+```
+
+The signature is compared in constant time, and an expired header, a forged one, one signed with another secret or
+none at all signs nobody in: a page goes to `/login`, which says to come in through the host, and an API call or a
+websocket gets a 401, as without a session today. The header is then the only sign-in, required from the first
+request (which satisfies `WOODSHED_CLOUD_REQUIRE_SIGN_IN` and a console bound to a public address): the console has
+no GitHub sign-in, no session cookie, no Sign out and no **Connect GitHub**. The host says who is in, so there is no
+People list and nobody's write access to the repo is asked (nor, for another project, to its repo); everything else
+that hangs off a login works as signed in, My settings, private sessions and each person's secrets
+(`users/<login>/claude-token`) among them. `role: owner` is an admin (Secrets & webhooks, Webhook events, Console
+settings); `member` is not, and gets 403 there. With no People list, nobody can be assigned a shared session.
+
+A session's app takes the header on its own name: `/auth/app` on the console sends the browser straight on to the
+app's `/__woodshed/auth`, with no code, and every app request, the editor's and the websockets included, is signed in
+by its header alone. An app's name that gets no header there answers 403 rather than sending the browser round again
+(`app: no identity from the hosting proxy on the app's name`). Share links work as they do elsewhere, for whoever the
+proxy lets through. The console never passes the header on to a session (the app, the editor, the terminals and the
+viewers), where the session's own code could replay it within its minute. A refused header logs `trustedIdentity:
+identity refused` with `why` (`forged`, `expired`, `malformed`, `bad identity`), at most once a minute for each.
+
+Writes still need the console's own origin and `x-woodshed: 1`, and terminal websockets its own origin: the proxy
+signs every request a signed-in browser sends, a cross-site one too. `woodshed-db.mjs`'s tunnel keeps its own token,
+which is not refused when the host later lets someone go: it lasts at most 12 hours. The console logs `console:
+hosted mode` with which of the two are on at start.
+
 ## Slack
 
 When a shared session opens a pull request, the console posts it to one Slack
@@ -1331,6 +1397,8 @@ Remove My Woodshed.
 | `WOODSHED_CLOUD_TLS_ASK_PORT` | none | A port on `127.0.0.1` where a reverse proxy asks before getting a certificate on demand: `GET /tls-ask?domain=<name>` answers 200 for the public URL's host, `WOODSHED_CLOUD_HOSTS` and a session's app name, 403 otherwise (`tlsAsk.mjs`). For a console with no wildcard certificate; `providers/local/README.md` has the Caddyfile |
 | `WOODSHED_CLOUD_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_CLOUD_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |
+| `WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET` | none | Hosted mode: the secret a trusted proxy in front of the console signs each request's `X-Woodshed-Identity` header with, at least 32 characters. Set, that header is the only sign-in, and it is required; `role: owner` is an admin. See "Hosted mode" |
+| `WOODSHED_CLOUD_GITHUB_BROKER_URL`, `_GITHUB_BROKER_TOKEN_FILE` | none | Hosted mode: where the console asks its host for every installation token, and a file holding the bearer it asks with. Both or neither, and never with `WOODSHED_CLOUD_GITHUB_APP_ID`. See "Hosted mode" |
 | `WOODSHED_CLOUD_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
 | `WOODSHED_CLOUD_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
 | `WOODSHED_CLOUD_REPO`, `WOODSHED_CLOUD_LABEL` | none (required, `owner/name`), `woodshed` | The one repo this installation works on. The console refuses to start without it |

@@ -42,12 +42,41 @@ function ghToken(env) {
 function githubApp(env) {
   const { WOODSHED_CLOUD_GITHUB_APP_ID: appId, WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID: installationId } = env;
   if (!appId) return null;
+  if (env.WOODSHED_CLOUD_GITHUB_BROKER_URL || env.WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE) {
+    throw new Error('WOODSHED_CLOUD_GITHUB_APP_ID and WOODSHED_CLOUD_GITHUB_BROKER_URL cannot both be set: a console has a GitHub App of its own, or borrows GitHub access from its host, not both');
+  }
   const keyFile = env.WOODSHED_CLOUD_GITHUB_APP_KEY_FILE || null;
   const keyFromSecret = !keyFile && (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' || Boolean(env.WOODSHED_LOCAL_SECRETS_DIR));
   if (!installationId || !(keyFile || keyFromSecret)) {
     throw new Error('WOODSHED_CLOUD_GITHUB_APP_ID needs WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID, and WOODSHED_CLOUD_GITHUB_APP_KEY_FILE without a secret store (AWS, or WOODSHED_LOCAL_SECRETS_DIR)');
   }
   return { appId, installationId, keyFile, keyFromSecret };
+}
+
+// Hosted mode's GitHub access, borrowed from the host's broker (githubBroker.mjs): both settings or neither. The token
+// file is only checked for being there; its value is read at each call, and never kept in the config.
+function githubBroker(env) {
+  const names = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE'];
+  const set = names.filter((name) => env[name]);
+  if (!set.length) return null;
+  if (set.length === 1) throw new Error(`${set[0]} needs ${names.find((n) => !env[n])} too`);
+  let url;
+  try {
+    url = new URL(env.WOODSHED_CLOUD_GITHUB_BROKER_URL);
+  } catch {
+    throw new Error('WOODSHED_CLOUD_GITHUB_BROKER_URL is not a URL');
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('WOODSHED_CLOUD_GITHUB_BROKER_URL must be http(s)');
+  return { url: url.href, tokenFile: env.WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE };
+}
+
+// Hosted mode's sign-in (trustedIdentity.mjs). Short enough to guess is no secret.
+const MIN_IDENTITY_SECRET_CHARS = 32;
+function trustedIdentitySecret(env) {
+  const secret = env.WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET;
+  if (!secret) return null;
+  if (secret.length < MIN_IDENTITY_SECRET_CHARS) throw new Error(`WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET must be at least ${MIN_IDENTITY_SECRET_CHARS} characters`);
+  return secret;
 }
 
 // What an installation's sessions can get a copy of: the database engines (shared/databases/), each on its own.
@@ -183,7 +212,7 @@ const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|\[::1\]|localhost)$/i;
  */
 export function requireClosedWhenReachable(config) {
   if (LOOPBACK.test(config.host) || config.requireSignIn) return;
-  throw new Error(`WOODSHED_CLOUD_HOST is ${config.host}, which other machines reach, and sign-in is not required: set WOODSHED_CLOUD_REQUIRE_SIGN_IN=1 (with the GitHub App), or bind 127.0.0.1 behind a proxy`);
+  throw new Error(`WOODSHED_CLOUD_HOST is ${config.host}, which other machines reach, and sign-in is not required: set WOODSHED_CLOUD_REQUIRE_SIGN_IN=1 (with the GitHub App) or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET, or bind 127.0.0.1 behind a proxy`);
 }
 
 /** Nothing in Woodshed Cloud names a repo of its own: an installation says which ones it works on. */
@@ -197,6 +226,8 @@ export function requireRepo(config) {
 export function loadConfig(env = process.env) {
   const port = number(env.WOODSHED_CLOUD_PORT, 7690);
   const app = githubApp(env);
+  const broker = githubBroker(env);
+  const identitySecret = trustedIdentitySecret(env);
   return {
     host: env.WOODSHED_CLOUD_HOST || '127.0.0.1',
     port,
@@ -208,7 +239,9 @@ export function loadConfig(env = process.env) {
     tlsAskPort: tlsAskPort(env),
     // On a console the internet reaches, sign-in never goes optional: not before the client secret is set,
     // nor while a new one is unproven.
-    requireSignIn: env.WOODSHED_CLOUD_REQUIRE_SIGN_IN === '1',
+    // A trusted proxy's identity header is sign-in, and always required (trustedIdentity.mjs).
+    requireSignIn: env.WOODSHED_CLOUD_REQUIRE_SIGN_IN === '1' || Boolean(identitySecret),
+    trustedIdentitySecret: identitySecret,
     stateDir: env.WOODSHED_CLOUD_STATE_DIR || '/var/lib/woodshed-cloud',
     // The repos this installation works on (projects.mjs). providers/console.mjs refuses to start without one.
     projects: loadProjects(env),
@@ -264,6 +297,8 @@ export function loadConfig(env = process.env) {
     // The docker network local sessions and db-admin runs join (providers/local/compose.yml's `woodshed`).
     localDockerNetwork: env.WOODSHED_LOCAL_DOCKER_NETWORK || null,
     githubApp: app,
+    // Hosted mode: no App of its own, every installation token from the host's broker. Null otherwise.
+    githubBroker: broker,
     // Who a local console with no sign-in treats the person using it as, for My Woodshed (server.mjs, soloLoginOf).
     localLogin: localLogin(env),
     // The Secrets page's store. In AWS, Secrets Manager: it needs the base box role's access to these secrets.
@@ -273,7 +308,7 @@ export function loadConfig(env = process.env) {
     // The key that folder's files are sealed with, in a file of its own outside it (providers/local/secretKey.mjs).
     localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
     webhookFunction: env.WOODSHED_CLOUD_WEBHOOK_FUNCTION || (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'woodshed-cloud-webhooks' : ''),
-    ghToken: app ? null : ghToken(env),
+    ghToken: app || broker ? null : ghToken(env),
     // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
     sessionApi: { host: env.WOODSHED_CLOUD_SESSION_API_HOST || null, port: number(env.WOODSHED_CLOUD_SESSION_API_PORT, 7691) },
   };

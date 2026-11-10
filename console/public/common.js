@@ -716,6 +716,10 @@
     { href: '/events', label: 'Webhook events' },
     { href: '/console-settings', label: 'Console settings' },
   ];
+  // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page.
+  function consoleLinks(me) {
+    return me?.hosted ? CONSOLE_LINKS.filter((link) => link.href !== '/people') : CONSOLE_LINKS;
+  }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its
   // WOODSHED_CLOUD_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
@@ -742,17 +746,17 @@
     // Someone asking to join waits on an admin, so the menu says so wherever you are.
     const asking = (link) => link.href === '/people' && me.asking > 0 && h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
     const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, asking(link));
-    const note = !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
+    const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
       h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : 'Woodshed Cloud'), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
       me.login && MY_LINKS.map(item),
-      me.admin && [h('div', { class: 'menu-label' }, 'Console'), CONSOLE_LINKS.map(item)],
+      me.admin && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(item)],
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it.
-      me.login && h('form', {
+      me.login && !me.hosted && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
         onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-cloud-last'); } catch { /* nothing kept */ } },
       },
@@ -790,7 +794,7 @@
   function fillConsoleSlot() {
     const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': link.href === navCurrent ? 'page' : null },
       h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
-    consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...CONSOLE_LINKS.map(item)] : []));
+    consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...consoleLinks(meNow).map(item)] : []));
   }
   fetch('/api/me', { cache: 'no-store' }).then((r) => r.json()).then(learnNames).then((me) => {
     meNow = me;
@@ -955,7 +959,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, serversTitle, nav, isAdmin, userMenuSlot, sharedEmptyText, getJson, postJson, when, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

@@ -59,6 +59,20 @@ default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local
 - **Host it on one machine with Docker:** [providers/local/README.md](../providers/local/README.md) has the compose file
   for the shared services and the settings for the console beside it.
 
+### Hosted mode
+
+A service that hosts a console for an organization, with the organization's GitHub already connected and its own
+sign-in in front, hands both to the console with two settings, each off unless set:
+
+- `WOODSHED_CLOUD_GITHUB_BROKER_URL` and `WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE`: the console has no GitHub App of
+  its own and asks the host's broker for every installation token, its own and its sessions'. No `/setup/github`, no
+  Connect GitHub, no webhooks (it polls). It refuses to start with `WOODSHED_CLOUD_GITHUB_APP_ID` set too.
+- `WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
+  (an HMAC-SHA256 over the person's login, role and expiry), which is then the only sign-in, and required. The host
+  says who is in, so there is no People list; its `owner`s are the console's admins.
+
+"Hosted mode" in [console/README.md](../console/README.md) has the request, the header's format and what each changes.
+
 ## How it works
 
 ```

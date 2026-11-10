@@ -72,12 +72,7 @@
       { group: 'Go to', label: 'Shared sessions', run: go('/all') },
       { group: 'Go to', label: 'My Woodshed', run: go('/') },
       { group: 'Go to', label: 'My settings', run: go('/settings') },
-      ...(W.isAdmin?.() ? [
-        { group: 'Go to', label: 'People', run: go('/people') },
-        { group: 'Go to', label: 'Secrets & webhooks', run: go('/secrets') },
-        { group: 'Go to', label: 'Webhook events', run: go('/events') },
-        { group: 'Go to', label: 'Console settings', run: go('/console-settings') },
-      ] : []),
+      ...(W.isAdmin?.() ? W.consoleLinks().map((link) => ({ group: 'Go to', label: link.label, run: go(link.href) })) : []),
       { group: 'Commands', label: 'Keyboard shortcuts', meta: '⌘?', run: () => openSheet(keys) },
       { group: 'Commands', label: 'Settings', meta: '⇧⌘,', run: () => openSheet(settings) },
       page.toggleRail && { group: 'Commands', label: page.railShown() ? 'Hide the rail' : 'Show the rail', meta: '⌘.', run: page.toggleRail },

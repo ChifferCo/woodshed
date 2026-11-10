@@ -14,6 +14,7 @@ import http from 'node:http';
 import net from 'node:net';
 
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
+import { IDENTITY_HEADER } from './trustedIdentity.mjs';
 
 export const EDITOR_PATH = '/__woodshed/code';
 // A browser says where a request came from; 'none' is a typed URL or a bookmark. A sibling session's app is
@@ -42,7 +43,7 @@ export function isFromAnotherSite({ method, headers }) {
  */
 
 function upstreamHeaders(headers, { host, statusPort, sessionToken }) {
-  const { authorization, cookie, ...rest } = headers;
+  const { authorization, cookie, [IDENTITY_HEADER]: identity, ...rest } = headers;
   // VS Code refuses a websocket whose Origin names another host than the one it was reached on.
   return { ...rest, host: `${host}:${statusPort}`, origin: `http://${host}:${statusPort}`, authorization: `Bearer ${sessionToken}` };
 }

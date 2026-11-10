@@ -5,10 +5,13 @@
 //
 // statusd checks the session token in `x-woodshed-app`, drops it and forwards to the app's frontend on
 // the session's loopback, so no new port opens on a session. The app runs at `/` as it does locally;
-// its own Authorization header and cookies pass through untouched, except the console's app sign-in and share cookies.
+// its own Authorization header and cookies pass through untouched, except the console's app sign-in and share cookies,
+// and a hosting proxy's identity header (trustedIdentity.mjs) never does.
 
 import http from 'node:http';
 import net from 'node:net';
+
+import { IDENTITY_HEADER } from './trustedIdentity.mjs';
 
 const APP_HEADER = 'x-woodshed-app';
 const ID_RE = /^([0-9a-f]{8})$/;
@@ -40,7 +43,8 @@ export function withoutCookie(header, names) {
 }
 
 function upstreamHeaders(headers, session, dropCookie) {
-  const out = { ...headers, [APP_HEADER]: `Bearer ${session.sessionToken}`, 'x-forwarded-proto': 'https', 'x-forwarded-host': headers.host };
+  const { [IDENTITY_HEADER]: identity, ...rest } = headers;
+  const out = { ...rest, [APP_HEADER]: `Bearer ${session.sessionToken}`, 'x-forwarded-proto': 'https', 'x-forwarded-host': headers.host };
   const cookie = withoutCookie(headers.cookie, dropCookie);
   if (cookie) out.cookie = cookie;
   else delete out.cookie;
