@@ -508,3 +508,33 @@ test('the project file\'s githubAccess decides how far a private session\'s toke
   assert.equal(await tokenOf('shared-on-locked'), 'ghs_locked', 'a shared session: the App\'s token, whatever the file says');
   assert.equal(await tokenOf('ask-on-locked'), 'ghs_locked_read', 'a question: the read-only App token');
 });
+
+test('a private session\'s GitHub access is logged when decided and when it changes, not on every token', async (t) => {
+  const sessions = [{ id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', project: 'app', repo: 'acme/app' }];
+  const source = (token) => ({ token: async () => ({ token, expiresAt: Date.parse('2026-11-10T13:00:00Z') }) });
+  const own = { project: 'app', default: true, repo: 'acme/app', permissions: { contents: 'write' }, sessions: source('ghs_app'), asks: source('ghs_app_read') };
+  const files = { app: 'full' };
+  const githubUser = {
+    tokenFor: async (login) => ({ token: `ghu_${login}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') }),
+    scopedTokenFor: async (login, scope) => ({ token: `ghu_${login}_scoped_${scope.repo}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') }),
+  };
+  const logged = [];
+  t.mock.method(console, 'log', (message, fields) => { if (message === 'sessionApi: github access for a private session') logged.push(fields.access); });
+  const handle = createSessionApi({
+    fleet: { sessions: () => sessions }, tokens: source('unused'), githubUser, tokensFor: () => own, githubAccess: async (name) => files[name],
+  });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const tokenOf = async () => (await request(port, { authorization: 'Bearer on-app' })).body.token;
+
+  await tokenOf();
+  await tokenOf();
+  await tokenOf();
+  assert.deepEqual(logged, ['full'], 'three tokens, one line');
+  files.app = 'repo';
+  assert.equal(await tokenOf(), 'ghu_mia_scoped_acme/app');
+  await tokenOf();
+  assert.deepEqual(logged, ['full', 'repo'], 'a changed decision is logged again, once');
+});

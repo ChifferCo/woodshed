@@ -99,6 +99,19 @@ export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
   attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null,
 }) {
+  // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
+  // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
+  const loggedAccess = new Map();
+  function logAccess(session, own, access) {
+    if (loggedAccess.get(session.id) === access) return;
+    if (loggedAccess.size >= 500) {
+      const live = new Set(fleet.sessions().map((s) => s.id));
+      for (const id of loggedAccess.keys()) if (!live.has(id)) loggedAccess.delete(id);
+    }
+    loggedAccess.set(session.id, access);
+    console.log('sessionApi: github access for a private session', { sessionId: session.id, project: own?.project ?? null, access });
+  }
+
   // `full` or `repo`, from the session's project file. One that cannot be read errs toward less: `full` on the default
   // project, as before the setting, and `repo` on any other, whose repo may be public.
   async function accessFor(session, own) {
@@ -109,7 +122,7 @@ export function createSessionApi({
       access = read ?? fallback;
       if (!read) console.warn('sessionApi: project file not read, githubAccess from the project', { sessionId: session.id, project: own.project, access });
     }
-    console.log('sessionApi: github access for a private session', { sessionId: session.id, project: own?.project ?? null, access });
+    logAccess(session, own, access);
     return access;
   }
 
