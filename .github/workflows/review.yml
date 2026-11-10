@@ -1,8 +1,9 @@
 name: Claude review
 
-# A review by Claude on pull requests from the team: those whose branch is in this repository, which only people with
-# write access can push. A pull request from a fork never runs it, and never gets the API key: this uses
-# pull_request, not pull_request_target. It runs when the last commit's message has [woodshed-review], so a push to a
+# A review by Claude on pull requests from the team: their branch is in this repository, which only people with write
+# access can push, and their author is a member of the organization (or the Woodshed Cloud App, which opens shared
+# sessions' pull requests). An outside collaborator with write access does not run it either. A pull request from a
+# fork never runs it, and never gets the API key: this uses pull_request, not pull_request_target. It runs when the last commit's message has [woodshed-review], so a push to a
 # draft or a work in progress does not spend a review. Its verdict is a formal review: APPROVE counts as the pull
 # request's approval, which needs "Allow GitHub Actions to create and approve pull requests" on in the repository's
 # Actions settings. A push after it dismisses the approval, so the next push asks again with [woodshed-review].
@@ -21,7 +22,11 @@ concurrency:
 jobs:
   review:
     name: Claude review
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.draft == false &&
+      (contains(fromJSON('["OWNER","MEMBER"]'), github.event.pull_request.author_association) ||
+       github.event.pull_request.user.login == 'woodshed-cloud[bot]')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
