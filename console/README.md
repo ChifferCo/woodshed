@@ -156,7 +156,9 @@ need the GitHub App's Issues write and the org's Projects write (read and
 write) permissions. The first poll only records where GitHub is, so a
 restart never replays old labels or comments. On a console with several projects, the same on another project's
 repo starts or reaches a session on that project, from its webhook alone: the poll reads the default project's repo
-(`webhooks: message for another project` in the console's log, and `project` on the fleet's lines that follow).
+(`webhooks: message for another project` in the console's log, and `project` on the fleet's lines that follow). The console's comments there (a session started, resumed or failed, or a refusal) name no link to the console or to a
+session's app: another project's repo may be public, and the console's address is the installation's (`commentConsoleUrl`
+in `fleet.mjs`). The default project's comments link to the session as before.
 
 GitHub's webhooks reach the console within a second or two: GitHub posts to a
 Lambda Function URL (`providers/aws/webhooks/index.mjs`), which checks the signature and

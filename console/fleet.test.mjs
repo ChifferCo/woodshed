@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createFleet, startComment } from './fleet.mjs';
+import { createFleet, failedComment, refusalComment, resumeComment, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -1686,7 +1686,7 @@ test('a private session on another project records it, clones its repo, and read
 });
 
 // Another project's issues and pull requests are its repo's: its #12 is not the default project's #12.
-function twoProjects({ toolWriters = ['joel'] } = {}) {
+function twoProjects({ toolWriters = ['joel'], ...options } = {}) {
   const projects = [{ name: 'r', repo: 'o/r', default: true }, { name: 'tools', repo: 'o/tools', default: false }];
   const toolCalls = { comments: [], reactions: [], canWrite: [], issues: [], pulls: [] };
   const tools = {
@@ -1699,7 +1699,7 @@ function twoProjects({ toolWriters = ['joel'] } = {}) {
     async removeLabel() { return true; },
     async issueProjectItems() { return []; },
   };
-  const ctx = setup({ projects, githubFor: (project) => (project.name === 'tools' ? tools : null) });
+  const ctx = setup({ ...options, projects, githubFor: (project) => (project.name === 'tools' ? tools : null) });
   return { ...ctx, projects, tools, toolCalls };
 }
 
@@ -1765,4 +1765,47 @@ test('a Needs a human comment and a pull request change reach the session on tha
   assert.deepEqual(toolCalls.pulls, [40], 'the kept tools session\'s pull request is read on its own repo');
   assert.deepEqual(fleet.pullsChanged([40], 'tools'), [40]);
   assert.deepEqual(fleet.pullsChanged([40], 'gone'), [], 'a project the console does not have marks nothing');
+});
+
+test('the console\'s comments link to it on the default project\'s repo, word for word as before, and nowhere else', () => {
+  const session = { id: 'abcd1234', status: 'starting', startedBy: 'joel', resumedBy: 'joel', branch: 'woodshed/1-abcd1234' };
+  assert.equal(startComment({ session, publicUrl: 'https://console.test', maxRunning: 5, appDomain: 'apps.test' }), [
+    'Started a Woodshed Cloud session for @joel on `woodshed/1-abcd1234`.',
+    '',
+    'Watch it and type into it: https://console.test/s/abcd1234',
+    'Its app, once started from that page: https://abcd1234.apps.test/',
+    '',
+    'Comment `/woodshed <message>` here to send it a message.',
+  ].join('\n'));
+  assert.equal(resumeComment({ session, publicUrl: 'https://console.test' }),
+    'Resumed the Woodshed Cloud session on `woodshed/1-abcd1234` for @joel, with its conversation.\n\nWatch it and type into it: https://console.test/s/abcd1234');
+  assert.match(failedComment({ session, publicUrl: 'https://console.test' }), /The console shows why: https:\/\/console\.test\/s\/abcd1234\n/);
+  assert.match(refusalComment({ login: 'sam', label: 'woodshed', unlabeled: false, member: true, publicUrl: 'https://console.test' }), /People page: https:\/\/console\.test\/people$/);
+  assert.match(refusalComment({ login: 'sam', label: 'woodshed', unlabeled: false, member: false, publicUrl: 'https://console.test' }), /add you to the console \(https:\/\/console\.test\)/);
+
+  const without = [
+    startComment({ session, publicUrl: null, maxRunning: 5, appDomain: 'apps.test' }),
+    startComment({ session: { ...session, status: 'queued' }, publicUrl: null, maxRunning: 5 }),
+    resumeComment({ session, publicUrl: null }),
+    failedComment({ session, publicUrl: null }),
+    startComment({ session: { ...session, status: 'failed' }, publicUrl: null, maxRunning: 5 }),
+    refusalComment({ login: 'sam', label: 'woodshed', unlabeled: true, member: true, publicUrl: null }),
+    refusalComment({ login: 'sam', label: 'woodshed', unlabeled: false, member: false, publicUrl: null }),
+  ];
+  for (const body of without) {
+    assert.doesNotMatch(body, /https?:|console\.test|apps\.test/, body);
+    assert.match(body, /Woodshed Cloud|console/, 'the comment still says where the session is');
+  }
+});
+
+test('a start and a refusal on another project\'s issue name no console address there', async () => {
+  const { fleet, calls, toolCalls } = twoProjects({ toolWriters: ['joel', 'sam'], githubSessions: ['joel'], writers: ['joel', 'sam'] });
+  const started = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  assert.equal(started.outcome, 'started');
+  await fleet.handleTrigger({ number: 3, login: 'joel', trigger: 'label', title: 'Default 3', kind: 'issue' });
+  assert.match(calls.comments.at(-1).body, /https:\/\/console\.test\/s\//, 'the default project\'s issue still links to the session');
+  const sam = await fleet.handleTrigger({ number: 13, login: 'sam', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  assert.equal(sam.outcome, 'ignored', 'no sessions from GitHub for sam');
+  assert.equal(toolCalls.comments.length, 2, 'a start comment and a refusal on the project\'s issues');
+  for (const { body } of toolCalls.comments) assert.doesNotMatch(body, /console\.test|https?:/, body);
 });
