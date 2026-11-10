@@ -259,6 +259,39 @@ Still specific to one repo, and not yet settings:
 - The db-admin task's drivers, borrowed from each database's `dir`'s `node_modules` (`pg`, and `mongoose` for Mongo),
   until the image ships its own.
 
+## The review in another repo
+
+`.github/workflows/review.yml` reviews Woodshed's own pull requests, and any repo can run the same review on its own by
+calling it. A workflow of the repo's, with a `pull_request` trigger, calls it pinned to a commit:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+jobs:
+  review:
+    permissions: { contents: read, pull-requests: write, issues: read, id-token: write }
+    uses: <woodshed's repo>/.github/workflows/review.yml@<commit>
+    with:
+      tag: '[review]'
+      rules: CLAUDE.md CONTRIBUTING.md
+      instructions: .github/review.md
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+- `tag`: what the last commit's message carries to ask for a review (default `[woodshed-review]`).
+- `rules`: the repo's rule files, separated by spaces (default `CLAUDE.md .woodshed/rules.md CONTRIBUTING.md`).
+- `instructions`: a file saying what this repo wants a review to look for, added to the prompt (default
+  `.woodshed/review.md`; none is fine).
+- `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default
+  `woodshed-cloud`).
+
+The rules and the instructions are read from the branch the pull request merges into, so a pull request cannot soften
+its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
+approval is refused. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
+repo's calling workflow, the run GitHub reports.
+
 ## Databases
 
 Each of the project file's `databases` is on an engine, a module in `shared/databases/` (`postgres.mjs`, `mongo.mjs`,
