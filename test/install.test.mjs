@@ -181,3 +181,28 @@ test('every database engine has the local provider\'s compose file, and install.
   const script = fs.readFileSync(path.join(import.meta.dirname, '../install.sh'), 'utf8');
   assert.ok(script.includes('files+=(-f "$src/providers/local/$engine.yml")'));
 });
+
+// A stand-in docker whose `pull` exits with `code`, and that records each call.
+function fakeDocker(code) {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-docker-'));
+  fs.writeFileSync(path.join(bin, 'docker'), `#!/usr/bin/env bash\necho "$*" >> "${bin}/calls"\nexit ${code}\n`, { mode: 0o755 });
+  const calls = () => (fs.existsSync(path.join(bin, 'calls')) ? fs.readFileSync(path.join(bin, 'calls'), 'utf8').trim().split('\n') : []);
+  return { PATH: `${bin}:${process.env.PATH}`, calls };
+}
+
+test('the session image is built on the published runtime when it can be pulled', () => {
+  const docker = fakeDocker(0);
+  assert.equal(runInstallFunction('sessionRuntime 2>/dev/null', { PATH: docker.PATH }), 'ghcr.io/chifferco/woodshed-session-runtime:latest');
+  assert.deepEqual(docker.calls(), ['pull --quiet ghcr.io/chifferco/woodshed-session-runtime:latest']);
+});
+
+test('the session image builds its own runtime when the published one cannot be pulled', () => {
+  const docker = fakeDocker(1);
+  assert.equal(runInstallFunction('sessionRuntime 2>/dev/null', { PATH: docker.PATH }), 'runtime');
+});
+
+test('an empty WOODSHED_SESSION_RUNTIME builds the runtime here without asking a registry', () => {
+  const docker = fakeDocker(0);
+  assert.equal(runInstallFunction('sessionRuntime 2>/dev/null', { PATH: docker.PATH, WOODSHED_SESSION_RUNTIME: '' }), 'runtime');
+  assert.deepEqual(docker.calls(), []);
+});
