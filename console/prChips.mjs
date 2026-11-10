@@ -109,3 +109,39 @@ export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = 
 
   return { refresh, view, stale };
 }
+
+/**
+ * The chips of every project: one reader per project's repo, each with its own GitHub client. A session's pull request
+ * URL names its repo, so each reader reads only its own project's sessions, and a webhook marks only the reader of the
+ * project it is about.
+ * @param {{projects: {name: string, repo: string, default?: boolean}[], githubFor: (project: object) => object|null,
+ *          now?: () => number, webhooksFlowing?: () => boolean, fallbackMs?: number}} deps
+ */
+export function createProjectPrChips({ projects, githubFor, ...rest }) {
+  const readers = projects.map((project) => ({ project, chips: createPrChips({ github: githubFor(project), repo: project.repo, ...rest }) }));
+  const defaultName = projects.find((p) => p.default)?.name ?? projects[0]?.name;
+  return {
+    // One project's GitHub failing leaves its chips as they were, and the others are still read.
+    async refresh(sessions) {
+      for (const { project, chips } of readers) {
+        try {
+          await chips.refresh(sessions);
+        } catch (err) {
+          console.warn('prChips: a project\'s pull requests not read', { project: project.name, message: String(err?.message ?? err).split('\n')[0] });
+        }
+      }
+    },
+    view(prUrl) {
+      for (const { chips } of readers) {
+        const pr = chips.view(prUrl);
+        if (pr) return pr;
+      }
+      return null;
+    },
+    /** @param {string|null} [project]  another project's name; none for the default project's */
+    stale(numbers, project = null) {
+      const name = project ?? defaultName;
+      return readers.find((r) => r.project.name === name)?.chips.stale(numbers) ?? [];
+    },
+  };
+}

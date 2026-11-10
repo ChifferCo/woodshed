@@ -91,3 +91,40 @@ test('while webhooks arrive, an open pull request is read when a webhook marks i
   await chips.refresh(sessions);
   assert.deepEqual(asked.at(-1), [10], 'the other at the fallback period after it was read');
 });
+
+test('each project\'s chips read its own repo, and a webhook marks only that project\'s', async () => {
+  const { createProjectPrChips } = await import('./prChips.mjs');
+  const asked = { app: [], tools: [] };
+  const client = (name) => ({
+    async pullStatuses(numbers) {
+      asked[name].push(numbers);
+      return numbers.map((number) => ({ number, title: `${name} ${number}`, state: 'OPEN', isDraft: false }));
+    },
+  });
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const chips = createProjectPrChips({ projects, githubFor: (p) => client(p.name) });
+  const sessions = [{ prUrl: 'https://github.com/acme/app/pull/7' }, { prUrl: 'https://github.com/acme/tools/pull/7' }];
+  await chips.refresh(sessions);
+  assert.deepEqual(asked, { app: [[7]], tools: [[7]] });
+  assert.equal(chips.view('https://github.com/acme/app/pull/7').title, 'app 7');
+  assert.equal(chips.view('https://github.com/acme/tools/pull/7').title, 'tools 7', 'two different #7s');
+  assert.deepEqual(chips.stale([7], 'tools'), [7]);
+  await chips.refresh(sessions);
+  assert.deepEqual(asked, { app: [[7]], tools: [[7], [7]] }, 'only the tools #7 was due again');
+  assert.deepEqual(chips.stale([7]), [7], 'no project named: the default project\'s');
+});
+
+test('one project\'s GitHub failing leaves the other projects\' chips read', async () => {
+  const { createProjectPrChips } = await import('./prChips.mjs');
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const githubFor = (p) => ({
+    async pullStatuses(numbers) {
+      if (p.name === 'app') throw new Error('HTTP 502');
+      return numbers.map((number) => ({ number, title: `tools ${number}`, state: 'OPEN', isDraft: false }));
+    },
+  });
+  const chips = createProjectPrChips({ projects, githubFor });
+  await chips.refresh([{ prUrl: 'https://github.com/acme/app/pull/1' }, { prUrl: 'https://github.com/acme/tools/pull/2' }]);
+  assert.equal(chips.view('https://github.com/acme/app/pull/1'), null);
+  assert.equal(chips.view('https://github.com/acme/tools/pull/2').title, 'tools 2');
+});

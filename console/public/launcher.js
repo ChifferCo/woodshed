@@ -100,10 +100,11 @@
     };
   }
 
-  // `/` at the start of the prompt or after a space lists the repo's skills and commands (GET /api/skills).
-  function createSkillMenu(prompt) {
+  // `/` at the start of the prompt or after a space lists the repo's skills and commands (GET /api/skills): the repo of
+  // the project picked, when there is a choice. `projectOf` says which; '' is the console's default project.
+  function createSkillMenu(prompt, projectOf = () => '') {
     const menu = h('div', { class: 'skill-menu', role: 'listbox', hidden: true });
-    let skills = null;
+    const skillsByProject = new Map();
     let matches = [];
     let active = 0;
 
@@ -144,8 +145,12 @@
 
     // Asked once, as the prompt is first focused, so the list is there by the time `/` is typed.
     function load() {
-      skills ??= W.getJson('/api/skills').then((b) => b.skills, () => { skills = null; return []; });
-      return skills;
+      const project = projectOf();
+      if (!skillsByProject.has(project)) {
+        const url = project ? `/api/skills?project=${encodeURIComponent(project)}` : '/api/skills';
+        skillsByProject.set(project, W.getJson(url).then((b) => b.skills, () => { skillsByProject.delete(project); return []; }));
+      }
+      return skillsByProject.get(project);
     }
 
     prompt.addEventListener('focus', load, { once: true });
@@ -241,7 +246,7 @@
     const note = h('span', { class: 'sub' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
     const attachments = createAttachments(() => { start.disabled = attachments.sending(); });
-    const promptWrap = h('div', { class: 'prompt-wrap' }, prompt, createSkillMenu(prompt));
+    const promptWrap = h('div', { class: 'prompt-wrap' }, prompt, createSkillMenu(prompt, () => projects.value()));
     promptWrap.addEventListener('dragover', (e) => {
       if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
       e.preventDefault();

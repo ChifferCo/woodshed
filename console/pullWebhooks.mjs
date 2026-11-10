@@ -1,7 +1,8 @@
 // Pull request webhooks: a change to a pull request, a review of it, or a workflow run on it (the Lambda's `pr`
 // message). Each one marks the pull request due in whatever reads it (the chips, the Slack announcer, a kept session's
 // retention), and the loops that already run read it within seconds. Nothing is read here and no payload is trusted:
-// the webhook only says when to look.
+// the webhook only says when to look. A message about another project's repo names that project (`project`), and
+// each reader marks only its pull requests: another repo's #12 is not the default project's #12.
 //
 // While they arrive, those loops poll only as a fallback for a lost delivery. "Arrive" means any pull request
 // webhook in the last half hour, about any pull request: CI on this repository sends many an hour, so a quiet half
@@ -11,9 +12,9 @@ export const FLOWING_MS = 30 * 60_000;
 
 /**
  * @param {{now?: () => number}} [opts]
- * @returns {{flowing: () => boolean, watch: (reader: {name: string, stale: (numbers: number[]) => number[]}) => void,
+ * @returns {{flowing: () => boolean, watch: (reader: {name: string, stale: (numbers: number[], project: string|null) => number[]}) => void,
  *            handle: (message: object) => {outcome: 'refreshed', reason: string}|{unrecorded: true}}}
- *   each reader's `stale` returns the numbers it reads, of those it was given
+ *   each reader's `stale` returns the numbers it reads, of those it was given on that project's repo (null: the default's)
  */
 export function createPullWebhooks({ now = Date.now } = {}) {
   let lastAt = -Infinity;
@@ -38,9 +39,10 @@ export function createPullWebhooks({ now = Date.now } = {}) {
     lastAt = now();
     flowing();
     const numbers = (Array.isArray(message?.numbers) ? message.numbers : [message?.number]).filter(Number.isInteger);
-    const by = readers.filter((r) => r.stale(numbers).length).map((r) => r.name);
+    const project = typeof message?.project === 'string' ? message.project : null;
+    const by = readers.filter((r) => r.stale(numbers, project).length).map((r) => r.name);
     if (!by.length) return { unrecorded: true };
-    console.log('pullWebhooks: pull request marked due', { numbers, what: message?.what ?? null, by });
+    console.log('pullWebhooks: pull request marked due', { numbers, what: message?.what ?? null, by, ...(project ? { project } : {}) });
     return { outcome: 'refreshed', reason: by.join(', ') };
   }
 

@@ -11,7 +11,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
-import { defaultProject, projectFor } from './projects.mjs';
+import { defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, keptIds, newSessionId, newSessionToken,
   parseWorkOn, pullNumber, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitsForRetry,
@@ -164,11 +164,12 @@ export function createFleet({
   const secondsSince = (iso) => (iso ? Math.round((now() - Date.parse(iso)) / 1000) : null);
   const retention = () => config.retention ?? DEFAULT_RETENTION;
   const announcer = createPrAnnouncer({
-    store, github, slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
+    store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
     events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
     webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs,
   });
   const issueTracking = createIssueTracking({ github });
+  const issueTrackings = new Map();
   const prCheckedAt = new Map();
   const homeDeleteTriedAt = new Map();
   let ticking = false;
@@ -460,7 +461,7 @@ export function createFleet({
   // announced by startComment itself.
   async function announceFailure(session) {
     if (!session.commentId) return;
-    const posted = await safely('failure comment', () => github.comment(session.number, failedComment({ session, publicUrl: config.publicUrl })));
+    const posted = await safely('failure comment', () => githubOf(projectFor(config, session)).comment(session.number, failedComment({ session, publicUrl: config.publicUrl })));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();
@@ -541,7 +542,7 @@ export function createFleet({
   async function announcePull(session) {
     if (!announcer.available || session.owner || !session.prUrl || session.announcedPrUrl === session.prUrl) return;
     const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session);
+      await announcer.track(session, projectFor(config, session));
       return true;
     });
     if (tracked) update(session, { announcedPrUrl: session.prUrl });
@@ -635,7 +636,7 @@ export function createFleet({
     const number = pullNumber(session.prUrl);
     if (number && !session.prClosedAt && now() - (prCheckedAt.get(session.id) ?? -Infinity) >= PR_STATE_CHECK_MS) {
       prCheckedAt.set(session.id, now());
-      const pull = await github.pull(number);
+      const pull = await githubOf(projectFor(config, session)).pull(number);
       if (pull.state === 'closed') {
         update(session, { prClosedAt: new Date(Date.parse(pull.closed_at) || now()).toISOString(), prMerged: Boolean(pull.merged_at) });
         console.log('fleet: a kept session\'s pull request closed', { id: session.id, number, merged: session.prMerged });
@@ -651,13 +652,17 @@ export function createFleet({
   /**
    * A webhook said these pull requests changed: a waiting one is read at the next check, and a kept session's is
    * read for its retention at the next tick.
+   * @param {number[]} numbers
+   * @param {string|null} [projectName]  the project whose repo they are on: the default one when none is named
    * @returns {number[]}  the numbers either of them cares about
    */
-  function pullsChanged(numbers) {
-    const marked = new Set(announcer.stale(numbers));
+  function pullsChanged(numbers, projectName = null) {
+    const project = projectOfEvent(projectName);
+    if (!project) return [];
+    const marked = new Set(announcer.stale(numbers, project.default ? null : project.name));
     for (const session of state.sessions) {
       const number = pullNumber(session.prUrl);
-      if (!number || !numbers.includes(number) || session.prClosedAt || !prCheckedAt.has(session.id)) continue;
+      if (!number || !numbers.includes(number) || !onProject(session, project) || session.prClosedAt || !prCheckedAt.has(session.id)) continue;
       prCheckedAt.delete(session.id);
       marked.add(number);
     }
@@ -893,34 +898,35 @@ export function createFleet({
   function mirrorAssignee(session) {
     if (session.kind !== 'issue' || session.owner) return Promise.resolve();
     const run = (assigneeSyncs.get(session.id) ?? Promise.resolve()).then(() => safely('issue assignee', async () => {
-      const githubAssignee = await issueTracking.syncAssignee({ number: session.number, to: session.assignee ?? null, added: session.githubAssignee ?? null });
+      const githubAssignee = await issueTrackingOf(projectFor(config, session)).syncAssignee({ number: session.number, to: session.assignee ?? null, added: session.githubAssignee ?? null });
       update(session, { githubAssignee });
     }));
     assigneeSyncs.set(session.id, run);
     return run;
   }
 
-  async function startFromGitHub({ number, login, trigger, text, commentId, title, kind, resumeBranch, announce = true }) {
+  async function startFromGitHub({ number, login, trigger, text, commentId, title, kind, resumeBranch, announce = true, project = defaultProject(config) }) {
+    const gh = githubOf(project);
     let target = { title, kind };
     if (!title) {
-      const issue = await github.issue(number);
+      const issue = await gh.issue(number);
       target = { title: issue.title, kind: issue.pull_request ? 'pr' : 'issue' };
     }
-    const branch = target.kind === 'pr' ? (await github.pull(number)).head.ref : resumeBranch;
+    const branch = target.kind === 'pr' ? (await gh.pull(number)).head.ref : resumeBranch;
     // Whoever tags the ticket or comments /woodshed has the session, when they can be assigned. Anyone else leaves it
     // unassigned, for someone who can to take.
     const assignTo = members?.isAssignable(login) ? { login: assignableSpelling(login), how: trigger } : null;
     if (!assignTo) console.log('fleet: session starts unassigned, its starter cannot be assigned', { number, login, trigger });
     const session = await createSession({
-      kind: target.kind, number, title: target.title, startedBy: login, trigger, prompt: text, branch, assignTo,
+      kind: target.kind, number, title: target.title, startedBy: login, trigger, prompt: text, branch, assignTo, project,
     });
     if (session.kind === 'issue') {
-      await safely('issue in progress', () => issueTracking.markInProgress(number));
+      await safely('issue in progress', () => issueTrackingOf(project).markInProgress(number));
       if (session.assignee) await mirrorAssignee(session);
     }
     if (!announce) return session;
-    await safely('reaction', () => (commentId ? github.reactToComment(commentId) : github.reactToIssue(number)));
-    const posted = await safely('start comment', () => github.comment(number, startComment({
+    await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
+    const posted = await safely('start comment', () => gh.comment(number, startComment({
       session, publicUrl: config.publicUrl, maxRunning: config.maxRunning, appDomain: config.appDomain,
     })));
     if (posted) {
@@ -963,6 +969,28 @@ export function createFleet({
   // The GitHub client of a project's repo: the fleet's own for the default project.
   function githubOf(project) {
     return project.default ? github : (githubFor?.(project) ?? github);
+  }
+
+  // The project a GitHub event is about: the default one when it names none (the poll's, and every event from before
+  // projects), null when it names one the installation no longer has.
+  function projectOfEvent(name) {
+    return name ? projectNamed(config, name) : defaultProject(config);
+  }
+
+  function onProject(session, project) {
+    return projectFor(config, session).name === project.name;
+  }
+
+  // An issue's assignee and board status, kept on the repo the issue is on.
+  function issueTrackingOf(project) {
+    if (project.default) return issueTracking;
+    if (!issueTrackings.has(project.name)) issueTrackings.set(project.name, createIssueTracking({ github: githubOf(project) }));
+    return issueTrackings.get(project.name);
+  }
+
+  // What a log line adds for another project's session or event: nothing for the default project's, as before projects.
+  function projectField(project) {
+    return project.default ? {} : { project: project.name };
   }
 
   /**
@@ -1115,35 +1143,43 @@ export function createFleet({
    */
   async function handleTrigger(trigger) {
     const { number, login, commentId } = trigger;
-    if (!(await github.canWrite(login))) {
-      console.log('fleet: trigger ignored, no write access', { number, login, trigger: trigger.trigger });
+    const project = projectOfEvent(trigger.project);
+    if (!project) {
+      console.log('fleet: trigger ignored, its project is not this console\'s', { number, login, trigger: trigger.trigger, project: trigger.project });
+      return { outcome: 'ignored', reason: `${trigger.project} is not one of this console's projects` };
+    }
+    // Write access, the issue and its sessions are all the project's own: another repo's #12 is not this one's.
+    const gh = githubOf(project);
+    if (!(await gh.canWrite(login))) {
+      console.log('fleet: trigger ignored, no write access', { number, login, trigger: trigger.trigger, ...projectField(project) });
       return { outcome: 'ignored', reason: 'no write access to the repo' };
     }
     if (people && !(await people.check(login))) {
-      console.log('fleet: trigger ignored, the handle was another account\'s', { number, login, trigger: trigger.trigger });
+      console.log('fleet: trigger ignored, the handle was another account\'s', { number, login, trigger: trigger.trigger, ...projectField(project) });
       return { outcome: 'ignored', reason: 'the GitHub name was another account\'s when last used here' };
     }
-    const route = routeTrigger({ sessions: state.sessions, number, trigger: trigger.trigger, kind: trigger.kind, text: trigger.text });
-    console.log('fleet: trigger routed', { number, login, trigger: trigger.trigger, action: route.action, reason: route.reason });
+    const sessions = state.sessions.filter((s) => onProject(s, project));
+    const route = routeTrigger({ sessions, number, trigger: trigger.trigger, kind: trigger.kind, text: trigger.text });
+    console.log('fleet: trigger routed', { number, login, trigger: trigger.trigger, action: route.action, reason: route.reason, ...projectField(project) });
     if (route.action === 'ignore') return { outcome: 'ignored', reason: route.reason };
-    if (members && !members.hasGithubSessions(login)) return refuseFromGitHub(trigger);
+    if (members && !members.hasGithubSessions(login)) return refuseFromGitHub(trigger, gh);
     if (route.action === 'send') {
       await send(find(route.sessionId), trigger.text);
       takeIfUnassigned(find(route.sessionId), login, trigger.trigger);
-      await safely('reaction', () => github.reactToComment(commentId));
+      await safely('reaction', () => gh.reactToComment(commentId));
       return { outcome: 'sent', sessionId: route.sessionId };
     }
-    if (route.action === 'resume') return resumeFromGitHub(find(route.sessionId), trigger);
+    if (route.action === 'resume') return resumeFromGitHub(find(route.sessionId), trigger, gh);
     const refused = await databasesRefusal();
-    if (refused) return refuseForDatabases(trigger, refused);
-    const session = await startFromGitHub({ ...trigger, resumeBranch: route.resumeBranch });
+    if (refused) return refuseForDatabases(trigger, refused, gh);
+    const session = await startFromGitHub({ ...trigger, resumeBranch: route.resumeBranch, project });
     return { outcome: 'started', sessionId: session.id };
   }
 
   // The project file needs a database engine this installation does not host: said once on the issue, as a refusal.
-  async function refuseForDatabases({ number, login, trigger }, why) {
+  async function refuseForDatabases({ number, login, trigger }, why, gh = github) {
     console.warn('fleet: trigger refused, its databases are not hosted', { number, login, trigger, why });
-    const posted = await safely('refusal comment', () => github.comment(number, `Woodshed Cloud cannot start a session here: ${why}.`));
+    const posted = await safely('refusal comment', () => gh.comment(number, `Woodshed Cloud cannot start a session here: ${why}.`));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();
@@ -1153,12 +1189,12 @@ export function createFleet({
 
   // A member without sessions from GitHub (People) is told on the issue, and their label taken off, so it does not
   // look like it is working. A later label from someone with it starts the session as usual.
-  async function refuseFromGitHub({ number, login, trigger }) {
+  async function refuseFromGitHub({ number, login, trigger }, gh = github) {
     const member = Boolean(members?.isMember?.(login));
     console.log('fleet: trigger ignored, no sessions from GitHub', { number, login, trigger, member });
-    const unlabeled = trigger === 'label' ? await safely('label removal', () => github.removeLabel(number, config.label)) : null;
+    const unlabeled = trigger === 'label' ? await safely('label removal', () => gh.removeLabel(number, config.label)) : null;
     const body = refusalComment({ login, label: config.label, unlabeled: Boolean(unlabeled), member, publicUrl: config.publicUrl });
-    const posted = await safely('refusal comment', () => github.comment(number, body));
+    const posted = await safely('refusal comment', () => gh.comment(number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();
@@ -1167,11 +1203,11 @@ export function createFleet({
   }
 
   // A resume leaves who has the session as it was, assigned or not.
-  async function resumeFromGitHub(session, { number, login, trigger, text, commentId }) {
+  async function resumeFromGitHub(session, { number, login, trigger, text, commentId }, gh = github) {
     const message = text || `Carry on with ${session.kind === 'pr' ? 'PR ' : ''}#${session.number}: the ${config.label} label was added again.`;
     await resumeShared(session, { text: message, by: login, why: trigger });
-    await safely('reaction', () => (commentId ? github.reactToComment(commentId) : github.reactToIssue(number)));
-    const posted = await safely('resume comment', () => github.comment(number, resumeComment({ session, publicUrl: config.publicUrl })));
+    await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
+    const posted = await safely('resume comment', () => gh.comment(number, resumeComment({ session, publicUrl: config.publicUrl })));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();
@@ -1181,11 +1217,12 @@ export function createFleet({
 
   // A webhook and the poll can both see one label. Whichever comes second skips it: the webhook's
   // receive time and the event's own time are seconds apart, however late the poll runs.
-  function claimLabel(number, at) {
+  // Another project's label is kept with its project's name, so its #12 is not the default project's #12.
+  function claimLabel(number, at, project = null) {
     const time = Date.parse(at);
     const recent = state.recentLabels ?? [];
-    if (recent.some((l) => l.number === number && Math.abs(Date.parse(l.at) - time) <= LABEL_DEDUPE_MS)) return false;
-    state.recentLabels = [...recent, { number, at }].slice(-RECENT_LABELS_KEPT);
+    if (recent.some((l) => l.number === number && (l.project ?? null) === project && Math.abs(Date.parse(l.at) - time) <= LABEL_DEDUPE_MS)) return false;
+    state.recentLabels = [...recent, { number, at, ...(project ? { project } : {}) }].slice(-RECENT_LABELS_KEPT);
     store.save();
     return true;
   }
@@ -1204,7 +1241,7 @@ export function createFleet({
     if (trigger.trigger === 'comment') {
       if (state.github) state.github.seenComments = state.github.seenComments.filter((id) => id !== trigger.commentId);
     } else {
-      state.recentLabels = (state.recentLabels ?? []).filter((l) => !(l.number === trigger.number && l.at === trigger.at));
+      state.recentLabels = (state.recentLabels ?? []).filter((l) => !(l.number === trigger.number && l.at === trigger.at && (l.project ?? null) === (trigger.project ?? null)));
     }
     store.save();
   }
@@ -1216,7 +1253,7 @@ export function createFleet({
    * @returns {Promise<{outcome: 'started'|'sent'|'resumed'|'ignored'|'duplicate', sessionId?: string, reason?: string}>}
    */
   async function handleWebhookTrigger(trigger) {
-    const claimed = trigger.trigger === 'comment' ? claimComment(trigger.commentId) : claimLabel(trigger.number, trigger.at);
+    const claimed = trigger.trigger === 'comment' ? claimComment(trigger.commentId) : claimLabel(trigger.number, trigger.at, trigger.project ?? null);
     if (!claimed) {
       console.log('fleet: webhook trigger already handled', { number: trigger.number, trigger: trigger.trigger });
       return { outcome: 'duplicate', reason: 'already handled by the poll' };
@@ -1238,13 +1275,16 @@ export function createFleet({
    * A session asked for a person in a `Needs a human:` comment on its issue or pull request (the webhooks Lambda queues
    * only the App's own). Its assignee is told in Slack, once for each comment. The console's own such comment, for a
    * pull request that gave up, already sent them a message.
-   * @param {{number: number, commentId: number, url?: string|null, body?: string}} message
+   * @param {{number: number, commentId: number, url?: string|null, body?: string, project?: string}} message
+   *   `project` names the project whose repo it is on: the default one when it names none
    */
-  async function handleNeedsHuman({ number, commentId, url = null, body = '' }) {
+  async function handleNeedsHuman({ number, commentId, url = null, body = '', project: projectName = null }) {
     if (String(body).includes(GAVE_UP_TEXT)) return { outcome: 'ignored', reason: 'the console\'s own comment, already messaged' };
-    const session = state.sessions.filter((s) => !s.owner && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
+    const project = projectOfEvent(projectName);
+    const session = project && state.sessions
+      .filter((s) => !s.owner && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
     if (!session) {
-      console.log('fleet: a Needs a human comment with no shared session on it', { number });
+      console.log('fleet: a Needs a human comment with no shared session on it', { number, ...(projectName ? { project: projectName } : {}) });
       return { outcome: 'ignored', reason: 'no shared session works on this issue or pull request' };
     }
     if (!claimComment(commentId)) return { outcome: 'duplicate', reason: 'already handled', sessionId: session.id };
