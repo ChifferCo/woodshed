@@ -1798,6 +1798,32 @@ test('the console\'s comments link to it on the default project\'s repo, word fo
   }
 });
 
+test('a resume and a failure on another project\'s issue name no console address there', async () => {
+  const { fleet, calls, toolCalls, statuses, alive } = twoProjects();
+  const started = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  const session = fleet.find(started.sessionId);
+  statuses[session.id] = { state: 'done', claudeSession: '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c' };
+  await fleet.tick();
+  await fleet.stop(session, 'test');
+  const resumed = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'comment', text: 'pick it up again', commentId: 80, project: 'tools' });
+  assert.deepEqual(resumed, { outcome: 'resumed', sessionId: session.id });
+  assert.match(toolCalls.comments.at(-1).body, /^Resumed the Woodshed Cloud session/);
+  alive.clear();
+  await fleet.tick();
+  assert.match(toolCalls.comments.at(-1).body, /failed to start/, 'the failure is announced on the project\'s issue');
+  assert.equal(toolCalls.comments.length, 3, 'start, resume and failure, all on the project\'s issue');
+  for (const { body } of toolCalls.comments) assert.doesNotMatch(body, /console\.test|https?:/, body);
+  assert.deepEqual(calls.comments, [], 'nothing on the default repo');
+
+  // The default project's resume and failure still link to the session.
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const onDefault = fleet.sessions().find((s) => s.number === 42);
+  alive.clear();
+  await fleet.tick();
+  assert.equal(onDefault.status, 'failed');
+  assert.match(calls.comments.at(-1).body, /failed to start[\s\S]*https:\/\/console\.test\/s\//);
+});
+
 test('a start and a refusal on another project\'s issue name no console address there', async () => {
   const { fleet, calls, toolCalls } = twoProjects({ toolWriters: ['joel', 'sam'], githubSessions: ['joel'], writers: ['joel', 'sam'] });
   const started = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
