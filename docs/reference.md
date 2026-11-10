@@ -270,12 +270,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   review:
-    permissions: { contents: read, pull-requests: write, issues: read, id-token: write }
+    permissions: { contents: read, pull-requests: write, issues: read, id-token: write, checks: write }
     uses: <woodshed's repo>/.github/workflows/review.yml@<commit>
     with:
       tag: '[review]'
       rules: CLAUDE.md CONTRIBUTING.md
       instructions: .github/review.md
+      risk-areas: .github/riskAreas.md
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -284,10 +285,16 @@ jobs:
 - `rules`: the repo's rule files, separated by spaces (default `CLAUDE.md .woodshed/rules.md CONTRIBUTING.md`).
 - `instructions`: a file saying what this repo wants a review to look for, added to the prompt (default
   `.woodshed/review.md`; none is fine).
+- `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
+  `.woodshed/riskAreas.md`; none is fine).
 - `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default
   `woodshed-cloud`).
 
-An input left empty takes its default. The rules and the instructions are read from the branch the pull request merges into, so a pull request cannot soften
+The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
+commit, which never blocks merging. That is why the caller grants `checks: write`. To show it in the decision brief and
+Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
+
+An input left empty takes its default. The rules, the instructions and the risk areas are read from the branch the pull request merges into, so a pull request cannot soften
 its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
 approval is refused. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.
