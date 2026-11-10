@@ -31,13 +31,16 @@ function sourcesFor({ config, privateKey, fetchImpl, now, project }) {
 export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
   if (!config.githubApp) return null;
   const main = defaultProject(config);
-  const byName = new Map([[main.name, sourcesFor({ config, privateKey, fetchImpl, now, project: main })]]);
+  // A project an admin removed and added again may be on another installation, so a source is kept per repo and installation.
+  const keyOf = (project) => `${project.name}\n${project.repo}\n${installationIdFor(config, project)}`;
+  const byName = new Map([[keyOf(main), sourcesFor({ config, privateKey, fetchImpl, now, project: main })]]);
   return {
-    ...byName.get(main.name),
+    ...byName.get(keyOf(main)),
     forSession(session) {
       const project = projectFor(config, session);
-      if (!byName.has(project.name)) byName.set(project.name, sourcesFor({ config, privateKey, fetchImpl, now, project }));
-      return { project: project.name, default: project.name === main.name, ...byName.get(project.name) };
+      const key = keyOf(project);
+      if (!byName.has(key)) byName.set(key, sourcesFor({ config, privateKey, fetchImpl, now, project }));
+      return { project: project.name, default: project.name === main.name, ...byName.get(key) };
     },
   };
 }

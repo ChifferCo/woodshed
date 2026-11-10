@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
-import { createConsoleSettings } from './consoleSettings.mjs';
+import { createAddedProjects } from './addedProjects.mjs';
+import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createHandler } from './server.mjs';
 import { createSlack } from './slack.mjs';
@@ -1010,6 +1011,35 @@ test('Console settings: a card\'s values and the channel saved together, refused
   assert.equal((await post(port, '/api/console-settings/clean', { kind: 'all', id: 'aaaaaaaa' })).status, 400);
   assert.equal((await post(port, '/api/console-settings/clean', { kind: 'home', id: 'aaaaaaaa' })).status, 200);
   assert.deepEqual(cleaned, [{ kind: 'home', id: 'aaaaaaaa', by: 'console' }]);
+});
+
+test('Console settings: a repo is added and removed on the page, with its sessions counted, and a refused one says why', async (t) => {
+  const store = { state: { sessions: [] }, save() {} };
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store);
+  const check = async (repo) => {
+    if (repo === 'o/missing') throw Object.assign(new Error('The GitHub App is not installed on o/missing.'), { shown: true });
+    return { installationId: null };
+  };
+  const addedProjects = createAddedProjects({ store, config, check });
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const added = await post(port, '/api/console-settings/projects', { repo: 'o/api' });
+  assert.equal(added.status, 200);
+  assert.deepEqual(added.body.projects.map((p) => [p.name, p.removable]), [['r', false], ['api', true]]);
+  assert.deepEqual(config.projects.map((p) => p.name), ['r', 'api'], 'the live config has it, with no restart');
+  assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/missing' }), { status: 400, body: { error: 'The GitHub App is not installed on o/missing.' } });
+  assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/api' })).status, 400, 'twice');
+  assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
+  assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
+  const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
 });
 
 test('the switch for shared sessions is set for the signed-in person alone, behind the same write checks', async (t) => {

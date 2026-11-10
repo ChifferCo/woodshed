@@ -12,6 +12,8 @@
     { id: 'retention', title: 'Retention', note: 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.' },
     { id: 'slack', title: 'Slack', note: 'Each pull request a shared session opens is posted once it passed what the repo\'s project file asks of it (pullRequests: its review approved and its suites passed), with its decision brief in the thread of the post once its QA check finished. The bot token is on Secrets & webhooks.' },
   ];
+  const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
+  const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
   const CHANNEL_RE = /^[CG][A-Z0-9]{8,}$/;
 
   let data = null;
@@ -124,6 +126,84 @@
             : notices.get(card.id) || 'Saved values. Each change is logged with who made it.')));
   }
 
+  // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
+  const repoForm = { repo: '', name: '', error: null, busy: false };
+
+  function projectRow(p) {
+    const live = p.sessions ? `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'} running or kept` : 'no sessions running';
+    return h('div', { class: 'data-row' },
+      h('div', { style: 'min-width: 0' },
+        h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name)),
+        h('div', { class: 'data-meta' },
+          h('span', null, p.default ? 'default project' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
+          h('span', null, live))),
+      h('div', { class: 'data-actions' }, p.removable && h('button', {
+        type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
+        onclick: () => W.confirmChange({
+          title: `Remove ${p.repo}?`,
+          before: 'a project',
+          after: 'not a project',
+          effect: 'New sessions can no longer start on it. Its pull requests and branches on GitHub are not touched.',
+          word: 'remove',
+          goLabel: 'Remove',
+          run: async () => {
+            data = { ...data, ...(await W.postJson('/api/console-settings/projects/remove', { name: p.name })) };
+            render();
+          },
+        }),
+      }, 'Remove')));
+  }
+
+  function addRepo() {
+    const repo = repoForm.repo.trim();
+    const name = repoForm.name.trim();
+    if (!REPO_RE.test(repo)) { repoForm.error = 'Give the repo as owner/name, such as acme/api.'; render(); return; }
+    if (name && !NAME_RE.test(name)) { repoForm.error = 'The name is lowercase letters and digits, in words joined by single dashes.'; render(); return; }
+    repoForm.error = null;
+    W.confirmChange({
+      title: `Add ${repo}?`,
+      before: 'not a project',
+      after: 'a project sessions can start on',
+      effect: 'The console checks that the GitHub App is installed on it. A My Woodshed session can then start on it from New session. Shared sessions, the image and the databases stay the default project\'s.',
+      word: 'add',
+      goLabel: 'Add repo',
+      run: async () => {
+        data = { ...data, ...(await W.postJson('/api/console-settings/projects', { repo, name })) };
+        repoForm.repo = '';
+        repoForm.name = '';
+        render();
+      },
+    });
+  }
+
+  function projectsCard() {
+    if (!data.projects) return null;
+    return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
+      h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what shared sessions use. The GitHub App must be installed on a repo before it is added here. An added repo applies at once, with no restart.'),
+      h('div', { class: 'data-list' }, data.projects.map(projectRow)),
+      h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
+        h('div', null,
+          h('label', { class: 'set-name', for: 'repo-new' }, 'Add a repo'),
+          h('div', { class: 'set-help' }, 'As owner/name. The name sessions show for it is the repo\'s own, unless you give one.')),
+        h('div', { class: 'set-value' },
+          h('input', {
+            id: 'repo-new', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'owner/name', value: repoForm.repo,
+            'aria-invalid': repoForm.error ? 'true' : null,
+            oninput: (e) => { repoForm.repo = e.target.value; },
+            onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
+          }),
+          h('input', {
+            id: 'repo-name', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'name (optional)', 'aria-label': 'Name (optional)', value: repoForm.name,
+            oninput: (e) => { repoForm.name = e.target.value; },
+            onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
+          })),
+        repoForm.error && h('p', { class: 'form-error', role: 'alert' }, repoForm.error)),
+      h('div', { class: 'card-foot' },
+        h('button', { type: 'button', class: 'btn btn-open', onclick: addRepo }, 'Add repo'),
+        h('span', { class: 'sub' }, 'Each change is logged with who made it.')));
+  }
+
   function refOf(r) {
     if (r.prUrl) return `PR ${r.prUrl.split('/').pop()}`;
     return r.number ? W.ref({ kind: r.sessionKind, number: r.number }) : '';
@@ -227,7 +307,7 @@
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, CARDS.map(settingsCard), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, projectsCard(), CARDS.map(settingsCard), dataCard()));
   }
 
   async function load() {
@@ -244,7 +324,7 @@
   async function refreshData() {
     try {
       const next = await W.getJson('/api/console-settings');
-      data = { ...data, data: next.data };
+      data = { ...data, data: next.data, projects: next.projects };
     } catch {
       return;
     }

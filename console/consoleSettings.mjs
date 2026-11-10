@@ -2,6 +2,8 @@
 // to the Slack channel, and read every time it is used, so a change applies on the next tick without a restart.
 // One never set is the console's environment value (Terraform's, on the base box), or the default below.
 
+import { addedProjectsOf } from './projects.mjs';
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
@@ -117,6 +119,11 @@ export function liveConfig(config, store) {
   const value = (key) => storedValue(store, key) ?? BY_KEY.get(key).read(config);
   return {
     ...config,
+    // The installation's repos, then the ones an admin added on the Console settings page (addedProjects.mjs).
+    get projects() {
+      const added = addedProjectsOf(store);
+      return added.length ? [...(config.projects ?? []), ...added] : config.projects;
+    },
     get maxRunning() { return value('maxRunning'); },
     get maxPrivatePerPerson() { return value('maxPrivatePerPerson'); },
     get maxAsks() { return value('maxAsks'); },

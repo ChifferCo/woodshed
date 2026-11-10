@@ -72,6 +72,8 @@
 //   POST /api/people/slack       {"login": "<handle>", "slack": "U01ABC2DEF3" | "@handle" | ""}   links a member's Slack user by hand (slackPeople.mjs)
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
+//   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
+//   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
 //   GET  /api/webhook/deliveries GitHub's last 10 deliveries to the App's webhook, with their status codes
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
@@ -165,6 +167,7 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
+import { createAddedProjects, repoChecker } from './addedProjects.mjs';
 import { allProjects, defaultProject, projectFor } from './projects.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -205,6 +208,7 @@ const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignabl
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
+const PROJECTS_PATH = '/api/console-settings/projects';
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -411,7 +415,7 @@ export function createHandler({
   config, fleet, settings = null, events = { list: () => [] }, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
-  dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null,
+  dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -1247,6 +1251,7 @@ export function createHandler({
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
+      projects: addedProjects?.view() ?? null,
       data: heldData ? await heldData.report() : null,
     });
   }
@@ -1262,7 +1267,12 @@ export function createHandler({
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
     try {
-      if (pathname === '/api/console-settings') {
+      if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
+        if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+        const by = login ?? 'console';
+        if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
+        else addedProjects.remove({ name: body.name, by });
+      } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
         const values = body.values ?? {};
         consoleSettings.check(values);
@@ -1279,7 +1289,7 @@ export function createHandler({
         await heldData.clean({ kind: body.kind, id: body.id, by: login ?? 'console' });
       }
     } catch (err) {
-      if (err.shown) return reply(res, pathname === '/api/console-settings' ? 400 : 409, { error: err.message });
+      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message });
       console.error('console: console settings change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The change failed; the console log says why' });
     }
@@ -1332,7 +1342,7 @@ export function createHandler({
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
-    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean') return consoleSettingsWrite(req, res, pathname, login);
+    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
@@ -1739,11 +1749,13 @@ export async function startConsole({ provider, config: given = null }) {
   // Each project's repo, on that project's own token: the default project's is the console's own client.
   const projectClients = new Map([[defaultProject(config).name, github]]);
   const githubFor = (project) => {
-    if (!projectClients.has(project.name)) {
+    // A repo an admin removed and added again is a new client, since it may be on another installation.
+    const key = project.default ? project.name : `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
+    if (!projectClients.has(key)) {
       const token = tokens && (async () => (await tokens.forSession({ project: project.name }).console.token()).token);
-      projectClients.set(project.name, createGitHub({ repo: project.repo, token }));
+      projectClients.set(key, createGitHub({ repo: project.repo, token }));
     }
-    return projectClients.get(project.name);
+    return projectClients.get(key);
   };
   // The databases the provider's db-admin makes a copy of for each session: what the installation runs.
   const databases = createDatabases({ store, secrets, dbAdmin, engines: provider.databases ?? [] });
@@ -1783,6 +1795,7 @@ export async function startConsole({ provider, config: given = null }) {
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   const appIdentity = createAppIdentity({ appApi });
+  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi }) });
   const auth = secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
   // A store the dashboard has not chosen yet holds no client secret either, so sign-in could never come on.
@@ -1804,7 +1817,7 @@ export async function startConsole({ provider, config: given = null }) {
     config, fleet, settings, events, auth, review: createReviewSource({ github }), userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name, words: provider.words ?? null }, appIdentity,
-    databaseGate,
+    databaseGate, addedProjects,
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => Boolean(auth?.enabled()) }),
   });
   const hosts = knownHosts(config);
