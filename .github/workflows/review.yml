@@ -2,7 +2,7 @@ name: Claude review
 
 # A review by Claude on pull requests from the team: those whose branch is in this repository, which only people with
 # write access can push. A pull request from a fork never runs it, and never gets the API key: this uses
-# pull_request, not pull_request_target. It runs when the last commit's message has [claude-review], so a push to a
+# pull_request, not pull_request_target. It runs when the last commit's message has [woodshed-review], so a push to a
 # draft or a work in progress does not spend a review. Its verdict is a comment review: a person still approves.
 
 on:
@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -32,15 +32,15 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Check for the [claude-review] tag
+      - name: Check for the [woodshed-review] tag
         id: gate
         run: |
           # Gate: review only when the last commit asks for it
-          if git log -1 --format=%B | grep -qiF '[claude-review]'; then
+          if git log -1 --format=%B | grep -qiF '[woodshed-review]'; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "No [claude-review] in the last commit's message: no review"
+            echo "No [woodshed-review] in the last commit's message: no review"
           fi
 
       - name: Review
@@ -78,7 +78,7 @@ jobs:
                author already covers.
             5. Write your verdict to `/tmp/claude-verdict.txt`: APPROVE when nothing blocks merging, REQUEST_CHANGES
                for a bug, a security problem or a broken rule, COMMENT when unsure. Write a summary of three to six
-               sentences to `/tmp/claude-review-summary.md`: what the pull request does, what you checked, and what, if
+               sentences to `/tmp/review-summary.md`: what the pull request does, what you checked, and what, if
                anything, must change.
           claude_args: |
             --model opus
@@ -100,10 +100,10 @@ jobs:
           {
             echo "## Claude review: ${verdict}"
             echo
-            cat /tmp/claude-review-summary.md 2>/dev/null || true
+            cat /tmp/review-summary.md 2>/dev/null || true
             echo
             echo "<sub>[View the run](${RUN_URL})</sub>"
-          } > /tmp/claude-review-body.md
-          gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment --body-file /tmp/claude-review-body.md
+          } > /tmp/review-body.md
+          gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --comment --body-file /tmp/review-body.md
           echo "### Claude review: \`${verdict}\`" >> "$GITHUB_STEP_SUMMARY"
           if [ "$verdict" = REQUEST_CHANGES ]; then exit 1; fi
