@@ -287,6 +287,45 @@ jobs:
           esac
           echo "### Claude review: \`${verdict}\`" >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Resolve the review's outdated threads
+        if: steps.gate.outputs.run == 'true'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # On an APPROVE, resolve this review's own threads that later commits made outdated, so they block no merge
+          verdict=$(tr -d '[:space:]' < /tmp/claude-verdict.txt 2>/dev/null | tr '[:lower:]' '[:upper:]')
+          if [ "$verdict" != APPROVE ]; then
+            echo "Not an approval: no thread resolved"
+            exit 0
+          fi
+          # Only threads the review opened (author github-actions) and that are outdated: a person's thread, or one of
+          # the review's still on current code, stays open for someone to read.
+          if ! threads=$(gh api graphql -F owner="${GITHUB_REPOSITORY%/*}" -F name="${GITHUB_REPOSITORY#*/}" -F number="$PR_NUMBER" \
+              -f query='query($owner: String!, $name: String!, $number: Int!) {
+                repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+                  reviewThreads(first: 100) { nodes { id isResolved isOutdated comments(first: 1) { nodes { author { login } } } } }
+                } } }' \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[]
+                | select(.isResolved | not) | select(.isOutdated)
+                | select(.comments.nodes[0].author.login == "github-actions") | .id'); then
+            echo "::warning::Could not list the review threads, so none was resolved"
+            exit 0
+          fi
+          resolved=0
+          failed=0
+          for id in $threads; do
+            if gh api graphql -f id="$id" -f query='mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }' >/dev/null; then
+              resolved=$((resolved + 1))
+            else
+              failed=$((failed + 1))
+            fi
+          done
+          [ "$failed" -eq 0 ] || echo "::warning::${failed} of the review's outdated threads could not be resolved"
+          echo "Resolved ${resolved} of the review's outdated threads"
+          echo "Resolved ${resolved} of the review's outdated threads." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Post the merge risk
         if: steps.gate.outputs.run == 'true'
         continue-on-error: true
