@@ -1,11 +1,11 @@
 name: Check
 
 # Woodshed has no dependencies and no build step, so its whole check is its tests and a shellcheck of its scripts.
-# The repository's ruleset requires the `test` job on master.
+# The repository's ruleset requires the `test` job on main.
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 

@@ -58,7 +58,7 @@
 #                        package registry's token; claude's terminal has them too
 #   WOODSHED_INSTALL_SECRETS  those variables' names, space-separated (the install_secrets Terraform variable, or the
 #                        local provider's WOODSHED_CLOUD_INSTALL_SECRETS): an ask session unsets each
-#   SESSION_MODE=ask     a question from Slack (console/asks.mjs): master, read only, no databases, Redis or app.
+#   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
 set -euo pipefail
 
