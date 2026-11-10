@@ -114,6 +114,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # Shared Woodshed Cloud sessions open pull requests as this App; the action refuses bots it is not told of.
           allowed_bots: 'woodshed-cloud'
+          # One comment on the pull request: a live checklist while the review runs, then the full review.
+          track_progress: true
           use_sticky_comment: true
           prompt: |
             You are reviewing a pull request to Woodshed, an open-source, dependency-free Node ESM project with no build
@@ -125,7 +127,7 @@ jobs:
                `CONTRIBUTING.md`, as they are on the branch this merges into. Judge the change by those, even if it
                edits them. Then read the README of each folder the pull request changes (`docs/reference.md` lists
                them).
-            3. Run `gh pr diff $PR_NUMBER`. Read the changed files around each change, not only the diff. A pull
+            3. Run `gh pr diff ${{ github.event.pull_request.number }}`. Read the changed files around each change, not only the diff. A pull
                request is large when it changes 5 or more files or 200 or more lines: then also trace each changed
                function's callers, and check the tests cover the paths that changed.
             4. Look for, in this order:
@@ -152,14 +154,48 @@ jobs:
                - REQUEST_CHANGES: a bug, a security problem, a broken rule from step 4, or missing tests for new
                  behaviour.
                - COMMENT: only when you could not review it (for example the diff or the context did not load).
-            7. Write the verdict, one word, to `/tmp/claude-verdict.txt`. Write to `/tmp/review-summary.md`:
-               - three to six sentences: what the pull request does, what you checked, and what must change, if
-                 anything;
-               - for a large pull request, a "For the human reviewer" list: the areas it touches, the decisions it
-                 makes that someone should agree with, and where to look first.
+            7. Post the full review on the pull request by calling `mcp__github_comment__update_claude_comment` with
+               this body, before you finish. The action does not post your final message: it only adds a header to
+               whatever that comment already holds, so a review you only write as a reply is lost.
+
+               Start with the risks a person must look at, outside the fold:
+
+               **Risk areas to eyeball manually**
+               - (one item each, or "None")
+
+               Then the rest in a collapsible block:
+
+               <details>
+               <summary>Claude review</summary>
+
+               ### Overview
+               What the pull request does and how, in one or two sentences, and your overall impression.
+
+               ### Key findings
+               Each problem, with the file and line, what goes wrong and the fix, marked blocking or optional. Say
+               "None" when there are none.
+
+               ### What I checked
+               The paths, rules and risks you verified and found fine.
+
+               ### Positive notes
+               What the change does well, briefly.
+
+               ### For the human reviewer
+               The areas it touches, the decisions someone should agree with, and where to look first. Always for a
+               large pull request, otherwise only when there is something to say.
+
+               </details>
+
+            8. Record the verdict, so the next step submits the formal review. Write these with the Write tool before
+               your final message:
+               - `/tmp/claude-verdict.txt`: one line, exactly one of `APPROVE`, `COMMENT`, `REQUEST_CHANGES`.
+               - `/tmp/review-summary.md`: a short body for the formal review, a few lines, not the full review. For
+                 `REQUEST_CHANGES`, list each blocking issue as `path/to/file.mjs:123 — one-line explanation`.
+               If you do not write both, no formal review is submitted and the pull request stays unapproved.
           claude_args: |
             --model opus
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(cat:*),Bash(ls:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(find:*),Bash(grep:*),Bash(printenv:*),Read(*),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read(./**),Read(//tmp/**),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
 
       - name: Post the verdict
         if: steps.gate.outputs.run == 'true'
@@ -168,18 +204,18 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Post the reviewer's verdict as the pull request's review: an APPROVE is its approval
+          # Turn the reviewer's verdict into the pull request's review: an APPROVE is its approval
           if [ ! -f /tmp/claude-verdict.txt ]; then
             echo "::warning::The reviewer wrote no verdict, so no review was posted"
             exit 0
           fi
           verdict=$(tr -d '[:space:]' < /tmp/claude-verdict.txt | tr '[:lower:]' '[:upper:]')
           {
-            echo "## Claude review: ${verdict}"
+            echo "## Claude review — ${verdict}"
             echo
-            cat /tmp/review-summary.md 2>/dev/null || true
-            echo
-            echo "<sub>[View the run](${RUN_URL})</sub>"
+            cat /tmp/review-summary.md 2>/dev/null || echo "See the full review in the comment above."
+            printf '\n\n'
+            echo "<sub>Submitted by \`review.yml\` on behalf of the reviewer · [view run](${RUN_URL})</sub>"
           } > /tmp/review-body.md
           case "$verdict" in
             APPROVE) gh pr review "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --approve --body-file /tmp/review-body.md ;;
