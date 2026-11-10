@@ -308,7 +308,7 @@ jobs:
             *) echo "::warning::Unknown merge risk tier '${tier}', so no Merge risk check was posted"; exit 0 ;;
           esac
           reason=$(sed -n 2p /tmp/merge-risk.md | cut -c1-200)
-          summary=$(printf '%s\n\n%s\n\nSet by the review ([run](%s)). It does not block merging.' \
+          summary=$(printf '%s\n\n%s\n\nSet by the AI review ([run](%s)). It does not block merging.' \
             "$reason" "$(tail -n +3 /tmp/merge-risk.md)" "$RUN_URL")
           jq -n --arg sha "$HEAD_SHA" --arg title "${label}: ${reason}" --arg summary "$summary" --arg url "$RUN_URL" \
             '{name: "Merge risk", head_sha: $sha, status: "completed", conclusion: "neutral", details_url: $url,
