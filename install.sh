@@ -10,8 +10,11 @@
 #
 # Optional settings: WOODSHED_REPO (owner/name, asked otherwise), WOODSHED_HOME (~/.woodshed), WOODSHED_GIT (where the
 # code is cloned from), WOODSHED_NETWORK (a docker network sessions join to reach the repository's own services, such
-# as its compose file's `<folder>_default`), WOODSHED_REBUILD=1 (build the session image again), WOODSHED_NO_START=1
-# (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on; empty builds it here).
+# as its compose file's `<folder>_default`), WOODSHED_PROJECT_FILES_DIR (an absolute path: a folder of project files,
+# `<owner>/<name>.yaml`, one for a repository with no .woodshed/project.yaml of its own, which this script and every
+# session then read in its place; saved in stack.env), WOODSHED_REBUILD=1 (build the session image again),
+# WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
+# empty builds it here).
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
@@ -107,12 +110,13 @@ fetchRepo() {
 # WOODSHED_CLOUD_ENV_FILES and WOODSHED_CLOUD_DB_ENV_SECRETS want them (either may be empty), and the engines its
 # databases are on, space-separated, or `none`.
 projectSettings() {
-  local src=$1 repoDir=$2
+  local src=$1 repoDir=$2 projectFilesDir=${3:-}
   # The paths go in the environment: as arguments, project.mjs would take argv[1] for itself and run as a command.
   # shellcheck disable=SC2016 # JavaScript, not shell, expands these
-  PROJECT_MJS=$src/shared/project.mjs REPO_DIR_TO_READ=$repoDir node --input-type=module -e '
+  PROJECT_MJS=$src/shared/project.mjs REPO_DIR_TO_READ=$repoDir WOODSHED_CLOUD_PROJECT_FILES_DIR=$projectFilesDir node --input-type=module -e '
     const { loadProject } = await import(process.env.PROJECT_MJS);
     const project = loadProject(process.env.REPO_DIR_TO_READ);
+    console.error(`woodshed install: project file from ${project.from}`);
     console.log(project.envFiles.map((f) => `${f.secret}=${f.path}`).join(","));
     console.log([...new Set(project.databases.flatMap((d) => d.envFiles))].join(","));
     console.log(project.databases.map((d) => d.engine).join(" ") || "none");
@@ -121,11 +125,11 @@ projectSettings() {
 
 # The session image is built for one repository: it holds a checkout and that checkout's node_modules.
 buildImage() {
-  local src=$1 repo=$2 repoDir=$3 image=$4 token=$5 context=$6
+  local src=$1 repo=$2 repoDir=$3 image=$4 token=$5 context=$6 projectFilesDir=${7:-}
   rm -rf "$context"
   mkdir -p "$context/woodshed"
   cp -R "$src/session" "$src/shared" "$context/woodshed/"
-  (cd "$repoDir" && bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
+  (cd "$repoDir" && WOODSHED_CLOUD_PROJECT_FILES_DIR=$projectFilesDir bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
   local runtime
   runtime=$(sessionRuntime)
   say "Building the session image $image (the first build takes several minutes)"
@@ -248,6 +252,19 @@ writeSessionEnv() {
   )
 }
 
+# The installation's folder of project files, in stack.env for the console and, through it, each session. Moved when a
+# later run names another, so the rest of the file stays as the first run wrote it.
+saveProjectFilesDir() {
+  local file=$1 dir=$2 kept
+  [ -n "$dir" ] || return 0
+  [ "$(savedSetting "$file" WOODSHED_CLOUD_PROJECT_FILES_DIR)" != "$dir" ] || return 0
+  kept=$(grep -v '^WOODSHED_CLOUD_PROJECT_FILES_DIR=' "$file" || true)
+  (
+    umask 077
+    printf '%s\nWOODSHED_CLOUD_PROJECT_FILES_DIR=%s\n' "$kept" "$dir" >"$file"
+  )
+}
+
 # An install works on one repository: its stack.env, image and databases are that repository's.
 refuseOtherRepo() {
   local file=$1 repo=$2 saved
@@ -306,6 +323,9 @@ main() {
   slug=$(printf '%s' "$repo" | tr '/[:upper:]' '-[:lower:]')
   local image=woodshed-session:$slug repoDir=$home/repos/$slug
 
+  local projectFilesDir=${WOODSHED_PROJECT_FILES_DIR:-$(savedSetting "$stackEnv" WOODSHED_CLOUD_PROJECT_FILES_DIR)}
+  [ -z "$projectFilesDir" ] || [[ $projectFilesDir = /* ]] || fail "WOODSHED_PROJECT_FILES_DIR must be an absolute path: $projectFilesDir"
+
   local token
   token=$(githubToken)
   [ -n "$token" ] || fail 'a GitHub token is needed to read the repository'
@@ -313,17 +333,18 @@ main() {
   fetchRepo "$repo" "$repoDir" "$token"
 
   if [ -n "${WOODSHED_REBUILD:-}" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
-    buildImage "$src" "$repo" "$repoDir" "$image" "$token" "$home/build"
+    buildImage "$src" "$repo" "$repoDir" "$image" "$token" "$home/build" "$projectFilesDir"
   else
     say "Using the session image $image (WOODSHED_REBUILD=1 builds it again)"
   fi
 
   local settings engines network
-  settings=$(projectSettings "$src" "$repoDir")
+  settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir")
   engines=$(sed -n 3p <<<"$settings")
   network=${WOODSHED_NETWORK:-}
   [ -n "$network" ] || ! anyEngine "$engines" || network=woodshed
   writeStackEnv "$stackEnv" "$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network"
+  saveProjectFilesDir "$stackEnv" "$projectFilesDir"
   set -a
   # shellcheck source=/dev/null
   . "$stackEnv"

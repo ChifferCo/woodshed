@@ -180,6 +180,20 @@ A session reads what it needs from the repo it works on (its env files, dependen
 checkout's copy, so a branch can change it, and the default branch's when a branch predates the file. A repo with no file gets
 an empty project: no dependency installs, env files, databases or app, and Woodshed Cloud's own rules alone.
 
+**A project file the installation supplies.** To try Woodshed on a repo without committing a project file, the
+installation can keep one for it: `WOODSHED_CLOUD_PROJECT_FILES_DIR` names a folder of them, one a repo, at
+`<owner>/<name>.yaml` as GitHub names the repo (matched in any case). It is read only when the repo has no
+`.woodshed/project.yaml` of its own, on the checkout or the default branch: once one is committed, it wins. Its `from`
+is `installation`, beside `checkout`, `default branch` and `none`, in each log line that prints it (the entrypoint's
+`Project file read`, the console's `projectFile: read`, the db-admin task's `Project read`, `stageDeps.sh`'s `project
+file from`). It is read and refused as a repo's file is, with its path named in place of `.woodshed/project.yaml`. A
+missing folder, or no file for the repo, is an empty project. The repo is told from the checkout's `origin` on GitHub.
+Every reader gets it: `install.sh` (`WOODSHED_PROJECT_FILES_DIR`, which it saves in `stack.env` as this setting) for its
+own reading and the image build's `stageDeps.sh`, the console, and, on the local provider, each session and db-admin
+container, given the files they need read-only (`providers/local/README.md`). The AWS provider does not hand it to its
+tasks yet, so there it is for the console alone. The files hold no secrets, as a committed one holds none, and must be
+readable by the session image's `node` user (uid 1000).
+
 Only `version` must be written. A field that can be none (`null`, `[]`, `{}`, or `false` for `editor`) may be left
 out, and is then none (`consoleLinks` left out is `true`): a file of `version: 1` alone is a repo with no dependencies, env files, databases or app. Inside
 a section the same holds (`app.stop`, an env file's `secret`, `pullRequests.review.rerun`), while what the section

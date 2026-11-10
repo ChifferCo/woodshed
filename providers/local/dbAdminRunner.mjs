@@ -20,6 +20,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { secretFile } from '../../shared/fileSecrets.mjs';
+import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 const execFileAsync = promisify(execFile);
 
@@ -76,13 +77,14 @@ function sharedServiceEnv(sessionEnv) {
  *   (its databases' `envFiles`); `mongoHost` is host:port and `postgresHost` a host on 5432, as dbAdmin.mjs takes them, and
  *   a database with no host is one the installation does not host; `network` is the docker
  *   network the databases are on, if any; `sessionEnv` gives the seed the shared services it lists in WOODSHED_SERVICES, as
- *   sessions get them
+ *   sessions get them; `projectFilesDir` the installation's folder of project files and `repo` the image's repo, owner/name,
+ *   whose file there a run reads when the checkout has none (projectFileMounts.mjs)
  * @returns {{start: (command: string[]) => Promise<string>, stop: (id: string) => Promise<void>,
  *            outcomes: (ids: string[]) => Promise<Array<{done: false}|{done: true, ok: boolean, reason: string|null}>>}}
  */
 export function createDbAdminRunner({
   image, repoDir, seedSecrets = [], secrets, postgresHost = null, postgresRootUser = null, mongoHost = null, network = null, sessionEnv = {},
-  runsDir = path.join(os.tmpdir(), 'woodshed-db-admin'), docker,
+  runsDir = path.join(os.tmpdir(), 'woodshed-db-admin'), docker, projectFilesDir = null, repo = null,
 }) {
   const run = docker ?? (async (args, env) => (await execFileAsync('docker', args, { env: { ...process.env, ...env } })).stdout.trim());
   const folderOf = (id) => path.join(runsDir, id);
@@ -144,6 +146,8 @@ export function createDbAdminRunner({
     };
     const forLabel = ownerOf(command);
     await removeEarlier(forLabel);
+    // Looked for at each run, so a file the installation adds later is read by the next one.
+    const mounts = projectFileMounts({ dir: projectFilesDir, repos: [repo] });
     const folder = await makeRunFolder(id);
     try {
       await copySecrets(folder, [...secretsFor(command), ...seedSecrets]);
@@ -152,15 +156,16 @@ export function createDbAdminRunner({
         '--add-host=host.docker.internal:host-gateway',
         ...(network ? ['--network', network] : []),
         ...Object.keys(env).flatMap((key) => ['-e', key]),
-        '-v', `${folder}:${SECRETS_MOUNT}:ro`, '--entrypoint', 'env', image, ...ENTRYPOINT,
-        '--secrets-dir', SECRETS_MOUNT, ...hostFlags, '--secret-prefix', '', '--repo', repoDir, '--', ...command,
+        '-v', `${folder}:${SECRETS_MOUNT}:ro`, ...mounts.args, '--entrypoint', 'env', image, ...ENTRYPOINT,
+        '--secrets-dir', SECRETS_MOUNT, ...hostFlags, '--secret-prefix', '', '--repo', repoDir,
+        ...(mounts.repos.length ? ['--project-files-dir', PROJECT_FILES_MOUNT] : []), '--', ...command,
       ];
       await run(args, env);
     } catch (err) {
       await fs.rm(folder, { recursive: true, force: true });
       throw err;
     }
-    console.log('local: db-admin run started', { id, action: command[0] });
+    console.log('local: db-admin run started', { id, action: command[0], installationProjectFile: mounts.repos.length > 0 });
     return id;
   }
 
