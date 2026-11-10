@@ -22,6 +22,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `shared/` | Modules the console and the sessions both run, and other tools can embed: review, the project file's reader, the terminal and same-origin helpers | [shared/README.md](../shared/README.md) |
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
+| `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request | |
 
 Imports go one way, and `test/layout.test.mjs` checks every one:
 - `shared/` imports nothing outside itself.
@@ -145,7 +146,8 @@ default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local
 | --- | --- |
 | Commits | `woodshed-bot <woodshed-bot@users.noreply.github.com>`; in a private session whose owner connected GitHub, the owner's name and noreply address |
 | Pushes, PRs, comments, reactions | The installation's GitHub App, as `<slug>[bot]` ; a connected owner's private session pushes and opens PRs as them, "via `<slug>`" |
-| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)" |
+| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)". On another project's repo, which may be public, the console is not linked: "Started by @<login> via Woodshed Cloud." |
+| Attribution | Claude Code's own `Co-Authored-By` trailer and PR footer, unless the repo's `.claude/settings.json` turns them off (`attribution`), as this one does |
 
 The only long-lived GitHub credential is the App's private key, in
 `woodshed-cloud/github-app-key`, which only the console reads (it never touches
@@ -258,6 +260,48 @@ An installation works on one repo, and nothing in this folder names one. To set 
 Still specific to one repo, and not yet settings:
 - The db-admin task's drivers, borrowed from each database's `dir`'s `node_modules` (`pg`, and `mongoose` for Mongo),
   until the image ships its own.
+
+## The review in another repo
+
+`.github/workflows/review.yml` reviews Woodshed's own pull requests, and any repo can run the same review on its own by
+calling it. A workflow of the repo's, with a `pull_request` trigger, calls it pinned to a commit:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+jobs:
+  review:
+    permissions: { contents: read, pull-requests: write, issues: read, id-token: write, checks: write }
+    uses: <woodshed's repo>/.github/workflows/review.yml@<commit>
+    with:
+      tag: '[review]'
+      rules: CLAUDE.md CONTRIBUTING.md
+      instructions: .github/review.md
+      risk-areas: .github/riskAreas.md
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+- `tag`: what the last commit's message carries to ask for a review (default `[woodshed-review]`).
+- `rules`: the repo's rule files, separated by spaces (default `CLAUDE.md .woodshed/rules.md CONTRIBUTING.md`).
+- `instructions`: a file saying what this repo wants a review to look for, added to the prompt (default
+  `.woodshed/review.md`; none is fine).
+- `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
+  `.woodshed/riskAreas.md`; none is fine).
+- `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default
+  `woodshed-cloud`).
+
+The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
+commit, which never blocks merging. That is why the caller grants `checks: write`. To show it in the decision brief and
+Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
+
+An input left empty takes its default. The rules, the instructions and the risk areas are read from the branch the pull request merges into, so a pull request cannot soften
+its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
+approval is refused. On an approval, the review resolves its own threads that later commits made outdated, so a
+ruleset that requires conversation resolution is not blocked by fixed findings; a person's thread, and one of the
+review's still on current code, stay open. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
+repo's calling workflow, the run GitHub reports.
 
 ## Databases
 

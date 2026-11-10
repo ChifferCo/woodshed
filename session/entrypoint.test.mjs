@@ -524,6 +524,7 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
     fn('withholdInstallationSecrets'),
     'useProjectRepo',
     'echo "secrets: npm=${NPM_TOKEN:-unset} api=${API_ENV:-unset} other=${OTHER_VAR:-unset}"',
+    'echo "session link: ${SESSION_URL:-unset}"',
     'echo "REPO_DIR=$REPO_DIR"',
     'git -C "$REPO_DIR" log -1 --format=%s',
     'cat "$REPO_DIR/README.md"',
@@ -534,6 +535,7 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
       env: {
         PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1', REPO_DIR: path.join(work, 'app'), IMAGE_DIR: path.join(work, 'app'),
         WOODSHED_INSTALL_SECRETS: 'NPM_TOKEN', NPM_TOKEN: 'npm-s3cret', API_ENV: 'api-s3cret', OTHER_VAR: 'kept',
+        SESSION_URL: 'https://console.example/s/0a1b2c3d',
         ...(projectRepo ? { PROJECT_REPO: projectRepo } : {}),
       },
     });
@@ -552,6 +554,8 @@ test('a session on another project clones its repo next to the image\'s checkout
   assert.match(run.stdout, /Installation secrets withheld \(another project\) \(variables: NPM_TOKEN API_ENV\)/);
   assert.match(run.stdout, /secrets: npm=unset api=unset other=kept/, 'the installation\'s install and env file secrets are gone');
   assert.doesNotMatch(run.stdout, /s3cret/, 'no value is ever printed');
+  assert.match(run.stdout, /Session link left out of pull requests \(another project\)/);
+  assert.match(run.stdout, /session link: unset/, 'its pull requests do not link the installation\'s console');
 });
 
 test('a session on the image\'s own repo, or with no project named, keeps the image\'s checkout', () => {
@@ -561,6 +565,7 @@ test('a session on the image\'s own repo, or with no project named, keeps the im
     assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/app\\n`), String(projectRepo));
     assert.doesNotMatch(run.stdout, /Cloning|withheld/);
     assert.match(run.stdout, /secrets: npm=npm-s3cret api=api-s3cret/, 'the default project keeps them, as before');
+    assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'and links the session from its pull requests');
   }
 });
 

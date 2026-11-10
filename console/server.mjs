@@ -165,7 +165,7 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { defaultProject } from './projects.mjs';
+import { allProjects, defaultProject, projectFor } from './projects.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -719,6 +719,8 @@ export function createHandler({
     const slackWaiting = fleet.slackWaiting?.() ?? new Set();
     return {
       repo: defaultProject(config).repo,
+      // The rail names each session's project only when there is more than one to tell apart.
+      projects: allProjects(config).map((p) => p.name),
       label: config.label,
       maxRunning: config.maxRunning,
       login,
@@ -736,7 +738,7 @@ export function createHandler({
       // The slots are shared sessions' alone: My Woodshed's start at once.
       running: sharedRunningCount(all),
       queued: all.filter((s) => s.status === 'queued' && !s.owner).length,
-      sessions: sessions.map((s) => ({ ...publicSession(s), slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null })).reverse(),
+      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],

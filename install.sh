@@ -14,8 +14,7 @@
 # (set up only).
 set -euo pipefail
 
-# woodshed.run redirects it to wherever the repository is published, and git follows the redirect.
-WOODSHED_GIT_DEFAULT=https://woodshed.run/woodshed.git
+WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
 CONSOLE_PORT=7690
 # Off Postgres's and Mongo's usual ports, so the databases a laptop already runs keep theirs.
 PG_PORT=15432

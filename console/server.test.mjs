@@ -1460,3 +1460,22 @@ test('a console with one project offers it alone, and a saved default it no long
   t.after(() => server.close());
   assert.deepEqual(JSON.parse(await getBody(port, '/api/my/projects', { cookie: 'woodshed_session=x' })), { projects: [{ name: 'r', repo: 'o/r' }], defaultProject: 'r', saved: false });
 });
+
+test('the session list names each session\'s project, and the projects there are, for the rail', async (t) => {
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'acme/app', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+    projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }],
+  };
+  const sessions = [
+    { id: 'aaaa0001', status: 'running', title: 'on tools', project: 'tools', repo: 'acme/tools' },
+    { id: 'aaaa0002', status: 'running', title: 'from before projects', repo: 'acme/tools' },
+    { id: 'aaaa0003', status: 'running', title: 'on the default' },
+  ];
+  const handle = createHandler({ config, fleet: { sessions: () => sessions, find: () => null } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const body = JSON.parse(await getBody(port, '/api/sessions'));
+  assert.deepEqual(body.projects, ['app', 'tools']);
+  assert.deepEqual(Object.fromEntries(body.sessions.map((s) => [s.id, s.project])), { aaaa0001: 'tools', aaaa0002: 'tools', aaaa0003: 'app' });
+});

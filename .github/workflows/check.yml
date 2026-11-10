@@ -36,6 +36,6 @@ jobs:
 
       - name: Shellcheck the scripts
         run: |
-          # Catches quoting and unset-variable mistakes in the installer and the session image's scripts
+          # Catches quoting and unset-variable mistakes in the installer, the session image's scripts and scripts/
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck --severity=error install.sh session/*.sh
+          shellcheck --severity=error install.sh session/*.sh scripts/*.sh
