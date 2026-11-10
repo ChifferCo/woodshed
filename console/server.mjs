@@ -1484,7 +1484,14 @@ export function createHandler({
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
-    if (pathname === '/api/skills') return skillsReply(res, new URL(req.url || '/', 'http://app.invalid').searchParams.get('project'));
+    if (pathname === '/api/skills') {
+      // Another project's list only for someone who may start sessions on it, as New session offers it; anyone else,
+      // and a project this console does not have, gets the default project's.
+      const asked = new URL(req.url || '/', 'http://app.invalid').searchParams.get('project');
+      const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
+      if (asked && projectAccess && !allowed) console.log('console: skills of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
+      return skillsReply(res, projectAccess ? allowed?.name ?? null : asked);
+    }
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);

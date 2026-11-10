@@ -1497,3 +1497,21 @@ test('New session\'s / list is the picked project\'s skills, or the default proj
   await names('/api/skills?project=tools');
   assert.deepEqual(read, ['app', 'tools'], 'each project\'s list is kept');
 });
+
+test('another project\'s / list is only for someone who may start sessions on it', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const github = { skills: async () => [{ name: 'deploy', desc: 'app skill' }] };
+  const tools = { skills: async () => [{ name: 'release', desc: 'tools skill' }] };
+  const asked = [];
+  // Mia writes to the default repo only.
+  const projectAccess = { forStart: async (login, name) => { asked.push([login, name]); return name === 'app' ? projects[0] : null; } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github, githubFor: (p) => (p.name === 'tools' ? tools : null), projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const names = async (path) => JSON.parse(await getBody(port, path)).skills.map((s) => s.name);
+  assert.deepEqual(await names('/api/skills?project=tools'), ['deploy'], 'refused: the default project\'s list, never the other repo\'s');
+  assert.deepEqual(await names('/api/skills?project=app'), ['deploy']);
+  assert.deepEqual(asked.map(([, name]) => name), ['tools', 'app']);
+});

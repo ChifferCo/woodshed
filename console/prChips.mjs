@@ -121,8 +121,15 @@ export function createProjectPrChips({ projects, githubFor, ...rest }) {
   const readers = projects.map((project) => ({ project, chips: createPrChips({ github: githubFor(project), repo: project.repo, ...rest }) }));
   const defaultName = projects.find((p) => p.default)?.name ?? projects[0]?.name;
   return {
+    // One project's GitHub failing leaves its chips as they were, and the others are still read.
     async refresh(sessions) {
-      for (const { chips } of readers) await chips.refresh(sessions);
+      for (const { project, chips } of readers) {
+        try {
+          await chips.refresh(sessions);
+        } catch (err) {
+          console.warn('prChips: a project\'s pull requests not read', { project: project.name, message: String(err?.message ?? err).split('\n')[0] });
+        }
+      }
     },
     view(prUrl) {
       for (const { chips } of readers) {
