@@ -17,7 +17,7 @@ export function projectNameOf(repo) {
 export const validProjectName = (name) => typeof name === 'string' && NAME.test(name) && name.length <= NAME_MAX;
 
 /** @returns {boolean}  whether `repo` is GitHub's `owner/name` */
-export const validRepo = (repo) => typeof repo === 'string' && REPO.test(repo);
+export const validRepo = (repo) => typeof repo === 'string' && REPO.test(repo) && repo.split('/').every((part) => !/^\.+$/.test(part));
 
 function fromJson(value) {
   let list;

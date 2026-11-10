@@ -71,7 +71,7 @@ test('only an added repo is removed, and not while a session is running on it or
   const { added, config, store } = setup({ sessions: [{ id: 'aaaaaaaa', project: 'api', repo: 'acme/api', status: 'running' }] });
   await added.add({ repo: 'acme/api', by: 'a' });
   assert.equal(added.view().find((p) => p.name === 'api').sessions, 1);
-  assert.throws(() => added.remove({ name: 'api', by: 'a' }), (err) => err.shown && /1 session is still running or kept/.test(err.message));
+  assert.throws(() => added.remove({ name: 'api', by: 'a' }), (err) => err.shown && /1 session is still running, or listed to resume/.test(err.message));
   assert.throws(() => added.remove({ name: 'app', by: 'a' }), /set in the installation's configuration/);
   assert.throws(() => added.remove({ name: 'nope', by: 'a' }), /no project called nope/);
   store.state.sessions = [{ id: 'aaaaaaaa', project: 'api', repo: 'acme/api', status: 'stopped', kept: false }];
@@ -95,4 +95,38 @@ test('with the App, the repo must have it installed; without, gh must read the r
   await assert.rejects(repoChecker({ appApi: down })('acme/x'), (err) => err.shown && /did not answer/.test(err.message));
   assert.deepEqual(await repoChecker({ appApi: null, read: async () => 'main' })('acme/x'), { installationId: null });
   await assert.rejects(repoChecker({ appApi: null, read: async () => { throw new Error('404'); } })('acme/x'), (err) => err.shown && /cannot read acme\/x/.test(err.message));
+});
+
+test('a stopped My Woodshed session still on its owner\'s list holds its repo, since Resume would fall back to the default', async () => {
+  const { added, store } = setup({ sessions: [{ id: 'aaaaaaaa', project: 'api', repo: 'acme/api', status: 'stopped', owner: 'bob' }] });
+  await added.add({ repo: 'acme/api', by: 'a' });
+  assert.throws(() => added.remove({ name: 'api', by: 'a' }), /still running, or listed to resume/);
+  store.state.sessions = [];
+  added.remove({ name: 'api', by: 'a' });
+});
+
+test('two adds of one repo at once keep one, and a link with a trailing slash or .git is read', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { added, config } = setup({ check: async () => { await gate; return { installationId: '100' }; } });
+  const first = added.add({ repo: 'https://github.com/acme/api.git/', by: 'a' });
+  const second = added.add({ repo: 'acme/api', by: 'b' });
+  release();
+  const results = await Promise.allSettled([first, second]);
+  assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+  assert.deepEqual(config.projects.map((p) => p.repo), ['acme/app', 'acme/api']);
+});
+
+test('a dot-only part is not a repo', async () => {
+  const { added } = setup();
+  for (const repo of ['x/..', '../..', './x']) await assert.rejects(added.add({ repo, by: 'a' }), /owner\/name/);
+});
+
+test('an added repo the installation names later is left out of the live list, and a hand-made config keeps its default', () => {
+  const store = { state: { addedProjects: [{ name: 'api', repo: 'acme/api', default: false }, { name: 'web', repo: 'acme/web', default: false }] } };
+  const later = liveConfig({ ...base, projects: [...base.projects, { name: 'other', repo: 'ACME/api', default: false }] }, store);
+  assert.deepEqual(later.projects.map((p) => p.name), ['app', 'other', 'web']);
+  assert.equal(later.projects, later.projects, 'the same list until the added ones change');
+  const byHand = liveConfig({ repo: 'acme/app', limits: base.limits }, store);
+  assert.deepEqual(byHand.projects.map((p) => [p.name, p.default]), [['app', true], ['api', false], ['web', false]]);
 });

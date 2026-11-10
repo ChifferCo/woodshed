@@ -328,6 +328,8 @@
     } catch {
       return;
     }
+    // Redrawing the page would take the caret out of a field being typed in.
+    if (document.activeElement?.closest?.('.settings-card') && document.activeElement.matches('input')) return;
     render();
   }
 

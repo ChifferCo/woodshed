@@ -1304,7 +1304,7 @@ project, or a name in use, is refused with its reason. The added repos are kept 
 and appended to `WOODSHED_CLOUD_PROJECTS`'s list in the live config (`liveConfig`), so one applies at once, with no
 restart, and a project's New session **Project** field shows it to whoever can write to it. **Remove**
 (`POST /api/console-settings/projects/remove`) takes an added repo off, and is disabled while a session is running on it
-or kept to resume, since that session would fall back to the default project's repo. The installation's own projects,
+or listed to resume (a shared one kept, or any of a person's My Woodshed sessions still on their list), since that session would fall back to the default project's repo. The installation's own projects,
 the default among them, are read-only here: they change where `WOODSHED_CLOUD_PROJECTS` is set. An added repo is on the
 same terms as any other project: My Woodshed sessions only, in the default project's session image and databases. The
 console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`

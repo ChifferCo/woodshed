@@ -21,7 +21,7 @@ export function createAddedProjects({ store, config, check, now = Date.now }) {
 
   function view() {
     const added = new Set(addedProjectsOf(store).map((p) => p.name));
-    const live = (store.state.sessions ?? []).filter((s) => ACTIVE_STATUSES.has(s.status) || s.kept);
+    const live = (store.state.sessions ?? []).filter((s) => ACTIVE_STATUSES.has(s.status) || s.kept || s.owner);
     return everyProject().map((p) => ({
       name: p.name, repo: p.repo, default: Boolean(p.default), removable: added.has(p.name),
       addedBy: p.addedBy ?? null, addedAt: p.addedAt ?? null,
@@ -35,7 +35,7 @@ export function createAddedProjects({ store, config, check, now = Date.now }) {
    * @throws {Error}  with `shown`, for a repo or name the page should refuse with its reason
    */
   async function add({ repo, name, by }) {
-    const wanted = String(repo ?? '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git$/, '').replace(/\/$/, '');
+    const wanted = String(repo ?? '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\/+$/, '').replace(/\.git$/, '');
     if (!validRepo(wanted)) throw shown('Give the repo as owner/name, such as acme/api.');
     const chosen = String(name ?? '').trim() || projectNameOf(wanted);
     if (!validProjectName(chosen)) throw shown('The name is lowercase letters and digits, in words joined by single dashes, at most 32 long.');
@@ -44,6 +44,8 @@ export function createAddedProjects({ store, config, check, now = Date.now }) {
     const named = everyProject().find((p) => p.name === chosen);
     if (named) throw shown(`The name ${chosen} is used by ${named.repo}: choose another.`);
     const { installationId } = await check(wanted);
+    // Another add may have finished while GitHub was asked.
+    if (everyProject().some((p) => p.name === chosen || p.repo.toLowerCase() === wanted.toLowerCase())) throw shown(`${wanted} was just added: reload the page.`);
     const project = { name: chosen, repo: wanted, default: false, addedBy: by, addedAt: new Date(now()).toISOString() };
     if (installationId && String(installationId) !== String(config.githubApp?.installationId ?? '')) project.installationId = String(installationId);
     store.state.addedProjects = [...addedProjectsOf(store), project];
@@ -65,7 +67,7 @@ export function createAddedProjects({ store, config, check, now = Date.now }) {
         : `There is no project called ${name}.`);
     }
     const live = view().find((p) => p.name === name)?.sessions ?? 0;
-    if (live) throw shown(`${live} ${live === 1 ? 'session is' : 'sessions are'} still running or kept to resume on ${found.repo}: stop or delete ${live === 1 ? 'it' : 'them'} first.`);
+    if (live) throw shown(`${live} ${live === 1 ? 'session is' : 'sessions are'} still running, or listed to resume, on ${found.repo}: stop or delete ${live === 1 ? 'it' : 'them'} first.`);
     store.state.addedProjects = addedProjectsOf(store).filter((p) => p.name !== name);
     store.save();
     console.log('projects: repo removed', { project: name, repo: found.repo, by });
