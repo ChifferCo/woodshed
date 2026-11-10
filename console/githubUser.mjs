@@ -52,6 +52,10 @@ export function createGitHubUser({
   // Scoped tokens by person and repo, each with the token it was made from: a refresh makes a new one.
   const scoped = new Map();
   const scoping = new Map();
+  // Bumped the moment a Disconnect starts, before its stored record goes: a scoped token made from a token the
+  // person had before it is ended, not handed out, even while the record still says they are connected.
+  const disconnects = new Map();
+  const disconnectsOf = (login) => disconnects.get(loginKey(login)) ?? 0;
 
   /** Keeps the answer of a Connect GitHub sign-in, and who GitHub says they are, for commits. */
   async function connect({ login, answer }) {
@@ -182,6 +186,7 @@ export function createGitHubUser({
    * @throws {Error}  `shown`, as tokenFor, when they had connected and GitHub refuses them now
    */
   async function scopedTokenFor(login, scope) {
+    const since = disconnectsOf(login);
     const from = await tokenFor(login);
     if (!from) {
       forgetScoped(login);
@@ -193,7 +198,7 @@ export function createGitHubUser({
     if (!scoping.has(key)) {
       // A Disconnect while GitHub was answering: the new token is ended, not kept, as a refresh's is.
       const making = makeScoped(login, from, scope).then(async (made) => {
-        if (!made || userSettings.view(login).github.connected) return made;
+        if (!made || (disconnectsOf(login) === since && userSettings.view(login).github.connected)) return made;
         console.log('githubUser: disconnected while a scoped token was made, ending it', { login, repo: scope.repo });
         await revoke(login, made.token);
         return null;
@@ -238,6 +243,7 @@ export function createGitHubUser({
    */
   async function disconnect(login) {
     const key = loginKey(login);
+    disconnects.set(key, disconnectsOf(login) + 1);
     const held = cache.get(key) ?? (await userSettings.githubCredentials(login));
     cache.delete(key);
     const scopedHeld = forgetScoped(login);

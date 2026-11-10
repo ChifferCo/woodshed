@@ -6,13 +6,16 @@ import { createUserSettings } from './userSettings.mjs';
 
 const HOUR = 3_600_000;
 
-function setup({ secret = 'cs' } = {}) {
+function setup({ secret = 'cs', removeMs = 0 } = {}) {
   let clock = Date.parse('2026-10-23T10:00:00Z');
   const values = new Map();
   const secrets = {
     read: async (name) => values.get(name) ?? null,
     save: async (name, value) => { values.set(name, value); },
-    remove: async (name) => { values.delete(name); },
+    remove: async (name) => {
+      if (removeMs) await new Promise((resolve) => setTimeout(resolve, removeMs));
+      values.delete(name);
+    },
   };
   const store = { state: {}, save() {} };
   const userSettings = createUserSettings({ store, secrets, now: () => clock });
@@ -214,4 +217,15 @@ test('a scoped token GitHub makes while Disconnect runs is ended, and never hand
   assert.equal(await asking, null);
   assert.deepEqual(github.revoked, ['ghu_first', 'ghu_scoped_1']);
   assert.equal(await user.scopedTokenFor('octocat', TOOLS), null, 'nothing kept for the next ask');
+});
+
+test('a scoped token GitHub returns while Disconnect still deletes the stored token is ended too', async () => {
+  const { user, github } = setup({ removeMs: 30 });
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
+  const asking = user.scopedTokenFor('octocat', TOOLS);
+  const disconnecting = user.disconnect('octocat');
+  assert.equal(await asking, null, 'GitHub answered before the record was gone: still not handed out');
+  await disconnecting;
+  assert.deepEqual([...github.revoked].sort(), ['ghu_first', 'ghu_scoped_1']);
+  assert.equal(await user.scopedTokenFor('octocat', TOOLS), null);
 });
