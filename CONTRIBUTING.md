@@ -21,7 +21,8 @@ request from someone who has not agreed to it is not merged.
 The checks on a pull request from a fork run after a maintainer approves them.
 
 Title your pull request in [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) form,
-`type(scope): summary`, such as `fix(console): keep the rail open on reload`. Pull requests are squash-merged, and the
+`type(scope): summary`, such as `fix(console): keep the rail open on reload`. For a change to a page, add screenshots
+from the dev console: `scripts/prAssets.sh <pr>-<slug> name.png=path` pushes them and prints the URLs to embed. Pull requests are squash-merged, and the
 title becomes the commit message.
 
 ## Licenses

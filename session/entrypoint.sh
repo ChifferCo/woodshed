@@ -40,7 +40,8 @@
 #   REVIEW_ONLY          1: claude opens with no prompt, for a session started only to read a PR or branch's review
 #   ATTACHMENTS          how many files were attached to New session: fetched from the console into /tmp/uploads
 #                        and listed under the prompt
-#   SESSION_URL          the session's page on the console, linked from the PR body (unlinked without it)
+#   SESSION_URL          the session's page on the console, linked from the PR body (unlinked without it, and on
+#                        another project's repo)
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -57,7 +58,7 @@
 #                        package registry's token; claude's terminal has them too
 #   WOODSHED_INSTALL_SECRETS  those variables' names, space-separated (the install_secrets Terraform variable, or the
 #                        local provider's WOODSHED_CLOUD_INSTALL_SECRETS): an ask session unsets each
-#   SESSION_MODE=ask     a question from Slack (console/asks.mjs): master, read only, no databases, Redis or app.
+#   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
 set -euo pipefail
 
@@ -126,6 +127,12 @@ useProjectRepo() {
     return 0
   fi
   withholdInstallationSecrets
+  # The console's address is the installation's own. Another project's repo may be public, so its pull requests name
+  # Woodshed Cloud without linking the session's page.
+  if [ -n "${SESSION_URL:-}" ]; then
+    unset SESSION_URL
+    log "Session link left out of pull requests (another project)"
+  fi
   dir="$(dirname "$REPO_DIR")/${PROJECT_REPO##*/}"
   local base=$dir n=1
   [ ! -e "$dir" ] || dir="$base-project"

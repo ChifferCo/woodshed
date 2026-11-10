@@ -1,0 +1,114 @@
+name: Session runtime image
+
+# Publishes session/Dockerfile's `runtime` stage, everything in the session image that is the same for every repository,
+# as ghcr.io/chifferco/woodshed-session-runtime: `:latest` and `:<commit>`, for x86 and Arm. install.sh builds a
+# repository's session image on it, so a machine builds only the checkout and its installs. Built again when the
+# Dockerfile changes and every Monday, for the week's system packages (BASE_WEEK). Claude is not in it: it changes
+# daily, and the installs built on the runtime would then run again daily too. `:latest` comes from main alone; a run
+# by hand from another branch publishes only `:<commit>`.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - session/Dockerfile
+      - .github/workflows/sessionRuntime.yml
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: session-runtime
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/chifferco/woodshed-session-runtime
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pick the build args
+        id: args
+        run: |
+          # The ISO week decides when the system packages are built again
+          echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the runtime by digest
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: session/Dockerfile
+          target: runtime
+          platforms: linux/${{ matrix.arch }}
+          build-args: |
+            BASE_WEEK=${{ steps.args.outputs.week }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=runtime-${{ matrix.arch }}
+          cache-to: type=gha,scope=runtime-${{ matrix.arch }},mode=max
+
+      - name: Keep the digest for the manifest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          # One empty file per architecture, named for its digest
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: digest-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: digest-*
+          path: /tmp/digests
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag both architectures as one image
+        working-directory: /tmp/digests
+        run: |
+          # :<commit>, and :latest from main only, name the x86 and Arm builds together
+          tags=(-t "$IMAGE:$GITHUB_SHA")
+          if [ "$GITHUB_REF" = refs/heads/main ]; then tags+=(-t "$IMAGE:latest"); fi
+          # shellcheck disable=SC2046 # one digest per file name
+          docker buildx imagetools create "${tags[@]}" $(printf "$IMAGE@sha256:%s " *)
+          docker buildx imagetools inspect "$IMAGE:$GITHUB_SHA"

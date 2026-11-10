@@ -1,11 +1,11 @@
 name: Check
 
 # Woodshed has no dependencies and no build step, so its whole check is its tests and a shellcheck of its scripts.
-# The repository's ruleset requires the `test` job on master.
+# The repository's ruleset requires the `test` job on main.
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
@@ -36,6 +36,6 @@ jobs:
 
       - name: Shellcheck the scripts
         run: |
-          # Catches quoting and unset-variable mistakes in the installer and the session image's scripts
+          # Catches quoting and unset-variable mistakes in the installer, the session image's scripts and scripts/
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck --severity=error install.sh session/*.sh
+          shellcheck --severity=error install.sh session/*.sh scripts/*.sh

@@ -20,7 +20,7 @@ test('messageToTrigger drops other labels, non-commands and anything malformed',
   assert.equal(messageToTrigger(null, { label: 'woodshed' }), null);
 });
 
-test('a GitHub message reaches the fleet only when it is about the default project\'s repo', async () => {
+test('a GitHub message reaches the fleet naming the project of its repo, and one from a repo that is no project is dropped', async () => {
   const config = {
     projects: [
       { name: 'app', repo: 'acme/app', default: true },
@@ -31,26 +31,36 @@ test('a GitHub message reaches the fleet only when it is about the default proje
   const needs = [];
   const prs = [];
   const fleet = {
-    handleWebhookTrigger: async (t) => { triggers.push(t.number); return { outcome: 'routed' }; },
-    handleNeedsHuman: async (b) => { needs.push(b.number); return { outcome: 'told' }; },
+    handleWebhookTrigger: async (t) => { triggers.push([t.number, t.project ?? null]); return { outcome: 'routed' }; },
+    handleNeedsHuman: async (b) => { needs.push([b.number, b.project ?? null]); return { outcome: 'told' }; },
     webhooksAlive() {},
   };
   const appIdentity = { available: true, login: async () => 'woodshed-app[bot]' };
-  const pulls = { handle: async (b) => { prs.push(b.number); } };
+  const pulls = { handle: async (b) => { prs.push([b.number, b.project ?? null]); } };
   const { dispatch } = createWebhookDispatch({ label: 'woodshed', config, fleet, pulls, appIdentity });
   const send = (message) => dispatch({ text: JSON.stringify(message) });
 
-  assert.equal(await send({ ...comment, number: 12, repo: 'acme/tools' }), true, 'another project\'s: dropped, not retried');
-  assert.equal(await send({ ...label, number: 12, repo: 'Other/Repo' }), true, 'a repo that is not a project: dropped');
-  assert.equal(await send({ source: 'github', type: 'needsHuman', number: 12, login: 'woodshed-app[bot]', repo: 'acme/tools' }), true);
-  assert.equal(await send({ source: 'github', type: 'pr', number: 12, numbers: [12], repo: 'acme/tools' }), true);
-  assert.deepEqual([triggers, needs, prs], [[], [], []], 'nothing acted on the default repo\'s #12');
+  assert.equal(await send({ ...label, number: 12, repo: 'Other/Repo' }), true, 'a repo that is not a project: dropped, not retried');
+  assert.deepEqual([triggers, needs, prs], [[], [], []]);
+
+  await send({ ...comment, number: 12, repo: 'acme/tools' });
+  await send({ ...label, number: 14, repo: 'acme/tools' });
+  await send({ source: 'github', type: 'needsHuman', number: 12, login: 'woodshed-app[bot]', repo: 'acme/tools' });
+  await send({ source: 'github', type: 'pr', number: 12, numbers: [12], repo: 'acme/tools' });
+  assert.deepEqual(triggers, [[12, 'tools'], [14, 'tools']], 'another project\'s: handed on naming it, so it never acts on the default repo\'s #12');
+  assert.deepEqual(needs, [[12, 'tools']]);
+  assert.deepEqual(prs, [[12, 'tools']]);
 
   await send({ ...comment, number: 9, repo: 'ACME/app' });
   await send({ ...comment, number: 10 });
   await send({ source: 'github', type: 'needsHuman', number: 11, login: 'woodshed-app[bot]', repo: 'acme/app' });
   await send({ source: 'github', type: 'pr', number: 13, numbers: [13], repo: 'acme/app' });
-  assert.deepEqual(triggers, [9, 10], 'the default repo\'s, in any case, and one from a Lambda that named no repo');
-  assert.deepEqual(needs, [11]);
-  assert.deepEqual(prs, [13]);
+  assert.deepEqual(triggers.slice(2), [[9, null], [10, null]], 'the default repo\'s, in any case, and one from a Lambda that named no repo, as before');
+  assert.deepEqual(needs.slice(1), [[11, null]]);
+  assert.deepEqual(prs.slice(1), [[13, null]]);
+});
+
+test('messageToTrigger keeps the project of another project\'s message', () => {
+  assert.equal(messageToTrigger({ ...label, project: 'tools' }, { label: 'woodshed' }).project, 'tools');
+  assert.equal(messageToTrigger({ ...comment, project: 'tools' }, { label: 'woodshed' }).project, 'tools');
 });

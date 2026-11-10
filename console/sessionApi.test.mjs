@@ -428,18 +428,31 @@ test('a session gets the token of the project it runs on', async (t) => {
   assert.equal((await request(port, { authorization: 'Bearer asking-tools' })).body.token, 'ghs_tools_read', 'an ask session gets its project\'s read-only one');
 });
 
-test('an owner\'s own GitHub token goes only to their sessions on the default project', async (t) => {
+test('an owner\'s sessions push as them: their own token on the default project, scoped to the repo on another', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'mine-on-app', owner: 'mia', project: 'app', repo: 'acme/app' },
     { id: 'bbbbbbbb', status: 'running', token: 'mine-on-tools', owner: 'mia', project: 'tools', repo: 'other/tools' },
+    { id: 'cccccccc', status: 'running', token: 'shared-on-tools', project: 'tools', repo: 'other/tools' },
+    { id: 'dddddddd', status: 'running', token: 'anas-on-tools', owner: 'ana', project: 'tools', repo: 'other/tools' },
+    { id: 'eeeeeeee', status: 'running', token: 'gone-on-tools', owner: 'gone', project: 'tools', repo: 'other/tools' },
   ];
   const source = (token) => ({ token: async () => ({ token, expiresAt: Date.parse('2026-11-10T13:00:00Z') }) });
+  const permissions = { contents: 'write', pull_requests: 'write' };
   const byProject = {
-    app: { project: 'app', default: true, sessions: source('ghs_app'), asks: source('ghs_app_read') },
-    tools: { project: 'tools', default: false, sessions: source('ghs_tools'), asks: source('ghs_tools_read') },
+    app: { project: 'app', default: true, repo: 'acme/app', permissions, sessions: source('ghs_app'), asks: source('ghs_app_read') },
+    tools: { project: 'tools', default: false, repo: 'other/tools', permissions, sessions: source('ghs_tools'), asks: source('ghs_tools_read') },
   };
   const asked = [];
-  const githubUser = { tokenFor: async (login) => { asked.push(login); return { token: 'ghu_mia', expiresAt: Date.parse('2026-11-10T13:00:00Z') }; } };
+  const scopedAsks = [];
+  const githubUser = {
+    tokenFor: async (login) => { asked.push(login); return { token: `ghu_${login}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') }; },
+    scopedTokenFor: async (login, scope) => {
+      scopedAsks.push([login, scope]);
+      if (login === 'ana') return null;
+      if (login === 'gone') throw Object.assign(new Error('GitHub no longer accepts @gone\'s authorization'), { shown: true });
+      return { token: `ghu_${login}_scoped`, expiresAt: Date.parse('2026-11-10T13:00:00Z') };
+    },
+  };
   const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: source('unused'), githubUser, tokensFor: (session) => byProject[session.project] });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -447,6 +460,12 @@ test('an owner\'s own GitHub token goes only to their sessions on the default pr
   const { port } = server.address();
 
   assert.equal((await request(port, { authorization: 'Bearer mine-on-app' })).body.token, 'ghu_mia', 'the default project: the owner\'s own, as before');
-  assert.equal((await request(port, { authorization: 'Bearer mine-on-tools' })).body.token, 'ghs_tools', 'another project: its App token, reaching its repo alone');
-  assert.deepEqual(asked, ['mia'], 'the owner\'s token is not even read for the other project');
+  assert.equal((await request(port, { authorization: 'Bearer mine-on-tools' })).body.token, 'ghu_mia_scoped', 'another project: the owner\'s, scoped to its repo');
+  assert.deepEqual(scopedAsks[0], ['mia', { repo: 'other/tools', permissions }]);
+  assert.deepEqual(asked, ['mia'], 'the full token is only read for the default project');
+  assert.equal((await request(port, { authorization: 'Bearer shared-on-tools' })).body.token, 'ghs_tools', 'a shared session: the project\'s App token');
+  assert.equal((await request(port, { authorization: 'Bearer anas-on-tools' })).body.token, 'ghs_tools', 'no scoped token: the project\'s App token, never the full one');
+  const refused = await request(port, { authorization: 'Bearer gone-on-tools' });
+  assert.equal(refused.status, 409, 'an owner GitHub no longer accepts is told so, as on the default project');
+  assert.match(refused.body.error, /no longer accepts/);
 });

@@ -11,10 +11,12 @@
 # Optional settings: WOODSHED_REPO (owner/name, asked otherwise), WOODSHED_HOME (~/.woodshed), WOODSHED_GIT (where the
 # code is cloned from), WOODSHED_NETWORK (a docker network sessions join to reach the repository's own services, such
 # as its compose file's `<folder>_default`), WOODSHED_REBUILD=1 (build the session image again), WOODSHED_NO_START=1
-# (set up only).
+# (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on; empty builds it here).
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
+# Everything in the session image that is the same for every repository (session/Dockerfile's `runtime` stage).
+SESSION_RUNTIME_DEFAULT=ghcr.io/chifferco/woodshed-session-runtime:latest
 CONSOLE_PORT=7690
 # Off Postgres's and Mongo's usual ports, so the databases a laptop already runs keep theirs.
 PG_PORT=15432
@@ -124,9 +126,24 @@ buildImage() {
   mkdir -p "$context/woodshed"
   cp -R "$src/session" "$src/shared" "$context/woodshed/"
   (cd "$repoDir" && bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
+  local runtime
+  runtime=$(sessionRuntime)
   say "Building the session image $image (the first build takes several minutes)"
   GH_TOKEN=$token docker build -f "$context/woodshed/session/Dockerfile" --secret id=gh_token,env=GH_TOKEN \
-    --build-arg REPO="$repo" --build-arg REPO_DIR="/work/${repo#*/}" -t "$image" "$context"
+    --build-arg RUNTIME="$runtime" --build-arg REPO="$repo" --build-arg REPO_DIR="/work/${repo#*/}" -t "$image" "$context"
+}
+
+# What the session image is built on: the published runtime when it can be pulled, which saves building Chromium, the
+# CLIs and the system packages here, or `runtime`, the Dockerfile's own stage, which builds them.
+sessionRuntime() {
+  local runtime=${WOODSHED_SESSION_RUNTIME-$SESSION_RUNTIME_DEFAULT}
+  if [ -n "$runtime" ] && docker pull --quiet "$runtime" >/dev/null 2>&1; then
+    say "Building on $runtime" >&2
+    printf '%s' "$runtime"
+  else
+    [ -z "$runtime" ] || say "Could not pull $runtime; building the whole image here" >&2
+    printf runtime
+  fi
 }
 
 randomSecret() { node -p 'require("node:crypto").randomBytes(24).toString("hex")'; }

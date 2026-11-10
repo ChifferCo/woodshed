@@ -575,3 +575,28 @@ test('a suite without a re-run tag tells the session to push a commit, with no t
   assert.doesNotMatch(told[0], /\[e2e\]|\[review\]|subject does not have/);
   assert.match(told[0], /git commit --allow-empty -m "Run the e2e suite"/);
 });
+
+test('another project\'s pull request is read on its repo, with its gates, and a webhook marks it by project', async () => {
+  const { announcer, github, slack, store, session } = setup();
+  const toolsReads = [];
+  const tools = {
+    ...github,
+    pull: async (number) => { toolsReads.push(number); return github.pull(number); },
+  };
+  const gatesAsked = [];
+  const two = createPrAnnouncer({
+    store, github, githubOf: (name) => (name === 'tools' ? tools : null), slack,
+    gates: async (project) => { gatesAsked.push(project); return GATES; }, events: {},
+  });
+  const onTools = { ...session, id: 's2', prUrl: 'https://github.com/acme/tools/pull/7' };
+  await two.track(session, { name: 'app', default: true });
+  await two.track(onTools, { name: 'tools', default: false });
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.project ?? null]), [[7, null], [7, 'tools']], 'two different #7s');
+  assert.deepEqual(toolsReads, [7]);
+  assert.deepEqual(two.stale([7], 'tools'), [7]);
+  assert.deepEqual(two.stale([8], 'tools'), []);
+  await two.check();
+  assert.deepEqual(gatesAsked, [null, 'tools'], 'each read with its own project\'s gates');
+  assert.equal(slack.posts.length, 2);
+  assert.deepEqual(store.state.slackPending, []);
+});

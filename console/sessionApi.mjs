@@ -129,11 +129,22 @@ export function createSessionApi({
     }
     const own = tokensFor?.(session);
     // The owner's own token reaches every repo the App is on that they can write to, not only the session's project's.
-    // So only a session on the default project gets it; one on another project gets that project's App token, which
-    // reaches its repo alone. Its commits are still the owner's: the git identity comes from /settings.
+    // So only a session on the default project gets it as it is; one on another project gets it scoped by GitHub to
+    // that project's repo alone, and when GitHub makes none, that project's App token, which reaches its repo alone.
     const ownerToken = session.owner && githubUser && (!own || own.default);
-    if (session.owner && githubUser && !ownerToken) {
-      console.log('sessionApi: owner\'s github token withheld, the session is on another project', { sessionId: session.id, project: own.project, token: 'installation' });
+    if (session.owner && githubUser && !ownerToken && !isAsk(session) && githubUser.scopedTokenFor) {
+      let scopedToken;
+      try {
+        scopedToken = await githubUser.scopedTokenFor(session.owner, { repo: own.repo, permissions: own.permissions });
+      } catch (err) {
+        if (!err.shown) throw err;
+        return reply(res, 409, { error: err.message });
+      }
+      if (scopedToken) {
+        console.log('sessionApi: owner\'s github token handed out, scoped to the project', { sessionId: session.id, owner: session.owner, project: own.project, token: 'owner-scoped' });
+        return reply(res, 200, { token: scopedToken.token, expiresAt: new Date(scopedToken.expiresAt).toISOString() });
+      }
+      console.log('sessionApi: no scoped owner token for the session\'s project, the App\'s instead', { sessionId: session.id, project: own.project, token: 'installation' });
     }
     if (ownerToken) {
       let user;

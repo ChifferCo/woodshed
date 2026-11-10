@@ -1684,3 +1684,85 @@ test('a private session on another project records it, clones its repo, and read
   assert.deepEqual([onDefault.project, onDefault.repo], ['r', 'o/r']);
   assert.equal(calls.started[1].env.PROJECT_REPO, undefined, 'the image\'s own repo: nothing to clone');
 });
+
+// Another project's issues and pull requests are its repo's: its #12 is not the default project's #12.
+function twoProjects({ toolWriters = ['joel'] } = {}) {
+  const projects = [{ name: 'r', repo: 'o/r', default: true }, { name: 'tools', repo: 'o/tools', default: false }];
+  const toolCalls = { comments: [], reactions: [], canWrite: [], issues: [], pulls: [] };
+  const tools = {
+    async canWrite(login) { toolCalls.canWrite.push(login); return toolWriters.includes(login); },
+    async issue(number) { toolCalls.issues.push(number); return { title: `Tools ${number}` }; },
+    async pull(number) { toolCalls.pulls.push(number); return { head: { ref: 'tools/pr' }, state: 'open' }; },
+    async comment(number, body) { toolCalls.comments.push({ number, body }); return 7000 + toolCalls.comments.length; },
+    async reactToIssue(number) { toolCalls.reactions.push({ issue: number }); },
+    async reactToComment(id) { toolCalls.reactions.push({ comment: id }); },
+    async removeLabel() { return true; },
+    async issueProjectItems() { return []; },
+  };
+  const ctx = setup({ projects, githubFor: (project) => (project.name === 'tools' ? tools : null) });
+  return { ...ctx, projects, tools, toolCalls };
+}
+
+test('a label or /woodshed comment on another project\'s issue starts a session on that project, on its repo', async () => {
+  const { fleet, calls, toolCalls } = twoProjects();
+  const started = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  assert.equal(started.outcome, 'started');
+  const session = fleet.find(started.sessionId);
+  assert.deepEqual([session.project, session.repo, session.number, session.title], ['tools', 'o/tools', 12, 'Tools 12']);
+  assert.equal(calls.started[0].env.PROJECT_REPO, 'o/tools', 'the session clones the project\'s repo');
+  assert.deepEqual(toolCalls.canWrite, ['joel'], 'write access is checked on the project\'s repo');
+  assert.deepEqual(toolCalls.issues, [12]);
+  assert.deepEqual(toolCalls.reactions, [{ issue: 12 }]);
+  assert.equal(toolCalls.comments.length, 1, 'the start comment goes on the project\'s issue');
+  assert.deepEqual([calls.comments, calls.reactions], [[], []], 'nothing on the default repo\'s #12');
+});
+
+test('another project\'s #12 and the default project\'s #12 are different issues', async () => {
+  const { fleet, calls, toolCalls } = twoProjects();
+  const onDefault = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: 'Default 12', kind: 'issue' });
+  const onTools = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: 'Tools 12', kind: 'issue', project: 'tools' });
+  assert.equal(onTools.outcome, 'started', 'a session on the default #12 does not stop one on the project\'s #12');
+  assert.notEqual(onTools.sessionId, onDefault.sessionId);
+  // A comment on the project's #12 goes to its session, not the default project's.
+  const sent = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'comment', text: 'and this', commentId: 501, project: 'tools' });
+  assert.deepEqual([sent.outcome, sent.sessionId], ['sent', onTools.sessionId]);
+  assert.deepEqual(toolCalls.reactions.at(-1), { comment: 501 });
+  assert.equal(calls.reactions.filter((r) => r.comment === 501).length, 0);
+});
+
+test('a project the console no longer has, or a writer of the default repo only, starts nothing on another project', async () => {
+  const { fleet, calls, toolCalls } = twoProjects({ toolWriters: [] });
+  const gone = await fleet.handleTrigger({ number: 3, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'gone' });
+  assert.equal(gone.outcome, 'ignored');
+  const notWriter = await fleet.handleTrigger({ number: 3, login: 'joel', trigger: 'label', title: '', kind: 'issue', project: 'tools' });
+  assert.deepEqual(notWriter, { outcome: 'ignored', reason: 'no write access to the repo' });
+  assert.deepEqual([calls.started, toolCalls.comments], [[], []]);
+});
+
+test('a webhook label is claimed per project, so the same number on two repos is two labels', async () => {
+  const { fleet } = twoProjects();
+  const at = '2026-10-21T10:00:00.000Z';
+  const first = await fleet.handleWebhookTrigger({ number: 8, login: 'joel', trigger: 'label', title: 'x', kind: 'issue', at });
+  const other = await fleet.handleWebhookTrigger({ number: 8, login: 'joel', trigger: 'label', title: 'y', kind: 'issue', at, project: 'tools' });
+  const again = await fleet.handleWebhookTrigger({ number: 8, login: 'joel', trigger: 'label', title: 'y', kind: 'issue', at, project: 'tools' });
+  assert.deepEqual([first.outcome, other.outcome, again.outcome], ['started', 'started', 'duplicate']);
+});
+
+test('a Needs a human comment and a pull request change reach the session on that project\'s repo alone', async () => {
+  const { fleet, store, toolCalls } = twoProjects();
+  const onDefault = fleet.find((await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: 'd', kind: 'issue' })).sessionId);
+  const onTools = fleet.find((await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: 't', kind: 'issue', project: 'tools' })).sessionId);
+  const needsDefault = await fleet.handleNeedsHuman({ number: 12, commentId: 801 });
+  const needsTools = await fleet.handleNeedsHuman({ number: 12, commentId: 802, project: 'tools' });
+  assert.equal(needsDefault.sessionId, onDefault.id);
+  assert.equal(needsTools.sessionId, onTools.id);
+  const needsGone = await fleet.handleNeedsHuman({ number: 12, commentId: 803, project: 'gone' });
+  assert.equal(needsGone.sessionId, undefined);
+  // A kept session's pull request is read again for its retention when its own repo's webhook says it changed.
+  for (const [s, url] of [[onDefault, 'https://github.com/o/r/pull/40'], [onTools, 'https://github.com/o/tools/pull/40']]) Object.assign(s, { prUrl: url, kept: true, status: 'stopped', stoppedAt: '2026-10-21T09:30:00.000Z' });
+  store.save();
+  await fleet.tick();
+  assert.deepEqual(toolCalls.pulls, [40], 'the kept tools session\'s pull request is read on its own repo');
+  assert.deepEqual(fleet.pullsChanged([40], 'tools'), [40]);
+  assert.deepEqual(fleet.pullsChanged([40], 'gone'), [], 'a project the console does not have marks nothing');
+});

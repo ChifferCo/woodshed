@@ -28,7 +28,9 @@ own `gh` token, which reaches far more than one repo.
 
 On a laptop, `install.sh` at Woodshed's root does steps 1 to 5 for one repository, with everything in `~/.woodshed`:
 `bash woodshed/install.sh`, or `curl -fsSL https://woodshed.run/install | bash` with no checkout. It reads your
-`gh` token to fetch the repository and builds the image as `woodshed-session:<owner>-<name>`. When the repository's
+`gh` token to fetch the repository and builds the image as `woodshed-session:<owner>-<name>`, on the published
+runtime (`ghcr.io/chifferco/woodshed-session-runtime`, `session/README.md`) when it can pull it, so the machine builds
+only the checkout and its installs. When the repository's
 project file has `databases`, it starts the server of each engine they are on, Postgres on 15432 and Mongo on
 17017, so a laptop's own databases keep theirs, and each session gets its own copy; with none it starts neither, and
 sessions get none.
@@ -143,7 +145,8 @@ and what tripped up the first install on a plain VM (Ubuntu 24.04, for a repo wi
   the origin through `WOODSHED_CLOUD_SESSION_ENV_FILE`, which every session gets, so the machine's name stays out of
   the repo.
 - **The session image is built on the machine**, for the repo `WOODSHED_CLOUD_REPO` names, and nothing rebuilds it:
-  build it again when an install's files or `.woodshed/project.yaml` change, or every session reinstalls.
+  build it again when an install's files or `.woodshed/project.yaml` change, or every session reinstalls. A rebuild
+  also picks up the day's Claude CLI and, on the published runtime, the week's system packages.
 - **Claude tokens.** Each person saves theirs on My settings, made with `claude setup-token`. A token copied across a
   wrapped line can lose a character and still look right: claude in the session then says `OAuth access token is
   invalid`. Save it again, then start a new session.

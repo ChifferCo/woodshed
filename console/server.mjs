@@ -127,7 +127,7 @@ import { CLIENT_SECRET, createAuth, safeNext, signInFailure } from './auth.mjs';
 import { loadConfig } from './config.mjs';
 import { createAttachments, MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { createAutoNamer } from './autoName.mjs';
-import { createPrChips } from './prChips.mjs';
+import { createProjectPrChips } from './prChips.mjs';
 import { createPullWebhooks } from './pullWebhooks.mjs';
 import { createDatabaseGate } from './databaseGate.mjs';
 import { createDatabases } from './databases.mjs';
@@ -168,7 +168,7 @@ import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvent
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createAddedProjects, repoChecker } from './addedProjects.mjs';
-import { allProjects, defaultProject, projectFor } from './projects.mjs';
+import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -416,14 +416,15 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
+  githubFor = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // Who may open a shared session is the People list's to say, once sign-in tells people apart.
   const access = auth ? members : null;
-  let skillsCache = null;
-  // One read of GitHub at a time: every keystroke after `/` asks.
-  let skillsReading = null;
+  // Each project's skills, by project name: one read of GitHub at a time for each, since every keystroke after `/` asks.
+  const skillsCaches = new Map();
+  const skillsReadings = new Map();
   const otherPublicNames = new Set(config.extraHosts);
   // Each person's pull requests, for a minute: every My Woodshed page asks on each refresh.
   const pullsCache = new Map();
@@ -1210,19 +1211,28 @@ export function createHandler({
     return toStatusd(req, res, session, { method: 'POST', path: '/scroll', body: { steps: body?.steps, pane: body?.pane } });
   }
 
-  async function skillsReply(res) {
-    if (!github?.skills) return reply(res, 200, { skills: [] });
-    if (skillsCache && Date.now() - skillsCache.at < SKILLS_FRESH_MS) return reply(res, 200, { skills: skillsCache.skills });
-    skillsReading ??= github.skills().then((skills) => {
-      skillsCache = { at: Date.now(), skills };
-      console.log('console: skills read', { count: skills.length });
-    }, (err) => {
-      console.warn('console: skills not readable', { message: String(err?.message ?? err).split('\n')[0] });
-      // Asked again in a minute, not on every launcher that opens meanwhile.
-      skillsCache = { at: Date.now() - SKILLS_FRESH_MS + 60_000, skills: skillsCache?.skills ?? [] };
-    }).finally(() => { skillsReading = null; });
-    await skillsReading;
-    return reply(res, 200, { skills: skillsCache?.skills ?? [] });
+  // The skills of the project New session has picked (`project`), or of the default project when it names none or
+  // one this console does not have.
+  async function skillsReply(res, projectName = null) {
+    const project = (projectName && projectNamed(config, projectName)) || defaultProject(config);
+    const repoGitHub = project.default ? github : (githubFor?.(project) ?? null);
+    if (!repoGitHub?.skills) return reply(res, 200, { skills: [] });
+    const key = project.name;
+    const cached = skillsCaches.get(key);
+    if (cached && Date.now() - cached.at < SKILLS_FRESH_MS) return reply(res, 200, { skills: cached.skills });
+    if (!skillsReadings.has(key)) {
+      const extra = project.default ? {} : { project: project.name };
+      skillsReadings.set(key, repoGitHub.skills().then((skills) => {
+        skillsCaches.set(key, { at: Date.now(), skills });
+        console.log('console: skills read', { count: skills.length, ...extra });
+      }, (err) => {
+        console.warn('console: skills not readable', { message: String(err?.message ?? err).split('\n')[0], ...extra });
+        // Asked again in a minute, not on every launcher that opens meanwhile.
+        skillsCaches.set(key, { at: Date.now() - SKILLS_FRESH_MS + 60_000, skills: skillsCaches.get(key)?.skills ?? [] });
+      }).finally(() => { skillsReadings.delete(key); }));
+    }
+    await skillsReadings.get(key);
+    return reply(res, 200, { skills: skillsCaches.get(key)?.skills ?? [] });
   }
 
   // A pin is the asker's own; a rename is the session's, for everyone who can see it.
@@ -1484,7 +1494,14 @@ export function createHandler({
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
-    if (pathname === '/api/skills') return skillsReply(res);
+    if (pathname === '/api/skills') {
+      // Another project's list only for someone who may start sessions on it, as New session offers it; anyone else,
+      // and a project this console does not have, gets the default project's.
+      const asked = new URL(req.url || '/', 'http://app.invalid').searchParams.get('project');
+      const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
+      if (asked && projectAccess && !allowed) console.log('console: skills of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
+      return skillsReply(res, projectAccess ? allowed?.name ?? null : asked);
+    }
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
@@ -1769,6 +1786,15 @@ export async function startConsole({ provider, config: given = null }) {
   console.log('console: Slack posts', { available: slack.available, channel: slack.view().channel || null });
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
   const projectReader = createProjectReader({ github });
+  // Each project's file, from its own repo: the gates its pull requests wait for. The default project's is the one above.
+  const projectReaders = new Map([[defaultProject(config).name, projectReader]]);
+  const readerOf = (name) => {
+    const project = (name && projectNamed(config, name)) || defaultProject(config);
+    // Keyed by repo too: a repo removed and added again may be another repo under the same name.
+    const key = project.default ? project.name : `${project.name}\n${project.repo}`;
+    if (!projectReaders.has(key)) projectReaders.set(key, createProjectReader({ github: githubFor(project) }));
+    return projectReaders.get(key);
+  };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
   const people = createGitHubPeople({ store, github });
@@ -1780,12 +1806,12 @@ export async function startConsole({ provider, config: given = null }) {
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const pullWebhooks = createPullWebhooks();
-  const prChips = createPrChips({ github, repo: defaultProject(config).repo, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
+  const prChips = createProjectPrChips({ projects: allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: projectReader.pullRequests, databasesRefusal: databaseGate.refusal, githubFor,
+    pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -1813,12 +1839,21 @@ export async function startConsole({ provider, config: given = null }) {
   });
   await dbRestore.recover();
   const viewPrefs = createViewPrefs(store);
+  // The Review tab reads the session's branch on its project's repo.
+  const reviewSources = new Map();
+  const projectReview = (session) => {
+    const project = projectFor(config, session);
+    const key = `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
+    if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
+    return reviewSources.get(key)(session);
+  };
   const handle = createHandler({
-    config, fleet, settings, events, auth, review: createReviewSource({ github }), userSettings, github, githubUser, homes, databases, tunnel, slack,
+    config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects,
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => Boolean(auth?.enabled()) }),
+    githubFor,
   });
   const hosts = knownHosts(config);
   const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares });

@@ -22,6 +22,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `shared/` | Modules the console and the sessions both run, and other tools can embed: review, the project file's reader, the terminal and same-origin helpers | [shared/README.md](../shared/README.md) |
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
+| `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request | |
 
 Imports go one way, and `test/layout.test.mjs` checks every one:
 - `shared/` imports nothing outside itself.
@@ -145,7 +146,8 @@ default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local
 | --- | --- |
 | Commits | `woodshed-bot <woodshed-bot@users.noreply.github.com>`; in a private session whose owner connected GitHub, the owner's name and noreply address |
 | Pushes, PRs, comments, reactions | The installation's GitHub App, as `<slug>[bot]` ; a connected owner's private session pushes and opens PRs as them, "via `<slug>`" |
-| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)" |
+| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)". On another project's repo, which may be public, the console is not linked: "Started by @<login> via Woodshed Cloud." |
+| Attribution | Claude Code's own `Co-Authored-By` trailer and PR footer, unless the repo's `.claude/settings.json` turns them off (`attribution`), as this one does |
 
 The only long-lived GitHub credential is the App's private key, in
 `woodshed-cloud/github-app-key`, which only the console reads (it never touches
@@ -248,7 +250,7 @@ An installation works on one repo, and nothing in this folder names one. To set 
 
 - **The default branch** is whatever the remote says (`HEAD`), read at each session's start into `DEFAULT_BRANCH`, so a repo
   may use `main`, `trunk` or any name. The image workflow's `if`s read `github.event.repository.default_branch`; the infra
-  workflow's `push` trigger cannot, so a repo whose default is not `master` edits its `branches:` line.
+  workflow's `push` trigger cannot, so a repo whose default is not `main` edits its `branches:` line.
 - **Which services a session needs** follow the project file: its `databases`, and Redis, started only when its
   `env` or `envFiles` mention `REDIS_URL` (`usesVariable` in `shared/project.mjs`; the start logs `Redis started` or
   `Redis not started`, and Data ▾ offers Redis only then). A shared service is the installation's: an env file line needing a variable that is not set
@@ -270,7 +272,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 jobs:
   review:
-    permissions: { contents: read, pull-requests: write, issues: read, id-token: write, checks: write }
+    permissions: { contents: write, pull-requests: write, issues: read, id-token: write, checks: write }
     uses: <woodshed's repo>/.github/workflows/review.yml@<commit>
     with:
       tag: '[review]'
@@ -296,7 +298,12 @@ Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
 
 An input left empty takes its default. The rules, the instructions and the risk areas are read from the branch the pull request merges into, so a pull request cannot soften
 its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
-approval is refused. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
+approval is refused. On an approval, the review resolves its own threads that later commits made outdated, so a
+ruleset that requires conversation resolution is not blocked by fixed findings; a person's thread, and one of the
+review's still on current code, stay open. That runs in a job of its own, with no checkout and no Claude, because
+resolving a thread needs `contents: write`, which the calling job grants and the reviewer's job never takes. A repo
+that already calls the review adds `contents: write` to its calling job when it moves to a commit with this job: GitHub
+refuses to start a called workflow whose job asks for more than the caller grants. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.
 
 ## Databases
