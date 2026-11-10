@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installsManifest, loadProject, neededDatabases, parseProject, renderLine, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
-import { fixtureApp, fixtureProject } from './projectFixture.mjs';
+import { checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
 
@@ -308,4 +308,78 @@ test('a project needs the engine of each of its databases, whatever its env line
   assert.deepEqual(neededDatabases({ ...EMPTY_PROJECT, databases: [{ ...database, engine: 'postgres' }, database] }), ['postgres', 'mongo']);
   assert.deepEqual(neededDatabases({ ...EMPTY_PROJECT, envFiles: [{ path: 'a/.env', secret: null, lines: ['H={{PGHOST}}'] }] }), [],
     'a line naming an engine\'s variable is no database: it is left unset');
+});
+
+test('a repo with no project file of its own reads the installation\'s, matched in any case, from: installation', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'Acme/APP': fixtureProject({ dependencies: { installs: [API_INSTALL] } }) });
+  const project = loadProject(checkout, { projectFilesDir: dir });
+  assert.deepEqual([project.from, project.dependencies.installs], ['installation', [API_INSTALL]]);
+  assert.equal(installationProjectFile({ dir, repo: 'ACME/app' }).path, path.join(dir, 'Acme/APP.yaml'));
+  assert.equal(loadProject(checkout, { projectFilesDir: dir, repo: 'other/app' }).from, 'none', 'another repo\'s file is not this one\'s');
+});
+
+test('the repo\'s own project file wins over the installation\'s, on its checkout or its default branch', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject({ editor: true }) });
+  fs.mkdirSync(path.join(checkout, '.woodshed'));
+  fs.writeFileSync(path.join(checkout, '.woodshed/project.yaml'), fixtureProject({ dependencies: { installs: [API_INSTALL] } }));
+  const own = loadProject(checkout, { projectFilesDir: dir });
+  assert.deepEqual([own.from, own.editor, own.dependencies.installs], ['checkout', false, [API_INSTALL]]);
+  const git = (...args) => execFileSync('git', ['-C', checkout, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'ignore' });
+  git('add', '.');
+  git('commit', '-q', '-m', 'project');
+  git('update-ref', `refs/remotes/origin/${process.env.DEFAULT_BRANCH || 'main'}`, 'HEAD');
+  git('rm', '-q', '.woodshed/project.yaml');
+  assert.deepEqual([loadProject(checkout, { projectFilesDir: dir }).from, loadProject(checkout, { projectFilesDir: dir }).editor], ['default branch', false]);
+});
+
+test('a missing folder or file of the installation\'s is an empty project, as a repo with no file is', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const none = { ...EMPTY_PROJECT, from: 'none' };
+  assert.deepEqual(loadProject(checkout, { projectFilesDir: path.join(scratch(t), 'missing') }), none);
+  assert.deepEqual(loadProject(checkout, { projectFilesDir: fixtureProjectFiles(scratch(t), { 'acme/web': fixtureProject() }) }), none);
+  assert.deepEqual(loadProject(checkout, { projectFilesDir: fixtureProjectFiles(scratch(t), { 'other/app': fixtureProject() }) }), none);
+  assert.deepEqual(loadProject(checkout, { projectFilesDir: null }), none);
+});
+
+test('a malformed installation file stops the read as a malformed repo file does, naming the field and the file', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': 'version: 1\nenvfiles: []\n' });
+  const file = path.join(dir, 'acme/app.yaml');
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }),
+    { message: `the installation's project file ${file}: has envfiles, which is not a field (expected version, dependencies, env, envFiles, databases, app, editor, rules, setup, pullRequests)` });
+  fs.writeFileSync(file, '# nothing yet\n');
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /the installation's project file .*app\.yaml: is empty: write version: 1 at least/);
+  fs.writeFileSync(file, 'version: 2\n');
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /version must be 1/);
+  const twice = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject(), 'ACME/app': fixtureProject() });
+  if (fs.readdirSync(twice).length === 2) assert.throws(() => loadProject(checkout, { projectFilesDir: twice }), /which name one repo: keep one/);
+});
+
+test('the installation\'s file needs the repo, told from the checkout\'s origin on GitHub', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app.web' });
+  assert.equal(repoOf(checkout), 'acme/app.web');
+  for (const [url, repo] of [
+    ['https://x-access-token:abc@github.com/Acme/App.git', 'Acme/App'], ['git@github.com:acme/app.git', 'acme/app'],
+    ['ssh://git@github.com/acme/app', 'acme/app'], ['https://gitlab.com/acme/app.git', null], [`file://${checkout}`, null],
+  ]) {
+    execFileSync('git', ['-C', checkout, 'remote', 'set-url', 'origin', url]);
+    assert.equal(repoOf(checkout), repo, url);
+  }
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject() });
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /the repo could not be told from its origin/);
+  assert.equal(repoOf(scratch(t)), null, 'not a checkout');
+});
+
+test('the CLI reads the installation\'s file from WOODSHED_CLOUD_PROJECT_FILES_DIR, and says so in `from`', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject({ dependencies: { installs: [API_INSTALL] } }) });
+  const cli = (args, env = {}) => execFileSync('node', [SCRIPT, ...args], {
+    encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: checkout, DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main', ...env },
+  });
+  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'installation\n');
+  assert.equal(cli(['installs'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
+  assert.equal(cli(['get', 'from']), 'none\n');
+  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: '' }), 'none\n');
 });

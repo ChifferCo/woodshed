@@ -117,3 +117,29 @@ test('the migrations Restore a dump counts are the files in the engine\'s databa
   const broken = createProjectReader({ github: { ...github, projectFile: async () => { throw new Error('HTTP 502'); } } });
   await assert.rejects(broken.migrationFiles('postgres'), /the project file could not be read: HTTP 502/);
 });
+
+test('a repo with no project file on its default branch is read from the installation\'s, and its own wins', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (message, fields) => logs.push([message, fields]));
+  const supplied = { text: PROJECT.replace('editor: true', 'editor: false'), path: '/files/acme/app.yaml' };
+  const fromInstallation = createProjectReader({ github: { projectFile: async () => null }, installationFile: () => supplied });
+  assert.deepEqual(await fromInstallation.appendedFor('app-env'), ['DATABASE_HOST', 'PORT']);
+  assert.deepEqual(logs.at(-1), ['projectFile: read', { found: true, from: 'installation', envFiles: 2, pullRequests: false, databases: [] }]);
+
+  let asked = 0;
+  const own = createProjectReader({ github: { projectFile: async () => PROJECT.replace('PORT={{PORT}}', 'OWN=1') }, installationFile: () => { asked += 1; return supplied; } });
+  assert.deepEqual(await own.appendedFor('app-env'), ['DATABASE_HOST', 'OWN']);
+  assert.equal(logs.at(-1)[1].from, 'default branch');
+  assert.equal(asked, 0, 'the installation\'s file is not read while the repo has its own');
+
+  const neither = createProjectReader({ github: { projectFile: async () => null }, installationFile: () => null });
+  assert.equal(await neither.pullRequests(), null);
+  assert.equal(logs.at(-1)[1].from, 'none');
+});
+
+test('a malformed installation file is an unread file, as a malformed repo file is', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  const reader = createProjectReader({ github: { projectFile: async () => null }, installationFile: () => ({ text: 'version: 1\nenvfiles: []\n' }) });
+  await assert.rejects(reader.pullRequests(), /the project file could not be read: .*envfiles, which is not a field/);
+  assert.equal(await reader.databases(), null);
+});

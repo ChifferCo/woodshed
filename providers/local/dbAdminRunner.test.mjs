@@ -8,8 +8,10 @@ import path from 'node:path';
 import { createDatabases } from '../../console/databases.mjs';
 import { containerOutcome, createDbAdminRunner, ownerOf, secretsFor } from './dbAdminRunner.mjs';
 import { createSecretStore } from './secretStore.mjs';
+import { PROJECT_FILES_MOUNT } from './projectFileMounts.mjs';
+import { fixtureProject, fixtureProjectFiles } from '../../shared/projectFixture.mjs';
 
-function setup({ roots = true, mongoHost = 'mongo:27017' } = {}) {
+function setup({ roots = true, mongoHost = 'mongo:27017', projectFilesDir = null } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'local-db-admin-'));
   const secretsDir = path.join(base, 'secrets');
   const secrets = createSecretStore({ dir: secretsDir, key: crypto.randomBytes(32) });
@@ -46,7 +48,7 @@ function setup({ roots = true, mongoHost = 'mongo:27017' } = {}) {
   const runner = createDbAdminRunner({
     image: 'woodshed-session', repoDir: '/work/app', seedSecrets: ['api-env'], secrets, postgresHost: 'postgres', postgresRootUser: 'postgres', mongoHost,
     network: 'woodshed', sessionEnv: { WOODSHED_SERVICES: 'S3_ENDPOINT', S3_ENDPOINT: 'http://s3:4566', OTHER: 'x' },
-    runsDir: path.join(base, 'runs'), docker,
+    runsDir: path.join(base, 'runs'), docker, projectFilesDir, repo: 'acme/app',
   });
   return { runner, secrets, calls, containers, mounted, modes, contents, runsDir: path.join(base, 'runs'), ready: roots ? Promise.all([
     secrets.write('db-root/postgres', 'pg-root-pw'), secrets.write('db-root/mongo', 'mongo-root-pw'), secrets.write('api-env', 'A=1'),
@@ -180,4 +182,25 @@ test('an owner\'s label cannot be another\'s: a login spelled like a session id,
   assert.equal(ownerOf(['drop-session', '0a1b2c3d']), 'session:0a1b2c3d');
   assert.notEqual(ownerOf(['reset', '0a1b2c3d']), ownerOf(['clone', '0a1b2c3d']));
   assert.notEqual(ownerOf(['reset', 'template']), ownerOf(['template']));
+});
+
+test('a run reads the installation\'s project file for the image\'s repo, mounted read-only and named by a fixed flag', async (t) => {
+  const dir = fixtureProjectFiles(fs.mkdtempSync(path.join(os.tmpdir(), 'local-db-admin-files-')), { 'acme/app': fixtureProject(), 'acme/web': fixtureProject() });
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  t.mock.method(console, 'log', () => {});
+  const f = setup({ projectFilesDir: dir });
+  await f.ready;
+  await f.runner.start(['template']);
+  const { args, env } = f.calls.find((c) => c.args[0] === 'run');
+  const mounts = args.flatMap((a, i) => (args[i - 1] === '--mount' ? [a] : []));
+  assert.deepEqual(mounts, [`type=bind,source=${path.join(dir, 'acme/app.yaml')},target=${PROJECT_FILES_MOUNT}/acme/app.yaml,readonly`]);
+  const flags = args.slice(args.indexOf('/opt/woodshed/session/dbAdmin.mjs') + 1, args.indexOf('--'));
+  assert.equal(flags[flags.indexOf('--project-files-dir') + 1], PROJECT_FILES_MOUNT);
+  assert.equal(env.WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined, 'the flag, never the environment');
+
+  const without = setup({ projectFilesDir: path.join(dir, 'missing') });
+  await without.ready;
+  await without.runner.start(['template']);
+  const plain = without.calls.find((c) => c.args[0] === 'run').args;
+  assert.ok(!plain.includes('--mount') && !plain.includes('--project-files-dir'), 'no file, no mount and no flag');
 });
