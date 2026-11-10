@@ -1,0 +1,41 @@
+name: Check
+
+# Woodshed has no dependencies and no build step, so its whole check is its tests and a shellcheck of its scripts.
+# The repository's ruleset requires the `test` job on master.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.16.0
+
+      - name: Run the tests
+        run: |
+          # Every test in the repository, the layout guard and the import rules included
+          # shellcheck disable=SC2046 # one test file per word, and these paths have no spaces
+          node --test --test-timeout=120000 $(git ls-files '*.test.mjs' '**/*.test.mjs')
+
+      - name: Shellcheck the scripts
+        run: |
+          # Catches quoting and unset-variable mistakes in the installer and the session image's scripts
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --severity=error install.sh session/*.sh

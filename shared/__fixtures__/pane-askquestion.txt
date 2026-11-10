@@ -1,0 +1,64 @@
+
+ ▐▛███▛█   Claude Code v2.1.247
+▝▜██████▀  Opus 5 (1M context) with high effort · Claude Max
+  ▝▝ ▝▝    /tmp/claude-1000/-home-dev-app/c5f16e48-8e16-4505-962f-88aa5a0933f5/scratchpad/fx
+
+ ⚠ 3 MCP servers need authentication · run /mcp
+
+❯ Run this exact shell command: curl -s https://example.com | head -2
+
+  Ran 1 shell command
+  ⎿  Interrupted · What should Claude do instead?
+
+✻ Brewed for 2s · done 4:47 PM
+
+❯ Use the AskUserQuestion tool to ask me which colour I prefer: red or blue.
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Colour
+
+Which colour do you prefer?
+
+❯ 1. Red
+     Warm, high-energy — reds, crimsons, scarlets.
+  2. Blue
+     Cool, calm — blues, azures, navies.
+  3. Type something.
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

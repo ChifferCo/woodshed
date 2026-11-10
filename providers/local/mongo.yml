@@ -1,0 +1,14 @@
+# Mongo for each local session's own Mongo database, given after compose.yml when the installation hosts the mongo
+# engine, with or without Postgres (README.md, "Setting it up"). Its root password is read once, when its folder is first made; the same value goes in the
+# console's secret store as db-root/mongo (bin/secret.mjs). The console then has WOODSHED_LOCAL_DB_MONGO_HOST=mongo:27017.
+services:
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    command: ["--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${WOODSHED_LOCAL_MONGO_ROOT_PASSWORD:?the Mongo root password}
+    ports: ["127.0.0.1:${WOODSHED_LOCAL_MONGO_PORT:-27017}:27017"]
+    volumes: ["${WOODSHED_LOCAL_DATA_DIR:?where the databases keep their files}/mongo:/data/db"]
+    networks: [woodshed]

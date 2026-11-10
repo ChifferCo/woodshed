@@ -1,0 +1,27 @@
+#!/bin/bash
+# Base box first boot, run once by cloud-init: Docker, Compose and the data volume.
+# Everything that runs on the box after that is baseBoxStack.sh.tftpl, which the
+# woodshed-cloud-configure-base-box SSM association applies, then again whenever it changes.
+# Terraform ignores changes to this file: they would replace the box.
+set -euo pipefail
+
+COMPOSE_VERSION=v5.5.1
+
+dnf install -y docker
+systemctl enable --now docker
+
+mkdir -p /usr/local/lib/docker/cli-plugins
+curl -sSfL -o /tmp/docker-compose "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64"
+curl -sSfL -o /tmp/docker-compose.sha256 "https://github.com/docker/compose/releases/download/$COMPOSE_VERSION/docker-compose-linux-x86_64.sha256"
+(cd /tmp && sed 's|\*\?docker-compose-linux-x86_64|docker-compose|' docker-compose.sha256 | sha256sum -c -)
+install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose
+
+# The data volume is attached after the instance starts, so wait for it. It is
+# formatted only when it has no filesystem yet: a replacement box keeps the data.
+DATA_DEVICE=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${replace(data_volume_id, "-", "")}
+for _ in $(seq 60); do [ -e "$DATA_DEVICE" ] && break; sleep 5; done
+[ -e "$DATA_DEVICE" ] || { echo "woodshed-cloud: data volume ${data_volume_id} never appeared" >&2; exit 1; }
+blkid "$DATA_DEVICE" >/dev/null || mkfs.xfs "$DATA_DEVICE"
+mkdir -p /var/lib/woodshed-cloud
+grep -q " /var/lib/woodshed-cloud " /etc/fstab || echo "UUID=$(blkid -s UUID -o value "$DATA_DEVICE") /var/lib/woodshed-cloud xfs defaults,nofail 0 2" >> /etc/fstab
+mountpoint -q /var/lib/woodshed-cloud || mount /var/lib/woodshed-cloud

@@ -1,0 +1,29 @@
+<!-- @dsCard group="Cards" height=520 subtitle="Token; databases as progress; a copy that failed; the compact rail form" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600;700&display=swap">
+<style>
+ body{margin:0;padding:20px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif;display:grid;gap:14px;max-width:420px}
+ .card{padding:12px;border:1px solid var(--amber);border-radius:8px;background:var(--amber-tint);display:grid;gap:10px}
+ h3{margin:0;font-size:14px}
+ p{margin:0;font-size:12.5px;color:var(--sub);line-height:1.45}
+ .step{display:flex;align-items:center;gap:10px;font-size:13px}
+ .check{flex:none;width:18px;height:18px;border-radius:50%;display:grid;place-items:center;font-size:11px;box-shadow:inset 0 0 0 2px var(--meta)}
+ .done .check{background:var(--green);box-shadow:none;color:var(--ground);font-weight:700}
+ .label{flex:1;min-width:0;font-weight:600}
+ .label small{display:block;font-weight:400;font-size:11.5px;color:var(--sub)}
+ .btn.outline{background:var(--ground);color:var(--ink);border-color:var(--line)}
+ .compact .label small{display:none}
+ .cap{font:600 11px "Red Hat Display",system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--label);margin:0}
+ .btn{flex:none;min-height:24px;padding:0 8px;border-radius:var(--radius-sm);background:var(--action);color:var(--action-ink);border:1px solid var(--action);font:600 11.5px "Red Hat Display",system-ui,sans-serif}
+</style>
+<div class="card"><h3>Set up your Woodshed</h3><p>New session needs these, and nothing else does.</p>
+ <div class="step"><span class="check"></span><span class="label">Save your Claude token<small>Your own sessions run on your plan</small></span><button class="btn" type="button">Set up</button></div></div>
+<div class="card"><h3>Set up your Woodshed</h3><p>New session needs these, and nothing else does.</p>
+ <div class="step done"><span class="check">✓</span><span class="label">Save your Claude token<small>Your own sessions run on your plan</small></span></div>
+ <div class="step"><span class="check"></span><span class="label">Your databases<small>Copying the template: about a minute</small></span></div></div>
+<p class="cap">The copy failed: something to do</p>
+<div class="card"><h3>Set up your Woodshed</h3><p>New session needs these, and nothing else does.</p>
+ <div class="step done"><span class="check">✓</span><span class="label">Save your Claude token<small>Your own sessions run on your plan</small></span></div>
+ <div class="step"><span class="check"></span><span class="label">Your databases<small>The copy failed: try again on My settings</small></span><button class="btn outline" type="button">Open My settings</button></div></div>
+<p class="cap">Compact, at the top of the rail's Mine view</p>
+<div class="card compact" style="max-width:340px"><h3>Set up your Woodshed</h3><p>New session needs these, and nothing else does.</p>
+ <div class="step"><span class="check"></span><span class="label">Save your Claude token<small>Your own sessions run on your plan</small></span><button class="btn" type="button">Set up</button></div></div>

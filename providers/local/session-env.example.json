@@ -1,0 +1,9 @@
+{
+  "PGHOST": "postgres",
+  "PGPORT": "5432",
+  "PGSSLMODE": "disable",
+  "WOODSHED_MONGO_HOST": "mongo:27017",
+  "WOODSHED_CONSOLE_URL": "http://<the session API host>:7691",
+  "WOODSHED_SERVICES": "S3_ENDPOINT",
+  "S3_ENDPOINT": "http://s3:4566"
+}

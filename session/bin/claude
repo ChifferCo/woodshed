@@ -1,0 +1,41 @@
+#!/bin/bash
+# claude, on the credential the entrypoint chose (chooseClaudeAuth). A private session's claude calls Anthropic
+# directly on its owner's Claude token, which the entrypoint keeps in a file only claude is pointed at: the Artifact
+# tool calls api.anthropic.com itself, whatever ANTHROPIC_BASE_URL says, so it works only on a real token. A shared
+# session holds no Anthropic credential: claude reaches Anthropic through the console's proxy
+# (console/anthropicProxy.mjs) with the session's own token, which the proxy swaps for the team key or a Claude plan's.
+#
+# These variables are claude's alone. Exported by the entrypoint they would reach the backend that Start app or the
+# Terminal tab starts, and an app's SDK may read ANTHROPIC_BASE_URL. CLAUDE_ENV_FILE, which claude sources before each
+# command it runs, takes them away again, so an app claude starts also uses only its own env files.
+# CLAUDE_CODE_OAUTH_TOKEN is hidden from those commands by claude itself; ANTHROPIC_API_KEY and ANTHROPIC_BASE_URL
+# are not (measured on Claude Code 2.1.312).
+set -euo pipefail
+
+real=${WOODSHED_REAL_CLAUDE:-$HOME/.local/bin/claude}
+case "${WOODSHED_CLAUDE_AUTH:-}" in
+  key) export ANTHROPIC_API_KEY=$SESSION_TOKEN ANTHROPIC_BASE_URL=$WOODSHED_CONSOLE_URL/anthropic ;;
+  plan)
+    export CLAUDE_CODE_OAUTH_TOKEN=$SESSION_TOKEN ANTHROPIC_BASE_URL=$WOODSHED_CONSOLE_URL/anthropic
+    unset ANTHROPIC_API_KEY
+    ;;
+  own)
+    # Remote Control needs a full-scope login, which a setup-token is not. When the owner has run `claude auth login`
+    # (kept in ~/.claude/.credentials.json, this session's alone: the entrypoint drops it from a restored home), claude uses that login and
+    # gets no token in its environment: the env token would win over it. `claude auth ...` itself also runs without
+    # the token, so the login works while the token is set.
+    unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL
+    if [ "${1:-}" = auth ] || grep -q '"claudeAiOauth"' "$HOME/.claude/.credentials.json" 2>/dev/null; then
+      unset CLAUDE_CODE_OAUTH_TOKEN
+      exec "$real" "$@"
+    fi
+    CLAUDE_CODE_OAUTH_TOKEN=$(<"$WOODSHED_CLAUDE_TOKEN_FILE")
+    export CLAUDE_CODE_OAUTH_TOKEN
+    ;;
+  *) exec "$real" "$@" ;;
+esac
+# One per claude: a SessionStart hook may add its own lines to it.
+childEnv=${TMPDIR:-/tmp}/woodshed-claude-env.$$
+printf 'unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY CLAUDE_CODE_OAUTH_TOKEN\n' > "$childEnv"
+export CLAUDE_ENV_FILE=$childEnv
+exec "$real" "$@"

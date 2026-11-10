@@ -1,0 +1,11 @@
+# What a Woodshed session needs to know about Woodshed itself, for when woodshed/ is a repo of its own: nothing reads it
+# while Woodshed is inside another repo, whose own .woodshed/project.yaml sessions read. test/selfProject.test.mjs
+# keeps it valid. docs/reference.md, "The project file", describes each field. Left out: no dependencies, env files, databases
+# or app (a change is proven with the dev console, which rules.md says how to run), and no pull request gates.
+
+version: 1
+
+# VS Code in the browser on each session's checkout (Editor ↗).
+editor: true
+
+rules: .woodshed/rules.md

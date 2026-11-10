@@ -1,0 +1,12 @@
+# The docker network local sessions and db-admin runs join (WOODSHED_LOCAL_DOCKER_NETWORK=woodshed), and what runs on
+# it, each from a file of its own given after this one: postgres.yml and mongo.yml for the databases the installation
+# runs (mongo.yml needs postgres.yml), and the installation's own shared services, such as a fake S3
+# (services.example.yml). The console runs beside it, on the machine itself: README.md says how.
+#
+#   docker compose -f woodshed/providers/local/compose.yml -f woodshed/providers/local/postgres.yml \
+#     -f woodshed/providers/local/mongo.yml -f <your services.yml> --env-file <your stack.env> up -d
+name: woodshed
+
+networks:
+  woodshed:
+    name: woodshed

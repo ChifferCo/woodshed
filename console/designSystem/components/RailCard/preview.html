@@ -1,0 +1,24 @@
+<!-- @dsCard group="Cards" height=300 subtitle="Needs you, working and stopped, on Everyone" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+ body{margin:0;padding:20px;background:var(--stopped);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif;display:flex;flex-direction:column;gap:6px;max-width:340px}
+ .card{background:var(--ground);border:1px solid var(--line);border-radius:var(--radius-lg);padding:8px 9px 7px 10px;display:flex;flex-direction:column;gap:3px;cursor:pointer}
+ .card.open{border-color:var(--amber);box-shadow:inset 0 0 0 1px var(--amber)}
+ .top,.sub{display:flex;align-items:center;gap:7px;min-width:0}
+ .dot{width:6px;height:6px;border-radius:50%;flex:none}
+ .ring{background:transparent;border:1.5px solid var(--meta)}
+ .name{flex:1;min-width:0;font:600 13px "Red Hat Display",system-ui,sans-serif;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .tag{font:700 10px "Red Hat Display",system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;color:var(--slate);box-shadow:inset 0 0 0 1px var(--slate)}
+ .tag.named{text-transform:none;letter-spacing:0;font-size:11px;font-weight:600}
+ .marks{color:var(--meta);font-size:12px;letter-spacing:6px}
+ .sub{font:400 10.5px "JetBrains Mono",ui-monospace,monospace;color:var(--meta);min-height:24px;padding-left:13px}
+ .pr{font:600 11px "JetBrains Mono",ui-monospace,monospace;padding:2px 6px;border-radius:5px;border:1px solid var(--green);color:var(--green);flex:none}
+ .pr.bad{border-color:var(--bad);color:var(--bad)}
+ .txt{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ b{font-weight:600}.wait{color:var(--wait)}.work{color:var(--slate)}
+ .go{flex:none;font:600 11.5px "Red Hat Display",system-ui,sans-serif;min-height:24px;padding:0 8px;border-radius:var(--radius-sm);background:var(--action);color:var(--action-ink);border:1px solid var(--action)}
+ .card.stopped{background:var(--stopped);padding:6px 9px 6px 10px}.card.stopped .name{font-size:12px;font-weight:500}.card.stopped .sub{min-height:0}
+</style>
+<div class="card open"><div class="top"><span class="dot" style="background:var(--wait)"></span><span class="name">ecsUtils.ts throws on empty task</span><span class="tag named">Mona Octocat</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="wait">Paused</b> · 19 h ago</span><span class="pr bad">PR #26530 ✗</span><button class="go" type="button">Resume</button></div></div>
+<div class="card"><div class="top"><span class="dot" style="background:var(--slate)"></span><span class="name">Scheduled run without description</span><span class="tag named">mrivera</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b class="work">Working</b></span><span class="pr">PR #26567 ✓</span></div></div>
+<div class="card stopped"><div class="top"><span class="dot ring"></span><span class="name">Fix duplicate task runs</span><span class="marks">☆ ⋯</span></div><div class="sub"><span class="txt"><b>Stopped</b> · from ana-dev</span><span class="pr">PR #26502 ✓</span></div></div>

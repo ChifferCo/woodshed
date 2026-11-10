@@ -1,0 +1,177 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
+
+const ENV_FILES = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }];
+
+function fakeSecrets() {
+  const values = new Map();
+  return {
+    values,
+    read: async (name) => values.get(name) ?? null,
+    save: async (name, value) => { values.set(name, value); },
+    remove: async (name) => { values.delete(name); },
+  };
+}
+
+test('each person\'s Claude token is kept under their own login, and state.json holds only when', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, now: () => Date.parse('2026-10-23T10:00:00Z') });
+
+  await settings.setClaudeToken('Octocat', '  sk-ant-oat01-joel  ');
+  assert.deepEqual([...secrets.values], [['users/octocat/claude-token', 'sk-ant-oat01-joel']]);
+  assert.deepEqual(store.state.people, { octocat: { claudeTokenAt: '2026-10-23T10:00:00.000Z' } });
+  assert.equal(JSON.stringify(store.state).includes('sk-ant'), false, 'never the value');
+  const view = settings.view('octocat');
+  assert.deepEqual(view.claudeToken, { set: true, savedAt: '2026-10-23T10:00:00.000Z' });
+  assert.deepEqual([view.setUp, view.available, view.files['api-env'].custom], [true, true, false]);
+
+  assert.equal(await settings.claudeToken('octocat'), 'sk-ant-oat01-joel');
+  assert.equal(await settings.claudeToken('mia-dev'), null, 'someone with nothing saved');
+  assert.equal(settings.view('mia-dev').claudeToken.set, false);
+
+  await settings.removeClaudeToken('octocat');
+  assert.equal(secrets.values.size, 0);
+  assert.equal(await settings.claudeToken('octocat'), null);
+});
+
+test('a token must look like one from claude setup-token, and the error never repeats it', () => {
+  assert.equal(checkClaudeToken('sk-ant-oat01-abc\n'), 'sk-ant-oat01-abc');
+  assert.equal(checkClaudeToken('  sk-ant-oat01-ab\n  cd-ef\r\n gh '), 'sk-ant-oat01-abcd-efgh', 'a copy wrapped across terminal lines');
+  for (const bad of ['', '   ', 'ghp_123', 'sk ant-ab', 42]) {
+    assert.throws(() => checkClaudeToken(bad), (err) => err.shown && !String(err.message).includes(String(bad).trim() || '\u0000'), String(bad));
+  }
+  assert.equal(userSecretName('Mia-Dev', 'claude-token'), 'users/mia-dev/claude-token');
+});
+
+test('without Secrets Manager nothing can be saved, and the page says so', async () => {
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: null });
+  assert.equal(settings.view('octocat').available, false);
+  await assert.rejects(settings.setClaudeToken('octocat', 'sk-ant-x'), /no secret store/);
+  assert.equal(await settings.claudeToken('octocat'), null);
+});
+
+test('removing everything deletes the person\'s secrets and their record, and leaves others alone', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES });
+  await settings.setClaudeToken('octocat', 'sk-ant-joel');
+  await settings.setClaudeToken('mia-dev', 'sk-ant-mia');
+  await settings.removeAll('octocat');
+  assert.deepEqual([...secrets.values.keys()], ['users/mia-dev/claude-token']);
+  assert.deepEqual(Object.keys(store.state.people), ['mia-dev']);
+  assert.equal(settings.view('octocat').setUp, false);
+});
+
+test('env files and tmux are the console\'s shared file plus the person\'s own lines, kept apart by login', async () => {
+  const secrets = fakeSecrets();
+  secrets.values.set('api-env', 'LOG_LEVEL=info\nOPENAI_API_KEY=x');
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, appendedFor: async (secret) => (secret === 'api-env' ? ['APP_DB', 'PORT'] : []), now: () => Date.parse('2026-10-23T10:00:00Z') });
+
+  const fresh = await settings.file('octocat', 'api-env');
+  assert.deepEqual([fresh.text, fresh.custom, fresh.sharedText, fresh.editable, fresh.label],
+    ['', false, 'LOG_LEVEL=info\nOPENAI_API_KEY=x', true, 'api/.env']);
+  assert.ok(fresh.appended.includes('APP_DB'), 'it says which keys the entrypoint writes after it');
+  const tmux = await settings.file('octocat', 'tmux-conf');
+  assert.match(tmux.sharedText, /set -g mouse on/, 'tmux\'s shared file is the session image\'s own');
+  assert.equal(tmux.editable, false, 'and the console cannot change it');
+
+  await settings.saveFile('octocat', 'api-env', 'LOG_LEVEL=debug\r\n');
+  assert.equal(secrets.values.get('users/octocat/api-env'), 'LOG_LEVEL=debug\n', 'only their own lines are kept');
+  assert.equal((await settings.file('octocat', 'api-env')).custom, true);
+  assert.equal(settings.view('octocat').files['api-env'].savedAt, '2026-10-23T10:00:00.000Z');
+  assert.deepEqual(await settings.ownFiles('octocat'), { 'api-env': 'LOG_LEVEL=debug\n', 'web-env': null, 'tmux-conf': null });
+  assert.deepEqual(await settings.ownFiles('mia-dev'), { 'api-env': null, 'web-env': null, 'tmux-conf': null }, 'a teammate has none');
+
+  secrets.values.set('api-env', 'LOG_LEVEL=info\nOPENAI_API_KEY=y');
+  assert.equal((await settings.file('octocat', 'api-env')).sharedText, 'LOG_LEVEL=info\nOPENAI_API_KEY=y', 'a change to the shared file reaches them');
+
+  await settings.saveFile('octocat', 'api-env', '  \n');
+  assert.equal(secrets.values.has('users/octocat/api-env'), false, 'saving nothing clears their lines');
+  await settings.saveFile('octocat', 'tmux-conf', 'set -g prefix C-a');
+  await settings.resetFile('octocat', 'tmux-conf');
+  assert.equal((await settings.ownFiles('octocat'))['tmux-conf'], null);
+
+  await assert.rejects(settings.saveFile('octocat', 'web-env', 'x'.repeat(70_000)), /64 KB/);
+  await assert.rejects(settings.file('octocat', 'secrets'), /no file called/);
+  await settings.saveFile('octocat', 'web-env', 'MINE=1');
+  await settings.removeAll('octocat');
+  assert.deepEqual([...secrets.values.keys()], ['api-env'], 'Remove deletes the files too');
+});
+
+test('the switch for shared sessions is on by default, needs a token, is in effect only while one is saved, and goes with Remove', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES });
+  assert.throws(() => settings.setOwnTokenForShared('joel', true), /save your Claude token first/);
+  assert.equal(settings.usesOwnTokenForShared('joel'), false);
+
+  await settings.setClaudeToken('joel', 'sk-ant-oat01-joel');
+  assert.deepEqual([settings.view('joel').ownTokenForShared, settings.usesOwnTokenForShared('Joel')], [true, true], 'on by default');
+  settings.setOwnTokenForShared('joel', false);
+  assert.deepEqual([settings.view('joel').ownTokenForShared, settings.usesOwnTokenForShared('joel')], [false, false]);
+
+  await settings.removeClaudeToken('joel');
+  await settings.setClaudeToken('joel', 'sk-ant-oat01-joel2');
+  assert.equal(settings.usesOwnTokenForShared('joel'), false, 'turned off stays off for the next token');
+  settings.setOwnTokenForShared('joel', true);
+  await settings.removeClaudeToken('joel');
+  assert.equal(settings.usesOwnTokenForShared('joel'), false, 'no token, no effect');
+  assert.equal(settings.view('joel').ownTokenForShared, true, 'the choice is kept for the next token');
+  settings.setOwnTokenForShared('joel', false);
+  await settings.removeAll('joel');
+  assert.equal(settings.view('joel').ownTokenForShared, true, 'back to the default');
+});
+
+test('the files follow the installation\'s env files: each tab is a secret, labelled with its path, then tmux', async () => {
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets(), envFiles: [{ secret: 'app-env', path: 'app/.env' }] });
+  const view = settings.view('mia');
+  assert.deepEqual(Object.entries(view.files).map(([key, f]) => [key, f.label]), [['app-env', 'app/.env'], ['tmux-conf', '~/.tmux.conf']]);
+  await assert.rejects(settings.file('mia', 'api-env'), /no file called api-env/);
+});
+
+test('a Codex sign-in is an API key or a codex auth.json, kept under the person\'s login', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-11-07T10:00:00Z') });
+  const auth = JSON.stringify({ auth_mode: 'chatgpt', tokens: { refresh_token: 'rt-1', access_token: 'at-1' } });
+
+  await settings.setCodexAuth('Octocat', ` ${auth}\n`);
+  assert.deepEqual([...secrets.values.keys()], ['users/octocat/codex-auth']);
+  assert.equal(await settings.codexAuth('octocat'), auth);
+  assert.deepEqual(settings.view('octocat').codexAuth, { set: true, savedAt: '2026-11-07T10:00:00.000Z' });
+  assert.equal(JSON.stringify(store.state).includes('rt-1'), false, 'never the value');
+  assert.equal(await settings.codexAuth('mia-dev'), null);
+
+  await settings.removeCodexAuth('octocat');
+  assert.equal(await settings.codexAuth('octocat'), null);
+  assert.equal(settings.view('octocat').codexAuth.set, false);
+});
+
+test('a Codex sign-in is checked, and the error never repeats it', () => {
+  assert.equal(checkCodexAuth(' sk-proj-abc '), 'sk-proj-abc');
+  assert.equal(checkCodexAuth('{"OPENAI_API_KEY":"sk-x"}'), '{"OPENAI_API_KEY":"sk-x"}');
+  for (const bad of ['', 'hunter2 hunter3', '{"nothing":1}', '[1]', 'sk-a b']) {
+    assert.throws(() => checkCodexAuth(bad), (err) => err.shown && !err.message.includes('hunter'), bad);
+  }
+});
+
+test('a person overrides the idle and lifetime hours of their own sessions, within the console settings ranges', () => {
+  const store = { state: {}, save() {} };
+  const settings = createUserSettings({ store, secrets: null });
+  assert.deepEqual(settings.limitsFor('joel'), {});
+  settings.setLimits('joel', { idleHours: 2, lifetimeHours: '12' });
+  assert.deepEqual(settings.limitsFor('joel'), { idleMs: 2 * 3_600_000, lifetimeMs: 12 * 3_600_000 });
+  assert.deepEqual(settings.view('joel').limits, { idleHours: 2, lifetimeHours: 12 });
+  assert.deepEqual(settings.limitsFor('mia'), {}, 'nobody else');
+  settings.setLimits('joel', { idleHours: '', lifetimeHours: 6 });
+  assert.deepEqual(settings.limitsFor('joel'), { lifetimeMs: 6 * 3_600_000 }, 'an empty box is the console\'s number');
+  assert.throws(() => settings.setLimits('joel', { idleHours: 30 }), /must be from 0.25 to 24/);
+  assert.throws(() => settings.setLimits('joel', { lifetimeHours: 1.5 }), /steps of 1/);
+  assert.deepEqual(settings.limitsFor('joel'), { lifetimeMs: 6 * 3_600_000 }, 'a refused save keeps what was');
+  settings.setLimits('joel', {});
+  assert.deepEqual(settings.limitsFor('joel'), {});
+});

@@ -1,0 +1,64 @@
+
+ ▐▛███▛█   Claude Code v2.1.247
+▝▜██████▀  Opus 5 (1M context) with high effort · Claude Max
+  ▝▝ ▝▝    /tmp/claude-1000/-home-dev-app/c5f16e48-8e16-4505-962f-88aa5a0933f5/scratchpad/fx
+
+ ⚠ 3 MCP servers need authentication · run /mcp
+
+❯ Run this exact shell command: curl -s https://example.com | head -2
+
+● Fetching example.com and showing first two lines
+  ⎿  $ curl -s https://example.com | head -2
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+
+   curl -s https://example.com | head -2
+   Fetch example.com and show first two lines
+
+ This command requires approval
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and don’t ask again for: curl -s https://example.com
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend · ctrl+e to explain
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

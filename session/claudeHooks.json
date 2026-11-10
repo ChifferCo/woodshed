@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": ["Bash(gh pr:*)"],
+    "ask": ["Bash(gh pr merge:*)", "Bash(gh pr -R:*)", "Bash(gh pr --repo:*)"]
+  },
+  "hooks": {
+    "SessionStart": [{ "matcher": "startup|resume|clear", "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] }],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] },
+      { "matcher": "Bash|mcp__github__create_pull_request|mcp__github__update_pull_request", "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/readyGate.mjs" }] }
+    ],
+    "PostToolUse": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] }],
+    "PermissionRequest": [{ "matcher": "*", "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "node /opt/woodshed/session/hookState.mjs" }] }]
+  }
+}

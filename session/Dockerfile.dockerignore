@@ -1,0 +1,12 @@
+**
+!woodshed/session/**
+!woodshed/shared/**
+woodshed/shared/**/*.test.mjs
+woodshed/shared/**/__fixtures__
+woodshed/shared/**/*.md
+woodshed/session/README.md
+# The folder itself too: a project with no dependencies stages it empty, and COPY needs it there.
+!woodshed-deps
+!woodshed-deps/**
+!woodshed-deps.editor
+!woodshed-deps.installs

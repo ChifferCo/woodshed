@@ -1,0 +1,13 @@
+<!-- @dsCard group="Cards" height=110 subtitle="Switch, People filter, New session" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@600;700&display=swap">
+<style>
+ body{margin:0;padding:20px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .head{display:flex;align-items:center;gap:6px;width:340px;margin-bottom:12px}
+ .seg{display:inline-flex;padding:2px;border-radius:8px;background:var(--chip-count)}
+ .seg a{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:6px;font:600 12.5px "Red Hat Display",system-ui,sans-serif;color:var(--sub);text-decoration:none}
+ .seg a.on{background:var(--ground);color:var(--ink);box-shadow:0 1px 2px rgba(27,34,50,.18)}
+ .pill{min-height:30px;display:inline-flex;align-items:center;padding:0 9px;border:1px solid var(--line);border-radius:var(--radius-pill);font:600 12px "Red Hat Display",system-ui,sans-serif}
+ .new{margin-left:auto;display:inline-flex;align-items:center;min-height:30px;padding:0 10px;border-radius:var(--radius-md);background:var(--action);color:var(--action-ink);font:600 12.5px "Red Hat Display",system-ui,sans-serif;border:1px solid var(--action)}
+</style>
+<div class="head"><span class="seg"><a href="#" class="on">Mine</a><a href="#">Everyone</a></span><span class="new">+ New session</span></div>
+<div class="head"><span class="seg"><a href="#">Mine</a><a href="#" class="on">Everyone</a></span><span class="pill">People ▾</span><span class="new">+ New session</span></div>

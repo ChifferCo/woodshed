@@ -1,0 +1,26 @@
+Woodshed Enterprise License
+
+Copyright 2026 ChifferCo, Inc. All rights reserved.
+
+This license covers every file in the ee/ folder and its subfolders ("the Enterprise Software"). It does not cover
+the rest of Woodshed, which is licensed under the GNU Affero General Public License, version 3 only (../LICENSE-AGPL),
+as ../COPYRIGHT says.
+
+1. The Enterprise Software is the property of ChifferCo, Inc. Its source is visible so you can read, review and audit
+   it. Seeing it grants no right to use it.
+
+2. You may use, copy, modify, run or host the Enterprise Software only under a separate, written commercial agreement
+   with ChifferCo, Inc. that covers it, and only as that agreement allows. Without one, you may not use it in
+   production, sell it, offer it as a service, or give it to anyone else.
+
+3. You may change the Enterprise Software, and run your changes, only for testing and development, and only while you
+   hold such an agreement. Any change to it that you send back to us is licensed to ChifferCo, Inc. under that
+   agreement, or under ../CLA.md for a contribution to Woodshed.
+
+4. The Enterprise Software is provided "as is", without warranty of any kind, express or implied, including the
+   warranties of merchantability, fitness for a particular purpose and non-infringement. ChifferCo, Inc. is not liable
+   for any claim, damages or other liability arising from it or its use, except as a commercial agreement says.
+
+5. This license ends at once, without notice, if you break it.
+
+For a commercial agreement, contact ChifferCo, Inc.

@@ -1,0 +1,12 @@
+**
+!woodshed/console/**
+!woodshed/shared/**
+!woodshed/providers/**/*.mjs
+!woodshed/session/tmux.conf
+woodshed/console/**/*.test.mjs
+woodshed/shared/**/*.test.mjs
+woodshed/shared/**/__fixtures__
+woodshed/shared/**/*.md
+woodshed/console/README.md
+woodshed/providers/**/*.test.mjs
+woodshed/providers/aws/terraform

@@ -1,0 +1,64 @@
+
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Accessing workspace:
+
+ /tmp/claude-1000/-home-dev-app/c5f16e48-8e16-4505-962f-88aa5a0933f5/scratchpad/fx
+
+ Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your
+ team). If not, take a moment to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and execute files here.
+
+ Security guide
+
+ ❯ 1. Yes, I trust this folder
+   2. No, exit
+
+ Enter to confirm · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

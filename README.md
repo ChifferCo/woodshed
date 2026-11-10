@@ -103,4 +103,7 @@ Woodshed is developed with Woodshed. Its own `.woodshed/project.yaml` is in this
 
 ## License
 
-[AGPL-3.0](LICENSE-AGPL), except `shared/`, which is [MIT](LICENSE-MIT) so other tools can embed it.
+Woodshed is copyright ChifferCo, Inc. ([COPYRIGHT](COPYRIGHT)) and licensed under [AGPL-3.0](LICENSE-AGPL), except
+`ee/`, which holds paid features under a [commercial license](ee/LICENSE).
+
+Contributions are accepted under the [Contributor License Agreement](CLA.md): see [CONTRIBUTING.md](CONTRIBUTING.md).

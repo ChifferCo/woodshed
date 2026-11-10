@@ -1,0 +1,11 @@
+# The installation's shared services, run beside compose.yml: copy it outside the repo, beside your stack.env, and give
+# it after compose.yml (README.md, "Setting it up"). Each joins the woodshed network with no published port, and
+# reaches sessions as a URL in a variable of its own, which session-env.json sets and lists in WOODSHED_SERVICES.
+# This one is a fake S3, at http://s3:4566 in S3_ENDPOINT. A repo with none needs no file.
+services:
+  s3:
+    image: localstack/localstack:4.14.0
+    restart: unless-stopped
+    environment:
+      SERVICES: s3
+    networks: [woodshed]

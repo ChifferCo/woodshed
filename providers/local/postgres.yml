@@ -1,0 +1,16 @@
+# Postgres for each local session's own database, given after compose.yml when the installation runs it (README.md,
+# "Setting it up"). Its root password is read once, when its folder is first made; the same value goes in the
+# console's secret store as db-root/postgres (bin/secret.mjs), which db-admin runs read. The console then has
+# WOODSHED_LOCAL_DB_POSTGRES_HOST=postgres and WOODSHED_LOCAL_DB_POSTGRES_ROOT_USER=postgres.
+services:
+  # Every database has a user of its own (session/dbAdmin.mjs); only db-admin runs use the root user.
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${WOODSHED_LOCAL_PG_ROOT_PASSWORD:?the Postgres root password}
+    # On the machine's loopback only, for the console's own database tools; sessions use the network.
+    ports: ["127.0.0.1:${WOODSHED_LOCAL_PG_PORT:-5432}:5432"]
+    volumes: ["${WOODSHED_LOCAL_DATA_DIR:?where the databases keep their files}/postgres:/var/lib/postgresql/data"]
+    networks: [woodshed]

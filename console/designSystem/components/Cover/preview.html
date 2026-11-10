@@ -1,0 +1,29 @@
+<!-- @dsCard height=288 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@500&display=swap">
+<style>
+ body{margin:0;background:var(--ground)}
+ svg{display:block;width:960px;height:288px}
+ .ink{fill:var(--ink)}.act{fill:var(--action)}.wait{fill:var(--wait)}.slate{fill:var(--slate)}.green{fill:var(--green)}.dot{fill:var(--ground)}
+ .b{rx:var(--radius-lg)}
+ .name{font:700 64px Merriweather,Georgia,serif;fill:var(--ink)}
+ .tag{font:500 14px "Red Hat Display",system-ui,sans-serif;fill:var(--sub)}
+</style>
+<svg viewBox="0 0 960 288" role="img" aria-label="Woodshed Design System">
+<!-- blocks: ink 240x96, action 160x96, wait 96x96, slate 224x96, green 120x96 at 16px gaps from x=32 (all full value, widths are spacing multiples)
+     arrangement: one strip of unequal bands across the top, as the rail stacks unequal rows
+     pattern: dot grid, "precise, dense UI" row, a 4px-based pitch of 16 cut out of the slate band in the ground colour
+     steps and radii: gap 16 (space-4), band corners radius-lg (7px) -->
+<rect class="b ink" x="32" y="24" width="240" height="96"/>
+<rect class="b act" x="288" y="24" width="160" height="96"/>
+<rect class="b wait" x="464" y="24" width="96" height="96"/>
+<rect class="b slate" x="576" y="24" width="224" height="96"/>
+<rect class="b green" x="816" y="24" width="112" height="96"/>
+<g class="dot">
+<circle cx="600" cy="48" r="2"/><circle cx="616" cy="48" r="2"/><circle cx="632" cy="48" r="2"/><circle cx="648" cy="48" r="2"/><circle cx="664" cy="48" r="2"/><circle cx="680" cy="48" r="2"/><circle cx="696" cy="48" r="2"/><circle cx="712" cy="48" r="2"/><circle cx="728" cy="48" r="2"/><circle cx="744" cy="48" r="2"/><circle cx="760" cy="48" r="2"/><circle cx="776" cy="48" r="2"/>
+<circle cx="600" cy="64" r="2"/><circle cx="616" cy="64" r="2"/><circle cx="632" cy="64" r="2"/><circle cx="648" cy="64" r="2"/><circle cx="664" cy="64" r="2"/><circle cx="680" cy="64" r="2"/><circle cx="696" cy="64" r="2"/><circle cx="712" cy="64" r="2"/><circle cx="728" cy="64" r="2"/><circle cx="744" cy="64" r="2"/><circle cx="760" cy="64" r="2"/><circle cx="776" cy="64" r="2"/>
+<circle cx="600" cy="80" r="2"/><circle cx="616" cy="80" r="2"/><circle cx="632" cy="80" r="2"/><circle cx="648" cy="80" r="2"/><circle cx="664" cy="80" r="2"/><circle cx="680" cy="80" r="2"/><circle cx="696" cy="80" r="2"/><circle cx="712" cy="80" r="2"/><circle cx="728" cy="80" r="2"/><circle cx="744" cy="80" r="2"/><circle cx="760" cy="80" r="2"/><circle cx="776" cy="80" r="2"/>
+<circle cx="600" cy="96" r="2"/><circle cx="616" cy="96" r="2"/><circle cx="632" cy="96" r="2"/><circle cx="648" cy="96" r="2"/><circle cx="664" cy="96" r="2"/><circle cx="680" cy="96" r="2"/><circle cx="696" cy="96" r="2"/><circle cx="712" cy="96" r="2"/><circle cx="728" cy="96" r="2"/><circle cx="744" cy="96" r="2"/><circle cx="760" cy="96" r="2"/><circle cx="776" cy="96" r="2"/>
+</g>
+<text class="name" x="32" y="204">Woodshed Design System</text>
+<text class="tag" x="32" y="240">The console's colors, type and rail, in one place.</text>
+</svg>

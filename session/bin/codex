@@ -1,0 +1,17 @@
+#!/bin/bash
+# codex, on the credential the entrypoint chose (chooseCodexAuth). A session on its owner's own Codex sign-in has it in
+# ~/.codex/auth.json already and calls OpenAI directly. Any other holds only its SESSION_TOKEN: codex reaches OpenAI
+# through the console's proxy (console/openaiProxy.mjs), which swaps it for the team key.
+#
+# The token is codex's alone, in a variable whose name codex's default shell policy keeps from the commands it runs.
+set -euo pipefail
+
+real=${WOODSHED_REAL_CODEX:-/usr/local/bin/codex}
+if [ "${WOODSHED_CODEX_AUTH:-}" = key ]; then
+  export WOODSHED_CODEX_KEY=$SESSION_TOKEN
+  exec "$real" \
+    -c 'model_provider="woodshed"' \
+    -c "model_providers.woodshed={name=\"Woodshed Cloud\",base_url=\"$WOODSHED_CONSOLE_URL/openai/v1\",env_key=\"WOODSHED_CODEX_KEY\",wire_api=\"responses\",supports_websockets=false}" \
+    "$@"
+fi
+exec "$real" "$@"

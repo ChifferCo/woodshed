@@ -1,0 +1,280 @@
+// The console's settings, all from the environment. README.md lists them.
+
+import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+
+import { ENGINE_NAMES } from '../shared/databases/index.mjs';
+import { secretEnvName } from '../shared/project.mjs';
+import { defaultProject, loadProjects } from './projects.mjs';
+
+const HOUR_MS = 3_600_000;
+
+function number(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function readSessionEnv(file) {
+  if (!file) return {};
+  const env = JSON.parse(fs.readFileSync(file, 'utf8'));
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value !== 'string') throw new Error(`${file}: ${key} must be a string`);
+  }
+  return env;
+}
+
+// Without a GitHub App, the token GitHub calls go out with also pushes for the
+// sessions unless the session env names its own.
+function ghToken(env) {
+  if (env.GH_TOKEN) return env.GH_TOKEN;
+  try {
+    return execFileSync('gh', ['auth', 'token'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    // A console being set up has no App yet and may have no gh either: the setup page is how it gets one.
+    console.warn('console: no GitHub App and no gh token, so no GitHub access until the App is set up at /setup/github');
+    return null;
+  }
+}
+
+// The key comes from a file on a dev box. With a secret store (AWS's, or the local provider's folder), without a file,
+// it comes from its secret, read at start and again whenever the Secrets page replaces it; until that has a value,
+// the console runs without GitHub.
+function githubApp(env) {
+  const { WOODSHED_CLOUD_GITHUB_APP_ID: appId, WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID: installationId } = env;
+  if (!appId) return null;
+  const keyFile = env.WOODSHED_CLOUD_GITHUB_APP_KEY_FILE || null;
+  const keyFromSecret = !keyFile && (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' || Boolean(env.WOODSHED_LOCAL_SECRETS_DIR));
+  if (!installationId || !(keyFile || keyFromSecret)) {
+    throw new Error('WOODSHED_CLOUD_GITHUB_APP_ID needs WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID, and WOODSHED_CLOUD_GITHUB_APP_KEY_FILE without a secret store (AWS, or WOODSHED_LOCAL_SECRETS_DIR)');
+  }
+  return { appId, installationId, keyFile, keyFromSecret };
+}
+
+// What an installation's sessions can get a copy of: the database engines (shared/databases/), each on its own.
+export const DATABASES = ENGINE_NAMES;
+
+/**
+ * The databases an installation runs, from a comma-separated list such as `postgres,mongo`, in DATABASES' order.
+ * @param {string} value
+ * @param {string} setting  what to name in an error
+ * @returns {string[]}
+ */
+export function databaseList(value, setting) {
+  const names = String(value ?? '').split(',').map((n) => n.trim()).filter(Boolean);
+  const unknown = names.filter((n) => !DATABASES.includes(n));
+  if (unknown.length) throw new Error(`${setting}: ${unknown.join(', ')} is not a database (${DATABASES.join(' or ')})`);
+  if (new Set(names).size !== names.length) throw new Error(`${setting} names a database twice`);
+  return DATABASES.filter((n) => names.includes(n));
+}
+
+// The local provider's databases: where dbAdmin.mjs's runs reach each, Postgres by its host and root user (both or
+// neither, so a console never starts half set up) and Mongo by host:port. The root passwords are in the local secret
+// store (providers/local/dbAdminRunner.mjs).
+function localDatabases(env) {
+  const pg = ['WOODSHED_LOCAL_DB_POSTGRES_HOST', 'WOODSHED_LOCAL_DB_POSTGRES_ROOT_USER'];
+  const pgSet = pg.filter((name) => env[name]);
+  if (pgSet.length === 1) throw new Error(`${pgSet[0]} needs ${pg.find((n) => !env[n])} too`);
+  const postgres = pgSet.length ? { host: env.WOODSHED_LOCAL_DB_POSTGRES_HOST, rootUser: env.WOODSHED_LOCAL_DB_POSTGRES_ROOT_USER } : null;
+  const mongo = env.WOODSHED_LOCAL_DB_MONGO_HOST ? { host: env.WOODSHED_LOCAL_DB_MONGO_HOST } : null;
+  if (!postgres && !mongo) return null;
+  return {
+    postgresHost: postgres?.host ?? null, postgresRootUser: postgres?.rootUser ?? null, mongoHost: mongo?.host ?? null,
+    network: env.WOODSHED_LOCAL_DOCKER_NETWORK || null,
+  };
+}
+
+// The local provider's webhook receiver: where it listens, and the public address GitHub and Slack post to, which a
+// proxy in front of it serves (the Settings page sets `<url>/github` on the GitHub App).
+function localWebhooks(env) {
+  if (!env.WOODSHED_LOCAL_WEBHOOK_PORT) return null;
+  const port = Number(env.WOODSHED_LOCAL_WEBHOOK_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`WOODSHED_LOCAL_WEBHOOK_PORT is not a port: ${env.WOODSHED_LOCAL_WEBHOOK_PORT}`);
+  return { host: env.WOODSHED_LOCAL_WEBHOOK_HOST || '127.0.0.1', port, url: (env.WOODSHED_LOCAL_WEBHOOK_URL || '').replace(/\/+$/, '') || null };
+}
+
+function tlsAskPort(env) {
+  if (!env.WOODSHED_CLOUD_TLS_ASK_PORT) return null;
+  const port = Number(env.WOODSHED_CLOUD_TLS_ASK_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error(`WOODSHED_CLOUD_TLS_ASK_PORT is not a port: ${env.WOODSHED_CLOUD_TLS_ASK_PORT}`);
+  return port;
+}
+
+function localLogin(env) {
+  const login = (env.WOODSHED_CLOUD_LOCAL_LOGIN || 'local').trim();
+  if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) throw new Error('WOODSHED_CLOUD_LOCAL_LOGIN must be a handle: letters, digits and hyphens');
+  return login;
+}
+
+/**
+ * `WOODSHED_CLOUD_ENV_FILES`: the secrets that hold the repo's env files, as `secret=path` pairs, the project file's
+ * `envFiles` (docs/reference.md, "The project file"): `api-env=api/.env,web-env=web/.env.local`.
+ * @returns {{secret: string, path: string}[]}
+ */
+export function envFiles(env) {
+  return (env.WOODSHED_CLOUD_ENV_FILES || '').split(',').map((p) => p.trim()).filter(Boolean).map((pair) => {
+    const [secret, ...rest] = pair.split('=');
+    const file = rest.join('=').trim();
+    if (!/^[a-z0-9-]+$/.test(secret.trim()) || !file) throw new Error(`WOODSHED_CLOUD_ENV_FILES wants secret=path pairs, as api-env=api/.env: ${pair}`);
+    return { secret: secret.trim(), path: file };
+  });
+}
+
+// The variables Woodshed itself gives a session (session/entrypoint.sh, its Environment), besides every WOODSHED_ one:
+// an install secret cannot arrive in one of them. providers/aws/terraform/variables.tf, install_secrets, repeats it.
+export const SESSION_VARIABLES = Object.freeze([
+  'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'SESSION_URL', 'SESSION_KIND', 'SESSION_MODE', 'STARTED_BY', 'ISSUE', 'PR',
+  'BRANCH', 'PROMPT', 'ASKED_BY', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY',
+  'REPO_DIR', 'GH_TOKEN', 'ANTHROPIC_API_KEY', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE',
+  'PGSSLROOTCERT', 'PG_URL', 'MONGODB_URI', 'HOME', 'PATH',
+]);
+
+/**
+ * `WOODSHED_CLOUD_INSTALL_SECRETS`: the secrets the repo's dependency installs read, as `secret=VARIABLE` pairs, each
+ * the variable a session gets it in (`registry-token=REGISTRY_TOKEN`). Terraform sets it from `install_secrets`.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{secret: string}[]} files  envFiles(env), whose secrets and variables an install secret cannot share
+ * @returns {{secret: string, variable: string}[]}
+ */
+export function installSecrets(env, files = envFiles(env)) {
+  const taken = new Set(files.flatMap(({ secret }) => [secret, secretEnvName(secret)]));
+  const pairs = (env.WOODSHED_CLOUD_INSTALL_SECRETS || '').split(',').map((p) => p.trim()).filter(Boolean).map((pair) => {
+    const [secret, variable = ''] = pair.split('=').map((part) => part.trim());
+    if (!/^[a-z0-9-]+$/.test(secret) || !/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
+      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS wants secret=VARIABLE pairs, as registry-token=REGISTRY_TOKEN: ${pair}`);
+    }
+    if (variable.startsWith('WOODSHED_') || SESSION_VARIABLES.includes(variable)) {
+      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: ${variable} is one of Woodshed's own session variables`);
+    }
+    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: ${pair} is an env file's, or named twice`);
+    taken.add(secret).add(variable);
+    return { secret, variable };
+  });
+  return pairs;
+}
+
+// The console menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the workflows in the repo that
+// build the images and apply the infrastructure. Each installation names its own; with none, the menu has no such
+// group.
+export function actionsWorkflows(value) {
+  return String(value ?? '').split(',').map((pair) => pair.trim()).filter(Boolean).map((pair) => {
+    const at = pair.lastIndexOf('=');
+    const label = pair.slice(0, at).trim();
+    const file = pair.slice(at + 1).trim();
+    if (at < 1 || !label || !/^[A-Za-z0-9._-]+\.ya?ml$/.test(file)) {
+      throw new Error(`WOODSHED_CLOUD_ACTIONS_WORKFLOWS: "${pair}" is not label=file.yml`);
+    }
+    return { label, file };
+  });
+}
+
+function webhookQueue(env) {
+  const value = env.WOODSHED_CLOUD_WEBHOOK_QUEUE;
+  if (value === '0') return '';
+  if (value) return value;
+  return env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'woodshed-cloud-webhooks' : '';
+}
+
+const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|\[::1\]|localhost)$/i;
+
+/**
+ * Without sign-in every gate lets a request through and the first visitor is an admin, which is safe only on a console
+ * nothing but this machine reaches. Bound to anything but loopback, sign-in must be required from the first request.
+ * A reverse proxy in front of a loopback console is the operator's to fence (providers/local/README.md).
+ */
+export function requireClosedWhenReachable(config) {
+  if (LOOPBACK.test(config.host) || config.requireSignIn) return;
+  throw new Error(`WOODSHED_CLOUD_HOST is ${config.host}, which other machines reach, and sign-in is not required: set WOODSHED_CLOUD_REQUIRE_SIGN_IN=1 (with the GitHub App), or bind 127.0.0.1 behind a proxy`);
+}
+
+/** Nothing in Woodshed Cloud names a repo of its own: an installation says which ones it works on. */
+export function requireRepo(config) {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(defaultProject(config).repo)) throw new Error('WOODSHED_CLOUD_REPO (or WOODSHED_CLOUD_PROJECTS) must name the repo this installation works on, as owner/name');
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ */
+export function loadConfig(env = process.env) {
+  const port = number(env.WOODSHED_CLOUD_PORT, 7690);
+  const app = githubApp(env);
+  return {
+    host: env.WOODSHED_CLOUD_HOST || '127.0.0.1',
+    port,
+    publicUrl: (env.WOODSHED_CLOUD_PUBLIC_URL || `http://localhost:${port}`).replace(/\/+$/, ''),
+    extraHosts: (env.WOODSHED_CLOUD_HOSTS || '').split(',').map((h) => h.trim()).filter(Boolean),
+    // Session apps answer at `<id>.<appDomain>`; empty turns them off.
+    appDomain: (env.WOODSHED_CLOUD_APP_DOMAIN || '').trim().toLowerCase(),
+    // Where a reverse proxy asks before getting a certificate on demand (tlsAsk.mjs), on 127.0.0.1; none turns it off.
+    tlsAskPort: tlsAskPort(env),
+    // On a console the internet reaches, sign-in never goes optional: not before the client secret is set,
+    // nor while a new one is unproven.
+    requireSignIn: env.WOODSHED_CLOUD_REQUIRE_SIGN_IN === '1',
+    stateDir: env.WOODSHED_CLOUD_STATE_DIR || '/var/lib/woodshed-cloud',
+    // The repos this installation works on (projects.mjs). providers/console.mjs refuses to start without one.
+    projects: loadProjects(env),
+    actionsWorkflows: actionsWorkflows(env.WOODSHED_CLOUD_ACTIONS_WORKFLOWS),
+    label: env.WOODSHED_CLOUD_LABEL || 'woodshed',
+    // The secrets holding the repo's env files, which the Secrets page and My settings show. None when it has none.
+    envFiles: envFiles(env),
+    // The ones of those the databases' commands read: their `envFiles` in the project file, which the db-admin run is given.
+    dbEnvSecrets: (env.WOODSHED_CLOUD_DB_ENV_SECRETS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    // The secrets the repo's installs read, each with the variable a session gets it in. None when it has none.
+    installSecrets: installSecrets(env),
+    pollGitHub: env.WOODSHED_CLOUD_POLL_GITHUB !== '0',
+    pollMs: number(env.WOODSHED_CLOUD_POLL_SECONDS, 30) * 1000,
+    tickMs: 10_000,
+    // A starting session's statusd alone, so its page opens claude's terminal within a couple of seconds.
+    startingCheckMs: 2_000,
+    // Shared sessions at once, until the Console settings page says otherwise, as it does for the limits below.
+    maxRunning: number(env.WOODSHED_CLOUD_MAX_SESSIONS, 5),
+    limits: {
+      idleMs: number(env.WOODSHED_CLOUD_IDLE_HOURS, 1) * HOUR_MS,
+      lifetimeMs: number(env.WOODSHED_CLOUD_LIFETIME_HOURS, 8) * HOUR_MS,
+      startTimeoutMs: 15 * 60_000,
+    },
+    launcher: {
+      kind: env.WOODSHED_CLOUD_LAUNCHER || 'docker',
+      image: env.WOODSHED_CLOUD_IMAGE || 'woodshed-session',
+      memory: env.WOODSHED_CLOUD_SESSION_MEMORY || '6g',
+      cpus: env.WOODSHED_CLOUD_SESSION_CPUS || '2',
+      ecs: {
+        cluster: env.WOODSHED_CLOUD_ECS_CLUSTER,
+        taskDefinition: env.WOODSHED_CLOUD_ECS_TASK_DEFINITION,
+        // Makes, resets and drops each person's own databases (databases.mjs); without it there are none.
+        dbAdminTaskDefinition: env.WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION || null,
+        // Which databases that task makes: Terraform's `databases` (providers/aws/index.mjs checks the two agree).
+        databases: env.WOODSHED_CLOUD_DATABASES === undefined ? null : databaseList(env.WOODSHED_CLOUD_DATABASES, 'WOODSHED_CLOUD_DATABASES'),
+        subnets: (env.WOODSHED_CLOUD_ECS_SUBNETS || '').split(',').filter(Boolean),
+        securityGroup: env.WOODSHED_CLOUD_ECS_SECURITY_GROUP,
+        logGroup: env.WOODSHED_CLOUD_ECS_LOG_GROUP,
+      },
+    },
+    // In AWS the queue Terraform makes, found by name; `0` turns it off. Elsewhere none, so a dev box only polls.
+    webhookQueue: webhookQueue(env),
+    fallbackPollMs: number(env.WOODSHED_CLOUD_FALLBACK_POLL_SECONDS, 300) * 1000,
+    sessionEnv: readSessionEnv(env.WOODSHED_CLOUD_SESSION_ENV_FILE),
+    // Where woodshed-db.mjs's connections go (dbTunnel.mjs), as `host:port`; without both, no tunnel.
+    tunnelTargets: { pg: env.WOODSHED_CLOUD_TUNNEL_POSTGRES || null, mongo: env.WOODSHED_CLOUD_TUNNEL_MONGO || null },
+    // Where each person's Claude home is kept between their private sessions (the aws provider's homeStore.mjs); none turns that off.
+    homesBucket: env.WOODSHED_CLOUD_HOMES_BUCKET || null,
+    // The same on the local provider, as files in a folder only the console's user can open.
+    localHomesDir: env.WOODSHED_LOCAL_HOMES_DIR || null,
+    localDatabases: localDatabases(env),
+    localWebhooks: localWebhooks(env),
+    // The docker network local sessions and db-admin runs join (providers/local/compose.yml's `woodshed`).
+    localDockerNetwork: env.WOODSHED_LOCAL_DOCKER_NETWORK || null,
+    githubApp: app,
+    // Who a local console with no sign-in treats the person using it as, for My Woodshed (server.mjs, soloLoginOf).
+    localLogin: localLogin(env),
+    // The Secrets page's store. In AWS, Secrets Manager: it needs the base box role's access to these secrets.
+    secrets: env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? { prefix: env.WOODSHED_CLOUD_SECRET_PREFIX || 'woodshed-cloud/' } : null,
+    // On the local provider, a folder only the console's user can open; none leaves it without a Secrets page.
+    localSecretsDir: env.WOODSHED_LOCAL_SECRETS_DIR || null,
+    // The key that folder's files are sealed with, in a file of its own outside it (providers/local/secretKey.mjs).
+    localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
+    webhookFunction: env.WOODSHED_CLOUD_WEBHOOK_FUNCTION || (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'woodshed-cloud-webhooks' : ''),
+    ghToken: app ? null : ghToken(env),
+    // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
+    sessionApi: { host: env.WOODSHED_CLOUD_SESSION_API_HOST || null, port: number(env.WOODSHED_CLOUD_SESSION_API_PORT, 7691) },
+  };
+}

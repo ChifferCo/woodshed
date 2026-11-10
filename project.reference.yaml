@@ -1,0 +1,140 @@
+# Every field of a repo's .woodshed/project.yaml, with an example value. Copy what you need: only `version` must be
+# written. A field marked "default" is that when left out; one marked "required" must be written whenever its section
+# is. A name that is not a field here is refused, so a typo is never read as "none". docs/reference.md, "The project file",
+# says what reads each field; test/projectReference.test.mjs keeps this file naming every field the parser knows.
+
+# Required. The format this Woodshed Cloud reads.
+version: 1
+
+# Default: {installs: []}. The installs the session image runs, and a session runs again where a branch changed their
+# files. A secret one reads, such as a registry's token, is the installation's (README.md, "Install secrets").
+dependencies:
+  # Default: []. One install a dir.
+  installs:
+    - # Required. The folder in the repo the command runs in.
+      dir: api
+      # Required, at least one. Files in the dir, globs allowed within one folder, which the image workflow stages for
+      # the build and whose change runs the install again at a session's start.
+      files: [package.json, package-lock.json, .npmrc]
+      # Required. One line, run with bash in the dir.
+      command: npm ci --no-audit --no-fund
+      # Required, at least one. What the image keeps: folders under the dir, or under the home as ~/...
+      output: [node_modules]
+
+# Default: {}. Variables exported for everything a session runs. A value can use {{NAME}}, a variable of the session's
+# environment (empty when unset), or {{NAME?}}, which leaves the line out when it is empty. Quote numbers.
+env:
+  NODE_ENV: development
+  PORT: '9000'
+
+# Default: []. The env files a session writes, each from its secret, then the owner's own lines, then `lines`.
+envFiles:
+  - # Required. Where the file goes, in the repo.
+    path: api/.env
+    # Default: null (no base text). The installation's secret holding the file's base text; it reaches the session as
+    # its name in capitals (api-env is API_ENV), and on My settings each person adds their own lines to it.
+    secret: api-env
+    # Default: []. Lines written last, so they win. `{{NAME}}` and `{{NAME?}}` as in `env`.
+    lines:
+      - DATABASE_URL={{PG_URL}}
+      - DB_PASSWORD={{PGPASSWORD}}
+      - S3_ENDPOINT={{S3_ENDPOINT?}}
+
+# Default: [] (no databases: the db-admin task refuses to run, and sessions get none). The databases each session gets
+# its own copy of, each on the engine it names and a copy of a template the db-admin task builds after each session
+# image. The installation must host each engine (its `databases`; docs/reference.md, "Databases"). Each engine gives
+# sessions its own variables for the env and env file lines: postgres PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE,
+# PGSSLMODE and PG_URL; mongo MONGODB_URI.
+databases:
+  - # Required. postgres or mongo; one database an engine.
+    engine: postgres
+    # Required. The folder `migrate` and `seed` run in, and whose dependencies give the db-admin task its driver.
+    dir: api
+    # Default: null (none). Commands that migrate and seed the template, run in `dir`: every database's migrate, then
+    # with a new template its seed, in this list's order, with every database's variables set.
+    migrate: npm run migrate
+    seed: npm run seed
+    # Default: []. Which envFiles' secrets the commands read: each must be an `envFiles` entry's `secret`.
+    envFiles: [api-env]
+    # Default: []. What the template is built from: the image workflow builds it again when any changed.
+    paths: [api/db/]
+    # Default: null. The folder under `paths` where a new file only migrates a copy, not rebuilds the template.
+    migrations: api/db/migrations
+    # Default: null (none: Restore a dump says nothing of the dump's migrations). postgres only. The table the
+    # migration tool records each migration it ran in, `table` or `schema.table`, and the `column` holding its name, each
+    # lowercase, as Postgres folds an unquoted name
+    # (knex: knex_migrations and name; Prisma: _prisma_migrations and migration_name). A name may end in the file's
+    # extension (`.js`), which is left out when it is compared with the files in `migrations`.
+    migrationsTable:
+      table: public.schema_versions
+      column: name
+    # Default: null (every row and collection, and pg_dump's own choice of extensions). What the dump commands on My
+    # settings' Restore a dump leave out. `skip`, default []: postgres tables whose rows only grow and a working copy
+    # rarely needs (`table` or `schema.table`, each coming over empty; never one other rows point at, or the restore
+    # stops at their foreign key), or mongo collections. `extensions`, default [], postgres only: the extensions the
+    # dump keeps, which the session's database user may create.
+    dump:
+      skip: [public.audit_log, public.events]
+      extensions: [pg_trgm]
+    # Default: null. The user and database a session uses where its environment names none (the docker launcher).
+    user: app_user
+    name: app
+
+# Default: null (no app: no Start app, no ports probed, and no pull request refused for an untested app).
+app:
+  # Required. Starts the app; statusd's Start app runs it.
+  start: make serve
+  # Default: null (Stop app does nothing).
+  stop: make stop
+  # Required. The ports statusd probes.
+  frontendPort: 3001
+  backendPort: 9000
+  # Default: {}. Name to log file, `~` and `{{CHECKOUT}}` (the checkout's folder name) filled in: the App log tab, and
+  # how the session tells the app was started.
+  logs:
+    api: ~/.cache/app/{{CHECKOUT}}/api.log
+    web: ~/.cache/app/{{CHECKOUT}}/web.log
+  # Default: []. Prefixes that count as an app change for readyGate (write a folder with its `/`).
+  paths: [api/, web/]
+  # Required. What readyGate tells a session that opens a pull request without having started the app.
+  howToProve: Run `make serve` and check each change in the browser.
+
+# Default: false. VS Code in the browser on each session's checkout (Editor ↗).
+editor: true
+
+# Default: null. Files in the repo: its rules for sessions, added after Woodshed Cloud's own, and its environment notes.
+rules: .woodshed/rules.md
+setup: .woodshed/setup.md
+
+# Default: null (no gates: the console posts a pull request once it is out of draft and its checks pass).
+pullRequests:
+  # Default: null (no review waited for).
+  review:
+    # Required. Who posts the review's verdict, and how its body starts.
+    author: review-bot[bot]
+    heading: '## Code Review'
+    # Required. The workflow file that runs the review.
+    workflow: .github/workflows/review.yml
+    # Default: null. What a commit subject carries to run the review again.
+    rerun: '[review]'
+    # Default: null. Who posts the review's inline comments, which the decision brief quotes.
+    commentAuthor: review-bot[bot]
+  # Default: []. Test suites that must pass on the head commit.
+  suites:
+    - # Required. The name shown, the workflow file, and the prefix of its jobs' names.
+      name: e2e suite
+      workflow: .github/workflows/e2e.yml
+      jobs: e2e run
+      # Default: null. What a commit subject carries to run it again.
+      rerun: '[e2e]'
+  # Default: null (no QA waited for).
+  qa:
+    # Required. The QA check run's name, the label that asks for it, and the author and heading of its comment.
+    check: QA
+    label: qa
+    heading: '## QA'
+    author: qa-bot[bot]
+  # Default: null. The check run that rates the merge; it needs `review`, whose workflow must post it.
+  mergeRisk:
+    # Required.
+    check: Merge risk

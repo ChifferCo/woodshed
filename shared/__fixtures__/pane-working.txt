@@ -1,0 +1,64 @@
+  Four states on every session row, derived from the tmux pane, sorted so whatever wants you sits at the top.
+
+  ┌─────┬───────────┬───────────────────────────────────────────────────┐
+  │     │   state   │                 how it's detected                 │
+  ├─────┼───────────┼───────────────────────────────────────────────────┤
+  │ 🟠  │ needs-you │ footer has Esc to cancel + a numbered option line │
+  ├─────┼───────────┼───────────────────────────────────────────────────┤
+  │ 🔵  │ working   │ footer has esc to interrupt                       │
+  ├─────┼───────────┼───────────────────────────────────────────────────┤
+  │ 🟢  │ done      │ neither, composer present                         │
+  ├─────┼───────────┼───────────────────────────────────────────────────┤
+  │ ⚪  │ idle      │ no transcript — launched, never spoken to         │
+  └─────┴───────────┴───────────────────────────────────────────────────┘
+
+  Logic lives in a new tested sessionState.mjs; server.mjs keeps only the I/O and wiring. 7 files, 8 acceptance criteria — six unit tests against
+  real captures, two browser-driven.
+
+  What the review changed
+
+  plan-critic returned 5 blocking + 7 advisory. All folded in. The three that genuinely changed the design:
+
+  Scanning the whole screen would have been a self-inflicted bug. Claude's own output persists on screen and can contain the markers verbatim —
+  the critic found esc to rewind sitting in a live pane, and the session implementing this will have esc to interrupt in its own diff. It would
+  have read "working" permanently. Now anchored to the footer segment after the last ─── rule.
+
+  session_activity is the wrong clock — 224s stale on a session redrawing every frame, while window_activity was current to the second. It broke
+  both the cache and the sort key. Caught by measuring; AC8 was the only criterion that would have found it, and it's manual.
+
+  Folding status into usageLine's level would have put a ⚠ on every session — level is truthy-tested to prepend a warning triangle, and the
+  class-removal list is hardcoded so classes would accumulate every poll. Now a separate field.
+
+  Two more worth flagging: my CSS specificity arithmetic was wrong (it's a (0,3,0) tie broken by source order, not (0,2,1) — the fix was right
+  for the wrong reason), and browser verification now runs against a throwaway instance on :7778, because AC7 as written would have restarted the
+  live bridge underneath your six running sessions, including this one.
+
+  Two things you may want to overrule
+
+  - Running group header becomes Active — it would otherwise sit above rows labelled "Done" and "Idle".
+  - A working session's dot goes green → blue. Green stops meaning "exists" and starts meaning "finished, your move." Deliberate, but you'll
+    notice it.
+
+  Still open (none blocking)
+
+  Whether done is the right word for a turn that ended with a question — structurally it's done, semantically it wants you. Both mean "your move"
+  so the dot is honest either way, but the labels may want to converge once they're on screen. I'd ship the four-way split and look at it.
+
+● User answered Claude's questions:
+  ⎿  · Ready to implement against this plan? → Approve as-is
+
+● Approved. Starting implementation.
+
+● Capturing working pane fixture
+  ⎿  $ tmux capture-pane -p -t claude-65a63520 > tools/bridge/__fixtures__/pane-working.txt; grep -n 'esc to interrupt'
+     tools/bridge/__fixtures__/pane-working.txt; echo "--- lines:"; wc -l <
+     tools/bridge/__fixtures__/pane-working.txt
+
+✽ Levitating… (6m 54s · ↓ 34.4k tokens)
+  ⎿  Tip: Use /btw to ask a quick side question without interrupting Claude's current work
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Claude bridge feedback ─
+❯ 
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · esc to interrupt · ← 1 agent                                                                       /rc
+  ⧉  worktree-bridge-65a63520-plan

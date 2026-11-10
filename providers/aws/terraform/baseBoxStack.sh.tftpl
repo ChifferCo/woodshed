@@ -1,0 +1,276 @@
+#!/bin/bash
+# The base box's stack: the compose file, Caddy's config, the helper scripts and systemd units under
+# /opt/woodshed-cloud, then the stack (re)started with them. Applied over SSM by the
+# woodshed-cloud-configure-base-box association (terraform/baseBox.tf) on a new box and after every
+# change to this file, so `terraform apply` is all a change here needs. Safe to run again.
+set -euo pipefail
+
+STACK=/opt/woodshed-cloud
+
+# On a new box SSM can get here before cloud-init has installed Docker and mounted the data volume.
+for _ in $(seq 90); do
+  docker info >/dev/null 2>&1 && mountpoint -q /var/lib/woodshed-cloud && break
+  sleep 10
+done
+docker info >/dev/null 2>&1 || { echo "woodshed-cloud: Docker never came up" >&2; exit 1; }
+mountpoint -q /var/lib/woodshed-cloud || { echo "woodshed-cloud: the data volume is not mounted" >&2; exit 1; }
+
+mkdir -p "$STACK/caddy" /var/lib/woodshed-cloud/mongo /var/lib/woodshed-cloud/console /var/lib/woodshed-cloud/caddy
+# The console runs as the image's uid 1000 user.
+chown 1000:1000 /var/lib/woodshed-cloud/console
+
+# The shared services' files (the shared_services variable), each mounted read-only into its container by compose.yml.
+# Base64 here, so no text of the installation's meets this script's quoting.
+rm -rf "$STACK/services"
+%{ for name, service in services ~}
+%{ for i, file in keys(service.files) ~}
+mkdir -p "$STACK/services/${name}"
+echo '${base64encode(service.files[file])}' | base64 -d > "$STACK/services/${name}/${i}"
+chmod +x "$STACK/services/${name}/${i}"
+%{ endfor ~}
+%{ endfor ~}
+
+# Caddy with the Route 53 DNS provider: Let's Encrypt checks a TXT record in the console's zone, never a
+# connection to the box, so port 80 only redirects and the wildcard certificate works.
+cat > "$STACK/caddy/Dockerfile" <<'EOF'
+FROM caddy:2.11.7-builder AS builder
+RUN xcaddy build --with github.com/caddy-dns/route53@v1.6.2
+
+FROM caddy:2.11.7
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
+EOF
+
+cat > "$STACK/Caddyfile" <<'EOF'
+{
+	# Browsers send no SNI to a bare IP, so Caddy is told which certificate to serve.
+	default_sni ${public_ip}
+	auto_https disable_redirects
+}
+
+(console) {
+	reverse_proxy 127.0.0.1:7690
+}
+
+https://${domain} {
+	# Let's Encrypt checks the TXT record from several places, some before Route 53 has published it to
+	# every nameserver; without a pause the first attempt fails and Caddy gives up on that job.
+	tls {
+		dns route53
+		propagation_delay 60s
+	}
+	import console
+}
+
+# Session apps: the console picks the session from the name. One wildcard certificate, by the same DNS check.
+https://*.${domain} {
+	tls {
+		dns route53
+		propagation_delay 60s
+	}
+	reverse_proxy 127.0.0.1:7690
+}
+
+http://${domain}, http://*.${domain}, http://${public_ip} {
+	redir https://{host}{uri} permanent
+}
+
+# The bare IP keeps its self-signed certificate.
+https://${public_ip} {
+	tls internal
+	import console
+}
+EOF
+
+cat > "$STACK/compose.yml" <<'EOF'
+# Ports for the shared services bind to the private address only; the security
+# group then limits them to session tasks. The console and Caddy share the
+# host's network: with the IMDS hop limit at 1, that keeps the instance role
+# away from the containers sessions can reach (Mongo and the shared services).
+services:
+%{ if mongo ~}
+  # Every database has a user of its own (session/dbAdmin.mjs); root's password is in a secret this box can't read.
+  mongo:
+    image: mongo:7.0
+    restart: unless-stopped
+    command: ["--auth"]
+    mem_limit: 1g
+    ports: ["${private_ip}:27017:27017"]
+    volumes: ["/var/lib/woodshed-cloud/mongo:/data/db"]
+
+%{ endif ~}
+%{ for name, service in services ~}
+  ${name}:
+    image: ${jsonencode(service.image)}
+    restart: unless-stopped
+    mem_limit: ${jsonencode(service.mem_limit)}
+    ports: ["${private_ip}:${service.port}:${service.port}"]
+%{ if length(service.environment) > 0 ~}
+    environment: ${jsonencode([for key in keys(service.environment) : "${key}=${replace(service.environment[key], "$", "$$")}"])}
+%{ endif ~}
+%{ if length(service.files) > 0 ~}
+    volumes: ${jsonencode([for i, file in keys(service.files) : "/opt/woodshed-cloud/services/${name}/${i}:${file}:ro"])}
+%{ endif ~}
+
+%{ endfor ~}
+  console:
+    image: ${console_image}
+    restart: unless-stopped
+    mem_limit: 512m
+    network_mode: host
+    environment:
+      - AWS_REGION=${region}
+      - WOODSHED_CLOUD_HOST=127.0.0.1
+      - WOODSHED_CLOUD_PUBLIC_URL=https://${domain}
+      - WOODSHED_CLOUD_APP_DOMAIN=${domain}
+      - WOODSHED_CLOUD_HOSTS=${public_ip}
+      - WOODSHED_CLOUD_REQUIRE_SIGN_IN=1
+      - WOODSHED_CLOUD_STATE_DIR=/var/lib/woodshed-cloud
+      - WOODSHED_CLOUD_REPO=${repo}
+%{ if projects != "" ~}
+      # The repos sessions start on (the projects variable), quoted since JSON is not a plain YAML value, $ escaped for Compose.
+      - ${jsonencode("WOODSHED_CLOUD_PROJECTS=${replace(projects, "$", "$$")}")}
+%{ endif ~}
+      - WOODSHED_CLOUD_ENV_FILES=${env_files}
+      - WOODSHED_CLOUD_DB_ENV_SECRETS=${db_env_secrets}
+      - WOODSHED_CLOUD_INSTALL_SECRETS=${install_secrets}
+      - WOODSHED_CLOUD_MAX_SESSIONS=${max_sessions}
+      - WOODSHED_CLOUD_ACTIONS_WORKFLOWS=${workflow_links}
+      - WOODSHED_CLOUD_HOMES_BUCKET=${homes_bucket}
+      - WOODSHED_CLOUD_GITHUB_APP_ID=${github_app_id}
+      - WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID=${github_app_install}
+      - WOODSHED_CLOUD_SESSION_API_HOST=${private_ip}
+      - WOODSHED_CLOUD_LAUNCHER=ecs
+      - WOODSHED_CLOUD_ECS_CLUSTER=${cluster}
+      - WOODSHED_CLOUD_ECS_TASK_DEFINITION=${task_definition}
+      - WOODSHED_CLOUD_ECS_SUBNETS=${subnets}
+      - WOODSHED_CLOUD_ECS_SECURITY_GROUP=${session_sg}
+      - WOODSHED_CLOUD_ECS_LOG_GROUP=${log_group}
+      # The databases the installation runs (the databases variable), which the db-admin task makes for each session.
+      - WOODSHED_CLOUD_DATABASES=${databases}
+%{ if db_admin_task != "" ~}
+      - WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION=${db_admin_task}
+%{ endif ~}
+      # woodshed-db.mjs's tunnel (console/dbTunnel.mjs): Postgres is RDS, Mongo the box's own, on its private address.
+%{ if db_host != "" ~}
+      - WOODSHED_CLOUD_TUNNEL_POSTGRES=${db_host}:5432
+%{ endif ~}
+%{ if mongo ~}
+      - WOODSHED_CLOUD_TUNNEL_MONGO=${private_ip}:27017
+%{ endif ~}
+    volumes:
+      - /var/lib/woodshed-cloud/console:/var/lib/woodshed-cloud
+
+  caddy:
+    # Built by woodshed-cloud-up with `docker build`: Compose's own build needs a newer buildx than
+    # Amazon Linux ships.
+    image: woodshed-cloud-caddy
+    pull_policy: never
+    restart: unless-stopped
+    mem_limit: 128m
+    network_mode: host
+    volumes:
+      - /opt/woodshed-cloud/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/woodshed-cloud/caddy:/data
+    environment:
+      - AWS_REGION=${region}
+EOF
+
+# Mongo's root user, made once through Mongo's localhost exception: with --auth and no user yet, a connection from
+# inside its container may make the first one. Once any user exists the attempt fails, which is the sign it is done.
+# The password goes to a secret this box may write and never read: only the db-admin task reads it. Without mongo in
+# the databases variable there is no Mongo, and the script goes; Mongo's folder on the data volume stays as it was.
+%{ if !mongo ~}
+rm -f /usr/local/bin/woodshed-cloud-mongo-root
+%{ else ~}
+cat > /usr/local/bin/woodshed-cloud-mongo-root <<'EOF'
+#!/bin/bash
+set -euo pipefail
+umask 077
+cd /opt/woodshed-cloud
+for _ in $(seq 30); do
+  docker compose exec -T mongo mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' >/dev/null 2>&1 && break
+  sleep 2
+done
+ROOT_PW=$(openssl rand -hex 24)
+export ROOT_PW
+if ! docker compose exec -T -e ROOT_PW mongo mongosh --quiet \
+    --eval 'db.getSiblingDB("admin").createUser({ user: "root", pwd: process.env.ROOT_PW, roles: ["root"] })' >/dev/null 2>&1; then
+  echo "woodshed-cloud: Mongo has its root user already"
+  exit 0
+fi
+file=$(mktemp)
+trap 'rm -f "$file"' EXIT
+printf '%s' "$ROOT_PW" > "$file"
+for _ in 1 2 3; do
+  if aws secretsmanager put-secret-value --region ${region} --secret-id '${mongo_root_secret}' --secret-string "file://$file" >/dev/null; then
+    echo "woodshed-cloud: Mongo's root user made, its password saved"
+    exit 0
+  fi
+  sleep 5
+done
+# Kept for root alone, so the user just made is not lost: put it in the secret by hand, then delete the file.
+cp "$file" /root/woodshed-cloud-mongo-root
+echo "woodshed-cloud: Mongo's root password could not be saved; it is in /root/woodshed-cloud-mongo-root" >&2
+exit 1
+EOF
+chmod 0755 /usr/local/bin/woodshed-cloud-mongo-root
+%{ endif ~}
+
+# Fetches the newest images, then (re)starts the stack. The console reads its secrets itself.
+cat > /usr/local/bin/woodshed-cloud-up <<'EOF'
+#!/bin/bash
+set -euo pipefail
+umask 077
+# Where a box set up earlier kept a GitHub token, then a copy of the App's key.
+rm -rf /opt/woodshed-cloud/console.env /opt/woodshed-cloud/github-app
+# --no-pull: apply a changed config with the images already on the box.
+PULL=1
+[ "$${1:-}" = --no-pull ] && PULL=0
+[ "$PULL" = 1 ] && aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registry}
+cd /opt/woodshed-cloud
+[ "$PULL" = 1 ] && docker compose pull --quiet
+# The build cache makes an unchanged Dockerfile a no-op.
+docker build --quiet --tag woodshed-cloud-caddy /opt/woodshed-cloud/caddy
+docker compose up -d --remove-orphans
+# The images the stack ran before: running containers keep theirs (the redeploy-console document does the same).
+docker image prune -af
+%{ if mongo ~}
+/usr/local/bin/woodshed-cloud-mongo-root
+%{ endif ~}
+# A new Caddyfile changes a mounted file, not Caddy's container, so Compose leaves Caddy on the old config.
+# A Caddy that has only just started may not answer a reload yet; a restart reads the file too.
+docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose restart caddy
+EOF
+chmod 0755 /usr/local/bin/woodshed-cloud-up
+
+# Where a box set up earlier kept the viewers that opened a database from here: every session has its own now.
+systemctl disable --now woodshed-cloud-pgweb.timer 2>/dev/null || true
+rm -f /etc/systemd/system/woodshed-cloud-pgweb.timer /etc/systemd/system/woodshed-cloud-pgweb.service \
+  /usr/local/bin/woodshed-cloud-pgweb /usr/local/bin/woodshed-cloud-pgweb-url "$STACK/rds-ca.pem"
+
+cat > /etc/systemd/system/woodshed-cloud.service <<'EOF'
+[Unit]
+Description=Woodshed Cloud console and shared services
+After=docker.service network-online.target
+Requires=docker.service
+RequiresMountsFor=/var/lib/woodshed-cloud
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/woodshed-cloud-up
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable woodshed-cloud.service
+# A running stack takes the new config without pulling a newer console image: deploying one is the
+# image workflow's job. A stack that never started (its console image did not exist yet) starts in full.
+if [ -n "$(cd "$STACK" && docker compose ps --quiet console)" ]; then
+  /usr/local/bin/woodshed-cloud-up --no-pull
+else
+  systemctl start woodshed-cloud.service || echo "woodshed-cloud: first start failed, see README.md"
+fi

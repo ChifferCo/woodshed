@@ -1,0 +1,15 @@
+#!/bin/bash
+# Signs claude in for Remote Control in this session. claude's own setup-token, which a private session runs on, is
+# inference-only, so /remote-control refuses it. The login made here is this session's alone: Anthropic rotates the
+# refresh token at each use, so a copy in another session would log one of them out. session/bin/claude then runs on
+# the login instead of the token (until `claude auth logout`).
+set -euo pipefail
+
+if [ "${WOODSHED_CLAUDE_AUTH:-}" != own ]; then
+  echo "woodshed-login is for a My Woodshed session: this one's claude is not on your own Claude plan." >&2
+  exit 1
+fi
+echo "Sign in with your Claude account. Open the link below, approve, and paste the code it shows."
+claude auth login --claudeai
+echo
+echo "Done. Start claude again (or /exit and reopen it) and run /remote-control."

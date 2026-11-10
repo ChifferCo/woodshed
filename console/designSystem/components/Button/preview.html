@@ -1,0 +1,12 @@
+<!-- @dsCard group="Actions" height=120 subtitle="Primary, outline and quiet" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600;700&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+ button{font:600 12.5px "Red Hat Display",system-ui,sans-serif;min-height:32px;padding:0 12px;border-radius:var(--radius-sm);cursor:pointer}
+ .p{background:var(--action);color:var(--action-ink);border:1px solid var(--action)}
+ .o{background:var(--ground);color:var(--ink);border:1px solid var(--line)}
+ .q{background:transparent;color:var(--amber-ink);border:1px solid transparent;font-weight:500}
+ button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+</style>
+<div class="row"><button class="p" type="button">+ New session</button><button class="p" type="button">Resume</button><button class="o" type="button">Change</button><button class="o" type="button">Unassign</button><button class="q" type="button">Remove</button></div>
