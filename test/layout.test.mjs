@@ -73,7 +73,8 @@ test('the import scan sees every form, so an empty answer means something', () =
 // What is that repo's goes in its own .woodshed/ (docs/reference.md, "Using it on another repo"). Each exception below is work
 // still to do, with the follow-up that removes it; one that no longer occurs fails too, so the list only shrinks.
 // The copyright holder, ChifferCo, Inc., is not the repo: the license files and the CLA name it, so its full legal name passes.
-const NAMED = /chiffer(?!co, inc\.)|woodrow|taskforce|\bsubscript\b|backend-env|agent-env|backend_env|agent_env|backend\/\.env|agent\/\.env|auth0|aws_s3_test|gotenberg|claude-review|playwright-agent|claude-qa|claude qa|playwright agent|joelbraga|joel braga|c03g108jpg8|c01fkny15hn/gi;
+// So does this repo's own public address, ChifferCo/woodshed, which the installer clones.
+const NAMED = /chiffer(?!co, inc\.|co\/woodshed(?![\w-]))|woodrow|taskforce|\bsubscript\b|backend-env|agent-env|backend_env|agent_env|backend\/\.env|agent\/\.env|auth0|aws_s3_test|gotenberg|claude-review|playwright-agent|claude-qa|claude qa|playwright agent|joelbraga|joel braga|c03g108jpg8|c01fkny15hn/gi;
 // And its app's conventions: its start script and Procfile, its folders as paths (not `/agent/` in a URL or
 // `user-agent/`), its database scripts, its skills, and the folder its standalone shed lives in (Hetzner the hosting
 // company is fine to name).
