@@ -6,6 +6,10 @@
 // once: each refresh returns a new pair, saved before the token is handed out, and one refresh per person runs at
 // a time. Without expiry the token itself is kept. Either way it lives in Secrets Manager at
 // `users/<login>/github` and never reaches a session; a session gets the short-lived token, from the session API.
+//
+// That token reaches every repo the App is installed on that the person can write to. A session on a project other
+// than the installation's default gets a copy GitHub scopes down to that project's repo alone (scopedTokenFor), so it
+// still pushes and opens pull requests as its owner without reaching the installation's other repos.
 
 import logins from './public/logins.cjs';
 const { loginKey, sameLogin } = logins;
@@ -45,6 +49,9 @@ export function createGitHubUser({
 }) {
   const cache = new Map();
   const refreshing = new Map();
+  // Scoped tokens by person and repo, each with the token it was made from: a refresh makes a new one.
+  const scoped = new Map();
+  const scoping = new Map();
 
   /** Keeps the answer of a Connect GitHub sign-in, and who GitHub says they are, for commits. */
   async function connect({ login, answer }) {
@@ -119,6 +126,70 @@ export function createGitHubUser({
     return { token: credentials.accessToken, expiresAt: credentials.expiresAt ?? now() + NO_EXPIRY_CACHE_MS };
   }
 
+  function forgetScoped(login) {
+    const prefix = `${loginKey(login)}\n`;
+    for (const key of scoped.keys()) if (key.startsWith(prefix)) scoped.delete(key);
+  }
+
+  async function makeScoped(login, from, { repo, permissions }) {
+    const secret = clientSecret();
+    if (!secret) {
+      console.warn('githubUser: no scoped token, the console has no client secret', { login, repo });
+      return null;
+    }
+    const id = await clientId();
+    const [owner, name] = repo.split('/');
+    let res;
+    try {
+      res = await fetchImpl(`${githubApi}/applications/${id}/token/scoped`, {
+        method: 'POST',
+        headers: {
+          authorization: `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`,
+          accept: 'application/vnd.github+json',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ access_token: from.token, target: owner, repositories: [name], permissions }),
+      });
+    } catch (err) {
+      if (!(err instanceof TypeError)) throw err;
+      console.warn('githubUser: GitHub did not answer the scoped token request', { login, repo, message: String(err.message).slice(0, 80) });
+      return null;
+    }
+    const answer = await res.json().catch(() => ({}));
+    if (!res.ok || !answer.token) {
+      console.warn('githubUser: GitHub refused a scoped token', { login, repo, status: res.status });
+      return null;
+    }
+    const expiresAt = Date.parse(answer.expires_at ?? '') || from.expiresAt;
+    console.log('githubUser: scoped token made', { login, repo });
+    return { from: from.token, token: answer.token, expiresAt };
+  }
+
+  /**
+   * The person's own token, scoped by GitHub to one repo and to `permissions`, for their sessions on a project other
+   * than the default.
+   * @param {string} login
+   * @param {{repo: string, permissions: Record<string, 'read'|'write'>}} scope  `repo` is owner/name
+   * @returns {Promise<{token: string, expiresAt: number}|null>}  null when they have not connected GitHub, or GitHub
+   *   (or a console with no client secret) made none: the caller falls back to the App's token for that repo
+   * @throws {Error}  `shown`, as tokenFor, when they had connected and GitHub refuses them now
+   */
+  async function scopedTokenFor(login, scope) {
+    const from = await tokenFor(login);
+    if (!from) {
+      forgetScoped(login);
+      return null;
+    }
+    const key = `${loginKey(login)}\n${scope.repo.toLowerCase()}`;
+    const held = scoped.get(key);
+    if (held && held.from === from.token && held.expiresAt - now() >= REFRESH_MARGIN_MS) return { token: held.token, expiresAt: held.expiresAt };
+    if (!scoping.has(key)) scoping.set(key, makeScoped(login, from, scope).finally(() => scoping.delete(key)));
+    const made = await scoping.get(key);
+    if (!made) return null;
+    scoped.set(key, made);
+    return { token: made.token, expiresAt: made.expiresAt };
+  }
+
   /**
    * Ends a token at GitHub, so a session that already cached it can no longer push with it. Deleting the stored copy
    * does not need this to work: a failure leaves only a token that expires in hours, and is logged.
@@ -150,10 +221,11 @@ export function createGitHubUser({
     const key = loginKey(login);
     const held = cache.get(key) ?? (await userSettings.githubCredentials(login));
     cache.delete(key);
+    forgetScoped(login);
     await userSettings.forgetGitHub(login);
     if (held?.accessToken) await revoke(login, held.accessToken);
     console.log('githubUser: disconnected', { login, heldToken: Boolean(held?.accessToken) });
   }
 
-  return { connect, tokenFor, disconnect };
+  return { connect, tokenFor, scopedTokenFor, disconnect };
 }

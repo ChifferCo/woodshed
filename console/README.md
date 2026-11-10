@@ -379,11 +379,16 @@ with the App's expiring user tokens (its default), a refresh token too. It goes
 in Secrets Manager at `woodshed-cloud/users/<login>/github` and never reaches a
 session. A connected owner's private session then:
 - gets their own token from the session API's `/github-token`, which an
-  installation token answers for everyone else. Only on the default project:
-  the owner's token reaches every repo the App is on that they can write to, so
-  a session on another project gets that project's App token instead, which
-  reaches its repo alone. Its commits are still authored as the owner (the git
-  identity below), but pushed with the App's token;
+  installation token answers for everyone else, so it pushes and opens pull
+  requests as them. The owner's token reaches every repo the App is on that they
+  can write to, so only a session on the default project gets it as it is. One
+  on another project gets it scoped down by GitHub to that project's repo and
+  the permissions sessions get (`POST /applications/{client_id}/token/scoped`,
+  with the App's client secret; `githubUser.mjs`, `scopedTokenFor`), made once
+  per person and repo and kept until it nears its expiry. When GitHub makes none
+  (no client secret, or it refuses), that session gets the project's App token,
+  which reaches its repo alone: its commits are still authored as the owner (the
+  git identity below), but pushed and opened as the App;
 - commits with their name and `<id>+<login>@users.noreply.github.com`, which
   My settings can change.
 
