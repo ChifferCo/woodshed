@@ -20,6 +20,9 @@ export const ROLES = Object.freeze(['owner', 'member']);
 const LOGIN_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$/;
 // The host sends one good for 60 seconds; a payload far bigger than that JSON is not one.
 const MAX_HEADER_CHARS = 1024;
+// The host sends one good for 60 seconds. One that claims far longer was not made per request, and a copy of it that
+// leaked would sign someone in for as long as it says: refused, with room left for the two clocks to differ.
+const MAX_LIFETIME_MS = 5 * 60_000;
 // The refusals that say something is wrong, logged at most this often for each reason.
 const LOG_EVERY_MS = 60_000;
 
@@ -45,7 +48,7 @@ export function signIdentity({ secret, login, role, exp }) {
 
 /**
  * @param {{value: string|string[]|undefined, secret: string, now: number}} args
- * @returns {{login: string, role: 'owner'|'member'}|{refused: 'missing'|'malformed'|'forged'|'expired'|'bad identity'}}
+ * @returns {{login: string, role: 'owner'|'member'}|{refused: 'missing'|'malformed'|'forged'|'expired'|'too long'|'bad identity'}}
  */
 export function verifyIdentity({ value, secret, now }) {
   if (value === undefined || value === '') return { refused: 'missing' };
@@ -63,6 +66,7 @@ export function verifyIdentity({ value, secret, now }) {
   }
   if (typeof claims?.login !== 'string' || !LOGIN_RE.test(claims.login) || !ROLES.includes(claims.role)) return { refused: 'bad identity' };
   if (!Number.isFinite(claims.exp) || claims.exp <= now) return { refused: 'expired' };
+  if (claims.exp - now > MAX_LIFETIME_MS) return { refused: 'too long' };
   return { login: claims.login, role: claims.role };
 }
 

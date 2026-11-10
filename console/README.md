@@ -1052,18 +1052,22 @@ POST <url>
 Authorization: Bearer <the file's contents, trimmed>
 Content-Type: application/json
 
-{"repo": "owner/name"}            ({} when the token is for no one repo)
+{"repo": "owner/name", "permissions": {"contents": "write", "metadata": "read", ...}}
+   (either left out when not wanted: no repo when the token is for no one repo, no permissions for the console's own)
 
--> 200 {"token": "ghs_...", "expiresAt": "<ISO 8601>"}
+-> 200 {"token": "ghs_...", "expiresAt": "<ISO 8601>", "permissions": {...}}
    anything else is a refusal; its JSON body may say {"error": "..."}
 ```
 
-Each repo's token is kept until 5 minutes before `expiresAt`, and shared by the console and its sessions. The file is
-read at each ask, so the host can rotate it, and its contents are never logged. The console logs `githubBroker: token
-borrowed` with the repo, the expiry and how long the ask took, or `githubBroker: token refused` with the status and
-the host's `error`, or `not reached`. With no App to narrow a token, a coding session gets the same token as the
-console, and a question from Slack, whose token must read and write nothing, gets none (`sessionApi: no read-only
-token for an ask session`). There is no `/setup/github` (404), no GitHub sign-in through the App, no **Connect
+`permissions` narrows the token as GitHub's own `POST /app/installations/{id}/access_tokens` does, so the host passes
+it on: the console asks with none for itself, with `SESSION_PERMISSIONS` (`projectTokens.mjs`: no workflows) for a
+coding session, and read-only for a question from Slack. When it asked for some, the answer must give the token's
+`permissions` as GitHub answered them, and a token that says nothing, or may do more than was asked, is not used
+(`githubBroker: token wider than asked, not used`): a session gets no token rather than a wider one. Each repo's token
+with the same permissions is kept until 5 minutes before `expiresAt`. The file is read at each ask, so the host can
+rotate it, and its contents are never logged. The console logs `githubBroker: token borrowed` with the repo, the
+expiry and how long the ask took, or `githubBroker: token refused` with the status and the host's `error`, or `not
+reached`. There is no `/setup/github` (404), no GitHub sign-in through the App, no **Connect
 GitHub** on My settings (private sessions push with the broker's token), and no webhook: the console polls
 (`console: webhooks off, GitHub access is borrowed`), and the Secrets & webhooks page keeps every secret but the
 App's own. Commits are `woodshed-bot`'s, as with an App ("Who commits" in `docs/reference.md`).
@@ -1078,15 +1082,17 @@ X-Woodshed-Identity: <payload>.<sig>
   sig      base64url(HMAC-SHA256(secret, payload))
 ```
 
-The signature is compared in constant time, and an expired header, a forged one, one signed with another secret or
-none at all signs nobody in: a page goes to `/login`, which says to come in through the host, and an API call or a
+The signature is compared in constant time, and an expired header, one whose `exp` is more than 5 minutes ahead, a
+forged one, one signed with another secret or none at all signs nobody in: a page goes to `/login`, which says to come in through the host, and an API call or a
 websocket gets a 401, as without a session today. The header is then the only sign-in, required from the first
 request (which satisfies `WOODSHED_CLOUD_REQUIRE_SIGN_IN` and a console bound to a public address): the console has
 no GitHub sign-in, no session cookie, no Sign out and no **Connect GitHub**. The host says who is in, so there is no
 People list and nobody's write access to the repo is asked (nor, for another project, to its repo); everything else
 that hangs off a login works as signed in, My settings, private sessions and each person's secrets
 (`users/<login>/claude-token`) among them. `role: owner` is an admin (Secrets & webhooks, Webhook events, Console
-settings); `member` is not, and gets 403 there. With no People list, nobody can be assigned a shared session.
+settings); `member` is not, and gets 403 there. With no People list, nobody can be assigned a shared session, and the
+`woodshed` label and `/woodshed` comments start sessions for anyone with write access to the repo, as the console
+checks them: there is no Sessions from GitHub switch to ask.
 
 A session's app takes the header on its own name: `/auth/app` on the console sends the browser straight on to the
 app's `/__woodshed/auth`, with no code, and every app request, the editor's and the websockets included, is signed in
@@ -1094,7 +1100,8 @@ by its header alone. An app's name that gets no header there answers 403 rather 
 (`app: no identity from the hosting proxy on the app's name`). Share links work as they do elsewhere, for whoever the
 proxy lets through. The console never passes the header on to a session (the app, the editor, the terminals and the
 viewers), where the session's own code could replay it within its minute. A refused header logs `trustedIdentity:
-identity refused` with `why` (`forged`, `expired`, `malformed`, `bad identity`), at most once a minute for each.
+identity refused` with `why` (`forged`, `expired`, `too long`, `malformed`, `bad identity`), at most once a minute for
+each.
 
 Writes still need the console's own origin and `x-woodshed: 1`, and terminal websockets its own origin: the proxy
 signs every request a signed-in browser sends, a cross-site one too. `woodshed-db.mjs`'s tunnel keeps its own token,

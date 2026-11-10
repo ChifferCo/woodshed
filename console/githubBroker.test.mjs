@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { createGitHubBroker } from './githubBroker.mjs';
-import { createProjectTokens } from './projectTokens.mjs';
+import { SESSION_PERMISSIONS, createProjectTokens } from './projectTokens.mjs';
 
 const BEARER = 'brk_s3cret-bearer-value';
 
@@ -121,23 +121,64 @@ test('the bearer is read at each ask, so the host can rotate it, and an empty or
   await assert.rejects(source.token(), /the GitHub broker's token file could not be read \(ENOENT\)/);
 });
 
-test('with a broker, the console and coding sessions borrow the repo\'s token, and an ask session gets none', async (t) => {
+test('a narrowed token is asked for with its permissions, kept apart, and used only when the broker says it is no wider', async (t) => {
+  const asked = [];
+  const answers = [];
+  async function fetchImpl(url, init) {
+    const body = JSON.parse(init.body);
+    asked.push(body);
+    const said = answers.length ? answers.shift() : body.permissions;
+    return json(200, { token: `ghs_${asked.length}`, expiresAt: new Date(Date.now() + 3_600_000).toISOString(), ...(said ? { permissions: said } : {}) });
+  }
+  const broker = createGitHubBroker({ url: 'https://host.example/t', tokenFile: tokenFile(t), fetchImpl });
+  const read = { metadata: 'read', contents: 'read' };
+  const readSource = broker.tokenSource({ repo: 'acme/app', permissions: read, label: 'asks' });
+  assert.equal((await readSource.token()).token, 'ghs_1');
+  assert.deepEqual(asked[0], { repo: 'acme/app', permissions: read });
+  assert.equal((await broker.tokenSource({ repo: 'acme/app', permissions: { contents: 'read', metadata: 'read' }, label: 'asks' }).token()).token, 'ghs_1', 'the same permissions in another order share it');
+  assert.equal((await broker.tokenSource({ repo: 'acme/app', label: 'console' }).token()).token, 'ghs_2', 'the console\'s own is another token');
+  assert.deepEqual(asked[1], { repo: 'acme/app' }, 'the console asks for no permissions: the installation\'s own');
+
+  const write = { contents: 'write', metadata: 'read' };
+  const refused = async (said, why) => {
+    answers.push(said);
+    await assert.rejects(broker.tokenSource({ repo: 'acme/api', permissions: write, label: 'sessions' }).token(), why);
+  };
+  const logged = await logsOf(async () => {
+    await refused({ contents: 'write', metadata: 'read', workflows: 'write' }, /may do more than was asked: workflows/);
+    await refused({ contents: 'admin', metadata: 'read' }, /may do more than was asked: contents/);
+    await refused({ contents: 'write', metadata: 'write' }, /may do more than was asked: metadata/);
+    await refused(null, /did not say what the token may do/);
+    await refused('everything', /did not say what the token may do/);
+  });
+  assert.match(logged, /githubBroker: token wider than asked, not used/);
+  answers.push({ contents: 'read' });
+  assert.equal((await broker.tokenSource({ repo: 'acme/api', permissions: write, label: 'sessions' }).token()).token, `ghs_${asked.length}`, 'narrower than asked is fine');
+});
+
+test('with a broker, each project\'s console, sessions and ask sessions get their own narrowing of the repo\'s token', async (t) => {
   const asked = [];
   const fetchImpl = async (url, init) => {
-    asked.push(JSON.parse(init.body).repo);
-    return json(200, { token: 'ghs_borrowed', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    const body = JSON.parse(init.body);
+    asked.push(body);
+    return json(200, { token: `ghs_${asked.length}`, expiresAt: new Date(Date.now() + 3_600_000).toISOString(), permissions: body.permissions });
   };
   const config = {
     githubApp: null, githubBroker: { url: 'https://host.example/t', tokenFile: tokenFile(t) },
     projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'api', repo: 'acme/api' }],
   };
   const tokens = createProjectTokens({ config, fetchImpl });
-  assert.equal((await tokens.console.token()).token, 'ghs_borrowed');
-  assert.equal((await tokens.sessions.token()).token, 'ghs_borrowed');
-  assert.equal(tokens.asks, null, 'nothing can narrow the broker\'s token to read-only');
+  await tokens.console.token();
+  await tokens.sessions.token();
+  await tokens.asks.token();
+  assert.deepEqual(asked.map((b) => [b.repo, b.permissions?.contents ?? 'all', b.permissions?.workflows]), [
+    ['acme/app', 'all', undefined], ['acme/app', 'write', undefined], ['acme/app', 'read', undefined],
+  ], 'a session never asks for workflows; an ask session reads');
+  assert.deepEqual(asked[1].permissions, SESSION_PERMISSIONS);
+  assert.equal(Object.values(asked[2].permissions).every((level) => level === 'read'), true);
   const api = tokens.forSession({ project: 'api' });
-  assert.deepEqual([api.project, api.default, api.asks], ['api', false, null]);
+  assert.deepEqual([api.project, api.default], ['api', false]);
   await api.sessions.token();
-  assert.deepEqual(asked, ['acme/app', 'acme/api']);
+  assert.equal(asked.at(-1).repo, 'acme/api');
   assert.equal(createProjectTokens({ config: { ...config, githubBroker: null } }), null, 'neither an App nor a broker: no tokens');
 });

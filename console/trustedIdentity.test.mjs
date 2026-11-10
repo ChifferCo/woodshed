@@ -39,6 +39,8 @@ test('an expired, forged, wrongly signed, missing or malformed header signs nobo
   assert.equal(check(signed({ ...claims, login: 'Octo-Cat' })), 'bad identity', 'the host sends the login lowercased');
   assert.equal(check(signed({ ...claims, login: 'a/../b' })), 'bad identity');
   assert.equal(check(signed({ login: 'octo-cat', role: 'owner' })), 'expired', 'no exp is never good');
+  assert.equal(check(signed({ ...claims, exp: NOW + 5 * 60_000 })), undefined, 'five minutes ahead leaves room for the clocks');
+  assert.equal(check(signed({ ...claims, exp: NOW + 5 * 60_000 + 1 })), 'too long', 'a header made to last is not one made per request');
   assert.equal(check(signed({ ...claims, exp: String(NOW + 60_000) })), 'expired', 'exp is a number');
   const notJson = Buffer.from('{not json').toString('base64url');
   assert.equal(check(`${notJson}.${crypto.createHmac('sha256', SECRET).update(notJson).digest('base64url')}`), 'malformed');

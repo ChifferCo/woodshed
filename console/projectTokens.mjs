@@ -2,9 +2,8 @@
 // project's repo alone, from the project's installation of the App. The default project's keep the labels they had
 // before there were projects, so a console with one project logs what it did.
 //
-// A console that borrows its GitHub access (githubBroker.mjs) has no App to narrow a token with: the console and its
-// coding sessions get the broker's token for the repo, and an ask session, whose token must read and write nothing,
-// gets none.
+// A console that borrows its GitHub access (githubBroker.mjs) asks the host's broker for the same three, each narrowed
+// the same way, and uses none the broker says can do more.
 
 import { createGitHubBroker } from './githubBroker.mjs';
 import { createTokenSource } from './githubApp.mjs';
@@ -23,8 +22,8 @@ function sourcesFor({ config, privateKey, fetchImpl, now, project, broker }) {
   if (broker) {
     return {
       console: broker.tokenSource({ repo: project.repo, label: `console${suffix}` }),
-      sessions: broker.tokenSource({ repo: project.repo, label: `sessions${suffix}` }),
-      asks: null,
+      sessions: broker.tokenSource({ repo: project.repo, permissions: SESSION_PERMISSIONS, label: `sessions${suffix}` }),
+      asks: broker.tokenSource({ repo: project.repo, permissions: ASK_PERMISSIONS, label: `asks${suffix}` }),
     };
   }
   const app = { appId: config.githubApp.appId, installationId: installationIdFor(config, project), repo: project.repo, privateKey, fetchImpl, now };
@@ -41,7 +40,7 @@ function sourcesFor({ config, privateKey, fetchImpl, now, project, broker }) {
  *   forSession: (session: object) => {project: string, default: boolean, repo: string, permissions: object,
  *     console: object, sessions: object, asks: object}}}
  *   the default project's sources, and `forSession` for the project a session runs on; null without a GitHub App or
- *   a broker. `asks` is null with a broker
+ *   a broker
  */
 export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
   if (!config.githubApp && !config.githubBroker) return null;
