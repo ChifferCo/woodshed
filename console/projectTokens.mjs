@@ -6,7 +6,8 @@ import { createTokenSource } from './githubApp.mjs';
 import { defaultProject, installationIdFor, projectFor } from './projects.mjs';
 
 // Sessions get less than the console: they push, open PRs, read CI's results and re-run its jobs, and never touch workflows.
-const SESSION_PERMISSIONS = {
+// An owner's token scoped to another project's repo (githubUser.mjs) gets the same.
+export const SESSION_PERMISSIONS = {
   contents: 'write', pull_requests: 'write', issues: 'write', metadata: 'read', checks: 'read', actions: 'write', statuses: 'read',
 };
 // An ask session (asks.mjs) reads the code, its history and its pull requests, and writes nothing.
@@ -25,7 +26,8 @@ function sourcesFor({ config, privateKey, fetchImpl, now, project }) {
 /**
  * @param {{config: object, privateKey: string|(() => string|null), fetchImpl?: typeof fetch, now?: () => number}} opts
  * @returns {null|{console: object, sessions: object, asks: object,
- *   forSession: (session: object) => {project: string, default: boolean, console: object, sessions: object, asks: object}}}
+ *   forSession: (session: object) => {project: string, default: boolean, repo: string, permissions: object,
+ *     console: object, sessions: object, asks: object}}}
  *   the default project's sources, and `forSession` for the project a session runs on; null without a GitHub App
  */
 export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
@@ -37,7 +39,10 @@ export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
     forSession(session) {
       const project = projectFor(config, session);
       if (!byName.has(project.name)) byName.set(project.name, sourcesFor({ config, privateKey, fetchImpl, now, project }));
-      return { project: project.name, default: project.name === main.name, ...byName.get(project.name) };
+      return {
+        project: project.name, default: project.name === main.name, repo: project.repo, permissions: SESSION_PERMISSIONS,
+        ...byName.get(project.name),
+      };
     },
   };
 }

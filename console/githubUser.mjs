@@ -6,6 +6,10 @@
 // once: each refresh returns a new pair, saved before the token is handed out, and one refresh per person runs at
 // a time. Without expiry the token itself is kept. Either way it lives in Secrets Manager at
 // `users/<login>/github` and never reaches a session; a session gets the short-lived token, from the session API.
+//
+// That token reaches every repo the App is installed on that the person can write to. A session on a project other
+// than the installation's default gets a copy GitHub scopes down to that project's repo alone (scopedTokenFor), so it
+// still pushes and opens pull requests as its owner without reaching the installation's other repos.
 
 import logins from './public/logins.cjs';
 const { loginKey, sameLogin } = logins;
@@ -45,6 +49,16 @@ export function createGitHubUser({
 }) {
   const cache = new Map();
   const refreshing = new Map();
+  // Scoped tokens by person and repo, each with the token it was made from: a refresh makes a new one.
+  const scoped = new Map();
+  const scoping = new Map();
+  // Bumped the moment a Disconnect starts, before its stored record goes: a scoped token made from a token the
+  // person had before it is ended, not handed out, even while the record still says they are connected.
+  const disconnects = new Map();
+  const disconnectsOf = (login) => disconnects.get(loginKey(login)) ?? 0;
+  // People whose Disconnect is still running: until it ends, their record may still say connected, and nothing new
+  // is scoped for them.
+  const disconnecting = new Set();
 
   /** Keeps the answer of a Connect GitHub sign-in, and who GitHub says they are, for commits. */
   async function connect({ login, answer }) {
@@ -76,8 +90,8 @@ export function createGitHubUser({
       throw shown(`GitHub no longer accepts @${login}'s authorization: connect GitHub again on My settings`);
     }
     const next = credentialsFrom(answer, now());
-    // A Disconnect while GitHub was answering: saving now would connect them again.
-    if (!userSettings.view(login).github.connected) {
+    // A Disconnect while GitHub was answering, finished or still deleting the secret: saving now would connect them again.
+    if (disconnecting.has(loginKey(login)) || !userSettings.view(login).github.connected) {
       console.log('githubUser: disconnected during a refresh, dropping the new token', { login });
       cache.delete(loginKey(login));
       await revoke(login, next.accessToken);
@@ -119,6 +133,91 @@ export function createGitHubUser({
     return { token: credentials.accessToken, expiresAt: credentials.expiresAt ?? now() + NO_EXPIRY_CACHE_MS };
   }
 
+  /** Drops the person's scoped tokens, and answers them, so Disconnect can end each one at GitHub. */
+  function forgetScoped(login) {
+    const prefix = `${loginKey(login)}\n`;
+    const held = [];
+    for (const [key, value] of scoped) {
+      if (!key.startsWith(prefix)) continue;
+      held.push(value.token);
+      scoped.delete(key);
+    }
+    return held;
+  }
+
+  async function makeScoped(login, from, { repo, permissions }) {
+    const secret = clientSecret();
+    if (!secret) {
+      console.warn('githubUser: no scoped token, the console has no client secret', { login, repo });
+      return null;
+    }
+    const id = await clientId();
+    const [owner, name] = repo.split('/');
+    let res;
+    try {
+      res = await fetchImpl(`${githubApi}/applications/${id}/token/scoped`, {
+        method: 'POST',
+        headers: {
+          authorization: `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`,
+          accept: 'application/vnd.github+json',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ access_token: from.token, target: owner, repositories: [name], permissions }),
+      });
+    } catch (err) {
+      if (!(err instanceof TypeError)) throw err;
+      console.warn('githubUser: GitHub did not answer the scoped token request', { login, repo, message: String(err.message).slice(0, 80) });
+      return null;
+    }
+    const answer = await res.json().catch(() => ({}));
+    if (!res.ok || !answer.token) {
+      console.warn('githubUser: GitHub refused a scoped token', { login, repo, status: res.status });
+      return null;
+    }
+    const expiresAt = Date.parse(answer.expires_at ?? '') || from.expiresAt;
+    console.log('githubUser: scoped token made', { login, repo });
+    return { from: from.token, token: answer.token, expiresAt };
+  }
+
+  /**
+   * The person's own token, scoped by GitHub to one repo and to `permissions`, for their sessions on a project other
+   * than the default.
+   * @param {string} login
+   * @param {{repo: string, permissions: Record<string, 'read'|'write'>}} scope  `repo` is owner/name
+   * @returns {Promise<{token: string, expiresAt: number}|null>}  null when they have not connected GitHub, or GitHub
+   *   (or a console with no client secret) made none: the caller falls back to the App's token for that repo
+   * @throws {Error}  `shown`, as tokenFor, when they had connected and GitHub refuses them now
+   */
+  async function scopedTokenFor(login, scope) {
+    if (disconnecting.has(loginKey(login))) {
+      console.log('githubUser: no scoped token, a Disconnect is running', { login, repo: scope.repo });
+      return null;
+    }
+    const since = disconnectsOf(login);
+    const from = await tokenFor(login);
+    if (!from) {
+      forgetScoped(login);
+      return null;
+    }
+    const key = `${loginKey(login)}\n${scope.repo.toLowerCase()}`;
+    const held = scoped.get(key);
+    if (held && held.from === from.token && held.expiresAt - now() >= REFRESH_MARGIN_MS) return { token: held.token, expiresAt: held.expiresAt };
+    if (!scoping.has(key)) {
+      // A Disconnect while GitHub was answering: the new token is ended, not kept, as a refresh's is.
+      const making = makeScoped(login, from, scope).then(async (made) => {
+        if (!made || (disconnectsOf(login) === since && !disconnecting.has(loginKey(login)) && userSettings.view(login).github.connected)) return made;
+        console.log('githubUser: disconnected while a scoped token was made, ending it', { login, repo: scope.repo });
+        await revoke(login, made.token);
+        return null;
+      });
+      scoping.set(key, making.finally(() => scoping.delete(key)));
+    }
+    const made = await scoping.get(key);
+    if (!made) return null;
+    scoped.set(key, made);
+    return { token: made.token, expiresAt: made.expiresAt };
+  }
+
   /**
    * Ends a token at GitHub, so a session that already cached it can no longer push with it. Deleting the stored copy
    * does not need this to work: a failure leaves only a token that expires in hours, and is logged.
@@ -145,15 +244,27 @@ export function createGitHubUser({
     console.log('githubUser: token revoked', { login });
   }
 
-  /** Disconnect and Remove My Woodshed: the stored token goes first, then GitHub ends the one sessions may hold. */
+  /**
+   * Disconnect and Remove My Woodshed: the stored token goes first, then GitHub ends the ones sessions may hold, the
+   * scoped copies included.
+   */
   async function disconnect(login) {
     const key = loginKey(login);
-    const held = cache.get(key) ?? (await userSettings.githubCredentials(login));
-    cache.delete(key);
-    await userSettings.forgetGitHub(login);
-    if (held?.accessToken) await revoke(login, held.accessToken);
-    console.log('githubUser: disconnected', { login, heldToken: Boolean(held?.accessToken) });
+    disconnects.set(key, disconnectsOf(login) + 1);
+    disconnecting.add(key);
+    try {
+      const held = cache.get(key) ?? (await userSettings.githubCredentials(login));
+      cache.delete(key);
+      const scopedHeld = forgetScoped(login);
+      await userSettings.forgetGitHub(login);
+      if (held?.accessToken) await revoke(login, held.accessToken);
+      // Each scoped token is a token of its own, which a session on another project may have cached.
+      for (const token of scopedHeld) await revoke(login, token);
+      console.log('githubUser: disconnected', { login, heldToken: Boolean(held?.accessToken), scopedTokens: scopedHeld.length });
+    } finally {
+      disconnecting.delete(key);
+    }
   }
 
-  return { connect, tokenFor, disconnect };
+  return { connect, tokenFor, scopedTokenFor, disconnect };
 }
