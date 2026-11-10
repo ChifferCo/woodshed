@@ -135,6 +135,21 @@ test('a project file with consoleLinks: false keeps the session\'s link out of i
   }
 });
 
+test('a consoleLinks read that fails never stops the start: the link stays', () => {
+  const script = [
+    'set -euo pipefail',
+    'log() { echo "[woodshed] $*"; }',
+    'die() { log "ERROR: $*"; exit 1; }',
+    'project() { return 1; }',
+    fn('leaveOutConsoleLinks'),
+    'leaveOutConsoleLinks',
+    'echo "link: ${SESSION_URL:-unset}"',
+  ].join('\n');
+  const out = execFileSync('bash', ['-c', script], { encoding: 'utf8', env: { PATH: process.env.PATH, SESSION_URL: 'https://console.example/s/0a1b2c3d' } });
+  assert.match(out, /link: https:\/\/console\.example\/s\/0a1b2c3d/);
+  assert.doesNotMatch(out, /ERROR/);
+});
+
 test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no notes', (t) => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-noproject-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));

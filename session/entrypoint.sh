@@ -373,7 +373,8 @@ writePrompt() {
 # there: its pull requests name Woodshed Cloud without linking the session's page.
 leaveOutConsoleLinks() {
   local links
-  links=$(project get consoleLinks) || die "the project file's consoleLinks could not be read"
+  # Never stops the start: the rules that follow read the same file, and say why when it does not parse.
+  links=$(project get consoleLinks 2>/dev/null) || links=
   [ "$links" = false ] && [ -n "${SESSION_URL:-}" ] || return 0
   unset SESSION_URL
   log "Session link left out of pull requests (the project file's consoleLinks)"
