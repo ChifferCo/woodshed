@@ -80,10 +80,11 @@ mounts the shed's `review/index.mjs` unchanged, and the console only carries
 `/review?session=claude-<id>` and `/reviews/claude-<id>/...` to it
 (`console/reviewProxy.mjs`, which knows nothing of reviews). The tab frames that
 page, once, so the chat and open asks survive a tab switch. Opening it takes a
-review of the checkout without running the analysis (**Run analysis** does),
-except in a session started with a pull request or branch and no prompt
-(`REVIEW_ONLY=1`), which starts it the first time. A resume is a new container,
-so it takes the review again and runs the analysis again. The shed's `gh` calls
+review of the checkout and starts the analysis, the first time the tab opens in
+the container and only when the review has none: a reload, a finished or failed
+analysis (its **Retry analysis** is yours), or a **Discard** pressed since, runs
+nothing (statusd logs `review: analysis on opening` with `started`). A resume is
+a new container, so it takes the review again and runs the analysis again. The shed's `gh` calls
 act as whoever the session's token belongs to, so writes to GitHub (comments,
 verdict, rename, merge, ticking files viewed) are on only in a My Woodshed
 session whose owner connected GitHub. In a shared session, or one whose owner

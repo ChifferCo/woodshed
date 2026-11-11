@@ -219,7 +219,7 @@ export async function startDevReview({ id, branch }) {
   // On disk before the first open, which then reads it as the finished analysis (restoreState).
   fs.writeFileSync(path.join(sessionDir, 'review.json'), JSON.stringify(ARTIFACT));
   const { createReviewHost } = await import('../../session/reviewShed/host.mjs');
-  const host = createReviewHost({ repoDir: repo, sessionId: id, sessionKind: 'shared', reviewOnly: false });
+  const host = createReviewHost({ repoDir: repo, sessionId: id, sessionKind: 'shared' });
   const server = http.createServer((req, res) => {
     host.handle(req, res).then((done) => {
       if (done) return;

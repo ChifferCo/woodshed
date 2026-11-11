@@ -10,7 +10,7 @@ import path from 'node:path';
 // may need either to open the page, which is the property this pins.
 process.env.WOODSHED_REVIEWS = fs.mkdtempSync(path.join(os.tmpdir(), 'rv-state-'));
 process.env.PATH = '/usr/bin:/bin';
-// A Woodshed session exports these; the fixtures' repos are on master and the host is not review-only.
+// A Woodshed session exports these; the fixtures' repos are on master.
 delete process.env.DEFAULT_BRANCH;
 delete process.env.REVIEW_ONLY;
 const { createReviewHost } = await import('./host.mjs');
@@ -44,12 +44,12 @@ async function serve(t, repoDir, sessionId) {
   return (p) => fetch(base + p).then((r) => (r.headers.get('content-type')?.startsWith('application/json') ? r.json() : r));
 }
 
-test('opening the review of a checkout with changes makes the review, with its diff, and starts no analysis', async (t) => {
+test('opening the review of a checkout with changes makes the review, with its diff, and starts the analysis', async (t) => {
   const get = await serve(t, checkout(t, { dirty: true }), 'aaaaaaa1');
   const status = await get('/reviews/claude-aaaaaaa1');
   assert.equal(status.ok, true);
   assert.equal(status.kind, 'worktree');
-  assert.equal(status.status, 'unknown', 'no analysis was started');
+  assert.notEqual(status.status, 'unknown', 'the analysis was started on opening');
   assert.equal(status.livePr, null);
   const diff = await get('/reviews/claude-aaaaaaa1/diff');
   assert.deepEqual(diff.files.map((f) => f.path), ['a.mjs']);

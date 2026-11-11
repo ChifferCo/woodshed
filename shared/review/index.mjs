@@ -653,14 +653,20 @@ async function refreshTargetReview({ ctx, sessionName }) {
 }
 
 /**
- * Kick the analysis off in the background. Fire and forget: /run answers as
- * soon as tmux is up, and the page reports progress from there.
+ * Start the analysis only when this review has none: never run, not running, not failed or cut off. Opening the page
+ * then runs it once, while a reload, a finished analysis or one that failed (whose Retry is the person's to press)
+ * is left as it is.
+ *
+ * @returns {boolean}  whether it started one
  */
-export function startReviewAnalysis({ ctx, sessionName }) {
-  if (DISABLED) return;
+export function startReviewAnalysisIfNone({ ctx, sessionName }) {
+  if (DISABLED) return false;
   const review = readSessionReview(sessionName);
-  if (!review) return;
+  if (!review) return false;
+  const state = reviewState.get(sessionName) || restoreState(sessionName);
+  if (state.status !== 'unknown') return false;
   beginAnalysis({ ctx, session: sessionName, review });
+  return true;
 }
 
 /**
