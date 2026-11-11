@@ -145,7 +145,8 @@ function listUnder(text, heading) {
   const ends = [ACCEPT_HEADING, UNTESTED_HEADING, RISK_HEADING].map((h) => rest.indexOf(h)).filter((i) => i >= 0);
   const next = ends.length ? Math.min(...ends) : -1;
   const section = next < 0 ? rest : rest.slice(0, next);
-  const folded = [...section.matchAll(/<summary>([\s\S]*?)<\/summary>/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
+  // Only a fold that starts its line: a diff quoted in an item's body has a `+`, `-` or space first.
+  const folded = [...section.matchAll(/^<details>\s*<summary>([\s\S]*?)<\/summary>/gm)].map((m) => m[1].replace(/\s+/g, ' ').trim());
   return (folded.length ? folded : bulletsOf(section)).filter((i) => i && !NOTHING_RISKY.test(i));
 }
 
