@@ -45,7 +45,7 @@ test('the gates match what Woodshed\'s own workflows post', () => {
   assert.ok(reviewYml.includes(reviewSummaryOf(review)), 'the review\'s comment is folded under the heading\'s words');
   assert.ok(reviewYml.includes(`name: "${mergeRisk.check}"`), 'review.yml posts the Merge risk check');
   // The verdict's first line, as review.yml's "Post the verdict" step writes it.
-  assert.ok(reviewYml.includes('echo "## Claude review — ${verdict}"'), 'review.yml writes the verdict under the heading');
+  assert.ok(reviewYml.includes('echo "## Claude review — ${shown}"'), 'review.yml writes the verdict under the heading');
   const verdict = { user: { login: review.author }, state: 'APPROVED', body: '## Claude review — APPROVE\n\nLooks right.' };
   assert.equal(reviewVerdict([verdict], review), verdict);
   const [suite] = suites;

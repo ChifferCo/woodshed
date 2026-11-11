@@ -31,7 +31,7 @@ rules: .woodshed/rules.md
 # .github/workflows/review.yml, the Check suite's `test` job, and the review's Merge risk check, which the brief quotes.
 pullRequests:
   review:
-    # review.yml posts the verdict with the workflow's token, as a review whose body starts `## Claude review — APPROVE`.
+    # review.yml posts the verdict with the workflow's token, as a review whose body starts `## Claude review — ✅ Approved`.
     author: github-actions[bot]
     heading: '## Claude review'
     workflow: .github/workflows/review.yml
