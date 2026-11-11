@@ -497,6 +497,19 @@ each of the repo's env files (the project file's `envFiles` that have a `secret`
   ports and URLs, listed on the page), so those always win.
 - A running session keeps the files it started with.
 
+**Your own files**, on My settings, are whole files of your own, by their path in the repo (an
+`app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
+writes into its checkout at start:
+- All of them are one secret, `woodshed-cloud/users/<login>/own-files` (JSON, path to text; 64 KB and 20 files at
+  most). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
+- A path is checked as it is saved and again in the session (`shared/ownFiles.mjs`): inside the repo, no `..`, not
+  under `.git`, and not one of the env files above, which take your lines instead.
+- The session writes a file only where git ignores it and does not track it, mode 600, so it cannot reach a commit
+  (`session/ownFiles.mjs`). Its log says `Own files written`, or a `WARNING` with each file skipped and why.
+- The console logs `userSettings: own file saved` or `removed` with the path, and `sessionApi: settings handed out`
+  names them under `wholeFiles`. Remove My Woodshed deletes them.
+- A running session keeps the files it started with; an edit made in a session is not saved back.
+
 **Session timeouts**, on My settings, override the console's *Pause a session
 waiting for input after* (0.25 to 24 hours) and *Stop a working session after*
 (1 to 24 hours) for your own My Woodshed sessions, in the same ranges as Console

@@ -850,7 +850,7 @@
     const busy = s.app === 'starting' || s.app === 'stopping';
     return [
       s.hasShell && W.isPrivate(s) && {
-        group: 'Claude', label: 'Sign in for Remote Control', note: 'Opens the Terminal tab on claude auth login: open the link and paste the code', run: () => claudeLogin(s),
+        group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
       data.appDomain && up && { group: 'App', label: 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener') },
       data.appDomain && !up && !busy && {
@@ -867,13 +867,14 @@
     ].filter(Boolean);
   }
 
-  // Remote Control needs a login of its own, which the Terminal tab's woodshed-login makes: this types it there.
+  // Remote Control needs a login of its own, which woodshed-login makes. claude's /woodshed:remote-control runs it in the
+  // conversation; a session from an older image gets it typed at the Terminal tab. The answer says which tab to open.
   async function claudeLogin(s) {
     try {
       const res = await fetch(`/api/sessions/${s.id}/claude-login`, { method: 'POST', headers: { 'x-woodshed': '1' } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `sign in answered ${res.status}`);
-      navigate(`/s/${s.id}?tab=terminal`);
+      navigate(body.where === 'agent' ? `/s/${s.id}` : `/s/${s.id}?tab=terminal`);
     } catch (err) {
       window.alert(`Could not start the sign-in: ${err.message}`);
     }

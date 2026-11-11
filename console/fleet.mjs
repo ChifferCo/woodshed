@@ -1478,13 +1478,16 @@ export function createFleet({
     return session;
   }
 
-  // A private session's Terminal tab runs woodshed-login (session/bin/woodshed-login): the person pastes the code there.
+  // A private session's claude is asked for /woodshed:remote-control, which signs in without leaving it
+  // (session/bin/woodshed-login); an image from before that command types woodshed-login at the Terminal tab instead.
+  // `where` is the tab the person pastes the code in.
   async function startClaudeLogin(session) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
     if (!session.owner) throw Object.assign(new Error('only a My Woodshed session can sign in'), { notPrivate: true });
-    await statusd(session, 'POST', '/claude-login');
-    console.log('fleet: Claude login started', { id: session.id });
-    return session;
+    const result = await statusd(session, 'POST', '/claude-login');
+    const where = result?.where === 'agent' ? 'agent' : 'terminal';
+    console.log('fleet: Claude login started', { id: session.id, where });
+    return { session, where };
   }
 
   async function stopApp(session) {

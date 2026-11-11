@@ -27,6 +27,8 @@ case "${WOODSHED_CLAUDE_AUTH:-}" in
     unset ANTHROPIC_API_KEY ANTHROPIC_BASE_URL
     if [ "${1:-}" = auth ] || grep -q '"claudeAiOauth"' "$HOME/.claude/.credentials.json" 2>/dev/null; then
       unset CLAUDE_CODE_OAUTH_TOKEN
+      # Tells woodshed-login, run by this claude, that it is on the login already: Remote Control works as it is.
+      [ "${1:-}" = auth ] || export WOODSHED_CLAUDE_ON_LOGIN=1
       exec "$real" "$@"
     fi
     CLAUDE_CODE_OAUTH_TOKEN=$(<"$WOODSHED_CLAUDE_TOKEN_FILE")

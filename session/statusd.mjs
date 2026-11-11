@@ -8,7 +8,8 @@
 //   /shed-review/...   the Review tab: the shed's own review page and server (reviewShed/), reached through the console's
 //                     /review and /reviews/claude-<id>/...
 //   POST /send        {"text": "..."} typed into claude's pane, then Enter
-//   POST /claude-login  types woodshed-login at the Terminal tab's prompt
+//   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
+//                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
 //                     (~/.claude and ~/.claude.json) to the console, for the session's next run
 //
@@ -558,15 +559,33 @@ async function appLogs() {
   return { logs: await Promise.all(files.map(async ([name, file]) => ({ name, ...((await tail(file)) ?? { text: null, bytes: 0 }) }))) };
 }
 
-// Types woodshed-login at the Terminal tab's prompt, for the console's Sign in button: a login needs a terminal to paste
-// the code into, and nothing else may be typed there through this route.
+// Where /woodshed:remote-control is: claude was started with Woodshed's plugin (claudeFlags in entrypoint.sh).
+const CLAUDE_FLAGS_FILE = process.env.WOODSHED_CLAUDE_FLAGS_FILE || '/tmp/woodshed-claude-flags';
+async function hasRemoteControlCommand() {
+  if (CODEX) return false;
+  try {
+    return (await fs.readFile(CLAUDE_FLAGS_FILE, 'utf8')).includes('--plugin-dir');
+  } catch {
+    return false;
+  }
+}
+
+// For the console's Sign in button. claude's own command signs in in the conversation, and reopens it with Remote
+// Control on (session/claudePlugin, session/bin/woodshed-login); a claude without it gets woodshed-login typed at the
+// Terminal tab's prompt, where the code is pasted. Nothing else may be typed through this route.
 async function startClaudeLogin() {
+  if (await hasRemoteControlCommand()) {
+    await send('/woodshed:remote-control');
+    console.log('statusd: Claude login started in claude');
+    return { where: 'agent' };
+  }
   // ttyd creates the shell session when the Terminal tab first connects, which may not have happened yet. The tab then
   // attaches to this one (`new-session -A -s shell`).
   await run('tmux', ['has-session', '-t', '=shell']).catch(() => run('tmux', ['new-session', '-d', '-s', 'shell', '-c', REPO_DIR]));
   await run('tmux', ['send-keys', '-t', 'shell', '-l', 'woodshed-login']);
   await run('tmux', ['send-keys', '-t', 'shell', 'Enter']);
   console.log('statusd: Claude login started in the terminal');
+  return { where: 'terminal' };
 }
 
 async function send(text) {
@@ -931,8 +950,7 @@ async function handle(req, res) {
     return reply(res, 200, { ok: true });
   }
   if (route === 'POST /claude-login') {
-    await startClaudeLogin();
-    return reply(res, 200, { ok: true });
+    return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });
   }
   if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
   if (route === 'POST /upload') return uploadReply(req, res);

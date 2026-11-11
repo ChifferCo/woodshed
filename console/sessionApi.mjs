@@ -3,6 +3,7 @@
 //
 //   POST /github-token   Authorization: Bearer <SESSION_TOKEN>  ->  {"token": "...", "expiresAt": "..."}
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...},
+//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
@@ -271,13 +272,14 @@ async function settingsReply(res, session, userSettings, databases) {
   }
   // null for a file is the console's default, which the task definition already gives every session.
   const files = await userSettings.ownFiles(session.owner);
+  const ownFiles = await userSettings.ownWholeFiles?.(session.owner) ?? {};
   console.log('sessionApi: settings handed out', {
-    sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), database: database?.name ?? null,
+    sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,
   });
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
   const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
-  return reply(res, 200, { files, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
+  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.
