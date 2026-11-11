@@ -629,19 +629,27 @@
     return railUser;
   }
 
-  // Your session on a pull request's branch, as the shed finds one: a live one first, then a stopped one.
-  function sessionOnBranch(branch) {
+  // Your session on a pull request's branch in its repo, as the shed finds one: a live one first, then a stopped one.
+  // A session or row from before projects is on the default project.
+  function sessionOnBranch(branch, project) {
     if (!branch) return null;
-    const mineOn = data.sessions.filter((s) => W.isPrivate(s) && s.branch === branch);
+    const main = projectList().find((p) => p.default)?.name ?? null;
+    const on = (x) => (x ?? main) === (project ?? main);
+    const mineOn = data.sessions.filter((s) => W.isPrivate(s) && s.branch === branch && on(s.project));
     return mineOn.find(W.isLive) ?? mineOn.find((s) => s.status === 'stopped') ?? null;
   }
 
-  // The shed's third group: your open pull requests, and those waiting on your review. Each opens your session on
-  // its branch, resumes a stopped one, or starts a new one.
-  function pullsZone() {
-    if (!pulls.length) return null;
+  // The shed's third group: your open pull requests on every repo you may start on, and those waiting on your review.
+  // Each opens your session on its branch, resumes a stopped one, or starts a new one. The rail's project filter
+  // applies to them as to the sessions.
+  function pullsZone(onProject) {
+    const main = projectList().find((p) => p.default)?.name ?? null;
+    const listed = onProject ? pulls.filter((p) => (p.project ?? main) === onProject) : pulls;
+    if (!listed.length) return null;
     const open = !folded.pulls;
-    // After the shed's rows: the number and title, the checks and how long since it moved, then what to do with it.
+    const marked = projectsShown();
+    // Two lines: the title and its checks' dot, then the repo and number, the checks and how long since it moved, with
+    // what to do with it at the end, as a session card has its Resume.
     const checksOf = (p) => {
       const c = p.checks;
       if (!c) return { key: 'none', text: p.draft ? 'draft · no checks' : 'no checks' };
@@ -650,40 +658,50 @@
       return { key: 'pass', text: 'all green' };
     };
     const row = (p) => {
-      const found = sessionOnBranch(p.branch);
+      const project = p.project ?? main;
+      const found = sessionOnBranch(p.branch, project);
       const live = found && W.isLive(found);
       const checks = checksOf(p);
+      const color = marked ? projectList().find((x) => x.name === project)?.color : null;
+      const isDefault = !p.project || p.project === main;
+      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${isDefault ? '' : `&project=${encodeURIComponent(project)}`}`;
       const action = live
         ? h('a', { class: 'btn btn-sm btn-open', href: `/s/${found.id}`, title: `${found.title} is on this branch: open it` },
-          h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open session')
+          h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open')
         : found
           ? h('button', {
             type: 'button', class: 'btn btn-sm btn-open', title: `${found.title} is on this branch, stopped: resume it`,
             onclick: (e) => resumeFromRow(found, e.currentTarget.closest('.prow')),
-          }, 'Resume session')
+          }, 'Resume')
           : h('a', {
-            class: 'btn btn-sm btn-plain', href: `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}`,
+            class: 'btn btn-sm btn-plain', href: startHref,
             title: p.why === 'review' ? 'Waiting on your review: start a session on it' : 'Yours: start a session on it',
-          }, 'Start session');
-      return h('div', { class: 'prow' },
+          }, 'Start');
+      const ref = marked ? `${project} #${p.number}` : `#${p.number}`;
+      return h('div', { class: `prow${marked ? ` has-project${color ? ` proj-${color}` : ''}` : ''}`, title: marked ? `${project}: ${p.title}` : p.title },
         h('div', { class: 'prow-top' },
-          h('span', { class: 'prow-num' }, `#${p.number}`),
-          h('span', { class: 'prow-title', title: p.title }, p.title),
+          h('span', { class: 'prow-title' }, p.title),
           h('span', { class: `prow-dot is-${checks.key}`, 'aria-hidden': 'true' })),
-        h('div', { class: 'prow-sub' }, h('span', { class: `prow-checks is-${checks.key}` }, checks.text), p.updatedAt && ` · ${W.ago(p.updatedAt)}`),
-        h('div', { class: 'prow-actions' }, action,
-          h('a', { class: 'prow-gh', href: W.issueUrl(data.repo, { kind: 'pr', number: p.number }), target: '_blank', rel: 'noopener' }, 'GitHub ↗')));
+        h('div', { class: 'prow-sub' },
+          h('span', { class: 'prow-text' },
+            marked ? [h('span', { class: 'prow-repo' }, project), ` #${p.number}`] : h('span', { class: 'prow-num' }, `#${p.number}`),
+            ' · ', h('span', { class: `prow-checks is-${checks.key}` }, checks.text), p.updatedAt && ` · ${W.ago(p.updatedAt)}`),
+          action,
+          h('a', {
+            class: 'prow-gh', href: W.issueUrl(p.repo ?? data.repo, { kind: 'pr', number: p.number }), target: '_blank', rel: 'noopener',
+            'aria-label': `${ref} on GitHub`, title: 'Open it on GitHub',
+          }, '↗')));
     };
     // Yours, and everything else a person is asked to look at, so no row the header counts goes unshown.
     const group = (mine, label) => {
-      const listed = pulls.filter((p) => (p.why === 'yours') === mine);
-      return listed.length ? [h('div', { class: 'prow-group' }, `${label} · ${listed.length}`), listed.map(row)] : null;
+      const rows = listed.filter((p) => (p.why === 'yours') === mine);
+      return rows.length ? [h('div', { class: 'prow-group' }, `${label} · ${rows.length}`), rows.map(row)] : null;
     };
     return h('section', { class: `zone is-pulls-zone${open ? '' : ' is-folded'}` },
       h('button', { type: 'button', class: 'zone-head', 'aria-expanded': String(open), onclick: () => toggleZone('pulls') },
         h('span', null, 'Pull requests'),
         h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
-        h('span', { class: 'count' }, pulls.length)),
+        h('span', { class: 'count' }, listed.length)),
       open && h('div', { class: 'zone-cards' }, group(true, 'Yours'), group(false, 'Review requested')));
   }
 
@@ -746,8 +764,6 @@
         zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'))]
       : [zone('unassigned', 'Unassigned', unassigned),
         ...W.GROUPS.filter((g) => status === 'all' || g.key === status).map((g) => zone(g.key, g.title, rest.filter((s) => W.group(s) === g.key)))];
-    // Pull requests are the default project's, so a filter to another project leaves them out.
-    const pullsShown = !onProject || projectList().find((p) => p.name === onProject)?.default;
     return [
       projectChips(all),
       !railMine() && statusChips(listed, status),
@@ -755,7 +771,7 @@
         setupNotice(),
         empty,
         zones,
-        railMine() && pullsShown && pullsZone()),
+        railMine() && pullsZone(onProject)),
     ].filter(Boolean);
   }
 

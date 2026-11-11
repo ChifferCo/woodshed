@@ -883,7 +883,7 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
     'Forget takes every session\'s copy too, so no Resume brings it back, and the owner\'s last, so a failure leaves its size on the page true');
 
   const pulls = async () => (await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: as })).json()).pulls;
-  assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours' }]);
+  assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours', project: 'r', repo: 'o/r' }]);
   await pulls();
   assert.equal(asked, 1, 'kept for a minute');
 });

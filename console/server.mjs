@@ -18,7 +18,7 @@
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
-//   GET  /api/my/pulls           your open pull requests, and those waiting on your review, for the rail
+//   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
 //   GET  /api/my/files/<file>    the console's shared file for one of the repo's env files or tmux-conf, and your own lines added after it
 //   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
 //   POST /api/my/files/<file>/reset                clears them: the console's file alone again
@@ -144,6 +144,7 @@ import { providerMetaContent } from './providerWords.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { readMyPulls } from './myPulls.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -1031,18 +1032,18 @@ export function createHandler({
     };
   }
 
+  // Every repo the person may start on, each on its own project's client; a console without projects asks its one.
   async function pullsReply(res, login) {
     if (!login || !github) return reply(res, 200, { pulls: [] });
     const cached = pullsCache.get(login);
     if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls });
-    try {
-      const pulls = await github.openPullsFor(login);
-      pullsCache.set(login, { at: Date.now(), pulls });
-      return reply(res, 200, { pulls });
-    } catch (err) {
-      console.warn('console: pull requests not readable', { login, message: String(err?.message ?? err).split('\n')[0] });
-      return reply(res, 200, { pulls: cached?.pulls ?? [], stale: true });
-    }
+    const named = (await projectsView(login)).projects;
+    const projects = named.map((p) => projectNamed(config, p.name) ?? { ...defaultProject(config), ...p });
+    const clientFor = (project) => (project.default ? github : (githubFor?.(project) ?? null));
+    const { pulls, stale } = await readMyPulls({ login, projects, githubFor: clientFor, kept: cached?.pulls ?? [] });
+    // Kept for the minute even when a repo failed, with that repo's last rows: every page asks on each refresh.
+    pullsCache.set(login, { at: Date.now(), pulls });
+    return reply(res, 200, stale ? { pulls, stale: true } : { pulls });
   }
 
   async function fileReply(res, login, key) {
