@@ -2020,3 +2020,27 @@ test('a console with no repo yet starts nothing, and says an admin adds one on C
   assert.equal(calls.started.length, 0);
   assert.equal(fleet.sessions().length, 0);
 });
+
+test('when the default repo is removed, the next default starts its poll from now, not from the old repo\'s last event', async () => {
+  const { fleet, github, store, projects } = twoProjects();
+  await fleet.pollGitHub();
+  assert.equal(store.state.github.repo, 'o/r', 'the default\'s cursors name their repo');
+  // The first repo added is removed on a console that started with none: the next one is the default, and the
+  // console's own client follows it (installation.mjs), so its events come from that client from here on.
+  projects.splice(0, 2, { name: 'tools', repo: 'o/tools', default: true });
+  github.latestEventId = async () => 500;
+  github.events = [toolsLabel(499, 3)];
+  await fleet.pollGitHub();
+  assert.deepEqual([store.state.github.repo, store.state.github.lastEventId], ['o/tools', 500], 'started again from where the new repo is');
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 0, 'the new default\'s older label is not handled again');
+});
+
+test('the default\'s cursors from before they named a repo are kept, as the environment\'s repo\'s', async () => {
+  const { fleet, github, store } = setup();
+  store.state.github = { lastEventId: 100, commentsSince: '2026-10-21T09:00:00.000Z', notBefore: '2026-10-21T09:00:00.000Z', seenComments: [7] };
+  github.events = [{ id: 101, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 4, title: 'x' } }];
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 1, 'polled from the kept cursor, not started again');
+  assert.ok(store.state.github.seenComments.includes(7), 'the comments seen before are still seen');
+});
