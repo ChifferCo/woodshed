@@ -5,7 +5,7 @@ import fs from 'node:fs';
 
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { secretEnvName } from '../shared/project.mjs';
-import { defaultProject, loadProjects } from './projects.mjs';
+import { defaultProject, loadProjects, projectsFrom } from './projects.mjs';
 
 const HOUR_MS = 3_600_000;
 
@@ -222,8 +222,10 @@ export function requireRepo(config) {
 
 /**
  * @param {NodeJS.ProcessEnv} env
+ * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked: a tenant of a multi-tenant console
+ *   (tenantConfig) borrows its GitHub access, and the defaults are all it wants from here
  */
-export function loadConfig(env = process.env) {
+export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const port = number(env.WOODSHED_CLOUD_PORT, 7690);
   const app = githubApp(env);
   const broker = githubBroker(env);
@@ -311,8 +313,139 @@ export function loadConfig(env = process.env) {
     // The key that folder's files are sealed with, in a file of its own outside it (providers/local/secretKey.mjs).
     localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
     webhookFunction: env.WOODSHED_CLOUD_WEBHOOK_FUNCTION || (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'woodshed-cloud-webhooks' : ''),
-    ghToken: app || broker ? null : ghToken(env),
+    ghToken: app || broker || !readGhToken ? null : ghToken(env),
     // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
     sessionApi: { host: env.WOODSHED_CLOUD_SESSION_API_HOST || null, port: number(env.WOODSHED_CLOUD_SESSION_API_PORT, 7691) },
+  };
+}
+
+// What a tenant of a multi-tenant console (hosted.mjs) may set, in loadConfig's own keys and shapes. Everything else is
+// the process's (host, port, publicUrl, appDomain, the session API) or Woodshed's own default.
+const TENANT_NUMBERS = ['maxRunning', 'maxPrivatePerPerson', 'maxAsks', 'pollMs', 'fallbackPollMs'];
+const TENANT_LIMITS = ['idleMs', 'lifetimeMs', 'startTimeoutMs', 'askIdleMs', 'askLifetimeMs'];
+const TENANT_RETENTION = ['afterCloseMs', 'withoutPrMs', 'openPrMs', 'slackGiveUpMs', 'qaWaitMs', 'removeAfterDeleteMs'];
+const TENANT_KEYS = new Set([
+  'projects', 'sessionApiUrl', 'sessionEnv', 'label', 'limits', 'retention', 'envFiles', 'installSecrets', 'dbEnvSecrets',
+  'actionsWorkflows', 'pollGitHub', 'launcher', 'tunnelTargets', ...TENANT_NUMBERS,
+]);
+
+function positiveNumbers(value, keys, where) {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${where} must be an object`);
+  const out = {};
+  for (const [key, n] of Object.entries(value)) {
+    if (!keys.includes(key)) throw new Error(`${where}.${key} is not a setting (${keys.join(', ')})`);
+    if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) throw new Error(`${where}.${key} must be a number of ms`);
+    out[key] = n;
+  }
+  return out;
+}
+
+function stringMap(value, where) {
+  if (value === undefined) return {};
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(`${where} must be an object of strings`);
+  for (const [key, text] of Object.entries(value)) {
+    if (typeof text !== 'string') throw new Error(`${where}.${key} must be a string`);
+  }
+  return { ...value };
+}
+
+// The pairs config.mjs parses from the environment, given as the lists it parses them into.
+function pairsSetting(list, where, [a, b]) {
+  if (list === undefined) return '';
+  if (!Array.isArray(list)) throw new Error(`${where} must be a list of { ${a}, ${b} }`);
+  return list.map((entry) => {
+    if (typeof entry?.[a] !== 'string' || typeof entry?.[b] !== 'string' || /,/.test(entry[a] + entry[b])) {
+      throw new Error(`${where}: each entry is { ${a}, ${b} }, strings with no comma`);
+    }
+    return `${entry[a]}=${entry[b]}`;
+  }).join(',');
+}
+
+function sessionApiUrlOf(value) {
+  if (value === undefined || value === null) return null;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error('settings.sessionApiUrl is not a URL');
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('settings.sessionApiUrl must be http(s)');
+  return url.href.replace(/\/+$/, '');
+}
+
+/**
+ * One tenant's installation config in a multi-tenant console: loadConfig's defaults, the process's own settings, and
+ * what the host gives for the tenant (`tenant.settings`), checked as the environment's values are. A setting the
+ * console does not know stops the tenant, naming it, rather than being ignored.
+ * @param {{process: {host: string, port: number, publicUrl: string, appDomain?: string, sessionApi?: object,
+ *          tlsAskPort?: number|null}, tenant: {id: string, settings?: object}, stateDir: string,
+ *          projectFilesDir?: string|null, githubSource: object, launcherKind?: string}} args
+ * @returns {object}  a config in loadConfig's shape
+ */
+export function tenantConfig({ process: given, tenant, stateDir, projectFilesDir = null, githubSource, launcherKind = 'docker' }) {
+  const settings = tenant.settings ?? {};
+  if (typeof settings !== 'object' || Array.isArray(settings)) throw new Error('settings must be an object');
+  const unknown = Object.keys(settings).filter((key) => !TENANT_KEYS.has(key));
+  if (unknown.length) throw new Error(`settings: ${unknown.join(', ')} ${unknown.length > 1 ? 'are not settings' : 'is not a setting'} a tenant has`);
+  const env = {
+    WOODSHED_CLOUD_ENV_FILES: pairsSetting(settings.envFiles, 'settings.envFiles', ['secret', 'path']),
+    WOODSHED_CLOUD_INSTALL_SECRETS: pairsSetting(settings.installSecrets, 'settings.installSecrets', ['secret', 'variable']),
+    WOODSHED_CLOUD_ACTIONS_WORKFLOWS: pairsSetting(settings.actionsWorkflows, 'settings.actionsWorkflows', ['label', 'file']),
+  };
+  const base = loadConfig(env, { readGhToken: false });
+  const projects = settings.projects === undefined ? [] : projectsFrom(
+    // As WOODSHED_CLOUD_PROJECTS, but the first is the default when none says it is.
+    Array.isArray(settings.projects) && settings.projects.length > 1 && !settings.projects.some((p) => p?.default === true)
+      ? settings.projects.map((p, i) => ({ ...p, default: i === 0 }))
+      : settings.projects,
+    'settings.projects',
+  );
+  for (const key of TENANT_NUMBERS) {
+    if (settings[key] !== undefined && (typeof settings[key] !== 'number' || !(settings[key] > 0))) throw new Error(`settings.${key} must be a positive number`);
+  }
+  if (settings.label !== undefined && (typeof settings.label !== 'string' || !/^[\w .:-]{1,50}$/.test(settings.label))) throw new Error('settings.label must be a GitHub label');
+  if (settings.dbEnvSecrets !== undefined && (!Array.isArray(settings.dbEnvSecrets) || !settings.dbEnvSecrets.every((n) => typeof n === 'string' && /^[a-z0-9-]+$/.test(n)))) {
+    throw new Error('settings.dbEnvSecrets must be a list of secret names');
+  }
+  const sessionApiUrl = sessionApiUrlOf(settings.sessionApiUrl);
+  const sessionEnv = stringMap(settings.sessionEnv, 'settings.sessionEnv');
+  const launcher = stringMap(settings.launcher, 'settings.launcher');
+  const tunnelTargets = stringMap(settings.tunnelTargets, 'settings.tunnelTargets');
+  return {
+    ...base,
+    ...Object.fromEntries(TENANT_NUMBERS.filter((key) => settings[key] !== undefined).map((key) => [key, settings[key]])),
+    host: given.host,
+    port: given.port,
+    publicUrl: String(given.publicUrl).replace(/\/+$/, ''),
+    extraHosts: [],
+    appDomain: String(given.appDomain ?? '').trim().toLowerCase(),
+    tlsAskPort: null,
+    // The host signs people in (tenancy.identify), always: nobody is the person at the keyboard (server.mjs, soloLoginOf).
+    requireSignIn: true,
+    localLogin: null,
+    trustedIdentitySecret: null,
+    stateDir,
+    projects,
+    projectFilesDir,
+    label: settings.label ?? base.label,
+    dbEnvSecrets: settings.dbEnvSecrets ?? [],
+    pollGitHub: settings.pollGitHub ?? true,
+    limits: { ...base.limits, ...positiveNumbers(settings.limits, TENANT_LIMITS, 'settings.limits') },
+    ...(settings.retention !== undefined ? { retention: positiveNumbers(settings.retention, TENANT_RETENTION, 'settings.retention') } : {}),
+    launcher: { ...base.launcher, ...launcher, kind: launcherKind },
+    // Where this tenant's sessions reach the one session API: the entrypoint, statusd and gh read it from here.
+    sessionEnv: { ...sessionEnv, ...(sessionApiUrl ? { WOODSHED_CONSOLE_URL: sessionApiUrl } : {}) },
+    sessionApiUrl,
+    sessionApi: { host: given.sessionApi?.host ?? null, port: given.sessionApi?.port ?? 7691 },
+    tunnelTargets: { pg: tunnelTargets.pg ?? null, mongo: tunnelTargets.mongo ?? null },
+    githubApp: null,
+    githubBroker: { source: githubSource },
+    ghToken: null,
+    // Nothing of the local provider's or AWS's: the host hands each tenant its services instead.
+    secrets: null, localSecretsDir: null, localSecretsKeyFile: null, localHomesDir: null, homesBucket: null,
+    localDatabases: null, localWebhooks: null, localDockerNetwork: null, webhookQueue: '', webhookFunction: '',
+    // Session links name the tenant, so whoever opens one lands in its org (hosted.mjs).
+    org: tenant.id,
   };
 }

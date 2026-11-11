@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const EMPTY_STATE = { sessions: [], github: null };
+// A save the host refused is tried again after this, so a blip in its store does not lose the change.
+const RETRY_MS = 5_000;
 
 /**
  * @param {string} dir
@@ -26,4 +28,81 @@ export function openStore(dir) {
       fs.renameSync(tmp, file);
     },
   };
+}
+
+/**
+ * The same `{state, save}` over a store the host keeps (hosted.mjs: a tenant's `services.store`), whose load and save
+ * are async. The console saves after every change and never waits, as it does with the file: each save sends a copy of
+ * the whole state, one at a time, and saves that come in while one is being written are sent once, as the latest.
+ * @param {{load: () => Promise<object|null>, save: (state: object) => Promise<void>}} service
+ * @param {{retryMs?: number}} [opts]
+ * @returns {Promise<{state: object, save: () => void, flush: () => Promise<void>, close: () => Promise<void>}>}
+ *   `flush` resolves once what was saved so far is written (or failed); `close` flushes, and from then on a save is
+ *   refused, so an installation that was stopped cannot write over the state of the one that replaced it
+ */
+export async function openServiceStore(service, { retryMs = RETRY_MS } = {}) {
+  const loaded = await service.load();
+  if (loaded !== null && loaded !== undefined && (typeof loaded !== 'object' || Array.isArray(loaded))) {
+    throw new Error('the tenant\'s store loaded something that is not a state object');
+  }
+  const state = { ...structuredClone(EMPTY_STATE), ...(loaded ? structuredClone(loaded) : {}) };
+  let dirty = false;
+  let writing = null;
+  let retry = null;
+  let closing = false;
+  let closed = false;
+
+  // Resolves true once everything saved is written, false when a write failed (a retry is then set).
+  async function writeLatest() {
+    while (dirty) {
+      dirty = false;
+      try {
+        await service.save(JSON.parse(JSON.stringify(state)));
+      } catch (err) {
+        console.error('store: state not saved, trying again', { message: String(err?.message ?? err).split('\n')[0] });
+        dirty = true;
+        if (!closing && !retry) {
+          retry = setTimeout(() => { retry = null; kick(); }, retryMs);
+          retry.unref?.();
+        }
+        return false;
+      }
+    }
+    return true;
+  }
+
+  function kick() {
+    if (writing) return;
+    writing = writeLatest().then((ok) => {
+      writing = null;
+      // A save that came in as the last write finished.
+      if (ok && dirty) kick();
+    });
+  }
+
+  function save() {
+    // A request the stopped installation was still answering: the tenant's new one owns the state now.
+    if (closed) {
+      console.warn('store: change after the installation stopped, not saved');
+      return;
+    }
+    dirty = true;
+    kick();
+  }
+
+  async function flush() {
+    while (writing) await writing;
+  }
+
+  async function close() {
+    closing = true;
+    clearTimeout(retry);
+    retry = null;
+    // One last try at what a failed write left.
+    if (dirty) kick();
+    await flush();
+    closed = true;
+  }
+
+  return { state, save, flush, close };
 }
