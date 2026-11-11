@@ -270,7 +270,7 @@ EOF
 systemctl daemon-reload
 systemctl enable woodshed-cloud.service
 # A running stack takes the new config without pulling a newer console image: deploying one is the
-# image workflow's job. A stack that never started (its console image did not exist yet) starts in full.
+# deploy workflow's console job (providers/aws/README.md, "The deploy workflow"). A stack that never started (its console image did not exist yet) starts in full.
 if [ -n "$(cd "$STACK" && docker compose ps --quiet console)" ]; then
   /usr/local/bin/woodshed-cloud-up --no-pull
 else

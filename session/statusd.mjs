@@ -771,7 +771,7 @@ const codeEditor = createCodeEditor({
   port: EDITOR.port, repoDir: REPO_DIR, listening,
 });
 
-// Whether the console offers Editor ↗: the project file turns it on, and the image has it (the image workflow leaves it
+// Whether the console offers Editor ↗: the project file turns it on, and the image has it (the deploy workflow's session job leaves it
 // out when the built commit's project file says false).
 function hasEditor() {
   return !ASK && PROJECT?.editor === true && existsSync(EDITOR_BIN);
