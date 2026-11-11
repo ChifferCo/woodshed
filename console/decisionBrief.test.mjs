@@ -263,6 +263,12 @@ test('risk areas are read from the review\'s alert: what merging accepts, then w
   assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate }), { found: true, items: [] });
 });
 
+test('with no comment from the approving run, the risks come from the review comment edited last', () => {
+  const edited = { ...reviewComment('**Risk areas to eyeball manually**\n- Edited last.', 333), updated_at: '2026-11-11T18:50:00Z' };
+  const stale = { ...reviewComment('**Risk areas to eyeball manually**\n- From before.', 222), id: 2, updated_at: '2026-11-11T18:29:00Z' };
+  assert.deepEqual(riskAreasFrom({ comments: [edited, stale], review, gate: GATES.review }).items, ['Edited last.']);
+});
+
 test('each folded risk is quoted by its one line, and the folds inside the alert do not end it', () => {
   const alert = [
     '> [!WARNING]',

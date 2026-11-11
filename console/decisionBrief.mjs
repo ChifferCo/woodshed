@@ -123,7 +123,9 @@ export function riskAreasFrom({ comments, review, gate }) {
   const summary = reviewSummaryOf(gate);
   const reviews = (comments ?? []).filter((c) => c.user?.login === gate.commentAuthor && (c.body ?? '').includes(summary));
   const runId = runIdIn(review?.body);
-  const comment = (runId && reviews.find((c) => runIdIn(c.body) === runId)) || reviews.at(-1);
+  // Else the one edited last: each run edits the same comment, which may sit above older ones from before it did.
+  const latest = reviews.reduce((a, c) => (!a || (c.updated_at ?? '') >= (a.updated_at ?? '') ? c : a), null);
+  const comment = (runId && reviews.find((c) => runIdIn(c.body) === runId)) || latest;
   if (!comment) return { found: false, items: [] };
   // The folded review starts at the first `<details>` outside the alert: the alert's own items fold too, in its quote.
   const lines = comment.body.replace(/\r\n/g, '\n').split('\n');
