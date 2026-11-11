@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildBrief, decisionsFrom, mergeRiskFrom, mergeRiskRunIds, qaReportFrom, riskAreasFrom, riskLineFrom } from './decisionBrief.mjs';
+import { buildBrief, decisionsFrom, mergeRiskFrom, mergeRiskRunIds, qaCheckFrom, qaCommentIn, qaReportFrom, riskAreasFrom, riskLineFrom } from './decisionBrief.mjs';
 
 const GATES = {
   review: { author: 'review-bot[bot]', heading: '## Code review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: 'review-bot[bot]' },
@@ -175,6 +175,20 @@ test('a QA comment is quoted only from the project file\'s author, under its hea
   const { comment } = brief({ comments: [RISKY, someoneElse] });
   assert.doesNotMatch(comment, /Covered:/);
   assert.match(comment, /Not covered: the QA comment does not say\./);
+});
+
+test('a QA session\'s check and comment are trusted from the console\'s own App, and no other', () => {
+  const own = { slug: 'my-woodshed', login: 'my-woodshed[bot]' };
+  const gate = { check: 'QA', author: 'qa-bot[bot]', heading: '## 🤖 QA' };
+  const fromApp = (slug) => ({ ...qaCheck('Pass: 2 test cases passed', 'success'), app: { slug } });
+  assert.equal(qaCheckFrom([fromApp('my-woodshed')], gate, own).finished, true);
+  assert.equal(qaCheckFrom([fromApp('my-woodshed')], gate, null).finished, false, 'before the App is known, only Actions counts');
+  assert.equal(qaCheckFrom([fromApp('someone-else')], gate, own).finished, false);
+  assert.equal(qaCheckFrom([fromApp('github-actions')], gate, own).finished, true, 'a workflow\'s QA check still counts');
+  const byApp = { ...QA_COMMENT, user: { login: 'my-woodshed[bot]' } };
+  assert.equal(qaCommentIn([byApp], gate, own), byApp);
+  assert.equal(qaCommentIn([byApp], gate, null), null);
+  assert.equal(qaCommentIn([{ ...QA_COMMENT, user: { login: 'octocat' } }], gate, own), null);
 });
 
 test('with nothing configured, the brief says so instead of waiting for or quoting a gate', () => {
