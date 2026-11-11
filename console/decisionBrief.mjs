@@ -8,8 +8,12 @@ import { reviewSummaryOf } from './pullGates.mjs';
 import { plainText } from './slack.mjs';
 
 export const BRIEF_HEADING = '## 🧭 Decision brief';
+// The review's own (review.yml) lists what merging accepts and what is untested; a repo whose review is its own may
+// still write the one list it had before.
+const ACCEPT_HEADING = '**What you accept by merging**';
+const UNTESTED_HEADING = '**Not tested: check before merging**';
 const RISK_HEADING = '**Risk areas to eyeball manually**';
-const NOTHING_RISKY = /^No breaking or hard-to-undo changes\.?$/i;
+const NOTHING_RISKY = /^(No breaking or hard-to-undo changes|None)\.?$/i;
 // A workflow posts its checks with its GITHUB_TOKEN, so they come from GitHub Actions' app. Any workflow can post a
 // check with these names; one from another app (a session's own token, say) is not the review's or QA's.
 const TRUSTED_CHECK_APP = 'github-actions';
@@ -106,7 +110,9 @@ export function qaCommentIn(comments, qa) {
 }
 
 /**
- * The review lists its risk areas at the top of its PR comment, before the review folded under its heading.
+ * The review lists its risk areas at the top of its PR comment, before the review folded under its heading: what
+ * merging accepts, then what is untested, which the brief quotes as `Not tested: …`. The list may be in an alert, a
+ * blockquote.
  * The comment of the run that approved is preferred: the review links that run, and so does the comment.
  * @param {{comments: object[], review: object|null, gate: {heading: string, commentAuthor: string|null}|null}} args
  *   `gate` is the project file's `pullRequests.review`
@@ -117,12 +123,41 @@ export function riskAreasFrom({ comments, review, gate }) {
   const summary = reviewSummaryOf(gate);
   const reviews = (comments ?? []).filter((c) => c.user?.login === gate.commentAuthor && (c.body ?? '').includes(summary));
   const runId = runIdIn(review?.body);
-  const comment = (runId && reviews.find((c) => runIdIn(c.body) === runId)) || reviews.at(-1);
+  // Else the one edited last: each run edits the same comment, which may sit above older ones from before it did.
+  const latest = reviews.reduce((a, c) => (!a || (c.updated_at ?? '') >= (a.updated_at ?? '') ? c : a), null);
+  const comment = (runId && reviews.find((c) => runIdIn(c.body) === runId)) || latest;
   if (!comment) return { found: false, items: [] };
-  const top = comment.body.split('<details>')[0];
-  const at = top.indexOf(RISK_HEADING);
-  if (at < 0) return { found: true, items: [] };
-  return { found: true, items: bulletsOf(top.slice(at + RISK_HEADING.length)).filter((i) => !NOTHING_RISKY.test(i)) };
+  // The folded review starts at the first `<details>` outside the alert: the alert's own items fold too, in its quote.
+  const lines = comment.body.replace(/\r\n/g, '\n').split('\n');
+  const fold = lines.findIndex((l) => l.startsWith('<details>'));
+  const top = (fold < 0 ? lines : lines.slice(0, fold)).map((l) => l.replace(/^>\s?/, '')).join('\n');
+  const accepted = [...listUnder(top, ACCEPT_HEADING), ...listUnder(top, RISK_HEADING)];
+  const untested = listUnder(top, UNTESTED_HEADING).map((i) => `Not tested: ${i}`);
+  const items = [...accepted, ...untested];
+  // A box or a list that gave no item is one whose headings the reviewer wrote differently: never shown as no risks.
+  const headed = [ACCEPT_HEADING, UNTESTED_HEADING, RISK_HEADING].some((h) => top.includes(h));
+  const unreadable = !items.length && (listsSomething(top) || (!headed && top.includes('**Merge risk:')));
+  if (unreadable) console.warn('decisionBrief: the review comment\'s risks could not be read', { commentId: comment.id ?? null });
+  return { found: true, items, ...(unreadable ? { unreadable: true } : {}) };
+}
+
+// Whether text has a fold or a bullet that is not a "None".
+function listsSomething(text) {
+  return text.split('\n').some((l) => /^<details>/.test(l) || (/^[-*]\s+\S/.test(l) && !NOTHING_RISKY.test(l.replace(/^[-*]\s+/, '').trim())));
+}
+
+// The items under one of the review's headings: each folded item's one line, or else the bullets.
+function listUnder(text, heading) {
+  const at = text.indexOf(heading);
+  if (at < 0) return [];
+  const rest = text.slice(at + heading.length);
+  // Up to the next of the review's own headings: an item's body may have bold lines of its own.
+  const ends = [ACCEPT_HEADING, UNTESTED_HEADING, RISK_HEADING].map((h) => rest.indexOf(h)).filter((i) => i >= 0);
+  const next = ends.length ? Math.min(...ends) : -1;
+  const section = next < 0 ? rest : rest.slice(0, next);
+  // Only a fold that starts its line: a diff quoted in an item's body has a `+`, `-` or space first.
+  const folded = [...section.matchAll(/^<details>\s*<summary>([\s\S]*?)<\/summary>/gm)].map((m) => m[1].replace(/\s+/g, ' ').trim());
+  return (folded.length ? folded : bulletsOf(section)).filter((i) => i && !NOTHING_RISKY.test(i));
 }
 
 /** Top-level `- `, `* ` or `1. ` items, each with its continuation lines. */
@@ -278,7 +313,7 @@ export function buildBrief({ pull, review, runs, comments, suites, qa, gates, re
     mergeRisk.title || !words.riskCheck ? null
       : `**Self-assessed risk** (no ${words.riskCheck} check): ${riskLine ? forSlack(riskLine, 120) : 'the PR body has no Risk line'}`,
     bulleted('Decisions', ranked, null),
-    bulleted('Risks', risk.items, risk.found ? 'none listed' : riskMissing),
+    bulleted('Risks', risk.items, risk.unreadable ? 'could not be read, see the review comment' : risk.found ? 'none listed' : riskMissing),
     `QA ${qaLine({ check: qa.check, report, notRun: qa.notRun })}${commentUrl ? ` · [Full brief →](${commentUrl})` : ''}`,
   ].filter(Boolean);
   // A blank line between sections, so each reads on its own.
@@ -290,6 +325,7 @@ export function buildBrief({ pull, review, runs, comments, suites, qa, gates, re
 
 function riskAreasText({ risk, words, list }) {
   if (words.riskAreas) return 'No review comment is configured to quote risk areas from.';
+  if (risk.unreadable) return 'The AI review comment lists risks this brief could not read: see the review comment.';
   return risk.found ? list(risk.items, 'None listed by the AI review.') : 'The AI review comment was not found, so its risk areas are unknown.';
 }
 

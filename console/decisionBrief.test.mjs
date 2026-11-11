@@ -242,6 +242,82 @@ test('risk areas are quoted from the review comment of the run that approved', (
   assert.equal(after(brief({ comments: [] }), 'Risks'), '**Risks:** the AI review comment was not found');
 });
 
+test('risk areas are read from the review\'s alert: what merging accepts, then what is untested', () => {
+  const gate = GATES.review;
+  const alert = [
+    '> [!WARNING]',
+    '> **Merge risk: Medium**: it changes an API reply.',
+    '>',
+    '> **What you accept by merging**',
+    '> - `server.mjs:12`: a client reading the old reply',
+    '>   gets an extra field.',
+    '>',
+    '> **Not tested: check before merging**',
+    '> - Add a repo the App is not on: the link opens its install page.',
+  ].join('\n');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(alert)], review, gate }).items, [
+    '`server.mjs:12`: a client reading the old reply gets an extra field.',
+    'Not tested: Add a repo the App is not on: the link opens its install page.',
+  ]);
+  const none = alert.replace(/> - `server[\s\S]*?extra field\./, '> - None').replace(/> - Add a repo.*$/, '> - None.');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate }), { found: true, items: [] });
+});
+
+test('with no comment from the approving run, the risks come from the review comment edited last', () => {
+  const edited = { ...reviewComment('**Risk areas to eyeball manually**\n- Edited last.', 333), updated_at: '2026-11-11T18:50:00Z' };
+  const stale = { ...reviewComment('**Risk areas to eyeball manually**\n- From before.', 222), id: 2, updated_at: '2026-11-11T18:29:00Z' };
+  assert.deepEqual(riskAreasFrom({ comments: [edited, stale], review, gate: GATES.review }).items, ['Edited last.']);
+});
+
+test('a box whose headings the reviewer wrote differently says its risks could not be read, not that there are none', () => {
+  const drifted = reviewComment(['> [!WARNING]', '> **Merge risk: Medium**: it changes an API reply.', '>', '> **What you accept when merging**',
+    '>', '> <details><summary>A client gets an extra field.</summary>', '>', '> </details>'].join('\n'));
+  assert.deepEqual(riskAreasFrom({ comments: [drifted], review, gate: GATES.review }), { found: true, items: [], unreadable: true });
+  assert.equal(after(brief({ comments: [drifted] }), 'Risks'), '**Risks:** could not be read, see the review comment');
+  assert.equal(after(brief({ comments: [reviewComment('No breaking or hard-to-undo changes.')] }), 'Risks'), '**Risks:** none listed');
+});
+
+test('each folded risk is quoted by its one line, and the folds inside the alert do not end it', () => {
+  const alert = [
+    '> [!WARNING]',
+    '> **Merge risk: Medium**: it removes a confirm step from admin settings.',
+    '>',
+    '> **What you accept by merging**',
+    '>',
+    '> <details><summary>An admin adds or removes a repo with one click.</summary>',
+    '>',
+    '> **Why:** nothing to type now.',
+    '> The typed confirm is gone. [consoleSettings.js:40-52](https://github.com/o/r/blob/abc/console/public/consoleSettings.js#L40-L52)',
+    '>',
+    '> ```diff',
+    '> +<details><summary>Not a risk, a line of the diff</summary>',
+    '> - confirmTyped(\'add\')',
+    '> ```',
+    '>',
+    '> </details>',
+    '>',
+    '> <details><summary>Removing a repo needs no confirm either.</summary>',
+    '>',
+    '> </details>',
+    '>',
+    '> **Not tested: check before merging**',
+    '>',
+    '> <details><summary>Add a repo the App is not on:',
+    '> the error links to its install page.</summary>',
+    '>',
+    '> Steps here.',
+    '>',
+    '> </details>',
+  ].join('\n');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(alert)], review, gate: GATES.review }).items, [
+    'An admin adds or removes a repo with one click.',
+    'Removing a repo needs no confirm either.',
+    'Not tested: Add a repo the App is not on: the error links to its install page.',
+  ]);
+  const none = alert.split('\n').filter((l, i) => i < 4 || (i > 20 && i < 22)).concat(['> None']).join('\n');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate: GATES.review }).items, []);
+});
+
 test('decisions that touch a risk area come first, and every one is listed in Slack and the comment', () => {
   const b = brief();
   assert.match(b.slack, /\*\*Decisions\*\*\n• Rate limits share `rateLimitUtils\.ts` with signup\n• Kept the 30 s/);
