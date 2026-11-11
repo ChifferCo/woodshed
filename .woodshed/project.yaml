@@ -1,9 +1,23 @@
 # What a Woodshed session needs to know about Woodshed itself, for when woodshed/ is a repo of its own: nothing reads it
 # while Woodshed is inside another repo, whose own .woodshed/project.yaml sessions read. test/selfProject.test.mjs
-# keeps it valid. docs/reference.md, "The project file", describes each field. Left out: no dependencies, env files, databases
-# or app (a change is proven with the dev console, which rules.md says how to run).
+# keeps it valid. docs/reference.md, "The project file", describes each field. Left out: no dependencies, env files or
+# databases.
 
 version: 1
+
+# The dev console with its made-up sessions (console/bin/devConsole.mjs): no Docker, AWS or GitHub. One server, so
+# both ports are its own. A nested console that launches real sessions could come later.
+app:
+  start: bash scripts/devConsoleApp.sh start
+  stop: bash scripts/devConsoleApp.sh stop
+  frontendPort: 7690
+  backendPort: 7690
+  logs:
+    console: ~/.cache/woodshed-dev-console/console.log
+  paths: [console/public/]
+  howToProve: >-
+    Start the app (`bash scripts/devConsoleApp.sh start`), open http://localhost:7690/s/aaaa1111 in the Playwright
+    browser and check the page you changed there, with a screenshot from its made-up sessions.
 
 # VS Code in the browser on each session's checkout (Editor ↗).
 editor: true
