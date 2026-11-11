@@ -1593,7 +1593,9 @@ export function createHandler({
       // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
       // the background: the page polls, and sees a change on a later poll.
       const first = userSettings?.askedAbout ? !userSettings.askedAbout(user.login) : false;
-      const looking = userSettings?.refresh?.(user.login);
+      const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
+        console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
+      });
       await Promise.all([databaseGate?.refusal(), first ? looking : null]);
       return reply(res, 200, myView(user.login));
     }
