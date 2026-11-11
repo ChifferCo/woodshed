@@ -103,8 +103,8 @@ export function commentConsoleUrl({ publicUrl, project, consoleLinks }) {
 export function startComment({ session, publicUrl, maxRunning, appDomain = '', linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME }) {
   if (session.status === 'failed') return failedComment({ session, publicUrl, linkQuery, consoleName });
   const head = session.status === 'queued'
-    ? `Queued a ${consoleName} session for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
-    : `Started a ${consoleName} session for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
+    ? `Queued a session on ${consoleName} for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
+    : `Started a session on ${consoleName} for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
   const links = publicUrl
     ? [
       `Watch it and type into it: ${sessionLink(publicUrl, session.id, linkQuery)}`,

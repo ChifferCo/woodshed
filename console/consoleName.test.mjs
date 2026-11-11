@@ -56,7 +56,7 @@ test('a name the console cannot show safely gives the default, with one warning 
   assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: '<script>alert(1)</script>' }), 'Woodshed');
   assert.equal(seen.length, 7, 'the same bad value warns once');
   assert.match(seen[0][0], /WOODSHED_CLOUD_CONSOLE_NAME/);
-  assert.doesNotMatch(JSON.stringify(seen), /<script>/, 'the warning does not repeat the value');
+  assert.doesNotMatch(JSON.stringify(seen), /<script/i, 'the warning does not repeat the value');
 });
 
 test('the page shell escapes the name wherever it writes it', () => {
@@ -103,8 +103,8 @@ test('a hostile name never reaches a page or the manifest', async (t) => {
 test('the console\'s GitHub comments and its new GitHub App use its name', () => {
   const session = { id: 'abcd1234', status: 'starting', startedBy: 'joel', resumedBy: 'joel', branch: 'woodshed/1-abcd1234' };
   const consoleName = 'Acme Woodshed';
-  assert.match(startComment({ session, publicUrl: null, maxRunning: 5, consoleName }), /^Started a Acme Woodshed session for @joel[^]*from Acme Woodshed\./);
-  assert.match(startComment({ session: { ...session, status: 'queued' }, publicUrl: null, maxRunning: 5, consoleName }), /^Queued a Acme Woodshed session/);
+  assert.match(startComment({ session, publicUrl: null, maxRunning: 5, consoleName }), /^Started a session on Acme Woodshed for @joel[^]*from Acme Woodshed\./);
+  assert.match(startComment({ session: { ...session, status: 'queued' }, publicUrl: null, maxRunning: 5, consoleName }), /^Queued a session on Acme Woodshed for @joel/);
   assert.match(resumeComment({ session, publicUrl: null, consoleName }), /^Resumed the Acme Woodshed session[^]*from Acme Woodshed\.$/);
   assert.match(failedComment({ session, publicUrl: null, consoleName }), /^The Acme Woodshed session for @joel failed/);
   assert.match(refusalComment({ login: 'sam', label: 'woodshed', unlabeled: false, member: true, publicUrl: null, consoleName }), /^@sam can't start Acme Woodshed sessions/);
