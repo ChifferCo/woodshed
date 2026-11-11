@@ -368,11 +368,17 @@ And what the shed shows about each session:
   third ttyd would need its own port in the security group.
 - **A pull request on the rail** opens your session already on its branch
   (**Open**), resumes a stopped one there (**Resume**), or starts a new one.
-- **⌘K** opens the command palette: jump to a session (stopped ones once you
-  type), go to a page, or Tab on a session for its actions. **⌘?** lists the
-  keys; **⌘.** hides the rail; **⇧⌘,** opens Settings, with the theme
-  (device, light or dark, kept in the browser); **⇧⌘O** is New session. Ctrl
-  works for ⌘ outside a terminal.
+- **⌘K** (or **/**) opens the command palette: jump to a session (stopped ones
+  once you type), go to a page, or Tab on a session for its actions. **?** (or
+  **⌘?**) lists the keys; **⌘.** hides the rail; **⇧⌘,** opens Settings, with
+  the theme (device, light or dark, kept in the browser); **⇧⌘O** (or **N**) is
+  New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
+  sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
+  write the keys as Ctrl on Windows and Linux. A key alone works only while
+  nothing takes typing, and never inside a terminal. Which key does what is
+  `public/keys.cjs`, read by the sheet, the hints and the handler alike. A
+  control with a key (New session, the user menu's and settings list's
+  Keyboard shortcuts) shows a hint with it when the pointer rests on it.
 - **Install as an app**: the console serves the shed's manifest and icons
   (`woodshed/shared/pwa.mjs`) under its own name, before sign-in, since a
   browser fetches the manifest without cookies. There is no service worker,

@@ -70,6 +70,13 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
 - **Unassigned**: `stopped` fill, `sub` text. A shared session nobody has taken.
 - Filled means private, outlined means assigned. Never use a purple or red for ownership.
 
+## Keyboard hints
+
+- A control with a shortcut carries `data-keys` (its id in `public/keys.cjs`) and gets the key hint on hover or keyboard
+  focus (`components/KeyHint`): `ink` fill with `ground` text, as the toast, its keys as outlined caps, and
+  "Press ? for every shortcut" under it. Never on a phone. It replaces the control's `title`: never both.
+- Keys are written for the computer: `⇧⌘O` on a Mac, `Ctrl` `Shift` `O` elsewhere, one cap per key.
+
 ## Iconography
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image.

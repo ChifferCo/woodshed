@@ -1,0 +1,16 @@
+<!-- @dsCard group="Overlays" height=150 subtitle="The hover hint on a control with a keyboard shortcut" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .btn{display:inline-block;padding:6px 12px;border-radius:7px;background:var(--action);color:#fff;font-weight:600;font-size:13px}
+ .keyhint{display:inline-block;margin:8px 0 0 0;padding:6px 9px;border-radius:6px;background:var(--ink);color:var(--ground);font-size:12px;line-height:1.4;box-shadow:0 6px 20px rgba(27,34,50,.2)}
+ .row{display:flex;align-items:center;gap:10px;justify-content:space-between}
+ kbd{display:inline-block;min-width:1.5em;padding:0 4px;margin-right:4px;border:1px solid currentColor;border-bottom-width:2px;border-radius:4px;font:500 10.5px/1.5 "JetBrains Mono",ui-monospace,monospace;text-align:center;opacity:.9}
+ .or{margin:0 6px 0 2px;opacity:.7;font-size:11px}
+ .more{margin-top:3px;opacity:.75;font-size:11px}
+</style>
+<span class="btn">+ New session</span><br>
+<div class="keyhint">
+ <div class="row"><span>New session</span><span><kbd>⇧</kbd><kbd>⌘</kbd><kbd>O</kbd><span class="or">or</span><kbd>N</kbd></span></div>
+ <div class="more">Press <kbd>?</kbd> for every shortcut</div>
+</div>
