@@ -19,7 +19,7 @@ function freePort() {
 
 function run(home, port, command) {
   return spawnSync('bash', [SCRIPT, command], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, DEV_CONSOLE_PORT: String(port) }, timeout: 60_000,
+    encoding: 'utf8', env: { PATH: process.env.PATH, HOME: home, DEV_CONSOLE_PORT: String(port), SESSION_ID: 'abcd1234' }, timeout: 60_000,
   });
 }
 

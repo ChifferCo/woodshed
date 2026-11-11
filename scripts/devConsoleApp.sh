@@ -23,8 +23,10 @@ start() {
     return 0
   fi
   echo "devConsoleApp: starting the dev console on port $PORT" | tee -a "$LOG"
-  # Behind a session's app proxy the request names the session's app host, which only the console in front knows.
-  DEV_CONSOLE_ANY_HOST=1 setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
+  # In a session, Open app's requests name the session's app host, which only the console in front knows.
+  local sessionApp=0
+  if [[ -n ${SESSION_ID:-} ]]; then sessionApp=1; fi
+  DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   for _ in $(seq "$WAIT_STEPS"); do

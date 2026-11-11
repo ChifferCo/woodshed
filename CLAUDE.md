@@ -737,7 +737,7 @@ for the pane bar's buttons, but has no container: it cannot show a live terminal
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. Add a session to `devConsole.mjs` to cover another state.
 A Woodshed Cloud session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
-7690 with `DEV_CONSOLE_ANY_HOST=1` so it also answers behind **Open app**.
+7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 
 When a change needs data the console gets from somewhere a session cannot reach (GitHub's pull request state and
 checks, a running container, the Slack or review APIs), do not stop at "not proven". Fake that input: add a session to

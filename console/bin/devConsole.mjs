@@ -1,8 +1,8 @@
 // Runs the console on this machine with a few made-up sessions, so a change to console/public can be checked in a
 // browser without AWS, GitHub or Docker. Usage: node console/bin/devConsole.mjs [port] [tls ask port]
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
-// DEV_CONSOLE_ANY_HOST=1 answers under any host name, as Woodshed's own app does behind a session's app proxy
-// (scripts/devConsoleApp.sh).
+// DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name, as Woodshed's own
+// app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,7 +13,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const port = process.argv[2] || '7690';
-const anyHost = process.env.DEV_CONSOLE_ANY_HOST === '1';
+const sessionApp = process.env.DEV_CONSOLE_SESSION_APP === '1';
+const sessionId = process.env.SESSION_ID ?? '';
+if (sessionApp && !/^[0-9a-f]{8}$/.test(sessionId)) {
+  console.error('dev console: DEV_CONSOLE_SESSION_APP=1 needs the session\'s SESSION_ID');
+  process.exit(1);
+}
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
 const tlsAskPort = process.argv[3] ? { WOODSHED_CLOUD_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher).
@@ -106,9 +111,19 @@ function freePort() {
   });
 }
 
-// The console refuses a host name it does not know (shared/sameOrigin.mjs), and a session's app name is known only to
-// the console in front of it. So the request comes in on `port` and reaches the console on a port of its own as if
-// for loopback: an Origin naming the host it came by names loopback too, and any other Origin is still refused.
+// The console refuses a host name it does not know (shared/sameOrigin.mjs), and a session's app name,
+// `<SESSION_ID>.<app domain>`, is known only to the console in front of it. So a request comes in on `port`, and one for
+// loopback or a name whose first label is the session's id reaches the console on a port of its own as if for loopback:
+// an Origin naming the host it came by names loopback too, and any other Origin is still refused. Any other name gets
+// the console's own 421, which keeps a DNS-rebound page out (isKnownHost).
+const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+function isSessionAppHost(host) {
+  const name = String(host ?? '').replace(/:\d+$/, '').toLowerCase();
+  if (LOOPBACK_NAMES.has(name)) return true;
+  const labels = name.split('.');
+  return labels.length > 1 && labels[0] === sessionId;
+}
+
 function asLoopback(headers, consolePort) {
   const out = { ...headers, host: `127.0.0.1:${consolePort}` };
   let sameHost = false;
@@ -121,8 +136,15 @@ function asLoopback(headers, consolePort) {
   return out;
 }
 
-function serveAnyHost(consolePort) {
+const MISDIRECTED = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+
+function serveSessionApp(consolePort) {
   const front = http.createServer((req, res) => {
+    if (!isSessionAppHost(req.headers.host)) {
+      console.warn('dev console: unknown host refused', { host: String(req.headers.host).slice(0, 100) });
+      res.writeHead(421, MISDIRECTED);
+      return res.end(JSON.stringify({ error: 'unknown host' }));
+    }
     const upstream = http.request({ host: '127.0.0.1', port: consolePort, method: req.method, path: req.url, headers: asLoopback(req.headers, consolePort) }, (upRes) => {
       res.writeHead(upRes.statusCode || 502, upRes.headers);
       upRes.pipe(res);
@@ -135,6 +157,7 @@ function serveAnyHost(consolePort) {
     req.pipe(upstream);
   });
   front.on('upgrade', (req, socket, head) => {
+    if (!isSessionAppHost(req.headers.host)) return socket.end('HTTP/1.1 421 Misdirected Request\r\n\r\n');
     const upstream = net.connect(Number(consolePort), '127.0.0.1', () => {
       const lines = [`${req.method} ${req.url} HTTP/1.1`];
       for (const [key, value] of Object.entries(asLoopback(req.headers, consolePort))) {
@@ -150,14 +173,14 @@ function serveAnyHost(consolePort) {
   });
   return new Promise((resolve, reject) => {
     front.once('error', reject).listen(Number(port), '127.0.0.1', () => {
-      console.log('dev console: answering any host name', { port, consolePort });
+      console.log('dev console: answering as the session\'s app too', { port, consolePort, sessionId });
       resolve();
     });
   });
 }
 
-const consolePort = anyHost ? await freePort() : port;
-if (anyHost) await serveAnyHost(consolePort);
+const consolePort = sessionApp ? await freePort() : port;
+if (sessionApp) await serveSessionApp(consolePort);
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
 const child = spawn(process.execPath, [server], {
@@ -166,7 +189,7 @@ const child = spawn(process.execPath, [server], {
     ...inherited, WOODSHED_CLOUD_HOST: '127.0.0.1', WOODSHED_CLOUD_PORT: consolePort, WOODSHED_CLOUD_STATE_DIR: stateDir,
     WOODSHED_CLOUD_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_CLOUD_APP_DOMAIN: 'apps.localhost',
     // Its own links name the port people open, not the one behind it.
-    ...(anyHost ? { WOODSHED_CLOUD_PUBLIC_URL: `http://localhost:${port}` } : {}),
+    ...(sessionApp ? { WOODSHED_CLOUD_PUBLIC_URL: `http://localhost:${port}` } : {}),
     // The console starts only with a repo set: the sessions' made-up one, or the projects this shell names.
     ...(process.env.WOODSHED_CLOUD_PROJECTS
       ? { WOODSHED_CLOUD_PROJECTS: process.env.WOODSHED_CLOUD_PROJECTS }
