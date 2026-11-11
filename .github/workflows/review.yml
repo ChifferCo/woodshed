@@ -231,11 +231,7 @@ jobs:
                this body, before you finish. The action does not post your final message: it only adds a header to
                whatever that comment already holds, so a review you only write as a reply is lost.
 
-               Start with the verdict on a line of its own, the same as `/tmp/claude-verdict.txt`: `**✅ Approved**`,
-               `**❌ Changes requested**: ` and how many blocking findings, or `**💬 Comments only**: ` and why you could
-               not review it.
-
-               Then what the person who merges must know, outside the fold, as one GitHub alert: `[!CAUTION]`
+               Start with what the person who merges must know, outside the fold, as one GitHub alert: `[!CAUTION]`
                for High, `[!WARNING]` for Medium, `[!TIP]` for Low, the colours of the merge risk labels. Every line of it starts with `> `. Write it for
                someone who has not read the diff and wants to decide in a minute: plain words, what happens to whom,
                no code walkthrough.
@@ -324,13 +320,8 @@ jobs:
           fi
           verdict=$(tr -d '[:space:]' < /tmp/claude-verdict.txt | tr '[:lower:]' '[:upper:]')
           echo "verdict=${verdict}" >> "$GITHUB_OUTPUT"
-          case "$verdict" in
-            APPROVE) shown='✅ Approved' ;;
-            REQUEST_CHANGES | REQUESTCHANGES) shown='❌ Changes requested' ;;
-            *) shown='💬 Comments only' ;;
-          esac
           {
-            echo "## Claude review — ${shown}"
+            echo "## Claude review — ${verdict}"
             echo
             cat /tmp/review-summary.md 2>/dev/null || echo "See the full review in the comment above."
             printf '\n\n'
