@@ -218,7 +218,7 @@ test('sessions past the cap queue, and a stop starts the next one', async () => 
   await fleet.handleTrigger({ number: 2, login: 'joel', trigger: 'label', title: 'two', kind: 'issue' });
   const [first, second] = fleet.sessions();
   assert.equal(second.status, 'queued');
-  assert.match(calls.comments[1].body, /^Queued a Woodshed session for @joel/);
+  assert.match(calls.comments[1].body, /^Queued a session on Woodshed for @joel/);
 
   await fleet.stop(first, 'stopped from the console');
   assert.equal(first.status, 'stopped');
@@ -360,7 +360,7 @@ test('a session that dies while starting, after its start comment, gets a follow
   alive.clear();
   await fleet.tick();
   assert.equal(calls.comments.length, 2);
-  assert.match(calls.comments[0].body, /^Started a Woodshed session/);
+  assert.match(calls.comments[0].body, /^Started a session on Woodshed/);
   assert.match(calls.comments[1].body, /failed to start/);
   assert.doesNotMatch(calls.comments[1].body, /PGHOST/, 'the log line stays in the console');
 });
@@ -1845,7 +1845,7 @@ test('a Needs a human comment and a pull request change reach the session on tha
 test('the console\'s comments link to it on the default project\'s repo, word for word as before, and nowhere else', () => {
   const session = { id: 'abcd1234', status: 'starting', startedBy: 'joel', resumedBy: 'joel', branch: 'woodshed/1-abcd1234' };
   assert.equal(startComment({ session, publicUrl: 'https://console.test', maxRunning: 5, appDomain: 'apps.test' }), [
-    'Started a Woodshed session for @joel on `woodshed/1-abcd1234`.',
+    'Started a session on Woodshed for @joel on `woodshed/1-abcd1234`.',
     '',
     'Watch it and type into it: https://console.test/s/abcd1234',
     'Its app, once started from that page: https://abcd1234.apps.test/',

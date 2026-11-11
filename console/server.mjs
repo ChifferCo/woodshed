@@ -1,4 +1,4 @@
-// Woodshed Cloud console: lists sessions, opens a live terminal on each, and
+// The Woodshed console: lists sessions, opens a live terminal on each, and
 // starts them from GitHub labels and `/woodshed` comments.
 //
 //   GET  /all                    Shared: the rail, and the shared sessions in the pane
@@ -126,7 +126,7 @@ import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
-import { loadConfig } from './config.mjs';
+import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
@@ -207,9 +207,15 @@ const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
-// The shed's mark and install details, under the console's name. Served before sign-in: a browser fetches the
-// manifest without cookies.
-const CONSOLE_MANIFEST = JSON.stringify({ ...MANIFEST, name: 'Woodshed Cloud', short_name: 'Woodshed Cloud', description: 'Claude sessions in containers.' }, null, 2);
+// The shed's mark and install details, under the console's name (config.consoleName), made once for each name.
+// Served before sign-in: a browser fetches the manifest without cookies.
+const consoleManifests = new Map();
+function consoleManifest(name) {
+  if (!consoleManifests.has(name)) {
+    consoleManifests.set(name, JSON.stringify({ ...MANIFEST, name, short_name: name, description: 'Claude sessions in containers.' }, null, 2));
+  }
+  return consoleManifests.get(name);
+}
 const PWA_PATHS = new Set(['/manifest.webmanifest', '/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png']);
 const MAX_RESUME_MESSAGE_CHARS = 4000;
 const CLAUDE_LOGIN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/claude-login$/;
@@ -298,6 +304,11 @@ function staticHash(file) {
   return staticHashes.get(file).hash;
 }
 
+/** @returns {string}  the text with what HTML reads in an attribute or between tags escaped */
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"'`]/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
 /** @returns {string}  the file's URL, versioned */
 function staticUrl(file) {
   return `/static/${file}?v=${staticHash(file)}`;
@@ -306,8 +317,10 @@ function staticUrl(file) {
 /**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
  *          linkQuery?: Record<string, string>|null}} args
- *   the page's scripts, loaded in order after common.js; `provider`'s words are what the page says about where
- *   sessions run (providerWords.mjs), the defaults where it has none; `linkQuery` is config.linkQuery
+ *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
+ *   what the scripts call the console (common.js, W.consoleName); `script` is the page's scripts, loaded in order
+ *   after common.js; `provider`'s words are what the page says about where sessions run (providerWords.mjs), the
+ *   defaults where it has none; `linkQuery` is config.linkQuery
  * @returns {string}  the page shell; the script renders everything from /api/sessions
  */
 export function pageShell({ title, script, login = null, provider = null, linkQuery = null }) {
@@ -316,13 +329,15 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
   // What the links a page copies carry (config.linkQuery). URLSearchParams leaves nothing an attribute needs escaped.
   const query = linkQueryString(linkQuery);
   const queryMeta = query ? `\n<meta name="woodshed-link-query" content="${query}">` : '';
+  const name = escapeHtml(title);
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">${who}${queryMeta}
 <meta name="woodshed-provider" content="${providerMetaContent(provider)}">
-<title>${title}</title>
+<meta name="woodshed-console-name" content="${name}">
+<title>${name}</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1b2232">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -330,7 +345,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Woodshed Cloud">
+<meta name="apple-mobile-web-app-title" content="${name}">
 <script src="${staticUrl('theme.js')}"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -352,15 +367,17 @@ ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n
 }
 
 /**
- * What the console serves to anyone, signed in or not, the same for every installation: the page scripts and styles, the
- * install-as-an-app manifest and its icons (a browser fetches the manifest without cookies).
+ * What the console serves to anyone, signed in or not: the page scripts and styles, the same for every installation,
+ * and the install-as-an-app manifest, under the console's name, and its icons (a browser fetches the manifest without
+ * cookies).
+ * @param {string} [consoleName]  config.consoleName
  * @returns {boolean}  whether it answered
  */
-export function servePublic(req, res, url) {
+export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
   if (url.pathname === '/manifest.webmanifest') {
     res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8', 'cache-control': 'no-cache' });
-    res.end(CONSOLE_MANIFEST);
+    res.end(consoleManifest(consoleName));
     return true;
   }
   if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return true;
@@ -489,6 +506,8 @@ export function createHandler({
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
+  // A config made in a test or by a program embedding the console may not have been through loadConfig.
+  const consoleName = config.consoleName || DEFAULT_CONSOLE_NAME;
   // Who may open a shared session is the People list's to say, once sign-in tells people apart.
   const access = auth ? members : null;
   // Each project's skills, by project name: one read of GitHub at a time for each, since every keystroke after `/` asks.
@@ -543,7 +562,7 @@ export function createHandler({
   async function authRoute(req, res, url) {
     const { pathname } = url;
     if (pathname === '/login' && req.method === 'GET') {
-      html(res, pageShell({ title: 'Woodshed Cloud', script: 'login.js' }));
+      html(res, pageShell({ title: consoleName, script: 'login.js' }));
       return true;
     }
     if (pathname === '/api/me' && req.method === 'GET' && trusted) {
@@ -1580,7 +1599,7 @@ export function createHandler({
     if (auth?.available() && req.method === 'GET' && !stays && otherPublicNames.has(hostnameOf(req.headers.host))) {
       return redirect(res, `${config.publicUrl}${url.pathname}${url.search}`);
     }
-    if (servePublic(req, res, url)) return;
+    if (servePublic(req, res, url, consoleName)) return;
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;
@@ -1605,16 +1624,16 @@ export function createHandler({
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
-    if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: 'Woodshed Cloud', script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings') return html(res, pageShell({ title: 'Woodshed Cloud', script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
-    if (pathname === '/setup/github') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'githubSetup.js' }));
+    if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
+    if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
-    if (pathname === '/events') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'events.js', provider }));
-    if (pathname === '/secrets') return html(res, pageShell({ title: 'Woodshed Cloud', script: ['webhookSetup.js', 'secrets.js'], provider }));
-    if (pathname === '/console-settings') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'consoleSettings.js', provider }));
+    if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
+    if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
+    if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
-    if (pathname === '/people') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'people.js', provider }));
+    if (pathname === '/people') return html(res, pageShell({ title: consoleName, script: 'people.js', provider }));
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));

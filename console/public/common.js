@@ -10,6 +10,8 @@
   // What the pages say about where sessions run, in the provider's own words: pageShell's meta tag, from
   // providerWords.mjs. A page without it leaves out the steps only a provider can name.
   const PROVIDER_WORDS = readProviderWords();
+  // What this installation calls its console (config.consoleName): pageShell's meta tag, read as text.
+  const CONSOLE_NAME = document.querySelector?.('meta[name="woodshed-console-name"]')?.content || 'Woodshed';
   /** @returns {string}  the text with its first letter capitalised, for a provider's words at the start of a sentence */
   function capitalised(text) {
     return String(text).replace(/^./, (c) => c.toUpperCase());
@@ -752,7 +754,7 @@
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
-      h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : 'Woodshed Cloud'), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
+      h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : CONSOLE_NAME), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
       menuGroups(me),
       me.login && MY_LINKS.map(item),
       h('button', {
@@ -986,7 +988,7 @@
   }
 
   window.Woodshed = {
-    invite, providerWords: PROVIDER_WORDS, capitalised,
+    invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,

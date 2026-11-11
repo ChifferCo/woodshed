@@ -29,7 +29,7 @@
 
   function card(...children) {
     document.getElementById('app').replaceChildren(h('div', { class: 'login-page' }, h('section', { class: 'login-card' },
-      h('h1', { class: 'title' }, 'Woodshed Cloud'), ...children)));
+      h('h1', { class: 'title' }, W.consoleName), ...children)));
   }
 
   // Signed in with write access, but not on the console's list: ask to join, then wait here to be let in.
@@ -49,7 +49,7 @@
     }
     if (!me.asked) {
       const ask = h('button', { type: 'button', class: 'btn btn-open login-btn', onclick: (e) => send('/api/access/ask', e.currentTarget) }, 'Ask to join');
-      card(h('p', { class: 'sub' }, 'Signed in with GitHub as ', h('b', null, `@${me.visitor}`), ', but you are not on Woodshed Cloud\'s list yet.'),
+      card(h('p', { class: 'sub' }, 'Signed in with GitHub as ', h('b', null, `@${me.visitor}`), `, but you are not on ${W.consoleName}'s list yet.`),
         ask, h('p', { class: 'foot' }, 'Anyone on the list can let you in. ', signOut));
       return;
     }
@@ -103,6 +103,6 @@
       !me.signIn && h('p', { class: 'msg-plain' }, 'Sign-in is not required yet. The first sign-in that works turns it on for every page.'),
       error && h('p', { class: 'form-error', role: 'alert' }, error),
       h('a', { class: 'btn btn-open login-btn', href: `/auth/start?next=${encodeURIComponent(next)}` }, 'Sign in with GitHub'),
-      h('p', { class: 'foot' }, 'GitHub asks once to let the Woodshed Cloud app see who you are. It gets no access to your repositories through this.'));
+      h('p', { class: 'foot' }, `GitHub asks once to let the ${W.consoleName} app see who you are. It gets no access to your repositories through this.`));
   }).catch((err) => card(h('p', { class: 'form-error' }, `The console did not answer: ${err.message}`)));
 })();

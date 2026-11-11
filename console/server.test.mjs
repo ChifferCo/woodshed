@@ -640,7 +640,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.equal(await request(port, { path: '/static/sessions.js', headers: { host: `localhost:${port}`, ...as('octocat') } }), 404, 'the old page is gone');
 
   const manifest = JSON.parse(await getBody(port, '/manifest.webmanifest', {}));
-  assert.equal(manifest.name, 'Woodshed Cloud');
+  assert.equal(manifest.name, 'Woodshed');
   assert.equal(await request(port, { path: '/icon-192.png', headers: { host: `localhost:${port}` } }), 200, 'icons before sign-in');
 });
 

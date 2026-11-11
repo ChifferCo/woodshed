@@ -134,6 +134,8 @@ services:
       - WOODSHED_CLOUD_DB_ENV_SECRETS=${db_env_secrets}
       - WOODSHED_CLOUD_INSTALL_SECRETS=${install_secrets}
       - WOODSHED_CLOUD_MAX_SESSIONS=${max_sessions}
+      # What the console calls itself (the console_name variable), quoted since a name may hold a colon or a #.
+      - ${jsonencode("WOODSHED_CLOUD_CONSOLE_NAME=${replace(console_name, "$", "$$")}")}
       - WOODSHED_CLOUD_ACTIONS_WORKFLOWS=${workflow_links}
       - WOODSHED_CLOUD_HOMES_BUCKET=${homes_bucket}
       - WOODSHED_CLOUD_GITHUB_APP_ID=${github_app_id}
@@ -250,7 +252,7 @@ rm -f /etc/systemd/system/woodshed-cloud-pgweb.timer /etc/systemd/system/woodshe
 
 cat > /etc/systemd/system/woodshed-cloud.service <<'EOF'
 [Unit]
-Description=Woodshed Cloud console and shared services
+Description=Woodshed console and shared services
 After=docker.service network-online.target
 Requires=docker.service
 RequiresMountsFor=/var/lib/woodshed-cloud

@@ -158,6 +158,11 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **The console:** `https://woodshed.example.com`, with a Let's Encrypt
   certificate, open to the internet behind a GitHub sign-in. The bare IP
   answers too, with Caddy's own certificate, and moves to the name.
+- **Its name:** the console calls itself Woodshed unless the installation names it: `WOODSHED_CLOUD_CONSOLE_NAME`
+  (`console_name` in Terraform, a line in the local provider's `stack.env`), such as `Acme Woodshed`. The name is the
+  pages' title, the sign-in page's heading, the installed app's name and what the console's GitHub comments call it.
+  1 to 40 printable characters without `< > " '` or a backtick; the console uses Woodshed in place of any other value,
+  and warns once. An app already installed from the browser keeps its old name until it is installed again.
 
 ## Who commits
 

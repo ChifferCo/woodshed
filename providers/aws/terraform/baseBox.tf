@@ -292,6 +292,7 @@ locals {
     db_env_secrets     = join(",", var.database_env_secrets)
     install_secrets    = join(",", [for name, env_name in var.install_secrets : "${name}=${env_name}"])
     max_sessions       = var.max_sessions
+    console_name       = var.console_name
     workflow_links     = join(",", [for label, file in var.console_workflow_links : "${label}=${file}"])
     homes_bucket       = aws_s3_bucket.homes.bucket
     cluster            = aws_ecs_cluster.main.name

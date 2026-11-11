@@ -1489,6 +1489,7 @@ Remove My Woodshed.
 | Variable | Default | |
 | --- | --- | --- |
 | `WOODSHED_CLOUD_HOST`, `WOODSHED_CLOUD_PORT` | `127.0.0.1`, `7690` | |
+| `WOODSHED_CLOUD_CONSOLE_NAME` | `Woodshed` | What the console calls itself: the pages' title, the sign-in page's heading, the installed app's name (the manifest and the Apple title) and the console's GitHub comments. 1 to 40 printable characters, trimmed, without `< > " '` or a backtick; any other value gives the default, with a warning once. Set on the base box from Terraform's `console_name`. An installed app keeps the name it was installed with until it is installed again |
 | `WOODSHED_CLOUD_PUBLIC_URL` | `http://localhost:<port>` | The base of the link posted on GitHub; its host is accepted |
 | `WOODSHED_CLOUD_HOSTS` | none | More names to accept, comma-separated |
 | `WOODSHED_CLOUD_TLS_ASK_PORT` | none | A port on `127.0.0.1` where a reverse proxy asks before getting a certificate on demand: `GET /tls-ask?domain=<name>` answers 200 for the public URL's host, `WOODSHED_CLOUD_HOSTS` and a session's app name, 403 otherwise (`tlsAsk.mjs`). For a console with no wildcard certificate; `providers/local/README.md` has the Caddyfile |
