@@ -3,9 +3,10 @@
 // before there were projects, so a console with one project logs what it did.
 //
 // A console that borrows its GitHub access (githubBroker.mjs) asks the host's broker for the same three, each narrowed
-// the same way, and uses none the broker says can do more.
+// the same way, and uses none the broker says can do more: over HTTP, or in the process for a tenant of a
+// multi-tenant console (`config.githubBroker.source`).
 
-import { createGitHubBroker } from './githubBroker.mjs';
+import { createGitHubBroker, createInProcessBroker } from './githubBroker.mjs';
 import { createTokenSource } from './githubApp.mjs';
 import { defaultProject, installationIdFor, projectFor } from './projects.mjs';
 
@@ -45,7 +46,10 @@ function sourcesFor({ config, privateKey, fetchImpl, now, project, broker }) {
  */
 export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
   if (!config.githubApp && !config.githubBroker) return null;
-  const broker = config.githubBroker ? createGitHubBroker({ ...config.githubBroker, fetchImpl, now }) : null;
+  // A multi-tenant host hands each tenant's token source in (hosted.mjs); a single console asks its host over HTTP.
+  const broker = !config.githubBroker ? null
+    : config.githubBroker.source ? createInProcessBroker({ source: config.githubBroker.source, now })
+      : createGitHubBroker({ ...config.githubBroker, fetchImpl, now });
   const main = defaultProject(config);
   // A project an admin removed and added again may be on another installation, so a source is kept per repo and installation.
   const keyOf = (project) => `${project.name}\n${project.repo}\n${broker ? '' : installationIdFor(config, project)}`;
