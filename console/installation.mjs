@@ -276,7 +276,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const brokerRead = tokens?.borrowFor
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
     : undefined;
-  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead }) });
+  const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
+  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }) });
   const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
   const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;

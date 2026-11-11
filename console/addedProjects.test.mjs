@@ -91,6 +91,11 @@ test('with the App, the repo must have it installed; without, gh must read the r
   const appApi = { installationOf: async (repo) => (repo === 'acme/yes' ? '300' : null) };
   assert.deepEqual(await repoChecker({ appApi })('acme/yes'), { installationId: '300' });
   await assert.rejects(repoChecker({ appApi })('acme/no'), (err) => err.shown && /App is not installed on acme\/no/.test(err.message));
+  await assert.rejects(repoChecker({ appApi })('acme/no'), (err) => !err.link, 'no link while the App\'s slug is unknown');
+  await assert.rejects(repoChecker({ appApi, appSlug: async () => 'woodshed-acme' })('acme/no'),
+    (err) => err.shown && /App is not installed on acme\/no/.test(err.message)
+      && err.link.href === 'https://github.com/apps/woodshed-acme/installations/new' && err.link.text === 'Install woodshed-acme on GitHub');
+  await assert.rejects(repoChecker({ appApi, appSlug: async () => { throw new Error('down'); } })('acme/no'), (err) => err.shown && !err.link);
   const down = { installationOf: async () => { throw new Error('HTTP 502'); } };
   await assert.rejects(repoChecker({ appApi: down })('acme/x'), (err) => err.shown && /did not answer/.test(err.message));
   assert.deepEqual(await repoChecker({ appApi: null, read: async () => 'main' })('acme/x'), { installationId: null });

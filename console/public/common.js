@@ -871,7 +871,7 @@
       method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
     });
     const answer = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(answer.error || `POST ${path} answered ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), answer.link && { link: answer.link });
     return answer;
   }
 
@@ -881,9 +881,19 @@
   }
 
   /**
+   * An error's message, then the server's `link` (an https page that fixes it, such as the App's install page) opening
+   * in a new tab, as the children of a `form-error`.
+   * @param {{message: string, link?: {href: string, text?: string}}} err
+   */
+  function errorParts(err) {
+    const href = /^https:\/\//.test(err.link?.href ?? '') ? err.link.href : null;
+    return [err.message, ...(href ? [' ', h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, `${err.link.text || 'Open on GitHub'} ↗`)] : [])];
+  }
+
+  /**
    * A change the person must confirm by typing `word`: what it is now, what it becomes, and what that affects.
    * @param {{title: string, before?: string, after?: string, rows?: string[][], effect: string, word: string, goLabel: string,
-   *          run: () => Promise<void>}} opts  `run` makes the change; its error stays in the dialog. `rows`, for several
+   *          run: () => Promise<void>}} opts  `run` makes the change; its error stays in the dialog (errorParts). `rows`, for several
    *   changes at once, is [what, now, after] for each, in place of `before` and `after`
    */
   function confirmChange({ title, before, after, rows = null, effect, word, goLabel, run }) {
@@ -912,7 +922,7 @@
         await run();
         dialog.close();
       } catch (err) {
-        error.textContent = err.message;
+        error.replaceChildren(...errorParts(err));
         error.hidden = false;
         go.disabled = false;
       }
@@ -990,7 +1000,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

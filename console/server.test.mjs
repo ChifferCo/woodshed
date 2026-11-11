@@ -1022,6 +1022,9 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   }, store);
   const check = async (repo) => {
     if (repo === 'o/missing') throw Object.assign(new Error('The GitHub App is not installed on o/missing.'), { shown: true });
+    if (repo === 'o/uninstalled') {
+      throw Object.assign(new Error('The GitHub App is not installed on o/uninstalled.'), { shown: true, link: { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' } });
+    }
     return { installationId: null };
   };
   const addedProjects = createAddedProjects({ store, config, check });
@@ -1035,6 +1038,9 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.deepEqual(added.body.projects.map((p) => [p.name, p.removable]), [['r', false], ['api', true]]);
   assert.deepEqual(config.projects.map((p) => p.name), ['r', 'api'], 'the live config has it, with no restart');
   assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/missing' }), { status: 400, body: { error: 'The GitHub App is not installed on o/missing.' } });
+  assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/uninstalled' }), {
+    status: 400, body: { error: 'The GitHub App is not installed on o/uninstalled.', link: { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' } },
+  }, 'the App\'s install page goes with the reason');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/api' })).status, 400, 'twice');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
