@@ -1367,6 +1367,19 @@ test('a start waiting for room shows the steps its launcher reports, saved only 
   assert.equal(session.waitProgress, null, 'only a session waiting for room is asked');
 });
 
+test('a launcher whose progress never answers holds up neither the queue nor the next read', async () => {
+  const ctx = setup();
+  ctx.fail.start = 'Capacity is unavailable: the machine is being set up';
+  let reads = 0;
+  ctx.launcher.progress = () => { reads += 1; return new Promise(() => {}); };
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  ctx.fail.start = false;
+  await ctx.fleet.handleTrigger({ number: 43, login: 'joel', trigger: 'label', title: 'y', kind: 'issue' });
+  const [waiting, next] = ctx.fleet.sessions();
+  assert.deepEqual([waiting.status, next.status], ['queued', 'starting'], 'the start behind it went on');
+  assert.equal(reads, 1);
+});
+
 test('a launcher with no progress leaves a waiting start as it was', async () => {
   const ctx = setup();
   ctx.fail.start = 'aws ecs run-task failed: RESOURCE:CPU';

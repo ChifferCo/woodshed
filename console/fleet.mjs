@@ -46,6 +46,13 @@ function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
 }
 
+/** @returns {Promise}  the promise's answer, or a rejection once `ms` pass without one */
+function withinTime(promise, ms) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in ${ms / 1000} s`)), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
+}
+
 function shown(message) {
   return Object.assign(new Error(message), { shown: true });
 }
@@ -311,7 +318,8 @@ export function createFleet({
       if (NO_ROOM_RE.test(firstLine(err))) {
         update(session, { status: 'queued', startedAt: null, error, retryAt: new Date(now() + NO_ROOM_RETRY_MS).toISOString() });
         console.warn('fleet: AWS has no room, session back in the queue', { id: session.id, retryInMs: NO_ROOM_RETRY_MS });
-        await readProgress(session);
+        // Not waited for: the queue goes on, and checkWaiting reads it again within a couple of seconds.
+        readProgress(session).catch((err) => console.error('fleet: wait progress failed', { id: session.id, message: firstLine(err) }));
         return;
       }
       console.error('fleet: session failed to start', { id: session.id, message: firstLine(err) });
@@ -632,7 +640,7 @@ export function createFleet({
     if (!launcher.progress) return;
     let progress;
     try {
-      progress = waitProgressFrom(await launcher.progress(session.id));
+      progress = waitProgressFrom(await withinTime(launcher.progress(session.id), STATUS_TIMEOUT_MS));
     } catch (err) {
       const message = firstLine(err);
       if (progressErrors.get(session.id) !== message) console.warn('fleet: wait progress not read', { id: session.id, message });
@@ -640,6 +648,8 @@ export function createFleet({
       return;
     }
     progressErrors.delete(session.id);
+    // Started, or stopped, while the launcher answered.
+    if (!(session.status === 'queued' && waitsForRetry(session, now()))) return;
     if (JSON.stringify(progress) === JSON.stringify(session.waitProgress ?? null)) return;
     update(session, { waitProgress: progress });
     const steps = progress?.steps ?? [];

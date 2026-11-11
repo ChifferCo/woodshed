@@ -1546,6 +1546,8 @@
   function bodyKey(s) {
     if (!s) return 'missing';
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
+    // A wait with steps counts its seconds, as a start does.
+    if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
     return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
