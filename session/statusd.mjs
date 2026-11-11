@@ -769,7 +769,8 @@ async function pushCheckpointRef(committed) {
   const pushedTo = checkpointRef(process.env.SESSION_ID);
   // Forced, so a retry of the same stop, or a later one of a resumed session, writes over the last.
   await git('push', '--force', 'origin', `HEAD:${pushedTo}`);
-  console.log('statusd: checkpoint pushed off the branch, the pull request is closed', { committed, unpushed, pushedTo });
+  // The ref's name has the session id, so the console logs it (`pushedTo`) and this line does not.
+  console.log('statusd: checkpoint pushed off the branch, the pull request is closed', { committed, unpushed });
   return pushedTo;
 }
 

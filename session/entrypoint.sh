@@ -241,10 +241,13 @@ checkoutBranch() {
     log "Created branch from the default branch" "(branch: $BRANCH, from: $DEFAULT_BRANCH)"
   fi
   # A checkpoint ahead of the branch: the pull request closed with its branch kept, and was reopened.
-  if git rev-parse --verify --quiet "$checkpoint" >/dev/null && ! git merge-base --is-ancestor "$checkpoint" HEAD \
-    && git merge-base --is-ancestor HEAD "$checkpoint"; then
-    git reset --quiet --hard "$checkpoint"
-    log "Moved the branch to the checkpoint of a closed pull request" "(branch: $BRANCH, ref: $checkpoint)"
+  if git rev-parse --verify --quiet "$checkpoint" >/dev/null && ! git merge-base --is-ancestor "$checkpoint" HEAD; then
+    if git merge-base --is-ancestor HEAD "$checkpoint"; then
+      git reset --quiet --hard "$checkpoint"
+      log "Moved the branch to the checkpoint of a closed pull request" "(branch: $BRANCH, ref: $checkpoint)"
+    else
+      log "WARNING: the checkpoint of a closed pull request has diverged from the branch, left as it is" "(branch: $BRANCH, ref: $checkpoint)"
+    fi
   fi
   updateSubmodules
 }

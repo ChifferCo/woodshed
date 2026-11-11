@@ -687,7 +687,7 @@ test('a checkout with a submodule gets it at the commit\'s pin, and one without 
 
 // fetchBranch and checkoutBranch as the entrypoint has them, on an image's clone of a bare remote standing for GitHub,
 // made before the session's branch merged and went. The remote keeps the last stop's work on the session's ref.
-function resumeAfterMerge({ pr = null, branchKept = false, checkpoint = true }) {
+function resumeAfterMerge({ pr = null, branchKept = false, checkpoint = true, diverged = false }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-resume-'));
   const env = { PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1' };
   const git = (args, cwd = tmp) => execFileSync('git', args, { cwd, encoding: 'utf8', env }).trim();
@@ -710,6 +710,12 @@ function resumeAfterMerge({ pr = null, branchKept = false, checkpoint = true }) 
   if (!branchKept) git(['update-ref', '-d', 'refs/heads/woodshed/42-0a1b2c3d'], remote);
   commit(author, 'wip.txt');
   if (checkpoint) git(['push', '-q', 'origin', 'HEAD:refs/woodshed/checkpoints/0a1b2c3d'], author);
+  if (diverged) {
+    // The branch moved on from where the checkpoint started, without it.
+    git(['checkout', '-q', '-B', 'later', 'HEAD~1'], author);
+    commit(author, 'later.txt');
+    git(['push', '-q', 'origin', 'HEAD:refs/heads/woodshed/42-0a1b2c3d'], author);
+  }
   const script = [
     'set -euo pipefail',
     'log() { echo "[woodshed] $*"; }',
@@ -769,4 +775,11 @@ test('a PR session whose branch a merge deleted checks out the PR\'s head, then 
   const kept = resumeAfterMerge({ pr: '7', branchKept: true, checkpoint: false });
   assert.equal(kept.status, 0, kept.stderr);
   assert.match(kept.stdout, /Checked out PR head \(pr: 7, branch: woodshed\/42-0a1b2c3d\)/);
+});
+
+test('a checkpoint that diverged from a kept branch is left alone, with a warning', () => {
+  const run = resumeAfterMerge({ branchKept: true, diverged: true });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /WARNING: the checkpoint of a closed pull request has diverged from the branch/);
+  assert.match(run.stdout, /files=README\.md later\.txt pushed\.txt \n/);
 });
