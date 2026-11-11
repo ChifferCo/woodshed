@@ -1,6 +1,6 @@
 ---
 name: setup-woodshed
-description: Set Woodshed up for someone's GitHub repository, on this machine (Docker), on a server their team reaches (a VM such as Hetzner), or on AWS. Use when asked to install, self-host, deploy or try Woodshed, or to "set Woodshed up for owner/name". Follows docs/self-host.md step by step, runs each step's check, and stops at the steps only the person can do.
+description: Set Woodshed up for someone's GitHub repository, on this machine (Docker), on a server their team reaches (a VM such as Hetzner), or on AWS. Use when asked to install, self-host, deploy or try Woodshed, or to "set Woodshed up for owner/name". Briefs the person up front on what it will do and everything it needs from them, then follows docs/self-host.md step by step, runs each step's check, and stops at the steps only the person can do.
 ---
 
 # Set Woodshed up
@@ -9,16 +9,59 @@ description: Set Woodshed up for someone's GitHub repository, on this machine (D
 place you were given in full before the first command, and follow it in order. Do not work from memory of an older
 copy; when this file and the runbook disagree, the runbook wins.
 
-## 1. Know three things before you start
+## 1. Up front: one briefing, then wait for a go
 
-Ask for whichever the request does not say, in one message:
+The person should hear everything you need from them and everything you will do before anything changes, not find
+out one step at a time. Send it as one message, and change nothing on the machine until they answer.
 
-- **The repository**, as `owner/name`.
-- **Where**: this machine (to try it), a server the team reaches, or AWS. The table at the top of `docs/self-host.md`
-  says what each costs in effort. Someone who only wants to see the console needs none of this:
-  `node console/bin/devConsole.mjs`, then `http://localhost:7690/s/aaaa1111`.
-- **Where their checkout of that repository is**, if they have one here. Without it, clone it with `gh repo clone`
-  into a folder of its own beside this one, never inside this checkout.
+**First, ask where**, unless the request says: this machine (to try it), a server the team reaches, or AWS, with the
+effort column of the table at the top of `docs/self-host.md`. Also the repository as `owner/name` if not given, and
+where their checkout of it is, if they have one here (without one, clone it later with `gh repo clone` into a folder
+beside this one, never inside this checkout). Someone who only wants to see the console needs none of this:
+`node console/bin/devConsole.mjs`, then `http://localhost:7690/s/aaaa1111`.
+
+**Then run the read-only checks** for that place, so the briefing says what is already in place:
+
+| Where | Checks |
+| --- | --- |
+| This machine | `docker info`, `docker compose version`, `node -v` (22 or later), `git --version`, `gh auth status`, `gh repo view owner/name --json viewerPermission` |
+| A server | The same, on the server over SSH once they gave you access; here, only `gh auth status` and the repository |
+| AWS | `aws sts get-caller-identity` (and that the account holds nothing but Woodshed), `terraform version`, `gh auth status`, `gh repo view owner/name --json viewerPermission` (ADMIN, for the environments and variables) |
+
+A missing login is fixed by the person in this session: tell them to type `! gh auth login` (or `! aws sso login`, and
+the like) at the prompt, so its output lands here. Never ask for a token in the chat.
+
+**Then the briefing**, short, in this order:
+
+1. **What it will do**: what gets installed and where (`~/.woodshed` on this machine; the packages, a systemd unit and
+   Caddy on a server; the Terraform in their AWS account and roughly what it costs idle, from `providers/aws/README.md`,
+   "Costs"), what runs afterwards and on which address, what is open to the network and what is not, and how long the
+   slow part takes (the session image's first build: several minutes, longer with no published runtime).
+2. **What the checks found**: what is ready, and what they must fix first.
+3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
+   so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).
+4. **The order**, in one line each: the project file, the install, the GitHub App, their Claude, the first session.
+
+Then ask them to say go.
+
+### What the person does, by place
+
+| Where | From them |
+| --- | --- |
+| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. Make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. A dev value for each env file `secret` the project file names (never production) |
+| A server, also | The machine (Ubuntu 24.04, about 4 GB a session) and SSH access to it for you. A firewall in their provider's panel. A name: a domain with an `A` and a wildcard record, or none with sslip.io. Their own IP, for the fence until sign-in. Signing in first, so they are the first admin |
+| AWS, also | An AWS account for Woodshed alone, with credentials in this shell. A domain to delegate, with NS records at its parent's DNS. An email for the budget alerts. The GitHub App made by hand (its permissions are in `providers/aws/README.md`, "Setting it up", step 2), its private key uploaded on the console later. Approving each Terraform apply after reading its plan |
+
+Everything else is yours: say so in the briefing, so they know the list above is the whole of it.
+
+### The person's steps come as early as they can
+
+- **The GitHub App first.** On AWS it is the first step anyway, before Terraform. On this machine and a server, it is
+  made from the console's `/setup/github` page, so it can only come once the console runs: start the console the
+  moment the runbook allows and make the App the first thing they do on it.
+- **Fill the waits.** While the session image builds, ask them for what does not need the console: `claude setup-token`
+  in their own terminal (they keep the token to paste on **My settings**), the env file values ready, on a server the
+  DNS records and firewall, on AWS the NS delegation as soon as Terraform printed the nameservers.
 
 ## 2. The project file comes first
 
