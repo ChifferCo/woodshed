@@ -49,7 +49,7 @@ export function checkoutDir(repo) {
 export const PROJECT_FIELDS = Object.freeze({
   '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
-  'dependencies.installs': ['dir', 'files', 'command', 'output'],
+  'dependencies.installs': ['dir', 'files', 'command', 'output', 'prune'],
   envFiles: ['path', 'secret', 'lines'],
   databases: ['engine', 'dir', 'migrate', 'seed', 'envFiles', 'paths', 'migrations', 'migrationsTable', 'dump', 'user', 'name'],
   'databases.migrationsTable': ['table', 'column'],
@@ -231,7 +231,7 @@ function outputPath(value, field) {
 }
 
 function install(value, field) {
-  const i = fields(value, field, PROJECT_FIELDS['dependencies.installs']);
+  const i = fields(value, field, PROJECT_FIELDS['dependencies.installs'], { prune: true });
   const files = list(i.files, `${field}.files`, (f, where) => repoPath(word(f, where), where));
   if (!files.length) fail(`${field}.files must name at least one file: a change to them is what reinstalls`);
   const command = string(i.command, `${field}.command`);
@@ -239,7 +239,7 @@ function install(value, field) {
   const output = list(i.output, `${field}.output`, outputPath);
   // An install the image keeps nothing of does nothing; and the manifest has no empty field, which bash's read drops.
   if (!output.length) fail(`${field}.output must name at least one folder the image keeps`);
-  return { dir: repoPath(i.dir, `${field}.dir`), files, command, output };
+  return { dir: repoPath(i.dir, `${field}.dir`), files, command, output, prune: boolean(i.prune, `${field}.prune`) };
 }
 
 // The repo's dependency installs: what the image runs, keeps and records, and a session runs again when their files
@@ -254,9 +254,12 @@ function dependencies(value) {
   return { installs };
 }
 
-/** `dependencies.installs` as session/deps.sh reads it: `install\t<dir>\t<files>\t<output>\t<command>` lines. */
+/**
+ * `dependencies.installs` as session/deps.sh reads it: `install\t<dir>\t<files>\t<output>\t<prune>\t<command>` lines,
+ * the command last since it is the one field with spaces of its own.
+ */
 export function installsManifest({ installs }) {
-  return installs.map((i) => `${['install', i.dir, i.files.join(' '), i.output.join(' '), i.command].join('\t')}\n`).join('');
+  return installs.map((i) => `${['install', i.dir, i.files.join(' '), i.output.join(' '), i.prune, i.command].join('\t')}\n`).join('');
 }
 
 function app(value) {
@@ -314,7 +317,7 @@ const TOP_DEFAULTS = {
 /**
  * @param {unknown} raw  the file, parsed
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
- *   output: string[]}[]}, env: Record<string, string>,
+ *   output: string[], prune: boolean}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, lines: string[]}[], databases: object[], app: object|null,
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing

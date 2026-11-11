@@ -1,11 +1,11 @@
 #!/bin/bash
 # The repo's dependency installs, from the manifest `project.mjs installs` prints (the project file's
-# `dependencies.installs`): one `install` line each, tab separated: dir, files, output, command. Nothing here knows a
+# `dependencies.installs`): one `install` line each, tab separated: dir, files, output, prune, command. Nothing here knows a
 # package manager or names a variable: each install is its own command, and reads what it needs from the environment.
 #
 #   deps.sh install <manifest> <out>   the image's deps stage, in the checkout's path: with INSTALL_ENV_FILE's
 #                                      `NAME=value` lines exported (the build's install_env secret, when it has one),
-#                                      runs each command in its dir, then moves what it keeps to <out>/checkout (paths in the dir) and <out>/home
+#                                      runs each command in its dir, prunes it (depsPrune), then moves what it keeps to <out>/checkout (paths in the dir) and <out>/home
 #                                      (`~/` paths), and the record of the files it was built from to <out>/records
 #   deps.sh check <manifest>           the image's last stage, in the checkout: fails unless each install's files are
 #                                      the ones its record says it was built from
@@ -18,6 +18,8 @@
 # (/work/.woodshed-deps in the image), at <dir>/built-from.
 
 DEPS_RECORDS=${WOODSHED_DEPS_RECORDS:-/work/.woodshed-deps}
+# Beside this file: the Dockerfile mounts the two side by side, and the image keeps them in one folder.
+DEPS_PRUNE=$(dirname "${BASH_SOURCE[0]}")/pruneDeps.mjs
 
 # depsFiles <dir> <files> <output>: the files the globs match, relative to the dir, one a line and sorted.
 depsFiles() {
@@ -88,14 +90,28 @@ depsLoadEnv() {
   echo "deps: install secrets in $(sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' "$1" | paste -sd ' ' -)"
 }
 
+# depsPrune <dir> <output> <prune>: removes from each `node_modules` the install keeps in its dir what this image never
+# loads (pruneDeps.mjs). Never fails the install: a prune that fails only warns, and keeps what it had not removed.
+depsPrune() {
+  local dir=$1 output=$2 prune=$3 path roots=()
+  if [ "$prune" != true ]; then echo "deps: not pruning $dir (prune: false)"; return 0; fi
+  for path in $output; do
+    case "$path" in "~/"*) continue ;; esac
+    if [ "${path##*/}" = node_modules ] && [ -d "$dir/$path" ]; then roots+=("$dir/$path"); fi
+  done
+  [ "${#roots[@]}" -gt 0 ] || return 0
+  node "$DEPS_PRUNE" "${roots[@]}" || echo "deps: WARNING: pruning $dir failed, what is left of it is kept" >&2
+}
+
 depsInstall() {
-  local manifest=$1 out=$2 kind dir files output command path from to count=0
+  local manifest=$1 out=$2 kind dir files output prune command path from to count=0
   depsLoadEnv "${INSTALL_ENV_FILE:-}"
   mkdir -p "$out/checkout" "$out/home" "$out/records"
-  while IFS=$'\t' read -r kind dir files output command; do
+  while IFS=$'\t' read -r kind dir files output prune command; do
     [ "$kind" = install ] || continue
     echo "deps: installing $dir"
     depsRun "$dir" "$command" || { echo "deps: the install in $dir failed: $command" >&2; return 1; }
+    depsPrune "$dir" "$output" "$prune"
     mkdir -p "$out/records/$dir"
     depsRecord "$dir" "$files" "$output" > "$out/records/$dir/built-from"
     for path in $output; do
@@ -113,8 +129,8 @@ depsInstall() {
 }
 
 depsCheck() {
-  local manifest=$1 kind dir files output command
-  while IFS=$'\t' read -r kind dir files output command; do
+  local manifest=$1 kind dir files output _prune _command
+  while IFS=$'\t' read -r kind dir files output _prune _command; do
     [ "$kind" = install ] || continue
     depsBuiltFrom "$dir" "$files" "$output" \
       || { echo "deps: $dir's files in the build context are not the cloned commit's: build from that commit" >&2; return 1; }

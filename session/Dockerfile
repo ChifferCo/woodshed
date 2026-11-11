@@ -112,10 +112,11 @@ USER node
 # Installed where the checkout will be, so what an install keeps works at the same path in the final stage. A home of
 # its own, deleted after: what the installs keep under ~/ is moved out first, and their caches go with it. The
 # optional install_env secret is `NAME=value` lines, the installation's install secrets under the variables its
-# installs read: deps.sh exports them before the first install.
+# installs read: deps.sh exports them before the first install. pruneDeps.mjs goes beside deps.sh, where it looks for it.
 RUN --mount=type=secret,id=install_env,uid=1000,required=false \
   --mount=type=bind,source=woodshed-deps.installs,target=/tmp/woodshed-installs \
   --mount=type=bind,source=woodshed/session/deps.sh,target=/tmp/woodshed-deps.sh \
+  --mount=type=bind,source=woodshed/session/pruneDeps.mjs,target=/tmp/pruneDeps.mjs \
   cd "$REPO_DIR" && export HOME=/tmp/woodshed-home && mkdir -p "$HOME" \
   && INSTALL_ENV_FILE=/run/secrets/install_env bash /tmp/woodshed-deps.sh install /tmp/woodshed-installs /woodshed-out \
   && rm -rf "$HOME"

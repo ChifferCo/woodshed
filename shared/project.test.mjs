@@ -113,7 +113,7 @@ test('only version must be written: a field left out is none, and a misspelt one
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, app: null }).app, null, 'null still says it has none');
 });
 
-const API_INSTALL = { dir: 'api', files: ['deps.lock'], command: 'make deps', output: ['vendor', '~/.cache/tool'] };
+const API_INSTALL = { dir: 'api', files: ['deps.lock'], command: 'make deps', output: ['vendor', '~/.cache/tool'], prune: true };
 
 test('dependencies are the installs the image runs, in the repo\'s own words, and name no variable', () => {
   const dependencies = { installs: [API_INSTALL, { ...API_INSTALL, dir: '.', files: ['a.lock', 'pkgs/*/manifest'] }] };
@@ -122,6 +122,10 @@ test('dependencies are the installs the image runs, in the repo\'s own words, an
   const wrong = (d) => () => parseProject({ ...EMPTY_PROJECT, dependencies: { installs: [], ...d } });
   const one = (i) => wrong({ installs: [{ ...API_INSTALL, ...i }] });
   assert.throws(wrong({ tokenVariable: 'REGISTRY_TOKEN' }), /dependencies has tokenVariable, which is not a field/);
+  const { prune, ...unpruned } = API_INSTALL;
+  assert.equal(parseProject({ ...EMPTY_PROJECT, dependencies: { installs: [unpruned] } }).dependencies.installs[0].prune, true, 'prune left out: on');
+  assert.equal(parseProject({ ...EMPTY_PROJECT, dependencies: { installs: [{ ...API_INSTALL, prune: false }] } }).dependencies.installs[0].prune, false);
+  assert.throws(one({ prune: 'no' }), /installs\[0\]\.prune must be true or false/);
   assert.throws(one({ dir: '../x' }), /installs\[0\]\.dir must be a path inside the repo/);
   assert.throws(one({ files: [] }), /installs\[0\]\.files must name at least one file/);
   assert.throws(one({ files: ['../deps.lock'] }), /installs\[0\]\.files\[0\] must be a path inside the repo/);
@@ -141,7 +145,8 @@ test('dependencies are the installs the image runs, in the repo\'s own words, an
 test('the installs\' manifest is one tab-separated line each, for session/deps.sh', () => {
   assert.equal(installsManifest({ installs: [] }), '');
   assert.equal(installsManifest({ installs: [{ ...API_INSTALL, files: ['a', 'b/*'], command: 'a && b' }] }),
-    'install\tapi\ta b/*\tvendor ~/.cache/tool\ta && b\n');
+    'install\tapi\ta b/*\tvendor ~/.cache/tool\ttrue\ta && b\n');
+  assert.equal(installsManifest({ installs: [{ ...API_INSTALL, prune: false }] }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tfalse\tmake deps\n');
 });
 
 const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null };
@@ -276,7 +281,7 @@ test('the CLI writes the env files from their secrets\' variables, and prints th
   }));
   fs.writeFileSync(path.join(dir, '.woodshed/rules.md'), '- Run `make check`.\n');
   const cli = (args, env = {}) => execFileSync('node', [SCRIPT, ...args], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env } });
-  assert.equal(cli(['installs']), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
+  assert.equal(cli(['installs']), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\ttrue\tmake deps\n');
   assert.equal(cli(['get', 'app.start']), '');
   assert.equal(cli(['env'], { PORT: '1' }), "export PORT='8080'\nexport URL='http://localhost:1'\n",
     'a value is filled in from the variables as they were, before any of these is set');
@@ -404,7 +409,7 @@ test('the CLI reads the installation\'s file from WOODSHED_CLOUD_PROJECT_FILES_D
     encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: checkout, DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main', ...env },
   });
   assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'installation\n');
-  assert.equal(cli(['installs'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
+  assert.equal(cli(['installs'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\ttrue\tmake deps\n');
   assert.equal(cli(['get', 'from']), 'none\n');
   assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: '' }), 'none\n');
 });

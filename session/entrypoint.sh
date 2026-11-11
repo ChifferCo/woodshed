@@ -245,7 +245,7 @@ checkoutBranch() {
 # project's environment notes (setup.md) have claude wait for DEPS_STATUS before it needs them.
 DEPS_STATUS=/tmp/woodshed-deps
 refreshDeps() {
-  local manifest kind dir files output command start=$SECONDS
+  local manifest kind dir files output prune command start=$SECONDS
   # Each install's dir is relative to the checkout, and its record is keyed on it (deps.sh). This is its own shell.
   cd "$REPO_DIR" || { echo "failed: the checkout $REPO_DIR is not there" > "$DEPS_STATUS"; return; }
   # Read on its own: a failure inside the loop's input would not stop it, and would report ready having checked nothing.
@@ -254,7 +254,7 @@ refreshDeps() {
     echo "failed: the project file (.woodshed/project.yaml) could not be read" > "$DEPS_STATUS"
     return
   fi
-  while IFS=$'\t' read -r kind dir files output command; do
+  while IFS=$'\t' read -r kind dir files output prune command; do
     [ "$kind" = install ] || continue
     if depsBuiltFrom "$dir" "$files" "$output"; then continue; fi
     log "Dependency files changed since the image was built, reinstalling" "(dir: $dir)"
@@ -264,6 +264,7 @@ refreshDeps() {
       echo "failed: \`$command\` in $dir.${WOODSHED_INSTALL_SECRETS:+ Are the install secrets ($WOODSHED_INSTALL_SECRETS) right?} Run it again there." > "$DEPS_STATUS"
       return
     fi
+    depsPrune "$dir" "$output" "$prune"
     mkdir -p "$(dirname "$(depsRecordFile "$dir")")"
     depsRecord "$dir" "$files" "$output" > "$(depsRecordFile "$dir")"
   done <<< "$manifest"

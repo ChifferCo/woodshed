@@ -39,7 +39,10 @@ what is built again: `BASE_WEEK` the system packages, once a week;
 `CLAUDE_DAY` the Claude CLI, once a day; and `BUILD_SHA` the checkout, every
 run. The installs run in a stage of their own (`session/deps.sh install`), from the files `stageDeps.sh` copied out of
 the build context and the manifest it wrote (`woodshed-deps.installs`), with a home of their own that is deleted
-after, so their caches stay out. Only each install's `output` is kept, with a record of the files it was built from
+after, so their caches stay out. Each `node_modules` an install keeps is pruned first (`session/pruneDeps.mjs`, unless
+the install says `prune: false`): a native package's variant for another libc, os or cpu goes when one for the image
+is installed beside it (npm installs the musl variants on a glibc image too), and so do source maps. The log's
+`deps: pruned` line says how many of each and the MB; a prune that fails only warns. Only each install's `output` is kept, with a record of the files it was built from
 (`/work/.woodshed-deps/<dir>/built-from`: each file's sha256). They run again only when those files or the manifest
 change, and the build fails if the context's files are not the cloned commit's (`deps.sh check`). The cache tag counts
 as one of the 5 images ECR keeps. It is built on `node:22-bookworm-slim`, with a compiler added back for native

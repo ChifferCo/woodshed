@@ -296,7 +296,7 @@ test('an ask session clears the env files\' secrets and the install secrets, and
 
 // A repo with one install, whose command stands in for a package manager and counts its runs, and the image's record
 // of the files it was built from.
-function depsRepo(t, { command = 'echo run >> ran' } = {}) {
+function depsRepo(t, { command = 'echo run >> ran', output = ['vendor'], prune } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-refresh-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const repoDir = path.join(root, 'app');
@@ -304,11 +304,11 @@ function depsRepo(t, { command = 'echo run >> ran' } = {}) {
   fs.mkdirSync(path.join(repoDir, 'api/pkgs/a'), { recursive: true });
   fs.writeFileSync(path.join(repoDir, 'api/deps.lock'), 'v1');
   fs.writeFileSync(path.join(repoDir, 'api/pkgs/a/manifest'), 'a');
-  const install = { dir: 'api', files: ['deps.lock', 'pkgs/*/manifest'], command, output: ['vendor'] };
+  const install = { dir: 'api', files: ['deps.lock', 'pkgs/*/manifest'], command, output, ...(prune !== undefined && { prune }) };
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({ dependencies: { installs: [install] } }));
   const records = path.join(root, 'records');
   fs.mkdirSync(path.join(records, 'api'), { recursive: true });
-  const recorded = execFileSync('bash', ['-c', `. "${SESSION_DIR}/deps.sh"; depsRecord "$1" "$2" vendor`, 'x', path.join(repoDir, 'api'), install.files.join(' ')], { encoding: 'utf8' });
+  const recorded = execFileSync('bash', ['-c', `. "${SESSION_DIR}/deps.sh"; depsRecord "$1" "$2" "$3"`, 'x', path.join(repoDir, 'api'), install.files.join(' '), output.join(' ')], { encoding: 'utf8' });
   fs.writeFileSync(path.join(records, 'api/built-from'), recorded);
   return { root, repoDir, records };
 }
@@ -346,6 +346,20 @@ test('refreshDeps runs an install again where a file changed or a glob matches a
   assert.equal(refreshDeps(repo).runs, 2);
   fs.rmSync(path.join(repo.records, 'api'), { recursive: true });
   assert.equal(refreshDeps(repo).runs, 3, 'an install the image has no record of, as one a branch added, runs');
+});
+
+test('a reinstall prunes its node_modules as the image\'s install does, unless its install says prune: false', (t) => {
+  const command = 'mkdir -p node_modules/lib && echo {} > node_modules/lib/index.js.map && echo run >> ran';
+  const repo = depsRepo(t, { command, output: ['node_modules'] });
+  fs.writeFileSync(path.join(repo.repoDir, 'api/deps.lock'), 'v2');
+  const pruned = refreshDeps(repo);
+  assert.equal(pruned.status, 'ready\n');
+  assert.match(pruned.stdout, /deps: pruned api\/node_modules \(0 packages not for .*, 1 source maps/);
+  assert.ok(!fs.existsSync(path.join(repo.repoDir, 'api/node_modules/lib/index.js.map')));
+  const whole = depsRepo(t, { command, output: ['node_modules'], prune: false });
+  fs.writeFileSync(path.join(whole.repoDir, 'api/deps.lock'), 'v2');
+  assert.match(refreshDeps(whole).stdout, /deps: not pruning api \(prune: false\)/);
+  assert.ok(fs.existsSync(path.join(whole.repoDir, 'api/node_modules/lib/index.js.map')));
 });
 
 test('a reinstall reads the install secrets already in the session\'s environment, and not the manifest on its stdin', (t) => {

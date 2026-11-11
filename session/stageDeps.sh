@@ -24,7 +24,7 @@ echo "stageDeps: editor $editor"
 # An empty file when there are no installs.
 : > "$dest.installs"
 [ -z "$manifest" ] || printf '%s\n' "$manifest" > "$dest.installs"
-while IFS=$'\t' read -r kind dir files output _command; do
+while IFS=$'\t' read -r kind dir files output _prune _command; do
   [ "$kind" = install ] || continue
   [ -d "$dir" ] || { echo "stageDeps: $dir, an install's dir, is not a folder in the repo" >&2; exit 1; }
   missing=$(depsMissing "$dir" "$files")
