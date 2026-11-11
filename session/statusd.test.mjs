@@ -492,3 +492,34 @@ test('handleUpgrade passes the editor\'s websocket through with the statusd toke
   assert.match(await editorUpgrade({}), /^HTTP\/1\.1 401/);
   assert.match(await editorUpgrade({ authorization: 'Bearer tok' }, { editorOn: false }), /^HTTP\/1\.1 404/, 'the project file turns it off');
 });
+
+test('Sign in for Remote Control types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab without the command', async (t) => {
+  // A tmux server of the test's own, never the session's: claude's pane and the Terminal tab's keep what is typed.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-login-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  for (const name of ['claude', 'shell']) {
+    await tmux('new-session', '-d', '-s', name, `bash --norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`);
+  }
+  const flags = path.join(dir, 'flags');
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_FLAGS_FILE: flags } });
+  const typed = (name) => fs.readFile(path.join(dir, `${name}.typed`), 'utf8').catch(() => '');
+  const until = async (name, text) => {
+    for (let i = 0; i < 50 && !(await typed(name)).includes(text); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  };
+
+  assert.equal((await call('POST', '/claude-login', 'wrong')).status, 401);
+  assert.deepEqual((await call('POST', '/claude-login')).body, { ok: true, where: 'terminal' }, 'claude started without the plugin: an older image');
+  await until('shell', 'woodshed-login');
+  assert.equal(await typed('shell'), 'woodshed-login\n');
+
+  await fs.writeFile(flags, ' --settings /x/claudeHooks.json --plugin-dir /x/claudePlugin');
+  assert.deepEqual((await call('POST', '/claude-login')).body, { ok: true, where: 'agent' });
+  await until('claude', '/woodshed:remote-control');
+  assert.equal(await typed('claude'), '/woodshed:remote-control\n');
+  assert.equal(await typed('shell'), 'woodshed-login\n', 'nothing more at the Terminal tab');
+});

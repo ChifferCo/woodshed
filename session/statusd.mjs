@@ -560,7 +560,7 @@ async function appLogs() {
 }
 
 // Where /woodshed:remote-control is: claude was started with Woodshed's plugin (claudeFlags in entrypoint.sh).
-const CLAUDE_FLAGS_FILE = '/tmp/woodshed-claude-flags';
+const CLAUDE_FLAGS_FILE = process.env.WOODSHED_CLAUDE_FLAGS_FILE || '/tmp/woodshed-claude-flags';
 async function hasRemoteControlCommand() {
   if (CODEX) return false;
   try {

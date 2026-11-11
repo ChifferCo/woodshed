@@ -913,6 +913,46 @@ test('a person\'s files are read and written for the signed-in login only', asyn
   assert.ok(calls.every((c) => c[1] === 'mia-dev'));
 });
 
+test('a person\'s own whole files are read and saved for the signed-in login only, and a refused path says why', async (t) => {
+  const calls = [];
+  let failRead = false;
+  const userSettings = {
+    view: (login) => ({ claudeToken: { set: false }, files: {}, ownFiles: [{ path: 'app/.env.production', savedAt: 'x' }], setUp: true, available: true, login }),
+    ownWholeFiles: async (login) => {
+      calls.push(['read', login]);
+      if (failRead) throw new Error('AccessDeniedException');
+      return { 'app/.env.production': `A=${login}` };
+    },
+    saveOwnFile: async (login, file, text) => {
+      calls.push(['save', login, file, text]);
+      if (file.includes('..')) throw Object.assign(new Error('a path cannot have . or .. in it'), { shown: true });
+      return { [file]: text };
+    },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as })).json(), { files: { 'app/.env.production': 'A=mia-dev' } });
+  const saved = await post(port, '/api/my/own-files', { path: 'app/.env.production', text: 'B=1', login: 'octocat' }, as);
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.files, { 'app/.env.production': 'B=1' });
+  assert.equal(saved.body.view.ownFiles[0].path, 'app/.env.production', 'the page gets its new view with the answer');
+  const refused = await post(port, '/api/my/own-files', { path: '../x', text: 'x' }, as);
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, 'a path cannot have . or .. in it');
+  assert.equal((await post(port, '/api/my/own-files', { path: 'a', text: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  assert.ok(calls.every((c) => c[1] === 'mia-dev'), 'never the login a body names');
+  failRead = true;
+  const failed = await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as });
+  assert.equal(failed.status, 502);
+  assert.equal(JSON.stringify(await failed.json()).includes('AccessDenied'), false, 'the store\'s error stays in the log');
+});
+
 test('Connect GitHub starts a sign-in that keeps its token, and the git identity is the signed-in person\'s', async (t) => {
   const started = [];
   const done = [];

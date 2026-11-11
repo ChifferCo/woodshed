@@ -450,6 +450,9 @@
   // them. All of them come in one read, the first time the card is drawn; `ownPath` is the one open, '' a new one.
   let ownFiles = null;
   let ownLoad = null;
+  // A read that failed is not tried again by itself: render() would otherwise ask the console again at once, for as
+  // long as the secret store is down. Try again asks.
+  let ownLoadFailed = false;
   let ownPath = null;
   const ownPathInput = h('input', { id: 'own-file-path', class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' });
   const ownEditor = h('textarea', { id: 'own-file-text', class: 'field mono file-text', rows: '10', spellcheck: 'false', placeholder: 'NOTION_TOKEN=…' });
@@ -463,8 +466,17 @@
       ownStatus.textContent = err.message;
       ownStatus.classList.add('is-error');
       ownLoad = null;
+      ownLoadFailed = true;
       render();
     });
+  }
+
+  function retryOwnFiles() {
+    ownLoadFailed = false;
+    ownStatus.textContent = 'Reading your files…';
+    ownStatus.classList.remove('is-error');
+    loadOwnFiles();
+    render();
   }
 
   function openOwnFile(file) {
@@ -491,7 +503,7 @@
   }
 
   function ownFilesCard() {
-    if (me.available && ownFiles === null) loadOwnFiles();
+    if (me.available && ownFiles === null && !ownLoadFailed) loadOwnFiles();
     const paths = (me.ownFiles ?? []).map((f) => f.path);
     const savedAt = (file) => me.ownFiles?.find((f) => f.path === file)?.savedAt;
     const working = busy.has('own-files');
@@ -511,6 +523,7 @@
       h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, ownPath ? `${ownPath}${savedAt(ownPath) ? `, saved ${W.when(savedAt(ownPath))}` : ''}` : 'Its text')),
       ownEditor,
       h('div', { class: 'set-actions' },
+        ownLoadFailed && h('button', { type: 'button', class: 'btn btn-quiet', onclick: retryOwnFiles }, 'Try again'),
         h('button', {
           type: 'button', class: 'btn btn-open', disabled: !me.available || ownFiles === null || working,
           onclick: () => {
@@ -612,6 +625,7 @@
             for (const key of fileKeys()) delete files[key];
             ownFiles = null;
             ownLoad = null;
+            ownLoadFailed = false;
             editor.dataset.key = '';
             openFile(fileKey);
             status.textContent = `My Woodshed removed: ${answer.stopped} stopped, ${answer.removed} taken off the list.`;
