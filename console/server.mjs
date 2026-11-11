@@ -102,8 +102,9 @@
 //
 // In AWS it sits behind Caddy, open to the internet, and every page, API call and terminal needs a GitHub
 // sign-in with write access (auth.mjs, always required there by WOODSHED_CLOUD_REQUIRE_SIGN_IN). Locally it
-// listens on loopback and has no sign-in. Every request must name a host the console
-// answers to, which stops DNS rebinding, and writes and terminal websockets must
+// listens on loopback and has no sign-in. Hosted, a trusted proxy in front of it signs people in instead, with a
+// header on every request (trustedIdentity.mjs), and there is no GitHub sign-in at all. Every request must name a
+// host the console answers to, which stops DNS rebinding, and writes and terminal websockets must
 // come from the console's own origin, checked with Woodshed's sameOrigin.mjs.
 // Writes also need the `x-woodshed: 1` header, which a cross-site form cannot send. The console's own pages
 // (People, secrets, webhook history, Console settings) are an admin's: ADMIN_API_RE below.
@@ -168,6 +169,7 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
+import { createTrustedIdentity } from './trustedIdentity.mjs';
 import { createAddedProjects, repoChecker } from './addedProjects.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 
@@ -247,6 +249,8 @@ const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-
 const APP_ID_RE = /^[0-9a-f]{8}$/;
 const APP_AUTH_PATH = '/__woodshed/auth';
 const APP_SHARE_PATH = '/__woodshed/share';
+// The GitHub App setup page and its calls, which a console that borrows its GitHub access has none of.
+const SETUP_PATH_RE = /^\/(?:api\/)?setup\/github(?:\/|$)/;
 const APP_SHARE_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app-share(?:\/(members|links)(?:\/([0-9a-f]{8})\/(revoke))?)?$/;
 
 /**
@@ -364,6 +368,17 @@ function linkExpiredPage(id, publicUrl) {
 <p><a href="${publicUrl}/s/${id}">Open session ${id} in the console</a></p>`;
 }
 
+// The hosting proxy signed the browser in on the console's name, but sent nothing on the app's: its setup, not the
+// person's, so the page says so rather than sending them round again.
+function noIdentityPage(id, publicUrl) {
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>Not signed in to the app</title>
+<body style="font-family: system-ui, sans-serif; max-width: 34rem; margin: 15vh auto; padding: 0 1rem; line-height: 1.5">
+<h1 style="font-size: 1.4rem">This app's name did not say who you are</h1>
+<p>The service that hosts this console signs you in to it, and must do the same on its apps' names.</p>
+<p><a href="${publicUrl}/s/${id}">Open session ${id} in the console</a></p>`;
+}
+
 function shareLinkEndedPage(id, publicUrl) {
   return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Link ended</title>
@@ -374,14 +389,15 @@ function shareLinkEndedPage(id, publicUrl) {
 }
 
 /**
- * Websockets to a session's app. Once sign-in is required they need the app's own cookie, as its pages do.
- * @param {{config: object, fleet: object, auth?: object|null}} deps
+ * Websockets to a session's app. Once sign-in is required they need the app's own cookie, as its pages do, or the
+ * hosting proxy's identity header.
+ * @param {{config: object, fleet: object, auth?: object|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
  */
-export function createAppUpgrade({ config, fleet, auth = null, members = null, appShares = null }) {
+export function createAppUpgrade({ config, fleet, auth = null, members = null, appShares = null, trusted = null }) {
   return function appUpgrade(req, socket, head, id) {
     if (isEditorPath(new URL(req.url || '/', 'http://app.invalid').pathname)) return editorUpgrade(req, socket, head, id);
-    const allowed = auth?.enabled()
-      ? appViewerFor({ auth, appShares, cookieHeader: req.headers.cookie, appId: id })
+    const allowed = trusted || auth?.enabled()
+      ? appViewerFor({ auth, trusted, appShares, headers: req.headers, appId: id })
       : Promise.resolve({ login: soloLoginOf(config), link: false });
     allowed.then((viewer) => {
       if (!viewer) {
@@ -396,7 +412,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
 
   // The editor's websocket: the app's own sign-in, never a share link's cookie.
   function editorUpgrade(req, socket, head, id) {
-    const user = auth?.enabled() ? auth.appSessionFor({ cookieHeader: req.headers.cookie, appId: id }) : Promise.resolve({ login: soloLoginOf(config) });
+    const user = trusted || auth?.enabled() ? appUserFor({ auth, trusted, headers: req.headers, appId: id }) : Promise.resolve({ login: soloLoginOf(config) });
     user.then((viewer) => {
       if (!viewer) {
         console.warn('editor: websocket refused, not signed in', { id });
@@ -419,7 +435,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  githubFor = null,
+  githubFor = null, trusted = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -448,9 +464,23 @@ export function createHandler({
     }
   }
 
-  // A console with no sign-in, or no list of people, has nobody to tell apart: everyone is an admin there. So is
-  // everyone on a list with no admin yet, so the first can be switched on; setAdmin keeps the last one from going.
-  function isAdminLogin(login) {
+  // Sign-in is required: by the hosting proxy's header, or by GitHub sign-in once it is turned on.
+  function signInOn() {
+    return Boolean(trusted) || Boolean(auth?.enabled());
+  }
+
+  // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
+  async function consoleUser(headers) {
+    if (trusted) return trusted.userFor(headers);
+    return auth.sessionFor(headers.cookie);
+  }
+
+  // The hosting proxy says who is an admin: its owners. Otherwise a console with no sign-in, or no list of people, has
+  // nobody to tell apart, and everyone is an admin there. So is everyone on a list with no admin yet, so the first can
+  // be switched on; setAdmin keeps the last one from going.
+  function isAdmin(user) {
+    if (trusted) return user?.role === 'owner';
+    const login = user?.login;
     return !auth?.enabled() || !login || !members || !members.hasAdmin() || members.isAdmin(login);
   }
 
@@ -466,6 +496,15 @@ export function createHandler({
       html(res, pageShell({ title: 'Woodshed Cloud', script: 'login.js' }));
       return true;
     }
+    if (pathname === '/api/me' && req.method === 'GET' && trusted) {
+      const user = trusted.userFor(req.headers);
+      reply(res, 200, {
+        supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
+        admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
+        repo: user ? defaultProject(config).repo : null, workflows: user ? (config.actionsWorkflows ?? []) : [],
+      });
+      return true;
+    }
     if (pathname === '/api/me' && req.method === 'GET') {
       const user = auth?.available() ? await auth.sessionFor(req.headers.cookie) : null;
       // Signed in with write access but not on the list: the login page offers to ask to join.
@@ -474,8 +513,8 @@ export function createHandler({
         supported: Boolean(auth), signIn: Boolean(auth?.enabled()), available: Boolean(auth?.available()), login: user?.login ?? null,
         visitor: visitor?.login ?? null, asked: visitor && members ? members.requestOf(visitor.login)?.askedAt ?? null : null,
         // Without sign-in turned on the server lets everyone through (signedIn gives no login), so the menu says the same.
-        admin: !auth?.enabled() || Boolean(user && isAdminLogin(user.login)),
-        asking: user && members && isAdminLogin(user.login) ? members.view().requests.length : 0,
+        admin: !auth?.enabled() || Boolean(user && isAdmin(user)),
+        asking: user && members && isAdmin(user) ? members.view().requests.length : 0,
         names: namesFor([user?.login ?? visitor?.login]),
         // The menu's workflow links. A signed-out browser is not told which repo this is: it may be private.
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
@@ -487,7 +526,8 @@ export function createHandler({
       await accessRequest(req, res, pathname);
       return true;
     }
-    if (!auth) return false;
+    // Behind a hosting proxy there is no GitHub sign-in to start, finish or end: the proxy's header is the sign-in.
+    if (!auth || trusted) return false;
     if (pathname === '/auth/start' && req.method === 'GET') {
       if (!auth.available()) {
         redirect(res, '/login');
@@ -634,8 +674,8 @@ export function createHandler({
   // Once sign-in is on, every page, API call and terminal needs a session; the login page's own files do not.
   // @returns {Promise<{login: string|null}|null>}  who is asking (login null with sign-in off), or null once answered
   async function signedIn(req, res, url) {
-    if (!auth?.enabled() || url.pathname === '/healthz' || url.pathname.startsWith('/static/')) return { login: soloLogin };
-    const user = await auth.sessionFor(req.headers.cookie);
+    if (!signInOn() || url.pathname === '/healthz' || url.pathname.startsWith('/static/')) return { login: soloLogin };
+    const user = await consoleUser(req.headers);
     if (user) return user;
     const page = req.method === 'GET' && !url.pathname.startsWith('/api/') && String(req.headers.accept || '').includes('text/html');
     if (page) redirect(res, `/login?next=${encodeURIComponent(url.pathname + url.search)}`);
@@ -649,7 +689,15 @@ export function createHandler({
     const ctx = ({ login, link = false }) => ({ id, targetFor: appTarget({ fleet, login, members: access, shares: appShares, link }), publicUrl: config.publicUrl, dropCookie });
     const url = new URL(req.url || '/', 'http://app.invalid');
     if (isEditorPath(url.pathname)) return editorRequest(req, res, id, url);
-    if (!auth?.enabled()) return handleAppRequest(req, res, ctx({ login: soloLogin }));
+    if (!signInOn()) return handleAppRequest(req, res, ctx({ login: soloLogin }));
+    // Behind a hosting proxy the app's name gets the identity header too, so there is no code to claim: a signed-in
+    // browser goes on, and one the proxy sent here with nothing is told so rather than sent round again.
+    if (url.pathname === APP_AUTH_PATH && req.method === 'GET' && trusted) {
+      if (trusted.userFor(req.headers)) return redirect(res, safeNext(url.searchParams.get('next')));
+      console.warn('app: no identity from the hosting proxy on the app\'s name', { id });
+      res.writeHead(403, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(noIdentityPage(id, config.publicUrl));
+    }
     if (url.pathname === APP_AUTH_PATH && req.method === 'GET') {
       const claimed = await auth.claimAppCode({ code: url.searchParams.get('code') || '', appId: id });
       if (!claimed) {
@@ -668,7 +716,7 @@ export function createHandler({
       res.writeHead(302, { location: '/', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'set-cookie': claimed.setCookie });
       return res.end();
     }
-    const viewer = await appViewerFor({ auth, appShares, cookieHeader: req.headers.cookie, appId: id });
+    const viewer = await appViewerFor({ auth, trusted, appShares, headers: req.headers, appId: id });
     if (viewer) return handleAppRequest(req, res, ctx(viewer));
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 401, { error: 'sign in first: open the app from the console' });
     console.log('app: sending to the console to sign in', { id });
@@ -678,7 +726,7 @@ export function createHandler({
   // The editor, on the app's name, for whoever can open the session itself: the app's sign-in cookie says who, and a
   // share link's cookie never counts (editorProxy.mjs).
   async function editorRequest(req, res, id, url) {
-    const viewer = auth?.enabled() ? await auth.appSessionFor({ cookieHeader: req.headers.cookie, appId: id }) : { login: soloLogin };
+    const viewer = signInOn() ? await appUserFor({ auth, trusted, headers: req.headers, appId: id }) : { login: soloLogin };
     if (!viewer) {
       if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 401, { error: 'sign in first: open the editor from the console' });
       console.log('editor: sending to the console to sign in', { id });
@@ -694,7 +742,9 @@ export function createHandler({
     const id = url.searchParams.get('id') || '';
     const next = safeNext(url.searchParams.get('next'));
     if (!config.appDomain || !APP_ID_RE.test(id) || !findAppFor(id, login)) return reply(res, 404, { error: 'no such session' });
-    if (!auth?.enabled()) return redirect(res, appUrl(config, id, next));
+    if (!signInOn()) return redirect(res, appUrl(config, id, next));
+    // The hosting proxy signs the app's name in itself (appRequest).
+    if (trusted) return redirect(res, appUrl(config, id, `${APP_AUTH_PATH}?next=${encodeURIComponent(next)}`));
     const code = await auth.appCode({ cookieHeader: req.headers.cookie, appId: id });
     if (!code) return redirect(res, `/login?next=${encodeURIComponent(url.pathname + url.search)}`);
     return redirect(res, appUrl(config, id, `${APP_AUTH_PATH}?code=${code}&next=${encodeURIComponent(next)}`));
@@ -896,6 +946,8 @@ export function createHandler({
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
       githubSetupNeeded: Boolean(githubSetup?.available()),
+      // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
+      githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
       app: appIdentity?.known() ?? null,
     };
@@ -1460,6 +1512,9 @@ export function createHandler({
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;
+    if (config.githubBroker && SETUP_PATH_RE.test(url.pathname)) {
+      return reply(res, 404, { error: 'this console borrows its GitHub access from its host, so it has no GitHub App to set up' });
+    }
     if (url.pathname === '/auth/app' && req.method === 'GET') return appSignIn(req, res, url, user.login);
     // Connect GitHub is a sign-in like any other, by the person already signed in, that keeps its token.
     if (url.pathname === '/auth/connect' && req.method === 'GET') {
@@ -1471,7 +1526,7 @@ export function createHandler({
     if (handleTerminalRequest(req, res, { targetFor: terminalTarget(fleet, user.login, access) })) return;
     if (isReviewPath(url.pathname)) return proxyReview(req, res, url, user.login);
     const { pathname } = url;
-    if (ADMIN_API_RE.test(pathname) && !isAdminLogin(user.login)) {
+    if (ADMIN_API_RE.test(pathname) && !isAdmin(user)) {
       console.log('console: admin call refused', { login: user.login, pathname, method: req.method });
       return reply(res, 403, { error: 'only an admin can do this' });
     }
@@ -1555,12 +1610,12 @@ export function createHandler({
 
 /**
  * A local console with no sign-in has one person at the keyboard, who gets a login of their own so My Woodshed works:
- * their Claude token, private sessions and settings are kept under it. Elsewhere, and with a GitHub App, nobody has one
- * until they sign in.
+ * their Claude token, private sessions and settings are kept under it. Elsewhere, with a GitHub App or behind a hosting
+ * proxy, nobody has one until they sign in.
  * @returns {string|null}
  */
 export function soloLoginOf(config) {
-  return config.launcher?.kind === 'docker' && !config.githubApp ? config.localLogin ?? null : null;
+  return config.launcher?.kind === 'docker' && !config.githubApp && !config.trustedIdentitySecret ? config.localLogin ?? null : null;
 }
 
 /**
@@ -1606,13 +1661,23 @@ function editorTarget({ fleet, login, members, id }) {
 }
 
 /**
- * Who a request for a session's app comes from: a member signed in to the console (their app cookie), or a holder of a
- * share link (its cookie). Both can be absent.
+ * Who is signed in on a session's app's name: whoever the hosting proxy's header names, or else the app's own sign-in
+ * cookie, which leans on a console session.
+ * @returns {Promise<{login: string}|null>}
+ */
+async function appUserFor({ auth, trusted, headers, appId }) {
+  if (trusted) return trusted.userFor(headers);
+  return auth.appSessionFor({ cookieHeader: headers.cookie, appId });
+}
+
+/**
+ * Who a request for a session's app comes from: a member signed in to the console (the proxy's header, or their app
+ * cookie), or a holder of a share link (its cookie). Both can be absent.
  * @returns {Promise<{login: string|null, link: boolean}|null>}
  */
-async function appViewerFor({ auth, appShares, cookieHeader, appId }) {
-  const user = await auth.appSessionFor({ cookieHeader, appId });
-  const link = Boolean(appShares?.viewerFor({ cookieHeader, appId }));
+async function appViewerFor({ auth, trusted, appShares, headers, appId }) {
+  const user = await appUserFor({ auth, trusted, headers, appId });
+  const link = Boolean(appShares?.viewerFor({ cookieHeader: headers.cookie, appId }));
   return user || link ? { login: user?.login ?? null, link } : null;
 }
 
@@ -1623,6 +1688,41 @@ function terminalTarget(fleet, login, members) {
     if (!session?.endpoint || session.status !== 'running' || !canOpen(session, login, members)) return null;
     const { host, termPort, statusPort, shellPort } = session.endpoint;
     return { host, termPort, statusPort, shellPort, terminalToken: session.terminalToken, sessionToken: session.token };
+  };
+}
+
+/**
+ * Every websocket the console takes: a session app's (createAppUpgrade), woodshed-db.mjs's tunnel, and the terminals,
+ * which need the console's own origin and whoever is signed in: the session cookie, or a hosting proxy's header.
+ * @param {{config: object, fleet: object, auth?: object|null, members?: object|null, appShares?: object|null,
+ *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
+ * @returns {(req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void}
+ */
+export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null }) {
+  const hosts = knownHosts(config);
+  const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares, trusted });
+  return function upgrade(req, socket, head) {
+    // An error on a socket nobody listens to is an uncaught exception.
+    socket.on('error', () => socket.destroy());
+    const appId = appIdFor(req.headers.host, config.appDomain);
+    if (appId) return appUpgrade(req, socket, head, appId);
+    // woodshed-db.mjs is no browser: no Origin, no cookie, and a token that does what the same-origin check does here.
+    if (isKnownHost(req.headers.host, hosts) && tunnel?.handleUpgrade(req, socket, head)) return;
+    // A websocket is not covered by the same-origin policy, and this one types into claude.
+    if (!isKnownHost(req.headers.host, hosts) || !isSameOrigin(req.headers)) {
+      console.warn('console: terminal websocket refused', { host: String(req.headers.host).slice(0, 100), origin: String(req.headers.origin).slice(0, 100) });
+      socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
+      return;
+    }
+    const allowed = trusted ? Promise.resolve(trusted.userFor(req.headers))
+      : auth?.enabled() ? auth.sessionFor(req.headers.cookie) : Promise.resolve({ login: soloLoginOf(config) });
+    allowed.then((user) => {
+      if (!user) {
+        socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        return;
+      }
+      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, auth ? members : null) })) socket.destroy();
+    }, () => socket.destroy());
   };
 }
 
@@ -1758,7 +1858,10 @@ export async function startConsole({ provider, config: given = null }) {
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
   const loaded = applyStored({ config: first, store, secrets: provider.secrets });
-  const githubSetup = provider.secrets ? createGitHubAppSetup({ store, secrets: provider.secrets, config: loaded, supervisor: supervisorOf(process.env) }) : null;
+  // A console that borrows its GitHub access keeps no App, so there is nothing to set up.
+  const githubSetup = provider.secrets && !loaded.githubBroker ? createGitHubAppSetup({ store, secrets: provider.secrets, config: loaded, supervisor: supervisorOf(process.env) }) : null;
+  const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
+  console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   // The limits and retention numbers are the Console settings page's, read each time they are used.
   const config = liveConfig(loaded, store);
   const consoleSettings = createConsoleSettings({ store, config: loaded });
@@ -1806,7 +1909,8 @@ export async function startConsole({ provider, config: given = null }) {
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
   const people = createGitHubPeople({ store, github });
-  const members = createMembers({ store });
+  // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
+  const members = trusted ? null : createMembers({ store });
   const appShares = createAppShares({ store, secure: loaded.publicUrl.startsWith('https:') });
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
@@ -1830,12 +1934,20 @@ export async function startConsole({ provider, config: given = null }) {
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   const appIdentity = createAppIdentity({ appApi });
-  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi }) });
-  const auth = secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
+  // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
+  const brokerRead = tokens?.borrowFor
+    ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
+    : undefined;
+  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead }) });
+  // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
+  const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
   // A store the dashboard has not chosen yet holds no client secret either, so sign-in could never come on.
-  if (config.requireSignIn && (!auth || secrets?.configured?.() === false)) throw new Error('WOODSHED_CLOUD_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_CLOUD_GITHUB_APP_ID) and Secrets Manager');
-  const settings = secrets && appKey
+  if (config.requireSignIn && !trusted && (!auth || secrets?.configured?.() === false)) {
+    throw new Error('WOODSHED_CLOUD_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_CLOUD_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET');
+  }
+  // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
+  const settings = secrets && (appKey || config.githubBroker)
     ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
   const githubUser = auth?.githubUser ?? null;
@@ -1861,11 +1973,11 @@ export async function startConsole({ provider, config: given = null }) {
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects,
-    projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => Boolean(auth?.enabled()) }),
+    // Behind a hosting proxy nobody's write access is asked: the host says who is in.
+    projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
+    trusted,
   });
-  const hosts = knownHosts(config);
-  const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares });
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       console.error('console: request failed', { url: req.url, message: err?.message });
@@ -1874,33 +1986,12 @@ export async function startConsole({ provider, config: given = null }) {
   });
   // A dump of a gigabyte or two takes longer to send than Node's 5-minute default for a whole request. Caddy is in front.
   server.requestTimeout = 60 * 60_000;
-  server.on('upgrade', (req, socket, head) => {
-    // An error on a socket nobody listens to is an uncaught exception.
-    socket.on('error', () => socket.destroy());
-    const appId = appIdFor(req.headers.host, config.appDomain);
-    if (appId) return appUpgrade(req, socket, head, appId);
-    // woodshed-db.mjs is no browser: no Origin, no cookie, and a token that does what the same-origin check does here.
-    if (isKnownHost(req.headers.host, hosts) && tunnel.handleUpgrade(req, socket, head)) return;
-    // A websocket is not covered by the same-origin policy, and this one types into claude.
-    if (!isKnownHost(req.headers.host, hosts) || !isSameOrigin(req.headers)) {
-      console.warn('console: terminal websocket refused', { host: String(req.headers.host).slice(0, 100), origin: String(req.headers.origin).slice(0, 100) });
-      socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
-      return;
-    }
-    const allowed = auth?.enabled() ? auth.sessionFor(req.headers.cookie) : Promise.resolve({ login: soloLoginOf(config) });
-    allowed.then((user) => {
-      if (!user) {
-        socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
-        return;
-      }
-      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, auth ? members : null) })) socket.destroy();
-    }, () => socket.destroy());
-  });
+  server.on('upgrade', createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted }));
   server.listen(config.port, config.host, () => {
     console.log('console: listening', {
       host: config.host, port: config.port, repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
-      githubApp: Boolean(tokens), ownDatabases: databases.available, tunnel: tunnel.available,
+      githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
     });
     // In ECS, sessions get their GitHub token from the task definition's secret, which says what it is.
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
@@ -1928,6 +2019,8 @@ export async function startConsole({ provider, config: given = null }) {
   keyReady.then(() => {
     every(config.pollMs, 'github poll', () => fleet.pollGitHub());
     appIdentity.login();
-    if (provider.webhooks) provider.webhooks.run(createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity }));
+    // Nobody points a webhook at a console with no App of its own: it polls.
+    if (provider.webhooks && config.githubBroker) console.log('console: webhooks off, GitHub access is borrowed', { pollSeconds: config.pollMs / 1000 });
+    else if (provider.webhooks) provider.webhooks.run(createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity }));
   });
 }

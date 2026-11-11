@@ -165,6 +165,13 @@
     // The App's own name for itself, read from GitHub; before the console has read it, a plain description.
     const bot = me.app?.login ?? 'the console\'s GitHub App';
     const via = me.app?.slug ?? 'the App';
+    // No App sign-in to connect through (a console that borrows its GitHub access from its host): sessions push as the App.
+    if (!gh.connected && !me.githubConnect) {
+      const app = me.app?.login ?? 'the GitHub App';
+      return h('section', { class: 'set-card' },
+        h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${app}`)),
+        h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as ${app}, with the GitHub access this console has.`));
+    }
     if (!gh.connected) {
       return h('section', { class: 'set-card' },
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${bot}`)),

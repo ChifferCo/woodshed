@@ -18,6 +18,7 @@ import http from 'node:http';
 import net from 'node:net';
 
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
+import { IDENTITY_HEADER } from './trustedIdentity.mjs';
 
 const throughStatusd = (s) => ({ port: s.statusPort, authorization: `Bearer ${s.sessionToken}` });
 // Each database engine's viewers (shared/databases/), such as /pg/<id>/, go through statusd as Redis's does.
@@ -72,7 +73,7 @@ export function basicAuth(token) {
 }
 
 function upstreamHeaders(headers, { host, port, authorization }) {
-  const { authorization: fromBrowser, cookie, ...rest } = headers;
+  const { authorization: fromBrowser, cookie, [IDENTITY_HEADER]: identity, ...rest } = headers;
   return {
     ...rest,
     host: `${host}:${port}`,

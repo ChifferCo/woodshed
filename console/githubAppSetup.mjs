@@ -284,7 +284,8 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
 }
 
 /**
- * Starting up: an App saved by the setup page counts as the console's own, unless the environment names one.
+ * Starting up: an App saved by the setup page counts as the console's own, unless the environment names one or the
+ * console borrows its GitHub access.
  * @param {object} config  loadConfig()'s; its `githubApp` is filled in, and `ghToken` dropped, when there is a saved App
  * @param {{state: object}} store
  * @param {object|null} secrets
@@ -292,6 +293,11 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
  */
 export function applyStored({ config, store, secrets }) {
   const found = store.state.githubAppSetup;
+  // A console that borrows its GitHub access has no App of its own, whatever an earlier setup left behind.
+  if (config.githubBroker) {
+    if (found?.appId) console.warn('console: GitHub App from the setup page ignored, GitHub access is borrowed', { appId: found.appId });
+    return config;
+  }
   if (config.githubApp || !secrets || !found?.appId || !found?.installationId) return config;
   console.log('console: GitHub App from the setup page', { appId: found.appId, installationId: found.installationId });
   return { ...config, githubApp: { appId: found.appId, installationId: found.installationId, keyFile: null, keyFromSecret: true }, ghToken: null };

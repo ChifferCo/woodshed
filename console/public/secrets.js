@@ -125,6 +125,7 @@
     if (after) notice = after;
     render();
     // GitHub's side of the last delivery, after the page is up: a slow GitHub should not hold the secrets back.
+    if (data && !data.webhook) return;
     W.getJson('/api/webhook/deliveries')
       .then((d) => { lastDelivery = d.deliveries[0] ?? null; })
       .catch(() => { lastDelivery = null; })
@@ -359,7 +360,8 @@
       W.nav('/secrets'),
       head,
       managerCard(),
-      webhookCard(),
+      // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
+      data.webhook && webhookCard(),
       GROUPS.map((g) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
         h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
         h('p', { class: 'sub' }, g.note),

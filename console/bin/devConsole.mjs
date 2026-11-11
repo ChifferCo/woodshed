@@ -85,8 +85,10 @@ const sessions = [
 fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null }));
 
 // The shell's own WOODSHED_CLOUD_* settings (a GitHub App, required sign-in, the ECS launcher) would turn this back
-// into the real console, so none of them are passed on.
-const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_CLOUD_')));
+// into the real console, so none of them are passed on, but hosted mode's (console/README.md, "Hosted mode"), to try it
+// with a stand-in broker and signed headers.
+const HOSTED = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE', 'WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET'];
+const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_CLOUD_') || HOSTED.includes(key)));
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
 const child = spawn(process.execPath, [server], {

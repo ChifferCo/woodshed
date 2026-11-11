@@ -9,9 +9,13 @@ import { defaultProject } from './projects.mjs';
 
 export const WEBHOOK_SECRET = 'github-webhook-secret';
 export const APP_KEY_SECRET = 'github-app-key';
+// The GitHub App's own secrets, which a console that borrows its GitHub access has none of.
+const APP_SECRETS = [APP_KEY_SECRET, WEBHOOK_SECRET, 'github-app-client-secret'];
 // What the console acts on; the webhook receiver drops every other event. Without the last two, pull requests are still read,
 // on the polls' full speed (pullWebhooks.mjs).
 export const WEBHOOK_EVENTS = ['issues', 'issue_comment', 'pull_request', 'pull_request_review', 'workflow_run'];
+
+const NO_WEBHOOK = 'this console borrows its GitHub access from its host, so it has no GitHub App webhook: it polls GitHub';
 
 /** @returns {Error & {shown: true}}  a refusal the page shows as it is */
 export function refusal(message) {
@@ -32,7 +36,10 @@ function firstLine(err) {
  *   `onReplace` hears of every replaced value, for the parts of the console that hold one (sign-in)
  */
 export function createSettings({ config, secrets, appKey, appApi, webhookUrl, checkKey, onReplace = () => {} }) {
-  const specs = secretSpecs({ envFiles: config.envFiles ?? [], installSecrets: config.installSecrets ?? [] });
+  // A console that borrows its GitHub access has no App: no key, no client secret, no webhook of its own to keep.
+  const borrowed = Boolean(config.githubBroker);
+  const specs = secretSpecs({ envFiles: config.envFiles ?? [], installSecrets: config.installSecrets ?? [] })
+    .filter((spec) => !borrowed || !APP_SECRETS.includes(spec.name));
   // One change at a time, so two Replaces of the App key cannot store one and keep the other in memory.
   let changing = Promise.resolve();
   function oneAtATime(fn) {
@@ -61,6 +68,10 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
   }
 
   async function view() {
+    if (borrowed) {
+      const list = await secrets.list();
+      return { repo: defaultProject(config).repo, secrets: list.filter((s) => !APP_SECRETS.includes(s.name)), webhook: null };
+    }
     const [list, expectedUrl, github] = await Promise.all([
       secrets.list(),
       webhookUrl().catch((err) => {
@@ -122,6 +133,7 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
   }
 
   async function setOnGitHub({ url, secret }) {
+    if (borrowed) throw refusal(NO_WEBHOOK);
     try {
       await appApi.setHookConfig(secret ? { url, secret } : { url });
     } catch (err) {
@@ -132,6 +144,7 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
 
   // The secret goes in first: until GitHub has it too, deliveries fail with a 401 and the poll picks up the slack.
   async function rotateWebhookSecret() {
+    if (borrowed) throw refusal(NO_WEBHOOK);
     const secret = newWebhookSecret();
     await secrets.write(WEBHOOK_SECRET, secret);
     try {
@@ -142,6 +155,7 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
   }
 
   async function applyWebhook() {
+    if (borrowed) throw refusal(NO_WEBHOOK);
     const secret = await secrets.read(WEBHOOK_SECRET);
     if (!secret) throw refusal('the webhook secret has no value yet: rotate it first');
     const url = await webhookUrl();
@@ -162,6 +176,7 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
 
   // GitHub's own record of what it sent and what came back: the only place a 401 from a mismatched secret shows.
   async function deliveries() {
+    if (borrowed) throw refusal(NO_WEBHOOK);
     if (!appKey.current()) throw refusal('the GitHub App key is not set yet');
     return appApi.deliveries();
   }
