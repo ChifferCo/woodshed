@@ -55,10 +55,12 @@ export function commandProblems(command, { repoDir, dir, field }) {
     if (/['"`$~\\]/.test(first)) continue;
     const plain = (word) => word && !word.startsWith('-') && !/['"`$~\\*?]/.test(word) && !path.isAbsolute(word);
     const script = SCRIPT_RUNNERS.has(first) ? rest[0] : first.includes('/') ? first : null;
-    if (plain(script) && (!SCRIPT_RUNNERS.has(first) || /\.\w+$|\//.test(script)) && !exists(repoDir, path.join(dir, script))
+    if (plain(script) && (!SCRIPT_RUNNERS.has(first) || /\.\w+$|\//.test(script))) {
+      if (leavesRepo(inDir(script))) problems.push(`${field} runs ${inDir(script)}, which is outside the repo`);
       // One git ignores is made by an install or a build (`dist/server.js`, `node_modules/.bin/x`), not committed.
-      && gitStatusOf(repoDir, path.posix.join(dir, script)) !== 'ignored') {
-      problems.push(`${field} runs ${inDir(script)}, which is not in the checkout`);
+      else if (!exists(repoDir, inDir(script)) && gitStatusOf(repoDir, inDir(script)) !== 'ignored') {
+        problems.push(`${field} runs ${inDir(script)}, which is not in the checkout`);
+      }
     }
     const run = PACKAGE_RUNNERS.has(first) && (rest[0] === 'run' || rest[0] === 'run-script') ? rest[1] : null;
     if (plain(run)) {
@@ -70,8 +72,15 @@ export function commandProblems(command, { repoDir, dir, field }) {
   return problems;
 }
 
+// `../setup.sh` from the root, or `api/../../x`: a path git refuses to answer for (exit 128), and no session has.
+function leavesRepo(file) {
+  const normal = path.posix.normalize(file);
+  return path.posix.isAbsolute(normal) || normal === '..' || normal.startsWith('../');
+}
+
 // Whether git ignores or tracks a file: an env file holds its secret's text, so a session must never commit it.
 function gitStatusOf(repoDir, file) {
+  if (leavesRepo(file)) return 'outside';
   const git = (args) => execFileSync('git', ['-C', repoDir, ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
   try {
     git(['rev-parse', '--git-dir']);

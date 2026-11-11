@@ -245,7 +245,7 @@ each, naming its field:
   `logs` file is under `~/` or in the repo.
 - Every command (an install's, a database's `migrate` and `seed`, `app.start` and `app.stop`): the script it hands a
   shell, node or python, or runs by its path, is there, relative to the command's folder, unless git ignores it (an
-  install's or a build's, as `node_modules/.bin/x`); and `npm run <script>` (or
+  install's or a build's, as `node_modules/.bin/x`), and not outside the repo (`../setup.sh`); and `npm run <script>` (or
   `pnpm`, `yarn`) names a script of that folder's `package.json`. Each part of `a && b` is checked up to a `cd`, and a
   word the shell would expand (`$HOME`, `~`) is left alone.
 - `rules` and `setup` are files there.

@@ -196,6 +196,7 @@ test('app: ports a session leaves free and an unprivileged user can listen on, i
   assertProblem(t, app({ frontendPort: 80 }), /^app\.frontendPort is 80: a session runs the app as an unprivileged user, which cannot listen below 1024$/);
   assertProblem(t, app({ backendPort: 7682 }), /^app\.backendPort is 7682, which statusd listens on in every session$/);
   assertProblem(t, app({ backendPort: 7685 }), /^app\.backendPort is 7685, which the Postgres viewer \(pgweb\) listens on/);
+  assertProblem(t, app({ start: 'bash ../setup.sh start' }), /^app\.start runs \.\.\/setup\.sh, which is outside the repo$/, 'in a git checkout, where git would exit 128 on it');
   assertProblem(t, app({ start: './scripts/start.sh' }), /^app\.start runs scripts\/start\.sh, which is not in the checkout$/);
   assert.deepEqual(problems(t, app({ start: 'npm ci && node api/node_modules/.bin/serve' })), [], 'a script git ignores is an install\'s or a build\'s');
   assertProblem(t, app({ stop: 'npm run stop' }), /^app\.stop runs `npm run stop`, and package\.json is not in the checkout$/);
@@ -217,6 +218,11 @@ test('a command\'s scripts are checked up to a cd, and words the shell would exp
     assert.deepEqual(check('"$HOME/bin/run" && ~/x.sh && $(pwd)/y.sh && /usr/bin/env true'), []);
     assert.deepEqual(check('make dev && docker compose up -d && node server'), [], 'a program from PATH, and a node module name');
     assert.deepEqual(check('A=1 B=2 python3 manage.py runserver | tee log'), ['app.start runs manage.py, which is not in the checkout']);
+    assert.deepEqual(check('bash ../setup.sh && ../bin/dev && node api/../../x.js'), [
+      'app.start runs ../setup.sh, which is outside the repo', 'app.start runs ../bin/dev, which is outside the repo',
+      'app.start runs ../x.js, which is outside the repo',
+    ], 'named, never asked of git');
+    assert.deepEqual(commandProblems('bash ../../tool.sh', { repoDir, dir: 'api', field: 'databases[0].seed' }), ['databases[0].seed runs ../tool.sh, which is outside the repo']);
     assert.deepEqual(check('bin/dev; pnpm run dev'), ['app.start runs bin/dev, which is not in the checkout', 'app.start runs `pnpm run dev`, and package.json is not in the checkout']);
   } finally {
     fs.rmSync(repoDir, { recursive: true, force: true });
