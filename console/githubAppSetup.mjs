@@ -8,6 +8,7 @@
 
 import crypto from 'node:crypto';
 
+import { DEFAULT_CONSOLE_NAME } from './config.mjs';
 import { appJwt, createAppApi, createTokenSource } from './githubApp.mjs';
 import { APP_KEY_SECRET } from './settings.mjs';
 import { checkValue, secretSpecs } from './secrets.mjs';
@@ -56,10 +57,11 @@ function refusal(message) {
  * somewhere for GitHub to post, and the console polls until then.
  * @returns {object}
  */
-export function appManifest({ publicUrl, repo }) {
+export function appManifest({ publicUrl, repo, consoleName = DEFAULT_CONSOLE_NAME }) {
   const [owner] = repo.split('/');
   return {
-    name: `Woodshed ${owner}`.slice(0, 34),
+    // 34 is GitHub's limit on an App's name.
+    name: `${consoleName} ${owner}`.slice(0, 34),
     url: publicUrl,
     redirect_url: `${publicUrl}/setup/github/created`,
     callback_urls: [`${publicUrl}/auth/callback`],
@@ -168,7 +170,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     console.log('githubSetup: manifest started', { ownerType: ownerType === 'User' ? 'User' : 'Organization' });
     return {
       url: manifestPostUrl({ repo: defaultProject(config).repo, state, ownerType: ownerType === 'User' ? 'User' : 'Organization' }),
-      manifest: appManifest({ publicUrl: config.publicUrl, repo: defaultProject(config).repo }),
+      manifest: appManifest({ publicUrl: config.publicUrl, repo: defaultProject(config).repo, consoleName: config.consoleName }),
     };
   }
 

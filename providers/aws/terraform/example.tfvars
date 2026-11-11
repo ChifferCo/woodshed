@@ -43,6 +43,9 @@ github_app_installation_id = "00000000"
 #   { name = "tools", repo = "your-org/tools" },
 # ]
 
+# Optional: what the console calls itself, on its pages, the installed app and its GitHub comments. Default Woodshed.
+# console_name = "Acme Woodshed"
+
 # Optional: the console menu's links to the repo's workflows that build the images and apply this Terraform.
 # console_workflow_links = {
 #   "Build images"       = "woodshed-images.yml"

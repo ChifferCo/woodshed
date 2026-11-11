@@ -10,6 +10,10 @@ import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
 
 const HOUR_MS = 3_600_000;
+export const DEFAULT_CONSOLE_NAME = 'Woodshed';
+// Printable, short enough for a tab and a home screen, and nothing HTML or a script's string would read as its own.
+const CONSOLE_NAME_RE = /^[^\p{C}<>"'`]{1,40}$/u;
+const warnedConsoleNames = new Set();
 
 function number(value, fallback) {
   const parsed = Number(value);
@@ -53,6 +57,19 @@ function githubApp(env) {
     throw new Error('WOODSHED_CLOUD_GITHUB_APP_ID needs WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID, and WOODSHED_CLOUD_GITHUB_APP_KEY_FILE without a secret store (AWS, or WOODSHED_LOCAL_SECRETS_DIR)');
   }
   return { appId, installationId, keyFile, keyFromSecret };
+}
+
+/** @returns {string}  `WOODSHED_CLOUD_CONSOLE_NAME` trimmed, or the default when it is unset or not a name the console shows */
+export function consoleName(env) {
+  const value = env.WOODSHED_CLOUD_CONSOLE_NAME;
+  if (value === undefined || value.trim() === '') return DEFAULT_CONSOLE_NAME;
+  const name = value.trim();
+  if (CONSOLE_NAME_RE.test(name)) return name;
+  if (!warnedConsoleNames.has(value)) {
+    warnedConsoleNames.add(value);
+    console.warn('console: WOODSHED_CLOUD_CONSOLE_NAME is not 1 to 40 printable characters without < > " \' or `, using the default', { length: value.length, name: DEFAULT_CONSOLE_NAME });
+  }
+  return DEFAULT_CONSOLE_NAME;
 }
 
 // Hosted mode's GitHub access, borrowed from the host's broker (githubBroker.mjs): both settings or neither. The token
@@ -219,7 +236,7 @@ export function requireClosedWhenReachable(config) {
   throw new Error(`WOODSHED_CLOUD_HOST is ${config.host}, which other machines reach, and sign-in is not required: set WOODSHED_CLOUD_REQUIRE_SIGN_IN=1 (with the GitHub App) or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET, or bind 127.0.0.1 behind a proxy`);
 }
 
-/** Nothing in Woodshed Cloud names a repo of its own: an installation says which ones it works on. */
+/** Nothing in Woodshed names a repo of its own: an installation says which ones it works on. */
 export function requireRepo(config) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(defaultProject(config).repo)) throw new Error('WOODSHED_CLOUD_REPO (or WOODSHED_CLOUD_PROJECTS) must name the repo this installation works on, as owner/name');
 }
@@ -235,6 +252,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const broker = githubBroker(env);
   const identitySecret = trustedIdentitySecret(env);
   return {
+    // What the pages, the installed app and the console's GitHub comments call this console.
+    consoleName: consoleName(env),
     host: env.WOODSHED_CLOUD_HOST || '127.0.0.1',
     port,
     publicUrl: (env.WOODSHED_CLOUD_PUBLIC_URL || `http://localhost:${port}`).replace(/\/+$/, ''),

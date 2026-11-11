@@ -168,6 +168,18 @@ variable "max_sessions" {
   default = 5
 }
 
+variable "console_name" {
+  description = "What the console calls itself: its pages' titles, the installed app's name and its GitHub comments, as WOODSHED_CLOUD_CONSOLE_NAME."
+  type        = string
+  default     = "Woodshed"
+
+  # The console falls back to Woodshed on a name it refuses (console/config.mjs, consoleName), so plan refuses it first.
+  validation {
+    condition     = trimspace(var.console_name) == var.console_name && can(regex("^[^\\p{C}<>\"'`]{1,40}$", var.console_name))
+    error_message = "The console_name is 1 to 40 printable characters, without spaces around it and without < > \" ' or `."
+  }
+}
+
 variable "console_workflow_links" {
   description = "The console menu's GitHub Actions links, label to workflow file in the repo (such as its deploy workflow). None leaves the group out."
   type        = map(string)

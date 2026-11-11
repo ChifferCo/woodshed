@@ -157,6 +157,12 @@ shape), with the current repo as the default, and install the GitHub App on it. 
 restarts, and its sessions carry on. Every project uses the one session image, task definition and databases for now.
 With `projects` empty, the default, the compose file has no such line.
 
+Naming the console: set `console_name` in the installation's tfvars, such as `"Acme Woodshed"` (default `"Woodshed"`).
+Like `projects`, the plan changes only the `woodshed-cloud-configure-base-box` document and its association: the
+console gets `WOODSHED_CLOUD_CONSOLE_NAME` and restarts. The pages and the manifest follow at once; an app already
+installed from the browser keeps the old name until it is installed again, since the browser keeps the name it was
+installed with.
+
 Terraform ignores changes to `baseBox.sh.tftpl` (first boot only), so an apply
 never replaces the box by surprise. `terraform apply -replace=aws_instance.base_box`
 does: the new box mounts the same data volume, so Mongo and the console's

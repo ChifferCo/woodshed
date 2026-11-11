@@ -1,4 +1,4 @@
-// Your own Woodshed Cloud databases, on your computer. My settings gives you the command that runs this:
+// Your own Woodshed databases, on your computer. My settings gives you the command that runs this:
 //
 //   WOODSHED_TOKEN=wt_... node woodshed-db.mjs https://woodshed.example.com
 //

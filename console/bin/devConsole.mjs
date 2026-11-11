@@ -98,8 +98,8 @@ fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, g
 
 // The shell's own WOODSHED_CLOUD_* settings (a GitHub App, required sign-in, the ECS launcher) would turn this back
 // into the real console, so none of them are passed on, but hosted mode's (console/README.md, "Hosted mode"), to try it
-// with a stand-in broker and signed headers.
-const HOSTED = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE', 'WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET'];
+// with a stand-in broker and signed headers, and the console's name.
+const HOSTED = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE', 'WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET', 'WOODSHED_CLOUD_CONSOLE_NAME'];
 const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_CLOUD_') || HOSTED.includes(key)));
 
 function freePort() {

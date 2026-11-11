@@ -426,7 +426,7 @@
       editor,
       replaced,
       f?.appended?.length
-        ? h('p', { class: 'sub' }, 'Woodshed Cloud always adds these last, so your databases, ports and URLs are right whatever the files say: ',
+        ? h('p', { class: 'sub' }, 'Woodshed always adds these last, so your databases, ports and URLs are right whatever the files say: ',
           h('code', null, f.appended.join(', ')), '.')
         : fileKey === 'tmux-conf' && h('p', { class: 'sub' }, 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.'),
       h('div', { class: 'set-actions' },
