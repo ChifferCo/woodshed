@@ -11,7 +11,7 @@ name: Claude review
 # Another repo runs the same review on its own pull requests by calling this file from a workflow of its own with a
 # pull_request trigger (docs/reference.md, "The review in another repo"). What is that repo's own, its rules and what to
 # look for, comes from its files on the branch the pull request merges into; Woodshed's own are in .woodshed/review.md.
-# The review also rates the merge risk, posted as a "Merge risk" check that never blocks merging.
+# The review also rates the merge risk, posted as a "Merge risk" check that never blocks merging, and as a label.
 
 on:
   pull_request:
@@ -315,18 +315,19 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Post the reviewer's tier as a neutral "Merge risk" check on the reviewed commit, which never blocks merging
+          # Post the reviewer's tier as a neutral "Merge risk" check on the reviewed commit, and as a label on the pull request
           if [ ! -s /tmp/merge-risk.md ]; then
             echo "::warning::The reviewer wrote no merge risk, so no Merge risk check was posted"
             exit 0
           fi
           tier=$(head -1 /tmp/merge-risk.md | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')
           case "$tier" in
-            LOW) label=Low ;;
-            MEDIUM) label=Medium ;;
-            HIGH) label=High ;;
+            LOW) label=Low color=0e8a16 ;;
+            MEDIUM) label=Medium color=fbca04 ;;
+            HIGH) label=High color=d93f0b ;;
             *) echo "::warning::Unknown merge risk tier '${tier}', so no Merge risk check was posted"; exit 0 ;;
           esac
           reason=$(sed -n 2p /tmp/merge-risk.md | cut -c1-200)
@@ -337,6 +338,15 @@ jobs:
               output: {title: $title, summary: $summary}}' \
             | gh api "repos/${GITHUB_REPOSITORY}/check-runs" --input - --jq '.html_url'
           echo "### Merge risk: \`${label}\`" >> "$GITHUB_STEP_SUMMARY"
+          # The label is for people to see at a glance. Anyone who can triage can change it, so the console and any merge
+          # rule read the check above, never the label.
+          name="merge risk: $(echo "$tier" | tr "[:upper:]" "[:lower:]")"
+          gh label create "$name" --repo "$GITHUB_REPOSITORY" --color "$color" --description "Set by the AI review" --force >/dev/null
+          for other in low medium high; do
+            [ "merge risk: $other" = "$name" ] && continue
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels/merge%20risk%3A%20${other}" >/dev/null 2>&1 || true
+          done
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/labels" -f "labels[]=${name}" --jq '[.[].name] | join(", ")'
 
   # Its own job, with no checkout and no Claude: resolving a thread needs more than the review job's token holds
   # (resolveReviewThread refuses a token with pull-requests: write alone), and the reviewer never gets contents: write.

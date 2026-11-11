@@ -883,7 +883,7 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
     'Forget takes every session\'s copy too, so no Resume brings it back, and the owner\'s last, so a failure leaves its size on the page true');
 
   const pulls = async () => (await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: as })).json()).pulls;
-  assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours' }]);
+  assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours', project: 'r', repo: 'o/r' }]);
   await pulls();
   assert.equal(asked, 1, 'kept for a minute');
 });
@@ -1630,4 +1630,25 @@ test('another project\'s / list is only for someone who may start sessions on it
   assert.deepEqual(await names('/api/skills?project=tools'), ['deploy'], 'refused: the default project\'s list, never the other repo\'s');
   assert.deepEqual(await names('/api/skills?project=app'), ['deploy']);
   assert.deepEqual(asked.map(([, name]) => name), ['tools', 'app']);
+});
+
+test('the rail\'s pull requests are read from each repo the person may start on, on that project\'s own client', async (t) => {
+  const projects = [{ name: 'shop', repo: 'acme/shop', default: true }, { name: 'app', repo: 'acme/app' }, { name: 'ops', repo: 'acme/ops' }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'acme/shop', projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const asked = [];
+  const client = (repo, updatedAt) => ({ openPullsFor: async (login) => { asked.push(`${repo} ${login}`); return [{ number: 1, title: repo, why: 'yours', updatedAt }]; } });
+  const github = client('acme/shop', '2026-11-01T00:00:00Z');
+  const others = { app: client('acme/app', '2026-11-02T00:00:00Z'), ops: client('acme/ops', '2026-11-03T00:00:00Z') };
+  // mia may start on shop and app, not ops.
+  const projectAccess = { view: async () => ({ projects: projects.slice(0, 2).map(({ name, repo }) => ({ name, repo })), defaultProject: 'shop', saved: false }) };
+  const fleet = { sessions: () => [], find: () => null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const handle = createHandler({ config, fleet, auth, github, githubFor: (p) => others[p.name], projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const answer = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
+  assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
+  assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
 });

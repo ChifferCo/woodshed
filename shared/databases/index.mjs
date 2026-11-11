@@ -1,7 +1,7 @@
 // The database engines a project file's `databases` can name, each a module here: postgres.mjs, mongo.mjs. An engine
 // says how the db-admin task makes, copies and drops its databases, which variables a session gets for one, and its
-// viewers. Adding one is a module here, its entry in ENGINES, and its server in each provider (docs/reference.md,
-// "Databases").
+// viewers. Adding one is a module here, its entry in ENGINES (engines.mjs), and its server in each provider
+// (docs/reference.md, "Databases").
 //
 //   node databases/index.mjs env                the project's databases' variables, as `export` lines for the
 //                                               entrypoint to eval. The console's credentials, when it made them,
@@ -20,20 +20,11 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 
-import mongo from './mongo.mjs';
-import postgres from './postgres.mjs';
+import { ENGINES, ENGINE_NAMES, engine } from './engines.mjs';
 import { isMain } from '../isMain.mjs';
 import { loadProject } from '../project.mjs';
 
-export const ENGINES = Object.freeze({ postgres, mongo });
-export const ENGINE_NAMES = Object.freeze(Object.keys(ENGINES));
-
-/** @returns {typeof postgres} */
-export function engine(name) {
-  const found = ENGINES[name];
-  if (!found) throw new Error(`no database engine called ${name} (there are ${ENGINE_NAMES.join(', ')})`);
-  return found;
-}
+export { ENGINES, ENGINE_NAMES, engine };
 
 /** @returns {string[]}  the engines whose server the installation gives a session (its environment) */
 export function hostedEngines(env) {

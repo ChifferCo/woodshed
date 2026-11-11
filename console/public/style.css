@@ -618,21 +618,25 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 
 .is-pulls-zone { background: var(--slate-tint); }
 .is-pulls-zone.is-folded { background: var(--ground); }
-/* A pull request row, after the shed's: number and title, its checks and age, then a session for it and GitHub. */
-.prow { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 6px; background: var(--ground); border: 1px solid var(--line); color: var(--ink); min-width: 0; }
-.prow-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.prow-num { font-family: var(--mono); font-size: 12px; color: var(--meta); flex: none; }
+/* A pull request row, after the shed's: its title and checks' dot, then the repo and number, its checks and age, with a
+   session for it and GitHub at the end. With more than one project, its project's edge, as a session card has. */
+.prow { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px 6px 10px; border-radius: 7px; background: var(--ground); border: 1px solid var(--line); color: var(--ink); min-width: 0; }
+.prow.has-project { border-left: 3px solid var(--project, var(--line)); padding-left: 8px; }
+.prow-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.prow-num { color: var(--meta); }
+.prow-repo { color: var(--sub); font-weight: 600; }
 .prow-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prow-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; background: var(--idle-dot); }
+.prow-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--idle-dot); }
 .prow-dot.is-pass { background: var(--green); }
 .prow-dot.is-pending { background: var(--amber); }
 .prow-dot.is-fail { background: var(--bad); }
-.prow-sub { font-family: var(--mono); font-size: 11px; color: var(--meta); }
+.prow-sub { display: flex; align-items: center; gap: 6px; min-height: 24px; font-family: var(--mono); font-size: 10.5px; color: var(--meta); }
+.prow-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow-sub .btn { flex: none; font-family: "Red Hat Display", system-ui, sans-serif; }
 .prow-checks.is-pass { color: var(--green); }
 .prow-checks.is-pending { color: var(--amber-ink); }
 .prow-checks.is-fail { color: var(--bad); }
-.prow-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
-.prow-gh { font-size: 12.5px; color: var(--slate); text-decoration: none; }
+.prow-gh { flex: none; padding: 0 2px; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 13px; color: var(--slate); text-decoration: none; }
 .prow-gh:hover { text-decoration: underline; }
 .prow-group { padding: 4px 2px 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .set-card.is-danger { border-color: var(--bad); }

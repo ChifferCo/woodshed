@@ -314,10 +314,15 @@ plan once it starts. **Take it out of the line** stops it, and Resume puts it
 back, at the end of the line.
 
 Under Stopped, the rail has a third group, as the shed does:
-- **Pull requests** lists your open pull requests, then those waiting on your
-  review.
-- **Start** on one opens New session with it under Work on.
-- The console asks GitHub's search for them at most once a minute per person.
+- **Pull requests** lists your open pull requests on every repo you may start
+  sessions on, then those waiting on your review. With more than one project,
+  each row has its project's edge and name, and the rail's project filter
+  applies to them too.
+- **Start** on one opens New session on its repo, with it under Work on;
+  **Open** or **Resume** is your session on its branch in that repo.
+- The console asks GitHub's search for them at most once a minute per person,
+  each repo on its own project's token. A repo that does not answer keeps its
+  last rows (`console: pull requests not readable` with the `project`).
 
 The rest of the shed's rail and shell is here too, on every session's page
 (Shared's as well):
@@ -682,7 +687,7 @@ each engine, that reaches nothing else:
 | `woodshed__template` | `woodshed__template`, which cannot log in | none kept | Nobody: Postgres's is closed to connections, which a copy needs | Until the next template |
 
 The template is the session image's: after each session build (by hand, or
-every morning), the image workflow runs the `woodshed-cloud-refresh-db-template`
+every morning), the deploy workflow's session job runs the `woodshed-cloud-refresh-db-template`
 SSM document on the base box, which runs the db-admin task's `template` and
 waits for it. That migrates and seeds `woodshed__template_next` from the image's
 checkout, then swaps it in: Postgres by a rename, Mongo, which has no rename,
@@ -693,7 +698,7 @@ it with the image's, for each database by its own `paths`; the strongest answer
 is every database's, since their commands run together:
 
 - nothing under a database's `paths` changed: the template is kept, and the task ends
-  in seconds. The image workflow makes the same check before it starts the
+  in seconds. The deploy workflow's session job makes the same check before it starts the
   task, against the last successful session build, and skips the step;
 - only new migration files: a copy of the template is migrated and swapped in,
   with no seeding, which takes about a minute. If the copy's migrations fail,

@@ -20,7 +20,7 @@
 # --build-arg RUNTIME=<that image> builds the repository's part on it instead of building the runtime here, which is
 # most of the time and memory a first build takes (install.sh does this). Without RUNTIME the stage is built here.
 #
-# The image workflow builds with a layer cache in ECR. These build args decide
+# The deploy workflow's session job builds with a layer cache in ECR. These build args decide
 # what it rebuilds: BASE_WEEK the system packages, CLAUDE_DAY the Claude CLI and
 # BUILD_SHA the checkout. The repo's installs run again only when their files or the project file's installs change.
 
@@ -45,7 +45,7 @@ ARG REDIS_COMMANDER_VERSION=0.9.0
 # definition). Pinned: when AWS changes the bundle the build fails here, rather than trusting what it got.
 ARG RDS_CA_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
 
-# Changes once a week in the image workflow, so security updates and a new gh still arrive.
+# Changes once a week in the deploy workflow's session job, so security updates and a new gh still arrive.
 ARG BASE_WEEK=
 # The slim base has no compiler: g++, make and python3 are for native modules a repo's install builds from source,
 # here and in a session that reinstalls. The rest are tools the full base had that sessions use.
@@ -91,7 +91,7 @@ ENV PATH=/home/node/.local/bin:$PATH
 ENV LANG=C.UTF-8
 
 # Claude, Chromium, the checkout and each node_modules are separate layers on purpose: BuildKit gzips layers in
-# parallel, and gzipping one layer that held them all was most of the image workflow's time.
+# parallel, and gzipping one layer that held them all was most of the session job's build time.
 # --no-shell: the MCP runs the full Chromium even when headless, so the separate headless shell is never used.
 RUN cd "$(npm root -g)/@playwright/mcp" && npx playwright install --no-shell chromium
 
@@ -103,7 +103,7 @@ USER root
 # The repo's checkout folder, /work/<name>.
 ARG REPO_DIR
 # The project file's installs (session/deps.sh), keyed on their files and the manifest alone: a commit that changes
-# neither reuses them from the cache. The image workflow puts each install's files under woodshed-deps/, in the repo's
+# neither reuses them from the cache. The deploy workflow's session job puts each install's files under woodshed-deps/, in the repo's
 # own layout, so what is installed here is what the checkout will hold.
 RUN test -n "$REPO_DIR" || { echo "REPO_DIR is not set: build with --build-arg REPO_DIR=/work/<repo name>" >&2; exit 1; } \
   && mkdir -p "$REPO_DIR" /woodshed-out && chown node:node "$REPO_DIR" /woodshed-out

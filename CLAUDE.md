@@ -85,7 +85,7 @@ All in us-east-1, everything named `woodshed-cloud*` and tagged
 | Sessions | ECS cluster `woodshed-cloud`, task definition `woodshed-cloud-session` | `aws ecs list-tasks --cluster woodshed-cloud`, `describe-tasks` for `stoppedReason` |
 | Session logs | CloudWatch `/woodshed-cloud/sessions`, stream `session/session/<taskId>` | `aws logs tail /woodshed-cloud/sessions --follow` |
 | Postgres | RDS, password in the RDS-managed secret | Reachable from the base box and sessions only. It refuses unencrypted connections, so the task definition sets `PGSSLMODE=verify-full` and the image trusts AWS's RDS CA bundle (`NODE_EXTRA_CA_CERTS`). `no pg_hba.conf entry … no encryption` means `PGSSLMODE` is missing; `self-signed certificate in certificate chain` means the bundle is missing from the image (an image built before it was added) |
-| Databases | Postgres on RDS and Mongo on the base box: `woodshed__template`, which the db-admin task builds after each session image (SSM document `woodshed-cloud-refresh-db-template`) when its `paths` (the project file's `databases[].paths`) changed since the commit it was built from (`Template kept`, `Migrating a copy of the template` or `Building the template again` in its log, with why; the image workflow's "Decide whether the database template needs building" step skips the task when the last session build had the same `paths`), and a copy of it for each shared session (`woodshed__<id>`) and each person (`woodshed_<login>`). The console's `state.json` keeps where each copy is, under `sessionDatabases` and `databases` | The db-admin task's log: `/woodshed-cloud/sessions`, stream `db-admin/db-admin/<taskId>`. The image workflow's last step prints the template's |
+| Databases | Postgres on RDS and Mongo on the base box: `woodshed__template`, which the db-admin task builds after each session image (SSM document `woodshed-cloud-refresh-db-template`) when its `paths` (the project file's `databases[].paths`) changed since the commit it was built from (`Template kept`, `Migrating a copy of the template` or `Building the template again` in its log, with why; the deploy workflow's session job skips the task when the last session build had the same `paths`), and a copy of it for each shared session (`woodshed__<id>`) and each person (`woodshed_<login>`). The console's `state.json` keeps where each copy is, under `sessionDatabases` and `databases` | The db-admin task's log: `/woodshed-cloud/sessions`, stream `db-admin/db-admin/<taskId>`. The deploy workflow's session job prints the template task's exit code and log stream |
 | Database viewers | `pgweb` and `mongo-express` inside each session, on its own databases (a private session's pgweb also on its restored copy, through bookmarks in `/tmp/woodshed-pgweb-bookmarks`, and a second mongo-express on its Mongo copy at `/mongo-copy/<id>/`), at `/pg/<id>/` and `/mongo/<id>/` | In the session, `/tmp/pgweb.log` and `/tmp/mongo-express.log` |
 | Claude homes | S3 `woodshed-cloud-homes-<account id>`, `<login>/claude-home.tar.gz`: each person's `~/.claude` between their private sessions (the last to stop), `<login>/sessions/<id>/claude-home.tar.gz`: one private session's own, for its Resume, and `_sessions/<id>/claude-home.tar.gz`: a kept shared session's, between its runs, and `<login>/claude-settings.json`: the settings every private session of theirs keeps in step with. Only the console's role reaches it | `aws s3 ls s3://woodshed-cloud-homes-<account id>/` (names and sizes; never download someone's) |
 | Images | ECR `woodshed-cloud-session`, `woodshed-cloud-console` | `aws ecr describe-images --repository-name …` |
@@ -109,7 +109,7 @@ All in us-east-1, everything named `woodshed-cloud*` and tagged
 | `users/<login>/github` | One person's GitHub App user token from Connect GitHub (JSON: the token, its expiry, the refresh token), for their private sessions' git and `gh`. Made and rotated by the console (`githubUser.mjs`); never in a session | Their next push fails with `GitHub no longer accepts @<login>'s authorization`: the console logs `githubUser: GitHub refused the refresh, disconnecting`. Connect GitHub again on My settings. A session whose project file says `githubAccess: repo` gets it scoped to that project's repo (`githubUser: scoped token made`); `githubUser: GitHub refused a scoped token` or `no scoped token, the console has no client secret`, then `sessionApi: no scoped owner token for the session's project`, means it pushes as the App instead |
 | `sessions/<id>/database`, `users/<login>/database` | The password of each database's own user: `woodshed__<id>` for that shared session and the viewers inside it, deleted with its databases; `woodshed_<login>` for that person's private sessions and the viewers inside them. Made by the console. Not on the Secrets tab | See the database symptoms below |
 | RDS's own master secret, `woodshed-cloud-root/mongo` | Each only where the installation runs that database (`databases` in Terraform). Root, for the db-admin task alone, through its execution role. Not the console, not the base box (which writes Mongo's once and cannot read it back), not a session | The db-admin task's log (`/woodshed-cloud/sessions`, stream `db-admin/...`) fails at its first connection. A Mongo root password that could not be saved is in `/root/woodshed-cloud-mongo-root` on the base box: put it in the secret, then delete the file |
-| Each install secret (`install_secrets` in Terraform, such as `registry-token`) | The repo's dependency installs: the image build's (a line of the build's `install_env` secret, which the image workflow writes from a repo secret) and a session's, only when a branch changed an install's files since the image was built. A session gets it in the variable `install_secrets` names, which claude's terminal has too; an ask session unsets each variable `WOODSHED_INSTALL_SECRETS` lists | `/tmp/woodshed-deps` says `failed: \`<command>\` in <dir>. Are the install secrets (<variables>) right?`, the log has `ERROR: the install failed` with the dir, and Claude asks for help. The image build logs `deps: install secrets in <variables>`, or `deps: no install secrets` when it got no `install_env`. In a session's Terminal, `[ -n "$<variable>" ] && echo set` |
+| Each install secret (`install_secrets` in Terraform, such as `registry-token`) | The repo's dependency installs: the image build's (a line of the build's `install_env` secret, which the deploy workflow's session job writes from a repo secret) and a session's, only when a branch changed an install's files since the image was built. A session gets it in the variable `install_secrets` names, which claude's terminal has too; an ask session unsets each variable `WOODSHED_INSTALL_SECRETS` lists | `/tmp/woodshed-deps` says `failed: \`<command>\` in <dir>. Are the install secrets (<variables>) right?`, the log has `ERROR: the install failed` with the dir, and Claude asks for help. The image build logs `deps: install secrets in <variables>`, or `deps: no install secrets` when it got no `install_env`. In a session's Terminal, `[ -n "$<variable>" ] && echo set` |
 
 The entrypoint adds the session's databases, Mongo, Redis (when the project uses it), the shared services, port and
 URL on top of each env file's secret
@@ -129,7 +129,7 @@ secrets.
   nameservers (the `dns_nameservers` output); `AccessDenied` on a `route53:`
   call means the box's role cannot write the `_acme-challenge` TXT record.
   Caddy retries by itself, with a growing pause between tries.
-- **The image workflow's "Restart the console" step fails.** Its log prints
+- **The deploy workflow's console job fails to restart the console** (providers/aws/README.md, "The deploy workflow"). Its log prints
   the SSM command's output. `aws ssm list-command-invocations --details
   --instance-id <base_box_instance_id>` shows past runs. The base box must be a
   managed SSM node (`aws ssm describe-instance-information`). `no space left on
@@ -276,7 +276,7 @@ secrets.
   seconds between `pullStartedAt` and `pullStoppedAt`, against under 10 with
   the index. `aws ecr describe-images --repository-name woodshed-cloud-session`
   lists an `application/vnd.amazon.soci.index.v2+json` artifact pushed with
-  each build; when it is missing, the image workflow's SOCI step failed.
+  each build; when it is missing, adding it (`session/addSociIndex.sh`) failed in the deploy workflow's session job.
 - **A starting session's checklist stays on one step.** The console logs
   `fleet: machine ready` once the task has an address, `fleet: start step`
   with the step and its seconds for `pullStarted` (from ECS) and each step the
@@ -319,7 +319,7 @@ secrets.
   `databases: task started` with `action: clone`, then `databases: task
   finished` with the db-admin task's result; the task's own log says why. `there
   is no database template` means it waited five minutes for one: run the
-  `db_template_command` output, or look at the image workflow's last step. A
+  `db_template_command` output, or look at the end of the deploy workflow's session job. A
   private session's log says `the console sent no database user` instead, and
   the console logs `sessionApi: the owner's databases are not ready`: My
   settings shows why, and **Try again** reruns the task.
@@ -653,7 +653,7 @@ secrets.
   `/tmp/mongo-express.log`; a session started from an image before every session
   had its own databases runs them only when private.
 - **Editor ↗ is missing.** It shows only while the session's statusd reports `editor: true`: the checkout's project file
-  says `editor: true` and the image has openvscode-server. The image workflow's "Stage the files" step logs `stageDeps:
+  says `editor: true` and the image has openvscode-server. The deploy workflow's session job logs `stageDeps:
   editor true` or `false` from the built commit's project file, and the build logs `editor left out` for `false`; statusd answers `the project file turns the editor
   off` (and logs `statusd: editor refused, the project file turns it off`) when the checkout's says `false`.
 - **Editor ↗ answers `not found` or `the editor is not running`, or VS Code says it cannot reconnect.** It is at

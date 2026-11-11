@@ -1,6 +1,6 @@
 #!/bin/bash
 # Copies the files each of the project file's `dependencies.installs` depends on (its `files`, globs expanded) to the
-# folder given, in the repo's own layout: the image workflow builds the session image with it as `woodshed-deps/`.
+# folder given, in the repo's own layout: the deploy workflow's session job builds the session image with it as `woodshed-deps/`.
 # Beside it, not inside it (the image copies the folder into the checkout whole): `<folder>.installs`, the manifest
 # session/deps.sh runs the installs from, and `<folder>.editor`, the project file's `editor` (true or false), which the
 # Dockerfile reads to add VS Code or leave it out. Run from the repo's root. The project file is the repo's, or the

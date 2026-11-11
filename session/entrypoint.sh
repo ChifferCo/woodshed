@@ -45,6 +45,8 @@
 #                        and listed under the prompt
 #   SESSION_URL          the session's page on the console, linked from the PR body (unlinked without it, and when
 #                        the project file says `consoleLinks: false`)
+#   SESSION_APP_DOMAIN   the domain session apps are served under, so this session's app is <SESSION_ID>.<it>;
+#                        unset when the console has session apps off (Woodshed's own app reads it, devConsole.mjs)
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -483,7 +485,7 @@ fetchSessionDatabases() {
       | curl -sS --max-time 15 -X POST -K - -w '\n%{http_code}' "$WOODSHED_CONSOLE_URL/settings") || answer=$'\n000'
     code=${answer##*$'\n'}
     answer=${answer%$'\n'*}
-    # 503 while the copy runs; no answer, 502 or 504 while the console restarts (the image workflow's redeploy).
+    # 503 while the copy runs; no answer, 502 or 504 while the console restarts (when the deploy workflow's console job redeploys it).
     case "$code" in 503 | 000 | 502 | 504) ;; *) break ;; esac
     [ $((SECONDS - start)) -lt "$DATABASE_WAIT_SECONDS" ] || die "the session's databases were not ready after $DATABASE_WAIT_SECONDS s (last status $code)"
     sleep 2

@@ -13,7 +13,7 @@ dependencies:
   installs:
     - # Required. The folder in the repo the command runs in.
       dir: api
-      # Required, at least one. Files in the dir, globs allowed within one folder, which the image workflow stages for
+      # Required, at least one. Files in the dir, globs allowed within one folder, which the deploy workflow's session job stages for
       # the build and whose change runs the install again at a session's start.
       files: [package.json, package-lock.json, .npmrc]
       # Required. One line, run with bash in the dir.
@@ -56,7 +56,7 @@ databases:
     seed: npm run seed
     # Default: []. Which envFiles' secrets the commands read: each must be an `envFiles` entry's `secret`.
     envFiles: [api-env]
-    # Default: []. What the template is built from: the image workflow builds it again when any changed.
+    # Default: []. What the template is built from: the deploy workflow's session job builds it again when any changed.
     paths: [api/db/]
     # Default: null. The folder under `paths` where a new file only migrates a copy, not rebuilds the template.
     migrations: api/db/migrations

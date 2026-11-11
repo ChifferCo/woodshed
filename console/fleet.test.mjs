@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '' } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
@@ -91,6 +91,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     limits: { idleMs: 2 * HOUR, lifetimeMs: 8 * HOUR, startTimeoutMs: 15 * 60_000 },
     sessionEnv: { PGHOST: 'db' }, ghToken, pollMs: 30_000, fallbackPollMs: 300_000, retention, maxPrivatePerPerson,
     ...(projects ? { projects } : {}),
+    ...(appDomain ? { appDomain } : {}),
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
@@ -144,6 +145,15 @@ test('a label from a writer starts a session and announces it on the issue', asy
   assert.equal(env.STARTED_BY, 'joel');
   assert.equal(env.SESSION_URL, `https://console.test/s/${session.id}`);
   assert.equal(env.PGHOST, 'db');
+});
+
+test('a session is told the domain its app answers under, and nothing when session apps are off', async () => {
+  const { fleet, calls } = setup({ appDomain: 'apps.console.test' });
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(calls.started[0].env.SESSION_APP_DOMAIN, 'apps.console.test');
+  const off = setup();
+  await off.fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(off.calls.started[0].env.SESSION_APP_DOMAIN, undefined);
 });
 
 test('with a GitHub App, a session is given no GitHub token to keep', async () => {
