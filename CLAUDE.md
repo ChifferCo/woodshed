@@ -742,7 +742,10 @@ Playwright browser. The rail folds its stopped zones, so run
 cards. Pull request chips show without their state or checks, since polling GitHub is off. `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
-fails it. Add a session to `devConsole.mjs` to cover another state.
+fails it. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
+the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
+chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
+`devConsole.mjs` to cover another state.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

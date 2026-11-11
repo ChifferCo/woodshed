@@ -424,14 +424,17 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   `clamp()` after the fact, where overrunning is free. There is a regression
   test.
 
-- **`architecture` and `decisions` are required fields, and there are
-  deliberately no more.** Left optional, models simply omit them, exactly as
-  they omitted `role`. An empty decisions list is legal; a missing one is
-  not. A glossary, a problem statement, a what-to-check list and a tests list
-  were each added as sections and cut again — every one read well on its own
-  and together they made the page longer than the diff it introduces. If a
-  new section is proposed, that is the bar: it has to earn its place over
-  the four that are there.
+- **`questions`, `architecture` and `decisions` are required fields, and there
+  are deliberately no more.** Left optional, models simply omit them, exactly as
+  they omitted `role`. An empty questions or decisions list is legal; a missing
+  one is not. `questions` (what a reviewer has to answer before approving, each
+  with the changed files that answer it) shares one section with the decisions
+  on the page, under the overview; a path not in the diff is dropped from it by
+  `reconcileArtifact`. A glossary, a problem statement, a what-to-check list and
+  a tests list were each added as sections and cut again — every one read well
+  on its own and together they made the page longer than the diff it
+  introduces. If a new section is proposed, that is the bar: it has to earn its
+  place over the ones that are there.
 
 - **`reconcileArtifact` guarantees every file in the diff renders exactly
   once**, whatever the model returns. `page.mjs` guards it a second time.

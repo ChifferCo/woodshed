@@ -142,9 +142,11 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **Talk to it:** `/woodshed <text>` on the same issue, or type in its terminal.
 - **Watch:** the console lists every session; click one for its live terminal.
 - **Review:** the session page's **Review** tab shows what its checkout
-  changes against the default branch, uncommitted work included, with Claude's analysis
-  of it, answers about any line or file, and a chat. A stopped session's tab
-  shows what it pushed, as GitHub has it.
+  changes against the default branch, uncommitted work included. Its **Overview** has Claude's analysis: what
+  the change does, the questions to answer before approving and the decisions it made (each question links to the
+  files that answer it), and how the code is shaped. **Files changed** has every file's diff, open, in the
+  analysis's reading order. Answers about any line or file, and a chat that offers starter questions. A stopped
+  session's tab shows what it pushed, as GitHub has it.
 - **Try its app:** **Start app** on the session's rail card (in the pane bar
   while the rail is hidden), then **Open app**, at
   `https://<session>.woodshed.example.com`. The session is told the domain after its id in `SESSION_APP_DOMAIN`

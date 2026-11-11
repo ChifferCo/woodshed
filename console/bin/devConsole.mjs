@@ -1,6 +1,8 @@
 // Runs the console on this machine with a few made-up sessions, so a change to console/public can be checked in a
 // browser without AWS, GitHub or Docker. Usage: node console/bin/devConsole.mjs [port] [tls ask port]
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
+// /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
+// analysis already written (devReviewSession.mjs).
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
@@ -11,6 +13,8 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { startDevReview } from './devReviewSession.mjs';
 
 const port = process.argv[2] || '7690';
 const sessionApp = process.env.DEV_CONSOLE_SESSION_APP === '1';
@@ -29,6 +33,8 @@ const server = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
+const REVIEW_ID = 'beadfeed';
+const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}` });
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -91,6 +97,11 @@ const sessions = [
     kind: 'ask', status: 'running', state: 'idle', stoppedAt: null, stopReason: null, branch: null, prUrl: null,
     startedBy: 'slack:U0DEV', trigger: 'slack', lastActiveAt: new Date(Date.now() - 2 * 60_000).toISOString(),
     slack: { channel: 'C0DEV', threadTs: '1.0', user: 'U0DEV', name: 'Joel' },
+  }),
+  // Running, with its Review tab answered by the stand-in statusd above. Its terminal, Diff and app go nowhere.
+  session(REVIEW_ID, 26701, 'Retry webhook deliveries with backoff', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
+    endpoint: { host: '127.0.0.1', statusPort: review.port, termPort: review.port },
   }),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
@@ -203,6 +214,7 @@ const child = spawn(process.execPath, [server], {
   },
 });
 child.on('exit', (code) => {
+  review.close();
   fs.rmSync(stateDir, { recursive: true, force: true });
   process.exit(code ?? 0);
 });

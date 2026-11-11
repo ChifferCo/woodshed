@@ -31,7 +31,7 @@ start() {
   echo "$pid" >"$PID_FILE"
   for _ in $(seq "$WAIT_STEPS"); do
     if answers; then
-      echo "devConsoleApp: up at http://localhost:$PORT/s/aaaa1111 (pid $pid)"
+      echo "devConsoleApp: up at http://localhost:$PORT/s/aaaa1111 (pid $pid); a review at /s/beadfeed?tab=review"
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then break; fi
