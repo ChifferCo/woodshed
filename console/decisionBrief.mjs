@@ -8,8 +8,12 @@ import { reviewSummaryOf } from './pullGates.mjs';
 import { plainText } from './slack.mjs';
 
 export const BRIEF_HEADING = '## 🧭 Decision brief';
+// The review's own (review.yml) lists what merging accepts and what is untested; a repo whose review is its own may
+// still write the one list it had before.
+const ACCEPT_HEADING = '**What you accept by merging**';
+const UNTESTED_HEADING = '**Not tested: check before merging**';
 const RISK_HEADING = '**Risk areas to eyeball manually**';
-const NOTHING_RISKY = /^No breaking or hard-to-undo changes\.?$/i;
+const NOTHING_RISKY = /^(No breaking or hard-to-undo changes|None)\.?$/i;
 // A workflow posts its checks with its GITHUB_TOKEN, so they come from GitHub Actions' app. Any workflow can post a
 // check with these names; one from another app (a session's own token, say) is not the review's or QA's.
 const TRUSTED_CHECK_APP = 'github-actions';
@@ -106,7 +110,9 @@ export function qaCommentIn(comments, qa) {
 }
 
 /**
- * The review lists its risk areas at the top of its PR comment, before the review folded under its heading.
+ * The review lists its risk areas at the top of its PR comment, before the review folded under its heading: what
+ * merging accepts, then what is untested, which the brief quotes as `Not tested: …`. The list may be in an alert, a
+ * blockquote.
  * The comment of the run that approved is preferred: the review links that run, and so does the comment.
  * @param {{comments: object[], review: object|null, gate: {heading: string, commentAuthor: string|null}|null}} args
  *   `gate` is the project file's `pullRequests.review`
@@ -119,10 +125,19 @@ export function riskAreasFrom({ comments, review, gate }) {
   const runId = runIdIn(review?.body);
   const comment = (runId && reviews.find((c) => runIdIn(c.body) === runId)) || reviews.at(-1);
   if (!comment) return { found: false, items: [] };
-  const top = comment.body.split('<details>')[0];
-  const at = top.indexOf(RISK_HEADING);
-  if (at < 0) return { found: true, items: [] };
-  return { found: true, items: bulletsOf(top.slice(at + RISK_HEADING.length)).filter((i) => !NOTHING_RISKY.test(i)) };
+  const top = comment.body.split('<details>')[0].split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
+  const accepted = [...listUnder(top, ACCEPT_HEADING), ...listUnder(top, RISK_HEADING)];
+  const untested = listUnder(top, UNTESTED_HEADING).map((i) => `Not tested: ${i}`);
+  return { found: true, items: [...accepted, ...untested] };
+}
+
+// The bullets under a bold heading line, up to the next one.
+function listUnder(text, heading) {
+  const at = text.indexOf(heading);
+  if (at < 0) return [];
+  const rest = text.slice(at + heading.length);
+  const next = rest.search(/\n\*\*[^*\n]+\*\*/);
+  return bulletsOf(next < 0 ? rest : rest.slice(0, next)).filter((i) => !NOTHING_RISKY.test(i));
 }
 
 /** Top-level `- `, `* ` or `1. ` items, each with its continuation lines. */

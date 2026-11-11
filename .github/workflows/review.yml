@@ -231,12 +231,21 @@ jobs:
                this body, before you finish. The action does not post your final message: it only adds a header to
                whatever that comment already holds, so a review you only write as a reply is lost.
 
-               Start with the merge risk and the risks a person must look at, outside the fold:
+               Start with what the person who merges must know, outside the fold, as one GitHub alert: `[!CAUTION]`
+               for High, `[!WARNING]` for Medium, `[!NOTE]` for Low. Every line of it starts with `> `. Write it for
+               someone who has not read the diff and wants to decide in a minute: plain words, what happens to whom,
+               no code walkthrough.
 
-               **Merge risk: Low, Medium or High**: the sentence from step 7 saying which rule decided it.
-
-               **Risk areas to eyeball manually**
-               - (one item each, or "None")
+               > [!WARNING]
+               > **Merge risk: Medium**: the sentence from step 7 saying which rule decided it.
+               >
+               > **What you accept by merging**
+               > - Each risk the merge takes on: what could go wrong, for whom and when, and where (`path:line`). The
+               >   ones that are hard to undo or reach users first. "None" when there is nothing beyond the change itself.
+               >
+               > **Not tested: check before merging**
+               > - Each change no test or run covers that you think a person should try: what to do, in a few steps,
+               >   and what they should see. "None" when the tests cover it.
 
                Then the rest in a collapsible block:
 

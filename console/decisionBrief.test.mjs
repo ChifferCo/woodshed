@@ -242,6 +242,27 @@ test('risk areas are quoted from the review comment of the run that approved', (
   assert.equal(after(brief({ comments: [] }), 'Risks'), '**Risks:** the AI review comment was not found');
 });
 
+test('risk areas are read from the review\'s alert: what merging accepts, then what is untested', () => {
+  const gate = GATES.review;
+  const alert = [
+    '> [!WARNING]',
+    '> **Merge risk: Medium**: it changes an API reply.',
+    '>',
+    '> **What you accept by merging**',
+    '> - `server.mjs:12`: a client reading the old reply',
+    '>   gets an extra field.',
+    '>',
+    '> **Not tested: check before merging**',
+    '> - Add a repo the App is not on: the link opens its install page.',
+  ].join('\n');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(alert)], review, gate }).items, [
+    '`server.mjs:12`: a client reading the old reply gets an extra field.',
+    'Not tested: Add a repo the App is not on: the link opens its install page.',
+  ]);
+  const none = alert.replace(/> - `server[\s\S]*?extra field\./, '> - None').replace(/> - Add a repo.*$/, '> - None.');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate }), { found: true, items: [] });
+});
+
 test('decisions that touch a risk area come first, and every one is listed in Slack and the comment', () => {
   const b = brief();
   assert.match(b.slack, /\*\*Decisions\*\*\n• Rate limits share `rateLimitUtils\.ts` with signup\n• Kept the 30 s/);
