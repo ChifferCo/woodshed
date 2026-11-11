@@ -1283,8 +1283,12 @@ added there alike (`POST /api/console-settings/projects/slack-channel` with
 channel ID, never a name). It is kept in `state.json` under
 `settings.projectSlackChannels`, by project name, and removing an added repo
 drops it. A project's pull requests and their decision briefs go to its own
-channel when it has one, and to the Slack card's channel otherwise; a project
-with neither waits, as every pull request did with no channel. The channel is
+channel when it has one, and to the Slack card's channel otherwise. A project
+with neither has its pull requests left untracked, as every pull request was
+with no channel, and tracked once a channel is set; one tracked before its
+channel was cleared is still read, so it is dropped when it closes, and waits
+for a channel until it gives up (`slack: ready, but its project has no channel
+now`, then `no Slack channel`). The channel is
 chosen once for each post, just before it, so the brief and the mention land
 in that post's thread, and where the post went is kept on the session
 (`slackPost`: its `channel` and `ts`), so a later change to the setting moves

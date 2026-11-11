@@ -571,8 +571,10 @@ export function createFleet({
   // pull request and opens another from a new branch gets the new one posted too.
   async function announcePull(session) {
     if (!announcer.available || session.owner || !session.prUrl || session.announcedPrUrl === session.prUrl) return;
+    const project = projectFor(config, session);
+    if (!announcer.postsFor(project)) return;
     const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session, projectFor(config, session));
+      await announcer.track(session, project);
       return true;
     });
     if (tracked) update(session, { announcedPrUrl: session.prUrl });

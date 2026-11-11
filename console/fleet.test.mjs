@@ -1960,3 +1960,21 @@ test('a posted pull request keeps the channel it went to on its session, after t
   await fleet.tick();
   assert.deepEqual(session.slackPost, { channel: 'C0ACMEPRS1', ts: '1730000000.000100' }, 'the post stays where it was made');
 });
+
+test('with no console channel, a pull request on a project without its own is not tracked until a channel is set', async () => {
+  const { createSlack } = await import('./slack.mjs');
+  const settings = { state: { settings: { slackChannel: '' } }, save() {} };
+  const slack = createSlack({ store: settings, secrets: { async read() { return 'xoxb-1'; } }, fetchImpl: async () => ({ status: 200, async json() { return { ok: true }; } }) });
+  slack.setProjectChannel({ project: 'tools', channel: 'C0TOOLS001', by: 'mia-dev' });
+  const { fleet, github, statuses, store } = setup({ slack });
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' });
+  const [session] = store.state.sessions;
+  github.pull = async (number) => ({ number, title: 'Add GTM', created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' } });
+  statuses[session.id] = { state: 'working', prUrl: 'https://github.com/o/r/pull/7' };
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending ?? [], [], 'its project has nowhere to post');
+  assert.equal(session.announcedPrUrl, undefined, 'and it is looked at again');
+  slack.setChannel({ channel: 'C0CONSOLE01', by: 'mia-dev' });
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [7]);
+});

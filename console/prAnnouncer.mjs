@@ -57,9 +57,16 @@ export function createPrAnnouncer({
   const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
   const gh = (item) => (item.project && githubOf ? githubOf(item.project) : github);
   const projectOf = (item) => item.project ?? defaultProjectName();
-  // A project with no channel of its own while the console's is empty has nowhere to post: it waits, as every pull
-  // request did before projects had channels.
-  const hasChannel = (item) => !slack?.channelFor || Boolean(slack.channelFor(projectOf(item)).channel);
+  const hasChannel = (name) => (slack?.channelFor ? Boolean(slack.channelFor(name).channel) : Boolean(slack?.available));
+
+  /**
+   * Whether a project's pull requests have a channel to go to: its own, or the console's. One with neither is not
+   * tracked, as every pull request was not before projects had channels, so it is tracked once one is set.
+   * @param {{name: string}|null} [project]  null for the default project
+   */
+  function postsFor(project = null) {
+    return Boolean(slack?.available) && hasChannel(project?.name ?? defaultProjectName());
+  }
 
   async function drop(item, why) {
     state.slackPending = pending().filter((p) => p !== item);
@@ -281,6 +288,12 @@ export function createPrAnnouncer({
       return drop(item, 'not approved and green in time');
     }
     if (passed) {
+      // Its channel was cleared after it was tracked: it waits for one, and gives up in time like any other.
+      if (!hasChannel(projectOf(item))) {
+        if (gaveUp) return drop(item, 'no Slack channel');
+        console.log('slack: ready, but its project has no channel now', { number: item.number, project: projectOf(item) });
+        return;
+      }
       const holding = gates?.review ? await holdForNotes(item, pull, review, gates) : false;
       const qa = qaFor(item, pull, runs, gates?.qa ?? null);
       if (holding || qa.waiting) return;
@@ -318,7 +331,7 @@ export function createPrAnnouncer({
   /** Each waiting pull request that is due. GitHub or Slack failing leaves it for its next check. */
   async function check() {
     if (!slack?.available) return;
-    for (const item of pending().filter((p) => due(p) && hasChannel(p))) {
+    for (const item of pending().filter(due)) {
       checkedAt.set(keyOf(item.number, item.project), now());
       try {
         await checkOne(item);
@@ -334,5 +347,5 @@ export function createPrAnnouncer({
   }
 
   // A getter: the channel is a setting, and can be set or cleared while the console runs.
-  return { get available() { return Boolean(slack?.available); }, track, check, stale, waitingSessions };
+  return { get available() { return Boolean(slack?.available); }, postsFor, track, check, stale, waitingSessions };
 }
