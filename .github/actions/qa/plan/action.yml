@@ -68,9 +68,16 @@ runs:
     - name: Fetch the base branch and record the commit under test
       shell: bash
       env:
-        BASE: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        EVENT_BASE: ${{ github.event.pull_request.base.ref }}
+        PR: ${{ steps.pr.outputs.number }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       run: |
-        # The planner diffs against the base branch; the check goes on this commit even if a test changes the tree
+        # The planner diffs against the base branch; the check goes on this commit even if a test changes the tree.
+        # A run that is not a pull request event (a manual one) takes the pull request's own base.
+        BASE="$EVENT_BASE"
+        [ -n "$BASE" ] || [ -z "$PR" ] || BASE=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json baseRefName --jq .baseRefName)
+        [ -n "$BASE" ] || BASE="$DEFAULT_BRANCH"
         git fetch --quiet origin "+refs/heads/${BASE}:refs/remotes/origin/${BASE}"
         # A token checkout leaves in .git/config is not the planner's to use.
         git config --local --unset-all http.https://github.com/.extraheader || true
