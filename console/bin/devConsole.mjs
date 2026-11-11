@@ -180,7 +180,6 @@ function serveSessionApp(consolePort) {
 }
 
 const consolePort = sessionApp ? await freePort() : port;
-if (sessionApp) await serveSessionApp(consolePort);
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
 const child = spawn(process.execPath, [server], {
@@ -203,3 +202,19 @@ child.on('exit', (code) => {
 });
 process.on('SIGINT', () => child.kill('SIGINT'));
 process.on('SIGTERM', () => child.kill('SIGTERM'));
+
+function answersOn(onPort) {
+  return new Promise((resolve) => {
+    const probe = net.connect(Number(onPort), '127.0.0.1', () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once('error', () => resolve(false));
+  });
+}
+
+// The port people open answers only once the console behind it does, so devConsoleApp.sh's start never returns into a 502.
+if (sessionApp) {
+  while (!(await answersOn(consolePort))) await new Promise((resolve) => setTimeout(resolve, 100));
+  await serveSessionApp(consolePort);
+}
