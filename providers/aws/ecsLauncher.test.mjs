@@ -220,6 +220,22 @@ test('logTail ends with the stop reason, which explains a task that never ran', 
   assert.equal(logs[logs.indexOf('--log-stream-name') + 1], 'session/session/abc123');
 });
 
+// A session that exited on its own logged why; the console shows the tail's last line as the failure.
+test('logTail ends with the session\'s own last line when its container exited, not ECS\'s exit notice', async () => {
+  const error = 'ERROR: .woodshed/project.yaml: has consoleLinks, which is not a field';
+  const { aws } = fakeAws({
+    'ecs describe-tasks': { tasks: [{ lastStatus: 'STOPPED', stoppedReason: 'Essential container in task exited' }] },
+    'logs get-log-events': { events: [{ message: 'Project repo cloned\n' }, { message: `${error}\n` }] },
+  });
+  assert.equal((await launcher(aws).logTail(ARN)).split('\n').pop(), error);
+
+  const { aws: silent } = fakeAws({
+    'ecs describe-tasks': { tasks: [{ lastStatus: 'STOPPED', stoppedReason: 'Essential container in task exited' }] },
+    'logs get-log-events': { events: [] },
+  });
+  assert.equal(await launcher(silent).logTail(ARN), 'Essential container in task exited');
+});
+
 test('stop by session id finds the task a lost start left running', async () => {
   const { aws, calls } = fakeAws({ 'ecs list-tasks': { taskArns: [ARN] }, 'ecs stop-task': {} });
   const l = launcher(aws);
