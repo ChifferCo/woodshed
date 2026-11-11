@@ -1,8 +1,8 @@
 // Runs the console on this machine with a few made-up sessions, so a change to console/public can be checked in a
 // browser without AWS, GitHub or Docker. Usage: node console/bin/devConsole.mjs [port] [tls ask port]
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
-// DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name, as Woodshed's own
-// app does behind the console's app proxy (scripts/devConsoleApp.sh).
+// DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
+// `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -19,6 +19,9 @@ if (sessionApp && !/^[0-9a-f]{8}$/.test(sessionId)) {
   console.error('dev console: DEV_CONSOLE_SESSION_APP=1 needs the session\'s SESSION_ID');
   process.exit(1);
 }
+const appDomain = (process.env.SESSION_APP_DOMAIN ?? '').trim().toLowerCase();
+// A console from before SESSION_APP_DOMAIN sends none: the app still opens, on any name whose first label is the id.
+if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so any name starting with the session id is let in');
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
 const tlsAskPort = process.argv[3] ? { WOODSHED_CLOUD_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher).
@@ -112,14 +115,15 @@ function freePort() {
 }
 
 // The console refuses a host name it does not know (shared/sameOrigin.mjs), and a session's app name,
-// `<SESSION_ID>.<app domain>`, is known only to the console in front of it. So a request comes in on `port`, and one for
-// loopback or a name whose first label is the session's id reaches the console on a port of its own as if for loopback:
-// an Origin naming the host it came by names loopback too, and any other Origin is still refused. Any other name gets
-// the console's own 421, which keeps a DNS-rebound page out (isKnownHost).
+// `<SESSION_ID>.<SESSION_APP_DOMAIN>`, is known only to the console in front of it. So a request comes in on `port`, and
+// one for loopback or that name reaches the console on a port of its own as if for loopback: an Origin naming the host
+// it came by names loopback too, and any other Origin is still refused. Any other name gets the console's own 421, which
+// keeps a DNS-rebound page out (isKnownHost), `<SESSION_ID>.attacker.example` too.
 const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 function isSessionAppHost(host) {
   const name = String(host ?? '').replace(/:\d+$/, '').toLowerCase();
   if (LOOPBACK_NAMES.has(name)) return true;
+  if (appDomain) return name === `${sessionId}.${appDomain}`;
   const labels = name.split('.');
   return labels.length > 1 && labels[0] === sessionId;
 }
@@ -173,7 +177,7 @@ function serveSessionApp(consolePort) {
   });
   return new Promise((resolve, reject) => {
     front.once('error', reject).listen(Number(port), '127.0.0.1', () => {
-      console.log('dev console: answering as the session\'s app too', { port, consolePort });
+      console.log('dev console: answering as the session\'s app too', { port, consolePort, appDomain: appDomain || null });
       resolve();
     });
   });

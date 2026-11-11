@@ -236,6 +236,8 @@ export function createFleet({
     };
     // A private session fetches its owner's settings from the console's session API at start (sessionApi.mjs).
     if (session.owner) env.SESSION_KIND = 'private';
+    // The session's app answers at `<id>.<appDomain>`; Woodshed's own app (console/bin/devConsole.mjs) lets in that name alone.
+    if (config.appDomain) env.SESSION_APP_DOMAIN = config.appDomain;
     // Every project runs in the default project's image for now, so a session on another one clones its repo at start.
     const project = projectFor(config, session);
     if (!project.default) env.PROJECT_REPO = project.repo;

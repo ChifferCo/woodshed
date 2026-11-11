@@ -147,7 +147,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
   shows what it pushed, as GitHub has it.
 - **Try its app:** **Start app** on the session's rail card (in the pane bar
   while the rail is hidden), then **Open app**, at
-  `https://<session>.woodshed.example.com`.
+  `https://<session>.woodshed.example.com`. The session is told the domain after its id in `SESSION_APP_DOMAIN`
+  (`session/README.md`, "Environment"), for an app that checks the name it is reached by.
 - **Edit its code:** **Editor ↗** in the session's pane bar opens VS Code on its checkout in a new tab, on the
   session's app name, started the first time someone opens it. The project file's `editor` turns it on and off. See "The editor" in `console/README.md`.
 - **Ask a question:** mention the bot in any Slack channel it is in, e.g.
