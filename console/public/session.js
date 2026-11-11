@@ -452,23 +452,25 @@
     const starting = s.status === 'starting' && s.startedAt ? W.startProgress(s).current : null;
     const place = W.linePlace(s, data.sessions);
     const who = cardPerson(s);
-    // The session's project, right after the status word, where the installation has more than one.
-    const head = data.projects?.length > 1 && s.project ? [word, ' · ', h('span', { class: 'rproject', title: `Project ${s.project}` }, s.project)] : word;
-    const sub = starting ? [head, ` · ${starting.short} · ${W.clock(s.startedAt)}`]
-      : place ? [head, ` · ${W.lineText(place)}`]
-      : live ? [head, who && [' · ', who], pauses && [' · ', h('span', { class: 'timer' }, pauses)], ownPlan]
-      : W.isResumable(s) ? [head, ` · ${W.keptLine(s)}`, who && [' · ', who]]
-        : W.isPrivate(s) ? [head, ` · ${W.privateStopLine(s, data.login)}`]
-          : [head, who && [' · ', who]];
+    // Where the installation has more than one project, the card's left edge is its project's colour, and the name
+    // is in the card's tooltip and its link's accessible name, so the colour is never all there is.
+    const project = projectsShown() && s.project ? projectList().find((p) => p.name === s.project) ?? { name: s.project, color: null } : null;
+    const sub = starting ? [word, ` · ${starting.short} · ${W.clock(s.startedAt)}`]
+      : place ? [word, ` · ${W.lineText(place)}`]
+      : live ? [word, who && [' · ', who], pauses && [' · ', h('span', { class: 'timer' }, pauses)], ownPlan]
+      : W.isResumable(s) ? [word, ` · ${W.keptLine(s)}`, who && [' · ', who]]
+        : W.isPrivate(s) ? [word, ` · ${W.privateStopLine(s, data.login)}`]
+          : [word, who && [' · ', who]];
     const href = sessionHref(s);
     return h('div', {
-      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}`,
+      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}`,
       'aria-current': s.id === id ? 'true' : null,
+      title: project ? `Project ${project.name}` : null,
       onclick: (e) => { if (!e.target.closest('a, button')) navigate(href); },
     },
       h('div', { class: 'rtop' },
         live ? h('span', { class: `status is-${st.key}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })) : h('span', { class: `dot ring is-${st.key}`, 'aria-hidden': 'true' }),
-        h('a', { class: 'rname', href, title: s.title }, s.title),
+        h('a', { class: 'rname', href, title: project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() }),
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
@@ -497,6 +499,55 @@
       // A private window keeps the choice for this page only.
     }
     render();
+  }
+
+  // The installation's projects, the default first, each with its colour key. A page kept from before the console sent
+  // colours has the names alone.
+  function projectList() {
+    return (data.projects ?? []).map((p) => (typeof p === 'string' ? { name: p, color: null, default: false } : p));
+  }
+  function projectsShown() {
+    return projectList().length > 1;
+  }
+
+  // The project the rail is filtered to, this viewer's own choice, kept in their browser when it lets us. One that
+  // names a project the console no longer has is All.
+  const PROJECT_KEY = 'woodshed-cloud-rail-project';
+  let savedProject = null;
+  try {
+    savedProject = window.localStorage.getItem(PROJECT_KEY);
+  } catch {
+    // A private window starts on All.
+  }
+  function railProject() {
+    if (!projectsShown()) return null;
+    return window.WoodshedProjectColors.railProject({ saved: savedProject, names: projectList().map((p) => p.name) });
+  }
+  function pickProject(name) {
+    savedProject = name;
+    try {
+      if (name) window.localStorage.setItem(PROJECT_KEY, name);
+      else window.localStorage.removeItem(PROJECT_KEY);
+    } catch {
+      // A private window keeps the choice for this page only.
+    }
+    render();
+  }
+
+  // All, then a chip per project with its colour and how many of the sessions the rail shows are on it. They are the
+  // legend of the cards' edges too. A rail with no sessions has nothing to filter.
+  function projectChips(listed) {
+    if (!projectsShown() || !listed.length) return null;
+    const current = railProject();
+    const counts = window.WoodshedProjectColors.countByProject(listed);
+    const chip = (name, label, n, color) => h('button', {
+      type: 'button', class: `proj-chip${color ? ` proj-${color}` : ''}`, 'aria-pressed': String(current === name), 'data-project': name ?? '',
+      title: name ? `Only the sessions on ${name}` : 'Every project\'s sessions',
+      onclick: () => pickProject(name),
+    }, name && h('span', { class: 'proj-swatch', 'aria-hidden': 'true' }), label, h('span', { class: 'n' }, n));
+    return h('div', { class: 'rail-projects', role: 'group', 'aria-label': 'Project' },
+      chip(null, 'All', listed.length, null),
+      projectList().map((p) => chip(p.name, p.name, counts[p.name] || 0, p.color)));
   }
 
   // Each zone's dot: the colour of what is in it, and a ring for what has stopped.
@@ -673,8 +724,12 @@
   }
 
   function railBody() {
-    const listed = railListing();
-    const empty = !listed.length && h('p', { class: 'rail-empty' }, railMine() ? 'No sessions yet. Start one with New session.' : W.sharedEmptyText(picked));
+    const all = railListing();
+    const onProject = railProject();
+    const listed = onProject ? all.filter((s) => s.project === onProject) : all;
+    const emptyText = all.length && onProject ? `No sessions on ${onProject} here. All shows the other projects'.`
+      : railMine() ? 'No sessions yet. Start one with New session.' : W.sharedEmptyText(picked);
+    const empty = !listed.length && h('p', { class: 'rail-empty' }, emptyText);
     // On a phone the rail is the Shared page, so its status filter is chips above the list; a desktop has the
     // filter in the pane beside it and shows every group.
     const status = !railMine() && narrow.matches ? railStatus() : 'all';
@@ -691,13 +746,16 @@
         zone('stopped', 'Stopped', rest.filter((s) => !W.isLive(s) && !W.needsYou(s) && W.group(s) !== 'finished'))]
       : [zone('unassigned', 'Unassigned', unassigned),
         ...W.GROUPS.filter((g) => status === 'all' || g.key === status).map((g) => zone(g.key, g.title, rest.filter((s) => W.group(s) === g.key)))];
+    // Pull requests are the default project's, so a filter to another project leaves them out.
+    const pullsShown = !onProject || projectList().find((p) => p.name === onProject)?.default;
     return [
+      projectChips(all),
       !railMine() && statusChips(listed, status),
       h('div', { class: 'rail-list' },
         setupNotice(),
         empty,
         zones,
-        railMine() && pullsZone()),
+        railMine() && pullsShown && pullsZone()),
     ].filter(Boolean);
   }
 
@@ -1554,7 +1612,11 @@
       if (slots.rail.firstChild !== slots.railBody) slots.rail.firstChild.remove();
       slots.rail.prepend(top);
     }
+    // The rail's list is drawn again on every refresh: a project chip that had the focus gets it back, so the keyboard
+    // stays where it was.
+    const focusedChip = document.activeElement?.closest?.('.rail-projects') ? document.activeElement.dataset.project ?? null : null;
     slots.railBody.replaceChildren(...railBody());
+    if (focusedChip !== null) slots.railBody.querySelector(`.rail-projects [data-project="${CSS.escape(focusedChip)}"]`)?.focus();
     syncCardMenu();
     // A tab's own page puts what it is in the pane: Shared's sessions on /all, New session on /.
     const tabPage = onMy || onShared;

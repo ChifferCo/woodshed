@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=110 subtitle="Switch, People filter, New session" -->
+<!-- @dsCard group="Cards" height=170 subtitle="Switch, People filter, New session, project chips" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@600;700&display=swap">
 <style>
  body{margin:0;padding:20px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
@@ -7,7 +7,13 @@
  .seg a{display:inline-flex;align-items:center;min-height:30px;padding:0 12px;border-radius:6px;font:600 12.5px "Red Hat Display",system-ui,sans-serif;color:var(--sub);text-decoration:none}
  .seg a.on{background:var(--ground);color:var(--ink);box-shadow:0 1px 2px rgba(27,34,50,.18)}
  .pill{min-height:30px;display:inline-flex;align-items:center;padding:0 9px;border:1px solid var(--line);border-radius:var(--radius-pill);font:600 12px "Red Hat Display",system-ui,sans-serif}
+ .chips{display:flex;flex-wrap:wrap;gap:6px;width:340px}
+ .chip{display:inline-flex;align-items:center;gap:6px;min-height:26px;padding:0 10px;border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--ground);color:var(--sub);font:600 12px "Red Hat Display",system-ui,sans-serif}
+ .chip i{width:8px;height:8px;border-radius:50%}
+ .chip b{font:500 10.5px "JetBrains Mono",ui-monospace,monospace;color:var(--meta)}
+ .chip.on{border-color:var(--ink);color:var(--ink);background:var(--proj-plum-tint)}.chip.on b{color:var(--sub)}
  .new{margin-left:auto;display:inline-flex;align-items:center;min-height:30px;padding:0 10px;border-radius:var(--radius-md);background:var(--action);color:var(--action-ink);font:600 12.5px "Red Hat Display",system-ui,sans-serif;border:1px solid var(--action)}
 </style>
 <div class="head"><span class="seg"><a href="#" class="on">Mine</a><a href="#">Everyone</a></span><span class="new">+ New session</span></div>
 <div class="head"><span class="seg"><a href="#">Mine</a><a href="#" class="on">Everyone</a></span><span class="pill">People ▾</span><span class="new">+ New session</span></div>
+<div class="chips" role="group" aria-label="Project"><span class="chip">All <b>9</b></span><span class="chip"><i style="background:var(--proj-teal)"></i>api <b>6</b></span><span class="chip on" aria-pressed="true"><i style="background:var(--proj-plum)"></i>web <b>3</b></span></div>

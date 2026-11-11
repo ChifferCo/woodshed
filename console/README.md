@@ -12,7 +12,7 @@ one row: a **Mine | Everyone** switch, **+ New session**, and on Everyone a **Pe
 of its own: `/all` (Everyone) shows the shared sessions in the pane, with a status filter, and `/` (Mine) shows New
 session. **People** filters Everyone by who started a session (it takes several people; `?by=<login>,<login>` in
 the URL). Your avatar menu (My settings, the console's pages, Sign out) is at the foot of the rail and opens upward.
-A card shows the title and its tag (on Everyone, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. How long it ran and who started it are under its Details; the app's button and the
+A card shows the title and its tag (on Everyone, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. On a console with more than one project, each card's left edge is its project's colour (the name is in its tooltip), and a row of chips under the head (**All**, then each project with its colour and count) filters the rail to one project; the browser keeps the pick (`woodshed-cloud-rail-project`), and one naming a project that is gone is All. How long it ran and who started it are under its Details; the app's button and the
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
 turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones assigned
@@ -1430,6 +1430,16 @@ it is no longer dropped), in the default project's session image and databases, 
 database check staying on the default project. The
 console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`
 when GitHub did not answer.
+
+Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
+the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,
+`{"name", "color"}`), checked against the palette, and refused when another repo has that colour, whose swatch is
+disabled. A repo nobody picked a colour for, the installation's own as well as an added one, takes the first colour no
+repo has, in the order the repos are listed; a pick pins every repo's colour as it shows then, so the one freed does
+not move to another. Past six repos the rest have no colour. The picks are kept in `state.json` under `projectColors`,
+and the console logs `projects: colour set` with the project, the colours and who set it. Removing a repo drops its
+pick (`projects: colour forgotten`), so a repo added again under that name takes a free colour, not one another repo has
+had since.
 
 Below the cards, **Sessions holding data** lists, checked again every minute:
 - **Stalled**, each with why and its fix behind a typed confirm: a shared
