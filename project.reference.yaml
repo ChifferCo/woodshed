@@ -3,7 +3,7 @@
 # is. A name that is not a field here is refused, so a typo is never read as "none". docs/reference.md, "The project file",
 # says what reads each field; test/projectReference.test.mjs keeps this file naming every field the parser knows.
 
-# Required. The format this Woodshed Cloud reads.
+# Required. The format this version of Woodshed reads.
 version: 1
 
 # Default: {installs: []}. The installs the session image runs, and a session runs again where a branch changed their
@@ -113,7 +113,7 @@ consoleLinks: false
 # public issues and comments. Shared sessions and questions use the App's token, whatever this says.
 githubAccess: repo
 
-# Default: null. Files in the repo: its rules for sessions, added after Woodshed Cloud's own, and its environment notes.
+# Default: null. Files in the repo: its rules for sessions, added after Woodshed's own, and its environment notes.
 rules: .woodshed/rules.md
 setup: .woodshed/setup.md
 

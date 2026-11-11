@@ -45,7 +45,7 @@ const QA_COMMENT = {
   ].join('\n'),
 };
 const BODY = [
-  'Started by @ana via Woodshed Cloud.', '', '## Summary', '- Adds a thing', '',
+  'Started by @ana via Woodshed.', '', '## Summary', '- Adds a thing', '',
   'Risk: Medium — changes a shared helper.', '',
   '## Decisions',
   '- Kept the 30 s timeout rather than 60 s.',
@@ -187,7 +187,7 @@ test('with nothing configured, the brief says so instead of waiting for or quoti
   assert.match(b.comment, /### Checks\nWith every other check green\./);
   const red = brief({ runs: [...shards, { ...qaCheck('Fail: 1 of 2', 'failure') }], gates: null, qa: null });
   assert.match(red.comment, /Not all green: 1 check, such as `QA` failure\./, 'without the gates, a QA check counts as any other');
-  assert.match(b.comment, /<sub>Quoted from the PR body by Woodshed Cloud/);
+  assert.match(b.comment, /<sub>Quoted from the PR body by Woodshed/);
   assert.equal(b.canMerge, false);
 });
 
@@ -211,7 +211,7 @@ test('a mergeRisk check under another name is the one the brief names', () => {
 test('the brief\'s own words name the gates the project file gave', () => {
   const { comment } = brief();
   assert.match(comment, /### Checks\nApproved by the AI review, with the e2e suite and every other check green\./);
-  assert.match(comment, /<sub>Quoted from the AI review, the Merge risk and QA checks and the PR body by Woodshed Cloud/);
+  assert.match(comment, /<sub>Quoted from the AI review, the Merge risk and QA checks and the PR body by Woodshed/);
 });
 
 test('"Can be merged" needs Low, a QA pass and every check green', () => {

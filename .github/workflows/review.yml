@@ -167,7 +167,7 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Shared Woodshed Cloud sessions open pull requests as this App; the action refuses bots it is not told of.
+          # Shared Woodshed sessions open pull requests as this App; the action refuses bots it is not told of.
           allowed_bots: ${{ inputs.allowed-bots || 'woodshed-cloud' }}
           # One comment on the pull request: a live checklist while the review runs, then the full review.
           track_progress: true

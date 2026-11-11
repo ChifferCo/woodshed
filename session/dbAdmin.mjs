@@ -147,7 +147,7 @@ function newPassword() {
 
 // A password goes into SQL as a literal, which no driver can bind; ours are hex, and anything else is refused.
 function checkPassword(password, owner) {
-  if (!/^[0-9a-f]{32,128}$/.test(password ?? '')) throw refuse(`the password saved for ${owner} is not one Woodshed Cloud made`);
+  if (!/^[0-9a-f]{32,128}$/.test(password ?? '')) throw refuse(`the password saved for ${owner} is not one Woodshed made`);
   return password;
 }
 

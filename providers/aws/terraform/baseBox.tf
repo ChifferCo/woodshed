@@ -45,7 +45,7 @@ data "aws_iam_policy_document" "base_box" {
       values   = [aws_ecs_cluster.main.arn]
     }
     # RunTask supports no condition key for subnets or security groups, so IAM cannot pin a task's
-    # network. The account holding nothing but Woodshed Cloud is what keeps sessions off other networks.
+    # network. The account holding nothing but Woodshed is what keeps sessions off other networks.
     # Running the db-admin task gives the console no root password: a run can change its command and environment,
     # and dbAdmin.mjs takes neither a host nor any code from them (ecs.tf).
   }
@@ -173,7 +173,7 @@ data "aws_iam_policy_document" "base_box" {
   }
 
   # The page's one list call (providers/aws/secretStore.mjs). ListSecrets has no resource-level permissions, so this is every
-  # secret's name and dates, never a value: the account holds nothing but Woodshed Cloud.
+  # secret's name and dates, never a value: the account holds nothing but Woodshed.
   statement {
     sid       = "ListTheSecrets"
     actions   = ["secretsmanager:ListSecrets"]
@@ -315,7 +315,7 @@ resource "aws_ssm_document" "configure_base_box" {
   document_format = "JSON"
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Write the Woodshed Cloud base box's stack config and (re)start the stack"
+    description   = "Write the Woodshed base box's stack config and (re)start the stack"
     mainSteps = [{
       action = "aws:runShellScript"
       name   = "configureBaseBox"

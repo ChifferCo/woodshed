@@ -101,14 +101,14 @@ export function commentConsoleUrl({ publicUrl, project, consoleLinks }) {
 export function startComment({ session, publicUrl, maxRunning, appDomain = '', linkQuery = null }) {
   if (session.status === 'failed') return failedComment({ session, publicUrl, linkQuery });
   const head = session.status === 'queued'
-    ? `Queued a Woodshed Cloud session for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
-    : `Started a Woodshed Cloud session for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
+    ? `Queued a Woodshed session for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
+    : `Started a Woodshed session for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
   const links = publicUrl
     ? [
       `Watch it and type into it: ${sessionLink(publicUrl, session.id, linkQuery)}`,
       ...(appDomain ? [`Its app, once started from that page: https://${session.id}.${appDomain}/`] : []),
     ]
-    : ['Watch it and type into it from Woodshed Cloud.'];
+    : ['Watch it and type into it from the console.'];
   return [
     head,
     '',
@@ -124,9 +124,9 @@ export function startComment({ session, publicUrl, maxRunning, appDomain = '', l
  */
 export function resumeComment({ session, publicUrl, linkQuery = null }) {
   return [
-    `Resumed the Woodshed Cloud session on \`${session.branch}\` for @${session.resumedBy}, with its conversation${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`,
+    `Resumed the Woodshed session on \`${session.branch}\` for @${session.resumedBy}, with its conversation${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`,
     '',
-    publicUrl ? `Watch it and type into it: ${sessionLink(publicUrl, session.id, linkQuery)}` : 'Watch it and type into it from Woodshed Cloud.',
+    publicUrl ? `Watch it and type into it: ${sessionLink(publicUrl, session.id, linkQuery)}` : 'Watch it and type into it from the console.',
   ].join('\n');
 }
 
@@ -143,7 +143,7 @@ export function refusalComment({ login, label, unlabeled, member, publicUrl }) {
     ask = `Ask an admin to add you to the console${publicUrl ? ` (${publicUrl})` : ''} and turn on "Sessions from GitHub" for you.`;
   }
   return [
-    `@${login} can't start Woodshed Cloud sessions from GitHub yet, so nothing started${unlabeled ? ` and the \`${label}\` label was taken off` : ''}.`,
+    `@${login} can't start Woodshed sessions from GitHub yet, so nothing started${unlabeled ? ` and the \`${label}\` label was taken off` : ''}.`,
     '',
     ask,
   ].join('\n');
@@ -156,7 +156,7 @@ export function refusalComment({ login, label, unlabeled, member, publicUrl }) {
  */
 export function failedComment({ session, publicUrl, linkQuery = null }) {
   return [
-    `The Woodshed Cloud session for @${session.startedBy} failed to start. The console shows why${publicUrl ? `: ${sessionLink(publicUrl, session.id, linkQuery)}` : '.'}`,
+    `The Woodshed session for @${session.startedBy} failed to start. The console shows why${publicUrl ? `: ${sessionLink(publicUrl, session.id, linkQuery)}` : '.'}`,
     '',
     `Add the \`woodshed\` label again, or comment \`/woodshed <message>\`, to try again.`,
   ].join('\n');
@@ -1222,7 +1222,7 @@ export function createFleet({
   // The project file needs a database engine this installation does not host: said once on the issue, as a refusal.
   async function refuseForDatabases({ number, login, trigger }, why, gh = github) {
     console.warn('fleet: trigger refused, its databases are not hosted', { number, login, trigger, why });
-    const posted = await safely('refusal comment', () => gh.comment(number, `Woodshed Cloud cannot start a session here: ${why}.`));
+    const posted = await safely('refusal comment', () => gh.comment(number, `Woodshed cannot start a session here: ${why}.`));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();

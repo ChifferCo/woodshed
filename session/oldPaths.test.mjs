@@ -11,10 +11,10 @@ const PREFIX = path.relative(TOP, WOODSHED);
 const SCANNED = PREFIX ? [PREFIX, '.github', '.woodshed', 'scripts', 'CLAUDE.md'] : ['.'];
 const own = (rel) => `:!${PREFIX ? `${PREFIX}/` : ''}${rel}`;
 
-// Woodshed Cloud lived at scripts/aws/woodshedCloud, and its images at /opt/scripts/aws/woodshedCloud, until it moved
+// Woodshed lived at scripts/aws/woodshedCloud, and its images at /opt/scripts/aws/woodshedCloud, until it moved
 // to woodshed/ (#26836). The image's compatibility symlink is gone, so a path naming the old place would fail only
 // where it runs, in AWS.
-test('nothing names Woodshed Cloud\'s old paths', () => {
+test('nothing names Woodshed\'s old paths', () => {
   // The sync test keeps an old status line on purpose: a session from an older image still sends one.
   const grep = spawnSync('git', ['-C', TOP, 'grep', '-n', '-e', '/opt/scripts/aws', '-e', 'scripts/aws/woodshedCloud', '--',
     ...SCANNED, own('session/oldPaths.test.mjs'), own('session/settingsSync.test.mjs')],

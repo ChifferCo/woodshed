@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Woodshed Cloud session image: everything one Claude session needs except the
+# Woodshed session image: everything one Claude session needs except the
 # databases, which it reaches over the network. Build from the repo root:
 #
 #   bash woodshed/session/stageDeps.sh woodshed-deps    # also writes woodshed-deps.editor and woodshed-deps.installs
@@ -191,7 +191,7 @@ RUN --mount=type=bind,source=woodshed-deps.installs,target=/tmp/woodshed-install
 # Copied under the repo's own layout so the session's relative imports of woodshed/shared/ resolve the same way here
 # as they do in a checkout.
 COPY --chown=node:node woodshed/session/ /opt/woodshed/session/
-# What Woodshed and Woodshed Cloud share, whole: the review feature, whose page and server run in statusd
+# What the shed and Woodshed's sessions share, whole: the review feature, whose page and server run in statusd
 # (session/reviewShed), the pane classifier, the project file's reader and the rest. Its tests and fixtures stay out
 # (Dockerfile.dockerignore).
 COPY --chown=node:node woodshed/shared/ /opt/woodshed/shared/

@@ -22,7 +22,7 @@ function fn(name) {
 // woodshed/shared/, where the project file's reader lives: the image's SHARED_DIR.
 const SHARED_DIR = path.resolve(SESSION_DIR, '../shared');
 
-// A repo whose project file names the rules and notes its sessions add to Woodshed Cloud's own.
+// A repo whose project file names the rules and notes its sessions add to Woodshed's own.
 const PROJECT_RULE = 'Run `make check` before every push.';
 const PROJECT_NOTE = 'Before anything that needs `vendor/`, wait for the install.';
 const REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-project-'));
@@ -79,7 +79,7 @@ test('a review-only session writes no prompt, and claude starts with none', () =
   assert.match(out, /Prompt skipped/);
   assert.match(out, /after writePrompt/);
   assert.equal(prompt, null);
-  assert.match(rules, /You are running in a Woodshed Cloud session/);
+  assert.match(rules, /You are running in a Woodshed session/);
   assert.match(fn('startClaude'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+tmux send-keys -t claude "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)" Enter/);
 });
 
@@ -90,8 +90,8 @@ test('attached files are listed under the prompt', () => {
 
 test('the first message is the request alone, and the rules are written apart for the system prompt', () => {
   const { prompt, rules } = writePrompt({ attachments: false });
-  assert.doesNotMatch(prompt, /You are running in a Woodshed Cloud session/);
-  assert.match(rules, /You are running in a Woodshed Cloud session/);
+  assert.doesNotMatch(prompt, /You are running in a Woodshed session/);
+  assert.match(rules, /You are running in a Woodshed session/);
   assert.match(rules, /branch `woodshed\/x`/);
   assert.match(rules, /Started by @octocat/);
   assert.doesNotMatch(rules, /\{\{/);
@@ -104,10 +104,10 @@ test('a shared session\'s rules drop the private lines, and a private one\'s dro
   assert.match(rules, /Someone may be watching this terminal/);
 });
 
-test('the project\'s rules follow Woodshed Cloud\'s, and its notes go inline in a shared session and in a file for a private one', () => {
+test('the project\'s rules follow Woodshed\'s, and its notes go inline in a shared session and in a file for a private one', () => {
   const shared = writePrompt({ attachments: false, kind: 'shared' });
   assert.ok(shared.rules.includes(PROJECT_RULE));
-  assert.ok(shared.rules.indexOf('You are running in a Woodshed Cloud session') < shared.rules.indexOf(PROJECT_RULE));
+  assert.ok(shared.rules.indexOf('You are running in a Woodshed session') < shared.rules.indexOf(PROJECT_RULE));
   assert.ok(shared.rules.includes(`- ${PROJECT_NOTE}`));
   assert.doesNotMatch(shared.rules, /Environment notes:/);
   const own = writePrompt({ attachments: false });
@@ -141,7 +141,7 @@ test('a project with a review tag tells its sessions to end each push\'s last co
 test('a project file with consoleLinks: false keeps the session\'s link out of its pull requests, on any repo', () => {
   const url = 'https://console.example/s/0a1b2c3d';
   const linked = writePrompt({ attachments: false, sessionUrl: url });
-  assert.ok(linked.rules.includes(`Started by @octocat via [Woodshed Cloud](${url}).`), 'left out, the link stays');
+  assert.ok(linked.rules.includes(`Started by @octocat via [Woodshed](${url}).`), 'left out, the link stays');
   assert.doesNotMatch(linked.out, /Session link left out/);
 
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-nolinks-'));
@@ -150,7 +150,7 @@ test('a project file with consoleLinks: false keeps the session\'s link out of i
     fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ consoleLinks: false }));
     const unlinked = writePrompt({ attachments: false, sessionUrl: url, repoDir: repo });
     assert.match(unlinked.out, /Session link left out of pull requests \(the project file's consoleLinks\)/);
-    assert.ok(unlinked.rules.includes('Started by @octocat via Woodshed Cloud.'));
+    assert.ok(unlinked.rules.includes('Started by @octocat via Woodshed.'));
     assert.doesNotMatch(unlinked.rules, /console\.example/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
@@ -172,7 +172,7 @@ test('a consoleLinks read that fails never stops the start: the link stays', () 
   assert.doesNotMatch(out, /ERROR/);
 });
 
-test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no notes', (t) => {
+test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (t) => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-noproject-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
   // A repository whose default branch, `trunk`, has no project file, as a session's checkout of another repo would be.
@@ -181,7 +181,7 @@ test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no not
   git('commit', '-q', '--allow-empty', '-m', 'empty');
   git('update-ref', 'refs/remotes/origin/trunk', 'HEAD');
   const { rules, setup } = writePrompt({ attachments: false, kind: 'shared', repoDir, defaultBranch: 'trunk' });
-  assert.match(rules, /You are running in a Woodshed Cloud session/);
+  assert.match(rules, /You are running in a Woodshed session/);
   assert.match(rules, /Started by @octocat/);
   assert.ok(!rules.includes(PROJECT_RULE), 'no project rules');
   assert.doesNotMatch(rules, /\{\{/);

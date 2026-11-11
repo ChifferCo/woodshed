@@ -1,4 +1,4 @@
-// Woodshed Cloud's one way in from the internet. GitHub posts its webhooks to
+// Woodshed's one way in from the internet. GitHub posts its webhooks to
 // this function's URL; it checks the signature, keeps only the events the
 // console acts on, and queues a small message the console long-polls for. The
 // console itself never takes an inbound connection.

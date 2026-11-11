@@ -32,15 +32,15 @@ test('the variables lines need and the environment leaves empty are named once e
 
 test('an env file is the secret, the owner\'s own lines, then the project\'s, so the project\'s win', () => {
   assert.equal(envFileText({ base: 'A=1', own: 'B=2', lines: ['A={{X}}', 'K={{K?}}'], env: { X: '3' } }),
-    'A=1\n\n# Your own lines, from My settings\nB=2\n\n# Woodshed Cloud overrides\nA=3\n');
-  assert.equal(envFileText({ base: '', own: '', lines: [], env: {} }), '\n\n# Woodshed Cloud overrides\n\n');
+    'A=1\n\n# Your own lines, from My settings\nB=2\n\n# Woodshed overrides\nA=3\n');
+  assert.equal(envFileText({ base: '', own: '', lines: [], env: {} }), '\n\n# Woodshed overrides\n\n');
 });
 
 test('a wrong project file names the field', () => {
   const full = (overrides) => parseProject({ ...EMPTY_PROJECT, ...overrides });
   const db = { engine: 'postgres', dir: '.', migrate: null, seed: null, envFiles: [], paths: [], migrations: null, user: null, name: null };
   assert.throws(() => parseProject([]), /the file must be a mapping of version, dependencies/);
-  assert.throws(() => parseProject({ ...EMPTY_PROJECT, version: 3 }), /version must be 1, the format this Woodshed Cloud reads \(it is 3\)/);
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, version: 3 }), /version must be 1, the format this version of Woodshed reads \(it is 3\)/);
   assert.throws(() => full({ dependencies: ['api'] }), /dependencies must be a mapping of installs/);
   assert.throws(() => full({ envFiles: [{ path: '../x', secret: null, lines: [] }] }), /envFiles\[0\]\.path must be a path inside the repo/);
   assert.throws(() => full({ envFiles: [{ path: 'x', secret: 'Api_Env', lines: [] }] }), /envFiles\[0\]\.secret must be lowercase/);
@@ -285,7 +285,7 @@ test('the CLI writes the env files from their secrets\' variables, and prints th
   assert.equal(cli(['file', 'setup']), '');
   assert.equal(cli(['write-env-files'], { API_ENV: 'SECRET=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"MINE=1"}' }), 'api/.env (base: 8 bytes, own lines)\n');
   assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'),
-    'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed Cloud overrides\nDB=app\n');
+    'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed overrides\nDB=app\n');
 });
 
 test('check prints what a session takes from the project file, and fails as a start would', (t) => {

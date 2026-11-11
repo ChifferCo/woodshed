@@ -1,4 +1,4 @@
-The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and its rail. Build mocks and console changes from these tokens; do not add a palette of your own.
+The look of the Woodshed console (`woodshed/console/public/style.css`) and its rail. Build mocks and console changes from these tokens; do not add a palette of your own.
 
 ## Content fundamentals
 

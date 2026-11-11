@@ -1,9 +1,9 @@
-# Woodshed Cloud: debugging and the rules for secrets
+# Woodshed: debugging and the rules for secrets
 
 Setting Woodshed up rather than changing or debugging it? Follow `docs/self-host.md` instead: most of this file is
 about running an installation, AWS's above all.
 
-Read this when something on Woodshed Cloud is not working, or before changing
+Read this when something on Woodshed is not working, or before changing
 what a session is given. The READMEs explain what each piece does and how it
 is applied (`docs/reference.md` here, then `console/`, `session/` and
 `providers/aws/`'s own); this file says where to look when it breaks. Do not restate them here.
@@ -151,7 +151,7 @@ secrets.
   `members: can be assigned changed` and `members: sessions from GitHub changed` say who turned a switch. Assign answers 409
   `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session and a
   question from Slack cannot be assigned.
-- **A label or /woodshed comment got a "can't start Woodshed Cloud sessions from GitHub yet" reply.** Their Sessions from
+- **A label or /woodshed comment got a "can't start Woodshed sessions from GitHub yet" reply.** Their Sessions from
   GitHub is off on People: the console logs `fleet: trigger ignored, no sessions from GitHub`, and `fleet: label removal
   failed` when GitHub kept the label. The same person sees no Everyone tab, and a shared session's link answers 404 for them.
 - **An issue's assignee or project status did not follow its session.** The console logs `issueTracking: issue marked
@@ -736,7 +736,7 @@ cards. Pull request chips show without their state or checks, since polling GitH
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. Add a session to `devConsole.mjs` to cover another state.
-A Woodshed Cloud session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
+A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 
 When a change needs data the console gets from somewhere a session cannot reach (GitHub's pull request state and

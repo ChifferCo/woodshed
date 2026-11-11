@@ -344,7 +344,7 @@ function briefComment({ pull, mergeRisk, riskLine, qa, qaComment, report, risk, 
     '### Checks',
     checksText({ green, pending, words }),
     '',
-    `<sub>Quoted from ${words.sources} by Woodshed Cloud, which works out none of it. Kept up to date in place.</sub>`,
+    `<sub>Quoted from ${words.sources} by Woodshed, which works out none of it. Kept up to date in place.</sub>`,
   ].join('\n');
 }
 

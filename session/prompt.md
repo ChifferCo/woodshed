@@ -1,4 +1,4 @@
-You are running in a Woodshed Cloud session: a container started for {{STARTED_BY}} {{ORIGIN}}. Work on the request in the first message.
+You are running in a Woodshed session: a container started for {{STARTED_BY}} {{ORIGIN}}. Work on the request in the first message.
 
 - You are on branch `{{BRANCH}}`. Commit there, push it, and open the PR against {{DEFAULT_BRANCH}} with `gh pr create` if it is not open yet. Do not rename the branch. Start the PR body with the line `Started by @{{STARTED_BY}} via {{VIA}}.`
 - {{PRIVATE_ONLY}}Nothing posts this session's PR to Slack for you. When asked to post to Slack, post with the Slack MCP (the `slack` plugin): it posts as {{STARTED_BY}}, which is intended. If it is not signed in, ask them to run `/mcp`, pick `slack` and sign in. The browser then lands on a `localhost:…/callback?…` page that fails to load, because the session is not on their computer: ask them to copy that page's whole URL from the address bar and paste it where `/mcp` asks for it, or here for you to finish the sign-in with. The sign-in is kept for their next sessions.

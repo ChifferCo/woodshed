@@ -20,7 +20,7 @@ Rules:
 - **Nothing here imports from outside `woodshed/shared/`.** What a module needs from its host is passed in, as
   `review/` already does with the shed's `ctx`. That keeps this folder liftable on its own.
 - **It ships whole.** The shed's `install.sh` installs every `*.mjs` here to `~/woodshed/woodshed/shared/` on the box,
-  and both Woodshed Cloud images copy the folder to `/opt/woodshed/shared/`. Tests, fixtures and Markdown stay behind.
+  and both Woodshed images copy the folder to `/opt/woodshed/shared/`. Tests, fixtures and Markdown stay behind.
 - **Paths mirror the repo** on the box and in the image, so `../../../woodshed/shared/x.mjs` from the shed resolves the
   same everywhere.
 - **Tests run with the shed's:** `install.sh --check` runs every `*.test.mjs` here, on the box too, and so does

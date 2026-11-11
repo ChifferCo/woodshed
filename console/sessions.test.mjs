@@ -23,7 +23,7 @@ test('parseCommand reads /woodshed at the start of a comment', () => {
 test('parseCommand ignores everything else', () => {
   assert.equal(parseCommand('please run /woodshed'), null);
   assert.equal(parseCommand('/woodshedding is fun'), null);
-  assert.equal(parseCommand('Started a Woodshed Cloud session. Comment `/woodshed <message>` here.'), null);
+  assert.equal(parseCommand('Started a Woodshed session. Comment `/woodshed <message>` here.'), null);
   assert.equal(parseCommand(undefined), null);
 });
 

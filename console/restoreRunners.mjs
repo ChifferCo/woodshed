@@ -87,7 +87,7 @@ export function migrationStem(name) {
 }
 
 function ident(name) {
-  if (!/^[a-z0-9_]{1,63}$/.test(name)) throw new Error(`not a database name Woodshed Cloud makes: ${name}`);
+  if (!/^[a-z0-9_]{1,63}$/.test(name)) throw new Error(`not a database name Woodshed makes: ${name}`);
   return `"${name}"`;
 }
 

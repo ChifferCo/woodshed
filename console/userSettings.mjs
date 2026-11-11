@@ -259,7 +259,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     requireFile(key);
     const value = checkFile(text);
     if (!value) return resetFile(login, key);
-    await secrets.save(userSecretName(login, key), value, `Woodshed Cloud: @${login}'s ${FILES[key].label}, for their My Woodshed sessions only`);
+    await secrets.save(userSecretName(login, key), value, `Woodshed: @${login}'s ${FILES[key].label}, for their My Woodshed sessions only`);
     const record = recordFor(login);
     touch(login, { files: { ...record?.files, [key]: new Date(now()).toISOString() } });
     console.log('userSettings: file saved', { login, key, bytes: Buffer.byteLength(value) });
@@ -284,7 +284,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   /** @param {{name: string, email: string}} [identity]  only on connecting; a refresh keeps what they had */
   async function saveGitHub(login, credentials, identity) {
     requireSecrets();
-    await secrets.save(userSecretName(login, GITHUB), JSON.stringify(credentials), `Woodshed Cloud: @${login}'s GitHub user token, for their My Woodshed sessions only`);
+    await secrets.save(userSecretName(login, GITHUB), JSON.stringify(credentials), `Woodshed: @${login}'s GitHub user token, for their My Woodshed sessions only`);
     const github = recordFor(login)?.github;
     touch(login, { github: { ...github, connectedAt: github?.connectedAt ?? new Date(now()).toISOString(), ...identity } });
   }
@@ -323,7 +323,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   async function setClaudeToken(login, value) {
     requireSecrets();
     const token = checkClaudeToken(value);
-    await secrets.save(userSecretName(login, CLAUDE_TOKEN), token, `Woodshed Cloud: @${login}'s Claude token, for their My Woodshed sessions only`);
+    await secrets.save(userSecretName(login, CLAUDE_TOKEN), token, `Woodshed: @${login}'s Claude token, for their My Woodshed sessions only`);
     touch(login, { claudeTokenAt: new Date(now()).toISOString() });
     console.log('userSettings: Claude token saved', { login });
   }
@@ -338,7 +338,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   async function setCodexAuth(login, value) {
     requireSecrets();
     const auth = checkCodexAuth(value);
-    await secrets.save(userSecretName(login, CODEX_AUTH), auth, `Woodshed Cloud: @${login}'s Codex sign-in, for their My Woodshed Codex sessions only`);
+    await secrets.save(userSecretName(login, CODEX_AUTH), auth, `Woodshed: @${login}'s Codex sign-in, for their My Woodshed Codex sessions only`);
     touch(login, { codexAuthAt: new Date(now()).toISOString() });
     console.log('userSettings: Codex sign-in saved', { login, apiKey: !auth.startsWith('{') });
   }

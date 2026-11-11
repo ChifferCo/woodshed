@@ -251,7 +251,7 @@ test('a project file that cannot be read holds the pull request, rather than pos
 
 test('a pull request that gives up waiting gets a comment tagging whoever started its session', async () => {
   const { announcer, github, session, dropped, gaveUp, advance } = setup({
-    reviews: [], runs: allShards('skipped'), pull: { body: 'Started by @octocat via [Woodshed Cloud](https://x/s/1).\n\nCloses #26385' },
+    reviews: [], runs: allShards('skipped'), pull: { body: 'Started by @octocat via [Woodshed](https://x/s/1).\n\nCloses #26385' },
   });
   await announcer.track(session);
   advance(1000 * 60 * 60 * 24 * 30);
