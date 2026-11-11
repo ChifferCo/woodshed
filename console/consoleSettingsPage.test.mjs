@@ -1,0 +1,106 @@
+// The Console settings page's Repos card, run from public/consoleSettings.js the way a page loads it, on a tiny DOM.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+
+const source = fs.readFileSync(new URL('./public/consoleSettings.js', import.meta.url), 'utf8');
+
+function element(tag) {
+  return {
+    tag, attrs: {}, listeners: {}, children: [], className: '',
+    setAttribute(k, v) { this.attrs[k] = v; },
+    addEventListener(k, fn) { this.listeners[k] = fn; },
+    append(c) { this.children.push(c); },
+    replaceChildren(...c) { this.children = c; },
+  };
+}
+
+function textOf(el) {
+  return typeof el === 'string' ? el : el.children.map(textOf).join('');
+}
+
+function walk(el, out = []) {
+  if (typeof el === 'string') return out;
+  out.push(el);
+  for (const c of el.children) walk(c, out);
+  return out;
+}
+
+const tick = () => new Promise((r) => setImmediate(r));
+
+async function loadPage(answer) {
+  const app = element('div');
+  const posted = [];
+  const confirms = [];
+  const h = (tag, attrs, ...children) => {
+    const el = element(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === 'class') el.className = v;
+      else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+      else el.setAttribute(k, v === true ? '' : String(v));
+    }
+    for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'object' ? c : String(c));
+    return el;
+  };
+  const W = {
+    h, nav: () => element('nav'), providerWords: {},
+    getJson: async () => structuredClone(answer),
+    postJson: async (path, body) => { posted.push({ path, body }); return { projects: answer.projects.map((p) => (p.name === body.name ? { ...p, slackChannel: body.channel } : p)) }; },
+    confirmChange: (opts) => { confirms.push(opts); },
+  };
+  const context = vm.createContext({
+    window: { Woodshed: W }, console, setInterval: () => 0, Date,
+    document: { getElementById: () => app, activeElement: null },
+  });
+  vm.runInContext(source, context);
+  await tick();
+  return { app, posted, confirms };
+}
+
+const ANSWER = {
+  settings: [],
+  slack: { channel: 'C0CONSOLE01', canPost: true },
+  projects: [
+    { name: 'r', repo: 'acme/app', default: true, removable: false, sessions: 0, slackChannel: '' },
+    { name: 'api', repo: 'acme/api', default: false, removable: true, addedBy: 'mia-dev', sessions: 0, slackChannel: 'C0APIPRS01' },
+  ],
+  data: null,
+};
+
+const channelInputs = (app) => walk(app).filter((e) => e.tag === 'input' && /^Slack channel for /.test(e.attrs['aria-label'] ?? ''));
+
+test('each repo on the Repos card has its own channel field, saying where its pull requests go', async () => {
+  const { app } = await loadPage(ANSWER);
+  const inputs = channelInputs(app);
+  assert.deepEqual(inputs.map((i) => [i.attrs['aria-label'], i.attrs.value]), [['Slack channel for acme/app', ''], ['Slack channel for acme/api', 'C0APIPRS01']]);
+  const text = textOf(app);
+  assert.match(text, /PRs to the Slack card's channel/);
+  assert.match(text, /PRs to C0APIPRS01/);
+});
+
+test('a channel typed into a row is saved for that repo behind the confirm, and a name is refused before it', async () => {
+  const { app, posted, confirms } = await loadPage(ANSWER);
+  const [own] = channelInputs(app);
+  own.listeners.change({ target: { value: '#acme-prs' } });
+  const [bad] = channelInputs(app);
+  assert.equal(bad.attrs['aria-invalid'], 'true');
+  const saveOf = () => walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Save');
+  assert.equal(saveOf().attrs.disabled, '', 'Save is off for a name');
+
+  channelInputs(app)[0].listeners.change({ target: { value: ' C0ACMEPRS1 ' } });
+  assert.equal(saveOf().attrs.disabled, undefined);
+  saveOf().listeners.click();
+  assert.equal(confirms.length, 1);
+  assert.equal(confirms[0].after, 'C0ACMEPRS1');
+  await confirms[0].run();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects/slack-channel', body: { name: 'r', channel: 'C0ACMEPRS1' } }]);
+  assert.match(textOf(app), /PRs to C0ACMEPRS1/);
+});
+
+test('with no Slack on the console, the rows have no channel field', async () => {
+  const { app } = await loadPage({ ...ANSWER, slack: null });
+  assert.deepEqual(channelInputs(app), []);
+});

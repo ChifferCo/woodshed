@@ -75,6 +75,7 @@
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
+//   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
 //   GET  /api/webhook/deliveries GitHub's last 10 deliveries to the App's webhook, with their status codes
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
@@ -186,6 +187,7 @@ const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
+const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -1376,7 +1378,7 @@ export function createHandler({
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
-      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null })) ?? null,
+      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
       palette: projectColorsShared.PALETTE,
       data: heldData ? await heldData.report() : null,
     });
@@ -1396,6 +1398,11 @@ export function createHandler({
       if (pathname === PROJECT_COLOR_PATH) {
         if (!projectColors) return reply(res, 404, { error: 'this console keeps no project colours' });
         projectColors.set({ name: body.name, color: body.color, by: login ?? 'console' });
+      } else if (pathname === PROJECT_CHANNEL_PATH) {
+        if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+        if (!slack) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+        if (!addedProjects.view().some((p) => p.name === body.name)) return reply(res, 400, { error: `There is no project called ${body.name}.` });
+        slack.setProjectChannel({ project: body.name, channel: body.channel, by: login ?? 'console' });
       } else if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         const by = login ?? 'console';
@@ -1403,6 +1410,8 @@ export function createHandler({
         else {
           addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
+          // A repo added again later under the same name starts on the console's channel.
+          slack?.setProjectChannel({ project: body.name, channel: '', by });
         }
       } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
@@ -1474,7 +1483,7 @@ export function createHandler({
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
-    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH) return consoleSettingsWrite(req, res, pathname, login);
+    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
