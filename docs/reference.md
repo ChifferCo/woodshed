@@ -32,6 +32,8 @@ Imports go one way, and `test/layout.test.mjs` checks every one:
 `woodshed-check.yml` runs it, with every other test in this folder, on every change under `woodshed/`.
 
 `CLAUDE.md` in this folder is for debugging: where every piece lives, what each secret is for, and fixes by symptom.
+`docs/self-host.md` is for setting Woodshed up, in order, with a check after each step; `AGENTS.md` points a coding agent
+to it or to `CLAUDE.md`, by what it was asked.
 
 ## Providers
 

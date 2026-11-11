@@ -35,6 +35,15 @@ test('install.sh parses and sourcing it runs nothing', () => {
   assert.equal(runInstallFunction('echo sourced'), 'sourced\n');
 });
 
+test('with no terminal, a question fails with what to set instead of waiting', { skip: !fs.existsSync('/usr/bin/setsid') && 'no setsid to drop the terminal' }, () => {
+  // setsid leaves the controlling terminal behind, as a coding agent's shell or CI has none.
+  assert.throws(() => execFileSync('setsid', ['-w', 'bash', '-c', `. "${SCRIPT}"; ask 'Which GitHub repository? '`], {
+    env: { PATH: process.env.PATH, HOME: os.tmpdir(), WOODSHED_INSTALL_LIB: '1' },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  }), (err) => err.status === 1 && err.stderr === 'woodshed install: no terminal to ask on: set it in the environment instead (Which GitHub repository? )\n');
+});
+
 test('validRepo takes owner/name and refuses anything else', () => {
   for (const repo of ['acme/app', 'Acme-Co/app.web', 'a_b/c-d']) assert.equal(runInstallFunction(`validRepo '${repo}' && echo ok`), 'ok\n', repo);
   for (const repo of ['acme', 'acme/app/extra', 'acme/app;rm', '', '/app']) {

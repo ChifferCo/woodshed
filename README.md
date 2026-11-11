@@ -33,6 +33,11 @@ starts Postgres and Mongo in Docker, and opens the console at `http://localhost:
 a GitHub App for the repository, and **My settings** takes your Claude token. Then press **New session** and say what
 you want built. Everything it makes is in `~/.woodshed`, and `~/.woodshed/bin/woodshed` starts the console again.
 
+**With a coding agent:** clone this repository and ask it to "set Woodshed up for `owner/name` on this machine,
+following `docs/self-host.md`" (or "on our server", or "on AWS"). The runbook gives it a check after each step, writes
+your repository's project file with it, and stops for the steps that are yours: the GitHub App, your Claude token, and
+any account, DNS or firewall.
+
 ## Features
 
 - **Isolated environments.** Sessions don't share a branch, a database or an app, so they can run side by side.
@@ -88,7 +93,7 @@ field and a full example.
 
 ## Documentation
 
-- Self-hosting: [on your laptop or a server](providers/local/README.md), [on AWS](providers/aws/README.md)
+- Self-hosting: [step by step, for you or your agent](docs/self-host.md); in depth, [on your laptop or a server](providers/local/README.md) and [on AWS](providers/aws/README.md)
 - [The console](console/README.md): sessions, sign-in, databases, Slack and settings
 - [The session image](session/README.md): what runs inside each session
 - [Reference](docs/reference.md): the project file, what a session can reach, and how the folders fit together

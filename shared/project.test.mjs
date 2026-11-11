@@ -288,6 +288,29 @@ test('the CLI writes the env files from their secrets\' variables, and prints th
     'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed Cloud overrides\nDB=app\n');
 });
 
+test('check prints what a session takes from the project file, and fails as a start would', (t) => {
+  const dir = scratch(t);
+  fs.mkdirSync(path.join(dir, '.woodshed'));
+  const file = path.join(dir, '.woodshed/project.yaml');
+  const cli = (args) => execFileSync('node', [SCRIPT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH, REPO_DIR: dir } });
+  fs.writeFileSync(file, fixtureProject({
+    dependencies: { installs: [API_INSTALL] },
+    envFiles: [{ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGDATABASE}}'] }],
+    app: fixtureApp(),
+    rules: '.woodshed/rules.md',
+  }));
+  fs.writeFileSync(path.join(dir, '.woodshed/rules.md'), '- Run `make check`.\n');
+  const out = cli(['check']);
+  assert.match(out, /^\.woodshed\/project\.yaml: read from the checkout\n/);
+  assert.match(out, /^installs: 1 \(api\)$/m);
+  assert.match(out, /^env files: 1 \(api\/\.env from api-env\)$/m);
+  assert.match(out, /^app: `.+`, frontend on \d+$/m);
+  fs.rmSync(path.join(dir, '.woodshed/rules.md'));
+  assert.throws(() => cli(['check']), (err) => /not in the checkout/.test(err.stderr), 'a rules file that is not there fails the check');
+  fs.writeFileSync(file, 'version: 1\nenvfiles: []\n');
+  assert.throws(() => cli(['check']), (err) => /envfiles/.test(err.stderr), 'a misspelt field fails the check');
+});
+
 test('checkoutDir is /work/<name>, the folder the session image clones into', () => {
   assert.equal(checkoutDir('acme/app'), '/work/app');
   assert.equal(checkoutDir('acme/web-app'), '/work/web-app');

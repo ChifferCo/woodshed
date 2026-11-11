@@ -28,10 +28,11 @@ MONGO_PORT=17017
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 fail() { printf 'woodshed install: %s\n' "$*" >&2; exit 1; }
 
-# Reads from the terminal, since with `curl | bash` the script itself is stdin.
+# Reads from the terminal, since with `curl | bash` the script itself is stdin. /dev/tty is readable even where there is
+# no terminal (a coding agent's shell, CI), so it is opened to tell: there it fails with what to set, not bash's error.
 ask() {
   local prompt=$1 hidden=${2:-} answer
-  [ -r /dev/tty ] || fail "no terminal to ask on: set it in the environment instead ($prompt)"
+  { : </dev/tty; } 2>/dev/null || fail "no terminal to ask on: set it in the environment instead ($prompt)"
   if [ -n "$hidden" ]; then
     read -r -s -p "$prompt" answer </dev/tty
     printf '\n' >/dev/tty

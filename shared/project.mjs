@@ -551,10 +551,33 @@ export function field(project, dotted) {
   return dotted.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), project);
 }
 
+/**
+ * What a session would take from the project file, one line each, for someone (or their agent) writing one: it
+ * throws as a session's start would, and on a file the project file names that is not there.
+ */
+export function checkSummary(project, repoDir) {
+  if (project.from === 'none') return [`no ${PROJECT_FILE}: sessions get no installs, databases or app (project.reference.yaml has every field)`];
+  for (const name of ['rules', 'setup']) {
+    if (project[name] && !readRepoFile(repoDir, project[name])) fail(`${name} names ${project[name]}, which is not in the checkout or on the default branch`);
+  }
+  const list = (items) => (items.length ? `${items.length} (${items.join(', ')})` : 'none');
+  const { app } = project;
+  return [
+    `${PROJECT_FILE}: read from the ${project.from}`,
+    `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
+    `databases: ${list(project.databases.map((d) => d.engine))}`,
+    `env files: ${list(project.envFiles.map((f) => (f.secret ? `${f.path} from ${f.secret}` : f.path)))}`,
+    `app: ${app ? `\`${app.start}\`, frontend on ${app.frontendPort}` : 'none (no Start app)'}`,
+    `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
+  ];
+}
+
 function main([command, arg]) {
   const repoDir = process.env.REPO_DIR || process.cwd();
   const project = loadProject(repoDir);
-  if (command === 'get') {
+  if (command === 'check') {
+    process.stdout.write(`${checkSummary(project, repoDir).join('\n')}\n`);
+  } else if (command === 'get') {
     const value = field(project, arg ?? '');
     if (value === undefined || value === null) return;
     const text = (v) => (typeof v === 'object' ? JSON.stringify(v) : v);
@@ -580,7 +603,7 @@ function main([command, arg]) {
   } else if (command === 'installs') {
     process.stdout.write(installsManifest(project.dependencies));
   } else {
-    throw new Error(`unknown command: ${command} (expected get, env, write-env-files, file, uses, secret-vars or installs)`);
+    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, file, uses, secret-vars or installs)`);
   }
 }
 

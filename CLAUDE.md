@@ -1,5 +1,8 @@
 # Woodshed Cloud: debugging and the rules for secrets
 
+Setting Woodshed up rather than changing or debugging it? Follow `docs/self-host.md` instead: most of this file is
+about running an installation, AWS's above all.
+
 Read this when something on Woodshed Cloud is not working, or before changing
 what a session is given. The READMEs explain what each piece does and how it
 is applied (`docs/reference.md` here, then `console/`, `session/` and
