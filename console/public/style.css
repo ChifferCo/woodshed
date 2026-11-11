@@ -392,6 +392,15 @@ dialog.wizard:focus { outline: none; }
 .menu-item { display: flex; align-items: center; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
 .menu-item:hover, .menu-item:focus-visible, .menu-item[aria-current="page"] { background: var(--stopped); }
 .menu-form { margin: 0; border-top: 1px solid var(--line-soft); padding-top: 4px; margin-top: 4px; }
+/* A multi-tenant console's org: under the name on the button, and the switcher at the top of the menu. */
+.user-name:has(> .user-org) { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.25; }
+.user-name .user-org { display: block; max-width: 100%; font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--meta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.menu-org { gap: 8px; }
+.menu-org[aria-current="true"] { cursor: default; font-weight: 600; }
+.menu-check { flex: none; width: 12px; color: var(--green); font-size: 12px; }
+.menu-org-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-role { margin-left: auto; padding-left: 10px; font-family: var(--mono); font-size: 11px; color: var(--meta); }
+.menu-rule { border-top: 1px solid var(--line-soft); margin: 4px 0; }
 @media (max-width: 720px) { .user-name { display: none; } .user-btn { padding-right: 8px; } }
 .login-page { min-height: 100vh; box-sizing: border-box; padding: 16px; display: flex; align-items: center; justify-content: center; }
 .login-card { width: 100%; max-width: 420px; box-sizing: border-box; padding: 28px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); display: flex; flex-direction: column; gap: 14px; }

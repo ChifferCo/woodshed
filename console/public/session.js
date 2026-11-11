@@ -897,7 +897,7 @@
         e.stopPropagation();
         if (!ready) return W.shell.toast(target.state === 'checking' ? 'Still checking whether GitHub has the branch' : 'Nothing to link yet: push the branch first');
         try {
-          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on));
+          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-org"]')?.content || null));
           W.shell.toast(`Link copied: opens New session on ${target.on}`);
         } catch (err) {
           W.shell.toast(`Not copied: ${err.message}`);

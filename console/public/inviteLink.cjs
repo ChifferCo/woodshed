@@ -27,10 +27,11 @@
    * Only the PR number or the branch name is in it: nothing of the session, so it opens nothing of it.
    * @param {string} origin  the console's address
    * @param {string} on  what the New session form's Work on takes
+   * @param {string|null} [org]  the org, in a multi-tenant console: whoever opens it is switched there first
    * @returns {string}
    */
-  function inviteUrl(origin, on) {
-    return `${origin}/?new=1&on=${encodeURIComponent(on)}`;
+  function inviteUrl(origin, on, org = null) {
+    return `${origin}/?new=1&on=${encodeURIComponent(on)}${org ? `&org=${encodeURIComponent(org)}` : ''}`;
   }
 
   /** @returns {string} the button's words for a target */

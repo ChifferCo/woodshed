@@ -741,7 +741,9 @@
     const button = h('button', { type: 'button', class: 'user-btn', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
       h('span', { class: 'avatar', 'aria-hidden': 'true' }, me.login ? initials(me.login) : '··'),
       me.asking > 0 && h('span', { class: 'asking-dot', title: `${me.asking} asking to join` }),
-      h('span', { class: 'user-name' }, me.login ? personText(me.login) : 'Not signed in'),
+      h('span', { class: 'user-name' }, me.login ? personText(me.login) : 'Not signed in',
+        // A multi-tenant console's org, under the name: whose sessions the rail is showing.
+        me.org && h('span', { class: 'user-org' }, me.org.name)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
     // Someone asking to join waits on an admin, so the menu says so wherever you are.
     const asking = (link) => link.href === '/people' && me.asking > 0 && h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
@@ -751,6 +753,7 @@
         : null;
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
       h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : 'Woodshed Cloud'), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
+      orgSwitcher(me),
       me.login && MY_LINKS.map(item),
       h('button', {
         type: 'button', class: 'menu-item', role: 'menuitem', 'data-keys': 'keys',
@@ -777,6 +780,25 @@
       button.focus();
     });
     return [button, menu];
+  }
+
+  // A multi-tenant console's orgs (console/hosted.mjs): the current one checked, each other one the host's switch, which
+  // brings the person back to this console in it. Then the host's own pages, such as Account or Members.
+  // designSystem/components/OrgSwitcher.
+  function orgSwitcher(me) {
+    if (!me.org || !Array.isArray(me.orgs)) return null;
+    const role = (o) => h('span', { class: 'menu-role' }, o.role === 'owner' ? 'Owner' : 'Member');
+    const org = (o) => (o.current
+      ? h('div', { class: 'menu-item menu-org', role: 'menuitemradio', 'aria-checked': 'true', 'aria-current': 'true' },
+        h('span', { class: 'menu-check', 'aria-hidden': 'true' }, '✓'), h('span', { class: 'menu-org-name' }, o.name), role(o))
+      : o.href && h('a', { class: 'menu-item menu-org', role: 'menuitemradio', 'aria-checked': 'false', href: o.href },
+        h('span', { class: 'menu-check', 'aria-hidden': 'true' }), h('span', { class: 'menu-org-name' }, o.name), role(o)));
+    return [
+      h('div', { class: 'menu-label' }, me.orgs.length > 1 ? 'Switch organization' : 'Organization'),
+      me.orgs.map(org),
+      (me.hostLinks ?? []).map((link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href }, link.label)),
+      h('div', { class: 'menu-rule', role: 'separator' }),
+    ];
   }
 
   /** @returns {string}  what Shared says with no session to list, on the rail and on / alike */
