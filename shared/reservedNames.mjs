@@ -5,7 +5,7 @@
 // The variables Woodshed itself gives a session (session/entrypoint.sh, its Environment), besides every WOODSHED_ one:
 // an install secret cannot arrive in one of them. providers/aws/terraform/variables.tf, install_secrets, repeats it.
 export const SESSION_VARIABLES = Object.freeze([
-  'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'SESSION_URL', 'SESSION_KIND', 'SESSION_MODE', 'STARTED_BY', 'ISSUE', 'PR',
+  'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'SESSION_URL', 'SESSION_APP_DOMAIN', 'SESSION_KIND', 'SESSION_MODE', 'STARTED_BY', 'ISSUE', 'PR',
   'BRANCH', 'PROMPT', 'ASKED_BY', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY',
   'REPO_DIR', 'GH_TOKEN', 'ANTHROPIC_API_KEY', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE',
   'PGSSLROOTCERT', 'PG_URL', 'MONGODB_URI', 'HOME', 'PATH',
