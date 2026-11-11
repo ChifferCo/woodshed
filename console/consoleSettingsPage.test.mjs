@@ -48,8 +48,14 @@ async function loadPage(answer) {
   const W = {
     h, nav: () => element('nav'), providerWords: {},
     getJson: async () => structuredClone(answer),
-    postJson: async (path, body) => { posted.push({ path, body }); return { projects: answer.projects.map((p) => (p.name === body.name ? { ...p, slackChannel: body.channel } : p)) }; },
+    postJson: async (path, body) => {
+      posted.push({ path, body });
+      if (posted.hold) await posted.hold;
+      if (posted.refuse) throw posted.refuse;
+      if (posted.reply) return posted.reply(path, body);
+      return { projects: answer.projects.map((p) => (p.name === body.name ? { ...p, slackChannel: body.channel } : p)) }; },
     confirmChange: (opts) => { confirms.push(opts); },
+    errorParts: (err) => [err.message, ...(err.link ? [' ', h('a', { href: err.link.href, target: '_blank' }, `${err.link.text} ↗`)] : [])],
   };
   const context = vm.createContext({
     window: { Woodshed: W }, console, setInterval: () => 0, Date,
@@ -81,26 +87,82 @@ test('each repo on the Repos card has its own channel field, saying where its pu
   assert.match(text, /PRs to C0APIPRS01/);
 });
 
-test('a channel typed into a row is saved for that repo behind the confirm, and a name is refused before it', async () => {
+test('a channel typed into a row is saved for that repo on its Save, with no typed confirm, and a name is refused before it', async () => {
   const { app, posted, confirms } = await loadPage(ANSWER);
   const [own] = channelInputs(app);
-  own.listeners.change({ target: { value: '#acme-prs' } });
+  own.listeners.input({ target: { value: '#acme-prs' } });
   const [bad] = channelInputs(app);
   assert.equal(bad.attrs['aria-invalid'], 'true');
   const saveOf = () => walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Save');
   assert.equal(saveOf().attrs.disabled, '', 'Save is off for a name');
 
-  channelInputs(app)[0].listeners.change({ target: { value: ' C0ACMEPRS1 ' } });
+  channelInputs(app)[0].listeners.input({ target: { value: ' C0ACMEPRS1 ' } });
   assert.equal(saveOf().attrs.disabled, undefined);
   saveOf().listeners.click();
-  assert.equal(confirms.length, 1);
-  assert.equal(confirms[0].after, 'C0ACMEPRS1');
-  await confirms[0].run();
+  await tick();
+  assert.equal(confirms.length, 0, 'a channel is changed back as easily: no typed confirm');
   assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects/slack-channel', body: { name: 'r', channel: 'C0ACMEPRS1' } }]);
   assert.match(textOf(app), /PRs to C0ACMEPRS1/);
+  assert.match(textOf(app), /Its next pull request goes to C0ACMEPRS1/);
+});
+
+test('Add repo adds on the click, and a refusal shows under the field with the page that fixes it', async () => {
+  const { app, posted, confirms } = await loadPage(ANSWER);
+  const link = { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' };
+  const field = walk(app).find((e) => e.attrs.id === 'repo-new');
+  field.listeners.input({ target: { value: 'https://github.com/acme/web' } });
+  const addOf = () => walk(app).find((e) => e.tag === 'button' && /^(Add repo|Checking with GitHub…)$/.test(textOf(e)));
+  posted.refuse = Object.assign(new Error('The GitHub App is not installed on acme/web.'), { link });
+  addOf().listeners.click();
+  await tick();
+  assert.equal(confirms.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects', body: { repo: 'acme/web', name: '' } }]);
+  const error = walk(app).find((e) => e.className === 'form-error');
+  assert.match(textOf(error), /not installed on acme\/web/);
+  const a = walk(error).find((e) => e.tag === 'a');
+  assert.deepEqual([a.attrs.href, a.attrs.target, textOf(a)], [link.href, '_blank', 'Install w on GitHub ↗']);
 });
 
 test('with no Slack on the console, the rows have no channel field', async () => {
   const { app } = await loadPage({ ...ANSWER, slack: null });
   assert.deepEqual(channelInputs(app), []);
+});
+
+const SETTING = { key: 'maxRunning', label: 'Shared sessions at once', help: 'At most this many.', group: 'sessions', min: 1, max: 20, step: 1, unit: 'sessions', defaultValue: 4, value: 4 };
+const WITH_SETTINGS = { ...ANSWER, settings: [SETTING] };
+const sessionsSave = (app) => walk(app).find((e) => e.tag === 'button' && /^(Save|Saving…)$/.test(textOf(e)) && e.className === 'btn btn-open');
+const cardOf = (app, id) => walk(app).find((e) => e.attrs['aria-labelledby'] === `card-${id}`);
+
+test('a settings card saves its values on the click, with no typed confirm, and says what changed', async () => {
+  const { app, posted, confirms } = await loadPage(WITH_SETTINGS);
+  posted.reply = (path, body) => ({ settings: [{ ...SETTING, value: body.values.maxRunning }] });
+  let release;
+  posted.hold = new Promise((r) => { release = r; });
+  walk(app).find((e) => e.attrs.id === 'set-maxRunning').listeners.input({ target: { value: '6' } });
+  assert.equal(sessionsSave(app).attrs.disabled, undefined);
+  sessionsSave(app).listeners.click();
+  assert.equal(textOf(sessionsSave(app)), 'Saving…');
+  assert.equal(sessionsSave(app).attrs.disabled, '', 'Saving… is off, so a second click sends nothing');
+  sessionsSave(app).listeners.click();
+  release();
+  await tick();
+  assert.equal(confirms.length, 0, 'a setting is changed back as easily: no typed confirm');
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings', body: { values: { maxRunning: 6 } } }]);
+  assert.match(textOf(cardOf(app, 'sessions')), /Saved\. Shared sessions at once: 4 sessions → 6 sessions\. Applies on the next check, with no restart\./);
+  assert.equal(walk(app).find((e) => e.attrs.id === 'set-maxRunning').attrs.value, '6');
+  assert.equal(textOf(sessionsSave(app)), 'Save');
+});
+
+test('the Slack card sends its channel with the values, and a refusal shows on the card', async () => {
+  const { app, posted, confirms } = await loadPage(WITH_SETTINGS);
+  const field = walk(app).find((e) => e.tag === 'input' && e.attrs.value === 'C0CONSOLE01');
+  field.listeners.input({ target: { value: 'C0NEWCHAN01' } });
+  posted.refuse = new Error('Slack says the bot is not in that channel.');
+  walk(cardOf(app, 'slack')).find((e) => e.tag === 'button').listeners.click();
+  await tick();
+  assert.equal(confirms.length, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings', body: { values: {}, slackChannel: 'C0NEWCHAN01' } }]);
+  const error = walk(cardOf(app, 'slack')).find((e) => e.className === 'form-error');
+  assert.equal(textOf(error), 'Slack says the bot is not in that channel.');
+  assert.equal(walk(cardOf(app, 'slack')).find((e) => e.tag === 'button').attrs.disabled, undefined, 'the typed channel is kept to try again');
 });

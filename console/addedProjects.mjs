@@ -7,7 +7,8 @@ import { addedProjectsOf, allProjects, projectNameOf, validProjectName, validRep
 import { createGitHub } from './github.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 
-const shown = (message) => Object.assign(new Error(message), { shown: true });
+// `link`, when given, is {href, text}: where the page can send the admin to fix what the message says.
+const shown = (message, link = null) => Object.assign(new Error(message), { shown: true }, link && { link });
 
 /**
  * @param {{store: {state: object, save: () => void}, config: object, check: (repo: string) => Promise<{installationId: string|null}>,
@@ -79,9 +80,11 @@ export function createAddedProjects({ store, config, check, now = Date.now }) {
 /**
  * What `check` is in the console: with the GitHub App, the repo must have it installed, and its installation is kept
  * when it differs from the console's own; without one (the local provider, on `gh`), the repo must be readable.
- * @param {{appApi: {installationOf: (repo: string) => Promise<string|null>}|null, read?: (repo: string) => Promise<unknown>}} deps
+ * A repo without the App is refused with a link to the App's install page on GitHub, when the App's slug can be read.
+ * @param {{appApi: {installationOf: (repo: string) => Promise<string|null>}|null, read?: (repo: string) => Promise<unknown>,
+ *          appSlug?: () => Promise<string|null>}} deps
  */
-export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).defaultBranch() }) {
+export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).defaultBranch(), appSlug = async () => null }) {
   return async (repo) => {
     if (appApi) {
       let installationId;
@@ -91,7 +94,13 @@ export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).de
         console.warn('projects: installation not read', { repo, message: String(err?.message ?? err).split('\n')[0] });
         throw shown('GitHub did not answer about that repo. Try again; the console log says why.');
       }
-      if (!installationId) throw shown(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it (GitHub, the App's Install page), then add it again.`);
+      if (!installationId) {
+        const slug = await appSlug().catch(() => null);
+        if (!slug) throw shown(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it (GitHub, the App's Install page), then add it again.`);
+        // GitHub's page lists the accounts the App can go on; one it is on already opens its repo picker from there.
+        throw shown(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it, then add it again.`,
+          { href: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`, text: `Install ${slug} on GitHub` });
+      }
       return { installationId };
     }
     try {

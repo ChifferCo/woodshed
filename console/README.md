@@ -1436,9 +1436,11 @@ To turn it on, on the same Slack app as the pull request posts:
 
 The Console settings page (`/console-settings`, under Console in the avatar
 menu, beside Secrets & webhooks) holds the numbers above. Only an admin can
-open it and change them. Each card saves its own values together, after the typed
-confirm (`settings`), and the server refuses a value out of its range, keeping
-none of the card's:
+open it and change them. Each card saves its own values together with its Save
+button, with no typed confirm since changing a value back undoes it (the typed
+confirm is kept for what cannot be undone: Stalled's fixes below, secrets, a
+restore), and the server refuses a value out of its range, keeping none of the
+card's:
 
 | Card | Setting | Range | Default |
 | --- | --- | --- | --- |
@@ -1457,10 +1459,11 @@ time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
 The **Repos** card, first on the page, lists the repos sessions can start on (the projects above) and adds more.
-**Add repo** takes `owner/name` (a `github.com` link works too) and an optional name, after the typed confirm
-(`POST /api/console-settings/projects`). The console checks the repo first: with the GitHub App it must be installed on
+**Add repo** takes `owner/name` (a `github.com` link works too) and an optional name (`POST /api/console-settings/projects`).
+It, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be installed on
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
-the console's own; on a console with no App (the local provider) `gh` must be able to read it. A repo already a
+the console's own; a repo without it is refused with a link to the App's install page
+(`https://github.com/apps/<slug>/installations/new`, the slug read from GitHub); on a console with no App (the local provider) `gh` must be able to read it. A repo already a
 project, or a name in use, is refused with its reason. The added repos are kept in `state.json` under `addedProjects`
 and appended to `WOODSHED_CLOUD_PROJECTS`'s list in the live config (`liveConfig`), so one applies at once, with no
 restart, and a project's New session **Project** field shows it to whoever can write to it. **Remove**

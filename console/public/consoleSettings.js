@@ -20,7 +20,15 @@
   let loadError = null;
   // What has been typed into each field, by setting key (and `slackChannel`), until it is saved or reloaded.
   const typed = new Map();
+  // What the last save on each settings card said: {text, bad}.
   const notices = new Map();
+  // Each card or row whose save is on its way, so a second click does not send it twice.
+  const saving = new Set();
+  // What the last Slack channel save or Remove on a repo's row said, by project name, until the page is drawn again.
+  const rowNotes = new Map();
+
+  // These saves have no typed confirm: each is undone by changing it back, and is logged with who made it. The typed
+  // confirm (W.confirmChange) is kept for what cannot be undone: a held session's data, secrets, a restore.
 
   function problem(s, raw) {
     const value = Number(String(raw).trim());
@@ -64,10 +72,9 @@
         h('div', { class: 'set-bounds' }, `${s.min} to ${s.max} ${s.unit} · default ${s.defaultValue}`)),
       h('div', { class: 'set-value' },
         h('input', {
-          id: `set-${s.key}`, class: 'field', type: 'number', inputmode: 'decimal', min: s.min, max: s.max, step: s.step, value: raw,
+          id: `set-${s.key}`, class: 'field', type: 'text', inputmode: 'decimal', autocomplete: 'off', value: raw,
           'aria-invalid': bad ? 'true' : null,
-          oninput: (e) => { typed.set(s.key, e.target.value); },
-          onchange: (e) => { typed.set(s.key, e.target.value); render(); },
+          oninput: (e) => { typed.set(s.key, e.target.value); render(); },
         }),
         h('span', { class: 'unit' }, s.unit)),
       bad && h('p', { class: 'form-error', role: 'alert' }, bad));
@@ -86,29 +93,27 @@
         h('input', {
           id: 'set-channel', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'C0123456789', value: raw,
           'aria-invalid': bad ? 'true' : null,
-          oninput: (e) => { typed.set('slackChannel', e.target.value); },
-          onchange: (e) => { typed.set('slackChannel', e.target.value); render(); },
+          oninput: (e) => { typed.set('slackChannel', e.target.value); render(); },
         })),
       bad && h('p', { class: 'form-error', role: 'alert' }, bad));
   }
 
-  function review(card) {
+  async function save(card) {
     const { changes } = pending(card.id);
-    W.confirmChange({
-      title: `Change ${changes.length} setting${changes.length > 1 ? 's' : ''}?`,
-      rows: changes.map((c) => [c.label, c.from, c.to]),
-      effect: 'They apply on the console\'s next check, with no restart, to sessions already running too. Each change is logged with who made it.',
-      word: 'settings',
-      goLabel: 'Save',
-      run: async () => {
-        const values = Object.fromEntries(changes.filter((c) => c.key !== 'slackChannel').map((c) => [c.key, c.value]));
-        const channel = changes.find((c) => c.key === 'slackChannel');
-        data = { ...data, ...(await W.postJson('/api/console-settings', { values, ...(channel ? { slackChannel: channel.value } : {}) })) };
-        for (const c of changes) typed.delete(c.key);
-        notices.set(card.id, 'Saved.');
-        render();
-      },
-    });
+    if (saving.has(card.id) || !changes.length) return;
+    saving.add(card.id);
+    render();
+    try {
+      const values = Object.fromEntries(changes.filter((c) => c.key !== 'slackChannel').map((c) => [c.key, c.value]));
+      const channel = changes.find((c) => c.key === 'slackChannel');
+      data = { ...data, ...(await W.postJson('/api/console-settings', { values, ...(channel ? { slackChannel: channel.value } : {}) })) };
+      for (const c of changes) typed.delete(c.key);
+      notices.set(card.id, { text: `Saved. ${changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join('; ')}. Applies on the next check, with no restart.` });
+    } catch (err) {
+      notices.set(card.id, { text: err.message, bad: true });
+    }
+    saving.delete(card.id);
+    render();
   }
 
   function settingsCard(card) {
@@ -120,14 +125,18 @@
       card.id === 'sessions' && W.providerWords.capacityNote && h('p', { class: 'cap-note' }, W.providerWords.capacityNote),
       h('div', { class: 'set-rows' }, rows.map(settingRow), card.id === 'slack' && data.slack && channelRow()),
       h('div', { class: 'card-foot' },
-        h('button', { type: 'button', class: 'btn btn-open', disabled: bad || !changes.length, onclick: () => review(card) }, 'Review changes'),
-        h('span', { class: 'sub' }, bad ? 'Fix the value in red first.'
-          : changes.length ? `${changes.length} changed. Takes effect on the next check, with no restart.`
-            : notices.get(card.id) || 'Saved values. Each change is logged with who made it.')));
+        h('button', { type: 'button', class: 'btn btn-open', disabled: bad || !changes.length || saving.has(card.id), onclick: () => save(card) },
+          saving.has(card.id) ? 'Saving…' : changes.length > 1 ? `Save ${changes.length} changes` : 'Save'),
+        notices.get(card.id)?.bad && !bad
+          ? h('span', { class: 'form-error', role: 'alert' }, notices.get(card.id).text)
+          : h('span', { class: 'sub', role: 'status' }, bad ? 'Fix the value in red first.'
+            : changes.length ? `${changes.length} changed. Takes effect on the next check, with no restart.`
+              : notices.get(card.id)?.text || 'Saved values. Each change is logged with who made it.')));
   }
 
   // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
-  const repoForm = { repo: '', name: '', error: null, busy: false };
+  // `error` is {message, link?}: the server's refusal, shown under the field with the page that fixes it.
+  const repoForm = { repo: '', name: '', error: null, notice: null, busy: false };
   // What the last colour pick said, by project name, until the page is drawn for another reason.
   const colorNotes = new Map();
 
@@ -171,25 +180,16 @@
     const next = raw.trim();
     return [
       h('input', {
-        class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', size: 13, placeholder: 'Slack channel ID', value: raw,
+        id: `channel-${p.name}`, class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', size: 13, placeholder: 'Slack channel ID', value: raw,
         'aria-label': `Slack channel for ${p.repo}`, 'aria-invalid': bad ? 'true' : null, title: bad || 'Its pull requests go here. Empty: the Slack card\'s channel.',
-        oninput: (e) => { typed.set(key, e.target.value); },
-        onchange: (e) => { typed.set(key, e.target.value); render(); },
+        oninput: (e) => { typed.set(key, e.target.value); render(); },
       }),
       h('button', {
         type: 'button', class: 'btn btn-quiet btn-sm', disabled: Boolean(bad) || next === saved,
-        onclick: () => W.confirmChange({
-          title: `Change where ${p.repo}'s pull requests go?`,
-          before: saved || 'the Slack card\'s channel',
-          after: next || 'the Slack card\'s channel',
-          effect: 'Its next pull request is posted there, with its decision brief in the post\'s thread. Posts already made stay where they are. Invite the bot to the channel first.',
-          word: 'channel',
-          goLabel: 'Save',
-          run: async () => {
-            data = { ...data, ...(await W.postJson('/api/console-settings/projects/slack-channel', { name: p.name, channel: next })) };
-            typed.delete(key);
-            render();
-          },
+        onclick: () => rowAction(p, async () => {
+          data = { ...data, ...(await W.postJson('/api/console-settings/projects/slack-channel', { name: p.name, channel: next })) };
+          typed.delete(key);
+          return `Its next pull request goes to ${next || 'the Slack card\'s channel'}. Invite the bot to the channel first.`;
         }),
       }, 'Save'),
     ];
@@ -207,42 +207,54 @@
         data.palette && colorPicker(p)),
       h('div', { class: 'data-actions' }, data.slack && channelField(p), p.removable && h('button', {
         type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
-        onclick: () => W.confirmChange({
-          title: `Remove ${p.repo}?`,
-          before: 'a project',
-          after: 'not a project',
-          effect: 'New sessions can no longer start on it. Its pull requests and branches on GitHub are not touched.',
-          word: 'remove',
-          goLabel: 'Remove',
-          run: async () => {
-            data = { ...data, ...(await W.postJson('/api/console-settings/projects/remove', { name: p.name })) };
-            render();
-          },
+        onclick: () => rowAction(p, async () => {
+          data = { ...data, ...(await W.postJson('/api/console-settings/projects/remove', { name: p.name })) };
+          repoForm.error = null;
+          repoForm.notice = `${p.repo} removed: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched. Add it again to undo.`;
+          return null;
         }),
-      }, 'Remove')));
+      }, 'Remove')),
+      rowNotes.get(p.name) && h('p', { class: rowNotes.get(p.name).bad ? 'form-error' : 'sub', role: rowNotes.get(p.name).bad ? 'alert' : 'status', style: 'grid-column: 1 / -1; margin: 0' }, rowNotes.get(p.name).text));
   }
 
-  function addRepo() {
+  // A save on a repo's row: `run` returns what to say on the row, or throws the console's refusal.
+  async function rowAction(p, run) {
+    const key = `row:${p.name}`;
+    if (saving.has(key)) return;
+    saving.add(key);
+    rowNotes.delete(p.name);
+    try {
+      const said = await run();
+      if (said) rowNotes.set(p.name, { text: said });
+    } catch (err) {
+      rowNotes.set(p.name, { text: err.message, bad: true });
+    }
+    saving.delete(key);
+    render();
+  }
+
+  // No typed confirm: an added repo is taken off again with Remove, and the console checks it with GitHub first.
+  async function addRepo() {
+    if (repoForm.busy) return;
     // A pasted link is read the way the server reads it (addedProjects.mjs).
     const repo = repoForm.repo.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\/+$/, '').replace(/\.git$/, '');
     const name = repoForm.name.trim();
-    if (!REPO_RE.test(repo)) { repoForm.error = 'Give the repo as owner/name, such as acme/api.'; render(); return; }
-    if (name && !NAME_RE.test(name)) { repoForm.error = 'The name is lowercase letters and digits, in words joined by single dashes.'; render(); return; }
+    if (!REPO_RE.test(repo)) { repoForm.error = { message: 'Give the repo as owner/name, such as acme/api.' }; render(); return; }
+    if (name && !NAME_RE.test(name)) { repoForm.error = { message: 'The name is lowercase letters and digits, in words joined by single dashes.' }; render(); return; }
     repoForm.error = null;
-    W.confirmChange({
-      title: `Add ${repo}?`,
-      before: 'not a project',
-      after: 'a project sessions can start on',
-      effect: 'The console checks that the GitHub App is installed on it. A My Woodshed session can then start on it from New session, and a label or /woodshed comment on its issues starts a shared session on it. Questions from Slack, the image and the databases stay the default project\'s.',
-      word: 'add',
-      goLabel: 'Add repo',
-      run: async () => {
-        data = { ...data, ...(await W.postJson('/api/console-settings/projects', { repo, name })) };
-        repoForm.repo = '';
-        repoForm.name = '';
-        render();
-      },
-    });
+    repoForm.notice = null;
+    repoForm.busy = true;
+    render();
+    try {
+      data = { ...data, ...(await W.postJson('/api/console-settings/projects', { repo, name })) };
+      repoForm.repo = '';
+      repoForm.name = '';
+      repoForm.notice = `${repo} added: sessions can start on it now. Remove takes it off again.`;
+    } catch (err) {
+      repoForm.error = err;
+    }
+    repoForm.busy = false;
+    render();
   }
 
   function projectsCard() {
@@ -267,10 +279,10 @@
             oninput: (e) => { repoForm.name = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
           })),
-        repoForm.error && h('p', { class: 'form-error', role: 'alert' }, repoForm.error)),
+        repoForm.error && h('p', { class: 'form-error', role: 'alert' }, W.errorParts(repoForm.error))),
       h('div', { class: 'card-foot' },
-        h('button', { type: 'button', class: 'btn btn-open', onclick: addRepo }, 'Add repo'),
-        h('span', { class: 'sub' }, 'Each change is logged with who made it.')));
+        h('button', { type: 'button', class: 'btn btn-open', disabled: repoForm.busy, onclick: addRepo }, repoForm.busy ? 'Checking with GitHub…' : 'Add repo'),
+        h('span', { class: 'sub', role: 'status' }, repoForm.notice || 'It applies at once; Remove takes it off again. Each change is logged with who made it.')));
   }
 
   function refOf(r) {
@@ -365,7 +377,28 @@
       h('p', { class: 'sub', style: 'font-size: 12.5px' }, totalsLine(d)));
   }
 
+  // Fields render as they are typed in, so a Save turns on before the field loses focus: the page is drawn again with
+  // the same field focused, its caret where it was. A render that starts inside another (a blur the swap fired) is
+  // skipped, since the outer one draws the same state.
+  let rendering = false;
   function render() {
+    if (rendering) return;
+    rendering = true;
+    const focused = document.activeElement?.id || null;
+    let caret = null;
+    try { caret = [document.activeElement.selectionStart, document.activeElement.selectionEnd]; } catch { /* a number field has none */ }
+    try {
+      draw();
+    } finally {
+      rendering = false;
+    }
+    const again = focused && document.getElementById(focused);
+    if (!again) return;
+    again.focus();
+    try { if (caret?.[0] !== null && caret?.[0] !== undefined) again.setSelectionRange(...caret); } catch { /* a number field has none */ }
+  }
+
+  function draw() {
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
