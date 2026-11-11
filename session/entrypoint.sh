@@ -199,14 +199,17 @@ findDefaultBranch() {
 # so BRANCH is worked out before it, in the main shell: a background job cannot hand a variable back.
 fetchBranch() {
   cd "$REPO_DIR"
+  # The session's own checkpoint ref too, which a stop pushes to instead of the branch once the pull request closed
+  # (statusd.mjs, checkpoint). Like the branch, a pattern: there is none for most sessions.
+  local checkpoint="+refs/woodshed/checkpoints/$SESSION_ID*:refs/woodshed/checkpoints/$SESSION_ID*"
   if [ -n "${PR:-}" ]; then
-    git fetch --quiet origin "$DEFAULT_BRANCH"
+    git fetch --quiet origin "$DEFAULT_BRANCH" "$checkpoint"
     log "Fetched" "(pr: $PR)"
     return
   fi
   # One round trip for the default branch and the branch. A pattern matches nothing when the branch is new, where
   # naming it would fail the fetch; --prune drops a copy the image has of a branch since deleted.
-  git fetch --quiet --prune origin "$DEFAULT_BRANCH" "+refs/heads/$BRANCH*:refs/remotes/origin/$BRANCH*"
+  git fetch --quiet --prune origin "$DEFAULT_BRANCH" "+refs/heads/$BRANCH*:refs/remotes/origin/$BRANCH*" "$checkpoint"
   log "Fetched" "(branch: $BRANCH)"
 }
 
@@ -223,21 +226,42 @@ updateSubmodules() {
 
 checkoutBranch() {
   cd "$REPO_DIR"
+  local checkpoint="refs/woodshed/checkpoints/$SESSION_ID"
   if [ -n "${PR:-}" ]; then
-    gh pr checkout "$PR" --force
-    BRANCH=$(git branch --show-current)
-    log "Checked out PR head" "(pr: $PR, branch: $BRANCH)"
-    updateSubmodules
-    return
-  fi
-  if git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
+    checkoutPr
+  elif git rev-parse --verify --quiet "refs/remotes/origin/$BRANCH" >/dev/null; then
     git checkout -B "$BRANCH" "origin/$BRANCH"
     log "Resumed existing branch" "(branch: $BRANCH)"
+  elif git rev-parse --verify --quiet "$checkpoint" >/dev/null; then
+    # The pull request merged and its branch went: the last stop's work is on the session's own ref.
+    git checkout -B "$BRANCH" "$checkpoint"
+    log "Resumed the checkpoint of a closed pull request" "(branch: $BRANCH, ref: $checkpoint)"
   else
     git checkout -B "$BRANCH" "origin/$DEFAULT_BRANCH"
     log "Created branch from the default branch" "(branch: $BRANCH, from: $DEFAULT_BRANCH)"
   fi
+  # A checkpoint ahead of the branch: the pull request closed with its branch kept, and was reopened.
+  if git rev-parse --verify --quiet "$checkpoint" >/dev/null && ! git merge-base --is-ancestor "$checkpoint" HEAD \
+    && git merge-base --is-ancestor HEAD "$checkpoint"; then
+    git reset --quiet --hard "$checkpoint"
+    log "Moved the branch to the checkpoint of a closed pull request" "(branch: $BRANCH, ref: $checkpoint)"
+  fi
   updateSubmodules
+}
+
+# gh fetches a pull request's branch by name, which fails once a merge deleted it: GitHub keeps the head at
+# refs/pull/<n>/head.
+checkoutPr() {
+  if gh pr checkout "$PR" --force; then
+    BRANCH=$(git branch --show-current)
+    log "Checked out PR head" "(pr: $PR, branch: $BRANCH)"
+    return
+  fi
+  BRANCH=$(gh pr view "$PR" --json headRefName --jq .headRefName)
+  [ -n "$BRANCH" ] || die "could not tell PR #$PR's branch"
+  git fetch --quiet origin "refs/pull/$PR/head"
+  git checkout -B "$BRANCH" FETCH_HEAD
+  log "Checked out the head of a PR whose branch is gone" "(pr: $PR, branch: $BRANCH)"
 }
 
 # The image ships what each install keeps for its build commit; run an install again only where its files changed

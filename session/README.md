@@ -60,7 +60,10 @@ change to the stage by the workflow's run, about the time the build takes.
 `entrypoint.sh session` (the default):
 
 1. Fetches the repo's default branch and creates `woodshed/<issue>-<session id>`, resumes that
-   branch if it already exists on GitHub, or checks out a PR's head. The
+   branch if it already exists on GitHub, or checks out a PR's head (from `refs/pull/<n>/head` once a merge deleted
+   its branch). When the session's last stop came after its pull request closed, its work is on
+   `refs/woodshed/checkpoints/<session id>`, fetched too: a branch that is gone resumes from it, and one it is ahead of
+   moves to it. The
    fetch runs alongside the session API calls for the owner's settings and
    the Claude home, so a start waits for the slowest of the three, not their
    sum. A saved home keeps the installed plugins' files
@@ -149,7 +152,7 @@ The console's only way into a running session besides the terminal:
 | --- | --- |
 | `GET /status` | `{ sessionId, state, editor, lastMessage, branch, head, prUrl, usage, planUsage, app, appServers }`. `planUsage` is the last reading of the owner's Claude plan the status line saved (`session/planUsage.mjs`): `{ asOf, fiveHour, sevenDay }`, each window `{ usedPercent, resetsAt }` or null, and null before Claude's first answer. `usage` is the container's, from its cgroup (v2 or v1, `session/usage.mjs`): `cpuPercent` (100 is one core busy, measured between two calls at least 2 s apart), `memoryBytes` without the inactive file cache, `memoryLimitBytes` and `cores`. `appServers` is `{ frontend, backend, frontendPort, backendPort }`: whether the frontend and the backend accept a connection on the project file's `app.frontendPort` and `app.backendPort` (or `APP_PORT` and `APP_API_PORT`), whoever started them, and those ports (null with no app). `app` is `running` when both do, `api-down` or `frontend-down` when one does, and otherwise `starting`, `stopping`, `failed` or `stopped` from the last **Start app** or **Stop app**. `lastMessage` is the last thing said in the transcript, `{ role, text, at }`. `state` is what Claude is doing, below |
 | `POST /send` | `{"text": "..."}` typed into Claude's pane, then Enter |
-| `POST /checkpoint` | Saves the Claude home, then commits anything uncommitted and pushes the branch, before a stop. An ask session only saves its Claude home |
+| `POST /checkpoint` | Saves the Claude home, then commits anything uncommitted and pushes the branch, before a stop. With `{"branch": false}`, which the console sends when the session's pull request has merged or closed (GitHub may have deleted its branch, and a push would bring it back), it pushes only what the remote lacks, uncommitted work or commits never pushed, and to `refs/woodshed/checkpoints/<session id>`, forced: not a branch, and not fetched by a clone. With nothing to push it pushes nothing. Answers `{ committed, head, pushedTo, homeSaved }`, `pushedTo` the ref or null. An ask session only saves its Claude home |
 | `* /redis/<id>/...` | Forwarded, without the token, to the session's redis-commander, which listens on 127.0.0.1:7683 only. The console's Redis button. 404 `this session has no Redis` when the project uses none |
 | `* /__woodshed/code/...` | Forwarded, without the token, to openvscode-server (VS Code), which listens on 127.0.0.1:7688 only. Refused with 404 when the checkout's project file says `editor: false`; `/status`'s `editor` is true when it says `true` and the image has the editor. statusd starts it on the first request (`session/codeEditor.mjs`), logging to `/tmp/openvscode-server.log`; an ask session answers 404. Websockets too, with the token in `Authorization` like its other requests. The console sends these for `https://<id>.<app domain>/__woodshed/code/` (`console/editorProxy.mjs`): the console's **Editor ↗** |
 | `POST /app/start` | Runs the project file's `app.start` in the background, logging to `/tmp/woodshed-app.log`. The console's Start app button |

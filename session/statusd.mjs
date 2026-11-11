@@ -10,7 +10,9 @@
 //   POST /send        {"text": "..."} typed into claude's pane, then Enter
 //   POST /claude-login  types woodshed-login at the Terminal tab's prompt
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
-//                     (~/.claude and ~/.claude.json) to the console, for the session's next run
+//                     (~/.claude and ~/.claude.json) to the console, for the session's next run. With
+//                     {"branch": false}, for a session whose pull request closed, work the remote lacks goes to
+//                     refs/woodshed/checkpoints/<SESSION_ID> instead, and nothing is pushed when it has it all
 //
 // A private session also keeps its owner's shared Claude settings in step with their other sessions, every
 // SYNC_EVERY_MS (settingsSync.mjs).
@@ -731,7 +733,7 @@ async function lastSettingsRound() {
   }
 }
 
-async function checkpoint() {
+async function checkpoint({ branch = true } = {}) {
   homeSavesOver = true;
   await keepCodexAuth();
   await lastSettingsRound();
@@ -742,11 +744,45 @@ async function checkpoint() {
     return { committed: false, head: await git('rev-parse', '--short', 'HEAD'), homeSaved: home.saved };
   }
   await git('add', '-A');
-  const staged = await git('diff', '--cached', '--name-only');
-  if (staged) await git('commit', '-m', 'WIP: Woodshed checkpoint before stop');
+  const committed = Boolean(await git('diff', '--cached', '--name-only'));
+  if (committed) await git('commit', '-m', 'WIP: Woodshed checkpoint before stop');
+  const pushedTo = branch ? await pushBranch(committed) : await pushCheckpointRef(committed);
+  const head = await git('rev-parse', '--short', 'HEAD');
+  return { committed, head, pushedTo, homeSaved: home.saved };
+}
+
+async function pushBranch(committed) {
   await git('push', '-u', 'origin', 'HEAD');
-  console.log('statusd: checkpoint pushed', { committed: Boolean(staged) });
-  return { committed: Boolean(staged), head: await git('rev-parse', '--short', 'HEAD'), homeSaved: home.saved };
+  const pushedTo = `refs/heads/${await git('rev-parse', '--abbrev-ref', 'HEAD')}`;
+  console.log('statusd: checkpoint pushed', { committed, pushedTo });
+  return pushedTo;
+}
+
+// The pull request closed, and GitHub may have deleted its branch: a push there would bring it back. Work that
+// never reached the remote goes to a ref of the session's own, which is not a branch and which clones do not fetch.
+async function pushCheckpointRef(committed) {
+  const unpushed = Number(await git('rev-list', '--count', 'HEAD', '--not', '--remotes=origin'));
+  if (!committed && !unpushed) {
+    console.log('statusd: checkpoint skipped the push, the pull request is closed', { committed });
+    return null;
+  }
+  const pushedTo = checkpointRef(process.env.SESSION_ID);
+  // Forced, so a retry of the same stop, or a later one of a resumed session, writes over the last.
+  await git('push', '--force', 'origin', `HEAD:${pushedTo}`);
+  console.log('statusd: checkpoint pushed off the branch, the pull request is closed', { committed, unpushed, pushedTo });
+  return pushedTo;
+}
+
+/** @returns {string}  where a session whose pull request closed keeps its last work (entrypoint.sh checkoutBranch reads it) */
+export function checkpointRef(sessionId) {
+  if (!/^[0-9a-z]+$/i.test(sessionId ?? '')) throw new Error('SESSION_ID is not set: no checkpoint ref to push to');
+  return `refs/woodshed/checkpoints/${sessionId}`;
+}
+
+/** @returns {{branch: boolean}}  `branch: false` keeps the push off the branch, for a session whose pull request closed */
+export function parseCheckpointBody(raw) {
+  const body = raw ? JSON.parse(raw) : {};
+  return { branch: body?.branch !== false };
 }
 
 function readBody(req) {
@@ -934,7 +970,15 @@ async function handle(req, res) {
     await startClaudeLogin();
     return reply(res, 200, { ok: true });
   }
-  if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
+  if (route === 'POST /checkpoint') {
+    let options;
+    try {
+      options = parseCheckpointBody(await readBody(req));
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    return reply(res, 200, await checkpoint(options));
+  }
   if (route === 'POST /upload') return uploadReply(req, res);
   if (route === 'GET /applog') return reply(res, 200, await appLogs());
   if (route === 'GET /diff') {

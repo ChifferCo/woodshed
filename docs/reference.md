@@ -120,7 +120,9 @@ sign-in in front, hands both to the console with two settings, each off unless s
    (both on the Console settings page),
    and stops once its pull request is posted to Slack (its project's channel from the Repos card of
    Console settings, else the Slack card's channel), or when someone presses
-   Stop. It commits and pushes work in progress first and keeps its
+   Stop. It commits and pushes work in progress first (to
+   `refs/woodshed/checkpoints/<session id>` rather than the branch once its pull request merged or closed, so a
+   deleted branch stays deleted; `git fetch origin refs/woodshed/checkpoints/<id>` gets it back) and keeps its
    conversation and databases, so a later label or comment resumes it where it
    was. See "Session states" in `console/README.md`.
 
@@ -153,7 +155,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **Ask a question:** mention the bot in any Slack channel it is in, e.g.
   `@woodshed how does a task decide to retry?`. A session reads the default branch and answers
   in the thread. See "Questions from Slack" in `console/README.md`.
-- **Stop:** the Stop session button. Work in progress is pushed first.
+- **Stop:** the Stop session button. Work in progress is pushed first, to the session's checkpoint ref once its pull
+  request merged or closed.
 - **Who can:** anyone with write access to the repo. Everyone else is ignored.
 - **The console:** `https://woodshed.example.com`, with a Let's Encrypt
   certificate, open to the internet behind a GitHub sign-in. The bare IP
