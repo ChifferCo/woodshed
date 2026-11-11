@@ -43,8 +43,9 @@ runs:
         VIEWPORT: ${{ inputs.viewport }}
       run: |
         # Headless, at a fixed viewport. --no-sandbox because some runners refuse Chrome's sandbox; it only opens the app.
+        # In .qa/, so the repo's own .mcp.json is left alone.
         jq -n --arg size "$VIEWPORT" '{mcpServers: {playwright: {command: "npx",
-          args: ["@playwright/mcp", "--headless", "--no-sandbox", "--viewport-size", $size]}}}' > .mcp.json
+          args: ["@playwright/mcp", "--headless", "--no-sandbox", "--viewport-size", $size]}}}' > .qa/mcp.json
 
     - name: Run the tests
       shell: bash
@@ -52,7 +53,10 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         BUDGET: ${{ inputs.budget-usd }}
       run: |
-        # Run the plan in the browser and write .qa/report.md, with the shell, files and the browser's tools only
+        # Run the plan in the browser and write .qa/report.md, with the shell, files and the browser's tools only. A
+        # session stopped by its turn or spend limit exits non-zero: the report says what it covered, rather than the job failing.
         claude --model opus -p "$(cat .qa/test-prompt.md)" \
+          --mcp-config .qa/mcp.json --strict-mcp-config \
           --max-turns 200 --max-budget-usd "$BUDGET" --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
-          --output-format stream-json --verbose 2>&1 | tee .qa/logs/test.jsonl
+          --output-format stream-json --verbose 2>&1 | tee .qa/logs/test.jsonl \
+          || echo "::warning::The test session exited with ${PIPESTATUS[0]}"
