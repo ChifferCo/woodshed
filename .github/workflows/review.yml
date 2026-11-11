@@ -249,7 +249,8 @@ jobs:
                >
                > What changed, in a sentence or two, and why it is a risk. A link to the lines, as
                > `[path:10-24](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.pull_request.head.sha }}/path#L10-L24)`,
-               > and when it helps, a few changed lines in a ```diff block, so nobody has to go and find them.
+               > then the changed lines that show it in a ```diff block, at most about 15, so nobody has to go and
+               > find them. Every item has its diff.
                >
                > </details>
                >
@@ -257,11 +258,14 @@ jobs:
                >
                > <details><summary>One line: what to try that no test or run covers.</summary>
                >
-               > The steps, a few, and what they should see. A link to the lines it depends on, as above.
+               > The steps, a few, and what they should see. A link to the lines it depends on, as above, and those
+               > changed lines in a ```diff block.
                >
                > </details>
 
-               One `<details>` for each item, in the order that matters most first: the ones that are hard to undo or
+               Inside a `<details>`, leave a `>` line empty after `</summary>`, around the ```diff block and before
+               `</details>`, or GitHub shows the markdown as plain text. Do not start a line in an item's body with
+               bold text. One `<details>` for each item, in the order that matters most first: the ones that are hard to undo or
                reach users first. The one line must make sense without opening it. Write `None` as the whole list, with
                no `<details>`, when there is nothing to accept beyond the change itself, or when the tests cover it.
 

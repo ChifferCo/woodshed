@@ -134,12 +134,14 @@ export function riskAreasFrom({ comments, review, gate }) {
   return { found: true, items: [...accepted, ...untested] };
 }
 
-// The items under a bold heading line, up to the next one: each folded item's one line, or else the bullets.
+// The items under one of the review's headings: each folded item's one line, or else the bullets.
 function listUnder(text, heading) {
   const at = text.indexOf(heading);
   if (at < 0) return [];
   const rest = text.slice(at + heading.length);
-  const next = rest.search(/\n\*\*[^*\n]+\*\*/);
+  // Up to the next of the review's own headings: an item's body may have bold lines of its own.
+  const ends = [ACCEPT_HEADING, UNTESTED_HEADING, RISK_HEADING].map((h) => rest.indexOf(h)).filter((i) => i >= 0);
+  const next = ends.length ? Math.min(...ends) : -1;
   const section = next < 0 ? rest : rest.slice(0, next);
   const folded = [...section.matchAll(/<summary>([\s\S]*?)<\/summary>/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
   return (folded.length ? folded : bulletsOf(section)).filter((i) => i && !NOTHING_RISKY.test(i));

@@ -272,11 +272,16 @@ test('each folded risk is quoted by its one line, and the folds inside the alert
     '>',
     '> <details><summary>An admin adds or removes a repo with one click.</summary>',
     '>',
+    '> **Why:** nothing to type now.',
     '> The typed confirm is gone. [consoleSettings.js:40-52](https://github.com/o/r/blob/abc/console/public/consoleSettings.js#L40-L52)',
     '>',
     '> ```diff',
     '> - confirmTyped(\'add\')',
     '> ```',
+    '>',
+    '> </details>',
+    '>',
+    '> <details><summary>Removing a repo needs no confirm either.</summary>',
     '>',
     '> </details>',
     '>',
@@ -291,9 +296,10 @@ test('each folded risk is quoted by its one line, and the folds inside the alert
   ].join('\n');
   assert.deepEqual(riskAreasFrom({ comments: [reviewComment(alert)], review, gate: GATES.review }).items, [
     'An admin adds or removes a repo with one click.',
+    'Removing a repo needs no confirm either.',
     'Not tested: Add a repo the App is not on: the error links to its install page.',
   ]);
-  const none = alert.split('\n').filter((l, i) => i < 4 || (i > 14 && i < 16)).concat(['> None']).join('\n');
+  const none = alert.split('\n').filter((l, i) => i < 4 || (i > 19 && i < 21)).concat(['> None']).join('\n');
   assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate: GATES.review }).items, []);
 });
 
