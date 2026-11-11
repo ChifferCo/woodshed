@@ -1038,7 +1038,8 @@ export function createHandler({
     const cached = pullsCache.get(login);
     if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls });
     const named = (await projectsView(login)).projects;
-    const projects = named.map((p) => projectNamed(config, p.name) ?? { ...defaultProject(config), ...p });
+    // A name the installation no longer has (removed since the access check was kept) is left out.
+    const projects = named.map((p) => projectNamed(config, p.name)).filter(Boolean);
     const clientFor = (project) => (project.default ? github : (githubFor?.(project) ?? null));
     const { pulls, stale } = await readMyPulls({ login, projects, githubFor: clientFor, kept: cached?.pulls ?? [] });
     // Kept for the minute even when a repo failed, with that repo's last rows: every page asks on each refresh.
