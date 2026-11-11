@@ -109,6 +109,7 @@ const APP_LOG = '/tmp/woodshed-app.log';
 // each Start app.
 const APP_REREAD_MS = 10_000;
 let appReadAt = Date.now();
+let appReadError = null;
 
 function refreshApp({ force = false } = {}) {
   if (PROJECT_APP || (!force && Date.now() - appReadAt < APP_REREAD_MS)) return;
@@ -116,8 +117,10 @@ function refreshApp({ force = false } = {}) {
   let app = null;
   try {
     app = loadProject(REPO_DIR).app ?? null;
-  } catch {
-    // Still not readable: the warning at start said why, and this is asked too often to say it again.
+  } catch (err) {
+    // Asked every few seconds: each reason is said once, so a file claude wrote that does not parse is in the log.
+    if (err.message !== appReadError) console.warn('statusd: project file not read again, still no app', { message: err.message });
+    appReadError = err.message;
     return;
   }
   if (!app) return;

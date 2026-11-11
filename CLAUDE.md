@@ -374,7 +374,7 @@ secrets.
   may be left out; a misspelt one never is read as none. The same file broken on a branch makes `readyGate` refuse `gh pr create` with `Not opened:
   .woodshed/project.yaml: …`. statusd logs `statusd: project file not read, no app` and `statusd: app start skipped,
   the project has no app`; Set up app logs `fleet: app setup asked` with `sent`, and statusd `statusd: the project file has
-  an app now` once claude wrote one. The session log's `Project file read (from: …)` says whether it read the checkout's
+  an app now` once claude wrote one, or `project file not read again, still no app` with the reason. The session log's `Project file read (from: …)` says whether it read the checkout's
   copy (`checkout`), the default branch's (`default branch`) or none. To see what it read, `cd` into the session's checkout and run
   `node /opt/woodshed/shared/project.mjs get app`.
 - **A session's dependencies are missing or old, or `/tmp/woodshed-deps` says `failed`.** At start the session's log
