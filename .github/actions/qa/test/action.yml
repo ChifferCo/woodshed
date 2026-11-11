@@ -1,0 +1,62 @@
+name: QA test
+description: >-
+  Runs the plan from the QA plan step against the running app, with Claude driving a browser through Playwright, and
+  writes the QA report. It never changes code: the verdict comes from a session that wrote none of it.
+inputs:
+  anthropic-api-key:
+    description: The Anthropic API key the tests run on.
+    required: true
+  budget-usd:
+    description: The most the test session may spend, there only to stop a runaway session.
+    default: '20'
+  viewport:
+    description: The browser's fixed size, so every screenshot has the same shape.
+    default: 1600x900
+runs:
+  using: composite
+  steps:
+    - name: Install the Playwright MCP server
+      shell: bash
+      run: |
+        # Claude drives the browser through Playwright's MCP server
+        npm install -g @playwright/mcp
+        echo "PLAYWRIGHT_MCP_VERSION=$(npm ls -g @playwright/mcp --json | jq -r '.dependencies["@playwright/mcp"].version')" >> "$GITHUB_ENV"
+
+    - name: Cache the browser
+      id: cache
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-chromium-${{ runner.os }}-${{ env.PLAYWRIGHT_MCP_VERSION }}
+
+    - name: Install Chromium
+      shell: bash
+      env:
+        CACHED: ${{ steps.cache.outputs.cache-hit }}
+      run: |
+        # The browser is cached, the system libraries it needs are not
+        if [ "$CACHED" = true ]; then npx playwright install-deps chromium; else npx playwright install chromium --with-deps; fi
+
+    - name: Configure the Playwright MCP server
+      shell: bash
+      env:
+        VIEWPORT: ${{ inputs.viewport }}
+      run: |
+        # Headless, at a fixed viewport. --no-sandbox because some runners refuse Chrome's sandbox; it only opens the app.
+        # In .qa/, so the repo's own .mcp.json is left alone.
+        jq -n --arg size "$VIEWPORT" '{mcpServers: {playwright: {command: "npx",
+          args: ["@playwright/mcp", "--headless", "--no-sandbox", "--viewport-size", $size]}}}' > .qa/mcp.json
+
+    - name: Run the tests
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        BUDGET: ${{ inputs.budget-usd }}
+      run: |
+        # Run the plan in the browser and write .qa/report.md, with the shell, files and the browser's tools only. A
+        # session stopped by its turn or spend limit exits non-zero: the report says what it covered, rather than the job failing.
+        claude --model opus -p "$(cat .qa/test-prompt.md)" \
+          --mcp-config .qa/mcp.json --strict-mcp-config \
+          --max-turns 200 --max-budget-usd "$BUDGET" --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
+          --output-format stream-json --verbose 2>&1 | tee .qa/logs/test.jsonl \
+          || echo "::warning::The test session exited with ${PIPESTATUS[0]}"

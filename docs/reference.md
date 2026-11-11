@@ -386,6 +386,50 @@ that already calls the review adds `contents: write` to its calling job when it 
 refuses to start a called workflow whose job asks for more than the caller grants. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.
 
+## QA in another repo
+
+A repo's own CI can run Woodshed's QA on its pull requests: Claude plans tests from the diff and the description,
+drives the running app in a browser through Playwright, and posts a QA report as a comment and a QA check. It is three
+actions in `.github/actions/qa/`, so the repo starts its app between them with its own steps:
+
+```yaml
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, pull-requests: write, issues: write, checks: write }
+    steps:
+      - uses: actions/checkout@<commit>
+        with: { ref: '${{ github.head_ref }}', fetch-depth: 50 }
+      - id: plan
+        uses: <woodshed's repo>/.github/actions/qa/plan@<commit>
+        with: { anthropic-api-key: '${{ secrets.ANTHROPIC_API_KEY }}', app-url: http://localhost:3000 }
+      - id: app
+        if: steps.plan.outputs.should-run == 'true'
+        run: make serve-ci   # the repo's own way to start its app
+      - if: steps.plan.outputs.should-run == 'true'
+        timeout-minutes: 15
+        uses: <woodshed's repo>/.github/actions/qa/test@<commit>
+        with: { anthropic-api-key: '${{ secrets.ANTHROPIC_API_KEY }}' }
+      - if: ${{ !cancelled() }}
+        uses: <woodshed's repo>/.github/actions/qa/report@<commit>
+        with:
+          not-covered: ${{ steps.app.outcome == 'failure' && 'the app did not start' || '' }}
+```
+
+- **plan** posts that QA is running, then plans. When the change has nothing a browser or API test can check, its
+  `should-run` is false and the app never starts. `notes` (default `.woodshed/qa.md`, read from the base branch, so a
+  pull request cannot change its own QA) is what the app's tests need: how to sign in, the data already there, how to
+  read what the app saved. `heading` (default `## QA`) starts the comment; `budget-usd` (default 2) caps the planner.
+- **test** runs the plan with Claude in a browser and writes the report. It never changes code. `budget-usd`
+  (default 20) caps it; give its step a `timeout-minutes`, so a stuck run still reaches the report.
+- **report** reads the verdict, updates the comment and posts the check: `check` (default `QA`) names it, which is
+  the project file's `pullRequests.qa.check`. A failed test case fails the check; a run that reached no verdict (nothing
+  to test, no plan, `not-covered` set, a test it could not verify) is neutral, so it never reads as a broken pull
+  request. The plan, the screenshots and the session logs are uploaded as `qa-*` artifacts. The check's `external_id`
+  holds the run's cost (`cost_usd=1.65`), for a repo that adds up what QA spends.
+
+When to run it (a label, an approved review, which files changed) is the calling workflow's to decide.
+
 ## Databases
 
 Each of the project file's `databases` is on an engine, a module in `shared/databases/` (`postgres.mjs`, `mongo.mjs`,
