@@ -9,6 +9,10 @@ place to another, and `console.mjs` here picks one and starts the console on it 
 | `aws` | An AWS account of its own: the console on one EC2 machine, each session a Fargate task | [aws/README.md](aws/README.md) |
 | `local` | One machine with Docker: the console on the machine, each session a container | [local/README.md](local/README.md) |
 
+A service hosting many orgs in one console (`console/hosted.mjs`, [docs/hosting.md](../docs/hosting.md)) uses no
+provider: it hands each org's parts to the console itself, in the same shapes as the table below, such as the local
+provider's docker launcher pointed at that org's own machine (`createDockerLauncher({ dockerHost, reachHost })`).
+
 On a VM, such as one on Hetzner Cloud, the local provider runs as it is: `local/README.md`, "On a server your team
 reaches", says what to decide, with Hetzner's own pieces under "On Hetzner Cloud".
 

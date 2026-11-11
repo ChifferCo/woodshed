@@ -7,7 +7,7 @@ off until its setting names it, so a console with none of them set runs sessions
 
 | Part | File | Setting |
 | --- | --- | --- |
-| Session containers | `dockerLauncher.mjs` | Always; `WOODSHED_LOCAL_DOCKER_NETWORK` puts them on the stack's network |
+| Session containers | `dockerLauncher.mjs` | Always; `WOODSHED_LOCAL_DOCKER_NETWORK` puts them on the stack's network. A host serving many orgs points it at another machine's daemon (`dockerHost`, `reachHost`; `docs/hosting.md`), and `dbAdminRunner.mjs` too |
 | Secrets, each file sealed with a key | `secretStore.mjs`, `secretKey.mjs` | `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` |
 | Saved Claude homes | `homeStore.mjs` | `WOODSHED_LOCAL_HOMES_DIR` |
 | Each session's own databases | `dbAdminRunner.mjs`, with `postgres.yml` and `mongo.yml` | Postgres: `WOODSHED_LOCAL_DB_POSTGRES_HOST` and `_DB_POSTGRES_ROOT_USER`. Mongo, which needs Postgres: `WOODSHED_LOCAL_DB_MONGO_HOST`. With the secrets folder |

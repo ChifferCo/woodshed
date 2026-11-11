@@ -204,3 +204,37 @@ test('a run reads the installation\'s project file for the image\'s repo, mounte
   const plain = without.calls.find((c) => c.args[0] === 'run').args;
   assert.ok(!plain.includes('--mount') && !plain.includes('--project-files-dir'), 'no file, no mount and no flag');
 });
+
+test('on another machine\'s daemon a run is created, its secrets copied in, then started, all on that daemon', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'local-db-admin-remote-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const secrets = createSecretStore({ dir: path.join(base, 'secrets'), key: crypto.randomBytes(32) });
+  await secrets.write('db-root/postgres', 'pg-root-pw');
+  await secrets.write('users/mia/database', 'mia-pw');
+  const projectFilesDir = fixtureProjectFiles(path.join(base, 'files'), { 'acme/app': fixtureProject() });
+  const calls = [];
+  let copied = null;
+  const runner = createDbAdminRunner({
+    image: 'woodshed-session', repoDir: '/work/app', secrets, postgresHost: 'postgres', postgresRootUser: 'postgres',
+    runsDir: path.join(base, 'runs'), projectFilesDir, projectFilesHostDir: '/srv/files', repo: 'acme/app', dockerHost: 'ssh://woodshed@10.8.0.12',
+    docker: async (args, env, { dockerHost }) => {
+      calls.push({ verb: args[0], args, env, dockerHost });
+      if (args[0] === 'cp') {
+        const folder = args[1].replace(/\/\.$/, '');
+        copied = fs.readdirSync(folder, { recursive: true }).filter((n) => n.endsWith('.json')).sort();
+      }
+      return args[0] === 'ps' ? '' : 'ok';
+    },
+  });
+  const id = await runner.start(['reset', 'mia']);
+  assert.deepEqual(calls.map((c) => c.verb), ['ps', 'create', 'cp', 'start']);
+  assert.deepEqual([...new Set(calls.map((c) => c.dockerHost))], ['ssh://woodshed@10.8.0.12']);
+  const create = calls.find((c) => c.verb === 'create');
+  assert.equal(create.args.includes('-v'), false, 'no bind mount of a folder the other machine does not have');
+  assert.equal(create.env.PG_ROOT_PASSWORD, 'pg-root-pw', 'the root password by name, in the CLI\'s environment');
+  assert.equal(create.args.includes('pg-root-pw'), false);
+  assert.ok(create.args.some((a) => a.includes('source=/srv/files/acme/app.yaml')), 'the project file from the other machine\'s copy');
+  assert.deepEqual(calls.find((c) => c.verb === 'cp').args.slice(2), [`${id}:/run/woodshed-secrets`]);
+  assert.deepEqual(copied, ['users/mia/database.json']);
+});

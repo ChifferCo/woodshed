@@ -9,7 +9,7 @@ import { checkoutDir, secretEnvName } from '../../shared/project.mjs';
 import { defaultProject } from '../../console/projects.mjs';
 import { secretSpecs } from '../../console/secrets.mjs';
 import { createDbAdminRunner } from './dbAdminRunner.mjs';
-import { dockerLauncher } from './dockerLauncher.mjs';
+import { createDockerLauncher } from './dockerLauncher.mjs';
 import { createHomeStore } from './homeStore.mjs';
 import { readKey } from './secretKey.mjs';
 import { createSecretSlot } from './secretSlot.mjs';
@@ -132,7 +132,7 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
  */
 export function localProvider(config) {
   const { image, memory, cpus } = config.launcher;
-  const docker = dockerLauncher({
+  const docker = createDockerLauncher({
     image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo,
   });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.

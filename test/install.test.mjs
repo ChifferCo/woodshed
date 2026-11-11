@@ -257,3 +257,18 @@ test('a stack.env written for another project file is named, and one written for
   runInstallFunction(`writeStackEnv "${current}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env 'mongo postgres' woodshed`);
   assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" $'api-env=api/.env\\napi-env\\nmongo postgres' 'mongo postgres' 'postgres mongo'`), '');
 });
+
+test('WOODSHED_BUILD_ONLY fetches the repository and builds its image where DOCKER_HOST points, and sets nothing else up', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-build-only-'));
+  const out = runInstallFunction([
+    'checkTools() { :; }',
+    'fetchRepo() { echo "fetch $1 $2"; }',
+    'buildImage() { echo "build $2 $4 on ${DOCKER_HOST:-here}"; }',
+    'writeStackEnv() { echo "stack.env written"; }',
+    'main',
+  ].join('; '), { WOODSHED_HOME: home, WOODSHED_REPO: 'acme/app', GH_TOKEN: 't', WOODSHED_BUILD_ONLY: '1', DOCKER_HOST: 'ssh://woodshed@10.8.0.12' });
+  assert.match(out, /fetch acme\/app .*\/repos\/acme-app\n/);
+  assert.match(out, /build acme\/app woodshed-session:acme-app on ssh:\/\/woodshed@10\.8\.0\.12\n/);
+  assert.doesNotMatch(out, /stack\.env written/);
+  assert.equal(fs.existsSync(path.join(home, 'stack.env')), false);
+});

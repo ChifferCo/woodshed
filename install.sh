@@ -14,7 +14,8 @@
 # `<owner>/<name>.yaml`, one for a repository with no .woodshed/project.yaml of its own, which this script and every
 # session then read in its place; saved in stack.env), WOODSHED_REBUILD=1 (build the session image again),
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
-# empty builds it here).
+# empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
+# DOCKER_HOST set, on that docker host).
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
@@ -343,6 +344,14 @@ main() {
   [ -n "$token" ] || fail 'a GitHub token is needed to read the repository'
   say "Fetching $repo"
   fetchRepo "$repo" "$repoDir" "$token"
+
+  # Every docker call goes where DOCKER_HOST points, so a host serving many orgs builds an org's session image on that
+  # org's own machine with this alone (docs/hosting.md).
+  if [ -n "${WOODSHED_BUILD_ONLY:-}" ]; then
+    buildImage "$src" "$repo" "$repoDir" "$image" "$token" "$home/build" "$projectFilesDir"
+    say "Built the session image $image${DOCKER_HOST:+ on $DOCKER_HOST}"
+    return 0
+  fi
 
   if [ -n "${WOODSHED_REBUILD:-}" ] || ! docker image inspect "$image" >/dev/null 2>&1; then
     buildImage "$src" "$repo" "$repoDir" "$image" "$token" "$home/build" "$projectFilesDir"
