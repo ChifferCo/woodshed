@@ -127,6 +127,14 @@ export function createTunnel({ store, targets, databases, now = Date.now, allowe
     return found[0];
   }
 
+  /** @returns {boolean}  whether the request carries a live token of this installation's, for a caller routing requests to it */
+  function owns(headers) {
+    const token = BEARER_RE.exec(String(headers?.authorization || ''))?.[1];
+    if (!token) return false;
+    const hash = sha256(token);
+    return Object.values(all()).some((record) => record.hash === hash && live(record));
+  }
+
   async function connection(req, res) {
     const send = (code, body) => {
       res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -193,5 +201,5 @@ export function createTunnel({ store, targets, databases, now = Date.now, allowe
     socket.on('error', () => upstream.destroy());
   }
 
-  return { available, kinds, view, issue, revoke, connection, handleUpgrade };
+  return { available, kinds, view, issue, revoke, owns, connection, handleUpgrade };
 }

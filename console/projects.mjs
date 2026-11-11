@@ -26,16 +26,27 @@ function fromJson(value) {
   } catch (err) {
     throw new Error(`WOODSHED_CLOUD_PROJECTS is not JSON (${err.message})`);
   }
-  if (!Array.isArray(list) || !list.length) throw new Error('WOODSHED_CLOUD_PROJECTS must be a list of projects, each { "name", "repo" }');
+  return projectsFrom(list);
+}
+
+/**
+ * A list of projects, each `{ name, repo, default, installationId }`, checked as WOODSHED_CLOUD_PROJECTS is, for a
+ * caller that has the list already parsed.
+ * @param {unknown} list
+ * @param {string} [setting]  what to name in an error
+ * @returns {{name: string, repo: string, default: boolean, installationId?: string}[]}
+ */
+export function projectsFrom(list, setting = 'WOODSHED_CLOUD_PROJECTS') {
+  if (!Array.isArray(list) || !list.length) throw new Error(`${setting} must be a list of projects, each { "name", "repo" }`);
   const projects = list.map((entry, i) => {
     const { name, repo, installationId } = entry ?? {};
     if (typeof name !== 'string' || !NAME.test(name) || name.length > NAME_MAX) {
-      throw new Error(`WOODSHED_CLOUD_PROJECTS[${i}]: name must be lowercase letters and digits, in words joined by single dashes, at most ${NAME_MAX} long`);
+      throw new Error(`${setting}[${i}]: name must be lowercase letters and digits, in words joined by single dashes, at most ${NAME_MAX} long`);
     }
-    if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error(`WOODSHED_CLOUD_PROJECTS[${i}] (${name}): repo must be owner/name`);
+    if (typeof repo !== 'string' || !REPO.test(repo)) throw new Error(`${setting}[${i}] (${name}): repo must be owner/name`);
     const project = { name, repo, default: entry.default === true };
     if (installationId !== undefined) {
-      if (!INSTALLATION_ID.test(String(installationId))) throw new Error(`WOODSHED_CLOUD_PROJECTS[${i}] (${name}): installationId must be the GitHub App installation's number`);
+      if (!INSTALLATION_ID.test(String(installationId))) throw new Error(`${setting}[${i}] (${name}): installationId must be the GitHub App installation's number`);
       project.installationId = String(installationId);
     }
     return project;
@@ -44,13 +55,13 @@ function fromJson(value) {
     const seen = new Set();
     for (const project of projects) {
       const value = key === 'repo' ? project.repo.toLowerCase() : project.name;
-      if (seen.has(value)) throw new Error(`WOODSHED_CLOUD_PROJECTS: two projects have the ${key} ${project[key]}`);
+      if (seen.has(value)) throw new Error(`${setting}: two projects have the ${key} ${project[key]}`);
       seen.add(value);
     }
   }
   const defaults = projects.filter((p) => p.default);
   if (projects.length === 1) projects[0].default = true;
-  else if (defaults.length !== 1) throw new Error('WOODSHED_CLOUD_PROJECTS: exactly one project must have "default": true');
+  else if (defaults.length !== 1) throw new Error(`${setting}: exactly one project must have "default": true`);
   return projects;
 }
 

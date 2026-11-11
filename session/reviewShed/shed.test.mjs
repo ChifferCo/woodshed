@@ -10,6 +10,9 @@ import path from 'node:path';
 // may need either to open the page, which is the property this pins.
 process.env.WOODSHED_REVIEWS = fs.mkdtempSync(path.join(os.tmpdir(), 'rv-state-'));
 process.env.PATH = '/usr/bin:/bin';
+// A Woodshed session exports these; the fixtures' repos are on master and the host is not review-only.
+delete process.env.DEFAULT_BRANCH;
+delete process.env.REVIEW_ONLY;
 const { createReviewHost } = await import('./host.mjs');
 
 function checkout(t, { dirty }) {

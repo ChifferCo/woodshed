@@ -119,58 +119,27 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { hostedEngines, viewersOf } from '../shared/databases/index.mjs';
-import { installationProjectFile } from '../shared/project.mjs';
+import { viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
-import { createAsks } from './asks.mjs';
-import { CLIENT_SECRET, createAuth, safeNext, signInFailure } from './auth.mjs';
+import { safeNext, signInFailure } from './auth.mjs';
 import { loadConfig } from './config.mjs';
-import { createAttachments, MAX_ATTACHMENT_BYTES } from './attachments.mjs';
-import { createAutoNamer } from './autoName.mjs';
-import { createProjectPrChips } from './prChips.mjs';
-import { createPullWebhooks } from './pullWebhooks.mjs';
-import { createDatabaseGate } from './databaseGate.mjs';
-import { createDatabases } from './databases.mjs';
-import { createDbRestore } from './dbRestore.mjs';
-import { createSlack } from './slack.mjs';
-import { CONNECTION_PATH, createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
-import { createFleet } from './fleet.mjs';
-import { checkGh, createGitHub } from './github.mjs';
-import { createAppApi } from './githubApp.mjs';
-import { createAppIdentity } from './appIdentity.mjs';
+import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
+import { CONNECTION_PATH } from './dbTunnel.mjs';
+import { checkGh } from './github.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
-import { createAnthropicProxy } from './anthropicProxy.mjs';
-import { createOpenAiProxy } from './openaiProxy.mjs';
-import { createSessionApi } from './sessionApi.mjs';
-import { createReviewSource } from './review.mjs';
-import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
-import { createHeldData } from './heldData.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, publicSession, sharedRunningCount } from './sessions.mjs';
-import { APP_KEY_SECRET, WEBHOOK_SECRET, createSettings } from './settings.mjs';
+import { createInstallation } from './installation.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, publicSession, sharedRunningCount } from './sessions.mjs';
+import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
-import { createGitHubUser } from './githubUser.mjs';
-import { createClaudeSettings } from './claudeSettings.mjs';
-import { createProjectReader } from './projectFile.mjs';
-import { createUserSettings } from './userSettings.mjs';
-import { createViewPrefs } from './viewPrefs.mjs';
-import { createGitHubPeople } from './githubPeople.mjs';
-import { createSlackPeople } from './slackPeople.mjs';
-import { createAssigneePings } from './assigneePings.mjs';
-import { createMembers, parseHandle } from './members.mjs';
+import { parseHandle } from './members.mjs';
 import { handleTerminalRequest, handleTerminalUpgrade } from './terminalProxy.mjs';
 import { appIdFor, handleAppRequest, handleAppUpgrade } from './appProxy.mjs';
 import { handleEditorRequest, handleEditorUpgrade, isEditorPath } from './editorProxy.mjs';
 import { startTlsAsk } from './tlsAsk.mjs';
-import { createAppShares } from './appShares.mjs';
 import { providerMetaContent } from './providerWords.mjs';
-import { createWebhookDispatch } from './webhookDispatch.mjs';
-import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
-import { createProjectTokens } from './projectTokens.mjs';
-import { createProjectAccess } from './projectAccess.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
-import { createAddedProjects, repoChecker } from './addedProjects.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -251,6 +220,9 @@ const APP_AUTH_PATH = '/__woodshed/auth';
 const APP_SHARE_PATH = '/__woodshed/share';
 // The GitHub App setup page and its calls, which a console that borrows its GitHub access has none of.
 const SETUP_PATH_RE = /^\/(?:api\/)?setup\/github(?:\/|$)/;
+// What a program embedding the console may add to the user menu (menuOf): how much of it, and how long each text.
+const MENU_TEXT_CHARS = 100;
+const MENU_ITEMS = 50;
 const APP_SHARE_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app-share(?:\/(members|links)(?:\/([0-9a-f]{8})\/(revoke))?)?$/;
 
 /**
@@ -261,6 +233,51 @@ export function knownHosts({ host, publicUrl, extraHosts }) {
   const names = ['localhost', '127.0.0.1', '::1', os.hostname(), new URL(publicUrl).hostname, ...extraHosts];
   if (host !== '0.0.0.0' && host !== '::') names.push(host);
   return names.filter(Boolean);
+}
+
+// A link from a program embedding the console goes into an href: a path on the console's own name, or the web.
+function menuHref(href) {
+  if (typeof href !== 'string' || href.length > 2000) return null;
+  if (/^https?:\/\//i.test(href)) return href;
+  return href.startsWith('/') && !href.startsWith('//') ? href : null;
+}
+
+function menuText(value) {
+  return typeof value === 'string' ? value.slice(0, MENU_TEXT_CHARS) : '';
+}
+
+/**
+ * What a program embedding the console adds to the user menu (createInstallation's `userMenu`), as /api/me sends it:
+ * text cut short, each link a path or an http(s) address, and the rest dropped. common.js draws it
+ * (designSystem/components/MenuGroups).
+ * @param {(headers: object) => {subtitle?: string, groups?: {label?: string, items: {label: string, href?: string,
+ *          current?: boolean, note?: string}[]}[]}|null} userMenu
+ *   `subtitle` goes under the person's name on the user button; each group is a `label` and its items at the top of
+ *   the menu. An item with `current` is one of a set of choices, `current: true` the one in use (it needs no `href`)
+ * @param {object} headers  the request's
+ * @returns {{menuSubtitle?: string, menuGroups?: object[]}}
+ */
+export function menuOf(userMenu, headers) {
+  let given;
+  try {
+    given = userMenu(headers) ?? {};
+  } catch (err) {
+    console.warn('console: user menu not given', { message: String(err?.message ?? err).split('\n')[0] });
+    return {};
+  }
+  let room = MENU_ITEMS;
+  const groups = (Array.isArray(given.groups) ? given.groups : []).map((group) => {
+    const items = (Array.isArray(group?.items) ? group.items : []).map((item) => ({
+      label: menuText(item?.label),
+      href: item?.current === true ? null : menuHref(item?.href),
+      ...(typeof item?.current === 'boolean' ? { current: item.current } : {}),
+      note: menuText(item?.note) || null,
+    })).filter((item) => item.label && (item.href || item.current === true)).slice(0, Math.max(room, 0));
+    room -= items.length;
+    return { label: menuText(group?.label) || null, items };
+  }).filter((group) => group.items.length);
+  const subtitle = menuText(given.subtitle);
+  return { ...(subtitle ? { menuSubtitle: subtitle } : {}), ...(groups.length ? { menuGroups: groups } : {}) };
 }
 
 // A static file's URL carries a hash of its contents, so the browser keeps it until a deploy changes it rather than
@@ -281,19 +298,23 @@ function staticUrl(file) {
 }
 
 /**
- * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null}} args
+ * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
+ *          linkQuery?: Record<string, string>|null}} args
  *   the page's scripts, loaded in order after common.js; `provider`'s words are what the page says about where
- *   sessions run (providerWords.mjs), the defaults where it has none
+ *   sessions run (providerWords.mjs), the defaults where it has none; `linkQuery` is config.linkQuery
  * @returns {string}  the page shell; the script renders everything from /api/sessions
  */
-export function pageShell({ title, script, login = null, provider = null }) {
+export function pageShell({ title, script, login = null, provider = null, linkQuery = null }) {
   // Whose page it is, for session.js to draw from what it kept only for the same person. A GitHub login, or nothing.
   const who = /^[A-Za-z0-9-]{1,39}$/.test(String(login ?? '')) ? `\n<meta name="woodshed-login" content="${login}">` : '';
+  // What the links a page copies carry (config.linkQuery). URLSearchParams leaves nothing an attribute needs escaped.
+  const query = linkQueryString(linkQuery);
+  const queryMeta = query ? `\n<meta name="woodshed-link-query" content="${query}">` : '';
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">${who}
+<meta name="viewport" content="width=device-width, initial-scale=1">${who}${queryMeta}
 <meta name="woodshed-provider" content="${providerMetaContent(provider)}">
 <title>${title}</title>
 <link rel="manifest" href="/manifest.webmanifest">
@@ -321,6 +342,28 @@ ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n
 </body>
 </html>
 `;
+}
+
+/**
+ * What the console serves to anyone, signed in or not, the same for every installation: the page scripts and styles, the
+ * install-as-an-app manifest and its icons (a browser fetches the manifest without cookies).
+ * @returns {boolean}  whether it answered
+ */
+export function servePublic(req, res, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return false;
+  if (url.pathname === '/manifest.webmanifest') {
+    res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8', 'cache-control': 'no-cache' });
+    res.end(CONSOLE_MANIFEST);
+    return true;
+  }
+  if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return true;
+  const file = url.pathname.startsWith('/static/') ? url.pathname.slice('/static/'.length) : null;
+  if (!file || !STATIC_FILES[file]) return false;
+  // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
+  const current = url.searchParams.get('v') === staticHash(file);
+  res.writeHead(200, { 'content-type': STATIC_FILES[file], 'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache' });
+  res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
+  return true;
 }
 
 function reply(res, code, body) {
@@ -425,7 +468,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
 }
 
 /**
- * @param {{config: object, fleet: object, settings?: ReturnType<typeof createSettings>|null,
+ * @param {{config: object, fleet: object, settings?: ReturnType<typeof import('./settings.mjs').createSettings>|null,
  *          events?: {list: () => object[]}, review?: ReturnType<typeof createReviewSource>|null,
  *          people?: {names: (logins: Iterable<string>) => Record<string, string>}|null}} deps
  *   `settings` only where the Secrets page works (AWS); `people` gives the pages each handle's display name
@@ -435,7 +478,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  githubFor = null, trusted = null,
+  githubFor = null, trusted = null, userMenu = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -502,6 +545,7 @@ export function createHandler({
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
         repo: user ? defaultProject(config).repo : null, workflows: user ? (config.actionsWorkflows ?? []) : [],
+        ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
       return true;
     }
@@ -519,6 +563,7 @@ export function createHandler({
         // The menu's workflow links. A signed-out browser is not told which repo this is: it may be private.
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
         workflows: user || !auth?.enabled() ? (config.actionsWorkflows ?? []) : [],
+        ...((user || !auth?.enabled()) && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
       return true;
     }
@@ -1035,6 +1080,7 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         const resuming = fleet.find(actionMatch[1]);
+        await userSettings?.refresh?.(login, { force: true });
         if (resuming?.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
         // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
@@ -1074,6 +1120,7 @@ export function createHandler({
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
+        await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
@@ -1504,11 +1551,7 @@ export function createHandler({
     if (auth?.available() && req.method === 'GET' && !stays && otherPublicNames.has(hostnameOf(req.headers.host))) {
       return redirect(res, `${config.publicUrl}${url.pathname}${url.search}`);
     }
-    if (req.method === 'GET' && url.pathname === '/manifest.webmanifest') {
-      res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8', 'cache-control': 'no-cache' });
-      return res.end(CONSOLE_MANIFEST);
-    }
-    if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return;
+    if (servePublic(req, res, url)) return;
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;
@@ -1533,8 +1576,8 @@ export function createHandler({
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
-    if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: 'Woodshed Cloud', script: SHELL_SCRIPTS, login: user.login, provider }));
-    if (pathname === '/settings') return html(res, pageShell({ title: 'Woodshed Cloud', script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider }));
+    if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: 'Woodshed Cloud', script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings') return html(res, pageShell({ title: 'Woodshed Cloud', script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
@@ -1547,7 +1590,13 @@ export function createHandler({
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
     if (pathname === '/api/my') {
-      await databaseGate?.refusal();
+      // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
+      // the background: the page polls, and sees a change on a later poll.
+      const first = userSettings?.askedAbout ? !userSettings.askedAbout(user.login) : false;
+      const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
+        console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
+      });
+      await Promise.all([databaseGate?.refusal(), first ? looking : null]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
@@ -1597,13 +1646,6 @@ export function createHandler({
       }
     }
     if (pathname === '/healthz') return reply(res, 200, { ok: true });
-    const file = pathname.startsWith('/static/') ? pathname.slice('/static/'.length) : null;
-    if (file && STATIC_FILES[file]) {
-      // Only the version a page names is kept: an old or missing ?v= is asked for again each time.
-      const current = url.searchParams.get('v') === staticHash(file);
-      res.writeHead(200, { 'content-type': STATIC_FILES[file], 'cache-control': current ? 'public, max-age=31536000, immutable' : 'no-cache' });
-      return res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
-    }
     return reply(res, 404, { error: 'not found' });
   };
 }
@@ -1727,120 +1769,6 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
 }
 
 /**
- * Sign-in, with the App's client secret read from Secrets Manager at start and kept in memory. Setting the
- * secret on the Secrets page makes sign-in available without a restart; the first one to complete makes it required.
- */
-async function startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) {
-  let clientSecret = await secrets.read(CLIENT_SECRET).catch((err) => {
-    console.error('console: GitHub App client secret not readable', { message: String(err?.message ?? err).split('\n')[0] });
-    return null;
-  });
-  let clientId = null;
-  const githubUser = createGitHubUser({
-    clientId: async () => {
-      clientId ??= (await appApi.app()).clientId;
-      return clientId;
-    },
-    clientSecret: () => clientSecret,
-    userSettings,
-  });
-  const auth = createAuth({
-    publicUrl: config.publicUrl,
-    store,
-    required: config.requireSignIn,
-    clientId: async () => {
-      clientId ??= (await appApi.app()).clientId;
-      return clientId;
-    },
-    clientSecret: () => clientSecret,
-    canWrite: (login) => github.canWrite(login),
-    onConnect: (args) => githubUser.connect(args),
-    people,
-    members,
-    slackPeople,
-  });
-  console.log('console: GitHub sign-in', { available: auth.available(), required: auth.enabled(), alwaysRequired: config.requireSignIn });
-  return {
-    ...auth,
-    githubUser,
-    secretReplaced(name, value) {
-      if (name !== CLIENT_SECRET) return;
-      clientSecret = value;
-      auth.disarm();
-      console.log('console: GitHub sign-in available', { reason: 'client secret set', required: auth.enabled() });
-    },
-  };
-}
-
-function every(ms, what, fn) {
-  async function run() {
-    try {
-      await fn();
-    } catch (err) {
-      console.error(`console: ${what} failed`, { message: String(err?.message ?? err).split('\n')[0] });
-    }
-    setTimeout(run, ms);
-  }
-  run();
-}
-
-/**
- * The App's private key, as the console holds it. In AWS it is read from its secret at start, and the Secrets
- * page swaps in a new one without a restart; until the secret has a value, the console runs without GitHub.
- * @returns {Promise<{current: () => string|null, set: (pem: string) => void, reload: () => Promise<void>}>}
- */
-async function loadAppKey(config, secrets) {
-  let key = null;
-  const { keyFile, keyFromSecret } = config.githubApp;
-
-  async function reload() {
-    if (keyFile) key = fs.readFileSync(keyFile, 'utf8');
-    else if (keyFromSecret) {
-      key = await secrets.read(APP_KEY_SECRET).catch((err) => {
-        console.error('console: GitHub App key not readable', { message: String(err?.message ?? err).split('\n')[0] });
-        return null;
-      });
-    }
-    if (key) console.log('console: GitHub App key loaded');
-  }
-
-  await reload();
-  if (!key) console.warn('console: no GitHub App key yet, so no GitHub polling, webhooks or session tokens until it is set on the Secrets page');
-  return {
-    current: () => key,
-    reload,
-    set(pem) {
-      key = pem;
-      console.log('console: GitHub App key replaced');
-    },
-  };
-}
-
-// Waits out a missing App key, reading it again each time: the secret may be filled in, or the first read may have failed.
-async function untilAppKey(appKey, everyMs) {
-  while (!appKey.current()) {
-    await new Promise((resolve) => setTimeout(resolve, everyMs));
-    await appKey.reload();
-  }
-}
-
-function startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks, githubAccess }) {
-  // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
-  if (!config.sessionApi.host) return;
-  const handle = createSessionApi({
-    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
-    githubAccess,
-  });
-  const server = http.createServer((req, res) => {
-    handle(req, res).catch((err) => {
-      console.error('sessionApi: request failed', { message: err?.message });
-      if (!res.headersSent) reply(res, 502, { error: 'could not get a GitHub token' });
-    });
-  });
-  server.listen(config.sessionApi.port, config.sessionApi.host, () => console.log('sessionApi: listening', config.sessionApi));
-}
-
-/**
  * Starts the console on what its provider supplies: where sessions run, its secrets, saved Claude homes, db-admin runs
  * and webhooks. ../providers/console.mjs picks the provider and calls this; nothing in the console imports one
  * (test/layout.test.mjs).
@@ -1862,122 +1790,9 @@ export async function startConsole({ provider, config: given = null }) {
   const githubSetup = provider.secrets && !loaded.githubBroker ? createGitHubAppSetup({ store, secrets: provider.secrets, config: loaded, supervisor: supervisorOf(process.env) }) : null;
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
-  // The limits and retention numbers are the Console settings page's, read each time they are used.
-  const config = liveConfig(loaded, store);
-  const consoleSettings = createConsoleSettings({ store, config: loaded });
-  const { secrets, homes, dbAdmin } = provider;
-  const appKey = config.githubApp ? await loadAppKey(config, secrets) : null;
-  const tokens = createProjectTokens({ config, privateKey: () => appKey.current() });
   await checkGh();
-  const github = createGitHub({ repo: defaultProject(config).repo, token: tokens && (async () => (await tokens.console.token()).token) });
-  // Each project's repo, on that project's own token: the default project's is the console's own client.
-  const projectClients = new Map([[defaultProject(config).name, github]]);
-  const githubFor = (project) => {
-    // A repo an admin removed and added again is a new client, since it may be on another installation.
-    const key = project.default ? project.name : `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
-    if (!projectClients.has(key)) {
-      const token = tokens && (async () => (await tokens.forSession({ project: project.name }).console.token()).token);
-      projectClients.set(key, createGitHub({ repo: project.repo, token }));
-    }
-    return projectClients.get(key);
-  };
-  // The databases the provider's db-admin makes a copy of for each session: what the installation runs.
-  const databases = createDatabases({ store, secrets, dbAdmin, engines: provider.databases ?? [] });
-  const databaseTargets = tunnelTargetsFor(config.tunnelTargets, databases.engines);
-  // Where the console makes none (the docker launcher), the session's environment says which servers it has.
-  const hosted = databases.available ? databases.engines : hostedEngines(config.sessionEnv ?? {});
-  console.log('console: databases', {
-    made: databases.available, engines: databases.engines, hosted, tunnel: Object.keys(databaseTargets).filter((k) => databaseTargets[k]),
-  });
-  const slack = createSlack({ store, secrets });
-  console.log('console: Slack posts', { available: slack.available, channel: slack.view().channel || null });
-  const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
-  // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
-  const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
-  const projectReader = createProjectReader({ github, installationFile: installationFileOf(defaultProject(config).repo) });
-  // Each project's file, from its own repo: the gates its pull requests wait for. The default project's is the one above.
-  const projectReaders = new Map([[defaultProject(config).name, projectReader]]);
-  const readerOf = (name) => {
-    const project = (name && projectNamed(config, name)) || defaultProject(config);
-    // Keyed by repo too: a repo removed and added again may be another repo under the same name.
-    const key = project.default ? project.name : `${project.name}\n${project.repo}`;
-    if (!projectReaders.has(key)) {
-      projectReaders.set(key, createProjectReader({ github: githubFor(project), installationFile: installationFileOf(project.repo) }));
-    }
-    return projectReaders.get(key);
-  };
-  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
-  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
-  const people = createGitHubPeople({ store, github });
-  // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
-  const members = trusted ? null : createMembers({ store });
-  const appShares = createAppShares({ store, secure: loaded.publicUrl.startsWith('https:') });
-  const slackPeople = createSlackPeople({ store, slack });
-  // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
-  const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null });
-  const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
-  const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
-  const pullWebhooks = createPullWebhooks();
-  const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
-  const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl });
-  const fleet = createFleet({
-    config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
-    autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
-    consoleLinks: (name) => readerOf(name).consoleLinks(),
-  });
-  pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
-  pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
-  // Questions need the bot token to answer, and the session API to hear the answer.
-  const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl }) : null;
-  console.log('console: Slack questions', { available: Boolean(asks) });
-  const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
-  const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
-  const appIdentity = createAppIdentity({ appApi });
-  // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
-  const brokerRead = tokens?.borrowFor
-    ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
-    : undefined;
-  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead }) });
-  // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
-  const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
-  // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
-  // A store the dashboard has not chosen yet holds no client secret either, so sign-in could never come on.
-  if (config.requireSignIn && !trusted && (!auth || secrets?.configured?.() === false)) {
-    throw new Error('WOODSHED_CLOUD_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_CLOUD_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET');
-  }
-  // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
-  const settings = secrets && (appKey || config.githubBroker)
-    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
-    : null;
-  const githubUser = auth?.githubUser ?? null;
-  // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
-  const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => !auth?.enabled() || members.isMember(login) });
-  const dbRestore = createDbRestore({
-    store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
-    defaultBranchMigrations: tokens ? () => projectReader.migrationFiles('postgres') : null,
-    projectDatabases: projectReader.databases,
-  });
-  await dbRestore.recover();
-  const viewPrefs = createViewPrefs(store);
-  // The Review tab reads the session's branch on its project's repo.
-  const reviewSources = new Map();
-  const projectReview = (session) => {
-    const project = projectFor(config, session);
-    const key = `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
-    if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
-    return reviewSources.get(key)(session);
-  };
-  const handle = createHandler({
-    config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
-    consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
-    prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects,
-    // Behind a hosting proxy nobody's write access is asked: the host says who is in.
-    projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
-    githubFor,
-    trusted,
-  });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup });
+  const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
       console.error('console: request failed', { url: req.url, message: err?.message });
@@ -1986,41 +1801,27 @@ export async function startConsole({ provider, config: given = null }) {
   });
   // A dump of a gigabyte or two takes longer to send than Node's 5-minute default for a whole request. Caddy is in front.
   server.requestTimeout = 60 * 60_000;
-  server.on('upgrade', createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted }));
+  server.on('upgrade', installation.upgrade);
   server.listen(config.port, config.host, () => {
-    console.log('console: listening', {
-      host: config.host, port: config.port, repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
-      launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
-      githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
+    console.log('console: listening', { host: config.host, port: config.port, ...installation.summary() });
+  });
+  if (installation.sessionApi) listenSessionApi({ config, handle: installation.sessionApi });
+  await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  installation.start({ webhooks: provider.webhooks ?? null });
+}
+
+/**
+ * The session API's own server, on the one address sessions reach (config.sessionApi).
+ * @param {{config: {sessionApi: {host: string, port: number}}, handle: (req: object, res: object) => Promise<void>}} args
+ * @returns {http.Server}
+ */
+export function listenSessionApi({ config, handle }) {
+  const server = http.createServer((req, res) => {
+    handle(req, res).catch((err) => {
+      console.error('sessionApi: request failed', { message: err?.message });
+      if (!res.headersSent) reply(res, 502, { error: 'could not get a GitHub token' });
     });
-    // In ECS, sessions get their GitHub token from the task definition's secret, which says what it is.
-    if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
-      console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
-    }
   });
-  startSessionApi({
-    config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks,
-    githubAccess: (name) => readerOf(name).githubAccess(),
-  });
-  await startTlsAsk({ config, sessions: () => fleet.sessions() });
-  every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
-  every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
-  // Every session someone can still open: a stopped one's pull request still merges or closes.
-  // Every 10 seconds, so a chip a webhook marked due changes soon; only due pull requests are asked for.
-  if (tokens) every(10_000, 'pull request chips', () => prChips.refresh(fleet.sessions().filter((s) => s.prUrl && !s.cleanedAt)));
-  every(config.tickMs, 'tick', () => fleet.tick());
-  every(config.tickMs, 'app shares sweep', () => appShares.sweep(fleet.sessions().filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.id)));
-  if (asks) every(config.tickMs, 'asks', () => asks.tick());
-  every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
-  if (databases.available) every(databases.POLL_MS, 'databases', () => databases.poll());
-  if (!config.pollGitHub) return;
-  // Neither starts without an App key: a message read then would fail its three tries and land in the dead-letter queue.
-  const keyReady = appKey ? untilAppKey(appKey, config.pollMs) : Promise.resolve();
-  keyReady.then(() => {
-    every(config.pollMs, 'github poll', () => fleet.pollGitHub());
-    appIdentity.login();
-    // Nobody points a webhook at a console with no App of its own: it polls.
-    if (provider.webhooks && config.githubBroker) console.log('console: webhooks off, GitHub access is borrowed', { pollSeconds: config.pollMs / 1000 });
-    else if (provider.webhooks) provider.webhooks.run(createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity }));
-  });
+  server.listen(config.sessionApi.port, config.sessionApi.host, () => console.log('sessionApi: listening', config.sessionApi));
+  return server;
 }

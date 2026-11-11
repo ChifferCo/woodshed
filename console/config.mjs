@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { secretEnvName } from '../shared/project.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
+import { secretSpecs } from './secrets.mjs';
 
 const HOUR_MS = 3_600_000;
 
@@ -134,16 +135,22 @@ function localLogin(env) {
   return login;
 }
 
+// A comma-separated setting's pairs, each with its place among the commas as written, empty ones counted. An error names
+// a bad pair by that place and never quotes it: a pair that is not what it should be may be a token pasted in by mistake.
+function pairsOf(value) {
+  return (value || '').split(',').map((pair, i) => ({ pair: pair.trim(), place: i + 1 })).filter(({ pair }) => pair);
+}
+
 /**
  * `WOODSHED_CLOUD_ENV_FILES`: the secrets that hold the repo's env files, as `secret=path` pairs, the project file's
  * `envFiles` (docs/reference.md, "The project file"): `api-env=api/.env,web-env=web/.env.local`.
  * @returns {{secret: string, path: string}[]}
  */
 export function envFiles(env) {
-  return (env.WOODSHED_CLOUD_ENV_FILES || '').split(',').map((p) => p.trim()).filter(Boolean).map((pair) => {
+  return pairsOf(env.WOODSHED_CLOUD_ENV_FILES).map(({ pair, place }) => {
     const [secret, ...rest] = pair.split('=');
     const file = rest.join('=').trim();
-    if (!/^[a-z0-9-]+$/.test(secret.trim()) || !file) throw new Error(`WOODSHED_CLOUD_ENV_FILES wants secret=path pairs, as api-env=api/.env: ${pair}`);
+    if (!/^[a-z0-9-]+$/.test(secret.trim()) || !file) throw new Error(`WOODSHED_CLOUD_ENV_FILES wants secret=path pairs, as api-env=api/.env: pair ${place} is not`);
     return { secret: secret.trim(), path: file };
   });
 }
@@ -166,15 +173,20 @@ export const SESSION_VARIABLES = Object.freeze([
  */
 export function installSecrets(env, files = envFiles(env)) {
   const taken = new Set(files.flatMap(({ secret }) => [secret, secretEnvName(secret)]));
-  const pairs = (env.WOODSHED_CLOUD_INSTALL_SECRETS || '').split(',').map((p) => p.trim()).filter(Boolean).map((pair) => {
-    const [secret, variable = ''] = pair.split('=').map((part) => part.trim());
-    if (!/^[a-z0-9-]+$/.test(secret) || !/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
-      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS wants secret=VARIABLE pairs, as registry-token=REGISTRY_TOKEN: ${pair}`);
+  // The console's own secrets, which a session never holds: Terraform's install_secrets refuses the same names.
+  const consoles = new Set(secretSpecs({ envFiles: [] }).map(({ name }) => name));
+  const pairs = pairsOf(env.WOODSHED_CLOUD_INSTALL_SECRETS).map(({ pair, place }) => {
+    const parts = pair.split('=').map((part) => part.trim());
+    const [secret, variable = ''] = parts;
+    // A third part is refused too, rather than dropped: it is most likely a value pasted after the name.
+    if (parts.length !== 2 || !/^[a-z0-9-]+$/.test(secret) || !/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
+      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS wants secret=VARIABLE pairs, as registry-token=REGISTRY_TOKEN: pair ${place} is not`);
     }
+    if (consoles.has(secret)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${place} names one of the console's own secrets, which sessions never get`);
     if (variable.startsWith('WOODSHED_') || SESSION_VARIABLES.includes(variable)) {
-      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: ${variable} is one of Woodshed's own session variables`);
+      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${place}'s variable is one of Woodshed's own session variables`);
     }
-    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: ${pair} is an env file's, or named twice`);
+    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${place} is an env file's, or named twice`);
     taken.add(secret).add(variable);
     return { secret, variable };
   });
@@ -222,8 +234,10 @@ export function requireRepo(config) {
 
 /**
  * @param {NodeJS.ProcessEnv} env
+ * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
+ *   from here and gives the console its GitHub access another way
  */
-export function loadConfig(env = process.env) {
+export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const port = number(env.WOODSHED_CLOUD_PORT, 7690);
   const app = githubApp(env);
   const broker = githubBroker(env);
@@ -311,7 +325,7 @@ export function loadConfig(env = process.env) {
     // The key that folder's files are sealed with, in a file of its own outside it (providers/local/secretKey.mjs).
     localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
     webhookFunction: env.WOODSHED_CLOUD_WEBHOOK_FUNCTION || (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'woodshed-cloud-webhooks' : ''),
-    ghToken: app || broker ? null : ghToken(env),
+    ghToken: app || broker || !readGhToken ? null : ghToken(env),
     // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
     sessionApi: { host: env.WOODSHED_CLOUD_SESSION_API_HOST || null, port: number(env.WOODSHED_CLOUD_SESSION_API_PORT, 7691) },
   };

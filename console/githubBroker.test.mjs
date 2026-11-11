@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createGitHubBroker } from './githubBroker.mjs';
+import { createGitHubBroker, createInProcessBroker } from './githubBroker.mjs';
 import { SESSION_PERMISSIONS, createProjectTokens } from './projectTokens.mjs';
 
 const BEARER = 'brk_s3cret-bearer-value';
@@ -201,4 +201,26 @@ test('with a broker, a repo an admin is adding is checked by borrowing a read-on
   await assert.rejects(logsOf(() => tokens.borrowFor('acme/elsewhere')), /403/);
   assert.equal(createProjectTokens({ config: { ...config, githubBroker: null, githubApp: { appId: '1', installationId: '2' } }, privateKey: () => null }).borrowFor, null,
     'with an App the App is asked instead');
+});
+
+test('a token source in the process is narrowed and cached as the HTTP broker is', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const asked = [];
+  const broker = createInProcessBroker({
+    source: {
+      async token({ repo, permissions }) {
+        asked.push({ repo, permissions });
+        if (repo === 'acme/wide') return { token: 'ghs_wide', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), permissions: { contents: 'write', workflows: 'write' } };
+        if (repo === 'acme/down') throw new Error('source down');
+        return { token: `ghs_${repo}`, expiresAt: Date.now() + 3_600_000, permissions };
+      },
+    },
+  });
+  const source = broker.tokenSource({ repo: 'acme/app', permissions: { contents: 'write' }, label: 'sessions' });
+  assert.equal((await source.token()).token, 'ghs_acme/app');
+  await source.token();
+  assert.equal(asked.length, 1, 'cached until near its expiry');
+  await assert.rejects(broker.tokenSource({ repo: 'acme/wide', permissions: { contents: 'write' }, label: 'sessions' }).token(), /more than was asked: workflows/);
+  await assert.rejects(broker.tokenSource({ repo: 'acme/down', label: 'console' }).token(), /the token source gave no GitHub token \(console\): source down/);
 });

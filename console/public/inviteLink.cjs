@@ -27,10 +27,11 @@
    * Only the PR number or the branch name is in it: nothing of the session, so it opens nothing of it.
    * @param {string} origin  the console's address
    * @param {string} on  what the New session form's Work on takes
+   * @param {string|null} [linkQuery]  config.linkQuery as a query string (the page's woodshed-link-query), carried too
    * @returns {string}
    */
-  function inviteUrl(origin, on) {
-    return `${origin}/?new=1&on=${encodeURIComponent(on)}`;
+  function inviteUrl(origin, on, linkQuery = null) {
+    return `${origin}/?new=1&on=${encodeURIComponent(on)}${linkQuery ? `&${linkQuery}` : ''}`;
   }
 
   /** @returns {string} the button's words for a target */

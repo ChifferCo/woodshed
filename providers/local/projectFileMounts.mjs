@@ -10,7 +10,11 @@
 // the db-admin task has no session token to call with.
 //
 // The docker daemon resolves a mount's source on its own host, so the folder must be the same path there, as it is
-// when the console runs on that machine (dbAdminRunner.mjs's runs folder is the same).
+// when the console runs on that machine (dbAdminRunner.mjs's runs folder is the same). A daemon on another machine
+// (createDockerLauncher's `dockerHost`) has its own copy of the folder, at `hostDir`: the console reads `dir` to know
+// which files there are, and the mounts name the same files under `hostDir`.
+import path from 'node:path';
+
 import { installationProjectFile } from '../../shared/project.mjs';
 
 export const PROJECT_FILES_MOUNT = '/run/woodshed-project-files';
@@ -21,10 +25,11 @@ function csvField(text) {
 }
 
 /**
- * @param {{dir: string|null, repos: (string|null|undefined)[]}} args  `repos` are owner/name, any case
+ * @param {{dir: string|null, hostDir?: string|null, repos: (string|null|undefined)[]}} args  `repos` are owner/name, any
+ *   case; `hostDir` is where the docker host has the same folder, `dir` itself when the daemon is on this machine
  * @returns {{args: string[], repos: string[]}}  docker run's `--mount` flags, and the repos the folder has a file for
  */
-export function projectFileMounts({ dir, repos }) {
+export function projectFileMounts({ dir, hostDir = null, repos }) {
   if (!dir) return { args: [], repos: [] };
   const seen = new Set();
   const args = [];
@@ -34,7 +39,8 @@ export function projectFileMounts({ dir, repos }) {
     seen.add(repo.toLowerCase());
     const file = installationProjectFile({ dir, repo });
     if (!file) continue;
-    args.push('--mount', ['type=bind', `source=${file.path}`, `target=${PROJECT_FILES_MOUNT}/${repo}.yaml`, 'readonly'].map(csvField).join(','));
+    const source = hostDir ? path.join(hostDir, path.relative(dir, file.path)) : file.path;
+    args.push('--mount', ['type=bind', `source=${source}`, `target=${PROJECT_FILES_MOUNT}/${repo}.yaml`, 'readonly'].map(csvField).join(','));
     found.push(repo);
   }
   return { args, repos: found };

@@ -1119,6 +1119,30 @@ signs every request a signed-in browser sends, a cross-site one too. `woodshed-d
 which is not refused when the host later lets someone go: it lasts at most 12 hours. The console logs `console:
 hosted mode` with which of the two are on at start.
 
+## Embedding the console
+
+`console/installation.mjs` is one console without its servers: `createInstallation` builds the fleet, GitHub clients,
+secrets, settings, pages and session API from a config in `loadConfig`'s shape and the services that hold its data and
+run its sessions, and returns `handle` and `upgrade` for the console's server, `sessionApi` for the session API's, and
+`start` and `stop` for its loops. `startConsole` builds one from the environment and serves it. Another program can
+build one from services of its own (a `store` from `openServiceStore` over its own load and save, a launcher, secret
+and home stores in the providers' shapes) and serve it from its own servers. It can also pass:
+
+- `trusted: {userFor(headers)}`: who the request is from, where the program signs people in itself, as a hosted-mode
+  proxy's header says on a single console.
+- `config.githubBroker.source`: a GitHub token source called in the process (`createInProcessBroker`), with the HTTP
+  broker's checks and cache.
+- `userMenu(headers)`: a line under the person's name and groups of links at the top of the user menu (`menuOf` in
+  `server.mjs`, `designSystem/components/MenuGroups`).
+- `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
+  `SESSION_URL`, the copied New session link), for the program to route them.
+- `newId`: how session ids are made, when they must be unique beyond the installation.
+- `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
+  `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
+
+A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
+`codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
+
 ## Slack
 
 When a shared session opens a pull request, the console posts it to one Slack

@@ -17,6 +17,11 @@ const TEAM_KEY_TTL_MS = 5 * 60_000;
 // Ours to set, or the connection's own: never passed on.
 const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key']);
 
+/** @returns {boolean}  whether a session API path is this proxy's */
+export function isOpenAiPath(pathname) {
+  return pathname === PREFIX || pathname.startsWith(`${PREFIX}/`);
+}
+
 function refuse(res, code, message) {
   res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify({ error: { type: code === 401 ? 'authentication_error' : 'permission_error', message } }));
@@ -109,5 +114,5 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
     return forward(req, res, key);
   }
 
-  return { isProxyPath: (pathname) => pathname === PREFIX || pathname.startsWith(`${PREFIX}/`), handle, teamCredential };
+  return { isProxyPath: isOpenAiPath, handle, teamCredential };
 }

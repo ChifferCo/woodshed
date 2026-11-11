@@ -9,7 +9,8 @@ import net from 'node:net';
 
 import { loadConfig, requireClosedWhenReachable } from './config.mjs';
 import { applyStored } from './githubAppSetup.mjs';
-import { createConsoleUpgrade, createHandler } from './server.mjs';
+import { createConsoleUpgrade, createHandler, pageShell } from './server.mjs';
+import { createUserSettings } from './userSettings.mjs';
 import { createSettings } from './settings.mjs';
 import { IDENTITY_HEADER, createTrustedIdentity, signIdentity } from './trustedIdentity.mjs';
 
@@ -289,4 +290,46 @@ test('the Secrets page keeps everything but the App\'s own secrets, with no webh
   }
   await settings.replace('api-env', 'A=1\n');
   assert.deepEqual(written, ['api-env']);
+});
+
+test('a program embedding the console adds to the user menu, and only links a page may hold get through', async (t) => {
+  const userMenu = (headers) => (headers['x-boom'] ? JSON.parse('{') : {
+    subtitle: 'Platform team',
+    groups: [
+      { label: 'Workspace', items: [{ label: 'Platform team', current: true, note: 'Admin' }, { label: 'Mobile team', current: false, href: '/switch?to=mobile' }] },
+      { items: [{ label: 'Billing', href: 'https://billing.example/' }, { label: 'Bad', href: 'javascript:alert(1)' }, { label: 'Odd', href: '//elsewhere.example' }, { href: '/no-label' }] },
+      { label: 'Empty', items: [] },
+    ],
+  });
+  const { port } = await hostedConsole(t, { extra: { userMenu } });
+  const me = (await send(port, { path: '/api/me', headers: MEMBER() })).body;
+  assert.equal(me.menuSubtitle, 'Platform team');
+  assert.deepEqual(me.menuGroups, [
+    { label: 'Workspace', items: [{ label: 'Platform team', href: null, current: true, note: 'Admin' }, { label: 'Mobile team', href: '/switch?to=mobile', current: false, note: null }] },
+    { label: null, items: [{ label: 'Billing', href: 'https://billing.example/', note: null }] },
+  ]);
+  const signedOut = (await send(port, { path: '/api/me' })).body;
+  assert.equal(signedOut.menuGroups, undefined, 'nothing for someone not signed in');
+  t.mock.method(console, 'warn', () => {});
+  const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
+  assert.deepEqual([failed.login, failed.menuGroups], ['sam-member', undefined], 'a menu that throws leaves /api/me as it was');
+});
+
+test('a page carries the console\'s link query for the links it copies, escaped as a query', () => {
+  assert.match(pageShell({ title: 't', script: 'common.js', linkQuery: { place: 'a"b<c' } }), /<meta name="woodshed-link-query" content="place=a%22b%3Cc">/);
+  assert.doesNotMatch(pageShell({ title: 't', script: 'common.js' }), /woodshed-link-query/);
+});
+
+test('My Woodshed\'s first look waits for the secret store, and its polls after that do not', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const values = new Map([['users/sam-member/claude-token', 'sk-ant-written-beside-the-console']]);
+  let reads = 0;
+  const secrets = { async read(name) { reads += 1; return values.get(name) ?? null; } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const { port } = await hostedConsole(t, { extra: { userSettings } });
+  assert.equal((await send(port, { path: '/api/my', headers: MEMBER() })).body.claudeToken.set, true, 'the first look found it');
+  assert.equal(reads, 2);
+  values.delete('users/sam-member/claude-token');
+  assert.equal((await send(port, { path: '/api/my', headers: MEMBER() })).body.claudeToken.set, true, 'a poll inside the minute does not ask');
+  assert.equal(reads, 2);
 });

@@ -741,7 +741,9 @@
     const button = h('button', { type: 'button', class: 'user-btn', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
       h('span', { class: 'avatar', 'aria-hidden': 'true' }, me.login ? initials(me.login) : '··'),
       me.asking > 0 && h('span', { class: 'asking-dot', title: `${me.asking} asking to join` }),
-      h('span', { class: 'user-name' }, me.login ? personText(me.login) : 'Not signed in'),
+      h('span', { class: 'user-name' }, me.login ? personText(me.login) : 'Not signed in',
+        // Under the name, what a program embedding the console says the person is in (server.mjs, menuOf).
+        me.menuSubtitle && h('span', { class: 'user-sub' }, me.menuSubtitle)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
     // Someone asking to join waits on an admin, so the menu says so wherever you are.
     const asking = (link) => link.href === '/people' && me.asking > 0 && h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
@@ -751,6 +753,7 @@
         : null;
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
       h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : 'Woodshed Cloud'), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
+      menuGroups(me),
       me.login && MY_LINKS.map(item),
       h('button', {
         type: 'button', class: 'menu-item', role: 'menuitem', 'data-keys': 'keys',
@@ -777,6 +780,26 @@
       button.focus();
     });
     return [button, menu];
+  }
+
+  // What a program embedding the console adds to the top of the menu (server.mjs, menuOf): groups of links, where a
+  // choice is checked when it is the one in use and is otherwise a link to choose it. designSystem/components/MenuGroups.
+  function menuGroups(me) {
+    if (!Array.isArray(me.menuGroups) || !me.menuGroups.length) return null;
+    const note = (item) => item.note && h('span', { class: 'menu-note' }, item.note);
+    const choice = (item) => (item.current
+      ? h('div', { class: 'menu-item menu-choice', role: 'menuitemradio', 'aria-checked': 'true', 'aria-current': 'true' },
+        h('span', { class: 'menu-check', 'aria-hidden': 'true' }, '✓'), h('span', { class: 'menu-choice-name' }, item.label), note(item))
+      : h('a', { class: 'menu-item menu-choice', role: 'menuitemradio', 'aria-checked': 'false', href: item.href },
+        h('span', { class: 'menu-check', 'aria-hidden': 'true' }), h('span', { class: 'menu-choice-name' }, item.label), note(item)));
+    const link = (item) => h('a', { class: 'menu-item', role: 'menuitem', href: item.href }, item.label, note(item));
+    return [
+      me.menuGroups.map((group) => [
+        group.label && h('div', { class: 'menu-label' }, group.label),
+        group.items.map((item) => (typeof item.current === 'boolean' ? choice(item) : link(item))),
+      ]),
+      h('div', { class: 'menu-rule', role: 'separator' }),
+    ];
   }
 
   /** @returns {string}  what Shared says with no session to list, on the rail and on / alike */

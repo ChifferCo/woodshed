@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   parseCommand, publicSession, sharedRunningCount, routeTrigger, sessionsToStart, statusUpdate, stopReason, canSee, activePrivateCount, parseWorkOn, sessionOptions,
-  keptIds, pullNumber, planUsageFrom,
+  keptIds, pullNumber, planUsageFrom, sessionLink,
 } from './sessions.mjs';
 
 const HOUR = 3_600_000;
@@ -296,4 +296,9 @@ test('stopReason stops a question by its own limits, and by the defaults when no
   assert.equal(stopReason(ask({ lastActiveAt: '2026-10-21T12:00:00.000Z' }), at('12:01'), own), null);
   assert.equal(stopReason(session({ startedAt: '2026-10-21T10:00:00.000Z', lastActiveAt: '2026-10-21T10:00:00.000Z' }), at('10:21'), own), null,
     'a shared session keeps its own limits');
+});
+
+test('sessionLink carries the console\'s link query, and is the plain page without one', () => {
+  assert.equal(sessionLink('https://console.example', 'aaaa1111'), 'https://console.example/s/aaaa1111');
+  assert.equal(sessionLink('https://console.example', 'aaaa1111', { place: 'a b', empty: '' }), 'https://console.example/s/aaaa1111?place=a+b');
 });

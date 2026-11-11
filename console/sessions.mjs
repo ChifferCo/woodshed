@@ -38,6 +38,25 @@ export function newSessionId() {
   return randomBytes(4).toString('hex');
 }
 
+/**
+ * A session's page, as a link that leaves the console: a GitHub comment, a Slack post, the session's own SESSION_URL.
+ * @param {string} publicUrl
+ * @param {string} id
+ * @param {Record<string, string>|null} [linkQuery]  `config.linkQuery`: what whatever serves the console in front of
+ *   it needs on its links to route them, carried as query parameters
+ * @returns {string}
+ */
+export function sessionLink(publicUrl, id, linkQuery = null) {
+  const query = linkQueryString(linkQuery);
+  return `${publicUrl}/s/${id}${query ? `?${query}` : ''}`;
+}
+
+/** @returns {string}  `config.linkQuery` as a query string, empty with none */
+export function linkQueryString(linkQuery) {
+  if (!linkQuery || typeof linkQuery !== 'object') return '';
+  return new URLSearchParams(Object.entries(linkQuery).filter(([, v]) => typeof v === 'string' && v)).toString();
+}
+
 /** @returns {string} 32 hex characters, the session's statusd and ttyd secret */
 export function newSessionToken() {
   return randomBytes(16).toString('hex');

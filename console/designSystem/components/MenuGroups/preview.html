@@ -1,0 +1,24 @@
+<!-- @dsCard group="Overlays" height=290 subtitle="Groups a program embedding the console adds to the user menu" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .menu{width:240px;padding:6px;border:1px solid var(--line);border-radius:8px;background:var(--ground);box-shadow:0 6px 20px rgba(27,34,50,.14)}
+ .label{padding:8px 10px 4px;font-size:10.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
+ .item{display:flex;align-items:center;gap:8px;min-height:34px;padding:0 10px;border-radius:5px;font-size:13px}
+ .item.current{font-weight:600}
+ .check{width:12px;color:var(--green);font-size:12px}
+ .note{margin-left:auto;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;color:var(--meta)}
+ .rule{border-top:1px solid var(--line-soft);margin:4px 0}
+ .btn{display:flex;align-items:center;gap:7px;width:240px;margin-top:8px;padding:4px 8px 4px 4px;border:1px solid var(--slate);border-radius:6px;font-size:12.5px;font-weight:600}
+ .avatar{width:26px;height:26px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;background:var(--slate);color:var(--ground);font-size:10.5px}
+ .sub{display:block;font-family:"JetBrains Mono",ui-monospace,monospace;font-size:11px;font-weight:500;color:var(--meta)}
+</style>
+<div class="menu">
+ <div class="label">Workspace</div>
+ <div class="item current"><span class="check">✓</span>Platform team<span class="note">Admin</span></div>
+ <div class="item"><span class="check"></span>Mobile team<span class="note">Member</span></div>
+ <div class="item">Billing ↗</div>
+ <div class="rule"></div>
+ <div class="item">My settings</div>
+</div>
+<div class="btn"><span class="avatar">OC</span><span>@octocat<span class="sub">Platform team</span></span></div>

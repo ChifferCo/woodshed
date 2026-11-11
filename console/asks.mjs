@@ -7,7 +7,7 @@
 // Only full members of the workspace may ask: never a guest, a bot, or someone from another organization in a shared
 // channel. Someone Slack will not tell us about is refused too.
 
-import { isAsk, ACTIVE_STATUSES } from './sessions.mjs';
+import { isAsk, ACTIVE_STATUSES, sessionLink } from './sessions.mjs';
 
 const TITLE_CHARS = 80;
 const EVENTS_KEPT = 200;
@@ -28,7 +28,7 @@ function titleFrom(text) {
  * @param {{store: {state: object, save: () => void}, fleet: object, slack: object, publicUrl: string, now?: () => number}} deps
  *   `fleet` is fleet.mjs's: createSession, send, resumeShared, sessions
  */
-export function createAsks({ store, fleet, slack, publicUrl, now = Date.now }) {
+export function createAsks({ store, fleet, slack, publicUrl, linkQuery = null, now = Date.now }) {
   const { state } = store;
 
   // Events being handled now, and those handled. One is marked handled only once it is, so a mention whose handling
@@ -66,7 +66,7 @@ export function createAsks({ store, fleet, slack, publicUrl, now = Date.now }) {
       kind: 'ask', number: null, title: titleFrom(text), startedBy: `slack:${user}`, trigger: 'slack', prompt: text,
       slack: { channel, threadTs, user, name },
     });
-    await slack.reply({ channel, threadTs, markdown: `Looking into it. [Watch it read the code](${publicUrl}/s/${session.id}).` })
+    await slack.reply({ channel, threadTs, markdown: `Looking into it. [Watch it read the code](${sessionLink(publicUrl, session.id, linkQuery)}).` })
       .catch((err) => console.warn('asks: start reply not posted', { id: session.id, message: String(err?.message ?? err) }));
     return { outcome: 'started', sessionId: session.id };
   }
