@@ -1,0 +1,4 @@
+[     513ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:7690/settings:0
+[   26508ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:7690/api/my/own-files:0
+[ 2522518ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:7690/api/my/own-files:0
+[ 2522586ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://localhost:7690/settings:0

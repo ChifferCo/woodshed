@@ -1,0 +1,139 @@
+- generic [ref=e129]:
+  - complementary "Settings" [ref=e130]:
+    - generic [ref=e131]:
+      - link "‹ Back to sessions" [ref=e132] [cursor=pointer]:
+        - /url: /
+      - button [ref=e8] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e9]: ··
+        - generic [aria-hidden] [ref=e10]: ▾
+    - navigation [ref=e133]:
+      - generic [ref=e134]: You
+      - link "My settings" [ref=e135] [cursor=pointer]:
+        - /url: /settings
+        - generic [aria-hidden] [ref=e136]: ◉
+        - text: My settings
+      - generic [ref=e15]:
+        - generic [ref=e137]: Console
+        - link "People" [ref=e138] [cursor=pointer]:
+          - /url: /people
+          - generic [aria-hidden] [ref=e139]: ☺
+          - text: People
+        - link "Secrets & webhooks" [ref=e140] [cursor=pointer]:
+          - /url: /secrets
+          - generic [aria-hidden] [ref=e141]: ◇
+          - text: Secrets & webhooks
+        - link "Webhook events" [ref=e142] [cursor=pointer]:
+          - /url: /events
+          - generic [aria-hidden] [ref=e143]: ≋
+          - text: Webhook events
+        - link "Console settings" [ref=e144] [cursor=pointer]:
+          - /url: /console-settings
+          - generic [aria-hidden] [ref=e145]: ⚙
+          - text: Console settings
+      - generic [ref=e146]: This browser
+      - button "Theme and review files Ctrl+Shift+," [ref=e147] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e148]: ◐
+        - text: Theme and review files
+        - generic [ref=e149]: Ctrl+Shift+,
+      - button "Keyboard shortcuts ?" [ref=e150] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e151]: "?"
+        - text: Keyboard shortcuts
+        - generic [ref=e152]: "?"
+  - banner [ref=e153]:
+    - generic [ref=e154]:
+      - heading "My settings" [level=1] [ref=e155]
+      - paragraph [ref=e156]: For @local's My Woodshed sessions. Shared sessions get none of it, but for your Claude token when you switch that on below.
+  - generic [ref=e157]:
+    - generic [ref=e158]:
+      - heading "Claude" [level=2] [ref=e159]
+      - generic [ref=e160]: Not set
+    - paragraph [ref=e161]:
+      - text: Your My Woodshed sessions run on your own Claude plan, not the team key. Make a token on your laptop with
+      - code [ref=e162]: claude setup-token
+      - text: and paste it here. Sessions that are already running keep the one they started with. For Remote Control, which that token cannot do, type
+      - code [ref=e163]: woodshed-login
+      - text: in the session's terminal, or use Sign in for Remote Control in its ⋯ menu.
+    - generic [ref=e164]: Paste your token
+    - textbox "Paste your token" [ref=e45]:
+      - /placeholder: sk-ant-oat01-…
+    - generic [ref=e166]:
+      - button "Save" [ref=e167] [cursor=pointer]
+      - button "Show" [ref=e168] [cursor=pointer]
+    - generic [ref=e169]:
+      - switch "Also use it for shared sessions I start from GitHub" [disabled] [ref=e170]
+      - generic [ref=e171]: Also use it for shared sessions I start from GitHub
+      - paragraph [ref=e172]: "Off: sessions you start from GitHub run on the team key."
+      - paragraph [ref=e173]: Save a token above to turn this on.
+  - generic [ref=e174]:
+    - generic [ref=e175]:
+      - heading "Codex" [level=2] [ref=e176]
+      - generic [ref=e177]: Not set
+    - paragraph [ref=e178]:
+      - text: "Choose Codex as the agent in New session. It runs on your own sign-in when you save one: an OpenAI API key, or the"
+      - code [ref=e179]: ~/.codex/auth.json
+      - text: that
+      - code [ref=e180]: codex login
+      - text: made on your laptop. With none, it runs on the team’s OpenAI key, if the console has one. A ChatGPT login is saved back when the session stops, since OpenAI rotates it.
+    - generic [ref=e181]: Paste your sign-in
+    - textbox "Paste your sign-in" [ref=e63]:
+      - /placeholder: sk-… or the contents of ~/.codex/auth.json
+    - button "Save" [ref=e184] [cursor=pointer]
+  - generic [ref=e185]:
+    - generic [ref=e186]:
+      - heading "Session timeouts" [level=2] [ref=e187]
+      - generic [ref=e188]: Console defaults
+    - paragraph [ref=e189]: How long your My Woodshed sessions wait for you before they pause, and how long one that works may run before it is stopped. Either way its work is pushed first, and Resume picks it up. Leave a box empty to use the console's number, shown in it. Sessions already running use the new numbers within a few seconds.
+    - generic [ref=e190]: Pause a session waiting for input after (hours, 0.25 to 24)
+    - spinbutton "Pause a session waiting for input after (hours, 0.25 to 24)" [ref=e73]
+    - generic [ref=e192]: Stop a working session after (hours, 1 to 24)
+    - spinbutton "Stop a working session after (hours, 1 to 24)" [ref=e76]
+    - button "Save" [ref=e195] [cursor=pointer]
+  - generic [ref=e196]:
+    - generic [ref=e197]:
+      - heading "GitHub" [level=2] [ref=e198]
+      - generic [ref=e199]: Pushes as the GitHub App
+    - paragraph [ref=e200]: Your My Woodshed sessions push and open pull requests as the GitHub App, with the GitHub access this console has.
+  - generic [ref=e201]:
+    - generic [ref=e202]:
+      - heading "MCP logins and Claude memory" [level=2] [ref=e203]
+      - generic [ref=e204]: Nothing kept yet
+    - paragraph [ref=e205]:
+      - text: Log in to an MCP once, inside any of your private sessions. While one runs, and when it stops, your
+      - code [ref=e206]: ~/.claude
+      - text: "is kept, and your next session starts with it: logins, memory, settings, and the conversations Resume reopens. Your settings, skills, agents and MCP logins are also kept the same in every running session, within 20 seconds. Forget it works once none is running."
+  - generic [ref=e207]:
+    - generic [ref=e208]:
+      - heading "Env files and tmux" [level=2] [ref=e209]
+      - generic [ref=e93]: Shared only
+    - paragraph [ref=e210]: Your sessions use the shared files everyone has, and add your own lines after them, so a key set in both uses yours. A change to a shared file reaches you too. Your next My Woodshed session picks up what you save; running ones keep theirs.
+    - group "File" [ref=e211]:
+      - button "~/.tmux.conf" [pressed] [ref=e212] [cursor=pointer]
+    - group [ref=e213]:
+      - generic "Shared ~/.tmux.conf · 51 lines" [ref=e214] [cursor=pointer]
+    - generic [ref=e215]: Your own lines for ~/.tmux.conf
+    - textbox "Your own lines for ~/.tmux.conf" [ref=e101]:
+      - /placeholder: set -g prefix C-a
+    - paragraph [ref=e217]: Loaded by claude's tmux. Prefix then r reloads it in a running session.
+    - button "Save" [ref=e219] [cursor=pointer]
+  - generic [ref=e220]:
+    - generic [ref=e221]:
+      - heading "Your own files" [level=2] [ref=e222]
+      - generic [ref=e223]: 1 file
+    - paragraph [ref=e224]:
+      - text: Whole files your sessions write into the repo at start, such as the
+      - code [ref=e225]: .env.production
+      - text: your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Your next My Woodshed session picks up what you save; running ones keep theirs.
+    - group "Your file" [ref=e226]:
+      - button "app/.env.production" [ref=e227] [cursor=pointer]
+      - button "+ Add a file" [pressed] [ref=e228] [cursor=pointer]
+    - generic [ref=e229]: Path in the repo
+    - textbox "Path in the repo" [ref=e116]:
+      - /placeholder: app/.env.production
+    - generic [ref=e231]: Its text
+    - textbox "Its text" [ref=e233]:
+      - /placeholder: NOTION_TOKEN=…
+    - button "Save" [ref=e235] [cursor=pointer]
+  - generic [ref=e236]:
+    - heading "Remove My Woodshed" [level=2] [ref=e238]
+    - paragraph [ref=e239]: Stops your 0 running private sessions, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, GitHub connection, your own databases, your own env and tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.
+    - button "Remove My Woodshed…" [ref=e241] [cursor=pointer]
