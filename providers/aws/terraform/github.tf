@@ -1,9 +1,9 @@
-# Lets .github/workflows/woodshed-cloud-image.yml push the two images to ECR,
+# Lets the installation's deploy workflow (providers/aws/README.md, "The deploy workflow") push the two images to ECR,
 # restart the console after a console build, and build the database template
 # again after a session build, through GitHub OIDC, so no AWS keys are stored
 # in GitHub. The trust names the
-# workflow's environment, not the branch: issue and comment workflows (claude-bot
-# among them) also run as master, and an image push runs code on the base box
+# image jobs' environment, not the branch: issue and comment workflows (a bot
+# answering comments among them) also run as the default branch, and an image push runs code on the base box
 # and in every session.
 
 resource "aws_iam_openid_connect_provider" "github" {

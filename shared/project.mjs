@@ -28,7 +28,6 @@ import { ENGINE_NAMES } from './databases/index.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
-import { checkSummary } from './projectCheck.mjs';
 
 export const PROJECT_FILE = '.woodshed/project.yaml';
 // While Woodshed Cloud is in beta the format changes in place, with every project file in the same change (README.md,
@@ -554,10 +553,12 @@ export function field(project, dotted) {
   return dotted.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), project);
 }
 
-function main([command, arg]) {
+async function main([command, arg]) {
   const repoDir = process.env.REPO_DIR || process.cwd();
   const project = loadProject(repoDir);
   if (command === 'check') {
+    // Loaded here, not imported: projectCheck.mjs imports this module.
+    const { checkSummary } = await import('./projectCheck.mjs');
     process.stdout.write(`${checkSummary(project, repoDir).join('\n')}\n`);
   } else if (command === 'get') {
     const value = field(project, arg ?? '');
@@ -590,10 +591,9 @@ function main([command, arg]) {
 }
 
 if (isMain(import.meta.url)) {
-  try {
-    main(process.argv.slice(2));
-  } catch (err) {
+  // Not awaited: check's import of projectCheck.mjs waits for this module, which a top-level await would never finish.
+  main(process.argv.slice(2)).catch((err) => {
     process.stderr.write(err.message.split('\n').map((line) => `project: ${line}\n`).join(''));
     process.exit(1);
-  }
+  });
 }

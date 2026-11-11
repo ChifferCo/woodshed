@@ -169,7 +169,7 @@ variable "max_sessions" {
 }
 
 variable "console_workflow_links" {
-  description = "The console menu's GitHub Actions links, label to workflow file in the repo (the image and infra workflows). None leaves the group out."
+  description = "The console menu's GitHub Actions links, label to workflow file in the repo (such as its deploy workflow). None leaves the group out."
   type        = map(string)
   default     = {}
 
