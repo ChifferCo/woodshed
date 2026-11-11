@@ -1010,8 +1010,9 @@ export function createFleet({
   // An issue's assignee and board status, kept on the repo the issue is on.
   function issueTrackingOf(project) {
     if (project.default) return issueTracking;
-    if (!issueTrackings.has(project.name)) issueTrackings.set(project.name, createIssueTracking({ github: githubOf(project) }));
-    return issueTrackings.get(project.name);
+    const key = `${project.name}\n${project.repo}`;
+    if (!issueTrackings.has(key)) issueTrackings.set(key, createIssueTracking({ github: githubOf(project) }));
+    return issueTrackings.get(key);
   }
 
   // What a log line adds for another project's session or event: nothing for the default project's, as before projects.

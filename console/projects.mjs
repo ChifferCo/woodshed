@@ -13,6 +13,12 @@ export function projectNameOf(repo) {
   return repo.split('/').pop().toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, NAME_MAX).replace(/^-+|-+$/g, '') || 'default';
 }
 
+/** @returns {boolean}  whether `name` can name a project: lowercase words of letters and digits, joined by single dashes */
+export const validProjectName = (name) => typeof name === 'string' && NAME.test(name) && name.length <= NAME_MAX;
+
+/** @returns {boolean}  whether `repo` is GitHub's `owner/name` */
+export const validRepo = (repo) => typeof repo === 'string' && REPO.test(repo) && repo.split('/').every((part) => !/^\.+$/.test(part));
+
 function fromJson(value) {
   let list;
   try {
@@ -106,4 +112,9 @@ export function projectForRepo(config, fullName) {
   if (typeof fullName !== 'string' || !fullName) return null;
   const wanted = fullName.toLowerCase();
   return allProjects(config).find((p) => p.repo.toLowerCase() === wanted) ?? null;
+}
+
+/** @returns {object[]}  the projects an admin added on the Console settings page (addedProjects.mjs), kept in state.json */
+export function addedProjectsOf(store) {
+  return Array.isArray(store.state.addedProjects) ? store.state.addedProjects : [];
 }

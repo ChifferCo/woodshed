@@ -113,6 +113,19 @@ export function createAppApi({ appId, privateKey, fetchImpl = fetch, now = Date.
       return { slug: answer.slug, events: answer.events ?? [], clientId: answer.client_id ?? '' };
     },
     /**
+     * @returns {Promise<string|null>}  the id of the App's installation on `repo` (`owner/name`), null when the App is
+     *   not installed on it, or cannot see it
+     */
+    async installationOf(repo) {
+      try {
+        const answer = await call('GET', `/repos/${repo}/installation`);
+        return answer.id ? String(answer.id) : null;
+      } catch (err) {
+        if (err.status === 404) return null;
+        throw err;
+      }
+    },
+    /**
      * @returns {Promise<{active: boolean, url: string, contentType: string, insecureSsl: string}>}
      *   `active` false when the App's webhook is switched off. GitHub never returns the secret
      */
