@@ -1080,7 +1080,7 @@ export function createHandler({
           return reply(res, 200, { removed: actionMatch[1] });
         }
         const resuming = fleet.find(actionMatch[1]);
-        await userSettings?.refresh?.(login);
+        await userSettings?.refresh?.(login, { force: true });
         if (resuming?.options?.agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
         // Write access to a project's repo can be taken away after a session started on it: Resume asks again, as a start does.
@@ -1120,7 +1120,7 @@ export function createHandler({
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
-        await userSettings?.refresh?.(login);
+        await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
@@ -1590,7 +1590,11 @@ export function createHandler({
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
     if (pathname === '/api/my') {
-      await Promise.all([databaseGate?.refusal(), userSettings?.refresh?.(user.login)]);
+      // The first look waits for the store, so the page never shows a sign-in missing that is there. Later ones ask it in
+      // the background: the page polls, and sees a change on a later poll.
+      const first = userSettings?.askedAbout ? !userSettings.askedAbout(user.login) : false;
+      const looking = userSettings?.refresh?.(user.login);
+      await Promise.all([databaseGate?.refusal(), first ? looking : null]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);

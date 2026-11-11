@@ -189,6 +189,8 @@ test('a Claude token or Codex sign-in written straight into the store counts as 
   values.set('users/mia-dev/codex-auth', 'sk-codex');
   clock += 2_500;
   await settings.refresh('mia-dev');
+  assert.equal(settings.view('mia-dev').claudeToken.set, false, 'a page load inside the minute does not ask again');
+  await settings.refresh('mia-dev', { force: true });
   assert.deepEqual([settings.view('mia-dev').claudeToken.set, settings.view('mia-dev').codexAuth.set], [true, true]);
   assert.equal(await settings.claudeToken('mia-dev'), 'sk-ant-host-wrote-it');
   assert.equal(settings.usesOwnTokenForShared('mia-dev'), true);
@@ -201,10 +203,27 @@ test('a Claude token or Codex sign-in written straight into the store counts as 
   assert.equal(settings.view('mia-dev').claudeToken.set, false);
 });
 
-test('a store that fails to answer changes nothing about what is set', async (t) => {
+test('a store that fails to answer changes nothing about what is set, and is not asked again inside the minute', async (t) => {
   t.mock.method(console, 'warn', () => {});
   const store = { state: { people: { 'mia-dev': { claudeTokenAt: '2026-11-01T00:00:00.000Z' } } }, save() {} };
-  const settings = createUserSettings({ store, secrets: { read: async () => { throw new Error('throttled'); } } });
+  let reads = 0;
+  const settings = createUserSettings({ store, secrets: { read: async () => { reads += 1; throw new Error('throttled'); } } });
   await settings.refresh('mia-dev');
   assert.equal(settings.view('mia-dev').claudeToken.set, true);
+  await settings.refresh('mia-dev');
+  assert.equal(reads, 2, 'one refresh, its two reads');
+});
+
+test('with no token saved, page loads inside the minute ask the store once', async () => {
+  let reads = 0;
+  let clock = 1_000_000;
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: { read: async () => { reads += 1; return null; } }, now: () => clock });
+  assert.equal(settings.askedAbout('mia-dev'), false);
+  for (let i = 0; i < 12; i += 1) {
+    await settings.refresh('mia-dev');
+    clock += 5_000;
+  }
+  assert.equal(reads, 2, 'one refresh in the first minute, its claude-token and codex-auth reads');
+  await settings.refresh('mia-dev');
+  assert.equal(reads, 4, 'and one more once the minute is up');
 });

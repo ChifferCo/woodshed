@@ -267,7 +267,7 @@ export function createFleet({
   // them claude would stay on the team key while the pages said otherwise.
   async function planFor(session) {
     if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || !databases?.available) return null;
-    await userSettings?.refresh?.(session.startedBy);
+    await userSettings?.refresh?.(session.startedBy, { force: true });
     if (!userSettings?.usesOwnTokenForShared(session.startedBy)) return null;
     try {
       if (await userSettings.claudeToken(session.startedBy)) return session.startedBy;

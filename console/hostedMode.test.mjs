@@ -10,6 +10,7 @@ import net from 'node:net';
 import { loadConfig, requireClosedWhenReachable } from './config.mjs';
 import { applyStored } from './githubAppSetup.mjs';
 import { createConsoleUpgrade, createHandler, pageShell } from './server.mjs';
+import { createUserSettings } from './userSettings.mjs';
 import { createSettings } from './settings.mjs';
 import { IDENTITY_HEADER, createTrustedIdentity, signIdentity } from './trustedIdentity.mjs';
 
@@ -317,4 +318,18 @@ test('a program embedding the console adds to the user menu, and only links a pa
 test('a page carries the console\'s link query for the links it copies, escaped as a query', () => {
   assert.match(pageShell({ title: 't', script: 'common.js', linkQuery: { place: 'a"b<c' } }), /<meta name="woodshed-link-query" content="place=a%22b%3Cc">/);
   assert.doesNotMatch(pageShell({ title: 't', script: 'common.js' }), /woodshed-link-query/);
+});
+
+test('My Woodshed\'s first look waits for the secret store, and its polls after that do not', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const values = new Map([['users/sam-member/claude-token', 'sk-ant-written-beside-the-console']]);
+  let reads = 0;
+  const secrets = { async read(name) { reads += 1; return values.get(name) ?? null; } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const { port } = await hostedConsole(t, { extra: { userSettings } });
+  assert.equal((await send(port, { path: '/api/my', headers: MEMBER() })).body.claudeToken.set, true, 'the first look found it');
+  assert.equal(reads, 2);
+  values.delete('users/sam-member/claude-token');
+  assert.equal((await send(port, { path: '/api/my', headers: MEMBER() })).body.claudeToken.set, true, 'a poll inside the minute does not ask');
+  assert.equal(reads, 2);
 });
