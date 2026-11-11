@@ -28,6 +28,11 @@ const MAX_CODEX_AUTH_CHARS = 20_000;
 // Secrets Manager's limit on one value.
 const MAX_FILE_BYTES = 65_536;
 const HOUR_MS = 3_600_000;
+// How often the secret store is asked whether a person's Claude token or Codex sign-in is there (refresh): once their
+// Claude token is known to be there, a minute is soon enough to see a change; while it is missing, each page load may
+// be the one after the person saved it elsewhere.
+const STORED_FRESH_MS = 60_000;
+const MISSING_FRESH_MS = 2_000;
 // The console settings a person may override for their own My Woodshed sessions, with the same ranges.
 const OWN_LIMIT_KEYS = ['idleHours', 'lifetimeHours'];
 const OWN_LIMITS = SETTINGS.filter((setting) => OWN_LIMIT_KEYS.includes(setting.key));
@@ -157,6 +162,40 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     const key = loginKey(login);
     people()[key] = { ...people()[key], ...fields };
     store.save();
+  }
+
+  // When each person's store was last asked about their sign-ins (refresh), by login key.
+  const askedAt = new Map();
+
+  /**
+   * A Claude token or Codex sign-in that is in the secret store counts as saved, whoever put it there: a host that
+   * keeps people's tokens itself writes `users/<login>/claude-token` straight into the store (docs/hosting.md), and the
+   * record here, which the pages read without calling the store, follows what is there. A store that fails to answer
+   * changes nothing.
+   */
+  async function refresh(login) {
+    if (!login || !secrets || secrets.configured?.() === false) return;
+    const key = loginKey(login);
+    const record = recordFor(login);
+    const fresh = record?.claudeTokenAt ? STORED_FRESH_MS : MISSING_FRESH_MS;
+    if (now() - (askedAt.get(key) ?? -Infinity) < fresh) return;
+    askedAt.set(key, now());
+    let token;
+    let codex;
+    try {
+      [token, codex] = await Promise.all([secrets.read(userSecretName(login, CLAUDE_TOKEN)), secrets.read(userSecretName(login, CODEX_AUTH))]);
+    } catch (err) {
+      askedAt.delete(key);
+      console.warn('userSettings: stored sign-ins not read', { login, message: String(err?.message ?? err).split('\n')[0] });
+      return;
+    }
+    const at = new Date(now()).toISOString();
+    const changes = {};
+    if (Boolean(token) !== Boolean(record?.claudeTokenAt)) changes.claudeTokenAt = token ? at : null;
+    if (Boolean(codex) !== Boolean(record?.codexAuthAt)) changes.codexAuthAt = codex ? at : null;
+    if (!Object.keys(changes).length) return;
+    touch(login, changes);
+    console.log('userSettings: sign-ins follow the secret store', { login, claudeToken: Boolean(token), codexAuth: Boolean(codex) });
   }
 
   function requireSecrets() {
@@ -315,6 +354,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
 
   /** @returns {Promise<string|null>}  the person's Codex sign-in for their own session; null when none is saved */
   async function codexAuth(login) {
+    await refresh(login);
     if (!secrets || !recordFor(login)?.codexAuthAt) return null;
     return secrets.read(userSecretName(login, CODEX_AUTH));
   }
@@ -354,6 +394,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
 
   /** @returns {Promise<string|null>}  the person's token: their private session's, or a shared one's they started; null when none is saved */
   async function claudeToken(login) {
+    await refresh(login);
     if (!secrets || !recordFor(login)?.claudeTokenAt) return null;
     return secrets.read(userSecretName(login, CLAUDE_TOKEN));
   }
@@ -369,7 +410,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   }
 
   return {
-    view, setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }
