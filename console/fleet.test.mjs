@@ -1748,6 +1748,81 @@ test('a webhook label is claimed per project, so the same number on two repos is
   assert.deepEqual([first.outcome, other.outcome, again.outcome], ['started', 'started', 'duplicate']);
 });
 
+// The tools repo's own issue events and comments, on its own client, as GitHub answers them.
+function pollableTools(tools) {
+  return Object.assign(tools, {
+    events: [], comments: [], polled: 0, pageSize: 100,
+    async latestEventId() { return 500; },
+    async issueEventsSince() { this.polled++; return { events: this.events, complete: true }; },
+    async commentsSince() { return this.comments; },
+  });
+}
+
+const toolsLabel = (id, number) => ({ id, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number, title: `t${number}` } });
+const toolsComment = (id, number, body) => ({ id, created_at: '2026-10-21T10:00:05Z', updated_at: '2026-10-21T10:00:05Z', body, user: { login: 'joel' }, issue_url: `https://api.github.com/repos/o/tools/issues/${number}` });
+
+test('with webhooks not arriving, the poll starts sessions from another project\'s labels and comments, on its repo', async () => {
+  const { fleet, github, store, tools, toolCalls, calls } = twoProjects();
+  pollableTools(tools);
+  tools.events = [toolsLabel(499, 3)];
+  await fleet.pollGitHub();
+  assert.equal(store.state.githubProjects.tools.lastEventId, 500, 'the first poll only records where the tools repo is');
+  assert.equal(store.state.githubProjects.tools.repo, 'o/tools');
+  assert.equal(fleet.sessions().length, 0);
+
+  tools.events = [toolsLabel(501, 12), toolsLabel(499, 3)];
+  tools.comments = [toolsComment(77, 15, '/woodshed fix the build')];
+  // The default repo has its own #12, untouched.
+  github.events = [];
+  await fleet.pollGitHub();
+  const sessions = fleet.sessions();
+  assert.deepEqual(sessions.map((s) => [s.project, s.repo, s.number, s.trigger]), [['tools', 'o/tools', 12, 'label'], ['tools', 'o/tools', 15, 'comment']]);
+  assert.equal(sessions[1].prompt, 'fix the build');
+  assert.deepEqual(toolCalls.reactions, [{ issue: 12 }, { comment: 77 }], 'the 👀 goes on the tools repo');
+  assert.deepEqual([calls.comments, calls.reactions], [[], []], 'nothing on the default repo');
+  assert.equal(store.state.githubProjects.tools.lastEventId, 501);
+
+  // A webhook arriving late for the same label or comment is a duplicate, and the next poll starts nothing again.
+  const late = await fleet.handleWebhookTrigger({ number: 12, login: 'joel', trigger: 'label', title: 't12', kind: 'issue', at: '2026-10-21T10:00:20Z', project: 'tools' });
+  const lateComment = await fleet.handleWebhookTrigger({ number: 15, login: 'joel', trigger: 'comment', text: 'fix the build', commentId: 77, project: 'tools' });
+  assert.deepEqual([late.outcome, lateComment.outcome], ['duplicate', 'duplicate']);
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 2);
+});
+
+test('one project\'s poll failing leaves the others polled, and a removed project\'s cursors go', async () => {
+  const { fleet, github, store, tools, projects } = twoProjects();
+  pollableTools(tools);
+  await fleet.pollGitHub();
+  await fleet.pollGitHub();
+  assert.equal(tools.polled, 1);
+
+  tools.issueEventsSince = async () => { throw new Error('gh: HTTP 502'); };
+  github.events = [{ id: 101, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 4, title: 'x' } }];
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (line, fields) => warned.push([line, fields]);
+  try {
+    await fleet.pollGitHub();
+    await fleet.pollGitHub();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(fleet.sessions().map((s) => [s.project, s.number]), [['r', 4]], 'the default repo is still polled');
+  assert.deepEqual(warned, [['fleet: a project\'s github poll failed', { project: 'tools', message: 'gh: HTTP 502' }]], 'said once while it keeps failing');
+
+  // The default project failing is still the poll's own error, after the others were polled.
+  github.issueEventsSince = async () => { throw new Error('gh: HTTP 401'); };
+  pollableTools(tools);
+  tools.polled = 0;
+  await assert.rejects(fleet.pollGitHub(), /HTTP 401/);
+  assert.equal(tools.polled, 1);
+
+  projects.pop();
+  await fleet.pollGitHub().catch(() => {});
+  assert.deepEqual(store.state.githubProjects, {});
+});
+
 test('a Needs a human comment and a pull request change reach the session on that project\'s repo alone', async () => {
   const { fleet, store, toolCalls } = twoProjects();
   const onDefault = fleet.find((await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'label', title: 'd', kind: 'issue' })).sessionId);
