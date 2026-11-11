@@ -128,6 +128,39 @@
 
   // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
   const repoForm = { repo: '', name: '', error: null, busy: false };
+  // What the last colour pick said, by project name, until the page is drawn for another reason.
+  const colorNotes = new Map();
+
+  // The repo's colour on the rail: a radio per palette colour, saved as soon as one is picked. A colour another repo
+  // has is disabled, since two repos never share one.
+  function colorPicker(p) {
+    const palette = data.palette ?? [];
+    const taken = new Map(data.projects.filter((o) => o.name !== p.name && o.color).map((o) => [o.color, o.name]));
+    const note = colorNotes.get(p.name);
+    return h('div', { class: 'proj-colors' },
+      h('fieldset', { class: 'proj-swatches' },
+        h('legend', { class: 'sr-only' }, `Colour of ${p.name} on the rail`),
+        palette.map((key) => h('label', { class: `proj-pick proj-${key}`, title: taken.has(key) ? `${key}, ${taken.get(key)}'s` : key },
+          h('input', {
+            type: 'radio', name: `color-${p.name}`, value: key, checked: p.color === key, disabled: taken.has(key),
+            'aria-label': taken.has(key) ? `${key}, ${taken.get(key)}'s` : key,
+            onchange: () => pickColor(p, key),
+          }),
+          h('span', { 'aria-hidden': 'true' })))),
+      h('span', { class: 'proj-name' }, p.color ? `${p.color} on the rail` : 'no colour left: the palette has six'),
+      note && h('span', { class: note.bad ? 'form-error' : 'sub', role: 'status' }, note.text));
+  }
+
+  async function pickColor(p, key) {
+    try {
+      data = { ...data, ...(await W.postJson('/api/console-settings/projects/color', { name: p.name, color: key })) };
+      colorNotes.set(p.name, { text: 'Saved.' });
+    } catch (err) {
+      colorNotes.set(p.name, { text: err.message, bad: true });
+    }
+    render();
+    document.querySelector(`input[name="color-${CSS.escape(p.name)}"]:checked`)?.focus();
+  }
 
   function projectRow(p) {
     const live = p.sessions ? `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'} running or kept` : 'no sessions running';
@@ -136,7 +169,8 @@
         h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name)),
         h('div', { class: 'data-meta' },
           h('span', null, p.default ? 'default project' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
-          h('span', null, live))),
+          h('span', null, live)),
+        data.palette && colorPicker(p)),
       h('div', { class: 'data-actions' }, p.removable && h('button', {
         type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
         onclick: () => W.confirmChange({
@@ -181,7 +215,7 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be installed on a repo before it is added here. An added repo applies at once, with no restart.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be installed on a repo before it is added here. An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once.'),
       h('div', { class: 'data-list' }, data.projects.map(projectRow)),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
         h('div', null,
@@ -325,7 +359,7 @@
   async function refreshData() {
     try {
       const next = await W.getJson('/api/console-settings');
-      data = { ...data, data: next.data, projects: next.projects };
+      data = { ...data, data: next.data, projects: next.projects, palette: next.palette };
     } catch {
       return;
     }

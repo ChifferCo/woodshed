@@ -5,6 +5,7 @@ import http from 'node:http';
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
 import { createAddedProjects } from './addedProjects.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
+import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createHandler } from './server.mjs';
 import { createSlack } from './slack.mjs';
@@ -412,7 +413,7 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings'];
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
-    '/api/console-settings', '/api/console-settings/clean', '/api/people/invite'];
+    '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/people/invite'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -1042,6 +1043,37 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
 });
 
+test('Console settings: a repo\'s colour is picked from the palette, never one another repo has, and the rail gets it', async (t) => {
+  const store = { state: { sessions: [], addedProjects: [{ name: 'web', repo: 'o/web', default: false }] }, save() {} };
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }, { name: 'api', repo: 'o/api', default: false }],
+  }, store);
+  const addedProjects = createAddedProjects({ store, config, check: async () => ({ installationId: null }) });
+  const handle = createHandler({
+    config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects,
+    projectColors: createProjectColors({ store, config }),
+  });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const page = JSON.parse(await getBody(port, '/api/console-settings'));
+  assert.deepEqual(page.projects.map((p) => [p.name, p.color]), [['r', 'teal'], ['api', 'plum'], ['web', 'sienna']], 'the environment\'s repos and the added one, each a colour of its own');
+  assert.deepEqual(page.palette, ['teal', 'plum', 'sienna', 'rose', 'violet', 'moss']);
+
+  const picked = await post(port, '/api/console-settings/projects/color', { name: 'api', color: 'moss' });
+  assert.equal(picked.status, 200);
+  assert.deepEqual(picked.body.projects.map((p) => [p.name, p.color]), [['r', 'teal'], ['api', 'moss'], ['web', 'sienna']]);
+  assert.deepEqual(await post(port, '/api/console-settings/projects/color', { name: 'web', color: 'teal' }), { status: 400, body: { error: 'r has teal already: pick another colour, or change r\'s first.' } });
+  assert.equal((await post(port, '/api/console-settings/projects/color', { name: 'web', color: 'red' })).status, 400, 'not in the palette');
+  assert.equal((await post(port, '/api/console-settings/projects/color', { name: 'gone', color: 'rose' })).status, 400, 'no such project');
+  assert.equal((await post(port, '/api/console-settings/projects/color', { name: 'web', color: 'rose' }, { origin: 'https://evil.example' })).status, 403);
+
+  const rail = JSON.parse(await getBody(port, '/api/sessions'));
+  assert.deepEqual(rail.projects, [{ name: 'r', color: 'teal', default: true }, { name: 'api', color: 'moss', default: false }, { name: 'web', color: 'sienna', default: false }]);
+});
+
 test('the switch for shared sessions is set for the signed-in person alone, behind the same write checks', async (t) => {
   const done = [];
   const userSettings = {
@@ -1506,7 +1538,7 @@ test('the session list names each session\'s project, and the projects there are
   const port = await listen(server);
   t.after(() => server.close());
   const body = JSON.parse(await getBody(port, '/api/sessions'));
-  assert.deepEqual(body.projects, ['app', 'tools']);
+  assert.deepEqual(body.projects, [{ name: 'app', color: 'teal', default: true }, { name: 'tools', color: 'plum', default: false }]);
   assert.deepEqual(Object.fromEntries(body.sessions.map((s) => [s.id, s.project])), { aaaa0001: 'tools', aaaa0002: 'tools', aaaa0003: 'app' });
 });
 

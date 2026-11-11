@@ -74,6 +74,7 @@
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
+//   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
 //   GET  /api/webhook/deliveries GitHub's last 10 deliveries to the App's webhook, with their status codes
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
@@ -140,6 +141,7 @@ import { handleEditorRequest, handleEditorUpgrade, isEditorPath } from './editor
 import { startTlsAsk } from './tlsAsk.mjs';
 import { providerMetaContent } from './providerWords.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
+import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -151,6 +153,7 @@ const STATIC_FILES = {
   'setupSteps.cjs': 'text/javascript; charset=utf-8',
   'inviteLink.cjs': 'text/javascript; charset=utf-8',
   'keys.cjs': 'text/javascript; charset=utf-8',
+  'projectColors.cjs': 'text/javascript; charset=utf-8',
   'common.js': 'text/javascript; charset=utf-8',
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
@@ -182,6 +185,7 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
+const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -335,6 +339,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('logins.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
+<script src="${staticUrl('projectColors.cjs')}"></script>
 <script src="${staticUrl('common.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
@@ -478,7 +483,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  githubFor = null, trusted = null, userMenu = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -814,6 +819,13 @@ export function createHandler({
 
   const proxyReview = createReviewProxy({ findFor });
 
+  /** @returns {object[]}  every project, the default first, each with its colour key (null past the palette's six) */
+  function projectsWithColors() {
+    const projects = allProjects(config);
+    const colors = projectColors?.view() ?? projectColorsShared.projectColors({ names: projects.map((p) => p.name) });
+    return projects.map((p) => ({ ...p, default: Boolean(p.default), color: colors[p.name] ?? null }));
+  }
+
   // Every shared session for someone with sessions from GitHub, and the asker's own private ones. The counts are the
   // fleet's, which say nothing of whose.
   function sessionsBody(login) {
@@ -822,8 +834,8 @@ export function createHandler({
     const slackWaiting = fleet.slackWaiting?.() ?? new Set();
     return {
       repo: defaultProject(config).repo,
-      // The rail names each session's project only when there is more than one to tell apart.
-      projects: allProjects(config).map((p) => p.name),
+      // The rail marks each session's project, in its colour, only when there is more than one to tell apart.
+      projects: projectsWithColors().map(({ name, color, default: main }) => ({ name, color, default: main })),
       label: config.label,
       maxRunning: config.maxRunning,
       login,
@@ -1360,10 +1372,12 @@ export function createHandler({
 
   async function consoleSettingsReply(res) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
+    const colors = new Map(projectsWithColors().map((p) => [p.name, p.color]));
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
-      projects: addedProjects?.view() ?? null,
+      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null })) ?? null,
+      palette: projectColorsShared.PALETTE,
       data: heldData ? await heldData.report() : null,
     });
   }
@@ -1379,7 +1393,10 @@ export function createHandler({
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
     try {
-      if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
+      if (pathname === PROJECT_COLOR_PATH) {
+        if (!projectColors) return reply(res, 404, { error: 'this console keeps no project colours' });
+        projectColors.set({ name: body.name, color: body.color, by: login ?? 'console' });
+      } else if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
@@ -1454,7 +1471,7 @@ export function createHandler({
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
-    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) return consoleSettingsWrite(req, res, pathname, login);
+    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'

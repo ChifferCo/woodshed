@@ -47,6 +47,7 @@ import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvent
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createAddedProjects, repoChecker } from './addedProjects.mjs';
+import { createProjectColors } from './projectColors.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 
@@ -276,6 +277,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
     : undefined;
   const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead }) });
+  const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
   const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
@@ -309,7 +311,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects,
+    databaseGate, addedProjects, projectColors,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
