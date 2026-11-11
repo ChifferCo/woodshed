@@ -1072,6 +1072,9 @@ test('Console settings: a repo\'s colour is picked from the palette, never one a
 
   const rail = JSON.parse(await getBody(port, '/api/sessions'));
   assert.deepEqual(rail.projects, [{ name: 'r', color: 'teal', default: true }, { name: 'api', color: 'moss', default: false }, { name: 'web', color: 'sienna', default: false }]);
+
+  assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'web' })).status, 200);
+  assert.deepEqual(store.state.projectColors, { r: 'teal', api: 'moss' }, 'a removed repo\'s colour is not kept for its name');
 });
 
 test('the switch for shared sessions is set for the signed-in person alone, behind the same write checks', async (t) => {

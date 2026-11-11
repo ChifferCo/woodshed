@@ -1400,7 +1400,10 @@ export function createHandler({
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
-        else addedProjects.remove({ name: body.name, by });
+        else {
+          addedProjects.remove({ name: body.name, by });
+          projectColors?.forget({ name: body.name });
+        }
       } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
         const values = body.values ?? {};

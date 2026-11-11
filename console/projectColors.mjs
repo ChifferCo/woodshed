@@ -39,10 +39,24 @@ export function createProjectColors({ store, config }) {
     // Every other project keeps the colour it shows now, picked or not: the one freed here would otherwise move to
     // the next project with none picked.
     const kept = Object.fromEntries(Object.entries(now).filter(([, key]) => key));
-    store.state.projectColors = { ...pickedOf(store), ...kept, [name]: color };
+    store.state.projectColors = { ...kept, [name]: color };
     store.save();
     console.log('projects: colour set', { project: name, from: now[name], to: color, by });
   }
 
-  return { view, set };
+  /**
+   * Drops a removed project's pick, so a repo added again under its name later takes a free colour, and never takes
+   * back one another project has had since.
+   * @param {{name: string}} args
+   */
+  function forget({ name }) {
+    const picked = pickedOf(store);
+    if (!Object.hasOwn(picked, name)) return;
+    const { [name]: dropped, ...rest } = picked;
+    store.state.projectColors = rest;
+    store.save();
+    console.log('projects: colour forgotten', { project: name, color: dropped });
+  }
+
+  return { view, set, forget };
 }

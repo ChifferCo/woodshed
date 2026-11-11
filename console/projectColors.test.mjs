@@ -81,3 +81,19 @@ test('a project added after the picks takes a colour nobody has', () => {
   config.projects.push({ name: 'web', repo: 'acme/web', default: false });
   assert.deepEqual(colors.view(), { app: 'teal', api: 'plum', web: 'sienna' });
 });
+
+test('a removed project\'s pick is dropped, so the same name added again never takes back a colour another has now', () => {
+  const store = storeWith({ projectColors: { app: 'teal', api: 'plum', web: 'sienna' } });
+  const config = configOf('app', 'api', 'web');
+  const colors = createProjectColors({ store, config });
+  config.projects.pop();
+  colors.forget({ name: 'web' });
+  assert.deepEqual(store.state.projectColors, { app: 'teal', api: 'plum' });
+  config.projects.push({ name: 'docs', repo: 'acme/docs', default: false });
+  assert.equal(colors.view().docs, 'sienna', 'the colour web had is free');
+  config.projects.push({ name: 'web', repo: 'acme/web', default: false });
+  assert.deepEqual(colors.view(), { app: 'teal', api: 'plum', docs: 'sienna', web: 'rose' }, 'docs keeps sienna');
+
+  colors.forget({ name: 'gone' });
+  assert.equal(store.saves, 1, 'a name with no pick is no change');
+});

@@ -1434,7 +1434,9 @@ the rule, for the server and the pages alike). A pick is saved at once (`POST /a
 disabled. A repo nobody picked a colour for, the installation's own as well as an added one, takes the first colour no
 repo has, in the order the repos are listed; a pick pins every repo's colour as it shows then, so the one freed does
 not move to another. Past six repos the rest have no colour. The picks are kept in `state.json` under `projectColors`,
-and the console logs `projects: colour set` with the project, the colours and who set it.
+and the console logs `projects: colour set` with the project, the colours and who set it. Removing a repo drops its
+pick (`projects: colour forgotten`), so a repo added again under that name takes a free colour, not one another repo has
+had since.
 
 Below the cards, **Sessions holding data** lists, checked again every minute:
 - **Stalled**, each with why and its fix behind a typed confirm: a shared
