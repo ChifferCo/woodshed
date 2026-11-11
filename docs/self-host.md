@@ -60,8 +60,8 @@ macOS and Windows, Docker Desktop must be running.
    with what to set rather than waiting. The first run builds the session image: several minutes on the published
    runtime, much longer when it cannot pull that and builds the runtime too (its log says which).
 
-   **Done when** it ends with `Set up in ~/.woodshed`. It also said `Starting postgres …` for each engine the project
-   file names, or `The project file has no databases`.
+   **Done when** it exits 0 having printed `Set up in ~/.woodshed`. Before that it printed `Starting <engines>, for a
+   copy of the databases in each session`, or `The project file has no databases: sessions get none of their own`.
    With databases, read "Known gaps", below, before the first session.
 3. **Agent.** Start the console in the background, and keep its log:
 
