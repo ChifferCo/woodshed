@@ -269,6 +269,14 @@ test('with no comment from the approving run, the risks come from the review com
   assert.deepEqual(riskAreasFrom({ comments: [edited, stale], review, gate: GATES.review }).items, ['Edited last.']);
 });
 
+test('a box whose headings the reviewer wrote differently says its risks could not be read, not that there are none', () => {
+  const drifted = reviewComment(['> [!WARNING]', '> **Merge risk: Medium**: it changes an API reply.', '>', '> **What you accept when merging**',
+    '>', '> <details><summary>A client gets an extra field.</summary>', '>', '> </details>'].join('\n'));
+  assert.deepEqual(riskAreasFrom({ comments: [drifted], review, gate: GATES.review }), { found: true, items: [], unreadable: true });
+  assert.equal(after(brief({ comments: [drifted] }), 'Risks'), '**Risks:** could not be read, see the review comment');
+  assert.equal(after(brief({ comments: [reviewComment('No breaking or hard-to-undo changes.')] }), 'Risks'), '**Risks:** none listed');
+});
+
 test('each folded risk is quoted by its one line, and the folds inside the alert do not end it', () => {
   const alert = [
     '> [!WARNING]',

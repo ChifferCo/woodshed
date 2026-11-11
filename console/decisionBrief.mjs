@@ -133,7 +133,17 @@ export function riskAreasFrom({ comments, review, gate }) {
   const top = (fold < 0 ? lines : lines.slice(0, fold)).map((l) => l.replace(/^>\s?/, '')).join('\n');
   const accepted = [...listUnder(top, ACCEPT_HEADING), ...listUnder(top, RISK_HEADING)];
   const untested = listUnder(top, UNTESTED_HEADING).map((i) => `Not tested: ${i}`);
-  return { found: true, items: [...accepted, ...untested] };
+  const items = [...accepted, ...untested];
+  // A box or a list that gave no item is one whose headings the reviewer wrote differently: never shown as no risks.
+  const headed = [ACCEPT_HEADING, UNTESTED_HEADING, RISK_HEADING].some((h) => top.includes(h));
+  const unreadable = !items.length && (listsSomething(top) || (!headed && top.includes('**Merge risk:')));
+  if (unreadable) console.warn('decisionBrief: the review comment\'s risks could not be read', { commentId: comment.id ?? null });
+  return { found: true, items, ...(unreadable ? { unreadable: true } : {}) };
+}
+
+// Whether text has a fold or a bullet that is not a "None".
+function listsSomething(text) {
+  return text.split('\n').some((l) => /^<details>/.test(l) || (/^[-*]\s+\S/.test(l) && !NOTHING_RISKY.test(l.replace(/^[-*]\s+/, '').trim())));
 }
 
 // The items under one of the review's headings: each folded item's one line, or else the bullets.
@@ -303,7 +313,7 @@ export function buildBrief({ pull, review, runs, comments, suites, qa, gates, re
     mergeRisk.title || !words.riskCheck ? null
       : `**Self-assessed risk** (no ${words.riskCheck} check): ${riskLine ? forSlack(riskLine, 120) : 'the PR body has no Risk line'}`,
     bulleted('Decisions', ranked, null),
-    bulleted('Risks', risk.items, risk.found ? 'none listed' : riskMissing),
+    bulleted('Risks', risk.items, risk.unreadable ? 'could not be read, see the review comment' : risk.found ? 'none listed' : riskMissing),
     `QA ${qaLine({ check: qa.check, report, notRun: qa.notRun })}${commentUrl ? ` · [Full brief →](${commentUrl})` : ''}`,
   ].filter(Boolean);
   // A blank line between sections, so each reads on its own.
@@ -315,6 +325,7 @@ export function buildBrief({ pull, review, runs, comments, suites, qa, gates, re
 
 function riskAreasText({ risk, words, list }) {
   if (words.riskAreas) return 'No review comment is configured to quote risk areas from.';
+  if (risk.unreadable) return 'The AI review comment lists risks this brief could not read: see the review comment.';
   return risk.found ? list(risk.items, 'None listed by the AI review.') : 'The AI review comment was not found, so its risk areas are unknown.';
 }
 
