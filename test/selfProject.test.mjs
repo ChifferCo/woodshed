@@ -16,10 +16,10 @@ function selfProject() {
   return parseProject(parseYaml(fs.readFileSync(path.join(DOT, 'project.yaml'), 'utf8')));
 }
 
-test('Woodshed\'s project file parses, with no dependencies, databases or app, and its rules file is there', () => {
+test('Woodshed\'s project file parses, with no dependencies or databases, and its rules file is there', () => {
   const project = selfProject();
-  assert.deepEqual([project.dependencies, project.envFiles, project.databases, project.app],
-    [{ installs: [] }, [], [], null]);
+  assert.deepEqual([project.dependencies, project.envFiles, project.databases],
+    [{ installs: [] }, [], []]);
   assert.equal(project.editor, true);
   assert.equal(project.rules, '.woodshed/rules.md');
   assert.ok(fs.existsSync(path.join(WOODSHED, project.rules)), 'rules is a path from what will be the repo root');
@@ -51,4 +51,17 @@ test('the gates match what Woodshed\'s own workflows post', () => {
   const checkYml = parseYaml(fs.readFileSync(path.join(WOODSHED, suite.workflow), 'utf8'));
   assert.ok(checkYml.jobs[suite.jobs], 'check.yml has the suite\'s job');
   assert.equal(checkYml.jobs[suite.jobs].name, undefined, 'the job has no name, so its check run is named for its id');
+});
+
+test('Woodshed\'s app is the dev console, one server on both ports, started and stopped by its script', () => {
+  const { app } = selfProject();
+  const { howToProve, ...rest } = app;
+  assert.deepEqual(rest, {
+    start: 'bash scripts/devConsoleApp.sh start', stop: 'bash scripts/devConsoleApp.sh stop',
+    frontendPort: 7690, backendPort: 7690, logs: { console: '~/.cache/woodshed-dev-console/console.log' },
+    paths: ['console/public/'],
+  });
+  assert.match(howToProve, /scripts\/devConsoleApp\.sh start/);
+  assert.ok(fs.existsSync(path.join(WOODSHED, 'scripts/devConsoleApp.sh')), 'the start script is a path from what will be the repo root');
+  assert.ok(fs.existsSync(path.join(WOODSHED, 'console', 'public')), 'paths names a folder there is');
 });

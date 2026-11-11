@@ -1,14 +1,19 @@
 // Runs the console on this machine with a few made-up sessions, so a change to console/public can be checked in a
 // browser without AWS, GitHub or Docker. Usage: node console/bin/devConsole.mjs [port] [tls ask port]
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
+// DEV_CONSOLE_ANY_HOST=1 answers under any host name, as Woodshed's own app does behind a session's app proxy
+// (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const port = process.argv[2] || '7690';
+const anyHost = process.env.DEV_CONSOLE_ANY_HOST === '1';
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
 const tlsAskPort = process.argv[3] ? { WOODSHED_CLOUD_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher).
@@ -92,12 +97,76 @@ fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, g
 const HOSTED = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE', 'WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET'];
 const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_CLOUD_') || HOSTED.includes(key)));
 
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer().once('error', reject).listen(0, '127.0.0.1', () => {
+      const { port: free } = probe.address();
+      probe.close(() => resolve(String(free)));
+    });
+  });
+}
+
+// The console refuses a host name it does not know (shared/sameOrigin.mjs), and a session's app name is known only to
+// the console in front of it. So the request comes in on `port` and reaches the console on a port of its own as if
+// for loopback: an Origin naming the host it came by names loopback too, and any other Origin is still refused.
+function asLoopback(headers, consolePort) {
+  const out = { ...headers, host: `127.0.0.1:${consolePort}` };
+  let sameHost = false;
+  try {
+    sameHost = new URL(headers.origin).host === headers.host;
+  } catch {
+    // No Origin, or one that does not parse: passed on as it came.
+  }
+  if (sameHost) out.origin = `http://127.0.0.1:${consolePort}`;
+  return out;
+}
+
+function serveAnyHost(consolePort) {
+  const front = http.createServer((req, res) => {
+    const upstream = http.request({ host: '127.0.0.1', port: consolePort, method: req.method, path: req.url, headers: asLoopback(req.headers, consolePort) }, (upRes) => {
+      res.writeHead(upRes.statusCode || 502, upRes.headers);
+      upRes.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (res.headersSent) return res.destroy();
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('the dev console is not up yet\n');
+    });
+    req.pipe(upstream);
+  });
+  front.on('upgrade', (req, socket, head) => {
+    const upstream = net.connect(Number(consolePort), '127.0.0.1', () => {
+      const lines = [`${req.method} ${req.url} HTTP/1.1`];
+      for (const [key, value] of Object.entries(asLoopback(req.headers, consolePort))) {
+        for (const v of [value].flat()) lines.push(`${key}: ${v}`);
+      }
+      upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
+  });
+  return new Promise((resolve, reject) => {
+    front.once('error', reject).listen(Number(port), '127.0.0.1', () => {
+      console.log('dev console: answering any host name', { port, consolePort });
+      resolve();
+    });
+  });
+}
+
+const consolePort = anyHost ? await freePort() : port;
+if (anyHost) await serveAnyHost(consolePort);
+
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
 const child = spawn(process.execPath, [server], {
   stdio: 'inherit',
   env: {
-    ...inherited, WOODSHED_CLOUD_HOST: '127.0.0.1', WOODSHED_CLOUD_PORT: port, WOODSHED_CLOUD_STATE_DIR: stateDir,
+    ...inherited, WOODSHED_CLOUD_HOST: '127.0.0.1', WOODSHED_CLOUD_PORT: consolePort, WOODSHED_CLOUD_STATE_DIR: stateDir,
     WOODSHED_CLOUD_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_CLOUD_APP_DOMAIN: 'apps.localhost',
+    // Its own links name the port people open, not the one behind it.
+    ...(anyHost ? { WOODSHED_CLOUD_PUBLIC_URL: `http://localhost:${port}` } : {}),
     // The console starts only with a repo set: the sessions' made-up one, or the projects this shell names.
     ...(process.env.WOODSHED_CLOUD_PROJECTS
       ? { WOODSHED_CLOUD_PROJECTS: process.env.WOODSHED_CLOUD_PROJECTS }
