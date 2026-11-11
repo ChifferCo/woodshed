@@ -101,6 +101,14 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_CLOUD_INSTALL
   assert.throws(bad('a-token=TOKEN,b-token=TOKEN'), /pair 2 is an env file's, or named twice/);
   // A value pasted where a name belongs is said by its place, and never repeated into the console's log.
   assert.throws(bad('ok-token=OK,registry-token=ghp_pastedValue123'), (err) => /pair 2 is not/.test(err.message) && !err.message.includes('ghp_'));
+  assert.throws(bad('registry-token=REGISTRY_TOKEN=ghp_pastedValue123'), (err) => /pair 1 is not/.test(err.message) && !err.message.includes('ghp_'));
+  // The place counts the commas as written, empty pairs too.
+  assert.throws(bad('a-token=A,,b-token=bad'), /pair 3 is not/);
+  for (const name of ['anthropic-api-key', 'openai-api-key', 'github-app-key', 'github-app-client-secret', 'github-webhook-secret', 'slack-bot-token', 'slack-signing-secret']) {
+    assert.throws(bad(`${name}=REGISTRY_TOKEN`), /one of the console's own secrets/, name);
+  }
+  assert.throws(() => loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_ENV_FILES: 'api-env=api/.env,ghp_pastedValue123' }),
+    (err) => /WOODSHED_CLOUD_ENV_FILES wants secret=path pairs.*pair 2 is not/.test(err.message) && !err.message.includes('ghp_'));
 });
 
 // Terraform cannot import the list, so its install_secrets validation repeats it: they must not drift apart.
