@@ -1573,7 +1573,7 @@ function beginAnalysis({ ctx, session, review }) {
   const diff = readDiff(session);
   if (!diff || !diff.files?.length) {
     // Nothing to order or explain. Not a failure — just nothing to do.
-    const empty = { overview: '', architecture: '', decisions: [], groups: [] };
+    const empty = { overview: '', questions: [], architecture: '', decisions: [], groups: [] };
     writeArtifact({ session, artifact: empty });
     reviewState.set(session, { status: 'ready', review: empty, error: null, gen });
     return { status: 'ready' };
@@ -1704,6 +1704,7 @@ async function runAnalysis({ ctx, session, review, diff, gen }) {
         headSha: review.headSha?.slice(0, 8),
         groups: artifact.groups?.length,
         architecture: artifact.architecture?.length,
+        questions: artifact.questions?.length,
         decisions: artifact.decisions?.length,
         toolCalls: job.toolCalls,
         // Kept even though the page may not show it: this is the line you read

@@ -46,9 +46,29 @@ export const ANALYSIS_SCHEMA = {
   // Kept deliberately small. A problem statement, a what-to-check list, a
   // tests list and a glossary were each tried as sections and cut again: each
   // read well alone, and together they made the page longer than the diff.
-  required: ['overview', 'architecture', 'decisions', 'groups'],
+  //
+  // `questions` is the one section a reviewer reads before anything else: what
+  // they have to make up their mind about before approving, most important
+  // first, each pointing at the files that answer it. Required for the same
+  // reason as the rest; an empty array is allowed for a change with nothing
+  // open to question.
+  required: ['overview', 'questions', 'architecture', 'decisions', 'groups'],
   properties: {
     overview: { type: 'string' },
+    questions: {
+      type: 'array',
+      maxItems: 5,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['question', 'why', 'files'],
+        properties: {
+          question: { type: 'string' },
+          why: { type: 'string' },
+          files: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
     architecture: { type: 'string' },
     decisions: {
       type: 'array',
@@ -196,10 +216,17 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     'Your job has four parts:',
     '',
     '0. WRITE the pieces a reader needs BEFORE they look at any code:',
+    '   - questions: the most important questions a reviewer has to answer for themselves before',
+    '     approving this change, most important first, at most five. Each is a real question',
+    '     about THIS change, not a generic checklist item: what could break, what behaviour',
+    '     changes for whom, what is assumed and not checked, what is missing. For each, one or',
+    '     two sentences on why it matters and what to look at to answer it, and the paths of the',
+    '     changed files that answer it (from the list below, exactly as given; empty when none',
+    '     does). Ask nothing whose answer is plain from the description.',
     '   - decisions: two to five choices this change makes that a reader might question — what',
     '     was deliberately done, deliberately not done, or left for a later change — each as a',
-    '     short title and one or two sentences of why. These are the things a reviewer would',
-    '     otherwise have to ask about.',
+    '     short title and one or two sentences of why, the most consequential first. These are',
+    '     the things a reviewer would otherwise have to ask about.',
     '   - architecture: how the changed code is SHAPED and how the pieces relate — what the',
     '     modules are, what each is responsible for, what talks to what, and where the seams',
     '     are. Open with a sentence or two of narrative and then name the pieces: of everything',
@@ -227,8 +254,8 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     'Every changed file listed below must appear exactly once across your groups. Use the paths',
     'exactly as given.',
     '',
-    'All of the prose — overview, architecture, each group\'s "why", each decision and each',
-    'preamble — is rendered as markdown, and the page draws more than paragraphs. What it',
+    'All of the prose — overview, architecture, each group\'s "why", each question\'s "why", each',
+    'decision and each preamble — is rendered as markdown, and the page draws more than paragraphs. What it',
     'supports, and what each is for:',
     '',
     '  - backticks around every identifier, file name and path;',
@@ -377,6 +404,10 @@ const MAX_ARCHITECTURE = 4_000;
 const MAX_DECISION_TITLE = 90;
 const MAX_DECISION_WHY = 500;
 const MAX_DECISIONS = 6;
+const MAX_QUESTION = 200;
+const MAX_QUESTION_WHY = 500;
+const MAX_QUESTIONS = 5;
+const MAX_QUESTION_FILES = 6;
 
 export function clamp(text, max) {
   const s = String(text ?? '').trim();
@@ -431,6 +462,7 @@ export function reconcileArtifact({ artifact, files, log }) {
 
   return {
     overview: clamp(artifact.overview, MAX_OVERVIEW),
+    questions: reconcileQuestions(artifact.questions, known),
     architecture: clamp(artifact.architecture, MAX_ARCHITECTURE),
     decisions: reconcileDecisions(artifact.decisions),
     groups,
@@ -451,6 +483,26 @@ function reconcileDecisions(decisions) {
     if (!title) continue;
     out.push({ title, why });
     if (out.length >= MAX_DECISIONS) break;
+  }
+  return out;
+}
+
+// A path the diff does not have would draw as a link to nothing, so it is
+// dropped here, the way reconcileArtifact drops one from a group.
+function reconcileQuestions(questions, known) {
+  if (!Array.isArray(questions)) return [];
+  const out = [];
+  for (const q of questions) {
+    if (!q || typeof q !== 'object') continue;
+    const question = clamp(q.question, MAX_QUESTION);
+    if (!question) continue;
+    const files = [];
+    for (const f of Array.isArray(q.files) ? q.files : []) {
+      if (typeof f === 'string' && known.has(f) && !files.includes(f)) files.push(f);
+      if (files.length >= MAX_QUESTION_FILES) break;
+    }
+    out.push({ question, why: clamp(q.why, MAX_QUESTION_WHY), files });
+    if (out.length >= MAX_QUESTIONS) break;
   }
   return out;
 }

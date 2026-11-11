@@ -793,6 +793,49 @@ ${DARK_PALETTE}
     }
     .decisions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
     .decisions .why { color: var(--muted); }
+    /* --- questions: what a reviewer has to answer, above the decisions --- */
+    .subhead {
+      font: 600 13px/1.5 "Red Hat Display", -apple-system, system-ui, sans-serif;
+      color: var(--ink); margin: 0.2rem 0 0.25rem;
+    }
+    .questions { margin: 0 0 1.1rem; padding: 0; list-style: none; counter-reset: question; max-width: var(--prose-measure); }
+    .questions li { position: relative; padding: 0.5rem 0 0.55rem 2.5rem; font-size: 13.5px; line-height: 1.55; }
+    /* Outlined where a decision's number is filled: the same family, and a
+       question is the open one of the two. */
+    .questions li::before {
+      counter-increment: question; content: 'Q' counter(question);
+      position: absolute; left: 0; top: 0.62rem;
+      font: 600 10px/1.6 ui-monospace, monospace; color: var(--c-dec);
+      border: 1px solid var(--c-dec); border-radius: 3px; padding: 0 0.3rem; min-width: 1.2rem; text-align: center;
+    }
+    .questions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
+    .questions .why { color: var(--muted); }
+    .qacts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.4rem; }
+    .qfile, .qask {
+      display: inline-flex; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem;
+      border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--panel);
+      font: 500 12px/1 ui-monospace, monospace; color: var(--slate); cursor: pointer;
+    }
+    .qask { font-family: "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
+    .qfile:hover, .qask:hover { border-color: var(--slate); color: var(--ink); filter: none; }
+    .qask svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
+    /* The way from the prose to the diff, at the end of the prose. */
+    .tofiles { margin: 1.4rem 0 2.5rem; font-size: 13.5px; }
+    /* Above the file list: how it is ordered, and folding every file at once. */
+    .filesbar {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      margin: -0.4rem 0 0.9rem; font-size: 12.5px; color: var(--muted);
+    }
+    .filesbar .grow { flex: 1; }
+    .filesbar button { height: 26px; padding: 0 0.6rem; font-size: 12.5px; }
+    /* Starters in the empty conversation: the analysis's own questions first. */
+    .chat-starters { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.2rem 0 0.4rem; }
+    .chat-starter {
+      text-align: left; padding: 0.45rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 8px;
+      background: var(--panel); color: var(--ink); font-size: 13px; line-height: 1.45; cursor: pointer;
+    }
+    .chat-starter:hover { border-color: var(--slate); filter: none; }
+    .chat-starter:disabled { opacity: 0.55; cursor: default; }
     /* --- acts --- */
     /* The chip beside a column holding the title and its note, so the note
        starts exactly under the title however wide the chip is — a fixed
@@ -1388,7 +1431,7 @@ ${DARK_PALETTE}
     <div class="sheet-body">
       <div>This throws away, for this review:</div>
       <ul>
-        <li>the overview, architecture, decisions and reading order</li>
+        <li>the overview, questions, decisions, architecture and reading order</li>
         <li>the conversation about the change</li>
       </ul>
       <div class="keeps" id="discardKeeps"></div>
@@ -1748,16 +1791,28 @@ ${DARK_PALETTE}
       return { seen: seen, total: files.length };
     }
 
-    // 'all' opens every file's diff with the page. Written by the launcher's
-    // settings sheet and read here, the way the theme is — same origin, so
-    // the choice needs no URL of its own, and a review opened in its own tab
-    // obeys it too.
+    // Every file's diff shows unless the reader folded them: 'collapsed'
+    // folds them, anything else ('all', or nothing saved) opens them. Folded
+    // by default, the diff was the hardest thing on the page to find. Written
+    // by the launcher's settings sheet and by the files tab's own Fold all,
+    // and read here the way the theme is: same origin, so the choice needs no
+    // URL of its own, and a review opened in its own tab obeys it too.
     function expandsByDefault() {
       try {
-        return localStorage.getItem('shed.review.expand') === 'all';
+        return localStorage.getItem('shed.review.expand') !== 'collapsed';
       } catch (e) {
-        return false;
+        return true;
       }
+    }
+
+    function setExpandAll(open) {
+      try {
+        if (open) localStorage.removeItem('shed.review.expand');
+        else localStorage.setItem('shed.review.expand', 'collapsed');
+      } catch (e) {}
+      // A file opened or folded by hand goes with the rest.
+      openFiles = {};
+      render();
     }
 
     function isFileOpen(path) {
@@ -1909,6 +1964,7 @@ ${DARK_PALETTE}
       var aside = buildTree();
       if (aside) split.appendChild(aside);
       var list = el('div', 'filelist');
+      list.appendChild(renderFilesBar());
       renderFiles(list, byPath);
       split.appendChild(list);
       content.appendChild(split);
@@ -1920,13 +1976,13 @@ ${DARK_PALETTE}
     function renderTabs(fileCount) {
       var bar = el('div', 'tabbar');
       bar.setAttribute('role', 'tablist');
-      bar.appendChild(tabButton('analysis', 'Analysis', null));
+      bar.appendChild(tabButton('analysis', 'Overview', null));
       // Only a pull request has a description and a discussion, so a branch
       // with none has no tab rather than an empty one.
       if (state.livePr) {
         bar.appendChild(tabButton('discussion', 'Discussion', draftLoading ? 'loading' : (draft.said.length || null)));
       }
-      bar.appendChild(tabButton('files', 'Reading order \\u00b7 files changed', fileCount));
+      bar.appendChild(tabButton('files', 'Files changed', fileCount));
       var right = el('div', 'right');
       var tally = viewedCount();
       if (tally.seen) {
@@ -2338,9 +2394,11 @@ ${DARK_PALETTE}
         });
     }
 
-    // What the model made of the change: what it does, how it fits, what was
-    // chosen. Order is deliberate, and three sections is on purpose — more
-    // were tried and cut, a drawing among them.
+    // What the model made of the change: what it does, what a reviewer has to
+    // make up their mind about, how it fits. Order is deliberate: the
+    // questions and decisions come straight after the overview because they
+    // are what a reviewer is here for, and the architecture is reference.
+    // It ends on the way into the diff, which is the next thing to do.
     function renderAnalysis(content) {
       var described = renderDescription(content);
       if (state.review && state.review.overview) {
@@ -2349,11 +2407,20 @@ ${DARK_PALETTE}
         renderMarkdown(overview, state.review.overview);
         content.appendChild(overview);
       }
+      renderWhatMatters(content);
       renderArchitecture(content);
-      renderDecisions(content);
       if (!state.review || !state.review.overview) {
         content.appendChild(el('div', 'tabnote', 'There is no analysis to show yet.'));
       }
+      content.appendChild(toFilesButton());
+    }
+
+    function toFilesButton() {
+      var n = ((state.diff && state.diff.files) || []).length;
+      var go = el('button', 'quiet tofiles', 'Read the diff: ' + n + (n === 1 ? ' file' : ' files') + ' changed \u2192');
+      go.type = 'button';
+      go.addEventListener('click', function onGo() { showTab('files'); });
+      return go;
     }
 
     // The author's own account, above the model's. Set in a box so the two
@@ -2494,6 +2561,24 @@ ${DARK_PALETTE}
 
     // The files, in the order the analysis put them in, under the acts that
     // say why that is the order.
+    function renderFilesBar() {
+      var bar = el('div', 'filesbar');
+      var acts = groupsToRender().filter(function titled(g) { return g.title; }).length;
+      bar.appendChild(el('span', null, acts
+        ? 'In reading order: ' + acts + (acts === 1 ? ' act' : ' acts') + ', the one to understand first at the top.'
+        : 'In the order git lists them.'));
+      bar.appendChild(el('span', 'grow'));
+      var open = el('button', 'quiet', 'Expand all');
+      open.type = 'button';
+      open.addEventListener('click', function onOpen() { setExpandAll(true); });
+      var fold = el('button', 'quiet', 'Collapse all');
+      fold.type = 'button';
+      fold.addEventListener('click', function onFold() { setExpandAll(false); });
+      bar.appendChild(open);
+      bar.appendChild(fold);
+      return bar;
+    }
+
     function renderFiles(content, byPath) {
       var groups = groupsToRender();
       var rendered = {};
@@ -2594,11 +2679,73 @@ ${DARK_PALETTE}
         });
     }
 
+    // The questions a reviewer has to answer before approving, then the
+    // choices the change made: one section, because the two are the same
+    // job. Each question links to the files that answer it and can be taken
+    // to the conversation; an analysis from before questions has decisions
+    // alone.
+    function renderWhatMatters(content) {
+      var questions = (state.review && state.review.questions) || [];
+      var decisions = (state.review && state.review.decisions) || [];
+      if (!questions.length && !decisions.length) return;
+      content.appendChild(el('div', 'secthead s-dec', 'The questions and decisions that matter most'));
+      if (questions.length) {
+        content.appendChild(el('div', 'subhead', 'Questions to answer before approving'));
+        var qlist = el('ol', 'questions');
+        for (var i = 0; i < questions.length; i++) qlist.appendChild(renderQuestion(questions[i]));
+        content.appendChild(qlist);
+      }
+      if (decisions.length) {
+        if (questions.length) content.appendChild(el('div', 'subhead', 'Decisions this change made'));
+        renderDecisions(content, decisions);
+      }
+    }
+
+    function renderQuestion(q) {
+      var li = document.createElement('li');
+      var b = document.createElement('b');
+      inline(b, q.question);
+      li.appendChild(b);
+      if (q.why) {
+        var why = el('span', 'why prose');
+        inline(why, q.why);
+        li.appendChild(why);
+      }
+      var acts = el('div', 'qacts');
+      var files = q.files || [];
+      var byPath = fileByPath();
+      for (var f = 0; f < files.length; f++) {
+        if (!byPath[files[f]]) continue;
+        acts.appendChild(fileLink(files[f]));
+      }
+      var askIt = el('button', 'qask');
+      askIt.type = 'button';
+      askIt.appendChild(svgIcon(BOT_D));
+      askIt.appendChild(el('span', null, 'Ask in the conversation'));
+      askIt.addEventListener('click', function onAsk() { askInChat(q.question); });
+      acts.appendChild(askIt);
+      li.appendChild(acts);
+      return li;
+    }
+
+    // A changed file named in the analysis, as a way to its diff.
+    function fileLink(path) {
+      var link = el('button', 'qfile');
+      link.type = 'button';
+      // The name and its folder: a bare action.yml or index.mjs could be any of several.
+      link.textContent = path.split('/').slice(-2).join('/');
+      link.dataset.tip = path;
+      link.setAttribute('aria-label', 'Show the diff of ' + path);
+      link.addEventListener('click', function onFile() {
+        openFiles[path] = true;
+        showTab('files');
+        jumpToFile(path);
+      });
+      return link;
+    }
+
     // A numbered list of a bold title and a sentence of why.
-    function renderDecisions(content) {
-      var items = (state.review && state.review.decisions) || [];
-      if (!items.length) return;
-      content.appendChild(el('div', 'secthead s-dec', 'Decisions'));
+    function renderDecisions(content, items) {
       var list = el('ol', 'decisions');
       for (var i = 0; i < items.length; i++) {
         var li = document.createElement('li');
@@ -3019,7 +3166,7 @@ ${DARK_PALETTE}
         say('dim', 'no new commits.');
         if (offer) offer.remove();
         offer = el('button', 'quiet', 'Read it again anyway');
-        offer.dataset.tip = 'Read the same commit again and rebuild the overview, architecture, decisions and reading order. A minute or two.';
+        offer.dataset.tip = 'Read the same commit again and rebuild the overview, questions, decisions, architecture and reading order. A minute or two.';
         offer.addEventListener('click', function onReanalyse() {
           offer.textContent = 'reading\\u2026';
           startAnalysis(offer);
@@ -3164,7 +3311,7 @@ ${DARK_PALETTE}
         box.appendChild(el('span', 'grow'));
         box.appendChild(el('span', 'aside', 'the diff below is complete and in git order'));
         var run = el('button', 'quiet', 'Run analysis');
-        run.dataset.tip = 'Read the diff and build the overview, architecture, decisions and reading order. A minute or two.';
+        run.dataset.tip = 'Read the diff and build the overview, questions, decisions, architecture and reading order. A minute or two.';
         run.addEventListener('click', function onRun() { startAnalysis(run); });
         box.appendChild(run);
         return box;
@@ -4318,8 +4465,11 @@ ${DARK_PALETTE}
       els.log.classList.toggle('blank', !chat.messages.length && !chat.pending && !chat.busy);
       if (!chat.messages.length && !chat.pending) {
         var hint = el('div', 'chat-hint');
-        hint.appendChild(el('p', null, 'A conversation about the change as a whole, with the branch checked out to read from.'));
-        hint.appendChild(el('p', null, 'Try: what should I look at first? Why was this done this way? What could break?'));
+        hint.appendChild(el('p', null, 'A conversation about the change as a whole, with the branch checked out to read from. Start with one of these, or ask your own:'));
+        var starters = el('div', 'chat-starters');
+        var picks = chatStarters();
+        for (var s = 0; s < picks.length; s++) starters.appendChild(starterButton(picks[s]));
+        hint.appendChild(starters);
         els.log.appendChild(hint);
       }
       for (var i = 0; i < chat.messages.length; i++) els.log.appendChild(renderChatMessage(chat.messages[i]));
@@ -4333,6 +4483,45 @@ ${DARK_PALETTE}
       if (chat.error) els.log.appendChild(el('div', 'chat-err', chat.error));
       els.send.disabled = chat.busy;
       els.log.scrollTop = els.log.scrollHeight;
+    }
+
+    // The analysis's own questions first, since they are about this change,
+    // then general ones to fill out to five.
+    var GENERAL_STARTERS = [
+      'What should I look at first?',
+      'What could this break, and for whom?',
+      'What is not covered by tests?',
+      'Why was it done this way rather than the obvious alternative?',
+      'What should I try by hand before approving?',
+    ];
+    function chatStarters() {
+      var out = [];
+      var qs = (state.review && state.review.questions) || [];
+      for (var i = 0; i < qs.length && out.length < 3; i++) out.push(qs[i].question);
+      for (var j = 0; j < GENERAL_STARTERS.length && out.length < 5; j++) out.push(GENERAL_STARTERS[j]);
+      return out;
+    }
+
+    function starterButton(text) {
+      var b = el('button', 'chat-starter', text);
+      b.type = 'button';
+      b.disabled = chat.busy;
+      b.addEventListener('click', function onStarter() { askInChat(text); });
+      return b;
+    }
+
+    // Opens the conversation and sends the question as if it had been typed.
+    function askInChat(text) {
+      if (!chat.open) setChatOpen(true);
+      if (chat.busy) {
+        // Something is being answered: leave it in the box to send after.
+        var input = chatEls().input;
+        input.value = text;
+        autosize(input);
+        return;
+      }
+      chatEls().input.value = text;
+      sendChat();
     }
 
     function renderChatMessage(m) {

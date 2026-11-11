@@ -69,7 +69,7 @@ test('the schema requires the fields the page renders before the diff', () => {
   // role chip went missing before it was made required. architecture and
   // decisions are the sections that make the artifact worth reading ahead of
   // the code, so an omission is a silently emptier page.
-  assert.deepEqual(ANALYSIS_SCHEMA.required, ['overview', 'architecture', 'decisions', 'groups']);
+  assert.deepEqual(ANALYSIS_SCHEMA.required, ['overview', 'questions', 'architecture', 'decisions', 'groups']);
 });
 
 test('the argv carries the flags that contain and cost-bound the run', () => {
@@ -193,3 +193,29 @@ test('the decisions are length-bounded and never make the page throw', () => {
   assert.equal(none.architecture, '');
 });
 
+
+test('the questions keep only files the diff has, and are bounded', () => {
+  // A question's files draw as links to diffs on the page, so a path the diff
+  // does not have would be a link to nothing.
+  const out = reconcileArtifact({
+    artifact: {
+      overview: 'o',
+      questions: [
+        { question: 'Does the proxy still refuse a stopped session?', why: 'w'.repeat(2_000),
+          files: [FILES[1].path, 'not/in/the/diff.mjs', FILES[1].path, 7] },
+        { question: '', why: 'no question', files: [] },
+        { question: 'No files key' },
+        ...Array.from({ length: 8 }, (_, i) => ({ question: `q${i}`, why: '', files: [] })),
+      ],
+      groups: [{ title: 'g', why: 'w', files: [{ path: FILES[0].path, preamble: 'p', role: 'docs' }] }],
+    },
+    files: FILES,
+  });
+  assert.equal(out.questions.length, 5);
+  assert.deepEqual(out.questions[0].files, [FILES[1].path]);
+  assert.ok(out.questions[0].why.length < 600);
+  assert.deepEqual(out.questions[1], { question: 'No files key', why: '', files: [] });
+
+  const none = reconcileArtifact({ artifact: { groups: [] }, files: FILES });
+  assert.deepEqual(none.questions, []);
+});

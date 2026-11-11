@@ -238,16 +238,17 @@
     paintSettings();
   }
 
+  // Expanded unless folded by choice: the review page reads 'collapsed' as folded and anything else as open.
   function reviewExpands() {
     try {
-      return window.localStorage.getItem(REVIEW_EXPAND_KEY) === 'all';
+      return window.localStorage.getItem(REVIEW_EXPAND_KEY) !== 'collapsed';
     } catch {
-      return false;
+      return true;
     }
   }
   function setReviewExpand(value) {
     try {
-      if (value === 'all') window.localStorage.setItem(REVIEW_EXPAND_KEY, 'all');
+      if (value === 'collapsed') window.localStorage.setItem(REVIEW_EXPAND_KEY, 'collapsed');
       else window.localStorage.removeItem(REVIEW_EXPAND_KEY);
     } catch {
       // A private window keeps nothing.
