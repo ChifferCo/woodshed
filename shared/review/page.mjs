@@ -4503,15 +4503,20 @@ ${DARK_PALETTE}
     }
 
     function starterButton(text) {
-      var b = el('button', 'chat-starter', text);
+      var b = el('button', 'chat-starter');
+      // The analysis writes its questions as markdown, so a name in one is drawn as code here.
+      inline(b, text);
       b.type = 'button';
       b.disabled = chat.busy;
       b.addEventListener('click', function onStarter() { askInChat(text); });
       return b;
     }
 
-    // Opens the conversation and sends the question as if it had been typed.
-    function askInChat(text) {
+    // Opens the conversation and sends the question as if it had been typed:
+    // without the analysis's code marks, which a typed message would show as
+    // they are.
+    function askInChat(markdown) {
+      var text = String(markdown).split(String.fromCharCode(96)).join('');
       if (!chat.open) setChatOpen(true);
       if (chat.busy) {
         // Something is being answered: leave it in the box to send after.
