@@ -748,6 +748,10 @@
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
       h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : 'Woodshed Cloud'), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
       me.login && MY_LINKS.map(item),
+      h('button', {
+        type: 'button', class: 'menu-item', role: 'menuitem', 'data-keys': 'keys',
+        onclick: () => { setOpen(false); window.Woodshed.shell?.openKeys(); },
+      }, 'Keyboard shortcuts', h('kbd', { class: 'menu-kbd' }, '?')),
       me.admin && [h('div', { class: 'menu-label' }, 'Console'), CONSOLE_LINKS.map(item)],
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
@@ -819,8 +823,10 @@
         h('div', { class: 'side-group' }, 'You'), MY_LINKS.map(item),
         consoleSlot,
         h('div', { class: 'side-group' }, 'This browser'),
-        h('button', { type: 'button', class: 'side-item', onclick: () => window.Woodshed.shell?.openSettings() },
-          h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '◐'), 'Theme and keys', h('kbd', { class: 'side-hint' }, '⇧⌘,'))));
+        h('button', { type: 'button', class: 'side-item', 'data-keys': 'settings', onclick: () => window.Woodshed.shell?.openSettings() },
+          h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '◐'), 'Theme and review files', h('kbd', { class: 'side-hint' }, window.Woodshed.shell?.keyText('settings') ?? '⇧⌘,')),
+        h('button', { type: 'button', class: 'side-item', 'data-keys': 'keys', onclick: () => window.Woodshed.shell?.openKeys() },
+          h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '?'), 'Keyboard shortcuts', h('kbd', { class: 'side-hint' }, '?'))));
   }
 
   async function getJson(path) {

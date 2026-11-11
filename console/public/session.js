@@ -537,7 +537,7 @@
         everyone: h('a', { class: 'rail-seg-link' }, 'Everyone'),
         slots: h('span', { class: 'rail-slots' }),
       };
-      railFrame.add = h('a', { class: 'rail-new', href: '/?new=1', title: 'New session (⇧⌘O)' }, '+ New session', railFrame.slots);
+      railFrame.add = h('a', { class: 'rail-new', href: '/?new=1', 'data-keys': 'new' }, '+ New session', railFrame.slots);
       railFrame.seg = h('div', { class: 'rail-seg', role: 'group', 'aria-label': 'Whose sessions' }, railFrame.mine, railFrame.everyone);
       railFrame.only = h('b', { class: 'rail-only' }, 'My sessions');
       railFrame.el = h('div', { class: 'rail-head' }, railFrame.seg, railFrame.only, picker.el, railFrame.add);
@@ -567,7 +567,7 @@
     const waiting = mine ? waitingMine() : data.queued;
     railFrame.slots.textContent = mine ? text : '';
     railFrame.slots.hidden = !mine;
-    railFrame.add.title = `New session (⇧⌘O). ${text} running${waiting ? `, ${waiting} waiting` : ''}.`;
+    railFrame.add.dataset.hint = `New session. ${text} running${waiting ? `, ${waiting} waiting` : ''}.`;
   }
 
   // The user menu sits at the foot of the rail and opens upward. It is mounted once in layout(), never inside the part
