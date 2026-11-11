@@ -166,15 +166,16 @@ export const SESSION_VARIABLES = Object.freeze([
  */
 export function installSecrets(env, files = envFiles(env)) {
   const taken = new Set(files.flatMap(({ secret }) => [secret, secretEnvName(secret)]));
-  const pairs = (env.WOODSHED_CLOUD_INSTALL_SECRETS || '').split(',').map((p) => p.trim()).filter(Boolean).map((pair) => {
+  const pairs = (env.WOODSHED_CLOUD_INSTALL_SECRETS || '').split(',').map((p) => p.trim()).filter(Boolean).map((pair, i) => {
     const [secret, variable = ''] = pair.split('=').map((part) => part.trim());
+    // Named by its place, never quoted: a pair that is not two names may be a token pasted in by mistake.
     if (!/^[a-z0-9-]+$/.test(secret) || !/^[A-Z_][A-Z0-9_]*$/.test(variable)) {
-      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS wants secret=VARIABLE pairs, as registry-token=REGISTRY_TOKEN: ${pair}`);
+      throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS wants secret=VARIABLE pairs, as registry-token=REGISTRY_TOKEN: pair ${i + 1} is not`);
     }
     if (variable.startsWith('WOODSHED_') || SESSION_VARIABLES.includes(variable)) {
       throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: ${variable} is one of Woodshed's own session variables`);
     }
-    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: ${pair} is an env file's, or named twice`);
+    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${i + 1} is an env file's, or named twice`);
     taken.add(secret).add(variable);
     return { secret, variable };
   });

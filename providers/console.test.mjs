@@ -98,7 +98,9 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_CLOUD_INSTALL
   assert.throws(bad('registry-token=GH_TOKEN'), /one of Woodshed's own session variables/);
   assert.throws(bad('api-env=TOKEN', 'api-env=api/.env'), /is an env file's, or named twice/);
   assert.throws(bad('registry-token=API_ENV', 'api-env=api/.env'), /is an env file's, or named twice/);
-  assert.throws(bad('a-token=TOKEN,b-token=TOKEN'), /named twice/);
+  assert.throws(bad('a-token=TOKEN,b-token=TOKEN'), /pair 2 is an env file's, or named twice/);
+  // A value pasted where a name belongs is said by its place, and never repeated into the console's log.
+  assert.throws(bad('ok-token=OK,registry-token=ghp_pastedValue123'), (err) => /pair 2 is not/.test(err.message) && !err.message.includes('ghp_'));
 });
 
 // Terraform cannot import the list, so its install_secrets validation repeats it: they must not drift apart.
