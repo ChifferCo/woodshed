@@ -125,19 +125,24 @@ export function riskAreasFrom({ comments, review, gate }) {
   const runId = runIdIn(review?.body);
   const comment = (runId && reviews.find((c) => runIdIn(c.body) === runId)) || reviews.at(-1);
   if (!comment) return { found: false, items: [] };
-  const top = comment.body.split('<details>')[0].split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
+  // The folded review starts at the first `<details>` outside the alert: the alert's own items fold too, in its quote.
+  const lines = comment.body.replace(/\r\n/g, '\n').split('\n');
+  const fold = lines.findIndex((l) => l.startsWith('<details>'));
+  const top = (fold < 0 ? lines : lines.slice(0, fold)).map((l) => l.replace(/^>\s?/, '')).join('\n');
   const accepted = [...listUnder(top, ACCEPT_HEADING), ...listUnder(top, RISK_HEADING)];
   const untested = listUnder(top, UNTESTED_HEADING).map((i) => `Not tested: ${i}`);
   return { found: true, items: [...accepted, ...untested] };
 }
 
-// The bullets under a bold heading line, up to the next one.
+// The items under a bold heading line, up to the next one: each folded item's one line, or else the bullets.
 function listUnder(text, heading) {
   const at = text.indexOf(heading);
   if (at < 0) return [];
   const rest = text.slice(at + heading.length);
   const next = rest.search(/\n\*\*[^*\n]+\*\*/);
-  return bulletsOf(next < 0 ? rest : rest.slice(0, next)).filter((i) => !NOTHING_RISKY.test(i));
+  const section = next < 0 ? rest : rest.slice(0, next);
+  const folded = [...section.matchAll(/<summary>([\s\S]*?)<\/summary>/g)].map((m) => m[1].replace(/\s+/g, ' ').trim());
+  return (folded.length ? folded : bulletsOf(section)).filter((i) => i && !NOTHING_RISKY.test(i));
 }
 
 /** Top-level `- `, `* ` or `1. ` items, each with its continuation lines. */

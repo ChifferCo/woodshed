@@ -372,8 +372,8 @@ jobs:
 The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
 commit, which never blocks merging, and as a `merge risk: low`, `medium` or `high` label on the pull request. The
 check's title says which rule decided the tier, and the check says how each tier is decided. The review comment opens
-with an alert for whoever merges: the tier and its reason, what they accept by merging, and what no test covers that
-they should try first. Size counts only code: tests and docs are left out of the Low limit (under 5 files and 200 lines). That is
+with an alert for whoever merges, in the tier's colour: the tier and its reason, what they accept by merging, and what
+no test covers that they should try first, each a line that opens to what changed, why, and a link to the lines. Size counts only code: tests and docs are left out of the Low limit (under 5 files and 200 lines). That is
 why the caller grants `checks: write`. The label is only for people: anyone who can triage can change it, so the
 console reads the check. To show it in the decision brief and
 Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.

@@ -232,7 +232,7 @@ jobs:
                whatever that comment already holds, so a review you only write as a reply is lost.
 
                Start with what the person who merges must know, outside the fold, as one GitHub alert: `[!CAUTION]`
-               for High, `[!WARNING]` for Medium, `[!NOTE]` for Low. Every line of it starts with `> `. Write it for
+               for High, `[!WARNING]` for Medium, `[!TIP]` for Low, the colours of the merge risk labels. Every line of it starts with `> `. Write it for
                someone who has not read the diff and wants to decide in a minute: plain words, what happens to whom,
                no code walkthrough.
 
@@ -240,12 +240,26 @@ jobs:
                > **Merge risk: Medium**: the sentence from step 7 saying which rule decided it.
                >
                > **What you accept by merging**
-               > - Each risk the merge takes on: what could go wrong, for whom and when, and where (`path:line`). The
-               >   ones that are hard to undo or reach users first. "None" when there is nothing beyond the change itself.
+               >
+               > <details><summary>One line: the risk the merge takes on, what could go wrong and for whom.</summary>
+               >
+               > What changed, in a sentence or two, and why it is a risk. A link to the lines, as
+               > `[path:10-24](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.pull_request.head.sha }}/path#L10-L24)`,
+               > and when it helps, a few changed lines in a ```diff block, so nobody has to go and find them.
+               >
+               > </details>
                >
                > **Not tested: check before merging**
-               > - Each change no test or run covers that you think a person should try: what to do, in a few steps,
-               >   and what they should see. "None" when the tests cover it.
+               >
+               > <details><summary>One line: what to try that no test or run covers.</summary>
+               >
+               > The steps, a few, and what they should see. A link to the lines it depends on, as above.
+               >
+               > </details>
+
+               One `<details>` for each item, in the order that matters most first: the ones that are hard to undo or
+               reach users first. The one line must make sense without opening it. Write `None` as the whole list, with
+               no `<details>`, when there is nothing to accept beyond the change itself, or when the tests cover it.
 
                Then the rest in a collapsible block:
 
@@ -349,7 +363,7 @@ jobs:
           esac
           reason=$(sed -n 2p /tmp/merge-risk.md | cut -c1-200)
           # How the tiers are decided, under every rating, so a reader can see which rule a change hit
-          tiers='**High** when it touches any of: the repo'"'"'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests, docs or a small tested fix. **Medium** is everything between.'
+          tiers='**High** when it touches any of: the repo'"'"'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests that add or strengthen checks, docs or a small tested fix. **Medium** is everything between.'
           summary=$(printf '%s\n\n%s\n\n%s\n\nSet by the AI review ([run](%s)). It does not block merging.' \
             "$reason" "$(tail -n +3 /tmp/merge-risk.md)" "$tiers" "$RUN_URL")
           jq -n --arg sha "$HEAD_SHA" --arg title "${label}: ${reason}" --arg summary "$summary" --arg url "$RUN_URL" \

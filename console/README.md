@@ -1252,7 +1252,8 @@ a signal that is missing is said to be missing:
 - **QA** is the `qa` check's own verdict and counts, and the first
   thing its PR comment (by `qa.author`, starting with `qa.heading`) lists as untested.
 - **Risk areas** are the review comment's `What you accept by merging`, then its
-  `Not tested: check before merging` as `Not tested: …` (or a repo's own review's
+  `Not tested: check before merging` as `Not tested: …`, each by the one line of
+  its folded item (or a repo's own review's
   `Risk areas to eyeball manually`), from `review.commentAuthor`'s comment that folds
   the review under the heading's words, from the run whose review approved.
 - **Decisions** are the PR body's `## Decisions`, those naming a file a risk

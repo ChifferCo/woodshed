@@ -263,6 +263,40 @@ test('risk areas are read from the review\'s alert: what merging accepts, then w
   assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate }), { found: true, items: [] });
 });
 
+test('each folded risk is quoted by its one line, and the folds inside the alert do not end it', () => {
+  const alert = [
+    '> [!WARNING]',
+    '> **Merge risk: Medium**: it removes a confirm step from admin settings.',
+    '>',
+    '> **What you accept by merging**',
+    '>',
+    '> <details><summary>An admin adds or removes a repo with one click.</summary>',
+    '>',
+    '> The typed confirm is gone. [consoleSettings.js:40-52](https://github.com/o/r/blob/abc/console/public/consoleSettings.js#L40-L52)',
+    '>',
+    '> ```diff',
+    '> - confirmTyped(\'add\')',
+    '> ```',
+    '>',
+    '> </details>',
+    '>',
+    '> **Not tested: check before merging**',
+    '>',
+    '> <details><summary>Add a repo the App is not on:',
+    '> the error links to its install page.</summary>',
+    '>',
+    '> Steps here.',
+    '>',
+    '> </details>',
+  ].join('\n');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(alert)], review, gate: GATES.review }).items, [
+    'An admin adds or removes a repo with one click.',
+    'Not tested: Add a repo the App is not on: the error links to its install page.',
+  ]);
+  const none = alert.split('\n').filter((l, i) => i < 4 || (i > 14 && i < 16)).concat(['> None']).join('\n');
+  assert.deepEqual(riskAreasFrom({ comments: [reviewComment(none)], review, gate: GATES.review }).items, []);
+});
+
 test('decisions that touch a risk area come first, and every one is listed in Slack and the comment', () => {
   const b = brief();
   assert.match(b.slack, /\*\*Decisions\*\*\n• Rate limits share `rateLimitUtils\.ts` with signup\n• Kept the 30 s/);
