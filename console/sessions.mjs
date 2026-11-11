@@ -38,6 +38,18 @@ export function newSessionId() {
   return randomBytes(4).toString('hex');
 }
 
+/**
+ * A session's page, as a link that leaves the console: a GitHub comment, a Slack post, the session's own SESSION_URL.
+ * In a multi-tenant console it names the session's org (`?org=`), which switches whoever opens it there (hosted.mjs).
+ * @param {string} publicUrl
+ * @param {string} id
+ * @param {string|null} [org]
+ * @returns {string}
+ */
+export function sessionLink(publicUrl, id, org = null) {
+  return `${publicUrl}/s/${id}${org ? `?org=${encodeURIComponent(org)}` : ''}`;
+}
+
 /** @returns {string} 32 hex characters, the session's statusd and ttyd secret */
 export function newSessionToken() {
   return randomBytes(16).toString('hex');

@@ -13,7 +13,7 @@ import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
-  ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, keptIds, newSessionId, newSessionToken,
+  ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, keptIds, newSessionId, newSessionToken, sessionLink,
   parseWorkOn, pullNumber, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitsForRetry,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
@@ -98,14 +98,14 @@ export function commentConsoleUrl({ publicUrl, project, consoleLinks }) {
  * @param {{session: object, publicUrl: string|null, maxRunning: number}} args  `publicUrl`: null leaves out every link
  * @returns {string}  the comment posted on the issue or PR when a session is created
  */
-export function startComment({ session, publicUrl, maxRunning, appDomain = '' }) {
-  if (session.status === 'failed') return failedComment({ session, publicUrl });
+export function startComment({ session, publicUrl, maxRunning, appDomain = '', org = null }) {
+  if (session.status === 'failed') return failedComment({ session, publicUrl, org });
   const head = session.status === 'queued'
     ? `Queued a Woodshed Cloud session for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
     : `Started a Woodshed Cloud session for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
   const links = publicUrl
     ? [
-      `Watch it and type into it: ${publicUrl}/s/${session.id}`,
+      `Watch it and type into it: ${sessionLink(publicUrl, session.id, org)}`,
       ...(appDomain ? [`Its app, once started from that page: https://${session.id}.${appDomain}/`] : []),
     ]
     : ['Watch it and type into it from Woodshed Cloud.'];
@@ -122,11 +122,11 @@ export function startComment({ session, publicUrl, maxRunning, appDomain = '' })
  * @param {{session: object, publicUrl: string|null}} args  `publicUrl`: null leaves out the link
  * @returns {string}  the comment posted on the issue or PR when a `/woodshed` comment resumes a session
  */
-export function resumeComment({ session, publicUrl }) {
+export function resumeComment({ session, publicUrl, org = null }) {
   return [
     `Resumed the Woodshed Cloud session on \`${session.branch}\` for @${session.resumedBy}, with its conversation${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`,
     '',
-    publicUrl ? `Watch it and type into it: ${publicUrl}/s/${session.id}` : 'Watch it and type into it from Woodshed Cloud.',
+    publicUrl ? `Watch it and type into it: ${sessionLink(publicUrl, session.id, org)}` : 'Watch it and type into it from Woodshed Cloud.',
   ].join('\n');
 }
 
@@ -154,9 +154,9 @@ export function refusalComment({ login, label, unlabeled, member, publicUrl }) {
  * @param {{session: object, publicUrl: string|null}} args  `publicUrl`: null leaves out the link
  * @returns {string}
  */
-export function failedComment({ session, publicUrl }) {
+export function failedComment({ session, publicUrl, org = null }) {
   return [
-    `The Woodshed Cloud session for @${session.startedBy} failed to start. The console shows why${publicUrl ? `: ${publicUrl}/s/${session.id}` : '.'}`,
+    `The Woodshed Cloud session for @${session.startedBy} failed to start. The console shows why${publicUrl ? `: ${sessionLink(publicUrl, session.id, org)}` : '.'}`,
     '',
     `Add the \`woodshed\` label again, or comment \`/woodshed <message>\`, to try again.`,
   ].join('\n');
@@ -180,7 +180,7 @@ export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
-  consoleLinks = async () => true,
+  consoleLinks = async () => true, newId = newSessionId,
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -226,7 +226,7 @@ export function createFleet({
       SESSION_TOKEN: session.token,
       TERMINAL_TOKEN: session.terminalToken,
       STARTED_BY: session.startedBy,
-      SESSION_URL: `${config.publicUrl}/s/${session.id}`,
+      SESSION_URL: sessionLink(config.publicUrl, session.id, config.org),
     };
     // A private session fetches its owner's settings from the console's session API at start (sessionApi.mjs).
     if (session.owner) env.SESSION_KIND = 'private';
@@ -267,6 +267,7 @@ export function createFleet({
   // them claude would stay on the team key while the pages said otherwise.
   async function planFor(session) {
     if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || !databases?.available) return null;
+    await userSettings?.refresh?.(session.startedBy);
     if (!userSettings?.usesOwnTokenForShared(session.startedBy)) return null;
     try {
       if (await userSettings.claudeToken(session.startedBy)) return session.startedBy;
@@ -357,7 +358,7 @@ export function createFleet({
       console.warn('fleet: session refused, its databases are not hosted', { kind, number, trigger, why: refused });
       throw shown(`Not started: ${refused}`);
     }
-    const id = newSessionId();
+    const id = newId();
     const attached = attach ? await attach(id) : 0;
     const defaultBranch = kind === 'issue' ? `woodshed/${number}-${id}` : kind === 'task' ? `woodshed/${owner}-${id}` : null;
     const session = {
@@ -485,7 +486,7 @@ export function createFleet({
   async function announceFailure(session) {
     if (!session.commentId) return;
     const project = projectFor(config, session);
-    const body = failedComment({ session, publicUrl: await consoleUrlOf(project) });
+    const body = failedComment({ session, publicUrl: await consoleUrlOf(project), org: config.org });
     const posted = await safely('failure comment', () => githubOf(project).comment(session.number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -953,7 +954,7 @@ export function createFleet({
     await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
     const publicUrl = await consoleUrlOf(project);
     const posted = await safely('start comment', () => gh.comment(number, startComment({
-      session, publicUrl, maxRunning: config.maxRunning, appDomain: config.appDomain,
+      session, publicUrl, maxRunning: config.maxRunning, appDomain: config.appDomain, org: config.org,
     })));
     if (posted) {
       update(session, { commentId: posted });
@@ -1243,7 +1244,7 @@ export function createFleet({
     await resumeShared(session, { text: message, by: login, why: trigger });
     await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
     const publicUrl = await consoleUrlOf(projectFor(config, session));
-    const posted = await safely('resume comment', () => gh.comment(number, resumeComment({ session, publicUrl })));
+    const posted = await safely('resume comment', () => gh.comment(number, resumeComment({ session, publicUrl, org: config.org })));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();

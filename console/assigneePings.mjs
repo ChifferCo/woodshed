@@ -4,12 +4,13 @@
 // request gave up waiting for an approval with green checks. A ready pull request is not one: its brief is in the channel's thread, which mentions them. Someone with no Slack link gets nothing new, and the console logs
 // that it skipped them. Best effort: a message Slack refuses changes nothing else, and is not sent again.
 
+import { sessionLink } from './sessions.mjs';
 import { plainText } from './slack.mjs';
 
 /**
  * @param {{slack: {dm: Function}|null, slackPeople: {slackUserFor: (login: string) => string|null}|null, publicUrl: string}} deps
  */
-export function createAssigneePings({ slack, slackPeople, publicUrl }) {
+export function createAssigneePings({ slack, slackPeople, publicUrl, org = null }) {
   /**
    * The rules every message here follows: a shared session, assigned, to someone People links to a Slack user.
    * @returns {string|null}  the assignee's Slack member ID, or null when they are not to be told, logged with `why`
@@ -39,7 +40,7 @@ export function createAssigneePings({ slack, slackPeople, publicUrl }) {
     }
   }
 
-  const link = (session) => `${publicUrl}/s/${session.id}`;
+  const link = (session) => sessionLink(publicUrl, session.id, org);
   // The title goes in quotes, not bold, so a `*` or `_` in it cannot break the formatting around it.
   const title = (session) => plainText(session.title ?? 'A session');
 
