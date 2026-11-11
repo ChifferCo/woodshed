@@ -370,7 +370,9 @@ jobs:
   `woodshed-cloud`).
 
 The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
-commit, which never blocks merging, and as a `merge risk: low`, `medium` or `high` label on the pull request. That is
+commit, which never blocks merging, and as a `merge risk: low`, `medium` or `high` label on the pull request. The
+check's title and the top of the review comment say which rule decided the tier, and the check says how each tier is
+decided. Size counts only code: tests and docs are left out of the Low limit (under 5 files and 200 lines). That is
 why the caller grants `checks: write`. The label is only for people: anyone who can triage can change it, so the
 console reads the check. To show it in the decision brief and
 Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
