@@ -1,7 +1,7 @@
 name: QA report
 description: >-
   Turns the QA run into the pull request's QA comment and its QA check, and uploads the plan, the screenshots and the
-  session logs. Run it with `if: ${{ !cancelled() }}`, so it reports a run that failed or timed out too.
+  session logs. Run it with `if: !cancelled()`, so it reports a run that failed or timed out too.
 inputs:
   check:
     description: The QA check's name, which the project file's pullRequests.qa.check names too.
