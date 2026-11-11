@@ -76,7 +76,7 @@ test('the manifest goes beside the folder, with each install\'s command and outp
   const repo = repoWith(t, [install('api', ['deps.lock'], { command: 'make deps && make tools', output: ['vendor', '~/.cache/tool'] })], ['api/deps.lock']);
   const { dest } = stage(repo);
   assert.equal(fs.readFileSync(`${dest}.installs`, 'utf8'),
-    'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps && make tools\n');
+    'install\tapi\tdeps.lock\tvendor ~/.cache/tool\ttrue\tmake deps && make tools\n');
   assert.deepEqual(stagedFiles(dest), ['api/deps.lock'], 'the checkout gets no manifest');
 });
 
@@ -122,7 +122,7 @@ test('a repo with no project file stages the installs of the installation\'s fil
   assert.equal(supplied.status, 0, supplied.stderr);
   assert.match(supplied.stdout, /stageDeps: project file from installation\n/);
   assert.deepEqual(stagedFiles(path.join(repo, 'staged')), ['api/deps.lock']);
-  assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), 'install\tapi\tdeps.lock\tvendor\tmake deps\n');
+  assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), 'install\tapi\tdeps.lock\tvendor\ttrue\tmake deps\n');
   assert.equal(fs.readFileSync(path.join(repo, 'staged.editor'), 'utf8'), 'true\n');
 
   const without = run({});

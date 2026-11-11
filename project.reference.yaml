@@ -20,6 +20,9 @@ dependencies:
       command: npm ci --no-audit --no-fund
       # Required, at least one. What the image keeps: folders under the dir, or under the home as ~/...
       output: [node_modules]
+      # Default: true. Removes from each node_modules in output what the image never loads: a native package's variant
+      # for another libc, os or cpu when one for the image is installed beside it, and source maps (*.map).
+      prune: true
 
 # Default: {}. Variables exported for everything a session runs. A value can use {{NAME}}, a variable of the session's
 # environment (empty when unset), or {{NAME?}}, which leaves the line out when it is empty. Quote numbers.
