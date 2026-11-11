@@ -32,7 +32,7 @@ output "github_infra_role_arn" {
 }
 
 output "redeploy_console_document" {
-  description = "The SSM document the image workflow runs on the base box after a console build."
+  description = "The SSM document the deploy workflow's console job runs on the base box after a console build."
   value       = aws_ssm_document.redeploy_console.name
 }
 
@@ -45,12 +45,12 @@ locals {
 }
 
 output "db_template_command" {
-  description = "Builds the database template every session's databases are copied from, from the session image's master, as a one-off task. Once before the first session; after that the image workflow runs it after each session image. null with no databases."
+  description = "Builds the database template every session's databases are copied from, from the session image's default branch, as a one-off task. Once before the first session; after that the deploy workflow's session job runs it after each session image. null with no databases."
   value       = local.db_admin ? "${local.db_admin_run} --overrides '{\"containerOverrides\":[{\"name\":\"db-admin\",\"command\":[\"template\"]}]}'" : null
 }
 
 output "refresh_db_template_document" {
-  description = "The SSM document the image workflow runs on the base box after a session build, to build the database template again. null with no databases."
+  description = "The SSM document the deploy workflow's session job runs on the base box after a session build, to build the database template again. null with no databases."
   value       = one(aws_ssm_document.refresh_db_template[*].name)
 }
 
