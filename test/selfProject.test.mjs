@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -64,4 +65,13 @@ test('Woodshed\'s app is the dev console, one server on both ports, started and 
   assert.match(howToProve, /scripts\/devConsoleApp\.sh start/);
   assert.ok(fs.existsSync(path.join(WOODSHED, 'scripts/devConsoleApp.sh')), 'the start script is a path from what will be the repo root');
   assert.ok(fs.existsSync(path.join(WOODSHED, 'console', 'public')), 'paths names a folder there is');
+});
+
+// What a repo's CI runs through .github/workflows/project-check.yml, run on Woodshed's own checkout.
+test('Woodshed\'s project file passes its own check against this checkout', () => {
+  const run = spawnSync(process.execPath, [path.join(WOODSHED, 'shared/project.mjs'), 'check'], {
+    encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: WOODSHED },
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^pull requests: review \.github\/workflows\/review\.yml, suites 1 \(Check in \.github\/workflows\/check\.yml\)$/m);
 });

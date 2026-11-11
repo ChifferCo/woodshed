@@ -1,0 +1,10 @@
+a: >
+  one
+  two
+
+  three
+    kept
+  four
+b: >-
+  x
+  y

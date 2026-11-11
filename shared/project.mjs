@@ -1,6 +1,8 @@
 // The project file: what a session needs to know about the repo it works on, so nothing here names that repo's
 // directories, commands or ports. It is `.woodshed/project.yaml` in the repo (docs/reference.md, "The project file").
 //
+//   node project.mjs check               the file read as a session's start reads it, then checked against the
+//                                        checkout (projectCheck.mjs): what a session takes from it, or each problem
 //   node project.mjs get <field>         a field, dotted (`app.start`); an array prints one item a line (a mapping as
 //                                        JSON), a missing field prints nothing
 //   node project.mjs env                 the project's `env`, as `export` lines for the entrypoint to eval
@@ -26,6 +28,7 @@ import { ENGINE_NAMES } from './databases/index.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
+import { checkSummary } from './projectCheck.mjs';
 
 export const PROJECT_FILE = '.woodshed/project.yaml';
 // While Woodshed Cloud is in beta the format changes in place, with every project file in the same change (README.md,
@@ -551,27 +554,6 @@ export function field(project, dotted) {
   return dotted.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), project);
 }
 
-/**
- * What a session would take from the project file, one line each, for someone (or their agent) writing one: it
- * throws as a session's start would, and on a file the project file names that is not there.
- */
-export function checkSummary(project, repoDir) {
-  if (project.from === 'none') return [`no ${PROJECT_FILE}: sessions get no installs, databases or app (project.reference.yaml has every field)`];
-  for (const name of ['rules', 'setup']) {
-    if (project[name] && !readRepoFile(repoDir, project[name])) fail(`${name} names ${project[name]}, which is not in the checkout or on the default branch`);
-  }
-  const list = (items) => (items.length ? `${items.length} (${items.join(', ')})` : 'none');
-  const { app } = project;
-  return [
-    `${PROJECT_FILE}: read from the ${project.from}`,
-    `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
-    `databases: ${list(project.databases.map((d) => d.engine))}`,
-    `env files: ${list(project.envFiles.map((f) => (f.secret ? `${f.path} from ${f.secret}` : f.path)))}`,
-    `app: ${app ? `\`${app.start}\`, frontend on ${app.frontendPort}` : 'none (no Start app)'}`,
-    `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
-  ];
-}
-
 function main([command, arg]) {
   const repoDir = process.env.REPO_DIR || process.cwd();
   const project = loadProject(repoDir);
@@ -611,7 +593,7 @@ if (isMain(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (err) {
-    process.stderr.write(`project: ${err.message}\n`);
+    process.stderr.write(err.message.split('\n').map((line) => `project: ${line}\n`).join(''));
     process.exit(1);
   }
 }

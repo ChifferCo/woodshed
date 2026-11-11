@@ -1,0 +1,107 @@
+# A project file of the size a real repo writes: comments everywhere, block text, quoted values with `#` and `:` in
+# them, flow lists, `~` paths and placeholders.
+
+version: 1
+
+dependencies:
+  installs:
+    # .npmrc reads the registry's token from REGISTRY_TOKEN.
+    - dir: api
+      files: [package.json, package-lock.json, .npmrc]
+      command: npm ci --no-audit --no-fund --loglevel=error
+      output: [node_modules]
+    - dir: web
+      files:
+        - package.json
+        - package-lock.json
+      command: npm ci && npx playwright install --only-shell chromium
+      output: [node_modules, ~/.cache/ms-playwright]
+
+env:
+  DB_HOST: '{{PGHOST}}'
+  DB_PORT: "{{PGPORT}}"
+  REDIS_URL: redis://127.0.0.1:6379
+  PORT: '9000'
+  NODE_ENV: development # trailing comment
+  TZ: UTC
+  ROOT_URL: http://localhost:9000
+
+envFiles:
+  - path: api/.env
+    secret: api-env
+    lines:
+      - DB_HOST={{PGHOST}}
+      # Quoted: a # in a value reads as a comment.
+      - DB_PASSWD="{{PGPASSWORD}}"
+      - DB_TEST_NAME={{PGDATABASE}}_test
+      - MONGODB_URI={{MONGODB_URI}}
+      - ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}
+  - path: web/.env.local
+    secret: web-env
+    lines:
+      - API_URL=http://localhost:9000
+
+databases:
+  - engine: postgres
+    user: acme_user
+    name: acme
+    dir: api
+    migrate: npm run migrate
+    seed: npm run seed
+    envFiles: [api-env]
+    paths: [api/db]
+    migrations: api/db/migrations
+    migrationsTable:
+      table: public.knex_migrations
+      column: name
+    dump:
+      skip:
+        - public.audit_events
+        - public.email_logs
+      extensions: [pg_trgm]
+  - engine: mongo
+    dir: api
+    seed: npm run seed:mongo
+    envFiles: [api-env]
+    paths: [api/db]
+    migrations: api/db/migrations
+    dump:
+      skip: [events, page_views]
+
+app:
+  start: bash scripts/dev.sh start
+  stop: bash scripts/dev.sh stop
+  frontendPort: 3001
+  backendPort: 9000
+  logs:
+    api: ~/.cache/servers/{{CHECKOUT}}/api.log
+    web: ~/.cache/servers/{{CHECKOUT}}/web.log
+  paths: [api/, web/]
+  howToProve: >-
+    Run `bash scripts/dev.sh start` and prove each thing the request asks for: the page in the
+    Playwright browser for a UI change, and for a bug fix the same steps on main first.
+
+pullRequests:
+  review:
+    author: github-actions[bot]
+    heading: '## Code Review'
+    workflow: .github/workflows/code-review.yml
+    rerun: '[review]'
+    commentAuthor: review[bot]
+  suites:
+    - name: e2e suite
+      workflow: .github/workflows/e2e.yml
+      jobs: E2E run
+      rerun: '[e2e]'
+  qa:
+    check: QA
+    label: qa
+    heading: '## 🤖 QA'
+    author: github-actions[bot]
+  mergeRisk:
+    check: Merge risk
+
+editor: true
+consoleLinks: true
+rules: .woodshed/rules.md
+setup: .woodshed/setup.md

@@ -12,7 +12,8 @@
 import { DEFAULT_RETENTION } from './consoleSettings.mjs';
 import { briefCommentIn, buildBrief, mergeRiskRunIds, qaCheckFrom } from './decisionBrief.mjs';
 import { approvalNotesFor, feedbackFor, gaveUpComment } from './prMessages.mjs';
-import { checksPass, pullRequestFilters, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
+import { checksPass, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
+import { pullRequestFilters } from '../shared/workflowFile.mjs';
 
 const CHECK_EVERY_MS = 60_000;
 const APPROVAL_GRACE_MS = 5 * 60_000;

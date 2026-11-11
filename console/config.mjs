@@ -5,6 +5,7 @@ import fs from 'node:fs';
 
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { secretEnvName } from '../shared/project.mjs';
+import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
 
@@ -155,15 +156,6 @@ export function envFiles(env) {
   });
 }
 
-// The variables Woodshed itself gives a session (session/entrypoint.sh, its Environment), besides every WOODSHED_ one:
-// an install secret cannot arrive in one of them. providers/aws/terraform/variables.tf, install_secrets, repeats it.
-export const SESSION_VARIABLES = Object.freeze([
-  'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'SESSION_URL', 'SESSION_KIND', 'SESSION_MODE', 'STARTED_BY', 'ISSUE', 'PR',
-  'BRANCH', 'PROMPT', 'ASKED_BY', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY',
-  'REPO_DIR', 'GH_TOKEN', 'ANTHROPIC_API_KEY', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE', 'PGSSLMODE',
-  'PGSSLROOTCERT', 'PG_URL', 'MONGODB_URI', 'HOME', 'PATH',
-]);
-
 /**
  * `WOODSHED_CLOUD_INSTALL_SECRETS`: the secrets the repo's dependency installs read, as `secret=VARIABLE` pairs, each
  * the variable a session gets it in (`registry-token=REGISTRY_TOKEN`). Terraform sets it from `install_secrets`.
@@ -183,7 +175,7 @@ export function installSecrets(env, files = envFiles(env)) {
       throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS wants secret=VARIABLE pairs, as registry-token=REGISTRY_TOKEN: pair ${place} is not`);
     }
     if (consoles.has(secret)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${place} names one of the console's own secrets, which sessions never get`);
-    if (variable.startsWith('WOODSHED_') || SESSION_VARIABLES.includes(variable)) {
+    if (isSessionVariable(variable)) {
       throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${place}'s variable is one of Woodshed's own session variables`);
     }
     if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_CLOUD_INSTALL_SECRETS: pair ${place} is an env file's, or named twice`);

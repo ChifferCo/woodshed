@@ -1,0 +1,58 @@
+name: E2E
+
+# A GitHub Actions workflow as repos write them: expressions, matrices, and long run blocks.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.github/workflows/**'
+      - '!.github/workflows/e2e.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Checks the commit message for [e2e]
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - id: gate
+        env:
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          # Gate: run only when the commit asks for it
+          if printf '%s' "$MESSAGE" | grep -qF '[e2e]'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  e2e:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    name: ${{ matrix.kind == 'flaky' && 'Flaky check' || format('E2E run ({0}/{1})', matrix.shard, 4) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+        kind: [normal]
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.16.0
+      - name: Run the suite
+        run: >-
+          npx playwright test --shard=${{ matrix.shard }}/4
+          --reporter=line

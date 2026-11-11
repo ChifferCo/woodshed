@@ -113,11 +113,22 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_CLOUD_INSTALL
 
 // Terraform cannot import the list, so its install_secrets validation repeats it: they must not drift apart.
 test('Terraform refuses the same session variables for an install secret as the console does', async () => {
-  const { SESSION_VARIABLES } = await import('../console/config.mjs');
+  const { SESSION_VARIABLES } = await import('../shared/reservedNames.mjs');
   const fs = await import('node:fs');
   const tf = fs.readFileSync(new URL('./aws/terraform/variables.tf', import.meta.url), 'utf8');
   const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
   const listed = /!contains\(\s*\[("SESSION_ID"[^\]]*)\]/.exec(block)?.[1] ?? '';
   assert.deepEqual([...listed.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]), [...SESSION_VARIABLES]);
   assert.match(block, /!startswith\(env_name, "WOODSHED_"\)/);
+});
+
+test('the console\'s own secrets are the ones Terraform refuses for an install secret, and the project file\'s check for an env file', async () => {
+  const { CONSOLE_SECRETS } = await import('../shared/reservedNames.mjs');
+  const { secretSpecs } = await import('../console/secrets.mjs');
+  const fs = await import('node:fs');
+  assert.deepEqual(secretSpecs({ envFiles: [] }).map((s) => s.name).sort(), [...CONSOLE_SECRETS].sort());
+  const tf = fs.readFileSync(new URL('./aws/terraform/variables.tf', import.meta.url), 'utf8');
+  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
+  const listed = /!contains\(\s*\[("anthropic-api-key"[^\]]*)\]/.exec(block)?.[1] ?? '';
+  assert.deepEqual([...listed.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]).sort(), [...CONSOLE_SECRETS].sort());
 });

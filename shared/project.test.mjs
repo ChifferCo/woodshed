@@ -300,6 +300,8 @@ test('check prints what a session takes from the project file, and fails as a st
     rules: '.woodshed/rules.md',
   }));
   fs.writeFileSync(path.join(dir, '.woodshed/rules.md'), '- Run `make check`.\n');
+  fs.mkdirSync(path.join(dir, 'api'));
+  fs.writeFileSync(path.join(dir, 'api/deps.lock'), '');
   const out = cli(['check']);
   assert.match(out, /^\.woodshed\/project\.yaml: read from the checkout\n/);
   assert.match(out, /^installs: 1 \(api\)$/m);

@@ -39,3 +39,10 @@ jobs:
           # Catches quoting and unset-variable mistakes in the installer, the session image's scripts and scripts/
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck --severity=error install.sh session/*.sh scripts/*.sh
+
+  # Woodshed's own project file through the reusable check other repos call, at this commit's Woodshed.
+  project-check:
+    uses: ./.github/workflows/project-check.yml
+    with:
+      ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      repository: ${{ github.repository }}
