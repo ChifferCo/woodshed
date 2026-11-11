@@ -107,7 +107,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       return statusd(session, method, path, opts);
     },
   });
-  return { fleet, calls, github, alive, pulls, statuses, store, fail, advance: (ms) => { clock += ms; } };
+  return { fleet, calls, github, alive, pulls, statuses, store, fail, launcher, advance: (ms) => { clock += ms; } };
 }
 
 // The project file needs an engine the installation does not host (databaseGate.mjs): nothing starts that would get
@@ -1320,6 +1320,61 @@ test('a start AWS has no room for waits in the queue, says why, and is tried aga
   await ctx.fleet.tick();
   assert.equal(session.status, 'starting');
   assert.equal(session.retryAt, null);
+});
+
+test('a start waiting for room shows the steps its launcher reports, saved only when they change, and drops them when it starts', async () => {
+  const ctx = setup();
+  const saves = [];
+  ctx.store.save = () => saves.push(1);
+  let answer = { steps: [
+    { label: 'Creating a machine', state: 'done', at: '2026-10-21T09:59:00.000Z' },
+    { label: 'Installing  Docker', state: 'current', note: ' layer 3\nof 7 ', at: '2026-10-21T09:59:40Z' },
+    { label: 'Starting the databases', state: 'pending' },
+    { label: 'Not a state the page knows', state: 'skipped' },
+    { label: '', state: 'pending' },
+  ] };
+  ctx.fail.start = 'Capacity is unavailable: the machine is being set up';
+  const asked = [];
+  ctx.launcher.progress = async (id) => { asked.push(id); return answer; };
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = ctx.fleet.sessions();
+  assert.equal(session.status, 'queued');
+  assert.deepEqual(asked, [session.id], 'read as soon as the start goes back in the queue');
+  assert.deepEqual(session.waitProgress.steps, [
+    { label: 'Creating a machine', state: 'done', note: null, at: '2026-10-21T09:59:00.000Z' },
+    { label: 'Installing Docker', state: 'current', note: 'layer 3 of 7', at: '2026-10-21T09:59:40.000Z' },
+    { label: 'Starting the databases', state: 'pending', note: null, at: null },
+  ]);
+
+  const saved = saves.length;
+  await ctx.fleet.checkWaiting();
+  assert.equal(saves.length, saved, 'the same steps are not saved again');
+  answer = { steps: [{ label: 'Creating a machine', state: 'failed', note: 'out of capacity' }] };
+  await ctx.fleet.checkWaiting();
+  assert.deepEqual(session.waitProgress.steps.map((s) => s.state), ['failed']);
+  ctx.launcher.progress = async () => { throw new Error('database unreachable'); };
+  await ctx.fleet.checkWaiting();
+  assert.deepEqual(session.waitProgress.steps.map((s) => s.state), ['failed'], 'a read that fails keeps the last steps');
+
+  ctx.launcher.progress = async () => answer;
+  ctx.fail.start = false;
+  ctx.advance(61_000);
+  await ctx.fleet.tick();
+  assert.equal(session.status, 'starting');
+  assert.equal(session.waitProgress, null, 'a session that starts has its start checklist instead');
+  answer = { steps: [{ label: 'Creating a machine', state: 'done' }] };
+  await ctx.fleet.checkWaiting();
+  assert.equal(session.waitProgress, null, 'only a session waiting for room is asked');
+});
+
+test('a launcher with no progress leaves a waiting start as it was', async () => {
+  const ctx = setup();
+  ctx.fail.start = 'aws ecs run-task failed: RESOURCE:CPU';
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  await ctx.fleet.checkWaiting();
+  const [session] = ctx.fleet.sessions();
+  assert.equal(session.status, 'queued');
+  assert.equal(session.waitProgress, null);
 });
 
 test('a session waiting to be tried again holds no slot from the sessions behind it', async () => {

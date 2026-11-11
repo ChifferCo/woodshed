@@ -1159,6 +1159,7 @@
   function terminalBody(s) {
     if (s.status === 'starting' && s.startedAt) return startingBody(s);
     if (W.linePlace(s, data.sessions)) return lineBody(s);
+    if (W.waitsForRetry(s) && s.waitProgress?.steps?.length) return waitingBody(s);
     const waiting = {
       queued: W.waitsForRetry(s) ? [W.providerWords.noRoom?.title ?? 'Waiting for room', W.providerWords.noRoom?.detail ?? '']
         : ['Waiting for a free slot', `All ${data.maxRunning} slots are in use. This session starts as soon as one frees up.`],
@@ -1199,15 +1200,29 @@
 
   // The start as a checklist: each step's seconds once done, the current one counting, the rest to come.
   function startingBody(s) {
-    const { steps } = W.startProgress(s);
-    const mark = { done: '✓', now: '', next: '' };
     return h('div', { class: 'ended starting' },
       h('div', { class: 'start-head' }, h('h2', null, 'Starting'), h('span', { class: 'start-clock' }, W.clock(s.startedAt))),
       h('p', null, 'The terminal appears here when claude is open.'),
-      h('ol', { class: 'start-steps' }, steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
-        h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
-        h('span', { class: 'start-label' }, step.label),
-        h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`)))));
+      startSteps(W.startProgress(s).steps));
+  }
+
+  // A wait for room that its launcher reports steps for: the provider's words for the wait, then the steps, as the
+  // start shows its own.
+  function waitingBody(s) {
+    const { steps, since } = W.waitProgress(s);
+    const words = W.providerWords.noRoom ?? {};
+    return h('div', { class: 'ended starting' },
+      h('div', { class: 'start-head' }, h('h2', null, words.title ?? 'Waiting for room'), since && h('span', { class: 'start-clock' }, W.clock(since))),
+      words.detail && h('p', null, words.detail),
+      startSteps(steps));
+  }
+
+  function startSteps(steps) {
+    const mark = { done: '✓', now: '', next: '', failed: '✗' };
+    return h('ol', { class: 'start-steps' }, steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
+      h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
+      h('span', { class: 'start-label' }, step.label, step.note && h('span', { class: 'start-note' }, ` · ${step.note}`)),
+      h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`))));
   }
 
   // A stopped shared session that keeps its conversation and databases: why it stopped, what is kept, and Resume.
