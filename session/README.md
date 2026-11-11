@@ -30,7 +30,7 @@ installs read (`REGISTRY_TOKEN='...'`), which `deps.sh` sources with `set -a` be
 name only. It is read as shell, so single-quote each value. Keep it
 out of the build context and delete it after. It is about 1.35 GB compressed (about 4 GB unpacked), most of it what the installs keep and Chromium. The editor, openvscode-server, adds about 75 MB in a layer of its own, which SOCI fetches only in a
 session whose editor is opened. It is left out when the project file's `editor` is `false`, which `stageDeps.sh` writes
-to `woodshed-deps.editor` for the build. The image workflow compresses it at gzip level 1, which takes a
+to `woodshed-deps.editor` for the build. The deploy workflow's session job compresses it at gzip level 1, which takes a
 fraction of the default level's time for a somewhat larger image.
 
 The workflow builds it with a layer cache in ECR, the repository's

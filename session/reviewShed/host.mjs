@@ -1,6 +1,6 @@
 // The shed's review feature, run inside the session: its page, its server routes and its GitHub calls, unchanged
 // (woodshed/shared/review). The console carries the requests (console/reviewProxy.mjs) and knows nothing of reviews.
-// This folder is everything Cloud adds for it: what the shed's `ctx` asks of its host, and which calls a session may
+// This folder is everything Woodshed adds for it: what the shed's `ctx` asks of its host, and which calls a session may
 // answer (policy.mjs).
 //
 // The checkout is the session's own, so the shed's "worktree" kind applies. Its state goes under /tmp: a session's

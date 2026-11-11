@@ -483,7 +483,7 @@ fetchSessionDatabases() {
       | curl -sS --max-time 15 -X POST -K - -w '\n%{http_code}' "$WOODSHED_CONSOLE_URL/settings") || answer=$'\n000'
     code=${answer##*$'\n'}
     answer=${answer%$'\n'*}
-    # 503 while the copy runs; no answer, 502 or 504 while the console restarts (the image workflow's redeploy).
+    # 503 while the copy runs; no answer, 502 or 504 while the console restarts (when the deploy workflow's console job redeploys it).
     case "$code" in 503 | 000 | 502 | 504) ;; *) break ;; esac
     [ $((SECONDS - start)) -lt "$DATABASE_WAIT_SECONDS" ] || die "the session's databases were not ready after $DATABASE_WAIT_SECONDS s (last status $code)"
     sleep 2

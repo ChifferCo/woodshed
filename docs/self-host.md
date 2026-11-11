@@ -189,7 +189,7 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 
 Found by running this runbook with an agent. Each is a problem in Woodshed, not a step to skip:
 
-- **The local provider never builds the database template.** On AWS the image workflow does. Here, when the project
+- **The local provider never builds the database template.** On AWS the deploy workflow's session job does. Here, when the project
   file has `databases`, every session's copy waits five minutes for a template and fails with `there is no database
   template`. Until a command for it exists, the only way is a `docker run` of the session image with `template`, as
   `providers/local/dbAdminRunner.mjs` builds one: try a repository without `databases` first.

@@ -150,8 +150,8 @@ resource "aws_ecs_task_definition" "session" {
 
 # The db-admin task (session/dbAdmin.mjs): the only thing that reads the databases' root passwords. It builds the
 # database template from master, and makes every other database user and database as a copy of it. The console runs
-# it for each person's databases and each shared session's; the template is the image workflow's, through the
-# base box (github.tf), or the db_template_command output's. All of it exists only with a database in var.databases.
+# it for each person's databases and each shared session's; the deploy workflow's session job builds the template through the
+# base box (github.tf), or the db_template_command output does. All of it exists only with a database in var.databases.
 locals {
   # Each database's host, as dbAdmin.mjs's flags: a database the installation does not run has none.
   db_admin_hosts = concat(

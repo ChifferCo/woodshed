@@ -11,7 +11,7 @@ const run = promisify(execFile);
 
 // The firings a turn produced in a probe on Claude Code 2.1.311, in order.
 test('a turn reads working, then needs-you at a dialog, then done', () => {
-  // SessionStart resets what an earlier claude in the container left; a Cloud session's first prompt comes after it.
+  // SessionStart resets what an earlier claude in the container left; a Woodshed session's first prompt comes after it.
   assert.equal(stateForHook({ hook_event_name: 'SessionStart', source: 'startup' }), 'done');
   assert.equal(stateForHook({ hook_event_name: 'UserPromptSubmit' }), 'working');
   assert.equal(stateForHook({ hook_event_name: 'PreToolUse', tool_name: 'Write' }), 'working');

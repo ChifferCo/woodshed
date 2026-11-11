@@ -32,7 +32,7 @@ const MANIFEST = [
 const CONTEXT = { 'api/deps.lock': 'a1', 'api/.registryrc': 'r', 'web/deps.lock': 'w1', 'web/pkgs/a/manifest': 'm', 'web/pkgs/b/manifest': 'm' };
 
 // The install_env build secret: the installation's install secrets as `NAME=value` lines, a value with a space in
-// it quoted, as the image workflow writes it.
+// it quoted, as the deploy workflow's session job writes it.
 const INSTALL_ENV = "REGISTRY_TOKEN='registry-secret'\nOTHER_TOKEN='two $words'\n";
 
 // The deps stage: woodshed-deps/ copied into the checkout's path, then the Dockerfile's install RUN with its mounts

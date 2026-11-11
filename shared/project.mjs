@@ -24,7 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { ENGINE_NAMES } from './databases/index.mjs';
+import { ENGINE_NAMES } from './databases/engines.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
@@ -35,7 +35,7 @@ export const PROJECT_FILE = '.woodshed/project.yaml';
 export const PROJECT_VERSION = 1;
 
 /**
- * Where the session image keeps a repo's checkout: `/work/<name>`. The image workflow passes the same path to the
+ * Where the session image keeps a repo's checkout: `/work/<name>`. The deploy workflow's session job passes the same path to the
  * Dockerfile as REPO_DIR, and the db-admin task is told it with `--repo`.
  * @param {string} repo  owner/name
  */
