@@ -1,4 +1,4 @@
-// yamlLite: the part of YAML a hand-written config file uses, so Woodshed Cloud can read YAML without a dependency.
+// yamlLite: the part of YAML a hand-written config file uses, so Woodshed can read YAML without a dependency.
 //
 // Read: mappings and sequences by indentation, `- key: value` items, comments, plain, 'single' and "double" quoted
 // scalars, `|` and `>` block text with `-` and `+` chomping, one-line flow `[a, b]` and `{a: 1}` (so JSON reads too),

@@ -117,7 +117,7 @@ test('a project whose databases are not hosted starts no session: a label is tol
   const { fleet, calls } = setup({ databasesRefusal: async () => why });
   const outcome = await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' });
   assert.deepEqual(outcome, { outcome: 'ignored', reason: why });
-  assert.deepEqual(calls.comments.map((c) => c.body), [`Woodshed Cloud cannot start a session here: ${why}.`]);
+  assert.deepEqual(calls.comments.map((c) => c.body), [`Woodshed cannot start a session here: ${why}.`]);
   assert.equal(fleet.sessions().length, 0);
   await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${why}` });
   assert.equal(calls.started.length, 0);
@@ -190,7 +190,7 @@ test('a writer without sessions from GitHub starts nothing: the label comes off 
   assert.deepEqual([fleet.sessions().length, calls.started.length, calls.reactions.length], [0, 0, 0]);
   assert.deepEqual(calls.unlabeled, [{ number: 42, label: 'woodshed' }]);
   assert.equal(calls.comments.length, 1);
-  assert.match(calls.comments[0].body, /@sam can't start Woodshed Cloud sessions from GitHub yet, so nothing started and the `woodshed` label was taken off/);
+  assert.match(calls.comments[0].body, /@sam can't start Woodshed sessions from GitHub yet, so nothing started and the `woodshed` label was taken off/);
   assert.match(calls.comments[0].body, /https:\/\/console\.test\/people/);
   assert.deepEqual(store.state.github.seenComments, [calls.comments[0].id ?? 9001], 'its own reply is never read back as a command');
 
@@ -218,7 +218,7 @@ test('sessions past the cap queue, and a stop starts the next one', async () => 
   await fleet.handleTrigger({ number: 2, login: 'joel', trigger: 'label', title: 'two', kind: 'issue' });
   const [first, second] = fleet.sessions();
   assert.equal(second.status, 'queued');
-  assert.match(calls.comments[1].body, /^Queued a Woodshed Cloud session for @joel/);
+  assert.match(calls.comments[1].body, /^Queued a Woodshed session for @joel/);
 
   await fleet.stop(first, 'stopped from the console');
   assert.equal(first.status, 'stopped');
@@ -292,7 +292,7 @@ test('a comment on a stopped issue resumes its session; once it is cleaned up, a
   assert.equal(calls.started[1].env.RESUME_SESSION, '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c');
   assert.equal(calls.started[1].env.BRANCH, first.branch);
   assert.deepEqual(first.pendingMessages, ['pick it up again'], 'the comment is typed in once claude is open');
-  assert.match(calls.comments.at(-1).body, /^Resumed the Woodshed Cloud session on `woodshed\/42-/);
+  assert.match(calls.comments.at(-1).body, /^Resumed the Woodshed session on `woodshed\/42-/);
 
   await fleet.stop(first, 'test');
   await fleet.deleteShared(first, 'joel');
@@ -336,7 +336,7 @@ test('a start that fails at once is announced as failed, never as started', asyn
   const [session] = fleet.sessions();
   assert.equal(session.status, 'failed');
   assert.equal(calls.comments.length, 1);
-  assert.match(calls.comments[0].body, /^The Woodshed Cloud session for @joel failed to start/);
+  assert.match(calls.comments[0].body, /^The Woodshed session for @joel failed to start/);
   assert.doesNotMatch(calls.comments[0].body, /AccessDenied/, 'the error stays in the console');
 });
 
@@ -360,7 +360,7 @@ test('a session that dies while starting, after its start comment, gets a follow
   alive.clear();
   await fleet.tick();
   assert.equal(calls.comments.length, 2);
-  assert.match(calls.comments[0].body, /^Started a Woodshed Cloud session/);
+  assert.match(calls.comments[0].body, /^Started a Woodshed session/);
   assert.match(calls.comments[1].body, /failed to start/);
   assert.doesNotMatch(calls.comments[1].body, /PGHOST/, 'the log line stays in the console');
 });
@@ -1845,7 +1845,7 @@ test('a Needs a human comment and a pull request change reach the session on tha
 test('the console\'s comments link to it on the default project\'s repo, word for word as before, and nowhere else', () => {
   const session = { id: 'abcd1234', status: 'starting', startedBy: 'joel', resumedBy: 'joel', branch: 'woodshed/1-abcd1234' };
   assert.equal(startComment({ session, publicUrl: 'https://console.test', maxRunning: 5, appDomain: 'apps.test' }), [
-    'Started a Woodshed Cloud session for @joel on `woodshed/1-abcd1234`.',
+    'Started a Woodshed session for @joel on `woodshed/1-abcd1234`.',
     '',
     'Watch it and type into it: https://console.test/s/abcd1234',
     'Its app, once started from that page: https://abcd1234.apps.test/',
@@ -1853,7 +1853,7 @@ test('the console\'s comments link to it on the default project\'s repo, word fo
     'Comment `/woodshed <message>` here to send it a message.',
   ].join('\n'));
   assert.equal(resumeComment({ session, publicUrl: 'https://console.test' }),
-    'Resumed the Woodshed Cloud session on `woodshed/1-abcd1234` for @joel, with its conversation.\n\nWatch it and type into it: https://console.test/s/abcd1234');
+    'Resumed the Woodshed session on `woodshed/1-abcd1234` for @joel, with its conversation.\n\nWatch it and type into it: https://console.test/s/abcd1234');
   assert.match(failedComment({ session, publicUrl: 'https://console.test' }), /The console shows why: https:\/\/console\.test\/s\/abcd1234\n/);
   assert.match(refusalComment({ login: 'sam', label: 'woodshed', unlabeled: false, member: true, publicUrl: 'https://console.test' }), /People page: https:\/\/console\.test\/people$/);
   assert.match(refusalComment({ login: 'sam', label: 'woodshed', unlabeled: false, member: false, publicUrl: 'https://console.test' }), /add you to the console \(https:\/\/console\.test\)/);
@@ -1869,7 +1869,7 @@ test('the console\'s comments link to it on the default project\'s repo, word fo
   ];
   for (const body of without) {
     assert.doesNotMatch(body, /https?:|console\.test|apps\.test/, body);
-    assert.match(body, /Woodshed Cloud|console/, 'the comment still says where the session is');
+    assert.match(body, /Woodshed|console/, 'the comment still says where the session is');
   }
 });
 
@@ -1907,7 +1907,7 @@ test('a resume and a failure on a repo whose project file says consoleLinks: fal
   await fleet.stop(session, 'test');
   const resumed = await fleet.handleTrigger({ number: 12, login: 'joel', trigger: 'comment', text: 'pick it up again', commentId: 80, project: 'tools' });
   assert.deepEqual(resumed, { outcome: 'resumed', sessionId: session.id });
-  assert.match(toolCalls.comments.at(-1).body, /^Resumed the Woodshed Cloud session/);
+  assert.match(toolCalls.comments.at(-1).body, /^Resumed the Woodshed session/);
   alive.clear();
   await fleet.tick();
   assert.match(toolCalls.comments.at(-1).body, /failed to start/, 'the failure is announced on the project\'s issue');

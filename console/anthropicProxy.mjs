@@ -134,7 +134,7 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
     if (!session) {
       req.resume();
       console.warn('anthropicProxy: refused, no active session has that token', { path, from: req.socket.remoteAddress });
-      return refuse(res, 401, 'not an active Woodshed Cloud session');
+      return refuse(res, 401, 'not an active Woodshed session');
     }
     try {
       return await (via === 'apiKey' ? teamCall(req, res, session) : planCall(req, res, session));

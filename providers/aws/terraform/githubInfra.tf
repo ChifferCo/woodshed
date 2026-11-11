@@ -1,7 +1,7 @@
 # Lets the installation's deploy workflow (providers/aws/README.md, "The deploy workflow") plan and apply this stack,
 # through GitHub OIDC like github.tf. Each role trusts one GitHub environment, not the branch, for the reason github.tf gives.
 # The plan role only reads and needs no approval; the infra role is an administrator of this account (which
-# holds nothing but Woodshed Cloud), so its environment requires a reviewer on every run. That reviewer, not
+# holds nothing but Woodshed), so its environment requires a reviewer on every run. That reviewer, not
 # IAM, is what keeps a merge from changing AWS unseen.
 
 locals {

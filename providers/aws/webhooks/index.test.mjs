@@ -219,7 +219,7 @@ test('toMessage passes on a Needs a human comment with its author, for the conso
     number: 26686, commentId: 77, url: 'https://github.com/o/r/pull/26686#issuecomment-77', body: 'Needs a human: @joel the fix could not be shown here.',
   });
   assert.equal(comment('joel', 'Needs a human: please look').login, 'joel', 'a person typing the words reaches the console with their login, which turns it away');
-  assert.equal(comment('acme-woodshed[bot]', 'Started a Woodshed Cloud session for @joel'), null);
+  assert.equal(comment('acme-woodshed[bot]', 'Started a Woodshed session for @joel'), null);
 });
 
 test('toMessage turns a change to a pull request, its review or a workflow run on it into a pr message', () => {

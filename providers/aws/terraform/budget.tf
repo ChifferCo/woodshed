@@ -1,4 +1,4 @@
-# The whole account's spend: the account holds nothing but Woodshed Cloud.
+# The whole account's spend: the account holds nothing but Woodshed.
 
 resource "aws_budgets_budget" "monthly" {
   name         = "woodshed-cloud"

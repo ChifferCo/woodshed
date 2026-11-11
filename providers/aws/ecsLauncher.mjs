@@ -146,7 +146,7 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
       const out = await aws([
         'ecs', 'run-task', '--cluster', cluster, '--task-definition', taskDefinition, '--launch-type', 'FARGATE',
         '--started-by', sessionId, '--network-configuration', JSON.stringify(network), '--overrides', JSON.stringify(overrides),
-        // The task definition's `project` tag, so the bill shows a session's Fargate time under Woodshed Cloud.
+        // The task definition's `project` tag, so the bill shows a session's Fargate time under Woodshed.
         '--propagate-tags', 'TASK_DEFINITION',
       ]);
       const taskArn = out?.tasks?.[0]?.taskArn;
@@ -165,7 +165,7 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
         throw new Error('task got no network address in time');
       } catch (err) {
         console.log('launcher: start failed, stopping the task', { sessionId, taskArn, error: err.message });
-        await stopTask(taskArn, 'start failed in the Woodshed Cloud console');
+        await stopTask(taskArn, 'start failed in the Woodshed console');
         throw err;
       }
     },
@@ -214,7 +214,7 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
       const taskArns = ref.startsWith(STARTED_BY_PREFIX)
         ? ((await aws(['ecs', 'list-tasks', '--cluster', cluster, '--started-by', ref.slice(STARTED_BY_PREFIX.length)]))?.taskArns ?? [])
         : [ref];
-      for (const taskArn of taskArns) await stopTask(taskArn, 'stopped by the Woodshed Cloud console');
+      for (const taskArn of taskArns) await stopTask(taskArn, 'stopped by the Woodshed console');
     },
   };
 }

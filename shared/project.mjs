@@ -30,7 +30,7 @@ import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
 
 export const PROJECT_FILE = '.woodshed/project.yaml';
-// While Woodshed Cloud is in beta the format changes in place, with every project file in the same change (README.md,
+// While Woodshed is in beta the format changes in place, with every project file in the same change (README.md,
 // "Changing the format").
 export const PROJECT_VERSION = 1;
 
@@ -322,7 +322,7 @@ const TOP_DEFAULTS = {
 export function parseProject(raw) {
   // The version first: another format's fields would otherwise read as misspelt.
   if (Object.hasOwn(raw ?? {}, 'version') && raw.version !== PROJECT_VERSION) {
-    fail(`version must be ${PROJECT_VERSION}, the format this Woodshed Cloud reads (it is ${JSON.stringify(raw.version)})`);
+    fail(`version must be ${PROJECT_VERSION}, the format this version of Woodshed reads (it is ${JSON.stringify(raw.version)})`);
   }
   const project = fields(raw, '', PROJECT_FIELDS[''], TOP_DEFAULTS);
   const envFiles = list(project.envFiles, 'envFiles', envFile);
@@ -342,7 +342,7 @@ export function parseProject(raw) {
   };
 }
 
-/** What a repo with no project file gets: Woodshed Cloud's own rules, and nothing else. */
+/** What a repo with no project file gets: Woodshed's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
   version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true,
   githubAccess: 'full', rules: null, setup: null, pullRequests: null,
@@ -494,7 +494,7 @@ export function expandPath(value, { repoDir, home = os.homedir() }) {
 export function envFileText({ base, own, lines, env }) {
   const withOwn = own ? `${base}\n\n# Your own lines, from My settings\n${own}` : base;
   const rendered = lines.map((line) => renderLine(line, env)).filter((line) => line !== null);
-  return `${withOwn}\n\n# Woodshed Cloud overrides\n${rendered.join('\n')}\n`;
+  return `${withOwn}\n\n# Woodshed overrides\n${rendered.join('\n')}\n`;
 }
 
 /**

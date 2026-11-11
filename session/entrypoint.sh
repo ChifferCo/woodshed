@@ -1,5 +1,5 @@
 #!/bin/bash
-# Woodshed Cloud session entrypoint.
+# Woodshed session entrypoint.
 #
 #   entrypoint.sh session      check out the branch, write env files, start Redis when the project uses it,
 #                              then claude in tmux, ttyd on 7681, statusd on 7682,
@@ -67,7 +67,7 @@ set -euo pipefail
 
 export REPO_DIR=${REPO_DIR:-$PWD}
 SESSION_DIR=/opt/woodshed/session
-# What Woodshed and Woodshed Cloud share (woodshed/shared/ in the repo): the project file's reader among it.
+# What the shed and Woodshed's sessions share (woodshed/shared/ in the repo): the project file's reader among it.
 SHARED_DIR=/opt/woodshed/shared
 
 # What this repo needs from a session (.woodshed/project.yaml): its env files, dependency installs, databases and app.
@@ -373,7 +373,7 @@ writePrompt() {
 # at every start, a resume included: claude keeps a resumed conversation's system prompt (measured on 2.1.312), and
 # passing it again makes a resume use the current rules.
 # The project file's `consoleLinks: false` (a public repo, say) keeps the console's address out of what the session posts
-# there: its pull requests name Woodshed Cloud without linking the session's page.
+# there: its pull requests name Woodshed without linking the session's page.
 leaveOutConsoleLinks() {
   local links
   # Never stops the start: the rules that follow read the same file, and say why when it does not parse.
@@ -386,13 +386,13 @@ leaveOutConsoleLinks() {
 writeRules() {
   local rules setup notes tag
   leaveOutConsoleLinks
-  # Woodshed Cloud's own rules, then the project's: its skills, checks and review workflow.
+  # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
   # Plain substitution, not sed: a branch name is chosen by whoever opened the PR.
   rules=${rules//"{{BRANCH}}"/"$BRANCH"}
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
   rules=${rules//"{{STARTED_BY}}"/"${STARTED_BY:-someone}"}
-  rules=${rules//"{{VIA}}"/"${SESSION_URL:+[}Woodshed Cloud${SESSION_URL:+]($SESSION_URL)}"}
+  rules=${rules//"{{VIA}}"/"${SESSION_URL:+[}Woodshed${SESSION_URL:+]($SESSION_URL)}"}
   # The tag that asks for the project's code review (pullRequests.review.rerun). A project with none loses the line.
   tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
   if [ -n "$tag" ]; then

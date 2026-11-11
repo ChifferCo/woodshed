@@ -743,7 +743,7 @@ async function checkpoint() {
   }
   await git('add', '-A');
   const staged = await git('diff', '--cached', '--name-only');
-  if (staged) await git('commit', '-m', 'WIP: Woodshed Cloud checkpoint before stop');
+  if (staged) await git('commit', '-m', 'WIP: Woodshed checkpoint before stop');
   await git('push', '-u', 'origin', 'HEAD');
   console.log('statusd: checkpoint pushed', { committed: Boolean(staged) });
   return { committed: Boolean(staged), head: await git('rev-parse', '--short', 'HEAD'), homeSaved: home.saved };

@@ -59,7 +59,7 @@ function refusal(message) {
 export function appManifest({ publicUrl, repo }) {
   const [owner] = repo.split('/');
   return {
-    name: `Woodshed Cloud ${owner}`.slice(0, 34),
+    name: `Woodshed ${owner}`.slice(0, 34),
     url: publicUrl,
     redirect_url: `${publicUrl}/setup/github/created`,
     callback_urls: [`${publicUrl}/auth/callback`],

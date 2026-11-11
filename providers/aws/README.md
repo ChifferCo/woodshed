@@ -200,8 +200,8 @@ cluster, passing only their roles; stop and describe them; read
 the GitHub App's key and the session logs; and pull the console image.
 Nothing else in the account. IAM cannot pin the network a task runs in:
 `RunTask` has no condition key for subnets or security groups. What keeps
-sessions off other networks is that this account holds nothing but Woodshed
-Cloud, so do not apply this into an account that has other workloads. Only the console and Caddy, on the
+sessions off other networks is that this account holds nothing but
+Woodshed, so do not apply this into an account that has other workloads. Only the console and Caddy, on the
 host's network, can reach the role: the IMDS hop limit is 1, so the containers
 sessions talk to (Mongo and the shared services) cannot. The base box reads no
 database password, and writes Mongo's root password once without being able to

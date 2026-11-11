@@ -78,7 +78,7 @@ resource "aws_ssm_document" "redeploy_console" {
   document_format = "JSON"
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Pull the newest Woodshed Cloud console image and restart only the console."
+    description   = "Pull the newest Woodshed console image and restart only the console."
     mainSteps = [{
       action = "aws:runShellScript"
       name   = "redeployConsole"
@@ -115,7 +115,7 @@ resource "aws_ssm_document" "refresh_db_template" {
   document_format = "JSON"
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Build the Woodshed Cloud database template again, from the newest session image."
+    description   = "Build the Woodshed database template again, from the newest session image."
     mainSteps = [{
       action = "aws:runShellScript"
       name   = "refreshDbTemplate"

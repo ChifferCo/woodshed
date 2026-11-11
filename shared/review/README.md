@@ -505,12 +505,12 @@ across its whole range at boot, so sharing a range kills the live service's
 terminals. But note that its worktrees still land in the **real** repo, because
 that is the thing under test.
 
-## A second host: Woodshed Cloud
+## A second host: Woodshed sessions
 
-`index.mjs` and `page.mjs` also run inside Woodshed Cloud sessions
+`index.mjs` and `page.mjs` also run inside Woodshed sessions
 (`woodshed/session/reviewShed/`), which supplies the `ctx` this
 file's header describes and calls `ensureWorktreeReview` to open the page on a
-session's own checkout without the launcher. Cloud's session image ships every
-file this module imports from an allow-list, and a Cloud test fails when a new
+session's own checkout without the launcher. The session image ships every
+file this module imports from an allow-list, and a session test fails when a new
 import is missing from it: when you add one, add it to
 `woodshed/session/Dockerfile` and `Dockerfile.dockerignore`.

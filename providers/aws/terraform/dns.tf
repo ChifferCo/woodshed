@@ -4,7 +4,7 @@
 
 resource "aws_route53_zone" "console" {
   name    = var.domain
-  comment = "Woodshed Cloud console"
+  comment = "Woodshed console"
 }
 
 resource "aws_route53_record" "console" {

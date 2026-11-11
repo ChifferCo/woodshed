@@ -11,7 +11,7 @@ if [ "${WOODSHED_CODEX_AUTH:-}" = key ]; then
   export WOODSHED_CODEX_KEY=$SESSION_TOKEN
   exec "$real" \
     -c 'model_provider="woodshed"' \
-    -c "model_providers.woodshed={name=\"Woodshed Cloud\",base_url=\"$WOODSHED_CONSOLE_URL/openai/v1\",env_key=\"WOODSHED_CODEX_KEY\",wire_api=\"responses\",supports_websockets=false}" \
+    -c "model_providers.woodshed={name=\"Woodshed\",base_url=\"$WOODSHED_CONSOLE_URL/openai/v1\",env_key=\"WOODSHED_CODEX_KEY\",wire_api=\"responses\",supports_websockets=false}" \
     "$@"
 fi
 exec "$real" "$@"

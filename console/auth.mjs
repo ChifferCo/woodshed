@@ -243,7 +243,7 @@ export function createAuth({
       }
       if (people && !people.remember({ login, id: signedIn.id, name: signedIn.name })) {
         console.warn('auth: sign-in refused, the handle was another account\'s', { login });
-        throw refusal(`@${login} was another GitHub account's name when it was last used here, so it cannot sign in. Ask a teammate to clear the old account (Woodshed Cloud's CLAUDE.md, "Signing in fails").`);
+        throw refusal(`@${login} was another GitHub account's name when it was last used here, so it cannot sign in. Ask a teammate to clear the old account (Woodshed's CLAUDE.md, "Signing in fails").`);
       }
       step = 'connect';
       if (started.connect) await onConnect({ login, answer: signedIn.answer });

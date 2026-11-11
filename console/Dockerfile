@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Woodshed Cloud console image, run on the base box behind Caddy. Build from
+# Woodshed console image, run on the base box behind Caddy. Build from
 # the repo root:
 #
 #   docker build -f woodshed/console/Dockerfile -t woodshed-console .

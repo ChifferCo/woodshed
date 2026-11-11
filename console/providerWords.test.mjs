@@ -22,7 +22,7 @@ function unescapeAttribute(text) {
 
 /** common.js loaded under the page pageShell renders for this provider, as a browser reads its meta tag */
 function pageFor(provider) {
-  const shell = pageShell({ title: 'Woodshed Cloud', script: 'session.js', provider });
+  const shell = pageShell({ title: 'Woodshed', script: 'session.js', provider });
   const content = unescapeAttribute(shell.match(/<meta name="woodshed-provider" content="([^"]*)">/)[1]);
   const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
   const context = vm.createContext({
