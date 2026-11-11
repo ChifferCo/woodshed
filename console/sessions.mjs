@@ -21,6 +21,11 @@ export function isAsk(session) {
   return session.kind === 'ask';
 }
 
+/** @returns {boolean}  whether the session runs QA on a pull request (qaSessions.mjs), rather than working on it */
+export function isQa(session) {
+  return Boolean(session.qa);
+}
+
 /** @returns {boolean}  whether the session holds, or waits for, one of the shared slots */
 function takesSharedSlot(session) {
   return !session.owner && !isAsk(session);
@@ -101,8 +106,9 @@ export function keptIds(sessions) {
  */
 export function routeTrigger({ sessions, number, trigger, kind = 'issue', text = '' }) {
   if (trigger === 'label' && kind === 'pr') return { action: 'ignore', reason: 'a label on a pull request starts nothing: comment /woodshed <what to do>' };
-  // A private session on the same issue is someone's own: GitHub can neither type into it nor resume its branch.
-  const shared = sessions.filter((s) => !s.owner);
+  // A private session on the same issue is someone's own: GitHub can neither type into it nor resume its branch. A QA
+  // session on the same pull request tests it, and is no session to send work to.
+  const shared = sessions.filter((s) => !s.owner && !isQa(s));
   const forTarget = shared.filter((s) => s.number === number || pullNumber(s.prUrl) === number);
   const active = forTarget.find((s) => ACTIVE_STATUSES.has(s.status));
   if (active) {
@@ -117,6 +123,17 @@ export function routeTrigger({ sessions, number, trigger, kind = 'issue', text =
     .filter((s) => s.number === number && s.branch && s.kind === 'issue')
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   return { action: 'start', resumeBranch: previous?.branch ?? null };
+}
+
+/**
+ * Decides what the QA label on a pull request does: start a QA session, unless one is already testing it. A QA session
+ * is never resumed: each label tests the branch as it is then.
+ * @param {{sessions: object[], number: number}} args
+ * @returns {{action: 'ignore', reason: string}|{action: 'start'}}
+ */
+export function routeQa({ sessions, number }) {
+  const running = sessions.find((s) => isQa(s) && s.number === number && ACTIVE_STATUSES.has(s.status));
+  return running ? { action: 'ignore', reason: 'QA is already running on it' } : { action: 'start' };
 }
 
 /**

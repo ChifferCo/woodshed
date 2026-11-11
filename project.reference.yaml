@@ -145,6 +145,10 @@ pullRequests:
     label: qa
     heading: '## QA'
     author: qa-bot[bot]
+    # Default: actions. Where QA runs: `actions` in the repo's own CI (the QA actions, docs/reference.md), or `woodshed`
+    # in a QA session the console starts when `label` goes on a pull request, which posts the comment and the check as
+    # the console's GitHub App. With `woodshed`, `author` is that App's bot login.
+    runner: actions
   # Default: null. The check run that rates the merge; it needs `review`, whose workflow must post it.
   mergeRisk:
     # Required.

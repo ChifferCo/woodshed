@@ -65,6 +65,9 @@
 #                        local provider's WOODSHED_CLOUD_INSTALL_SECRETS): an ask session unsets each
 #   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
+#   SESSION_MODE=qa      QA of the pull request PR against its base branch QA_BASE (console/qaSessions.mjs): its branch,
+#                        its own databases and app, a read-only GitHub token. session/qa.sh runs in claude's pane in place
+#                        of claude, and sends the report to the console, which posts it on the pull request
 set -euo pipefail
 
 export REPO_DIR=${REPO_DIR:-$PWD}
@@ -750,7 +753,11 @@ startClaude() {
   tmux set-option -t claude history-limit 50000
   # woodshed-login reopens claude with the same flags once it signed in.
   [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
-  if [ "${AGENT:-claude}" = codex ]; then
+  if [ "${SESSION_MODE:-}" = qa ]; then
+    # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
+    touch /tmp/qa-running
+    tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
+  elif [ "${AGENT:-claude}" = codex ]; then
     # A Codex conversation is not kept between runs, so a resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
       tmux send-keys -t claude "$SESSION_DIR/bin/codex$(codexFlags)" Enter
@@ -876,7 +883,9 @@ runSession() {
   configureClaude
   fetchAttachments
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.
-  if [ "${AGENT:-claude}" != codex ] && resumable; then
+  if [ "${SESSION_MODE:-}" = qa ]; then
+    log "Prompt skipped" "(QA: session/qa.sh runs the QA prompts)"
+  elif [ "${AGENT:-claude}" != codex ] && resumable; then
     log "Resuming claude's conversation" "(id: $RESUME_SESSION)"
   else
     [ -z "${RESUME_SESSION:-}" ] || log "WARNING: the conversation to resume is not in the Claude home, starting the prompt again" "(id: $RESUME_SESSION)"

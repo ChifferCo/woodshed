@@ -1432,6 +1432,24 @@ To turn it on, on the same Slack app as the pull request posts:
    the Request URL (Slack checks it at once), and the bot event `app_mention`.
 4. Invite the bot to the channels where people should ask.
 
+## QA sessions
+
+A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here rather than in its CI
+(docs/reference.md, "QA in a Woodshed session"):
+
+1. The webhooks pass every label on a pull request to the fleet (`handleQaLabel`), which reads the project file from
+   the default branch and drops any label that is not its QA label, without an entry in the events log.
+2. The person who added it needs write access and sessions from GitHub, as for the console's own label. A QA session
+   already running on the pull request, or a closed pull request, starts nothing.
+3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
+   `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
+   posts the QA comment saying it is running.
+4. `session/qa.sh` runs in the session's terminal, and statusd reports the session working until it is done. It sends
+   the verdict, the report, the commit it tested and the cost to the session API's `POST /qa-report`
+   (`qaSessions.mjs` checks it), once.
+5. The fleet writes the report into the QA comment and stops the session with `QA finished: <verdict>`. It pushes
+   nothing and is not kept, so its databases go at the next sweep.
+
 ## Console settings
 
 The Console settings page (`/console-settings`, under Console in the avatar

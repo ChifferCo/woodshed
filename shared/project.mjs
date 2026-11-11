@@ -58,7 +58,7 @@ export const PROJECT_FIELDS = Object.freeze({
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
-  'pullRequests.qa': ['check', 'label', 'heading', 'author'],
+  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
   'pullRequests.mergeRisk': ['check'],
 });
 
@@ -269,6 +269,10 @@ function app(value) {
   };
 }
 
+// Where QA runs: `actions` in the repo's own CI, which posts the check (.github/actions/qa), `woodshed` in a QA session
+// the console starts when the label goes on (console/qaSessions.mjs).
+export const QA_RUNNERS = Object.freeze(['actions', 'woodshed']);
+
 // What a pull request a session opens must pass before the console posts it to Slack, in the repo's own CI's words:
 // the review whose verdict counts, the suites whose jobs must pass, and the QA and Merge risk checks the brief quotes.
 // The console has no names of its own for any of them (console/prAnnouncer.mjs, decisionBrief.mjs).
@@ -290,10 +294,11 @@ function pullRequests(value) {
     };
   });
   const qa = nullable(p.qa, 'pullRequests.qa', (q) => {
-    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa']);
+    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions' });
+    if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.qa.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
     return {
       check: string(f.check, 'pullRequests.qa.check'), label: string(f.label, 'pullRequests.qa.label'),
-      heading: string(f.heading, 'pullRequests.qa.heading'), author: string(f.author, 'pullRequests.qa.author'),
+      heading: string(f.heading, 'pullRequests.qa.heading'), author: string(f.author, 'pullRequests.qa.author'), runner: f.runner,
     };
   });
   const mergeRisk = nullable(p.mergeRisk, 'pullRequests.mergeRisk', (m) => {

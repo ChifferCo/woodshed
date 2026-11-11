@@ -12,12 +12,30 @@ test('messageToTrigger maps labels and /woodshed comments to the triggers the po
   assert.deepEqual(messageToTrigger(comment, { label: 'woodshed' }), { trigger: 'comment', number: 9, login: 'joel', text: 'keep going', commentId: 55 });
 });
 
-test('messageToTrigger drops other labels, non-commands and anything malformed', () => {
+test('messageToTrigger drops other labels on an issue, non-commands and anything malformed', () => {
   assert.equal(messageToTrigger({ ...label, label: 'bug' }, { label: 'woodshed' }), null);
   assert.equal(messageToTrigger({ ...comment, body: '/woodshedding' }, { label: 'woodshed' }), null);
   assert.equal(messageToTrigger({ ...label, number: '7' }, { label: 'woodshed' }), null);
   assert.equal(messageToTrigger({ ...label, source: 'slack' }, { label: 'woodshed' }), null);
   assert.equal(messageToTrigger(null, { label: 'woodshed' }), null);
+});
+
+test('another label on a pull request goes to the fleet\'s QA check, which alone knows the project\'s QA label', async () => {
+  const qaLabel = { ...label, kind: 'pr', label: 'qa' };
+  assert.deepEqual(messageToTrigger(qaLabel, { label: 'woodshed' }), { trigger: 'qa', number: 7, label: 'qa', login: 'joel' });
+  assert.equal(messageToTrigger({ ...qaLabel, label: 'woodshed' }, { label: 'woodshed' }).trigger, 'label');
+  const seen = [];
+  const recorded = [];
+  const fleet = {
+    async handleQaLabel(trigger) { seen.push(trigger); return trigger.label === 'qa' ? { outcome: 'started', sessionId: 's1' } : { unrecorded: true }; },
+    async handleWebhookTrigger() { throw new Error('not a coding session'); },
+    webhooksAlive() {},
+  };
+  const { dispatch } = createWebhookDispatch({ label: 'woodshed', fleet, events: { record: (body, result) => recorded.push(result.outcome) } });
+  assert.equal(await dispatch({ text: JSON.stringify(qaLabel) }), true);
+  assert.equal(await dispatch({ text: JSON.stringify({ ...qaLabel, label: 'bug' }) }), true);
+  assert.deepEqual(seen.map((s) => s.label), ['qa', 'bug']);
+  assert.deepEqual(recorded, ['started'], 'a label that is nobody\'s stays out of the events log');
 });
 
 test('a GitHub message reaches the fleet naming the project of its repo, and one from a repo that is no project is dropped', async () => {

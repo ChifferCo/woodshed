@@ -16,6 +16,11 @@ export function messageToTrigger(message, { label }) {
   // Another project's issue or pull request: its #12 is not the default project's #12.
   const project = message.project ? { project: message.project } : {};
   if (message.type === 'label') {
+    // Any other label on a pull request may be its project's QA label, which only its project file names: the fleet
+    // reads that and drops the rest (qaSessions.mjs).
+    if (message.label !== label && message.kind === 'pr') {
+      return { trigger: 'qa', number: message.number, label: message.label, login: message.login, ...project };
+    }
     if (message.label !== label) return null;
     return {
       trigger: 'label', number: message.number, title: message.title ?? '', kind: message.kind === 'pr' ? 'pr' : 'issue',
@@ -31,7 +36,7 @@ export function messageToTrigger(message, { label }) {
 }
 
 /**
- * @param {{label: string, config?: object|null, fleet: {handleWebhookTrigger: Function, handleNeedsHuman: Function, webhooksAlive: Function},
+ * @param {{label: string, config?: object|null, fleet: {handleWebhookTrigger: Function, handleQaLabel: Function, handleNeedsHuman: Function, webhooksAlive: Function},
  *          asks?: {handleMention: Function}|null, pulls?: {handle: Function}|null, events?: {record: Function},
  *          appIdentity?: {available: boolean, login: () => Promise<string|null>}|null}} opts
  *   `events` keeps what happened to each message (webhookEvents.mjs); without `asks`, a Slack mention is dropped, and
@@ -106,6 +111,7 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       console.log('webhooks: message not for the console, deleted', { type: body?.type ?? null, number: body?.number ?? null });
       return true;
     }
+    if (trigger.trigger === 'qa') return settle(body, () => fleet.handleQaLabel(trigger), trigger.number, attempt);
     console.log('webhooks: message received', { type: body.type, number: trigger.number, delivery: body.deliveryId ?? null });
     return settle(body, () => fleet.handleWebhookTrigger(trigger), trigger.number, attempt);
   }
