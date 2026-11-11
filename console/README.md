@@ -314,10 +314,15 @@ plan once it starts. **Take it out of the line** stops it, and Resume puts it
 back, at the end of the line.
 
 Under Stopped, the rail has a third group, as the shed does:
-- **Pull requests** lists your open pull requests, then those waiting on your
-  review.
-- **Start** on one opens New session with it under Work on.
-- The console asks GitHub's search for them at most once a minute per person.
+- **Pull requests** lists your open pull requests on every repo you may start
+  sessions on, then those waiting on your review. With more than one project,
+  each row has its project's edge and name, and the rail's project filter
+  applies to them too.
+- **Start** on one opens New session on its repo, with it under Work on;
+  **Open** or **Resume** is your session on its branch in that repo.
+- The console asks GitHub's search for them at most once a minute per person,
+  each repo on its own project's token. A repo that does not answer keeps its
+  last rows (`console: pull requests not readable` with the `project`).
 
 The rest of the shed's rail and shell is here too, on every session's page
 (Shared's as well):
