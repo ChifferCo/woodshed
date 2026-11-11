@@ -417,3 +417,22 @@ test('an installation file this user cannot read says so, naming it, rather than
   fs.chmodSync(path.join(dir, 'acme/app.yaml'), 0o000);
   assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /^Error: the installation's project file .*acme\/app\.yaml cannot be read by uid \d+: make it readable by everyone$/);
 });
+
+function staticImports(file) {
+  const source = fs.readFileSync(file, 'utf8');
+  const specifiers = [...source.matchAll(/^\s*(?:import|export)\b(?:[^'";]*?\bfrom)?\s*['"](\.{1,2}\/[^'"]+)['"]/gm)].map((m) => m[1]);
+  return specifiers.map((s) => path.resolve(path.dirname(file), s));
+}
+
+function staticallyReaches(from, to, seen = new Set()) {
+  if (from === to) return true;
+  if (seen.has(from)) return false;
+  seen.add(from);
+  return staticImports(from).some((next) => staticallyReaches(next, to, seen));
+}
+
+test('project.mjs never statically imports projectCheck.mjs, which imports it: check loads it lazily', () => {
+  const check = path.join(import.meta.dirname, 'projectCheck.mjs');
+  assert.ok(staticallyReaches(check, SCRIPT), 'the walk reads projectCheck.mjs\'s import of project.mjs');
+  assert.equal(staticallyReaches(SCRIPT, check), false, 'project.mjs reaches projectCheck.mjs through its static imports');
+});
