@@ -212,6 +212,9 @@ export function loadConfig(env = process.env) {
     stateDir: env.WOODSHED_CLOUD_STATE_DIR || '/var/lib/woodshed-cloud',
     // The repos this installation works on (projects.mjs). providers/console.mjs refuses to start without one.
     projects: loadProjects(env),
+    // A folder of `<owner>/<name>.yaml` project files, each for a repo with no .woodshed/project.yaml of its own
+    // (shared/project.mjs, installationProjectFile). The local provider hands a session its repo's.
+    projectFilesDir: env.WOODSHED_CLOUD_PROJECT_FILES_DIR || null,
     actionsWorkflows: actionsWorkflows(env.WOODSHED_CLOUD_ACTIONS_WORKFLOWS),
     label: env.WOODSHED_CLOUD_LABEL || 'woodshed',
     // The secrets holding the repo's env files, which the Secrets page and My settings show. None when it has none.

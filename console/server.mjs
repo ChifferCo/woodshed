@@ -119,6 +119,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hostedEngines, viewersOf } from '../shared/databases/index.mjs';
+import { installationProjectFile } from '../shared/project.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
@@ -1788,14 +1789,18 @@ export async function startConsole({ provider, config: given = null }) {
   const slack = createSlack({ store, secrets });
   console.log('console: Slack posts', { available: slack.available, channel: slack.view().channel || null });
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
-  const projectReader = createProjectReader({ github });
+  // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
+  const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
+  const projectReader = createProjectReader({ github, installationFile: installationFileOf(defaultProject(config).repo) });
   // Each project's file, from its own repo: the gates its pull requests wait for. The default project's is the one above.
   const projectReaders = new Map([[defaultProject(config).name, projectReader]]);
   const readerOf = (name) => {
     const project = (name && projectNamed(config, name)) || defaultProject(config);
     // Keyed by repo too: a repo removed and added again may be another repo under the same name.
     const key = project.default ? project.name : `${project.name}\n${project.repo}`;
-    if (!projectReaders.has(key)) projectReaders.set(key, createProjectReader({ github: githubFor(project) }));
+    if (!projectReaders.has(key)) {
+      projectReaders.set(key, createProjectReader({ github: githubFor(project), installationFile: installationFileOf(project.repo) }));
+    }
     return projectReaders.get(key);
   };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });

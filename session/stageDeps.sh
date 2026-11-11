@@ -3,7 +3,8 @@
 # folder given, in the repo's own layout: the image workflow builds the session image with it as `woodshed-deps/`.
 # Beside it, not inside it (the image copies the folder into the checkout whole): `<folder>.installs`, the manifest
 # session/deps.sh runs the installs from, and `<folder>.editor`, the project file's `editor` (true or false), which the
-# Dockerfile reads to add VS Code or leave it out. Run from the repo's root.
+# Dockerfile reads to add VS Code or leave it out. Run from the repo's root. The project file is the repo's, or the
+# installation's for a repo with none when WOODSHED_CLOUD_PROJECT_FILES_DIR names its folder (shared/project.mjs).
 set -euo pipefail
 
 dest=${1:?usage: stageDeps.sh <folder>}
@@ -13,10 +14,12 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Read on their own: a failure inside a command substitution in a for list would not stop the script.
 manifest=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" installs) || { echo "stageDeps: the project file's dependencies could not be read" >&2; exit 1; }
 editor=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get editor) || { echo "stageDeps: the project file's editor could not be read" >&2; exit 1; }
+from=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get from) || { echo "stageDeps: the project file could not be read" >&2; exit 1; }
 
 rm -rf "$dest"
 mkdir -p "$dest"
 printf '%s\n' "$editor" > "$dest.editor"
+echo "stageDeps: project file from $from"
 echo "stageDeps: editor $editor"
 # An empty file when there are no installs.
 : > "$dest.installs"

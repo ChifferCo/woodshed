@@ -35,7 +35,10 @@ project file has `databases`, it starts the server of each engine they are on, P
 17017, so a laptop's own databases keep theirs, and each session gets its own copy; with none it starts neither, and
 sessions get none.
 `WOODSHED_NETWORK` puts sessions on a docker network of the repository's own, such as its compose file's
-`<folder>_default`, to reach the services it runs there. It starts the console with `~/.woodshed/bin/woodshed`, which
+`<folder>_default`, to reach the services it runs there. `WOODSHED_PROJECT_FILES_DIR`, an absolute path, is a folder of
+project files the installation supplies, `<owner>/<name>.yaml`, for a repository with no `.woodshed/project.yaml` of its
+own: `install.sh` reads the repository's from it, for the databases it starts and the image it builds, and saves it in
+`stack.env` as `WOODSHED_CLOUD_PROJECT_FILES_DIR` ("Project files the installation supplies", below). It starts the console with `~/.woodshed/bin/woodshed`, which
 starts it again when the GitHub App setup page asks. By hand, on any machine:
 
 1. Build the session image from the repo root, as `session/Dockerfile` says, and tag it `woodshed-session`.
@@ -115,6 +118,21 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
   first made: changing them later means changing them in Postgres and Mongo too, then in the store.
 - **Webhooks need a public address.** The receiver listens on `127.0.0.1` by default; put a proxy with HTTPS in front
   of it and set `WOODSHED_LOCAL_WEBHOOK_URL`. Without the port set, the console polls GitHub every 30 seconds.
+- **Project files the installation supplies.** With `WOODSHED_CLOUD_PROJECT_FILES_DIR` set (docs/reference.md, "The
+  project file"), the console reads the default project's file from it when the repo has none on its default branch,
+  and each session and db-admin run gets the files it needs as read-only bind mounts under
+  `/run/woodshed-project-files`, which `WOODSHED_CLOUD_PROJECT_FILES_DIR` (in a session) or `--project-files-dir` (in a
+  db-admin run) names there (`projectFileMounts.mjs`). A session gets its own repo's file and the image's repo's, which it
+  reads for the secrets to withhold on another project; never the folder, which may hold other repos' files. Each is
+  looked for when the container starts, so a file added later reaches the next session; one in a running session stays
+  as it was. The console logs `launcher: installation project files` with the repos mounted, and `local: db-admin run
+  started` says `installationProjectFile`. A repo's own `.woodshed/project.yaml` wins over the installation's wherever
+  it is read. The folder must be the same path for the docker daemon, and its files readable by uid 1000, the image's
+  `node` user. Set it on the first run of `install.sh`: `stack.env` is written once, so an install made before the
+  folder had the repo's file keeps the env files, seed secrets and database engines of no project file, and its image
+  the installs of none. `install.sh` then says `was written for another project file`: set `WOODSHED_CLOUD_ENV_FILES`
+  and `WOODSHED_CLOUD_DB_ENV_SECRETS` in `stack.env` to what the file names (or, with no databases yet, move
+  `stack.env` aside to have it written again), and run it with `WOODSHED_REBUILD=1` to build the image from the file.
 - **A shared service keeps nothing across restarts** unless its compose file gives it a volume. A fake S3's buckets
   can be made on every start by an init script it mounts, such as localstack's `/etc/localstack/init/ready.d/`.
 

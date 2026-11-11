@@ -8,6 +8,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
+
 const execFileAsync = promisify(execFile);
 
 /**
@@ -20,11 +22,14 @@ export function parseDockerPort(output) {
 }
 
 /**
- * @param {{image: string, memory: string, cpus: string, network?: string|null}} opts  `network` is the docker network
- *   sessions join, to reach the shared services by name (compose.yml's `woodshed`)
+ * @param {{image: string, memory: string, cpus: string, network?: string|null, projectFilesDir?: string|null,
+ *          repo?: string|null}} opts  `network` is the docker network sessions join, to reach the shared services by
+ *   name (compose.yml's `woodshed`); `projectFilesDir` the installation's folder of project files, and `repo` the
+ *   image's repo, owner/name (projectFileMounts.mjs); `run` stands in for the docker CLI in tests
  */
-export function dockerLauncher({ image, memory, cpus, network = null }) {
+export function dockerLauncher({ image, memory, cpus, network = null, projectFilesDir = null, repo = null, run = null }) {
   async function docker(args, env) {
+    if (run) return run(args, env);
     const { stdout } = await execFileAsync('docker', args, { env: env ? { ...process.env, ...env } : process.env });
     return stdout.trim();
   }
@@ -41,14 +46,18 @@ export function dockerLauncher({ image, memory, cpus, network = null }) {
      * @param {Record<string, string>} env  passed by name only, so no secret shows up in `ps`
      * @returns {Promise<{ref: string, host: string, termPort: number, statusPort: number, shellPort: number}>}
      */
-    async start(sessionId, env) {
+    async start(sessionId, given) {
       const ref = this.refFor(sessionId);
+      const mounts = projectFileMounts({ dir: projectFilesDir, repos: [repo, given.PROJECT_REPO] });
+      if (projectFilesDir) console.log('launcher: installation project files', { sessionId, mounted: mounts.repos });
+      const env = mounts.repos.length ? { ...given, WOODSHED_CLOUD_PROJECT_FILES_DIR: PROJECT_FILES_MOUNT } : given;
       const args = [
         'run', '-d', '--name', ref, '--init', '--memory', memory, '--cpus', cpus,
         '--add-host=host.docker.internal:host-gateway',
         '-p', '127.0.0.1::7681', '-p', '127.0.0.1::7682', '-p', '127.0.0.1::7684',
         '--label', `woodshed-cloud.session=${sessionId}`,
         ...(network ? ['--network', network] : []),
+        ...mounts.args,
       ];
       for (const key of Object.keys(env)) args.push('-e', key);
       args.push(image);

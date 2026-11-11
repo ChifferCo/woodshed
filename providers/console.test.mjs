@@ -55,6 +55,8 @@ test('a setting only AWS can serve stops a start on the local provider, naming i
 test('a setting only the local provider serves stops a start on AWS, naming it', () => {
   const env = { GH_TOKEN: 'x', WOODSHED_CLOUD_LAUNCHER: 'ecs', WOODSHED_CLOUD_ECS_CLUSTER: 'c', WOODSHED_CLOUD_ECS_TASK_DEFINITION: 't', WOODSHED_LOCAL_SECRETS_DIR: '/s' };
   assert.throws(() => createProvider(loadConfig(env), env), /WOODSHED_LOCAL_SECRETS_DIR needs the local provider; this console runs on the aws provider/);
+  const files = { ...env, WOODSHED_LOCAL_SECRETS_DIR: '', WOODSHED_CLOUD_PROJECT_FILES_DIR: '/srv/project-files' };
+  assert.throws(() => createProvider(loadConfig(files), files), /WOODSHED_CLOUD_PROJECT_FILES_DIR needs the local provider; this console runs on the aws provider/);
 });
 
 test('a console with no repo, or one that is not owner/name, will not start: no repo is the default', () => {
