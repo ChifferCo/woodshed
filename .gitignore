@@ -1,0 +1,3 @@
+# The Playwright MCP's browser logs, page snapshots and screenshots. They can hold what a page showed, and a
+# session's stop checkpoint commits everything git does not ignore.
+.playwright-mcp/
