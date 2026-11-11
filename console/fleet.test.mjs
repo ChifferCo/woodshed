@@ -654,6 +654,7 @@ test('Set up app types the setup request into claude, only for a running session
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body), [{ text: SETUP_APP_PROMPT }]);
   assert.match(SETUP_APP_PROMPT, /\.woodshed\/project\.yaml/);
   assert.doesNotMatch(SETUP_APP_PROMPT, /\n/, 'typed as one message');
+  for (const field of ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'howToProve']) assert.match(SETUP_APP_PROMPT, new RegExp(`\`${field}\``), `names ${field}, which the project file's app reads`);
 });
 
 test('a starting session records each start step once, and opens on the quick check without an aws call', async () => {

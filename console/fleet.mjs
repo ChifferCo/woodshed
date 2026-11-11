@@ -48,9 +48,10 @@ const GITHUB_TRIGGERS = new Set(['label', 'comment']);
 export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
   + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
   + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
-  + 'same port twice for one server), and `logs` (a name for each server\'s log file). Write .woodshed/project.yaml '
-  + 'with `version: 1` if there is none. Run the start command yourself and check both ports answer, run the stop, then '
-  + 'commit the file on this branch. Start app reads the file again, so tell me when to press it.';
+  + 'same port twice for one server), `logs` (a name for each server\'s log file) and `howToProve` (how to check a '
+  + 'change in the running app); `start`, both ports and `howToProve` are required. Write .woodshed/project.yaml '
+  + 'with `version: 1` if there is none, and check it with `node /opt/woodshed/shared/project.mjs get app`. Run the '
+  + 'start command yourself and check both ports answer, run the stop, then commit the file on this branch. Start app reads the file again, so tell me when to press it.';
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
