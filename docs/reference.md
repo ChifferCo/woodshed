@@ -200,7 +200,10 @@ an empty project: no dependency installs, env files, databases or app, and Woods
 **A project file the installation supplies.** To try Woodshed on a repo without committing a project file, the
 installation can keep one for it: `WOODSHED_CLOUD_PROJECT_FILES_DIR` names a folder of them, one a repo, at
 `<owner>/<name>.yaml` as GitHub names the repo (matched in any case). It is read only when the repo has no
-`.woodshed/project.yaml` of its own, on the checkout or the default branch: once one is committed, it wins. Its `from`
+`.woodshed/project.yaml` of its own, on the checkout or the default branch: once one is committed, it wins. The one
+exception is a repo's own file Woodshed cannot read (one written for another version of Woodshed, say): where the
+installation has a file for the repo, that one is read instead, and the project's `repoFileError` says why the repo's
+was not. With none, the read stops on the repo's file as before. Its `from`
 is `installation`, beside `checkout`, `default branch` and `none`, in each log line that prints it (the entrypoint's
 `Project file read`, the console's `projectFile: read`, the db-admin task's `Project read`, `stageDeps.sh`'s `project
 file from`). It is read and refused as a repo's file is, with its path named in place of `.woodshed/project.yaml`. A

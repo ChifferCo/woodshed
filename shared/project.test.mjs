@@ -357,6 +357,20 @@ test('the repo\'s own project file wins over the installation\'s, on its checkou
   assert.deepEqual([loadProject(checkout, { projectFilesDir: dir }).from, loadProject(checkout, { projectFilesDir: dir }).editor], ['default branch', false]);
 });
 
+test('a repo\'s own file Woodshed cannot read gives way to the installation\'s, saying why; with none, the read stops', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject({ dependencies: { installs: [API_INSTALL] } }) });
+  fs.mkdirSync(path.join(checkout, '.woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.woodshed/project.yaml'), 'version: 1\ndatabase: null\n');
+  const project = loadProject(checkout, { projectFilesDir: dir });
+  assert.equal(project.from, 'installation');
+  assert.deepEqual(project.dependencies.installs, [API_INSTALL]);
+  assert.match(project.repoFileError, /\.woodshed\/project\.yaml: has database, which is not a field/);
+  assert.throws(() => loadProject(checkout), /\.woodshed\/project\.yaml: has database, which is not a field/);
+  fs.writeFileSync(path.join(dir, 'acme/app.yaml'), 'version: 1\nenvfiles: []\n');
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /the installation's project file .*app\.yaml: has envfiles/);
+});
+
 test('a missing folder or file of the installation\'s is an empty project, as a repo with no file is', (t) => {
   const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
   const none = { ...EMPTY_PROJECT, from: 'none' };

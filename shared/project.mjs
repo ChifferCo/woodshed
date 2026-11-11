@@ -448,10 +448,24 @@ export function loadProject(repoDir, { projectFilesDir = process.env.WOODSHED_CL
   try {
     return { ...readProjectText(file.text), from: file.from };
   } catch (err) {
-    // The installation's file is wrong in the same ways a repo's is, and is named by its path.
-    if (file.from === 'installation') err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file.path}`);
-    throw err;
+    if (file.from === 'installation') throw installationError(err, file.path);
+    // A repo's own file Woodshed cannot read (one written for another version, say) gives way to the installation's for
+    // the repo, where there is one, so the installation can run it until the repo's is fixed. `repoFileError` says why.
+    const of = projectFilesDir && (repo ?? repoOf(repoDir));
+    const supplied = of && installationProjectFile({ dir: projectFilesDir, repo: of });
+    if (!supplied) throw err;
+    try {
+      return { ...readProjectText(supplied.text), from: 'installation', repoFileError: err.message };
+    } catch (suppliedErr) {
+      throw installationError(suppliedErr, supplied.path);
+    }
   }
+}
+
+// The installation's file is wrong in the same ways a repo's is, and is named by its path.
+function installationError(err, file) {
+  err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file}`);
+  return err;
 }
 
 function readProjectText(text) {
