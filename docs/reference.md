@@ -369,7 +369,9 @@ jobs:
   `woodshed-cloud`).
 
 The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
-commit, which never blocks merging. That is why the caller grants `checks: write`. To show it in the decision brief and
+commit, which never blocks merging, and as a `merge risk: low`, `medium` or `high` label on the pull request. That is
+why the caller grants `checks: write`. The label is only for people: anyone who can triage can change it, so the
+console reads the check. To show it in the decision brief and
 Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
 
 An input left empty takes its default. The rules, the instructions and the risk areas are read from the branch the pull request merges into, so a pull request cannot soften
