@@ -138,7 +138,7 @@ sign-in in front, hands both to the console with two settings, each off unless s
   page until the machine is up, then moves to its Review tab with the analysis
   already running. Claude starts with no prompt, so it waits for you. The move
   happens only for a page that saw the session starting: opened once it is up,
-  it stays on Agent, and the analysis starts when you open Review.
+  it stays on Agent. In every session, the analysis starts when Review first opens.
 - **Talk to it:** `/woodshed <text>` on the same issue, or type in its terminal.
 - **Watch:** the console lists every session; click one for its live terminal.
 - **Review:** the session page's **Review** tab shows what its checkout
