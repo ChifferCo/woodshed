@@ -160,6 +160,35 @@ test('Start app says why it could not start: not running, an image without it, o
   assert.deepEqual(await post(), { status: 502, error: 'the session did not answer: try again in a moment' });
 });
 
+test('Set up app answers whether claude got the request, and why it was refused', async (t) => {
+  const session = { id: '0a1b2c3d', status: 'running', app: 'none' };
+  const answers = [
+    () => ({ session, sent: 'queued' }),
+    () => { throw Object.assign(new Error('the project already has an app: Start app runs it'), { refused: true }); },
+  ];
+  const fleet = { sessions: () => [session], find: () => session, setupApp: async () => answers.shift()() };
+  const config = { host: '127.0.0.1', publicUrl: 'http://localhost', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const post = () => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/sessions/0a1b2c3d/app/setup',
+      headers: { host: `localhost:${port}`, origin: `http://localhost:${port}`, 'x-woodshed': '1' } }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(body) }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  const ok = await post();
+  assert.deepEqual([ok.status, ok.body.sent, ok.body.app], [200, 'queued', 'none']);
+  const refused = await post();
+  assert.deepEqual([refused.status, refused.body.error], [409, 'the project already has an app: Start app runs it']);
+});
+
 test('until sign-in is required, an app opens with no cookie, as before', async (t) => {
   const statusd = await fakeStatusd();
   const session = { id: '0a1b2c3d', status: 'running', token: 'tok', endpoint: { host: '127.0.0.1', termPort: 1, statusPort: statusd.port } };

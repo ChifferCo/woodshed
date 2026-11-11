@@ -227,6 +227,7 @@ test('appState: both servers up is running, whoever started them; otherwise the 
   assert.equal(appState(DOWN, { exitCode: 1 }), 'failed');
   assert.equal(appState(DOWN, { exitCode: 0 }), 'stopped', 'started, then stopped since');
   assert.equal(appState(DOWN, null), 'stopped');
+  assert.equal(appState(UP, { exitCode: null }, null, { hasApp: false }), 'none', 'no app in the project file: nothing to start');
 });
 
 test('appState: half an app says which half is down, after the shed', () => {
@@ -323,11 +324,23 @@ test('GET /diff answers the checkout against master with the token only, uncommi
   assert.equal((await git('status', '--porcelain')).stdout.includes('A '), false, 'nothing was staged');
 });
 
-test('a project with no app never runs a start or a stop', async (t) => {
+test('a project with no app says none, and never runs a start or a stop', async (t) => {
   const { call, calls } = await statusdWithApp(t, { app: false });
-  assert.deepEqual((await call('POST', '/app/start')).body, { started: false, app: 'stopped' });
-  assert.deepEqual((await call('POST', '/app/stop')).body, { stopping: false, app: 'stopped' });
+  assert.equal((await call('GET', '/status')).body.app, 'none');
+  assert.deepEqual((await call('POST', '/app/start')).body, { started: false, app: 'none' });
+  assert.deepEqual((await call('POST', '/app/stop')).body, { stopping: false, app: 'none' });
   assert.deepEqual(await calls(), []);
+});
+
+test('an app written into the project file after the start is read at the next Start app', async (t) => {
+  const { repo, call, calls } = await statusdWithApp(t, { app: false });
+  assert.equal((await call('GET', '/status')).body.app, 'none');
+  await fs.mkdir(path.join(repo, '.woodshed'));
+  await fs.writeFile(path.join(repo, '.woodshed/project.yaml'),
+    fixtureProject({ app: fixtureApp({ start: 'bash scripts/serve.sh start', stop: 'bash scripts/serve.sh stop' }) }));
+  assert.deepEqual((await call('POST', '/app/start')).body, { started: true, app: 'starting' });
+  assert.equal((await call('GET', '/status')).body.app, 'starting');
+  assert.deepEqual(await calls(), ['start']);
 });
 
 test('Redis is offered only when the project uses REDIS_URL, as the entrypoint starts it', async (t) => {

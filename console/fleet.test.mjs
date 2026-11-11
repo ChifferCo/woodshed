@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { commentConsoleUrl, createFleet, failedComment, refusalComment, resumeComment, startComment } from './fleet.mjs';
+import { commentConsoleUrl, createFleet, failedComment, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -634,6 +634,26 @@ test('Stop app asks the session\'s statusd and takes the app\'s state from its a
   await fleet.stopApp(session);
   assert.ok(calls.statusd.some((c) => c.method === 'POST' && c.path === '/app/stop'));
   assert.equal(session.app, 'stopping', 'statusd answered without a state, as the fake does, so the console assumes one');
+});
+
+test('Set up app types the setup request into claude, only for a running session whose project has no app', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  await assert.rejects(fleet.setupApp(session), (err) => err.notRunning === true);
+
+  statuses[session.id] = { state: 'idle', app: 'stopped' };
+  await fleet.tick();
+  await assert.rejects(fleet.setupApp(session), (err) => err.refused === true, 'a project with an app is started, not set up');
+
+  statuses[session.id] = { state: 'idle', app: 'none' };
+  await fleet.tick();
+  assert.equal(session.app, 'none', 'the console keeps statusd\'s none');
+  const { sent } = await fleet.setupApp(session);
+  assert.equal(sent, 'sent');
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body), [{ text: SETUP_APP_PROMPT }]);
+  assert.match(SETUP_APP_PROMPT, /\.woodshed\/project\.yaml/);
+  assert.doesNotMatch(SETUP_APP_PROMPT, /\n/, 'typed as one message');
 });
 
 test('a starting session records each start step once, and opens on the quick check without an aws call', async () => {

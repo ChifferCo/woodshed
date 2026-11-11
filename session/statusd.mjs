@@ -90,13 +90,40 @@ function readProject() {
   }
 }
 const PROJECT = readProject();
-const PROJECT_APP = PROJECT?.app ?? null;
-// No app, no ports: nothing is probed or proxied.
-const APP_PORT = Number(process.env.APP_PORT || PROJECT_APP?.frontendPort) || null;
-const APP_API_PORT = Number(process.env.APP_API_PORT || PROJECT_APP?.backendPort) || null;
+// No app, no ports: nothing is probed or proxied. A project with no app yet is read again (refreshApp), so an app Set up
+// app had claude write starts from Start app in the same session; an app it already has is kept as it was read.
+let PROJECT_APP = null;
+let APP_PORT = null;
+let APP_API_PORT = null;
+let SERVER_LOGS = [];
+function useApp(app) {
+  PROJECT_APP = app ?? null;
+  APP_PORT = Number(process.env.APP_PORT || PROJECT_APP?.frontendPort) || null;
+  APP_API_PORT = Number(process.env.APP_API_PORT || PROJECT_APP?.backendPort) || null;
+  SERVER_LOGS = Object.entries(PROJECT_APP?.logs ?? {}).map(([name, file]) => [name, expandPath(file, { repoDir: REPO_DIR })]);
+}
+useApp(PROJECT?.app);
 const APP_HEADER = 'x-woodshed-app';
 const APP_LOG = '/tmp/woodshed-app.log';
-const SERVER_LOGS = Object.entries(PROJECT_APP?.logs ?? {}).map(([name, file]) => [name, expandPath(file, { repoDir: REPO_DIR })]);
+// The console asks for /status every few seconds: a project with no app is read again at most this often, and on
+// each Start app.
+const APP_REREAD_MS = 10_000;
+let appReadAt = Date.now();
+
+function refreshApp({ force = false } = {}) {
+  if (PROJECT_APP || (!force && Date.now() - appReadAt < APP_REREAD_MS)) return;
+  appReadAt = Date.now();
+  let app = null;
+  try {
+    app = loadProject(REPO_DIR).app ?? null;
+  } catch {
+    // Still not readable: the warning at start said why, and this is asked too often to say it again.
+    return;
+  }
+  if (!app) return;
+  useApp(app);
+  console.log('statusd: the project file has an app now', { frontendPort: APP_PORT, backendPort: APP_API_PORT });
+}
 const APP_LOG_TAIL_BYTES = 48 * 1024;
 const APP_PROBE_MS = 500;
 const TOKEN = process.env.SESSION_TOKEN || '';
@@ -363,9 +390,12 @@ let appStop = null;
  * @param {{frontend: boolean, backend: boolean}} servers  which of the app's ports accept connections
  * @param {{exitCode: number|null, stopped?: boolean}|null} start  the last start this statusd ran, if any
  * @param {{exitCode: number|null}|null} stop  the last stop this statusd ran, if any
- * @returns {'running'|'api-down'|'frontend-down'|'starting'|'stopping'|'failed'|'stopped'}
+ * @param {{hasApp?: boolean}} [opts]  whether the project file has an app at all
+ * @returns {'running'|'api-down'|'frontend-down'|'starting'|'stopping'|'failed'|'stopped'|'none'}
  */
-export function appState(servers, start, stop = null) {
+export function appState(servers, start, stop = null, { hasApp = true } = {}) {
+  // The project file says nothing of an app: Set up app, not Start app.
+  if (!hasApp) return 'none';
   if (stop && stop.exitCode === null) return 'stopping';
   if (servers.frontend && servers.backend) return 'running';
   if (start && start.exitCode === null) return 'starting';
@@ -377,8 +407,9 @@ export function appState(servers, start, stop = null) {
 }
 
 async function appStatus() {
+  refreshApp();
   const servers = await appServers();
-  return { app: appState(servers, appStart, appStop), appServers: servers };
+  return { app: appState(servers, appStart, appStop, { hasApp: Boolean(PROJECT_APP) }), appServers: servers };
 }
 
 // The project's own start or stop command: the project file's `app.start` or `app.stop`.
@@ -389,6 +420,7 @@ function runAppCommand(command) {
 
 // The start command waits until the servers are healthy, then leaves them running on their own.
 async function startApp() {
+  refreshApp({ force: true });
   if (!PROJECT_APP) {
     console.log('statusd: app start skipped, the project has no app');
     return { started: false, app: (await appStatus()).app };

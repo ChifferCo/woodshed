@@ -848,12 +848,24 @@
     };
     const up = s.app === 'running' || s.app === 'api-down';
     const busy = s.app === 'starting' || s.app === 'stopping';
+    const none = s.app === 'none';
     return [
       s.hasShell && W.isPrivate(s) && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
       data.appDomain && up && { group: 'App', label: 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener') },
-      data.appDomain && !up && !busy && {
+      data.appDomain && none && s.kind !== 'ask' && {
+        group: 'App', label: 'Set up app', note: 'The project file has no app: ask claude to write one',
+        run: async () => {
+          try {
+            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent));
+          } catch (err) {
+            window.alert(`Could not set up the app: ${err.message}`);
+          }
+          refresh();
+        },
+      },
+      data.appDomain && !up && !busy && !none && {
         group: 'App', label: s.app === 'failed' || s.app === 'frontend-down' ? 'Start app again' : 'Start app',
         note: 'Start the app in this session: one to three minutes', run: app('start'),
       },
