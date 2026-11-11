@@ -156,7 +156,10 @@ need the GitHub App's Issues write and the org's Projects write (read and
 write) permissions. The first poll only records where GitHub is, so a
 restart never replays old labels or comments. On a console with several projects, the same on another project's
 repo starts or reaches a session on that project, from its webhook alone: the poll reads the default project's repo
-(`webhooks: message for another project` in the console's log, and `project` on the fleet's lines that follow).
+(`webhooks: message for another project` in the console's log, and `project` on the fleet's lines that follow). The console's comments on a repo (a session started, queued, resumed or failed, or a refusal) link to the console and
+the session's app unless that repo's project file, read from its default branch, says `consoleLinks: false`, as a public
+repo's should (`commentConsoleUrl` in `fleet.mjs`; `fleet: comment names no console address` in the log). When the file
+cannot be read, the default project's comments keep their links and another project's leave them out.
 
 GitHub's webhooks reach the console within a second or two: GitHub posts to a
 Lambda Function URL (`providers/aws/webhooks/index.mjs`), which checks the signature and
@@ -382,14 +385,16 @@ in Secrets Manager at `woodshed-cloud/users/<login>/github` and never reaches a
 session. A connected owner's private session then:
 - gets their own token from the session API's `/github-token`, which an
   installation token answers for everyone else, so it pushes and opens pull
-  requests as them. The owner's token reaches every repo the App is on that they
-  can write to, so only a session on the default project gets it as it is. One
-  on another project gets it scoped down by GitHub to that project's repo and
-  the permissions sessions get (`POST /applications/{client_id}/token/scoped`,
-  with the App's client secret; `githubUser.mjs`, `scopedTokenFor`), made once
+  requests as them, on any project. The owner's token reaches every repo the App
+  is on that they can write to, and the project file's `githubAccess` decides
+  how much of that the session gets (`sessionApi: github access for a private
+  session` logs it): `full`, the default, hands it over as it is; `repo` has it
+  scoped down by GitHub to that project's repo and the permissions sessions get
+  (`POST /applications/{client_id}/token/scoped`, with the App's client secret;
+  `githubUser.mjs`, `scopedTokenFor`), made once
   per person and repo and kept until it nears its expiry; Disconnect revokes each
   of those at GitHub too, along with the full token. When GitHub makes none
-  (no client secret, or it refuses), that session gets the project's App token,
+  (no client secret, or it refuses), a `repo` session gets the project's App token,
   which reaches its repo alone: its commits are still authored as the owner (the
   git identity below), but pushed and opened as the App;
 - commits with their name and `<id>+<login>@users.noreply.github.com`, which
