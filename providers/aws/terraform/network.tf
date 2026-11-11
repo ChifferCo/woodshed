@@ -81,7 +81,7 @@ moved {
   to   = aws_security_group.database[0]
 }
 
-# Open to the internet: the console requires a GitHub sign-in on every route (WOODSHED_CLOUD_REQUIRE_SIGN_IN).
+# Open to the internet: the console requires a GitHub sign-in on every route (WOODSHED_REQUIRE_SIGN_IN).
 resource "aws_vpc_security_group_ingress_rule" "console_https" {
   security_group_id = aws_security_group.base_box.id
   description       = "Console"

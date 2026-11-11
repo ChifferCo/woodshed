@@ -14,6 +14,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
 import { startDevReview } from './devReviewSession.mjs';
 
 const port = process.argv[2] || '7690';
@@ -27,7 +28,7 @@ const appDomain = (process.env.SESSION_APP_DOMAIN ?? '').trim().toLowerCase();
 // A console from before SESSION_APP_DOMAIN sends none: the app still opens, on any name whose first label is the id.
 if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so any name starting with the session id is let in');
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
-const tlsAskPort = process.argv[3] ? { WOODSHED_CLOUD_TLS_ASK_PORT: process.argv[3] } : {};
+const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher).
 const server = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'providers', 'console.mjs');
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
@@ -66,7 +67,7 @@ const sessions = [
   session('abcd7777', 26627, 'Merge Shared and My Woodshed tabs', { status: 'running', state: 'done', stoppedAt: null, stopReason: null, assignee: 'octocat' }),
   session('bcde8888', 26590, 'Fix CSV upload for large files', { kind: 'issue', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, startedBy: 'ana-dev', assignee: 'octocat' }),
   // On a second and a third project: the rail marks each in its colour, with a filter chip per project, when the
-  // console has more than one, as with WOODSHED_CLOUD_PROJECTS='[{"name":"example-repo","repo":"example-org/example-repo","default":true},
+  // console has more than one, as with WOODSHED_PROJECTS='[{"name":"example-repo","repo":"example-org/example-repo","default":true},
   // {"name":"example-api","repo":"example-org/example-api"},{"name":"example-web","repo":"example-org/example-web"}]'.
   session('beef4242', 26631, 'Rate limit the public API', { project: 'example-api', repo: 'example-org/example-api', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   session('beef4343', 26632, 'Show the plan picker on the pricing page', { project: 'example-web', repo: 'example-org/example-web', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
@@ -112,11 +113,14 @@ const sessions = [
 ];
 fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null }));
 
-// The shell's own WOODSHED_CLOUD_* settings (a GitHub App, required sign-in, the ECS launcher) would turn this back
-// into the real console, so none of them are passed on, but hosted mode's (console/README.md, "Hosted mode"), to try it
-// with a stand-in broker and signed headers, and the console's name.
-const HOSTED = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE', 'WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET', 'WOODSHED_CLOUD_CONSOLE_NAME'];
-const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_CLOUD_') || HOSTED.includes(key)));
+// The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
+// launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
+// (console/README.md, "Hosted mode"), to try it with a stand-in broker and signed headers, and the console's name. In a
+// session that also keeps out the session's own WOODSHED_PROJECT_FILES_DIR.
+const HOSTED = ['GITHUB_BROKER_URL', 'GITHUB_BROKER_TOKEN_FILE', 'TRUSTED_IDENTITY_SECRET', 'CONSOLE_NAME'];
+const hosted = Object.fromEntries(HOSTED.map((name) => [currentName(name), envValue(process.env, name)]).filter(([, value]) => value !== undefined));
+const projects = envValue(process.env, 'PROJECTS');
+const inherited = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !isSettingName(key))), ...hosted };
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -202,15 +206,14 @@ const consolePort = sessionApp ? await freePort() : port;
 const child = spawn(process.execPath, [server], {
   stdio: 'inherit',
   env: {
-    ...inherited, WOODSHED_CLOUD_HOST: '127.0.0.1', WOODSHED_CLOUD_PORT: consolePort, WOODSHED_CLOUD_STATE_DIR: stateDir,
-    WOODSHED_CLOUD_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_CLOUD_APP_DOMAIN: 'apps.localhost',
+    ...inherited, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+    WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_APP_DOMAIN: 'apps.localhost',
     // Its own links name the port people open, not the one behind it.
-    ...(sessionApp ? { WOODSHED_CLOUD_PUBLIC_URL: `http://localhost:${port}` } : {}),
+    ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
     // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
     // installation that adds its repos on the Console settings page does.
     ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
-      : process.env.WOODSHED_CLOUD_PROJECTS ? { WOODSHED_CLOUD_PROJECTS: process.env.WOODSHED_CLOUD_PROJECTS }
-        : { WOODSHED_CLOUD_REPO: 'example-org/example-repo' }),
+      : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
     ...tlsAskPort,
   },
 });

@@ -1,5 +1,5 @@
 // The repos an admin adds on the Console settings page, kept in state.json under `addedProjects` beside the ones the
-// installation's environment names (WOODSHED_CLOUD_PROJECTS, console/projects.mjs). The two lists make one:
+// installation's environment names (WOODSHED_PROJECTS, console/projects.mjs). The two lists make one:
 // `liveConfig` appends the added ones to `config.projects`, so an add or a removal applies at once, with no restart.
 // The installation's own can only be changed where they are set, and the default project is always one of them.
 

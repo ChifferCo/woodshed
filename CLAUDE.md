@@ -214,16 +214,16 @@ secrets.
   `App created from the manifest` or `App details saved`, `installation saved` or `App not installed on the repo yet`,
   and after the restart `console: GitHub App from the setup page`. `manifest conversion refused` means the code was used
   or older than an hour: start again. No Restart button on step 3: the start's `githubSetup: restart from the page`
-  line has `offered: false`, so neither systemd (`INVOCATION_ID`) nor `WOODSHED_CLOUD_SUPERVISED=1` said something
+  line has `offered: false`, so neither systemd (`INVOCATION_ID`) nor `WOODSHED_SUPERVISED=1` said something
   starts the console again. A click logs `githubSetup: restart asked` and the process exits with code 75; a console that
   stays down after it has a unit without `Restart=on-failure` (or a container with no restart policy).
 - **Sign-in fails and every poll logs `spawn gh ENOENT` or `gh is not installed on the console`.** The console's
   machine has no `gh`, which every GitHub call goes through, the App's included: it logs `console: gh not installed,
   GitHub calls will fail` at start, and `auth: sign-in failed` and `console: github poll failed` name it. Install it
   (https://cli.github.com) and restart. The console image has it; the local provider's host needs it.
-- **The console does not start, logging `WOODSHED_CLOUD_REQUIRE_SIGN_IN needs
+- **The console does not start, logging `WOODSHED_REQUIRE_SIGN_IN needs
   the GitHub App`.** The base box always requires sign-in, and sign-in needs
-  the App: check `WOODSHED_CLOUD_GITHUB_APP_ID` in `compose.yml`.
+  the App: check `WOODSHED_GITHUB_APP_ID` in `compose.yml`.
 - **New session says to save a Claude token, or a private session fails at
   start.** No token is saved for that login, or the session API refused: the
   session's log has `could not get the owner's settings from the console`, and
@@ -319,10 +319,10 @@ secrets.
   marker stood for both) or a template run that failed midway leaves one without: run the `db_template_command`
   output once. `WARNING: the templates were built from different commits` means one engine's swap failed after
   another's; the next `template` run builds them again.
-- **The console stops at start with `WOODSHED_CLOUD_DATABASES is not set`, `names no database for it to make` or
-  `there is no WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION`.** The base box's stack predates the setting, or was
+- **The console stops at start with `WOODSHED_DATABASES is not set`, `names no database for it to make` or
+  `there is no WOODSHED_ECS_DB_ADMIN_TASK_DEFINITION`.** The base box's stack predates the setting, or was
   written by hand: `terraform apply`, which writes it from `databases`, and sets
-  `WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION` only when there is a database. A console image built before the apply
+  `WOODSHED_ECS_DB_ADMIN_TASK_DEFINITION` only when there is a database. A console image built before the apply
   stops here, so the apply goes first.
 - **A shared session fails at start with `the session's databases were not
   ready` or `could not get the session's databases`.** The console logs
@@ -365,7 +365,7 @@ secrets.
   and `slack: channel changed` for the channel; a value out of range is
   refused with its range and nothing of that card is kept. The new value is
   read on the next tick, about 10 seconds later. With nothing saved a setting is
-  its environment value (`WOODSHED_CLOUD_MAX_SESSIONS`, `_IDLE_HOURS`,
+  its environment value (`WOODSHED_MAX_SESSIONS`, `_IDLE_HOURS`,
   `_LIFETIME_HOURS`) or the page's default.
 - **A session waits in the queue with `AWS has no room for another session`.**
   The account's Fargate vCPU quota is used up: `aws service-quotas
@@ -411,8 +411,8 @@ secrets.
   installation's `.woodshed/install/README.md` says where).
 - **Open app answers with a certificate error on a local install, or on AWS with no `domain`.** With no wildcard certificate, Caddy gets one per
   app name on demand, after asking the console (providers/local/README.md, "Session apps without a wildcard
-  certificate"). No `tls: ask listening` at start means `WOODSHED_CLOUD_TLS_ASK_PORT` is not set. `tls: certificate
-  asked` with `allowed: false, why: 'unknown'` for the app's name means it is not `<id>.<WOODSHED_CLOUD_APP_DOMAIN>` of a
+  certificate"). No `tls: ask listening` at start means `WOODSHED_TLS_ASK_PORT` is not set. `tls: certificate
+  asked` with `allowed: false, why: 'unknown'` for the app's name means it is not `<id>.<WOODSHED_APP_DOMAIN>` of a
   session on the list (refusals log at most once a minute, with `refused`), and `why: 'not loopback'` that something
   other than Caddy on this machine asked, or a proxy sits in front of the port. No `tls:` line at all means Caddy never
   asked: `curl -s -w '%{http_code}' 'http://127.0.0.1:<port>/tls-ask?domain=<name>'` from the machine, then Caddy's own
@@ -687,7 +687,7 @@ secrets.
   seconds and bytes, `tunnel: refused, no valid token`, `tunnel: closing open
   tunnels` with why, and `tunnel: database unreachable` when it cannot reach
   RDS or Mongo. psql saying `server does not support SSL` means it reached
-  something other than RDS: check `WOODSHED_CLOUD_TUNNEL_POSTGRES` in
+  something other than RDS: check `WOODSHED_TUNNEL_POSTGRES` in
   `compose.yml`.
 - **Restore a dump fails, or is missing from My settings.** It shows only with own databases ready and a tunnel
   address: the console logs `dbRestore: ready` with `kinds` (`postgres`, `mongo`) at start. Then `dbRestore: dump

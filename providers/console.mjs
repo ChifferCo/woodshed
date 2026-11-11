@@ -1,10 +1,11 @@
 // Starts the console on a provider: `node woodshed/providers/console.mjs`, which the console image runs. The one place
 // a provider is picked; the console itself is handed it (console/server.mjs, startConsole).
 //
-// WOODSHED_PROVIDER is `aws` or `local`. Without it, WOODSHED_CLOUD_LAUNCHER says, as it always has: `ecs` is AWS, and
+// WOODSHED_PROVIDER is `aws` or `local`. Without it, WOODSHED_LAUNCHER says, as it always has: `ecs` is AWS, and
 // `docker` (its default) is local.
 import { loadConfig, requireClosedWhenReachable, requireRepo } from '../console/config.mjs';
 import { startConsole } from '../console/server.mjs';
+import { envValue } from '../shared/envNames.mjs';
 import { isMain } from '../shared/isMain.mjs';
 import { awsProvider } from './aws/index.mjs';
 import { localProvider } from './local/index.mjs';
@@ -13,11 +14,11 @@ const PROVIDERS = { aws: awsProvider, local: localProvider };
 
 /** @returns {'aws'|'local'} */
 export function providerName(env = process.env) {
-  const name = env.WOODSHED_PROVIDER || (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'aws' : 'local');
+  const name = env.WOODSHED_PROVIDER || (envValue(env, 'LAUNCHER') === 'ecs' ? 'aws' : 'local');
   if (!(name in PROVIDERS)) throw new Error(`unknown WOODSHED_PROVIDER "${name}" (expected ${Object.keys(PROVIDERS).join(' or ')})`);
-  const launcher = env.WOODSHED_CLOUD_LAUNCHER || 'docker';
+  const launcher = envValue(env, 'LAUNCHER') || 'docker';
   if ((name === 'aws') !== (launcher === 'ecs')) {
-    throw new Error(`WOODSHED_PROVIDER=${name} needs WOODSHED_CLOUD_LAUNCHER=${name === 'aws' ? 'ecs' : 'docker'} (it is ${launcher})`);
+    throw new Error(`WOODSHED_PROVIDER=${name} needs WOODSHED_LAUNCHER=${name === 'aws' ? 'ecs' : 'docker'} (it is ${launcher})`);
   }
   return name;
 }
@@ -26,9 +27,9 @@ export function providerName(env = process.env) {
 // being ignored, or failing later on the first call that needs it.
 const NEEDS = {
   aws: [
-    ['homesBucket', 'WOODSHED_CLOUD_HOMES_BUCKET'],
-    ['webhookQueue', 'WOODSHED_CLOUD_WEBHOOK_QUEUE'],
-    ['webhookFunction', 'WOODSHED_CLOUD_WEBHOOK_FUNCTION'],
+    ['homesBucket', 'WOODSHED_HOMES_BUCKET'],
+    ['webhookQueue', 'WOODSHED_WEBHOOK_QUEUE'],
+    ['webhookFunction', 'WOODSHED_WEBHOOK_FUNCTION'],
   ],
   local: [
     ['localSecretsDir', 'WOODSHED_LOCAL_SECRETS_DIR'],
@@ -38,7 +39,7 @@ const NEEDS = {
     ['localWebhooks', 'WOODSHED_LOCAL_WEBHOOK_PORT'],
     ['localDockerNetwork', 'WOODSHED_LOCAL_DOCKER_NETWORK'],
     // The console would read the installation's project files while AWS's tasks, which are not given them, read none.
-    ['projectFilesDir', 'WOODSHED_CLOUD_PROJECT_FILES_DIR'],
+    ['projectFilesDir', 'WOODSHED_PROJECT_FILES_DIR'],
   ],
 };
 

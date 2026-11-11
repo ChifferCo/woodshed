@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { bothNames } from '../../shared/envNames.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -65,7 +66,9 @@ export function createDockerLauncher({
       if (projectFilesDir) console.log('launcher: installation project files', { sessionId, mounted: mounts.repos });
       const named = Object.fromEntries(Object.entries(given).filter(([key]) => !DOCKER_SETTINGS.has(key)));
       if (Object.keys(named).length !== Object.keys(given).length) console.warn('launcher: docker\'s own settings left out of the session\'s environment', { sessionId });
-      const env = mounts.repos.length ? { ...named, WOODSHED_CLOUD_PROJECT_FILES_DIR: PROJECT_FILES_MOUNT } : named;
+      // Both names while a session image older than shared/envNames.mjs, which reads only the old one, may be running;
+      // the old name goes in a later release.
+      const env = mounts.repos.length ? { ...named, ...bothNames('PROJECT_FILES_DIR', PROJECT_FILES_MOUNT) } : named;
       const args = [
         'run', '-d', '--name', ref, '--init', '--memory', memory, '--cpus', cpus,
         '--add-host=host.docker.internal:host-gateway',

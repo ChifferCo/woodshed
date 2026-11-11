@@ -15,7 +15,7 @@
 //
 // The repo is REPO_DIR. The checkout's own file is read first, so a branch can change it; a branch from before the file
 // existed gets the default branch's. A repo with neither gets the installation's file for it, when
-// WOODSHED_CLOUD_PROJECT_FILES_DIR names a folder holding one (installationProjectFile), and otherwise EMPTY_PROJECT: no
+// WOODSHED_PROJECT_FILES_DIR names a folder holding one (installationProjectFile), and otherwise EMPTY_PROJECT: no
 // dependencies, env files, databases or app.
 // Only `version` must be written; a field that can be none and is left out is none. A misspelt field is refused.
 
@@ -26,6 +26,7 @@ import path from 'node:path';
 
 import { ENGINE_NAMES } from './databases/engines.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
+import { envValue } from './envNames.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
 
@@ -426,7 +427,7 @@ export function installationProjectFile({ dir, repo }) {
   }
 }
 
-// The repo's own file, or else the installation's. A folder is named only by WOODSHED_CLOUD_PROJECT_FILES_DIR, so
+// The repo's own file, or else the installation's. A folder is named only by WOODSHED_PROJECT_FILES_DIR, so
 // the repo is told from the checkout only then; one that cannot be told is an error, not a repo with no file.
 function projectFileOf(repoDir, { projectFilesDir, repo }) {
   const file = readRepoFile(repoDir, PROJECT_FILE);
@@ -440,11 +441,11 @@ function projectFileOf(repoDir, { projectFilesDir, repo }) {
 /**
  * @param {string} repoDir
  * @param {{projectFilesDir?: string|null, repo?: string}} [opts]  `projectFilesDir` is the installation's folder of
- *   project files (WOODSHED_CLOUD_PROJECT_FILES_DIR by default); `repo` is owner/name, told from the checkout's origin
+ *   project files (WOODSHED_PROJECT_FILES_DIR by default); `repo` is owner/name, told from the checkout's origin
  *   without it
  * @returns {ReturnType<typeof parseProject> & {from: 'checkout'|'default branch'|'installation'|'none'}}
  */
-export function loadProject(repoDir, { projectFilesDir = process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR || null, repo } = {}) {
+export function loadProject(repoDir, { projectFilesDir = envValue(process.env, 'PROJECT_FILES_DIR') || null, repo } = {}) {
   const file = projectFileOf(repoDir, { projectFilesDir, repo });
   if (!file) return { ...EMPTY_PROJECT, from: 'none' };
   try {

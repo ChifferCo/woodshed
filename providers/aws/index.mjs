@@ -33,19 +33,19 @@ export const AWS_WORDS = {
 const PLACES = { postgres: 'RDS', mongo: 'Mongo' };
 
 /**
- * The databases the db-admin task makes, which Terraform's `databases` names twice: in WOODSHED_CLOUD_DATABASES, and
+ * The databases the db-admin task makes, which Terraform's `databases` names twice: in WOODSHED_DATABASES, and
  * by setting the task's family only when there is one. A console told one and not the other stops at start.
  * @param {{dbAdminTaskDefinition?: string|null, databases?: string[]|null}} ecs
  * @returns {string[]}
  */
 export function awsDatabases({ dbAdminTaskDefinition = null, databases = null }) {
   if (databases === null) {
-    throw new Error('WOODSHED_CLOUD_DATABASES is not set: the base box\'s stack sets it from Terraform\'s databases, so run terraform apply');
+    throw new Error('WOODSHED_DATABASES is not set: the base box\'s stack sets it from Terraform\'s databases, so run terraform apply');
   }
   if (Boolean(dbAdminTaskDefinition) !== databases.length > 0) {
     throw new Error(dbAdminTaskDefinition
-      ? 'WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION is set, and WOODSHED_CLOUD_DATABASES names no database for it to make'
-      : `WOODSHED_CLOUD_DATABASES names ${databases.join(', ')}, and there is no WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION to make them`);
+      ? 'WOODSHED_ECS_DB_ADMIN_TASK_DEFINITION is set, and WOODSHED_DATABASES names no database for it to make'
+      : `WOODSHED_DATABASES names ${databases.join(', ')}, and there is no WOODSHED_ECS_DB_ADMIN_TASK_DEFINITION to make them`);
   }
   return databases;
 }

@@ -14,7 +14,7 @@ own repo, such as in `.woodshed/install/aws/`.
 | GitHub and Slack webhooks | `webhooks/` (a Lambda), `webhookQueue.mjs`, `webhookUrl.mjs` | A Lambda Function URL that checks each delivery and queues it in SQS, which the console long-polls |
 | The machine | `terraform/` | The base box (EC2), its data disk, the network, DNS and the IAM roles |
 
-The console picks this provider with `WOODSHED_PROVIDER=aws`, or `WOODSHED_CLOUD_LAUNCHER=ecs`. The base box sets
+The console picks this provider with `WOODSHED_PROVIDER=aws`, or `WOODSHED_LAUNCHER=ecs`. The base box sets
 those and every other setting from Terraform's outputs, so there is nothing to set by hand; `console/README.md` lists
 them. A setting only the local provider serves stops a console started here.
 
@@ -75,7 +75,7 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    `../../../../.woodshed/install/aws/backend.hcl` and `../../../../.woodshed/install/aws/terraform.tfvars`, and the
    deploy workflow ("The deploy workflow", below) runs the same.
 4. Before the console's first start, give it what sign-in needs: the base box requires sign-in from the start
-   (`WOODSHED_CLOUD_REQUIRE_SIGN_IN=1`), and a console without these lets nobody in, so the Secrets & webhooks tab
+   (`WOODSHED_REQUIRE_SIGN_IN=1`), and a console without these lets nobody in, so the Secrets & webhooks tab
    cannot be reached to set them. On the App's settings page (General), set **Callback URL** to the `console_url`
    output plus `/auth/callback`, then **Generate a new client secret** and **Generate a private key**. Save the secret
    to a file only you can read, upload both, and delete both files:
@@ -188,13 +188,13 @@ aws ssm describe-association-executions --association-id "$(aws ssm list-associa
 Adding a repo sessions start on: an admin can do it on the console's Console settings page (Repos), once the GitHub App is
 installed on the repo, with no apply. To keep it in the installation's configuration instead, add it to `projects` in the installation's tfvars (`example.tfvars` shows the
 shape), with the current repo as the default, and install the GitHub App on it. The plan changes only the
-`woodshed-cloud-configure-base-box` document and its association: the console gets `WOODSHED_CLOUD_PROJECTS` and
+`woodshed-cloud-configure-base-box` document and its association: the console gets `WOODSHED_PROJECTS` and
 restarts, and its sessions carry on. Every project uses the one session image, task definition and databases for now.
 With `projects` empty, the default, the compose file has no such line.
 
 Naming the console: set `console_name` in the installation's tfvars, such as `"Acme Woodshed"` (default `"Woodshed"`).
 Like `projects`, the plan changes only the `woodshed-cloud-configure-base-box` document and its association: the
-console gets `WOODSHED_CLOUD_CONSOLE_NAME` and restarts. The pages and the manifest follow at once; an app already
+console gets `WOODSHED_CONSOLE_NAME` and restarts. The pages and the manifest follow at once; an app already
 installed from the browser keeps the old name until it is installed again, since the browser keeps the name it was
 installed with.
 

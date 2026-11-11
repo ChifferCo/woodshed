@@ -105,7 +105,7 @@
           h('option', { value: 'User', selected: ownerType === 'User' }, 'my own GitHub account'))),
       h('div', null, h('button', { type: 'button', class: 'btn btn-open', disabled: busy, onclick: () => act(createApp) }, 'Create the App on GitHub')),
       h('p', { class: 'msg-plain' }, 'Its Callback URL will be ', h('code', null, `${data.publicUrl}/auth/callback`),
-        '. GitHub only takes an http address for localhost: anywhere else this console\'s public URL must be https, and set WOODSHED_CLOUD_PUBLIC_URL to it first.'),
+        '. GitHub only takes an http address for localhost: anywhere else this console\'s public URL must be https, and set WOODSHED_PUBLIC_URL to it first.'),
       h('details', null, h('summary', null, 'I already have an App: paste its details instead'), pasteForm()));
   }
 
@@ -162,7 +162,7 @@
         h('code', null, 'node woodshed/providers/console.mjs'), ' again as in providers/local/README.md; under systemd, ', h('code', null, 'systemctl restart'),
         ' its unit; in Docker, ', h('code', null, 'docker compose restart console'), '.'),
       h('p', { class: 'msg-plain' }, 'Nothing is known to start this console again if it exits, so the page offers no Restart button. ',
-        'Under systemd with Restart=on-failure it offers one; in Docker with a restart policy, set ', h('code', null, 'WOODSHED_CLOUD_SUPERVISED=1'), '.'));
+        'Under systemd with Restart=on-failure it offers one; in Docker with a restart policy, set ', h('code', null, 'WOODSHED_SUPERVISED=1'), '.'));
   }
 
   function render() {

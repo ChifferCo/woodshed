@@ -24,7 +24,7 @@ test('without a GitHub App there are no tokens', () => {
 });
 
 test('each project\'s tokens reach its repo alone, from its own installation', async () => {
-  const projects = loadProjects({ WOODSHED_CLOUD_PROJECTS: '[{"name":"app","repo":"acme/app","default":true},{"name":"tools","repo":"other/tools","installationId":"42"}]' });
+  const projects = loadProjects({ WOODSHED_PROJECTS: '[{"name":"app","repo":"acme/app","default":true},{"name":"tools","repo":"other/tools","installationId":"42"}]' });
   const github = fakeGitHub();
   const tokens = createProjectTokens({ config: { projects, githubApp: { appId: '1', installationId: '7' } }, privateKey, fetchImpl: github.fetchImpl, now });
 

@@ -38,8 +38,8 @@ test('with no domain, Caddy gets each name\'s certificate on demand, asking the 
   const stack = read('baseBoxStack.sh.tftpl');
   assert.match(stack, /%\{ if !own_domain ~\}\n[^%]*on_demand_tls \{\n\t\task http:\/\/127\.0\.0\.1:7692\/tls-ask\n\t\}\n%\{ endif ~\}/);
   assert.match(stack, /%\{ else ~\}\n\t\t# [^\n]*\n\t\ton_demand\n%\{ endif ~\}/);
-  assert.match(stack, /%\{ if !own_domain ~\}\n {6}#[^\n]*\n {6}- WOODSHED_CLOUD_TLS_ASK_PORT=7692\n%\{ endif ~\}/);
-  assert.equal(loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_TLS_ASK_PORT: '7692' }).tlsAskPort, 7692);
+  assert.match(stack, /%\{ if !own_domain ~\}\n {6}#[^\n]*\n {6}- \$\{prefix\}TLS_ASK_PORT=7692\n%\{ endif ~\}/);
+  assert.equal(loadConfig({ GH_TOKEN: 'x', WOODSHED_TLS_ASK_PORT: '7692' }).tlsAskPort, 7692);
   // The console's other ports on the box: its own, and the session API's.
   assert.doesNotMatch(stack, /:7692:|7692:7692/, 'nothing else on the box takes 7692');
 });

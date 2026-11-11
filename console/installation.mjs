@@ -297,7 +297,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
   // A store the dashboard has not chosen yet holds no client secret either, so sign-in could never come on.
   if (config.requireSignIn && !trusted && (!auth || secrets?.configured?.() === false)) {
-    throw new Error('WOODSHED_CLOUD_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_CLOUD_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET');
+    throw new Error('WOODSHED_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_TRUSTED_IDENTITY_SECRET');
   }
   // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
   const settings = secrets && (appKey || config.githubBroker)

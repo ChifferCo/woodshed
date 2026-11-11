@@ -7,7 +7,7 @@ import { failedComment, refusalComment, resumeComment, startComment } from './fl
 import { appManifest } from './githubAppSetup.mjs';
 import { createHandler, pageShell } from './server.mjs';
 
-const BASE_ENV = { GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: 'acme/app' };
+const BASE_ENV = { GH_TOKEN: 'x', WOODSHED_REPO: 'acme/app' };
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
@@ -41,21 +41,21 @@ function warnings(t) {
 test('the console is called Woodshed unless the installation names it', () => {
   assert.equal(DEFAULT_CONSOLE_NAME, 'Woodshed');
   assert.equal(loadConfig(BASE_ENV).consoleName, 'Woodshed');
-  assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: '   ' }), 'Woodshed', 'blank is unset');
-  assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: '  Acme Woodshed ' }), 'Acme Woodshed', 'trimmed');
-  assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: 'Café: the shed #2 & co.' }), 'Café: the shed #2 & co.');
-  assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: 'x'.repeat(40) }), 'x'.repeat(40));
+  assert.equal(consoleName({ WOODSHED_CONSOLE_NAME: '   ' }), 'Woodshed', 'blank is unset');
+  assert.equal(consoleName({ WOODSHED_CONSOLE_NAME: '  Acme Woodshed ' }), 'Acme Woodshed', 'trimmed');
+  assert.equal(consoleName({ WOODSHED_CONSOLE_NAME: 'Café: the shed #2 & co.' }), 'Café: the shed #2 & co.');
+  assert.equal(consoleName({ WOODSHED_CONSOLE_NAME: 'x'.repeat(40) }), 'x'.repeat(40));
 });
 
 test('a name the console cannot show safely gives the default, with one warning for each value', (t) => {
   const seen = warnings(t);
   for (const bad of ['<script>alert(1)</script>', 'Acme "Woodshed"', "Acme's", 'a`b', 'x'.repeat(41), 'line\nbreak', 'tab\there']) {
-    assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: bad }), 'Woodshed', JSON.stringify(bad));
+    assert.equal(consoleName({ WOODSHED_CONSOLE_NAME: bad }), 'Woodshed', JSON.stringify(bad));
   }
   assert.equal(seen.length, 7);
-  assert.equal(consoleName({ WOODSHED_CLOUD_CONSOLE_NAME: '<script>alert(1)</script>' }), 'Woodshed');
+  assert.equal(consoleName({ WOODSHED_CONSOLE_NAME: '<script>alert(1)</script>' }), 'Woodshed');
   assert.equal(seen.length, 7, 'the same bad value warns once');
-  assert.match(seen[0][0], /WOODSHED_CLOUD_CONSOLE_NAME/);
+  assert.match(seen[0][0], /WOODSHED_CONSOLE_NAME/);
   assert.doesNotMatch(JSON.stringify(seen), /<script/i, 'the warning does not repeat the value');
 });
 
@@ -79,7 +79,7 @@ test('by default the pages and the installed app are called Woodshed', async (t)
 });
 
 test('a configured name is the page title, the installed app\'s name and what the sign-in page reads', async (t) => {
-  const port = await consoleOn(t, { WOODSHED_CLOUD_CONSOLE_NAME: 'Acme Woodshed' });
+  const port = await consoleOn(t, { WOODSHED_CONSOLE_NAME: 'Acme Woodshed' });
   const manifest = JSON.parse(await getBody(port, '/manifest.webmanifest'));
   assert.equal(manifest.name, 'Acme Woodshed');
   assert.equal(manifest.short_name, 'Acme Woodshed');
@@ -93,7 +93,7 @@ test('a configured name is the page title, the installed app\'s name and what th
 
 test('a hostile name never reaches a page or the manifest', async (t) => {
   warnings(t);
-  const port = await consoleOn(t, { WOODSHED_CLOUD_CONSOLE_NAME: '</title><script>alert(1)</script>' });
+  const port = await consoleOn(t, { WOODSHED_CONSOLE_NAME: '</title><script>alert(1)</script>' });
   assert.equal(JSON.parse(await getBody(port, '/manifest.webmanifest')).name, 'Woodshed');
   const login = await getBody(port, '/login');
   assert.doesNotMatch(login, /alert\(1\)/);

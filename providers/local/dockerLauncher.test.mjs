@@ -40,8 +40,10 @@ test('a session gets its repo\'s and the image\'s repo\'s installation project f
 
   const own = await launch({ projectFilesDir: dir });
   assert.deepEqual(mountsOf(own.args), [`type=bind,source=${path.join(dir, 'acme/app.yaml')},target=${PROJECT_FILES_MOUNT}/acme/app.yaml,readonly`]);
-  assert.equal(own.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, PROJECT_FILES_MOUNT);
-  assert.ok(own.args.includes('WOODSHED_CLOUD_PROJECT_FILES_DIR'), 'passed by name, as every variable is');
+  assert.equal(own.env.WOODSHED_PROJECT_FILES_DIR, PROJECT_FILES_MOUNT);
+  assert.ok(own.args.includes('WOODSHED_PROJECT_FILES_DIR'), 'passed by name, as every variable is');
+  assert.equal(own.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, PROJECT_FILES_MOUNT, 'and under its old name, for an older session image');
+  assert.ok(own.args.includes('WOODSHED_CLOUD_PROJECT_FILES_DIR'));
 
   const other = await launch({ projectFilesDir: dir, env: { PROJECT_REPO: 'other/web' } });
   assert.deepEqual(mountsOf(other.args), [
@@ -51,7 +53,8 @@ test('a session gets its repo\'s and the image\'s repo\'s installation project f
 
   const none = await launch({ projectFilesDir: dir, repo: 'acme/nothing' });
   assert.deepEqual(mountsOf(none.args), []);
-  assert.equal(none.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined, 'a repo with no file there reads none, as one with no folder');
+  assert.equal(none.env.WOODSHED_PROJECT_FILES_DIR, undefined, 'a repo with no file there reads none, as one with no folder');
+  assert.equal(none.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined);
   assert.deepEqual(mountsOf((await launch({ projectFilesDir: null })).args), []);
   assert.deepEqual(mountsOf((await launch({ projectFilesDir: path.join(dir, 'missing') })).args), []);
 });

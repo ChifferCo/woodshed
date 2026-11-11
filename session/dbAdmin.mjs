@@ -22,7 +22,7 @@
 // reads are files in a folder mounted read-only, `--secrets-dir`, in place of Secrets Manager's `--region`.
 //
 // Which engines a run has is which engines' flags the entryPoint gives (each engine's `flags`): the installation's
-// choice. `--project-files-dir` is the installation's folder of project files (WOODSHED_CLOUD_PROJECT_FILES_DIR), read
+// choice. `--project-files-dir` is the installation's folder of project files (WOODSHED_PROJECT_FILES_DIR), read
 // for a repo with no `.woodshed/project.yaml` of its own. A flag, not the variable: the project file names the commands
 // the seed runs, so a run's overrides must not be able to point the task at another one. A project database on an
 // engine the run has no flags for stops it; an installation with no database has no db-admin task at all.
@@ -457,7 +457,7 @@ export function seedEnv({ flags, env, databases, user, name, password, files }) 
     HOME: os.userInfo().homedir,
     ...Object.assign({}, ...databases.map((d) => engine(d.engine).seedEnv({ flags, user, password, name }))),
     // The entrypoint's `seed` reads the project file again, for the commands: the same one as this task.
-    ...(flags['project-files-dir'] && { WOODSHED_CLOUD_PROJECT_FILES_DIR: flags['project-files-dir'] }),
+    ...(flags['project-files-dir'] && { WOODSHED_PROJECT_FILES_DIR: flags['project-files-dir'] }),
     ...files,
   };
 }

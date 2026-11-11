@@ -42,7 +42,7 @@ variable "sessions_on_github_repo" {
 # Empty, the default, leaves the console on github_repo alone, as before projects (console/projects.mjs), or on none
 # without sessions_on_github_repo.
 variable "projects" {
-  description = "The repos the console starts sessions on, handed to it as WOODSHED_CLOUD_PROJECTS: each with a name (lowercase words joined by single dashes, at most 32 long), its repo (owner/name), whether it is the default, and, when the App is installed on its repo's account under another installation, that installation's ID. [] (the default) for github_repo alone, or for none when sessions_on_github_repo is false. Every project uses this installation's session image, task definition and databases for now."
+  description = "The repos the console starts sessions on, handed to it as WOODSHED_PROJECTS: each with a name (lowercase words joined by single dashes, at most 32 long), its repo (owner/name), whether it is the default, and, when the App is installed on its repo's account under another installation, that installation's ID. [] (the default) for github_repo alone, or for none when sessions_on_github_repo is false. Every project uses this installation's session image, task definition and databases for now."
   type = list(object({
     name            = string
     repo            = string
@@ -72,8 +72,8 @@ variable "projects" {
     condition     = length(var.projects) <= 1 || length([for p in var.projects : p if p.default]) == 1
     error_message = "With more than one project, exactly one is the default."
   }
-  # WOODSHED_CLOUD_REPO stays github_repo, and the console refuses a list whose default is another repo. Without
-  # sessions_on_github_repo the console gets no WOODSHED_CLOUD_REPO, so any repo may be the default.
+  # WOODSHED_REPO stays github_repo, and the console refuses a list whose default is another repo. Without
+  # sessions_on_github_repo the console gets no WOODSHED_REPO, so any repo may be the default.
   validation {
     condition     = length(var.projects) == 0 || !var.sessions_on_github_repo || anytrue([for p in var.projects : lower(p.repo) == lower(var.github_repo) && (p.default || length(var.projects) == 1)])
     error_message = "The default project's repo is github_repo, unless sessions_on_github_repo is false."
@@ -185,7 +185,7 @@ variable "max_sessions" {
 }
 
 variable "console_name" {
-  description = "What the console calls itself: its pages' titles, the installed app's name and its GitHub comments, as WOODSHED_CLOUD_CONSOLE_NAME."
+  description = "What the console calls itself: its pages' titles, the installed app's name and its GitHub comments, as WOODSHED_CONSOLE_NAME."
   type        = string
   default     = "Woodshed"
 
