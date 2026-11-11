@@ -191,7 +191,13 @@ are read at the full speed, as before.
 
 At most 5 shared sessions run at once; the rest queue. A session pauses after
 an hour without claude working, or stops at 8 hours in all; a stop commits and
-pushes work in progress first (statusd `/checkpoint`). Those numbers, and the
+pushes work in progress first (statusd `/checkpoint`). Once the session's pull
+request has merged or closed, which the console reads from GitHub at the stop,
+the push leaves the branch alone, since GitHub may have deleted it: work the
+remote lacks goes to `refs/woodshed/checkpoints/<session id>`, and the console
+logs `fleet: checkpoint pushed` with `pushedTo`. To get it back,
+`git fetch origin refs/woodshed/checkpoints/<id>` and check out `FETCH_HEAD`; a
+Resume picks it up by itself. Those numbers, and the
 retention ones below, are the defaults: the Console settings page changes them.
 My Woodshed sessions take no shared slot: each person may have 3 running or
 waiting, which the same page changes. On AWS, above both is the account's

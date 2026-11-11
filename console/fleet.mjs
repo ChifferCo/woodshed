@@ -449,11 +449,29 @@ export function createFleet({
     await startQueued();
   }
 
+  // GitHub deletes a merged pull request's branch, often seconds before the stop that follows the merge: pushing the
+  // branch then brings it back (#13, #16). The checkpoint goes to a ref of the session's own instead.
+  async function prClosedForCheckpoint(session) {
+    if (isAsk(session)) return false;
+    const number = pullNumber(session.prUrl) ?? (session.kind === 'pr' ? session.number : null);
+    if (!number) return false;
+    try {
+      const pull = await githubOf(projectFor(config, session)).pull(number);
+      const closed = pull?.state === 'closed';
+      if (closed) console.log('fleet: pull request closed, the checkpoint keeps off its branch', { id: session.id, number, merged: Boolean(pull.merged_at) });
+      return closed;
+    } catch (err) {
+      console.warn('fleet: pull request state not read, the checkpoint pushes the branch', { id: session.id, number, message: firstLine(err) });
+      return false;
+    }
+  }
+
   async function checkpointAndRemove(session) {
     if (session.endpoint) {
       try {
-        const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS });
-        console.log('fleet: checkpoint pushed', { id: session.id, committed: result?.committed, head: result?.head });
+        const body = (await prClosedForCheckpoint(session)) ? { branch: false } : undefined;
+        const result = await statusd(session, 'POST', '/checkpoint', { timeoutMs: CHECKPOINT_TIMEOUT_MS, body });
+        console.log('fleet: checkpoint pushed', { id: session.id, committed: result?.committed, head: result?.head, pushedTo: result?.pushedTo ?? null });
       } catch (err) {
         console.warn('fleet: checkpoint failed, stopping anyway', { id: session.id, message: firstLine(err) });
       }

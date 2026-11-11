@@ -378,6 +378,42 @@ test('an idle session is checkpointed and stopped', async () => {
   assert.ok(calls.statusd.some((c) => c.path === '/checkpoint'));
 });
 
+// GitHub deletes a merged pull request's branch, and a checkpoint pushed to it after that brings it back (#13).
+async function runningWithPull({ state, merged = false }) {
+  const ctx = setup();
+  ctx.github.pull = async (number) => {
+    if (state === 'unreadable') throw new Error('gh: HTTP 502');
+    return { number, state, merged_at: merged ? '2026-10-21T10:30:00Z' : null, head: { ref: 'woodshed/42-x' } };
+  };
+  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = ctx.fleet.sessions();
+  ctx.statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/7' };
+  await ctx.fleet.tick();
+  return { ...ctx, session, checkpoints: () => ctx.calls.statusd.filter((c) => c.path === '/checkpoint') };
+}
+
+test('a stop after the session\'s pull request merged or closed keeps its checkpoint off the branch', async () => {
+  for (const [state, merged] of [['closed', true], ['closed', false]]) {
+    const { fleet, session, checkpoints } = await runningWithPull({ state, merged });
+    await fleet.stop(session, 'posted to Slack');
+    assert.equal(session.status, 'stopped');
+    assert.deepEqual(checkpoints().map((c) => c.body), [{ branch: false }], `merged: ${merged}`);
+  }
+});
+
+test('a manual stop with the pull request open, or its state unreadable, pushes the branch as before', async () => {
+  for (const state of ['open', 'unreadable']) {
+    const { fleet, session, checkpoints } = await runningWithPull({ state });
+    await fleet.stop(session, 'stopped from the console', { by: 'joel' });
+    assert.equal(session.status, 'stopped');
+    assert.deepEqual(checkpoints().map((c) => c.body), [undefined], state);
+  }
+  const { fleet, calls } = setup();
+  await fleet.handleTrigger({ number: 43, login: 'joel', trigger: 'label', title: 'no pull request yet', kind: 'issue' });
+  await fleet.stop(fleet.sessions()[0], 'stopped from the console');
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/checkpoint').map((c) => c.body), [undefined]);
+});
+
 test('the first poll only records where GitHub is, so history is never replayed', async () => {
   const { fleet, github, store } = setup();
   github.events = [{ id: 99, event: 'labeled', label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 1, title: 'old' } }];

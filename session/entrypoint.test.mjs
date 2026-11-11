@@ -667,7 +667,7 @@ function checkoutWithSubmodule({ withSubmodule }) {
     'ls woodshed 2>/dev/null || echo "no woodshed"',
   ].join('\n');
   try {
-    return spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...env, REPO_DIR: checkout, BRANCH: 'woodshed/task-1', DEFAULT_BRANCH: 'main' } });
+    return spawnSync('bash', ['-c', script], { encoding: 'utf8', env: { ...env, REPO_DIR: checkout, BRANCH: 'woodshed/task-1', DEFAULT_BRANCH: 'main', SESSION_ID: '0a1b2c3d' } });
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -683,4 +683,103 @@ test('a checkout with a submodule gets it at the commit\'s pin, and one without 
   assert.equal(without.status, 0, without.stderr);
   assert.doesNotMatch(without.stdout, /Submodules/);
   assert.match(without.stdout, /no woodshed/);
+});
+
+// fetchBranch and checkoutBranch as the entrypoint has them, on an image's clone of a bare remote standing for GitHub,
+// made before the session's branch merged and went. The remote keeps the last stop's work on the session's ref.
+function resumeAfterMerge({ pr = null, branchKept = false, checkpoint = true, diverged = false }) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-resume-'));
+  const env = { PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1' };
+  const git = (args, cwd = tmp) => execFileSync('git', args, { cwd, encoding: 'utf8', env }).trim();
+  const commit = (cwd, file) => {
+    fs.writeFileSync(path.join(cwd, file), `${file}\n`);
+    git(['add', '-A'], cwd);
+    git(['-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '-m', file], cwd);
+  };
+  const remote = path.join(tmp, 'app.git');
+  git(['init', '-q', '--bare', '-b', 'main', remote]);
+  const author = path.join(tmp, 'author');
+  git(['clone', '-q', remote, author]);
+  commit(author, 'README.md');
+  git(['push', '-q', 'origin', 'HEAD:main'], author);
+  git(['checkout', '-q', '-b', 'woodshed/42-0a1b2c3d'], author);
+  commit(author, 'pushed.txt');
+  git(['push', '-q', 'origin', 'HEAD:refs/heads/woodshed/42-0a1b2c3d', 'HEAD:refs/pull/7/head'], author);
+  const checkout = path.join(tmp, 'work');
+  git(['clone', '-q', remote, checkout]);
+  if (!branchKept) git(['update-ref', '-d', 'refs/heads/woodshed/42-0a1b2c3d'], remote);
+  commit(author, 'wip.txt');
+  if (checkpoint) git(['push', '-q', 'origin', 'HEAD:refs/woodshed/checkpoints/0a1b2c3d'], author);
+  if (diverged) {
+    // The branch moved on from where the checkpoint started, without it.
+    git(['checkout', '-q', '-B', 'later', 'HEAD~1'], author);
+    commit(author, 'later.txt');
+    git(['push', '-q', 'origin', 'HEAD:refs/heads/woodshed/42-0a1b2c3d'], author);
+  }
+  const script = [
+    'set -euo pipefail',
+    'log() { echo "[woodshed] $*"; }',
+    'die() { log "ERROR: $*"; exit 1; }',
+    // gh fetches the branch by name, which a merge deleted; it still names the branch.
+    `gh() { if [ "$1 $2" = "pr checkout" ]; then ${branchKept ? 'git fetch -q origin woodshed/42-0a1b2c3d && git checkout -q -B woodshed/42-0a1b2c3d FETCH_HEAD' : 'return 1'}; else echo woodshed/42-0a1b2c3d; fi; }`,
+    fn('fetchBranch'),
+    fn('updateSubmodules'),
+    fn('checkoutPr'),
+    fn('checkoutBranch'),
+    'fetchBranch',
+    'checkoutBranch',
+    'echo "branch=$BRANCH files=$(git ls-files | tr "\\n" " ")"',
+  ].join('\n');
+  try {
+    return spawnSync('bash', ['-c', script], {
+      encoding: 'utf8',
+      env: { ...env, REPO_DIR: checkout, SESSION_ID: '0a1b2c3d', DEFAULT_BRANCH: 'main', ...(pr ? { PR: pr } : { BRANCH: 'woodshed/42-0a1b2c3d' }) },
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test('a resume after the pull request merged and its branch went picks up the session\'s checkpoint ref', () => {
+  const run = resumeAfterMerge({});
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /Resumed the checkpoint of a closed pull request/);
+  assert.match(run.stdout, /branch=woodshed\/42-0a1b2c3d files=README\.md pushed\.txt wip\.txt/);
+
+  const none = resumeAfterMerge({ checkpoint: false });
+  assert.equal(none.status, 0, none.stderr);
+  assert.match(none.stdout, /Created branch from the default branch/, 'nothing was left over: the merged work is on main');
+  assert.match(none.stdout, /files=README\.md \n/);
+});
+
+test('a resume of a branch that is still there keeps it, and moves it to a checkpoint ahead of it', () => {
+  const kept = resumeAfterMerge({ branchKept: true, checkpoint: false });
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /Resumed existing branch/);
+  assert.doesNotMatch(kept.stdout, /checkpoint/);
+  assert.match(kept.stdout, /files=README\.md pushed\.txt \n/);
+
+  const reopened = resumeAfterMerge({ branchKept: true });
+  assert.equal(reopened.status, 0, reopened.stderr);
+  assert.match(reopened.stdout, /Moved the branch to the checkpoint of a closed pull request/);
+  assert.match(reopened.stdout, /files=README\.md pushed\.txt wip\.txt/);
+});
+
+test('a PR session whose branch a merge deleted checks out the PR\'s head, then its checkpoint', () => {
+  const run = resumeAfterMerge({ pr: '7' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /Checked out the head of a PR whose branch is gone \(pr: 7, branch: woodshed\/42-0a1b2c3d\)/);
+  assert.match(run.stdout, /Moved the branch to the checkpoint/);
+  assert.match(run.stdout, /branch=woodshed\/42-0a1b2c3d files=README\.md pushed\.txt wip\.txt/);
+
+  const kept = resumeAfterMerge({ pr: '7', branchKept: true, checkpoint: false });
+  assert.equal(kept.status, 0, kept.stderr);
+  assert.match(kept.stdout, /Checked out PR head \(pr: 7, branch: woodshed\/42-0a1b2c3d\)/);
+});
+
+test('a checkpoint that diverged from a kept branch is left alone, with a warning', () => {
+  const run = resumeAfterMerge({ branchKept: true, diverged: true });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /WARNING: the checkpoint of a closed pull request has diverged from the branch/);
+  assert.match(run.stdout, /files=README\.md later\.txt pushed\.txt \n/);
 });

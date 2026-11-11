@@ -492,3 +492,83 @@ test('handleUpgrade passes the editor\'s websocket through with the statusd toke
   assert.match(await editorUpgrade({}), /^HTTP\/1\.1 401/);
   assert.match(await editorUpgrade({ authorization: 'Bearer tok' }, { editorOn: false }), /^HTTP\/1\.1 404/, 'the project file turns it off');
 });
+
+// A session's checkout of a bare remote that stands for GitHub, on a branch pushed once, as the session left it.
+async function statusdWithRemote(t) {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-checkpoint-'));
+  t.after(() => fs.rm(tmp, { recursive: true, force: true }));
+  const remote = path.join(tmp, 'remote.git');
+  const repo = path.join(tmp, 'work');
+  const git = async (cwd, ...args) => (await promisify(execFile)('git', ['-C', cwd, ...args])).stdout.trim();
+  await git(tmp, 'init', '-q', '--bare', '-b', 'main', remote);
+  await git(tmp, 'clone', '-q', remote, repo);
+  await git(repo, 'config', 'user.name', 't');
+  await git(repo, 'config', 'user.email', 't@t');
+  await git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+  await git(repo, 'push', '-q', 'origin', 'HEAD:main');
+  await git(repo, 'checkout', '-q', '-b', 'woodshed/42-0a1b2c3d');
+  await fs.writeFile(path.join(repo, 'done.txt'), 'pushed\n');
+  await git(repo, 'add', '-A');
+  await git(repo, 'commit', '-q', '-m', 'work');
+  await git(repo, 'push', '-q', '-u', 'origin', 'HEAD');
+  const port = await freePort();
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./statusd.mjs', import.meta.url))], {
+    env: { ...process.env, SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, SESSION_ID: '0a1b2c3d', WOODSHED_CONSOLE_URL: '', SESSION_MODE: '', AGENT: '' },
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
+  t.after(() => child.kill());
+  let out = '';
+  await new Promise((resolve) => child.stdout.on('data', (chunk) => { out += chunk; if (out.includes('listening')) resolve(); }));
+  const checkpoint = (body) => fetch(`http://127.0.0.1:${port}/checkpoint`, {
+    method: 'POST', headers: { authorization: 'Bearer sess', 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined,
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  // What the remote has, branches and every other ref, by name.
+  const remoteRefs = async () => (await git(remote, 'for-each-ref', '--format=%(refname)')).split('\n').filter(Boolean);
+  // GitHub deleting the branch once its pull request merged.
+  const deleteBranch = () => git(remote, 'update-ref', '-d', 'refs/heads/woodshed/42-0a1b2c3d');
+  return { repo, remote, git, checkpoint, remoteRefs, deleteBranch, log: () => out };
+}
+
+test('a checkpoint told the pull request closed, with nothing the remote lacks, pushes nothing', async (t) => {
+  const { checkpoint, remoteRefs, deleteBranch, log } = await statusdWithRemote(t);
+  await deleteBranch();
+  const { status, body } = await checkpoint({ branch: false });
+  assert.equal(status, 200);
+  assert.deepEqual([body.committed, body.pushedTo], [false, null]);
+  assert.deepEqual(await remoteRefs(), ['refs/heads/main'], 'the deleted branch stays deleted');
+  assert.match(log(), /statusd: checkpoint skipped the push, the pull request is closed/);
+});
+
+test('a checkpoint told the pull request closed pushes uncommitted work and unpushed commits to the session\'s own ref only', async (t) => {
+  const { repo, remote, git, checkpoint, remoteRefs, deleteBranch } = await statusdWithRemote(t);
+  await deleteBranch();
+  await fs.writeFile(path.join(repo, 'local.txt'), 'committed, never pushed\n');
+  await git(repo, 'add', '-A');
+  await git(repo, 'commit', '-q', '-m', 'local');
+  await fs.writeFile(path.join(repo, 'wip.txt'), 'uncommitted\n');
+
+  const { body } = await checkpoint({ branch: false });
+  assert.deepEqual([body.committed, body.pushedTo], [true, 'refs/woodshed/checkpoints/0a1b2c3d']);
+  assert.deepEqual(await remoteRefs(), ['refs/heads/main', 'refs/woodshed/checkpoints/0a1b2c3d']);
+  assert.equal(await git(remote, 'rev-parse', '--short', 'refs/woodshed/checkpoints/0a1b2c3d'), body.head);
+  assert.deepEqual((await git(remote, 'ls-tree', '--name-only', 'refs/woodshed/checkpoints/0a1b2c3d')).split('\n'), ['done.txt', 'local.txt', 'wip.txt']);
+
+  // A later stop's work, on another commit than the ref's, writes over it rather than failing on it.
+  await git(repo, 'reset', '-q', '--hard', 'HEAD~1');
+  await fs.writeFile(path.join(repo, 'other.txt'), 'other\n');
+  const again = await checkpoint({ branch: false });
+  assert.equal(again.status, 200);
+  assert.equal(await git(remote, 'rev-parse', '--short', 'refs/woodshed/checkpoints/0a1b2c3d'), again.body.head);
+});
+
+test('a checkpoint with no body, as every other stop sends, pushes the branch as before', async (t) => {
+  const { repo, remote, git, checkpoint, remoteRefs } = await statusdWithRemote(t);
+  await fs.writeFile(path.join(repo, 'wip.txt'), 'uncommitted\n');
+  const { body } = await checkpoint();
+  assert.deepEqual([body.committed, body.pushedTo], [true, 'refs/heads/woodshed/42-0a1b2c3d']);
+  assert.deepEqual(await remoteRefs(), ['refs/heads/main', 'refs/heads/woodshed/42-0a1b2c3d']);
+  assert.equal(await git(remote, 'rev-parse', '--short', 'refs/heads/woodshed/42-0a1b2c3d'), body.head);
+
+  const clean = await checkpoint({ branch: true });
+  assert.deepEqual([clean.body.committed, clean.body.pushedTo], [false, 'refs/heads/woodshed/42-0a1b2c3d']);
+});
