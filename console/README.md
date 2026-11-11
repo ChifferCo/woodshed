@@ -884,7 +884,11 @@ in the shed, and runs its `app.stop`, after interrupting a start still in
 progress. Half an app says which half: `API down` when the page loads but every
 call under it would fail, `frontend down` when only the backend answers (Start
 app then starts the frontend). The GitHub comment that announces a session gives
-the app's address.
+the app's address. A project file with no `app` has nothing to start, so the button is **Set up app**
+instead: it types a request into the session's claude (`SETUP_APP_PROMPT` in `console/fleet.mjs`; held until its turn
+ends, as a message would be) to work out how the app runs, write the `app` section and commit it. statusd reads a
+project with no app again on each Start app, so the button turns into **Start app** once the file has one, and that
+start runs it.
 
 The session has 2 vCPU, so a start is the one moment its CPU badge runs high:
 both cores are busy while the app's servers load, then the container idles.

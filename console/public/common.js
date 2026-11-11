@@ -510,6 +510,10 @@
     return button;
   }
 
+  function setupAppToast(sent) {
+    return sent === 'queued' ? 'claude will be asked to set up the app when its turn ends' : 'Asked claude to set up the app';
+  }
+
   /**
    * The app's controls, after the shed's app line: Open app while it runs, Start app otherwise, and Stop app
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
@@ -541,6 +545,29 @@
         title: starting ? 'Starting the backend and the frontend; usually one to three minutes' : 'Stopping the backend and the frontend',
       }, h('span', { class: 'spin', 'aria-hidden': 'true' }), starting ? (small ? 'Starting' : 'Starting app…') : (small ? 'Stopping' : 'Stopping app…'));
       return group(busy, starting ? stop : null);
+    }
+    // The project file has no app: Start app would have nothing to run, so this asks claude to write one.
+    if (s.app === 'none') {
+      if (s.kind === 'ask') return null;
+      const setup = h('button', {
+        type: 'button', class: `btn btn-plain${size}`,
+        title: 'This project\'s .woodshed/project.yaml has no app, so there is nothing to start. Asks claude to work out how the app runs and write it there.',
+        onclick: async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setup.disabled = true;
+          try {
+            const { sent } = await appAction(s, 'setup');
+            window.Woodshed.shell?.toast(setupAppToast(sent));
+          } catch (err) {
+            window.alert(`Could not set up the app: ${err.message}`);
+          }
+          onDone();
+        },
+      }, 'Set up app');
+      const ctl = group(setup);
+      ctl.dataset.idle = 'true';
+      return ctl;
     }
     const halfUp = s.app === 'frontend-down';
     const again = s.app === 'failed';
@@ -1000,7 +1027,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

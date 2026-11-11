@@ -91,6 +91,7 @@
 //   GET  /api/me                 who is signed in, and whether sign-in is on
 //   POST /api/sessions/<id>/app/start  start the session's app
 //   POST /api/sessions/<id>/app/stop   stop it
+//   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
 //   GET  /api/sessions/<id>/review     what the session's branch changes, from GitHub (review.mjs)
 //   *    https://<id>.<app domain>/...  the session's running app, through its statusd (appProxy.mjs)
@@ -223,7 +224,7 @@ function consoleManifest(name) {
 const PWA_PATHS = new Set(['/manifest.webmanifest', '/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png']);
 const MAX_RESUME_MESSAGE_CHARS = 4000;
 const CLAUDE_LOGIN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/claude-login$/;
-const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop)$/;
+const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop|setup)$/;
 const REVIEW_RE = /^\/api\/sessions\/([0-9a-f]{8})\/review$/;
 const SECRET_RE = /^\/api\/secrets\/([a-z0-9-]+)(\/reveal)?$/;
 const SETUP_WRITE_RE = /^\/api\/setup\/github\/(manifest|paste|installation|restart)$/;
@@ -1553,9 +1554,14 @@ export function createHandler({
       const session = findFor(id, login);
       if (!session) return reply(res, 404, { error: 'no such session' });
       try {
+        if (action === 'setup') {
+          const { session: after, sent } = await fleet.setupApp(session);
+          return reply(res, 200, { ...publicSession(after), sent });
+        }
         return reply(res, 200, publicSession(await (action === 'start' ? fleet.startApp(session) : fleet.stopApp(session))));
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
+        if (err.refused) return reply(res, 409, { error: err.message });
         const message = String(err?.message ?? err).split('\n')[0];
         console.warn('console: app action failed', { id: session.id, action, message });
         // A session started before its image had the action has a statusd without the route.

@@ -31,7 +31,8 @@ export const START_STEPS = ['container', 'settings', 'home', 'branch', 'database
 
 const CLAUDE_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export const APP_STATES = new Set(['running', 'api-down', 'frontend-down', 'starting', 'stopping', 'failed', 'stopped']);
+// `none`: the project file has no app, so the page offers Set up app instead of Start app.
+export const APP_STATES = new Set(['running', 'api-down', 'frontend-down', 'starting', 'stopping', 'failed', 'stopped', 'none']);
 
 /** @returns {string} 8 hex characters, also ttyd's base path and part of the branch name */
 export function newSessionId() {

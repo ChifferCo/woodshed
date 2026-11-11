@@ -43,6 +43,15 @@ const NO_ROOM_RETRY_MS = 60_000;
 // The triggers whose starter GitHub vouches for, so the only ones a personal Claude plan may run on.
 const GITHUB_TRIGGERS = new Set(['label', 'comment']);
 
+// What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
+// the session image, so they are named here.
+export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
+  + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
+  + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
+  + 'same port twice for one server), and `logs` (a name for each server\'s log file). Write .woodshed/project.yaml '
+  + 'with `version: 1` if there is none. Run the start command yourself and check both ports answer, run the stop, then '
+  + 'commit the file on this branch. Start app reads the file again, so tell me when to press it.';
+
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
 }
@@ -1478,6 +1487,17 @@ export function createFleet({
     return session;
   }
 
+  // A project file with no app leaves Start app nothing to run: Set up app asks the session's claude to write one, which
+  // its statusd reads at the next Start app.
+  async function setupApp(session) {
+    if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
+    if (isAsk(session)) throw Object.assign(new Error('a question from Slack has no app'), { refused: true });
+    if (session.app !== 'none') throw Object.assign(new Error('the project already has an app: Start app runs it'), { refused: true });
+    const sent = await send(session, SETUP_APP_PROMPT);
+    console.log('fleet: app setup asked', { id: session.id, sent });
+    return { session, sent };
+  }
+
   // A private session's claude is asked for /woodshed:remote-control, which signs in without leaving it
   // (session/bin/woodshed-login); an image from before that command types woodshed-login at the Terminal tab instead.
   // `where` is the tab the person pastes the code in.
@@ -1499,7 +1519,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

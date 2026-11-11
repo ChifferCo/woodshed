@@ -368,12 +368,13 @@ secrets.
   `limit` and how many were `ahead`, then `fleet: starting session` when a
   slot frees up. A Done or Needs you session still holds its task until the
   idle pause.
-- **A session fails at start with `.woodshed/project.yaml: …`, or has no Start app.** The project file
+- **A session fails at start with `.woodshed/project.yaml: …`, or shows Set up app instead of Start app.** The project file
   (docs/reference.md, "The project file") does not parse: the error names the field (`is missing app`, `has envfiles, which is not a field`), or says
   `not read as YAML (line N: …)` for YAML that `woodshed/shared/yamlLite.mjs` does not read. A field that can be none
   may be left out; a misspelt one never is read as none. The same file broken on a branch makes `readyGate` refuse `gh pr create` with `Not opened:
   .woodshed/project.yaml: …`. statusd logs `statusd: project file not read, no app` and `statusd: app start skipped,
-  the project has no app`. The session log's `Project file read (from: …)` says whether it read the checkout's
+  the project has no app`; Set up app logs `fleet: app setup asked` with `sent`, and statusd `statusd: the project file has
+  an app now` once claude wrote one, or `project file not read again, still no app` with the reason. The session log's `Project file read (from: …)` says whether it read the checkout's
   copy (`checkout`), the default branch's (`default branch`) or none. To see what it read, `cd` into the session's checkout and run
   `node /opt/woodshed/shared/project.mjs get app`.
 - **A session's dependencies are missing or old, or `/tmp/woodshed-deps` says `failed`.** At start the session's log
