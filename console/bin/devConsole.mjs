@@ -173,7 +173,7 @@ function serveSessionApp(consolePort) {
   });
   return new Promise((resolve, reject) => {
     front.once('error', reject).listen(Number(port), '127.0.0.1', () => {
-      console.log('dev console: answering as the session\'s app too', { port, consolePort, sessionId });
+      console.log('dev console: answering as the session\'s app too', { port, consolePort });
       resolve();
     });
   });
