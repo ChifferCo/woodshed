@@ -17,17 +17,17 @@ output "ecr_repositories" {
 }
 
 output "github_images_role_arn" {
-  description = "The WOODSHED_CLOUD_AWS_ROLE_ARN repository variable for woodshed-cloud-image.yml."
+  description = "The WOODSHED_CLOUD_AWS_ROLE_ARN repository variable, for the deploy workflow's image jobs."
   value       = aws_iam_role.github_images.arn
 }
 
 output "github_plan_role_arn" {
-  description = "The WOODSHED_CLOUD_PLAN_ROLE_ARN repository variable for woodshed-cloud-infra.yml."
+  description = "The WOODSHED_CLOUD_PLAN_ROLE_ARN repository variable, for the deploy workflow's plan job."
   value       = aws_iam_role.github_infra["plan"].arn
 }
 
 output "github_infra_role_arn" {
-  description = "The WOODSHED_CLOUD_INFRA_ROLE_ARN repository variable for woodshed-cloud-infra.yml."
+  description = "The WOODSHED_CLOUD_INFRA_ROLE_ARN repository variable, for the deploy workflow's apply job."
   value       = aws_iam_role.github_infra["infra"].arn
 }
 
