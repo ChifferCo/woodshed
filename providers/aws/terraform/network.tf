@@ -91,7 +91,8 @@ resource "aws_vpc_security_group_ingress_rule" "console_https" {
   to_port           = 443
 }
 
-# Port 80 only redirects to HTTPS, for a typed http:// link. The certificate never needs it: it comes by DNS.
+# Port 80 redirects to HTTPS, for a typed http:// link. With a domain the certificates never need it: they come by DNS.
+# On sslip.io (no domain), Caddy may answer a certificate's HTTP challenge on it.
 resource "aws_vpc_security_group_ingress_rule" "console_http" {
   security_group_id = aws_security_group.base_box.id
   description       = "Console, redirect to HTTPS"

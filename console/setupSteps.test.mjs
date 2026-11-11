@@ -32,3 +32,9 @@ test('a console with no GitHub App puts connecting one first, and is not done un
   assert.deepEqual(rows(m), ['github:waiting', 'token:done', 'databases:done']);
   assert.equal(setupDone(m), false);
 });
+
+test('a console with no repo puts adding one first, and is not done until it has', () => {
+  assert.deepEqual(rows({ ...me({ token: true }), repoNeeded: true }), ['repo:waiting', 'token:done']);
+  assert.equal(setupDone({ ...me({ token: true }), repoNeeded: true }), false);
+  assert.equal(setupDone({ ...me({ token: true }), repoNeeded: false }), true);
+});

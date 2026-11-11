@@ -206,10 +206,11 @@ const child = spawn(process.execPath, [server], {
     WOODSHED_CLOUD_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_CLOUD_APP_DOMAIN: 'apps.localhost',
     // Its own links name the port people open, not the one behind it.
     ...(sessionApp ? { WOODSHED_CLOUD_PUBLIC_URL: `http://localhost:${port}` } : {}),
-    // The console starts only with a repo set: the sessions' made-up one, or the projects this shell names.
-    ...(process.env.WOODSHED_CLOUD_PROJECTS
-      ? { WOODSHED_CLOUD_PROJECTS: process.env.WOODSHED_CLOUD_PROJECTS }
-      : { WOODSHED_CLOUD_REPO: 'example-org/example-repo' }),
+    // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
+    // installation that adds its repos on the Console settings page does.
+    ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
+      : process.env.WOODSHED_CLOUD_PROJECTS ? { WOODSHED_CLOUD_PROJECTS: process.env.WOODSHED_CLOUD_PROJECTS }
+        : { WOODSHED_CLOUD_REPO: 'example-org/example-repo' }),
     ...tlsAskPort,
   },
 });

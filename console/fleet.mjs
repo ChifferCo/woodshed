@@ -366,10 +366,18 @@ export function createFleet({
    *   the `slack` thread; `owner` makes a session private to that login; `attach` moves the files attached to New
    *   session under it before it launches, and says how many; `background` answers without waiting for the launch
    */
+  // A console that started with no repo has nothing to check out until an admin adds one on the Console settings page.
+  function refuseWithoutRepo(project, { kind, trigger }) {
+    if (project?.repo) return;
+    console.warn('fleet: session refused, the console has no repo yet', { kind, trigger });
+    throw shown('Not started: the console has no repo yet. An admin adds one on the Console settings page, under Repos.');
+  }
+
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config),
   }) {
+    refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack gets no databases, so it needs none hosted.
     const refused = kind === 'ask' ? null : await databasesRefusal();
     if (refused) {
@@ -1070,6 +1078,7 @@ export function createFleet({
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
   async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), ...picked }) {
+    refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
     const text = String(prompt ?? '').trim();

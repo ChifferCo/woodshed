@@ -123,6 +123,16 @@ secrets.
   `sudo woodshed-cloud-up` once it does. A 421 means
   the host name is not one the console knows, which is the DNS rebinding check
   working.
+- **A console on sslip.io (no `domain` in Terraform) gives a certificate error.** Caddy gets each name's certificate
+  on demand, after asking the console on 127.0.0.1:7692: the console logs `tls: ask listening` at start, then `tls:
+  certificate asked` with `allowed` and `why` for each name, as in "Open app answers with a certificate error on a local
+  install, or on AWS with no `domain`" below. `sudo docker compose logs caddy` on the base box has the issuer's answer; a Let's Encrypt rate limit
+  on `sslip.io` is shared with everyone, and Caddy then tries ZeroSSL.
+- **Nobody can sign in to a console with no repo yet.** Until an admin adds one (Console settings, Repos), only the
+  owner of the account the GitHub App is installed on gets in: the console logs `appOwner: owner checked` with the
+  `account`, its `type`, the `role` for an organization and `owner`. `appOwner: the App may not read the org's
+  members` means the App lacks Organization permissions, Members: read, and the login page says so. Starts on such a
+  console log `fleet: session refused, the console has no repo yet`.
 - **The console's domain gives a certificate error, while the bare IP works.**
   Caddy has no certificate for the name yet: `sudo docker compose logs caddy`
   on the base box. `dig NS <domain>` must list the zone's
@@ -399,7 +409,7 @@ secrets.
   statusd `statusd: app start finished` with the script's exit code. A page that
   loads but never comes to life means the app's dev server refused the name: it must allow `*.<domain>` (the
   installation's `.woodshed/install/README.md` says where).
-- **Open app answers with a certificate error on a local install.** With no wildcard certificate, Caddy gets one per
+- **Open app answers with a certificate error on a local install, or on AWS with no `domain`.** With no wildcard certificate, Caddy gets one per
   app name on demand, after asking the console (providers/local/README.md, "Session apps without a wildcard
   certificate"). No `tls: ask listening` at start means `WOODSHED_CLOUD_TLS_ASK_PORT` is not set. `tls: certificate
   asked` with `allowed: false, why: 'unknown'` for the app's name means it is not `<id>.<WOODSHED_CLOUD_APP_DOMAIN>` of a

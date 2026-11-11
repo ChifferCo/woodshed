@@ -2009,3 +2009,14 @@ test('with no console channel, a pull request on a project without its own is no
   await fleet.tick();
   assert.deepEqual(store.state.slackPending.map((p) => p.number), [7]);
 });
+
+test('a console with no repo yet starts nothing, and says an admin adds one on Console settings', async () => {
+  const { fleet, calls } = setup();
+  // As loadConfig leaves it with neither WOODSHED_CLOUD_REPO nor WOODSHED_CLOUD_PROJECTS, and no repo added yet.
+  const none = { name: 'default', repo: '', default: true };
+  const said = { shown: true, message: 'Not started: the console has no repo yet. An admin adds one on the Console settings page, under Repos.' };
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: none }), said);
+  await assert.rejects(fleet.createSession({ kind: 'ask', title: 'Why?', startedBy: 'joel', trigger: 'slack', project: none }), said);
+  assert.equal(calls.started.length, 0);
+  assert.equal(fleet.sessions().length, 0);
+});

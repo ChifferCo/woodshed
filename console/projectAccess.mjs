@@ -2,7 +2,7 @@
 // already proved write access to the default project's repo; every other project's is asked of GitHub, and kept a
 // while, since New session and My settings ask on each load.
 
-import { allProjects, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, projectNamed } from './projects.mjs';
 
 const FRESH_MS = 10 * 60_000;
 
@@ -52,7 +52,7 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
   }
 
   /**
-   * @returns {Promise<{projects: {name: string, repo: string}[], defaultProject: string, saved: boolean}>}
+   * @returns {Promise<{projects: {name: string, repo: string}[], defaultProject: string|null, saved: boolean}>}
    *   `defaultProject` is the person's own choice while they may still start on it, else the installation's
    */
   async function view(login) {
@@ -60,7 +60,8 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
     const saved = viewPrefs?.defaultProject(login) ?? null;
     const own = saved ? projects.find((p) => p.name === saved) : null;
     if (saved && !own) console.log('projects: saved default not offered, the installation\'s used', { login, saved });
-    return { projects: projects.map(({ name, repo }) => ({ name, repo })), defaultProject: (own ?? projects[0]).name, saved: Boolean(own) };
+    // A console with no repo yet has nothing to offer: New session says to add one.
+    return { projects: projects.map(({ name, repo }) => ({ name, repo })), defaultProject: (own ?? projects[0])?.name ?? null, saved: Boolean(own) };
   }
 
   /** @returns {Promise<object|null>}  the view after saving, or null when the person may not start on that project */
@@ -78,7 +79,8 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
    * @returns {Promise<object|null>}  null when the person may not start on it, or there is no such project
    */
   async function forStart(login, name) {
-    if (!name) return allProjects(config)[0];
+    // With no repo yet, the default stands in, and the start is refused for having none (fleet.mjs).
+    if (!name) return allProjects(config)[0] ?? defaultProject(config);
     const project = projectNamed(config, name);
     if (!project) return null;
     return (await canStart(login, project)) ? project : null;

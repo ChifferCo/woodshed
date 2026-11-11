@@ -50,34 +50,44 @@ data "aws_iam_policy_document" "base_box" {
     # and dbAdmin.mjs takes neither a host nor any code from them (ecs.tf).
   }
 
-  # Caddy's certificate for var.domain: the DNS challenge writes and removes one TXT record in that zone.
-  statement {
-    sid       = "AnswerTheCertificateChallenge"
-    actions   = ["route53:ChangeResourceRecordSets"]
-    resources = [aws_route53_zone.console.arn]
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "route53:ChangeResourceRecordSetsRecordTypes"
-      values   = ["TXT"]
-    }
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
-      values   = ["_acme-challenge.${var.domain}"]
+  # Caddy's certificate for var.domain: the DNS challenge writes and removes one TXT record in that zone. With no domain
+  # there is no zone, and Caddy proves each name over HTTPS instead, so the box gets no Route 53 access at all.
+  dynamic "statement" {
+    for_each = aws_route53_zone.console
+    content {
+      sid       = "AnswerTheCertificateChallenge"
+      actions   = ["route53:ChangeResourceRecordSets"]
+      resources = [statement.value.arn]
+      condition {
+        test     = "ForAllValues:StringEquals"
+        variable = "route53:ChangeResourceRecordSetsRecordTypes"
+        values   = ["TXT"]
+      }
+      condition {
+        test     = "ForAllValues:StringEquals"
+        variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
+        values   = ["_acme-challenge.${var.domain}"]
+      }
     }
   }
 
-  statement {
-    sid       = "ReadTheConsoleZone"
-    actions   = ["route53:ListResourceRecordSets"]
-    resources = [aws_route53_zone.console.arn]
+  dynamic "statement" {
+    for_each = aws_route53_zone.console
+    content {
+      sid       = "ReadTheConsoleZone"
+      actions   = ["route53:ListResourceRecordSets"]
+      resources = [statement.value.arn]
+    }
   }
 
   # Route 53 gives these no resource-level permissions. Caddy finds the zone by name and waits on its change.
-  statement {
-    sid       = "FindTheConsoleZone"
-    actions   = ["route53:ListHostedZonesByName", "route53:ListHostedZones", "route53:GetChange"]
-    resources = ["*"]
+  dynamic "statement" {
+    for_each = aws_route53_zone.console
+    content {
+      sid       = "FindTheConsoleZone"
+      actions   = ["route53:ListHostedZonesByName", "route53:ListHostedZones", "route53:GetChange"]
+      resources = ["*"]
+    }
   }
 
   # run-task's --propagate-tags copies the task definition's tags onto the task, which needs TagResource.
@@ -279,13 +289,14 @@ locals {
   base_box_stack = templatefile("${path.module}/baseBoxStack.sh.tftpl", {
     region             = var.region
     public_ip          = aws_eip.base_box.public_ip
-    domain             = var.domain
+    domain             = local.console_domain
+    own_domain         = local.own_domain
     private_ip         = local.base_box_private_ip
     console_image      = "${aws_ecr_repository.images["console"].repository_url}:latest"
     registry           = split("/", aws_ecr_repository.images["console"].repository_url)[0]
     github_app_id      = var.github_app_id
     github_app_install = var.github_app_installation_id
-    repo               = var.github_repo
+    repo               = var.sessions_on_github_repo ? var.github_repo : ""
     projects           = local.projects_json
     services           = var.shared_services
     env_files          = join(",", [for name, path in var.env_files : "${name}=${path}"])

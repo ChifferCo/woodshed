@@ -1,5 +1,5 @@
 output "console_url" {
-  value = "https://${var.domain}"
+  value = "https://${local.console_domain}"
 }
 
 output "base_box_instance_id" {
@@ -65,6 +65,6 @@ output "slack_events_url" {
 }
 
 output "dns_nameservers" {
-  description = "Delegate var.domain to these: an NS record for each, where the parent domain's DNS is hosted."
-  value       = aws_route53_zone.console.name_servers
+  description = "Delegate var.domain to these: an NS record for each, where the parent domain's DNS is hosted. Empty with no domain: sslip.io needs nothing."
+  value       = flatten(aws_route53_zone.console[*].name_servers)
 }

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from './config.mjs';
-import { defaultProject, installationIdFor, loadProjects, projectFor, projectNameOf } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, installationIdFor, loadProjects, projectFor, projectNameOf } from './projects.mjs';
 
 const two = JSON.stringify([
   { name: 'app', repo: 'acme/app', default: true },
@@ -10,7 +10,7 @@ const two = JSON.stringify([
 
 test('with only WOODSHED_CLOUD_REPO, the installation has one project, its default, named after the repo', () => {
   assert.deepEqual(loadProjects({ WOODSHED_CLOUD_REPO: ' acme/Web.App ' }), [{ name: 'web-app', repo: 'acme/Web.App', default: true }]);
-  assert.deepEqual(loadProjects({}), [], 'neither set: none, which requireRepo refuses');
+  assert.deepEqual(loadProjects({}), [], 'neither set: none, and the console starts with no repo');
   const config = loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: 'acme/app' });
   assert.equal(defaultProject(config).repo, 'acme/app');
   assert.equal(config.repo, undefined, 'the repo is read through the project, not beside it');
@@ -73,4 +73,14 @@ test('a session runs on the project it names, or else the one with its repo, or 
   assert.equal(projectFor(config, { project: 'gone', repo: 'acme/gone' }).name, 'app', 'a project the installation no longer has');
   assert.equal(projectFor(config, {}).name, 'app');
   assert.equal(projectFor({ repo: 'acme/app' }, { repo: 'acme/app' }).name, 'app', 'a config made by hand');
+});
+
+test('a console with no repo has no project to list, and its default stands in with no repo', () => {
+  const config = loadConfig({ GH_TOKEN: 'x' });
+  assert.deepEqual(allProjects(config), [], 'nothing to poll or offer');
+  assert.equal(hasRepo(config), false);
+  assert.equal(defaultProject(config).repo, '');
+  assert.equal(projectFor(config, { project: 'gone' }).repo, '', 'a session record on a project it no longer has falls to no repo, which a start refuses');
+  assert.equal(hasRepo(loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: 'acme/app' })), true);
+  assert.deepEqual(allProjects({ repo: 'acme/app' }).map((p) => p.repo), ['acme/app'], 'a config made by hand keeps its one');
 });

@@ -35,17 +35,37 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    ```
 
 2. The installation's `terraform.tfvars`: its values for the code in `providers/aws/terraform/`, none of them
-   secret: the console's domain, the repository, the budget email, the GitHub App's IDs, the `databases` engines it hosts, and with
+   secret: the repository that deploys it, the budget email, the GitHub App's IDs, the `databases` engines it hosts, and with
    Postgres the name and master user RDS starts with (nothing else uses them, and a change replaces RDS). The code has no default
    for the ones that name an installation, so each installation writes its own, from
    `providers/aws/terraform/example.tfvars`, and keeps it in its own repo. Its `backend.hcl` names where the state
    lives (`example.backend.hcl`). Check both in, such as at `.woodshed/install/aws/`.
 
+   Two of them are optional:
+
+   - `domain`, the console's name. Left out, the console is `https://woodshed.<Elastic IP with dashes>.sslip.io`
+     (the `console_url` output): sslip.io answers any name with an IP in it with that IP, so there is no DNS to set
+     up, and Caddy gets a certificate for each name the first time it is opened, after asking the console whether it is
+     one of its own (on-demand TLS, `console/tlsAsk.mjs`). Let's Encrypt counts every `sslip.io` certificate,
+     everyone's, against one weekly limit, and Caddy falls back to ZeroSSL when it refuses; each session app's first
+     visit waits a few seconds for its certificate. With a domain, Terraform makes it a Route 53 zone of its own, the
+     parent domain delegates it (step 6), and one wildcard certificate covers every session app. Setting one later
+     changes the console's address: the GitHub App's Callback URL then needs the new one.
+   - `sessions_on_github_repo`, true unless set. `github_repo` is where the deploy workflow runs (the GitHub roles
+     trust it) and what the session image is built from; with true it is also the repo sessions work on, the console's
+     default. False keeps it to deploying, such as a repo of the installation's own: the console starts with no repo,
+     and an admin adds the ones sessions work on, on the Console settings page (Repos). Until the first is added,
+     only the owner of the account the GitHub App is installed on can sign in (an admin, for an organization: the App
+     then needs Organization permissions, Members: read), and New session says to add a repo. The first repo added
+     becomes the default. Sessions on an added repo clone it at start and run in the session image built from
+     `github_repo`, so they get none of that repo's installs or secrets (`session/entrypoint.sh`).
+
    The App comes first: in the org's settings, Developer settings, GitHub Apps,
    create one with the webhook off and repository permissions Contents, Issues
    and Pull requests and Actions (read and write), and Metadata, Checks and
    Commit statuses (read), installable only on
-   this account. Install it on this repo only. The App ID is on its settings
+   this account. Install it on this repo only (on the repos sessions will work on, too, with
+   `sessions_on_github_repo = false`). The App ID is on its settings
    page; the installation ID ends the installation page's URL.
 
 3. From `providers/aws/terraform/`: `terraform init -backend-config=<your backend.hcl>`, then
@@ -64,8 +84,9 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
 5. Run the deploy workflow. With nothing to apply after step 3, it builds both images. The console job ends
    by starting the stack on the base box over SSM. Its first start at boot
    fails until the console image exists, and this is what starts it.
-6. Open `https://<domain>` once its NS records are in place (`dig <domain>`
-   answers the Elastic IP). Before that, `https://<Elastic IP>` works with Caddy's own
+6. Open the `console_url` output. With a domain, first delegate it: an NS record for it where the parent domain's
+   DNS is hosted, holding the `dns_nameservers` output, until `dig <domain>` answers the Elastic IP. With none there
+   is nothing to wait for. Before that, `https://<Elastic IP>` works with Caddy's own
    certificate: accept the browser's warning for that one address. Do not
    install Caddy's root certificate: it is not limited to this site, and its key
    lives on the base box.

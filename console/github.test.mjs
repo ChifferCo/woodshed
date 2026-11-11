@@ -122,3 +122,21 @@ test('other gh failures pass through as they were', async () => {
   const github = createGitHub({ repo: 'o/r', run: async () => { throw notFound; } });
   assert.equal(await github.canWrite('sid'), false, 'a 404 still reads as not a collaborator');
 });
+
+test('a client given a getter follows the repo it names, the default branch read once for each', async () => {
+  let repo = 'acme/api';
+  const asked = [];
+  const run = async (cmd, args) => {
+    asked.push(args[1]);
+    return { stdout: JSON.stringify({ default_branch: args[1] === 'repos/acme/web' ? 'trunk' : 'main' }) };
+  };
+  const github = createGitHub({ repo: () => repo, run });
+  assert.equal(github.repo, 'acme/api');
+  assert.equal(await github.defaultBranch(), 'main');
+  assert.equal(await github.defaultBranch(), 'main');
+  repo = 'acme/web';
+  assert.equal(github.repo, 'acme/web');
+  assert.equal(await github.defaultBranch(), 'trunk', 'not the first repo\'s, kept from before');
+  await github.issue(7);
+  assert.deepEqual(asked, ['repos/acme/api', 'repos/acme/web', 'repos/acme/web/issues/7']);
+});
