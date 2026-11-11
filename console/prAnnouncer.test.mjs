@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPrAnnouncer } from './prAnnouncer.mjs';
-import { pullRequestFilters, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
+import { reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
+import { pullRequestFilters } from '../shared/workflowFile.mjs';
 
 const MINUTE = 60_000;
 const REVIEW = { author: 'review-bot[bot]', heading: '## Code review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: 'review-bot[bot]' };

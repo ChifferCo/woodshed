@@ -1,0 +1,5 @@
+[
+  "DB=\"{{X}}\"",
+  "http://localhost:9000",
+  "~/.cache/{{CHECKOUT}}/a.log"
+]

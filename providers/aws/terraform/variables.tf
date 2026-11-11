@@ -114,7 +114,7 @@ variable "install_secrets" {
     error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets or an env file's."
   }
   validation {
-    # Woodshed's own session variables: the same list as SESSION_VARIABLES in console/config.mjs.
+    # Woodshed's own session variables: the same list as SESSION_VARIABLES in shared/reservedNames.mjs.
     condition = alltrue([for env_name in values(var.install_secrets) : can(regex("^[A-Z_][A-Z0-9_]*$", env_name)) && !startswith(env_name, "WOODSHED_") && !contains(
       ["SESSION_ID", "SESSION_TOKEN", "TERMINAL_TOKEN", "SESSION_URL", "SESSION_KIND", "SESSION_MODE", "STARTED_BY", "ISSUE", "PR", "BRANCH", "PROMPT", "ASKED_BY", "AGENT", "MODEL", "EFFORT", "PERMISSION_MODE", "RESUME_SESSION", "ATTACHMENTS", "REVIEW_ONLY", "REPO_DIR", "GH_TOKEN", "ANTHROPIC_API_KEY", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE", "PGSSLROOTCERT", "PG_URL", "MONGODB_URI", "HOME", "PATH"],
     env_name) && !contains([for name in keys(var.env_files) : upper(replace(name, "-", "_"))], env_name)]) && length(distinct(values(var.install_secrets))) == length(var.install_secrets)

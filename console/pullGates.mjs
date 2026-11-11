@@ -2,8 +2,6 @@
 // project file's `pullRequests` (docs/reference.md, "The project file"): its review's verdict, its suites' jobs, and whether a
 // suite's workflow runs at all for the files it touched. Pure functions over what GitHub answered.
 
-import { parseYaml } from '../shared/yamlLite.mjs';
-
 const PASSING = new Set(['success', 'neutral', 'skipped']);
 
 /**
@@ -93,23 +91,6 @@ export function suiteNeverRuns(files, { pathsIgnore, paths }) {
   if (!files?.length) return false;
   if (pathsIgnore?.length && files.every((f) => matchesFilter(pathsIgnore, f))) return true;
   return Boolean(paths?.length) && !files.some((f) => matchesFilter(paths, f));
-}
-
-/**
- * The `on:` section of a workflow file, read on its own: the rest of a workflow (expressions, long scripts) is more
- * YAML than yamlLite reads, and the path filters are all that is needed.
- * @returns {{pathsIgnore: string[]|null, paths: string[]|null}}
- * @throws {Error}  when the section is not there or is not read as YAML
- */
-export function pullRequestFilters(workflowText) {
-  const lines = String(workflowText).replace(/\r\n/g, '\n').split('\n');
-  const at = lines.findIndex((l) => /^(?:on|'on'|"on")\s*:/.test(l));
-  if (at < 0) throw new Error('the workflow has no on: section');
-  const end = lines.findIndex((l, i) => i > at && /^[^\s#]/.test(l));
-  const on = Object.values(parseYaml(lines.slice(at, end < 0 ? undefined : end).join('\n')) ?? {})[0];
-  const pullRequest = on && typeof on === 'object' && !Array.isArray(on) ? on.pull_request : null;
-  const list = (value) => (Array.isArray(value) ? value.map(String) : null);
-  return { pathsIgnore: list(pullRequest?.['paths-ignore']), paths: list(pullRequest?.paths) };
 }
 
 /**

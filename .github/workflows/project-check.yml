@@ -1,0 +1,67 @@
+name: Project check
+
+# Checks a repo's .woodshed/project.yaml against its own checkout, with Woodshed's `node shared/project.mjs check`:
+# the file read as a session's start reads it, then each workflow, job, folder, script, port and env file it names
+# looked for in the checkout (docs/reference.md, "The project file"). Read-only: no secrets, no network beyond the two
+# checkouts. Another repo calls it from a workflow of its own, on pull requests that touch .woodshed/** (docs/self-host.md):
+#
+#   jobs:
+#     check:
+#       uses: ChifferCo/woodshed/.github/workflows/project-check.yml@main
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: The Woodshed branch, tag or commit whose check runs. Pin a commit to keep a refactor from changing it.
+        type: string
+        default: main
+      repository:
+        description: The Woodshed repository to take the check from, for a fork of it.
+        type: string
+        default: ChifferCo/woodshed
+      node-version:
+        description: The Node version the check runs on (22 or later).
+        type: string
+        default: 22.16.0
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Project check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Fetch Woodshed's check, outside the workspace
+        env:
+          REF: ${{ inputs.ref }}
+          REPOSITORY: ${{ inputs.repository }}
+        run: |
+          # Woodshed at the ref asked for, in the runner's temp folder, so nothing of it is in the checkout being checked
+          set -euo pipefail
+          dest="$RUNNER_TEMP/woodshed"
+          git init -q "$dest"
+          git -C "$dest" remote add origin "https://github.com/${REPOSITORY}.git"
+          # A commit, a branch or a tag alike: GitHub serves any of them by name.
+          git -C "$dest" fetch -q --depth 1 origin "$REF"
+          git -C "$dest" checkout -q FETCH_HEAD
+          echo "Woodshed $(git -C "$dest" rev-parse --short HEAD) from ${REPOSITORY}@${REF}"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      - name: Check the project file
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          # The project file against this checkout: what a session takes from it, or each problem with its field
+          node "$RUNNER_TEMP/woodshed/shared/project.mjs" check

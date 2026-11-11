@@ -36,9 +36,29 @@ but no installs, no databases and no app to check its change in. Writing it is t
    ```
 
    **Done when** it prints `.woodshed/project.yaml: read from the checkout` and a line each for the installs,
-   databases, env files and app you meant. A mistake exits 1 with the field it is about.
+   databases, env files, app and pull requests you meant. A mistake exits 1 with each problem and the field it is
+   about: it also checks the file against the checkout, so a workflow, folder, script or port it names that is not
+   there, or an env file git would not ignore, fails it too.
 3. **You.** Commit it to the repository's default branch. The session image is built from the default branch, so a
    file on another branch is not read by the install.
+4. **Agent.** Have the repository's CI run the same check on each pull request that changes the file or a workflow it
+   names: a workflow of the repository's own, `.github/workflows/woodshed-project.yml`, calling Woodshed's reusable
+   one (`docs/reference.md`, "Checking it"):
+
+   ```yaml
+   name: Woodshed project file
+   on:
+     pull_request:
+       paths: ['.woodshed/**', '.github/workflows/**']
+   permissions:
+     contents: read
+   jobs:
+     check:
+       uses: ChifferCo/woodshed/.github/workflows/project-check.yml@main
+   ```
+
+   `with: { ref: <commit> }` pins Woodshed's check to a commit, so a change to it reaches the repository only when the
+   pin moves. **Done when** the pull request that adds it shows a passing `check / Project check`.
 
 Things the file cannot hold: secrets. An env file's secret values (API keys the app's dev setup needs, never
 production ones: `CLAUDE.md`, "Rules") are set on the console's Secrets & webhooks page after it starts.

@@ -222,6 +222,41 @@ session at start with the field named, and makes `readyGate` refuse to open a pu
 Nothing required has a default: the ports, the database's folder and `howToProve` come from the file. `project.reference.yaml`
 writes every field there is, with an example, and says which are required and what each one is when left out.
 
+**Checking it.** `node <woodshed>/shared/project.mjs check`, run from the repo's root (or with `REPO_DIR` naming it),
+reads the file as a session's start does, then checks it against the checkout it is in, so a repo needs no tests of its
+own against Woodshed's code (`shared/projectCheck.mjs`). It reads files and asks git what it ignores and tracks, with no
+network and no AWS. It prints a line for each part a session takes, or exits 1 with every problem at once, one line
+each, naming its field:
+
+- `pullRequests`: `review.workflow` and each suite's `workflow` are files there; each suite's `on:` section reads, since
+  the console takes its path filters from it; and some job of the suite's workflow has check runs whose names start
+  with its `jobs`: the job's `name`, or its id without one, a matrix's ` (…)` and a called workflow's ` / …` after it,
+  and for a name with an expression, its text before the expression or a name quoted in it.
+- `envFiles`: one entry a path and a secret; no secret is one of the console's own (`github-app-key` and the rest), or
+  reaches the session in one of Woodshed's own variables (`gh-token` would be `GH_TOKEN`); each path is a file that git
+  ignores and does not track, since it holds its secret's text, and not a folder, `.git/` or the project file; each line
+  is `NAME=value` or a `#` comment; and a placeholder that is almost one (`{{ PGHOST }}`, `{{pgHost}}`), which would be written as it is,
+  is refused. `env` the same: a variable name, not one of Woodshed's own, and no such placeholder.
+- `dependencies.installs`: each `dir` is a folder, and each of its `files` without a glob is there.
+- `databases`: each `dir` is a folder, its `paths` are there, `migrations` is a folder under one of them.
+- `app`: neither port is below 1024 (the app runs as an unprivileged user) or one a session's own programs take
+  (claude's and the shell's terminals, statusd, Redis and its viewer, the editor, the database viewers:
+  `SESSION_PORTS` in `shared/reservedNames.mjs`); something in the checkout starts with each of its `paths`; and each
+  `logs` file is under `~/` or in the repo.
+- Every command (an install's, a database's `migrate` and `seed`, `app.start` and `app.stop`): the script it hands a
+  shell, node or python, or runs by its path, is there, relative to the command's folder, unless git ignores it (an
+  install's or a build's, as `node_modules/.bin/x`), and not outside the repo (`../setup.sh`); and `npm run <script>` (or
+  `pnpm`, `yarn`) names a script of that folder's `package.json`. Each part of `a && b` is checked up to a `cd`, and a
+  word the shell would expand (`$HOME`, `~`) is left alone.
+- `rules` and `setup` are files there.
+
+Beside what each part is, it prints `install variables`, the `${NAME}`s an install's `.npmrc` reads, each of which
+must be an install secret of the installation's, and `from the session`, the variables the `env` and the env files'
+lines use that neither the `env` nor the databases give, such as a shared service's URL. A repo runs it on its pull
+requests with the reusable workflow `.github/workflows/project-check.yml` (`docs/self-host.md`, "Before any of them:
+the project file"), whose inputs are `ref`, the Woodshed branch, tag or commit to take the check from (default `main`),
+`repository` (default `ChifferCo/woodshed`) and `node-version` (default `22.16.0`).
+
 **Changing the format.** While Woodshed Cloud is in beta the format stays `version: 1` and changes in place: a new
 or changed field comes with every project file it applies to, in the same pull request, and with no reader for the old
 shape. Each branch carries its own copy, and the image reads it, so after such a change an open branch from before it
@@ -267,7 +302,7 @@ An installation works on one repo, and nothing in this folder names one. To set 
   and claude's terminal alike; Woodshed names no variable and renames nothing. Sessions also get
   `WOODSHED_INSTALL_SECRETS`, the list of those variables, which an ask session unsets. A variable cannot be one of
   Woodshed's own (`WOODSHED_*`, `SESSION_ID`, `GH_TOKEN`, `PGHOST` and the rest, `SESSION_VARIABLES` in
-  `console/config.mjs`) or an env file's.
+  `shared/reservedNames.mjs`) or an env file's.
 - **The env files:** `env_files` in Terraform (`WOODSHED_CLOUD_ENV_FILES` for the console) is each `envFiles` entry's `secret` with its `path`,
   and `database_env_secrets` is every `envFiles` of the project file's `databases`. Each secret is made by Terraform, set on the Secrets page and
   reaches a session as its name in capitals. A test checks this installation's tfvars against its project file.

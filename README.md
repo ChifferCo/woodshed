@@ -91,6 +91,22 @@ Add a `.woodshed/project.yaml` to your repository. It tells a session what to in
 to build the database and how to start the app. See [the project file](docs/reference.md#the-project-file) for every
 field and a full example.
 
+`node <woodshed>/shared/project.mjs check`, run from your repository, checks the file against your checkout. To run
+the same check on pull requests that touch it, call the reusable workflow from one of your own:
+
+```yaml
+on:
+  pull_request:
+    paths: ['.woodshed/**', '.github/workflows/**']
+permissions:
+  contents: read
+jobs:
+  check:
+    uses: ChifferCo/woodshed/.github/workflows/project-check.yml@main
+```
+
+[Setting it up](docs/self-host.md#before-any-of-them-the-project-file) has the steps.
+
 ## Documentation
 
 - Self-hosting: [step by step, for you or your agent](docs/self-host.md); in depth, [on your laptop or a server](providers/local/README.md) and [on AWS](providers/aws/README.md)

@@ -10,7 +10,10 @@ Woodshed can embed them too.
 - `sameOrigin.mjs` and `pwa.mjs`: the known-Host and same-Origin gates, and the install-as-an-app manifest and icons.
 - `isMain.mjs`: whether a script was started directly, through a symlink too.
 - `project.mjs`, `yamlLite.mjs` and `projectFixture.mjs`: the project file (`.woodshed/project.yaml`), its YAML reader,
-  and a full file for tests.
+  and a full file for tests. `projectCheck.mjs` is `project.mjs check`'s checks against the checkout, and
+  `workflowFile.mjs` what it and the console read from a GitHub Actions workflow. `__fixtures__/yamlLite/` holds the
+  YAML reader's cases, each beside the JSON js-yaml reads it as.
+- `reservedNames.mjs`: the variables, secrets and ports Woodshed keeps for itself in a session.
 
 Rules:
 
