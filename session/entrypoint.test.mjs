@@ -116,6 +116,28 @@ test('the project\'s rules follow Woodshed Cloud\'s, and its notes go inline in 
   assert.ok(own.setup.includes(PROJECT_NOTE));
 });
 
+test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
+  const none = writePrompt({ attachments: false, kind: 'shared' });
+  assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
+  assert.match(none.out, /review tag: none/);
+
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-reviewtag-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
+    fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: null, mergeRisk: null } }));
+    for (const kind of ['shared', 'private']) {
+      const tagged = writePrompt({ attachments: false, kind, repoDir: repo });
+      assert.ok(tagged.rules.includes('end the subject of the last commit of each push with ` [run-review]`'), kind);
+      assert.match(tagged.rules, /keep the tag out of the PR title/);
+      assert.doesNotMatch(tagged.rules, /\{\{/);
+      assert.match(tagged.out, /review tag: \[run-review\]/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('a project file with consoleLinks: false keeps the session\'s link out of its pull requests, on any repo', () => {
   const url = 'https://console.example/s/0a1b2c3d';
   const linked = writePrompt({ attachments: false, sessionUrl: url });

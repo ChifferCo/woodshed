@@ -384,7 +384,7 @@ leaveOutConsoleLinks() {
 }
 
 writeRules() {
-  local rules setup notes
+  local rules setup notes tag
   leaveOutConsoleLinks
   # Woodshed Cloud's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
@@ -393,6 +393,13 @@ writeRules() {
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
   rules=${rules//"{{STARTED_BY}}"/"${STARTED_BY:-someone}"}
   rules=${rules//"{{VIA}}"/"${SESSION_URL:+[}Woodshed Cloud${SESSION_URL:+]($SESSION_URL)}"}
+  # The tag that asks for the project's code review (pullRequests.review.rerun). A project with none loses the line.
+  tag=$(project get pullRequests.review.rerun 2>/dev/null) || tag=
+  if [ -n "$tag" ]; then
+    rules=${rules//"{{REVIEW_TAG}}"/"$tag"}
+  else
+    rules=$(grep -vF '{{REVIEW_TAG}}' <<< "$rules" || true)
+  fi
   # The project's environment notes. A shared session gets them inline. A private one is often just a conversation,
   # so it gets a pointer to them instead of the whole text. Lines marked {{SHARED_ONLY}}, such as the Slack
   # announcement, are for shared sessions alone, and lines marked {{PRIVATE_ONLY}} for private ones.
@@ -412,7 +419,7 @@ writeRules() {
   fi
   [ -z "${setup:-}" ] || rules+=$'\n'"$setup"
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none})"
 }
 
 # Each container has its own throwaway Redis, for whatever of the app connects to it. A shared Redis would let one
