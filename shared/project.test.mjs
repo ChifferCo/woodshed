@@ -436,3 +436,9 @@ test('project.mjs never statically imports projectCheck.mjs, which imports it: c
   assert.ok(staticallyReaches(check, SCRIPT), 'the walk reads projectCheck.mjs\'s import of project.mjs');
   assert.equal(staticallyReaches(SCRIPT, check), false, 'project.mjs reaches projectCheck.mjs through its static imports');
 });
+
+test('project.mjs never statically imports databases/index.mjs, which imports it: the engine names are in engines.mjs', () => {
+  const databases = path.join(import.meta.dirname, 'databases', 'index.mjs');
+  assert.ok(staticallyReaches(databases, SCRIPT), 'the walk reads databases/index.mjs\'s import of project.mjs');
+  assert.equal(staticallyReaches(SCRIPT, databases), false, 'project.mjs reaches databases/index.mjs through its static imports');
+});
