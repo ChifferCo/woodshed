@@ -428,6 +428,8 @@ jobs:
   request. The plan, the screenshots and the session logs are uploaded as `qa-*` artifacts. The check's `external_id`
   holds the run's cost (`cost_usd=1.65`), for a repo that adds up what QA spends.
 
+The prompts, the rubric and the verdict are `shared/qa/`'s, the same a QA session runs with.
+
 When to run it (a label, an approved review, which files changed) is the calling workflow's to decide.
 
 ## Databases
