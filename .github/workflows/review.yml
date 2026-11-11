@@ -169,9 +169,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           # Shared Woodshed sessions open pull requests as this App; the action refuses bots it is not told of.
           allowed_bots: ${{ inputs.allowed-bots || 'woodshed-cloud' }}
-          # One comment on the pull request: a live checklist while the review runs, then the full review.
-          track_progress: true
-          use_sticky_comment: true
+          # No comment of the action's own: it posts as github-actions[bot], whose comment it cannot find again, so each
+          # run would add one. The review goes to a file, and the next step edits the pull request's one review comment.
           prompt: |
             You are reviewing a pull request to this repository. Your verdict is the pull request's approval, so be
             careful, and fair.
@@ -227,9 +226,9 @@ jobs:
                it ("it changes an API reply", "it removes a confirm step from admin settings"); for LOW, why it is small
                and contained. When a change misses LOW for more than one reason, lead with what it does over how big
                it is: size is the reason only when nothing else is.
-            8. Post the full review on the pull request by calling `mcp__github_comment__update_claude_comment` with
-               this body, before you finish. The action does not post your final message: it only adds a header to
-               whatever that comment already holds, so a review you only write as a reply is lost.
+            8. Write the full review to `/tmp/review-comment.md` with the Write tool, before you finish, in this
+               form. The next step puts it on the pull request, in place of the last review; your final message is
+               not posted, so a review you only write as a reply is lost.
 
                Start with what the person who merges must know, outside the fold, as one GitHub alert: `[!CAUTION]`
                for High, `[!WARNING]` for Medium, `[!TIP]` for Low, the colours of the merge risk labels. Every line of it starts with `> `. Write it for
@@ -303,7 +302,31 @@ jobs:
                If you do not write the first two, no formal review is submitted and the pull request stays unapproved.
           claude_args: |
             --model opus
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read(./**),Read(//tmp/**),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read(./**),Read(//tmp/**),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
+
+      - name: Post the review comment
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # One review comment per pull request, edited by each run: it keeps its place, and GitHub keeps each earlier review in its edit history
+          if [ ! -s /tmp/review-comment.md ]; then
+            echo "::warning::The reviewer wrote no review comment, so the last one stays"
+            exit 0
+          fi
+          { head -c 60000 /tmp/review-comment.md; printf '\n\n<sub>Updated on each review · [view run](%s)</sub>\n' "$RUN_URL"; } > /tmp/review-comment-body.md
+          # The first review comment on it, by this workflow's token, the action's own from before included
+          comment=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<summary>Claude review</summary>"))) | .id' | head -1)
+          if [ -n "$comment" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment}" -X PATCH -F body=@/tmp/review-comment-body.md > /dev/null
+            echo "Review comment updated: ${comment}"
+          else
+            comment=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@/tmp/review-comment-body.md --jq '.id')
+            echo "Review comment posted: ${comment}"
+          fi
 
       - name: Post the verdict
         id: verdict
