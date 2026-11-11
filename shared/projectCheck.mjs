@@ -12,7 +12,8 @@ import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNam
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
 
 const PLACEHOLDER = /^[A-Z_][A-Z0-9_]*\??$/;
-const ENV_LINE = /^(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*=/;
+// A `#` comment is dotenv's too (parseProject refuses an empty line).
+const ENV_LINE = /^(?:(?:export\s+)?[A-Za-z_][A-Za-z0-9_.]*=|\s*#)/;
 const SCRIPT_RUNNERS = new Set(['bash', 'sh', 'zsh', 'node', 'python', 'python3', 'ruby']);
 const PACKAGE_RUNNERS = new Set(['npm', 'pnpm', 'yarn']);
 
@@ -54,7 +55,9 @@ export function commandProblems(command, { repoDir, dir, field }) {
     if (/['"`$~\\]/.test(first)) continue;
     const plain = (word) => word && !word.startsWith('-') && !/['"`$~\\*?]/.test(word) && !path.isAbsolute(word);
     const script = SCRIPT_RUNNERS.has(first) ? rest[0] : first.includes('/') ? first : null;
-    if (plain(script) && (!SCRIPT_RUNNERS.has(first) || /\.\w+$|\//.test(script)) && !exists(repoDir, path.join(dir, script))) {
+    if (plain(script) && (!SCRIPT_RUNNERS.has(first) || /\.\w+$|\//.test(script)) && !exists(repoDir, path.join(dir, script))
+      // One git ignores is made by an install or a build (`dist/server.js`, `node_modules/.bin/x`), not committed.
+      && gitStatusOf(repoDir, path.posix.join(dir, script)) !== 'ignored') {
       problems.push(`${field} runs ${inDir(script)}, which is not in the checkout`);
     }
     const run = PACKAGE_RUNNERS.has(first) && (rest[0] === 'run' || rest[0] === 'run-script') ? rest[1] : null;

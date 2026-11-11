@@ -235,7 +235,7 @@ each, naming its field:
 - `envFiles`: one entry a path and a secret; no secret is one of the console's own (`github-app-key` and the rest), or
   reaches the session in one of Woodshed's own variables (`gh-token` would be `GH_TOKEN`); each path is a file that git
   ignores and does not track, since it holds its secret's text, and not a folder, `.git/` or the project file; each line
-  is `NAME=value`; and a placeholder that is almost one (`{{ PGHOST }}`, `{{pgHost}}`), which would be written as it is,
+  is `NAME=value` or a `#` comment; and a placeholder that is almost one (`{{ PGHOST }}`, `{{pgHost}}`), which would be written as it is,
   is refused. `env` the same: a variable name, not one of Woodshed's own, and no such placeholder.
 - `dependencies.installs`: each `dir` is a folder, and each of its `files` without a glob is there.
 - `databases`: each `dir` is a folder, its `paths` are there, `migrations` is a folder under one of them.
@@ -244,7 +244,8 @@ each, naming its field:
   `SESSION_PORTS` in `shared/reservedNames.mjs`); something in the checkout starts with each of its `paths`; and each
   `logs` file is under `~/` or in the repo.
 - Every command (an install's, a database's `migrate` and `seed`, `app.start` and `app.stop`): the script it hands a
-  shell, node or python, or runs by its path, is there, relative to the command's folder; and `npm run <script>` (or
+  shell, node or python, or runs by its path, is there, relative to the command's folder, unless git ignores it (an
+  install's or a build's, as `node_modules/.bin/x`); and `npm run <script>` (or
   `pnpm`, `yarn`) names a script of that folder's `package.json`. Each part of `a && b` is checked up to a `cd`, and a
   word the shell would expand (`$HOME`, `~`) is left alone.
 - `rules` and `setup` are files there.

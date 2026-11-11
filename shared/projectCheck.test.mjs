@@ -165,7 +165,7 @@ test('envFiles: each path is a file git ignores, never one it tracks, a folder o
 
 test('envFiles and env: each line is NAME=value, and a placeholder is written in capitals in double braces', (t) => {
   const lines = (...l) => ({ project: { envFiles: [{ ...PROJECT.envFiles[0], lines: l }] } });
-  assert.deepEqual(problems(t, lines('export A=1', 'B.C=2', 'D=')), []);
+  assert.deepEqual(problems(t, lines('export A=1', 'B.C=2', 'D=', '# A comment')), []);
   assertProblem(t, lines('just words'), /^envFiles\[0\]\.lines\[0\] is not NAME=value: "just words"$/);
   assertProblem(t, lines('DB={{ PGHOST }}'), /^envFiles\[0\]\.lines\[0\] has \{\{ PGHOST \}\}, which is not a placeholder: write \{\{NAME\}\} or \{\{NAME\?\}\}, in capitals$/);
   assertProblem(t, lines('A=1', 'DB={{pgHost}}'), /^envFiles\[0\]\.lines\[1\] has \{\{pgHost\}\}/);
@@ -197,6 +197,7 @@ test('app: ports a session leaves free and an unprivileged user can listen on, i
   assertProblem(t, app({ backendPort: 7682 }), /^app\.backendPort is 7682, which statusd listens on in every session$/);
   assertProblem(t, app({ backendPort: 7685 }), /^app\.backendPort is 7685, which the Postgres viewer \(pgweb\) listens on/);
   assertProblem(t, app({ start: './scripts/start.sh' }), /^app\.start runs scripts\/start\.sh, which is not in the checkout$/);
+  assert.deepEqual(problems(t, app({ start: 'npm ci && node api/node_modules/.bin/serve' })), [], 'a script git ignores is an install\'s or a build\'s');
   assertProblem(t, app({ stop: 'npm run stop' }), /^app\.stop runs `npm run stop`, and package\.json is not in the checkout$/);
   assertProblem(t, app({ paths: ['web/', 'mobile/'] }), /^app\.paths\[1\] is mobile\/, and nothing in the checkout starts with it$/);
   assert.deepEqual(problems(t, app({ paths: ['we', 'api/db/'] })), [], 'a prefix of a name is enough');
