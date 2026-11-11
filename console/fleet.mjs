@@ -11,7 +11,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
-import { defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, keptIds, newSessionId, newSessionToken, sessionLink,
   parseWorkOn, pullNumber, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitsForRetry,
@@ -209,6 +209,10 @@ export function createFleet({
   let webhooksAliveAt = -Infinity;
   let lastPollAt = -Infinity;
   let pollingSlowly = false;
+  // Projects already said to have no GitHub client to poll with: said once, not on every poll.
+  const unpolledProjects = new Set();
+  // Another project's poll error, by its name, while it keeps failing.
+  const failingProjects = new Map();
 
   function update(session, fields) {
     Object.assign(session, fields);
@@ -1346,42 +1350,111 @@ export function createFleet({
     return !webhooksUp || now() - lastPollAt >= config.fallbackPollMs;
   }
 
-  async function pollGitHub() {
-    if (!state.github) {
-      const startedAt = nowIso();
-      state.github = { lastEventId: await github.latestEventId(), commentsSince: startedAt, notBefore: startedAt, seenComments: [] };
-      store.save();
-      console.log('fleet: github cursors initialised', { lastEventId: state.github.lastEventId });
-      return;
-    }
-    if (!pollIsDue()) return;
-    lastPollAt = now();
-    const cursors = state.github;
-    const pollStartedAt = now();
+  // Each project's repo is polled on its own client: the default's cursors are `state.github`, as before projects, and
+  // another's are `state.githubProjects` under its name. GitHub's comment ids are unique across repos, so the one seen
+  // list in `state.github` serves them all.
+  function cursorsOf(project) {
+    if (project.default) return state.github;
+    const kept = state.githubProjects?.[project.name];
+    return kept && kept.repo.toLowerCase() === project.repo.toLowerCase() ? kept : null;
+  }
 
-    const { events, complete } = await github.issueEventsSince(cursors.lastEventId);
-    if (!complete) console.warn('fleet: more issue events than one poll reads, older ones skipped', { count: events.length });
+  // A removed repo's cursors go, so the same name on another repo, or the repo added again, starts from now.
+  function dropGoneCursors(projects) {
+    for (const name of Object.keys(state.githubProjects ?? {})) {
+      const project = projects.find((p) => p.name === name && !p.default);
+      if (project && cursorsOf(project)) continue;
+      delete state.githubProjects[name];
+      store.save();
+      console.log('fleet: github cursors dropped, no longer a project', { project: name });
+    }
+  }
+
+  // Only the project's own client: falling back to the default's would poll the default repo again under another name.
+  function pollClientOf(project) {
+    if (project.default) return github;
+    const gh = githubFor?.(project) ?? null;
+    if (!gh && !unpolledProjects.has(project.name)) {
+      unpolledProjects.add(project.name);
+      console.warn('fleet: project not polled, it has no GitHub client', { project: project.name });
+    }
+    return gh;
+  }
+
+  // The first poll of a repo only records where GitHub is, so a restart or a repo just added never replays history.
+  async function startCursors(project, gh) {
+    const startedAt = nowIso();
+    const cursors = { lastEventId: await gh.latestEventId(), commentsSince: startedAt, notBefore: startedAt };
+    if (project.default) state.github = { ...cursors, seenComments: [] };
+    else state.githubProjects = { ...state.githubProjects, [project.name]: { repo: project.repo, ...cursors } };
+    store.save();
+    console.log('fleet: github cursors initialised', { lastEventId: cursors.lastEventId, ...projectField(project) });
+  }
+
+  // One project failing leaves the others polled. The default project's failure is still the poll's own, as before
+  // projects (`console: github poll failed`); another's is logged here with its project, once until its error changes
+  // or it recovers, not every 30 seconds.
+  async function pollGitHub() {
+    const projects = allProjects(config);
+    dropGoneCursors(projects);
+    let failure = null;
+    async function guarded(project, work) {
+      try {
+        await work();
+        if (failingProjects.delete(project.name)) console.log('fleet: a project\'s github poll recovered', { project: project.name });
+      } catch (err) {
+        if (project.default) {
+          failure ??= err;
+          return;
+        }
+        const message = firstLine(err);
+        if (failingProjects.get(project.name) === message) return;
+        failingProjects.set(project.name, message);
+        console.warn('fleet: a project\'s github poll failed', { project: project.name, message });
+      }
+    }
+    const due = [];
+    for (const project of projects) {
+      const gh = pollClientOf(project);
+      if (!gh) continue;
+      if (cursorsOf(project)) due.push({ project, gh });
+      else await guarded(project, () => startCursors(project, gh));
+    }
+    // Another project's comments are marked in the default's seen list, so they wait for it.
+    if (state.github && due.length && pollIsDue()) {
+      lastPollAt = now();
+      for (const { project, gh } of due) await guarded(project, () => pollProject(project, gh, cursorsOf(project)));
+    }
+    if (failure) throw failure;
+  }
+
+  async function pollProject(project, gh, cursors) {
+    const pollStartedAt = now();
+    const on = project.default ? {} : { project: project.name };
+
+    const { events, complete } = await gh.issueEventsSince(cursors.lastEventId);
+    if (!complete) console.warn('fleet: more issue events than one poll reads, older ones skipped', { count: events.length, ...on });
     for (const t of labelTriggers(events, { label: config.label, afterId: cursors.lastEventId })) {
       cursors.lastEventId = t.id;
       store.save();
-      if (!claimLabel(t.number, t.at)) {
-        console.log('fleet: polled label already handled by a webhook', { number: t.number });
+      if (!claimLabel(t.number, t.at, on.project ?? null)) {
+        console.log('fleet: polled label already handled by a webhook', { number: t.number, ...on });
         continue;
       }
       const { at, ...rest } = t;
-      await handleTrigger({ ...rest, trigger: 'label' });
+      await handleTrigger({ ...rest, trigger: 'label', ...on });
     }
     cursors.lastEventId = Math.max(cursors.lastEventId, ...events.map((e) => e.id));
 
-    const comments = (await github.commentsSince(cursors.commentsSince)) ?? [];
+    const comments = (await gh.commentsSince(cursors.commentsSince)) ?? [];
     // Oldest update first: a full page means newer comments wait for the next poll, from where this one stopped.
-    const full = comments.length >= github.pageSize;
-    const triggers = commandTriggers(comments, { seen: new Set(cursors.seenComments), notBefore: cursors.notBefore });
+    const full = comments.length >= gh.pageSize;
+    const triggers = commandTriggers(comments, { seen: new Set(state.github.seenComments), notBefore: cursors.notBefore });
     for (const t of triggers) {
       // Marked before handling, so a trigger that throws is logged once and not retried every 30 seconds.
-      cursors.seenComments = rememberSeen(cursors.seenComments, [t.id]);
+      state.github.seenComments = rememberSeen(state.github.seenComments, [t.id]);
       store.save();
-      await handleTrigger({ number: t.number, login: t.login, text: t.text, commentId: t.id, trigger: 'comment' });
+      await handleTrigger({ number: t.number, login: t.login, text: t.text, commentId: t.id, trigger: 'comment', ...on });
     }
     cursors.commentsSince = full
       ? comments.at(-1).updated_at
