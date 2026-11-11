@@ -502,6 +502,8 @@ fetchSessionDatabases() {
 }
 
 OWN_CLAUDE_TOKEN_FILE=$HOME/.config/woodshed/claude-token
+# The owner's own files from My settings, from fetchOwnerSettings to writeOwnFiles, which deletes it.
+OWN_FILES_JSON=$HOME/.config/woodshed/own-files.json
 # The owner's own Codex sign-in, for a Codex session: written into codex's own home by configureCodex.
 OWN_CODEX_AUTH_FILE=$HOME/.config/woodshed/codex-auth
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
@@ -536,9 +538,27 @@ fetchOwnerSettings() {
     mkdir -p "$(dirname "$OWN_CODEX_AUTH_FILE")"
     (umask 077 && printf '%s' "$token" > "$OWN_CODEX_AUTH_FILE")
   fi
+  # Their own whole files, for writeOwnFiles once the branch is checked out. Kept outside ~/.claude, which is saved.
+  if jq -e '(.ownFiles // {}) | length > 0' <<< "$answer" >/dev/null; then
+    mkdir -p "$(dirname "$OWN_FILES_JSON")"
+    (umask 077 && jq -c '.ownFiles' <<< "$answer" > "$OWN_FILES_JSON")
+  fi
   OWNER_GIT_NAME=$(jq -r '.git.name // empty' <<< "$answer")
   OWNER_GIT_EMAIL=$(jq -r '.git.email // empty' <<< "$answer")
   log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no))"
+}
+
+# The owner's own files (My settings, "Your own files") into the checkout, after the env files. session/ownFiles.mjs
+# writes only the ones git ignores and does not track, and says why it skipped any; a skipped file never stops the start.
+writeOwnFiles() {
+  [ -f "$OWN_FILES_JSON" ] || return 0
+  local said
+  if said=$(node "$SESSION_DIR/ownFiles.mjs" write "$REPO_DIR" "$OWN_FILES_JSON"); then
+    log "Own files written" "($said)"
+  else
+    log "WARNING: some of the owner's own files were not written" "(${said:-the files could not be read})"
+  fi
+  rm -f "$OWN_FILES_JSON"
 }
 
 # A `claude auth login` belongs to the one session that made it: Anthropic rotates the refresh token at each use, so a
@@ -616,6 +636,9 @@ claudeFlags() {
   # Files attached to New session and pasted or dropped on a terminal land here, outside the repo: without this claude
   # asks before reading each one.
   printf ' --add-dir %s' "${UPLOADS_DIR:-/tmp/uploads}"
+  # Woodshed's own commands: /woodshed:remote-control signs in and reopens the conversation (session/bin/woodshed-login),
+  # which only a session on its owner's own Claude token can do.
+  [ "${WOODSHED_CLAUDE_AUTH:-}" != own ] || printf ' --plugin-dir %s' "$SESSION_DIR/claudePlugin"
   [ "$mode" = default ] || printf ' --permission-mode %s' "$mode"
   [ -z "${MODEL:-}" ] || printf ' --model %s' "$MODEL"
   [ -z "${EFFORT:-}" ] || printf ' --effort %s' "$EFFORT"
@@ -723,6 +746,8 @@ startClaude() {
   tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
   tmux set-option -t claude remain-on-exit on
   tmux set-option -t claude history-limit 50000
+  # woodshed-login reopens claude with the same flags once it signed in.
+  [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
   if [ "${AGENT:-claude}" = codex ]; then
     # A Codex conversation is not kept between runs, so a resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
@@ -845,6 +870,7 @@ runSession() {
   progress databases
   chooseClaudeAuth
   writeEnvFiles
+  writeOwnFiles
   configureClaude
   fetchAttachments
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.

@@ -431,8 +431,14 @@ secrets.
   session image. In a shared session or on the team key, the Artifact tool
   cannot work: write the page to a file.
 - **`/remote-control` says `Remote Control requires a full-scope login token`.** The owner's setup-token is inference-only.
-  In a private session use the session's ⋯ menu, Sign in for Remote Control (it types `woodshed-login` at the Terminal tab; the console logs `fleet: Claude login started`, statusd `statusd: Claude login started in the terminal`), or run `woodshed-login` yourself (it is `claude auth login --claudeai`: open the link, paste the code), then
-  restart claude. The login is that session's alone: Anthropic rotates the refresh token at each use, so a copy in a
+  In a private session type `/woodshed:remote-control` in claude, or use the session's ⋯ menu, Sign in for Remote Control,
+  which types it (the console logs `fleet: Claude login started` with `where`, statusd `statusd: Claude login started in
+  claude`, or `in the terminal` for an image from before the command, where it types `woodshed-login` at the Terminal
+  tab). claude shows the link and takes the code in the chat; `woodshed-login code` then stops claude when its turn ends,
+  reopens the conversation with `--resume` and the flags in `/tmp/woodshed-claude-flags`, and types `/remote-control`.
+  `/tmp/woodshed-login.log` says each step (`signed in`, `claude reopened`, `/remote-control typed in`, or why it
+  stopped); a refused code says `The code was not accepted` with claude's reason. `woodshed-login` alone does it by hand
+  in the Terminal tab (it is `claude auth login --claudeai`), then restart claude. The login is that session's alone: Anthropic rotates the refresh token at each use, so a copy in a
   second container fails with `invalid_grant` (measured), and the entrypoint drops `claudeAiOauth` from every restored
   home (`dropClaudeLogin`; `Claude login from the restored home dropped` in the log). `session/bin/claude` runs without
   the token while the session holds a login; `claude auth logout` puts the token back. Shared sessions cannot: they hold

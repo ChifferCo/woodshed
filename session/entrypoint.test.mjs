@@ -684,3 +684,21 @@ test('a checkout with a submodule gets it at the commit\'s pin, and one without 
   assert.doesNotMatch(without.stdout, /Submodules/);
   assert.match(without.stdout, /no woodshed/);
 });
+
+test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped, and deletes the JSON', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-own-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.env*\n');
+  const json = path.join(dir, 'own-files.json');
+  fs.writeFileSync(json, JSON.stringify({ 'app/.env.production': 'NOTION_TOKEN=x\n', 'notes.txt': 'not ignored' }));
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', `SESSION_DIR=${SESSION_DIR}`, `REPO_DIR=${repo}`, `OWN_FILES_JSON=${json}`, fn('writeOwnFiles'), 'writeOwnFiles'].join('\n');
+  const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
+  assert.equal(out, '[woodshed] WARNING: some of the owner\'s own files were not written (written: app/.env.production, skipped: notes.txt (git does not ignore it))\n');
+  assert.equal(fs.readFileSync(path.join(repo, 'app/.env.production'), 'utf8'), 'NOTION_TOKEN=x\n');
+  assert.equal(fs.existsSync(path.join(repo, 'notes.txt')), false);
+  assert.equal(fs.existsSync(json), false);
+  assert.equal(execFileSync('bash', ['-c', script], { encoding: 'utf8' }), '', 'nothing to write without the JSON');
+});

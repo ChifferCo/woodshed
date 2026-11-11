@@ -103,7 +103,7 @@
       h('div', { class: 'set-head' }, h('h2', null, 'Claude'), pill),
       h('p', { class: 'sub' }, 'Your My Woodshed sessions run on your own Claude plan, not the team key. Make a token on your laptop with ',
         h('code', null, 'claude setup-token'), ' and paste it here. Sessions that are already running keep the one they started with. For Remote Control, which that token cannot do, type ',
-        h('code', null, 'woodshed-login'), ' in the session\'s terminal, or use Sign in for Remote Control in its ⋯ menu.'),
+        h('code', null, '/woodshed:remote-control'), ' in claude, or use Sign in for Remote Control in the session\'s ⋯ menu.'),
       h('label', { class: 'field-label', for: 'claude-token' }, h('span', null, set ? 'Replace the token' : 'Paste your token')),
       tokenInput,
       h('div', { class: 'set-actions' },
@@ -446,6 +446,93 @@
       fileStatus);
   }
 
+  // Your own whole files (an app/.env.production), which your sessions write into the checkout where git ignores
+  // them. All of them come in one read, the first time the card is drawn; `ownPath` is the one open, '' a new one.
+  let ownFiles = null;
+  let ownLoad = null;
+  let ownPath = null;
+  const ownPathInput = h('input', { id: 'own-file-path', class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' });
+  const ownEditor = h('textarea', { id: 'own-file-text', class: 'field mono file-text', rows: '10', spellcheck: 'false', placeholder: 'NOTION_TOKEN=…' });
+  const ownStatus = h('p', { class: 'form-note', role: 'status' });
+
+  function loadOwnFiles() {
+    ownLoad ??= W.getJson('/api/my/own-files').then((answer) => {
+      ownFiles = answer.files ?? {};
+      openOwnFile(Object.keys(ownFiles).sort()[0] ?? '');
+    }, (err) => {
+      ownStatus.textContent = err.message;
+      ownStatus.classList.add('is-error');
+      ownLoad = null;
+      render();
+    });
+  }
+
+  function openOwnFile(file) {
+    ownPath = file;
+    ownPathInput.value = file;
+    ownEditor.value = file ? ownFiles?.[file] ?? '' : '';
+    ownStatus.textContent = '';
+    ownStatus.classList.remove('is-error');
+    render();
+  }
+
+  function saveOwnFile(file, text, done) {
+    return act({
+      card: 'own-files', note: ownStatus, done, call: async () => {
+        const answer = await W.postJson('/api/my/own-files', { path: file, text });
+        ownFiles = answer.files;
+        me = answer.view;
+        const next = ownFiles[file.trim()] !== undefined ? file.trim() : Object.keys(ownFiles).sort()[0] ?? '';
+        ownPath = next;
+        ownPathInput.value = next;
+        ownEditor.value = next ? ownFiles[next] : '';
+      },
+    });
+  }
+
+  function ownFilesCard() {
+    if (me.available && ownFiles === null) loadOwnFiles();
+    const paths = (me.ownFiles ?? []).map((f) => f.path);
+    const savedAt = (file) => me.ownFiles?.find((f) => f.path === file)?.savedAt;
+    const working = busy.has('own-files');
+    ownPathInput.readOnly = working || Boolean(ownPath);
+    ownEditor.readOnly = working;
+    ownPathInput.disabled = ownEditor.disabled = !me.available || ownFiles === null;
+    return h('section', { class: 'set-card is-wide' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Your own files'),
+        h('span', { class: `pill${paths.length ? ' is-ok' : ''}` }, paths.length ? `${paths.length} file${paths.length === 1 ? '' : 's'}` : 'None')),
+      h('p', { class: 'sub' }, 'Whole files your sessions write into the repo at start, such as the ', h('code', null, '.env.production'),
+        ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Your next My Woodshed session picks up what you save; running ones keep theirs.'),
+      h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Your file' },
+        paths.map((file) => h('button', { type: 'button', 'aria-pressed': String(file === ownPath), disabled: working, onclick: () => openOwnFile(file) }, file)),
+        h('button', { type: 'button', 'aria-pressed': String(ownPath === ''), disabled: working || ownFiles === null, onclick: () => openOwnFile('') }, '+ Add a file')),
+      h('label', { class: 'field-label', for: 'own-file-path' }, h('span', null, 'Path in the repo')),
+      ownPathInput,
+      h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, ownPath ? `${ownPath}${savedAt(ownPath) ? `, saved ${W.when(savedAt(ownPath))}` : ''}` : 'Its text')),
+      ownEditor,
+      h('div', { class: 'set-actions' },
+        h('button', {
+          type: 'button', class: 'btn btn-open', disabled: !me.available || ownFiles === null || working,
+          onclick: () => {
+            const file = ownPathInput.value.trim();
+            if (!ownEditor.value.trim()) {
+              ownStatus.textContent = 'Write the file\'s text first. To delete a file, use Remove.';
+              ownStatus.classList.add('is-error');
+              return;
+            }
+            saveOwnFile(file, ownEditor.value, `Saved ${file}. Your next session writes it.`);
+          },
+        }, 'Save'),
+        ownPath && h('button', {
+          type: 'button', class: 'btn btn-quiet', disabled: working,
+          onclick: () => {
+            if (!window.confirm(`Remove ${ownPath}? Your next sessions no longer write it.`)) return;
+            saveOwnFile(ownPath, '', `Removed ${ownPath}.`);
+          },
+        }, 'Remove')),
+      ownStatus);
+  }
+
   // Your own pause and stop times, for your My Woodshed sessions. Empty is the console's number.
   const limitInputs = {
     idleHours: h('input', { id: 'limit-idle', class: 'field mono', type: 'number', min: '0.25', max: '24', step: '0.25', inputmode: 'decimal' }),
@@ -523,6 +610,8 @@
             const answer = await W.postJson('/api/my/remove', { confirm: me.login });
             me = answer;
             for (const key of fileKeys()) delete files[key];
+            ownFiles = null;
+            ownLoad = null;
             editor.dataset.key = '';
             openFile(fileKey);
             status.textContent = `My Woodshed removed: ${answer.stopped} stopped, ${answer.removed} taken off the list.`;
@@ -551,6 +640,7 @@
       githubCard(),
       homeCard(),
       filesCard(),
+      ownFilesCard(),
       removeCard()));
     watchDatabases();
   }
