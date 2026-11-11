@@ -117,7 +117,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
    session. Open its terminal in the console to watch or take over.
 6. A session pauses after an hour waiting for input, stops at 8 hours in all
    (both on the Console settings page),
-   and stops once its pull request is posted to Slack, or when someone presses
+   and stops once its pull request is posted to Slack (its project's channel from the Repos card of
+   Console settings, else the Slack card's channel), or when someone presses
    Stop. It commits and pushes work in progress first and keeps its
    conversation and databases, so a later label or comment resumes it where it
    was. See "Session states" in `console/README.md`.

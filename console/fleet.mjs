@@ -187,7 +187,7 @@ export function createFleet({
   const secondsSince = (iso) => (iso ? Math.round((now() - Date.parse(iso)) / 1000) : null);
   const retention = () => config.retention ?? DEFAULT_RETENTION;
   const announcer = createPrAnnouncer({
-    store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
+    store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
     events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
     webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs,
   });
@@ -571,8 +571,10 @@ export function createFleet({
   // pull request and opens another from a new branch gets the new one posted too.
   async function announcePull(session) {
     if (!announcer.available || session.owner || !session.prUrl || session.announcedPrUrl === session.prUrl) return;
+    const project = projectFor(config, session);
+    if (!announcer.postsFor(project)) return;
     const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session, projectFor(config, session));
+      await announcer.track(session, project);
       return true;
     });
     if (tracked) update(session, { announcedPrUrl: session.prUrl });
@@ -824,7 +826,8 @@ export function createFleet({
   async function prDropped(item, why) {
     const session = find(item.sessionId);
     if (!session || why !== 'posted') return;
-    update(session, { slackPostedAt: nowIso() });
+    // Where the post is stays with it, so its thread is found again after the project's channel changes.
+    update(session, { slackPostedAt: nowIso(), ...(item.post ? { slackPost: item.post } : {}) });
     if (announcer.waitingSessions().has(session.id)) {
       console.log('fleet: session kept, another pull request is still waiting', { id: session.id, number: item.number });
       return;

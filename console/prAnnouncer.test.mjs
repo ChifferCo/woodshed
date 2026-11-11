@@ -600,3 +600,83 @@ test('another project\'s pull request is read on its repo, with its gates, and a
   assert.equal(slack.posts.length, 2);
   assert.deepEqual(store.state.slackPending, []);
 });
+
+// Two projects, `app` the default and `tools` added, through the real Slack client and a Slack that answers each post.
+async function twoProjects({ appChannel = null, toolsChannel = null, consoleChannel = 'C0CONSOLE01' } = {}) {
+  const { createSlack } = await import('./slack.mjs');
+  const { github, store, session } = setup({ gates: null, runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }] });
+  store.state.settings = { slackChannel: consoleChannel };
+  const posts = [];
+  const fetchImpl = async (url, opts) => {
+    const body = JSON.parse(opts.body);
+    posts.push(body);
+    return { status: 200, async json() { return { ok: true, ts: body.thread_ts ?? `${posts.length}.0` }; } };
+  };
+  const slack = createSlack({ store, secrets: { async read() { return 'xoxb-1'; } }, fetchImpl });
+  if (appChannel) slack.setProjectChannel({ project: 'app', channel: appChannel, by: 'mia-dev' });
+  if (toolsChannel) slack.setProjectChannel({ project: 'tools', channel: toolsChannel, by: 'mia-dev' });
+  const dropped = [];
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const announcer = createPrAnnouncer({
+    store, github, githubOf: () => github, defaultProjectName: () => 'app', slack, gates: async () => null, now: () => clock,
+    events: { dropped: (item, why) => { dropped.push({ item, why }); } },
+  });
+  const onTools = { ...session, id: 's2', prUrl: 'https://github.com/acme/tools/pull/8' };
+  await announcer.track(session, { name: 'app', default: true });
+  await announcer.track(onTools, { name: 'tools', default: false });
+  return { announcer, slack, github, store, posts, dropped, advance: (ms) => { clock += ms; } };
+}
+
+test('a project with its own channel has its pull request posted there, and the other project\'s goes to the console\'s', async () => {
+  const { announcer, posts, dropped } = await twoProjects({ toolsChannel: 'C0TOOLS001' });
+  await announcer.check();
+  const lines = posts.filter((p) => !p.thread_ts);
+  assert.deepEqual(lines.map((p) => [p.channel, p.text.split(' - ')[1]]), [
+    ['C0CONSOLE01', 'https://github.com/acme/app/pull/7'],
+    ['C0TOOLS001', 'https://github.com/acme/app/pull/8'],
+  ]);
+  assert.deepEqual(dropped.map((d) => [d.item.sessionId, d.why, d.item.post]), [
+    ['s1', 'posted', { channel: 'C0CONSOLE01', ts: '1.0' }],
+    ['s2', 'posted', { channel: 'C0TOOLS001', ts: '3.0' }],
+  ], 'where each post is goes to the fleet with it');
+});
+
+test('the default project\'s own channel counts too, by its name', async () => {
+  const { announcer, posts } = await twoProjects({ appChannel: 'C0APPPRS01' });
+  await announcer.check();
+  assert.deepEqual(posts.filter((p) => !p.thread_ts).map((p) => p.channel), ['C0APPPRS01', 'C0CONSOLE01']);
+});
+
+test('the decision brief threads under its own project\'s post', async () => {
+  const { announcer, posts } = await twoProjects({ toolsChannel: 'C0TOOLS001' });
+  await announcer.check();
+  const byTs = new Map(posts.filter((p) => !p.thread_ts).map((p, i) => [`${posts.indexOf(p) + 1}.0`, p.channel]));
+  const replies = posts.filter((p) => p.thread_ts);
+  assert.equal(replies.length, 2, 'one brief for each');
+  for (const r of replies) assert.equal(r.channel, byTs.get(r.thread_ts), 'in the channel of the post it threads under');
+  assert.deepEqual(replies.map((r) => r.channel), ['C0CONSOLE01', 'C0TOOLS001']);
+});
+
+test('with no console channel, only a project with its own has its pull requests tracked', async () => {
+  const { announcer } = await twoProjects({ toolsChannel: 'C0TOOLS001', consoleChannel: '' });
+  assert.equal(announcer.postsFor({ name: 'tools' }), true);
+  assert.equal(announcer.postsFor({ name: 'app', default: true }), false);
+  assert.equal(announcer.postsFor(null), false, 'the default project, by its name');
+});
+
+test('a tracked pull request whose channel is cleared waits for one, and is still dropped when it closes or gives up', async () => {
+  // Both tracked while each had a channel; then they are cleared, with a third project's keeping Slack on.
+  const { announcer, slack, github, posts, store, dropped, advance } = await twoProjects({ appChannel: 'C0APPPRS01', toolsChannel: 'C0TOOLS001', consoleChannel: '' });
+  slack.setProjectChannel({ project: 'other', channel: 'C0OTHER001', by: 'mia-dev' });
+  slack.setProjectChannel({ project: 'app', channel: '', by: 'mia-dev' });
+  slack.setProjectChannel({ project: 'tools', channel: '', by: 'mia-dev' });
+  await announcer.check();
+  assert.deepEqual(posts, [], 'nowhere to post');
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [7, 8], 'both waiting');
+  const pull = github.pull;
+  github.pull = async (number) => ({ ...(await pull(number)), ...(number === 7 ? { state: 'closed' } : {}) });
+  advance(8 * 24 * 60 * MINUTE);
+  await announcer.check();
+  assert.deepEqual(dropped.map((d) => [d.item.number, d.why]), [[7, 'closed'], [8, 'no Slack channel']]);
+  assert.deepEqual(store.state.slackPending, []);
+});

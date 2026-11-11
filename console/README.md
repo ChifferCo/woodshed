@@ -1148,8 +1148,8 @@ A Claude token or Codex sign-in written straight into the secret store, as `user
 
 ## Slack
 
-When a shared session opens a pull request, the console posts it to one Slack
-channel as `PR title - PR link - 🟢 Low risk` (🟡 Medium, 🔴 High, or
+When a shared session opens a pull request, the console posts it to its
+project's Slack channel (below) as `PR title - PR link - 🟢 Low risk` (🟡 Medium, 🔴 High, or
 `⚪ Risk not posted` without a trusted merge risk check), with its decision
 brief (below) as a reply in that post's thread, once, and only after it has earned it by the
 gates in the repo's project file (`pullRequests`, docs/reference.md, "The project file", read from
@@ -1273,6 +1273,30 @@ To turn it on:
    `state.json`, and an empty channel turns the posts off.
 
 Both are read for each post, so neither needs a restart.
+
+### A channel for each project
+
+A project can have a channel of its own: the channel field on its row of the
+Console settings page's Repos card, for the installation's repos and the ones
+added there alike (`POST /api/console-settings/projects/slack-channel` with
+`{"name", "channel"}`, admins only, checked as the Slack card's channel is: a
+channel ID, never a name). It is kept in `state.json` under
+`settings.projectSlackChannels`, by project name, and removing an added repo
+drops it. A project's pull requests and their decision briefs go to its own
+channel when it has one, and to the Slack card's channel otherwise. A project
+with neither has its pull requests left untracked, as every pull request was
+with no channel, and tracked once a channel is set; one tracked before its
+channel was cleared is still read, so it is dropped when it closes, and waits
+for a channel until it gives up (`slack: ready, but its project has no channel
+now`, then `no Slack channel`). The channel is
+chosen once for each post, just before it, so the brief and the mention land
+in that post's thread, and where the post went is kept on the session
+(`slackPost`: its `channel` and `ts`), so a later change to the setting moves
+only the posts after it. The console logs `slack: pull request channel chosen`
+with the `project` and `channel: 'project'` or `'console'` for each post, and
+`slack: project channel changed` with who changed it. Invite the bot to each
+channel. Questions from Slack are not part of this: they are answered in the
+thread they were asked in, on the default project.
 
 ## Who is who on Slack
 
@@ -1408,7 +1432,7 @@ none of the card's:
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
 | Slack | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
-| Slack | Channel | a channel ID, or empty for no posts | none |
+| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on the Repos card posts there instead | none |
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
@@ -1424,7 +1448,8 @@ and appended to `WOODSHED_CLOUD_PROJECTS`'s list in the live config (`liveConfig
 restart, and a project's New session **Project** field shows it to whoever can write to it. **Remove**
 (`POST /api/console-settings/projects/remove`) takes an added repo off, and is disabled while a session is running on it
 or listed to resume (a shared one kept, or any of a person's My Woodshed sessions still on their list), since that session would fall back to the default project's repo. The installation's own projects,
-the default among them, are read-only here: they change where `WOODSHED_CLOUD_PROJECTS` is set. An added repo is on the
+the default among them, are read-only here: they change where `WOODSHED_CLOUD_PROJECTS` is set. Each row, theirs too, has a
+Slack channel field for that repo's pull requests ("A channel for each project" under Slack). An added repo is on the
 same terms as any other project: My Woodshed sessions, and labels and `/woodshed` comments on its issues (a webhook about
 it is no longer dropped), in the default project's session image and databases, with Slack questions and the
 database check staying on the default project. The
