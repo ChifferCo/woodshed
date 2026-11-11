@@ -9,7 +9,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
-const AUTHOR = ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev Console'];
+// A made-up author, and no signing: a signing setup of the person running it must not stop the dev console starting.
+const AUTHOR = ['-c', 'user.email=dev@example.com', '-c', 'user.name=Dev Console', '-c', 'commit.gpgsign=false'];
 
 // The default branch's files, then what the branch changes: a webhook sender that gives up on the first failure, and
 // the branch that makes it retry with backoff.

@@ -4508,7 +4508,11 @@ ${DARK_PALETTE}
       inline(b, text);
       b.type = 'button';
       b.disabled = chat.busy;
-      b.addEventListener('click', function onStarter() { askInChat(text); });
+      b.addEventListener('click', function onStarter(ev) {
+        // A link in the question opens the link, not the question.
+        if (ev.target && ev.target.closest && ev.target.closest('a')) return;
+        askInChat(text);
+      });
       return b;
     }
 
