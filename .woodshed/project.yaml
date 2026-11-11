@@ -1,7 +1,7 @@
 # What a Woodshed session needs to know about Woodshed itself, for when woodshed/ is a repo of its own: nothing reads it
 # while Woodshed is inside another repo, whose own .woodshed/project.yaml sessions read. test/selfProject.test.mjs
 # keeps it valid. docs/reference.md, "The project file", describes each field. Left out: no dependencies, env files, databases
-# or app (a change is proven with the dev console, which rules.md says how to run), and no pull request gates.
+# or app (a change is proven with the dev console, which rules.md says how to run).
 
 version: 1
 
@@ -12,3 +12,22 @@ editor: true
 consoleLinks: false
 
 rules: .woodshed/rules.md
+
+# What a pull request a session opens must pass before the console posts it to Slack: the review's APPROVE in
+# .github/workflows/review.yml, the Check suite's `test` job, and the review's Merge risk check, which the brief quotes.
+pullRequests:
+  review:
+    # review.yml posts the verdict with the workflow's token, as a review whose body starts `## Claude review — APPROVE`.
+    author: github-actions[bot]
+    heading: '## Claude review'
+    workflow: .github/workflows/review.yml
+    rerun: '[woodshed-review]'
+    # The review's PR comment comes from the same token: its risk areas, then the review under
+    # <summary>Claude review</summary>, the heading's words.
+    commentAuthor: github-actions[bot]
+  suites:
+    - name: Check
+      workflow: .github/workflows/check.yml
+      jobs: test
+  mergeRisk:
+    check: Merge risk
