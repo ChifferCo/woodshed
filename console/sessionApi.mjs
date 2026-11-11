@@ -40,8 +40,8 @@
 
 import { timingSafeEqual } from 'node:crypto';
 
-import { proxyCredential } from './anthropicProxy.mjs';
-import { bearerOf } from './openaiProxy.mjs';
+import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
+import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
@@ -66,6 +66,20 @@ function sameToken(given, expected) {
 }
 
 /**
+ * The session token a request to the session API carries, wherever its route takes it: claude's calls to Anthropic
+ * as an API key or a bearer, Codex's to OpenAI and every other route as a bearer: a caller that serves
+ * the session API for an installation can tell by it whether a request is that installation's (ownsSessionToken).
+ * @param {import('node:http').IncomingMessage} req
+ * @returns {string|null}
+ */
+export function sessionTokenOf(req) {
+  const pathname = new URL(req.url || '/', 'http://console').pathname;
+  if (isAnthropicPath(pathname)) return proxyCredential(req.headers)?.token ?? null;
+  if (isOpenAiPath(pathname)) return bearerOf(req.headers);
+  return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
+}
+
+/**
  * @param {string|undefined} header  the request's Authorization header
  * @param {object[]} sessions
  * @returns {object|null}  the active session whose token the header carries
@@ -74,7 +88,7 @@ export function sessionForAuthorization(header, sessions) {
   return sessionForToken(/^Bearer (\S+)$/.exec(String(header ?? ''))?.[1], sessions);
 }
 
-function sessionForToken(given, sessions) {
+export function sessionForToken(given, sessions) {
   if (!given) return null;
   return sessions.find((s) => ACTIVE_STATUSES.has(s.status) && sameToken(given, s.token)) ?? null;
 }

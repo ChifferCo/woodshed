@@ -93,7 +93,8 @@ test('run as the hook, it blocks with exit code 2 and its reason on stderr, and 
 
   const run = (command) => spawnSync('node', [script], {
     input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: repo }),
-    env: { ...process.env, HOME: home },
+    // Without the session's DEFAULT_BRANCH, which would name a branch the fixture repo (on master) does not have.
+    env: { ...process.env, HOME: home, DEFAULT_BRANCH: '' },
     encoding: 'utf8',
   });
 

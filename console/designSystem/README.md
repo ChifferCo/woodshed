@@ -29,6 +29,15 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
 - Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions assigned to you whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups.
 - A shared session someone has carries the Assigned tag: on Mine the word Assigned, on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch: the rail head reads My sessions. **People** on Everyone filters by assignee. A resume keeps the assignee.
 
+## Menu groups
+
+- A program embedding the console may add a line under the person's name on the user button, in `meta` (mono, `meta`
+  color), and nowhere else on the rail.
+- It may add groups to the top of the user menu (`components/MenuGroups`): a `menu-label`, then a row per item. A
+  choice in use has a `green` ✓ and 600 weight; a note, such as the person's role there, is a word in `meta` at the
+  right end. Then a `line-soft` rule.
+- Each one is a plain link: never orange, never a button that looks like an action on the session.
+
 ## Setup card
 
 - A member who has not saved a Claude token (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The token row has the one primary button, Set up, which goes to My settings. The databases row appears once the token is saved: progress while it copies, and an outline Open My settings button when it failed or never started.

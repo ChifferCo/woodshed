@@ -33,3 +33,10 @@ test('the link holds only the target, survives sign-in, and the form reads it ba
   const branch = new URL(inviteUrl('https://console.example', 'woodshed/sikakkar-8387f694'));
   assert.deepEqual(parseWorkOn(safeNext(branch.pathname + branch.search) && new URL(branch).searchParams.get('on')), { kind: 'branch', branch: 'woodshed/sikakkar-8387f694' });
 });
+
+test('the link carries the console\'s link query, for whatever serves the console to route it', () => {
+  const link = new URL(inviteUrl('https://console.example', 'PR #123', 'place=acme'));
+  assert.equal(link.searchParams.get('place'), 'acme');
+  assert.equal(link.searchParams.get('on'), 'PR #123');
+  assert.equal(new URL(inviteUrl('https://console.example', 'PR #123', null)).search, '?new=1&on=PR%20%23123');
+});

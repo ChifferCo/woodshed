@@ -222,8 +222,10 @@ export function requireRepo(config) {
 
 /**
  * @param {NodeJS.ProcessEnv} env
+ * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
+ *   from here and gives the console its GitHub access another way
  */
-export function loadConfig(env = process.env) {
+export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const port = number(env.WOODSHED_CLOUD_PORT, 7690);
   const app = githubApp(env);
   const broker = githubBroker(env);
@@ -311,7 +313,7 @@ export function loadConfig(env = process.env) {
     // The key that folder's files are sealed with, in a file of its own outside it (providers/local/secretKey.mjs).
     localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
     webhookFunction: env.WOODSHED_CLOUD_WEBHOOK_FUNCTION || (env.WOODSHED_CLOUD_LAUNCHER === 'ecs' ? 'woodshed-cloud-webhooks' : ''),
-    ghToken: app || broker ? null : ghToken(env),
+    ghToken: app || broker || !readGhToken ? null : ghToken(env),
     // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
     sessionApi: { host: env.WOODSHED_CLOUD_SESSION_API_HOST || null, port: number(env.WOODSHED_CLOUD_SESSION_API_PORT, 7691) },
   };
