@@ -22,7 +22,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `shared/` | Modules the console and the sessions both run, and other tools can embed: review, the project file's reader, the terminal and same-origin helpers | [shared/README.md](../shared/README.md) |
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
-| `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request | |
+| `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request, on a `refs/pr-assets/` ref that `.github/workflows/prAssetsCleanup.yml` deletes when the pull request is closed unmerged | |
 
 Imports go one way, and `test/layout.test.mjs` checks every one:
 - `shared/` imports nothing outside itself.

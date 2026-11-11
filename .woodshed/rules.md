@@ -23,4 +23,5 @@
 - For a change people can see, such as a console page, show it under `## Proof` with screenshots: take them from the
   dev console's made-up sessions, never from a real installation, push them with
   `scripts/prAssets.sh <pr>-<slug> name.png=path …`, and embed the URLs it prints (`![name](url)`). Show before and
-  after when the change alters something that exists.
+  after when the change alters something that exists. It keeps them on `refs/pr-assets/<pr>-<slug>`, not a branch.
+  A re-run, to add or replace an image, gives new URLs for every image on the ref, so put the latest ones in the body.

@@ -1,0 +1,39 @@
+name: PR assets cleanup
+
+# scripts/prAssets.sh keeps a pull request's screenshots on refs/pr-assets/<number>-<slug>. A pull request closed
+# without merging no longer needs them, so this deletes its refs and GitHub can collect the images. A merged pull
+# request keeps its refs, because its description embeds them.
+#
+# On `pull_request` from a fork the token is read-only, so fork pull requests are skipped: their screenshots were
+# pushed by a maintainer, who can delete them by hand.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  delete:
+    if: ${{ !github.event.pull_request.merged && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete the pull request's screenshot refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Delete every refs/pr-assets/<number>-* of the closed pull request
+          set -euo pipefail
+          refs="$(gh api --paginate "repos/$REPO/git/matching-refs/pr-assets/$NUMBER-" --jq '.[].ref')"
+          if [ -z "$refs" ]; then
+            echo "No screenshot refs for #$NUMBER"
+            exit 0
+          fi
+          for ref in $refs; do
+            gh api -X DELETE "repos/$REPO/git/$ref"
+            echo "Deleted $ref"
+          done
