@@ -1,0 +1,146 @@
+name: QA report
+description: >-
+  Turns the QA run into the pull request's QA comment and its QA check, and uploads the plan, the screenshots and the
+  session logs. Run it with `if: ${{ !cancelled() }}`, so it reports a run that failed or timed out too.
+inputs:
+  check:
+    description: The QA check's name, which the project file's pullRequests.qa.check names too.
+    default: QA
+  heading:
+    description: How the QA comment starts; the same as the plan step's.
+    default: '## QA'
+  not-covered:
+    description: >-
+      Set when the app could not start, to why, in one line. The check is then neutral: a broken run never reads as a
+      broken pull request.
+    default: ''
+  artifacts:
+    description: The prefix of the uploaded artifacts' names.
+    default: qa
+  github-token:
+    description: Writes the QA comment and the check.
+    default: ${{ github.token }}
+outputs:
+  conclusion:
+    description: success, failure or neutral.
+    value: ${{ steps.verdict.outputs.conclusion }}
+  cost:
+    description: What the plan and the tests cost, in US dollars.
+    value: ${{ steps.verdict.outputs.cost }}
+runs:
+  using: composite
+  steps:
+    - name: Collect the session logs
+      shell: bash
+      run: |
+        # The sessions' own transcripts, next to the CLI's output, the planner's first
+        i=0
+        for f in $(ls -tr ~/.claude/projects/*/*.jsonl 2>/dev/null); do
+          i=$((i + 1))
+          cp "$f" ".qa/logs/session-${i}.jsonl"
+        done
+        echo "Collected ${i} session logs"
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifacts }}-plan
+        path: .qa/plan/
+        retention-days: 30
+        if-no-files-found: ignore
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifacts }}-logs
+        path: .qa/logs/
+        retention-days: 30
+        if-no-files-found: ignore
+
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ inputs.artifacts }}-screenshots
+        path: .qa/screenshots/
+        retention-days: 90
+        if-no-files-found: ignore
+
+    - name: Read the verdict and post the report
+      id: verdict
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        HEADING: ${{ inputs.heading }}
+        NOT_COVERED: ${{ inputs.not-covered }}
+        ARTIFACTS: ${{ inputs.artifacts }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        # The verdict comes from the report's test case headings. A fail fails the check; anything that kept the run
+        # from a verdict is neutral, so a broken run never reads as a broken pull request
+        [ -f .qa/state.env ] && source .qa/state.env
+        total=0; pass=0; fail=0; warn=0
+        if [ -s .qa/report.md ]; then
+          total=$(grep -cE '^## TC-[0-9]+:' .qa/report.md) || total=0
+          pass=$(grep -cE '^## TC-[0-9]+:.*✅[[:space:]]*$' .qa/report.md) || pass=0
+          fail=$(grep -cE '^## TC-[0-9]+:.*❌[[:space:]]*$' .qa/report.md) || fail=0
+          warn=$(grep -cE '^## EC-[0-9]+:.*⚠️[[:space:]]*$' .qa/report.md) || warn=0
+        fi
+        unverified=$((total - pass - fail))
+        conclusion=neutral
+        if [ -n "$NOT_COVERED" ]; then
+          status="🔌 **Not covered**: ${NOT_COVERED}"; title="Not covered: ${NOT_COVERED}"
+        elif [ -f .qa/plan/SKIP.md ]; then
+          status="⏭️ **Not covered**: $(head -1 .qa/plan/SKIP.md)"; title="Not covered: nothing to test"
+        elif [ -f .qa/plan/NO_PLAN.md ]; then
+          status="⚠️ **Not covered**: $(head -1 .qa/plan/NO_PLAN.md)"; title="Not covered: no test plan"
+        elif [ "$total" -eq 0 ]; then
+          status="⚠️ **Not covered**: the run ended without a QA report"; title="Not covered: no QA report"
+        elif [ "$fail" -gt 0 ]; then
+          status="❌ **Fail**: ${fail} of ${total} test cases failed"; title="Fail: ${fail} of ${total} test cases failed"
+          conclusion=failure
+        elif [ "$unverified" -gt 0 ]; then
+          status="❓ **Not covered**: ${unverified} of ${total} test cases could not be verified"
+          title="Not covered: ${unverified} of ${total} test cases unverified"
+        else
+          status="✅ **Pass**: all ${total} test cases passed"; title="Pass: ${total} test cases passed"
+          conclusion=success
+        fi
+        # Edge cases are the planner's guesses, not agreed criteria: flagged, never part of the verdict.
+        [ "$warn" -eq 1 ] && status="${status} · ⚠️ 1 edge case to look at"
+        [ "$warn" -gt 1 ] && status="${status} · ⚠️ ${warn} edge cases to look at"
+        echo "Verdict: ${conclusion}, ${total} test cases, ${pass} passed, ${fail} failed, ${unverified} unverified, ${warn} edge cases to look at"
+
+        # Each session's last stream-json line has its cost; one the step's timeout killed never wrote it.
+        cost_of() { [ -f "$1" ] && jq -rR 'fromjson? | select(.type == "result") | .total_cost_usd // empty' "$1" | tail -1; }
+        cost=$(awk -v p="$(cost_of .qa/logs/plan.jsonl)" -v t="$(cost_of .qa/logs/test.jsonl)" 'BEGIN { printf "%.2f", p + t }')
+        echo "This run cost \$${cost}" >> "$GITHUB_STEP_SUMMARY"
+
+        {
+          printf '%s\n\n%s\n\n' "$HEADING" "$status"
+          if [ "$total" -gt 0 ]; then cat .qa/report.md; printf '\n\n'; fi
+          printf -- '---\n\n[The run, its session logs, screenshots and test plan](%s) (artifacts `%s-*`)\n' "$RUN_URL" "$ARTIFACTS"
+        } > .qa/summary.md
+        if [ -n "${QA_COMMENT:-}" ]; then
+          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${QA_COMMENT}" -X PATCH -F body=@.qa/summary.md > /dev/null
+        elif [ -n "${QA_PR:-}" ]; then
+          gh api "repos/${GITHUB_REPOSITORY}/issues/${QA_PR}/comments" -F body=@.qa/summary.md > /dev/null
+        fi
+        { echo "conclusion=${conclusion}"; echo "title=${title}"; echo "cost=${cost}"; } >> "$GITHUB_OUTPUT"
+
+    - name: Post the QA check
+      if: steps.verdict.outputs.conclusion != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        CHECK: ${{ inputs.check }}
+        CONCLUSION: ${{ steps.verdict.outputs.conclusion }}
+        TITLE: ${{ steps.verdict.outputs.title }}
+        COST: ${{ steps.verdict.outputs.cost }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        # The verdict as its own check on the commit under test. The API caps the summary at 65535 characters, and
+        # external_id keeps the run's cost out of sight on the pull request, for a repo that adds up its spend
+        source .qa/state.env
+        head -c 60000 .qa/summary.md > .qa/summary-trimmed.md
+        jq -n --arg name "$CHECK" --arg sha "$QA_SHA" --arg conclusion "$CONCLUSION" --arg title "$TITLE" \
+          --arg url "$RUN_URL" --arg cost "cost_usd=${COST}" --rawfile summary .qa/summary-trimmed.md \
+          '{name: $name, head_sha: $sha, status: "completed", conclusion: $conclusion, details_url: $url,
+            external_id: $cost, output: {title: $title, summary: $summary}}' \
+          | gh api "repos/${GITHUB_REPOSITORY}/check-runs" --input - --jq '.html_url'

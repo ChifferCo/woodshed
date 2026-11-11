@@ -1,0 +1,173 @@
+name: QA plan
+description: >-
+  Plans QA tests for the pull request with Claude, from its diff, its description and the repo's QA notes. Run it
+  before starting the app: when it finds nothing to test, its should-run output is false and the app never starts.
+inputs:
+  anthropic-api-key:
+    description: The Anthropic API key the planner runs on.
+    required: true
+  app-url:
+    description: Where the app will be running when the tests run.
+    required: true
+  notes:
+    description: >-
+      The repo's QA notes, read from the branch the pull request merges into: how to sign in, the data already there,
+      how to read what the app saved, anything else its tests need. Optional.
+    default: .woodshed/qa.md
+  heading:
+    description: How the QA comment on the pull request starts.
+    default: '## QA'
+  budget-usd:
+    description: The most the planner may spend, there only to stop a runaway session.
+    default: '2'
+  github-token:
+    description: Reads the pull request and writes its QA comment.
+    default: ${{ github.token }}
+outputs:
+  should-run:
+    description: true when there is a plan to test, so start the app and run the test step.
+    value: ${{ steps.decide.outputs.should-run }}
+  pr-number:
+    description: The pull request's number.
+    value: ${{ steps.pr.outputs.number }}
+runs:
+  using: composite
+  steps:
+    - name: Find the pull request and post that QA is running
+      id: pr
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        EVENT_PR: ${{ github.event.pull_request.number }}
+        BRANCH: ${{ github.head_ref || github.ref_name }}
+        HEADING: ${{ inputs.heading }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: |
+        # One QA comment per pull request, updated by each run, so a new commit's run replaces the last one's report
+        mkdir -p .qa/plan .qa/screenshots .qa/logs
+        # Keep the QA files out of anything the tests or a tool might commit, without touching .gitignore.
+        echo ".qa/" >> .git/info/exclude
+        pr="$EVENT_PR"
+        [ -n "$pr" ] || pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json number --jq '.[0].number // empty')
+        if [ -z "$pr" ]; then
+          echo "::warning::No pull request for ${BRANCH}, so QA posts no comment"
+          exit 0
+        fi
+        body=$(printf '%s\n\n⏳ **QA is running.** [Live logs](%s)' "$HEADING" "$RUN_URL")
+        comment=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${pr}/comments" --paginate \
+          | jq -rs --arg h "$HEADING" 'add // [] | [.[] | select(.user.type == "Bot" and (.body | startswith($h)))] | last | .id // empty')
+        if [ -n "$comment" ]; then
+          gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment}" -X PATCH -f body="$body" > /dev/null
+        else
+          comment=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${pr}/comments" -f body="$body" --jq '.id')
+        fi
+        echo "QA comment ready on #${pr}: ${comment}"
+        echo "number=${pr}" >> "$GITHUB_OUTPUT"
+        { echo "QA_PR=${pr}"; echo "QA_COMMENT=${comment}"; } >> .qa/state.env
+
+    - name: Fetch the base branch and record the commit under test
+      shell: bash
+      env:
+        BASE: ${{ github.event.pull_request.base.ref || github.event.repository.default_branch }}
+      run: |
+        # The planner diffs against the base branch; the check goes on this commit even if a test changes the tree
+        git fetch --quiet origin "+refs/heads/${BASE}:refs/remotes/origin/${BASE}"
+        # A token checkout leaves in .git/config is not the planner's to use.
+        git config --local --unset-all http.https://github.com/.extraheader || true
+        { echo "QA_BASE=${BASE}"; echo "QA_SHA=$(git rev-parse HEAD)"; } >> .qa/state.env
+        echo "Base ${BASE}, head $(git rev-parse --short HEAD)"
+
+    - name: Install Claude Code
+      shell: bash
+      run: |
+        # The planner and the tests run the Claude Code CLI
+        command -v claude > /dev/null || curl -fsSL https://claude.ai/install.sh | bash
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+    - name: Gather the pull request's context
+      if: steps.pr.outputs.number != ''
+      continue-on-error: true
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ steps.pr.outputs.number }}
+      run: |
+        # The planner has no GitHub token, so its description, linked issues and past fixes are handed over as files
+        gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json title,body --jq '"# Pull request: \(.title)\n\n\(.body)\n"' \
+          > .qa/logs/pr-context.md
+        # The issues it closes, and "Part of #N" ones; capped, since "Part of" often names a large umbrella issue.
+        issues=$(gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body,closingIssuesReferences \
+          --jq '[.closingIssuesReferences[].number] + [(.body // "") | scan("(?i)part of #([0-9]+)") | .[0] | tonumber]
+            | unique | .[:3] | .[]')
+        for n in $issues; do
+          gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json title,body \
+            --jq '"# Linked issue: \(.title)\n\n\((.body // "")[:6000])\n"' >> .qa/logs/pr-context.md
+        done
+        # Recent fixes to the files it changes, newest first, so the planner can check again what broke there before.
+        # The checkout may be too shallow to find them with git log. Tests, docs and CI are left out.
+        files=$(gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" --name-only \
+          | grep -vE '(^|/)(\.github|docs)/|\.(test|spec)\.[a-z]+$|\.md$' | head -10 || true)
+        : > .qa/logs/past-fixes.md
+        for f in $files; do
+          fixes=$(gh api "repos/${GITHUB_REPOSITORY}/commits?path=$(jq -rn --arg p "$f" '$p | @uri')&per_page=30" \
+            --jq '.[] | .commit.message | split("\n")[0] | select(test("\\bfix(es|ed)?\\b"; "i")) | "- \(.)"' | head -5)
+          if [ -n "$fixes" ]; then printf '### %s\n%s\n\n' "$f" "$fixes" >> .qa/logs/past-fixes.md; fi
+        done
+        echo "Context: $(echo $issues | wc -w) linked issues, $(grep -c '^- ' .qa/logs/past-fixes.md) past fixes"
+
+    - name: Write the prompts
+      shell: bash
+      env:
+        APP_URL: ${{ inputs.app-url }}
+        NOTES: ${{ inputs.notes }}
+        PROMPTS: ${{ github.action_path }}/..
+      run: |
+        # The prompts are Woodshed's, then the repo's own QA notes from the base branch, so a pull request cannot change its own QA
+        source .qa/state.env
+        cp "${PROMPTS}/rubric.md" .qa/rubric.md
+        if [ -n "$NOTES" ] && git show "origin/${QA_BASE}:${NOTES}" > .qa/notes.md 2>/dev/null; then
+          echo "QA notes: ${NOTES}"
+        else
+          echo "No QA notes on the base branch" > .qa/notes.md
+          echo "No QA notes on the base branch"
+        fi
+        for p in plan test; do
+          {
+            sed -e "s|{{APP_URL}}|${APP_URL}|g" -e "s|{{BASE}}|${QA_BASE}|g" -e "s|{{RUBRIC}}|.qa/rubric.md|g" "${PROMPTS}/${p}.md"
+            printf '\n# The repository'"'"'s QA notes\n\n'
+            cat .qa/notes.md
+          } > ".qa/${p}-prompt.md"
+        done
+
+    - name: Plan the tests
+      shell: bash
+      env:
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        BUDGET: ${{ inputs.budget-usd }}
+      run: |
+        # A test plan from the diff, before the app starts, so a pull request with nothing to test costs seconds
+        claude --model opus -p "$(cat .qa/plan-prompt.md)" \
+          --max-turns 40 --max-budget-usd "$BUDGET" --allowedTools "Bash,Read,Write,Edit" \
+          --output-format stream-json --verbose 2>&1 | tee .qa/logs/plan.jsonl
+
+    - name: Decide whether to run the tests
+      id: decide
+      shell: bash
+      run: |
+        # SKIP.md means the planner found nothing a test here can check; no plan at all says why it stopped
+        if [ -f .qa/plan/SKIP.md ]; then
+          echo "The planner skipped: $(head -1 .qa/plan/SKIP.md)"
+          echo "should-run=false" >> "$GITHUB_OUTPUT"
+        elif [ ! -s .qa/plan/plan.md ]; then
+          end=$(grep '"type":"result"' .qa/logs/plan.jsonl | tail -1 | jq -r '.subtype // empty' 2>/dev/null || true)
+          case "$end" in
+            error_max_turns) reason="the planner ran out of turns before writing a test plan" ;;
+            error_max_budget_usd) reason="the planner hit its spend limit before writing a test plan" ;;
+            *) reason="the planner ended without writing a test plan" ;;
+          esac
+          echo "$reason" > .qa/plan/NO_PLAN.md
+          echo "::warning::No test plan: ${end:-unknown}"
+          echo "should-run=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "should-run=true" >> "$GITHUB_OUTPUT"
+        fi
