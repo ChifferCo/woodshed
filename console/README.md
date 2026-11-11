@@ -156,7 +156,10 @@ need the GitHub App's Issues write and the org's Projects write (read and
 write) permissions. The first poll only records where GitHub is, so a
 restart never replays old labels or comments. On a console with several projects, the same on another project's
 repo starts or reaches a session on that project, from its webhook alone: the poll reads the default project's repo
-(`webhooks: message for another project` in the console's log, and `project` on the fleet's lines that follow).
+(`webhooks: message for another project` in the console's log, and `project` on the fleet's lines that follow). The console's comments on a repo (a session started, queued, resumed or failed, or a refusal) link to the console and
+the session's app unless that repo's project file, read from its default branch, says `consoleLinks: false`, as a public
+repo's should (`commentConsoleUrl` in `fleet.mjs`; `fleet: comment names no console address` in the log). When the file
+cannot be read, the default project's comments keep their links and another project's leave them out.
 
 GitHub's webhooks reach the console within a second or two: GitHub posts to a
 Lambda Function URL (`providers/aws/webhooks/index.mjs`), which checks the signature and
@@ -365,11 +368,17 @@ And what the shed shows about each session:
   third ttyd would need its own port in the security group.
 - **A pull request on the rail** opens your session already on its branch
   (**Open**), resumes a stopped one there (**Resume**), or starts a new one.
-- **⌘K** opens the command palette: jump to a session (stopped ones once you
-  type), go to a page, or Tab on a session for its actions. **⌘?** lists the
-  keys; **⌘.** hides the rail; **⇧⌘,** opens Settings, with the theme
-  (device, light or dark, kept in the browser); **⇧⌘O** is New session. Ctrl
-  works for ⌘ outside a terminal.
+- **⌘K** (or **/**) opens the command palette: jump to a session (stopped ones
+  once you type), go to a page, or Tab on a session for its actions. **?** (or
+  **⌘?**) lists the keys; **⌘.** hides the rail; **⇧⌘,** opens Settings, with
+  the theme (device, light or dark, kept in the browser); **⇧⌘O** (or **N**) is
+  New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
+  sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
+  write the keys as Ctrl on Windows and Linux. A key alone works only while
+  nothing takes typing, and never inside a terminal. Which key does what is
+  `public/keys.cjs`, read by the sheet, the hints and the handler alike. A
+  control with a key (New session, the user menu's and settings list's
+  Keyboard shortcuts) shows a hint with it when the pointer rests on it.
 - **Install as an app**: the console serves the shed's manifest and icons
   (`woodshed/shared/pwa.mjs`) under its own name, before sign-in, since a
   browser fetches the manifest without cookies. There is no service worker,
@@ -382,14 +391,16 @@ in Secrets Manager at `woodshed-cloud/users/<login>/github` and never reaches a
 session. A connected owner's private session then:
 - gets their own token from the session API's `/github-token`, which an
   installation token answers for everyone else, so it pushes and opens pull
-  requests as them. The owner's token reaches every repo the App is on that they
-  can write to, so only a session on the default project gets it as it is. One
-  on another project gets it scoped down by GitHub to that project's repo and
-  the permissions sessions get (`POST /applications/{client_id}/token/scoped`,
-  with the App's client secret; `githubUser.mjs`, `scopedTokenFor`), made once
+  requests as them, on any project. The owner's token reaches every repo the App
+  is on that they can write to, and the project file's `githubAccess` decides
+  how much of that the session gets (`sessionApi: github access for a private
+  session` logs it): `full`, the default, hands it over as it is; `repo` has it
+  scoped down by GitHub to that project's repo and the permissions sessions get
+  (`POST /applications/{client_id}/token/scoped`, with the App's client secret;
+  `githubUser.mjs`, `scopedTokenFor`), made once
   per person and repo and kept until it nears its expiry; Disconnect revokes each
   of those at GitHub too, along with the full token. When GitHub makes none
-  (no client secret, or it refuses), that session gets the project's App token,
+  (no client secret, or it refuses), a `repo` session gets the project's App token,
   which reaches its repo alone: its commits are still authored as the owner (the
   git identity below), but pushed and opened as the App;
 - commits with their name and `<id>+<login>@users.noreply.github.com`, which
@@ -1376,6 +1387,23 @@ They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
+The **Repos** card, first on the page, lists the repos sessions can start on (the projects above) and adds more.
+**Add repo** takes `owner/name` (a `github.com` link works too) and an optional name, after the typed confirm
+(`POST /api/console-settings/projects`). The console checks the repo first: with the GitHub App it must be installed on
+it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
+the console's own; on a console with no App (the local provider) `gh` must be able to read it. A repo already a
+project, or a name in use, is refused with its reason. The added repos are kept in `state.json` under `addedProjects`
+and appended to `WOODSHED_CLOUD_PROJECTS`'s list in the live config (`liveConfig`), so one applies at once, with no
+restart, and a project's New session **Project** field shows it to whoever can write to it. **Remove**
+(`POST /api/console-settings/projects/remove`) takes an added repo off, and is disabled while a session is running on it
+or listed to resume (a shared one kept, or any of a person's My Woodshed sessions still on their list), since that session would fall back to the default project's repo. The installation's own projects,
+the default among them, are read-only here: they change where `WOODSHED_CLOUD_PROJECTS` is set. An added repo is on the
+same terms as any other project: My Woodshed sessions, and labels and `/woodshed` comments on its issues (a webhook about
+it is no longer dropped), in the default project's session image and databases, with Slack questions, the poll and the
+database check staying on the default project. The
+console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`
+when GitHub did not answer.
+
 Below the cards, **Sessions holding data** lists, checked again every minute:
 - **Stalled**, each with why and its fix behind a typed confirm: a shared
   session stuck starting or stopping for 20 minutes (**Stop it**, **Finish the
@@ -1409,7 +1437,7 @@ Remove My Woodshed.
 | `WOODSHED_CLOUD_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
 | `WOODSHED_CLOUD_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
 | `WOODSHED_CLOUD_REPO`, `WOODSHED_CLOUD_LABEL` | none (required, `owner/name`), `woodshed` | The one repo this installation works on. The console refuses to start without it |
-| `WOODSHED_CLOUD_PROJECTS` | one project, `WOODSHED_CLOUD_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_CLOUD_REPO`, named after its repo; set beside it, `WOODSHED_CLOUD_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. Questions from Slack, the poll (the fallback for a lost webhook) and the database check still run on the default project. A list that is wrong stops the console with what is wrong |
+| `WOODSHED_CLOUD_PROJECTS` | one project, `WOODSHED_CLOUD_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_CLOUD_REPO`, named after its repo; set beside it, `WOODSHED_CLOUD_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. Questions from Slack, the poll (the fallback for a lost webhook) and the database check still run on the default project. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
 | `WOODSHED_CLOUD_ENV_FILES`, `WOODSHED_CLOUD_DB_ENV_SECRETS` | none | The repo's env files as `secret=path` pairs (`api-env=api/.env,web-env=web/.env.local`): each is a secret on the Secrets page and a tab on My settings. The second lists which of those secrets the databases' commands read (every `envFiles` of the project file's `databases`). Terraform sets both from `env_files` and `database_env_secrets`; the project file's own `envFiles` must name the same secrets |
 | `WOODSHED_CLOUD_INSTALL_SECRETS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `config.mjs`, or `WOODSHED_*`) or an env file's stops the start. Terraform sets it from `install_secrets` |
 | `WOODSHED_CLOUD_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |

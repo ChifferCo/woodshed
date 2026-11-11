@@ -80,6 +80,7 @@ function dbAdmin(config, secrets) {
   return createDbAdminRunner({
     image: config.launcher.image, repoDir: checkoutDir(defaultProject(config).repo), seedSecrets: config.dbEnvSecrets, secrets, sessionEnv: config.sessionEnv,
     runsDir: path.join(config.stateDir, 'db-admin-runs'), ...config.localDatabases,
+    projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo,
   });
 }
 
@@ -131,7 +132,9 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
  */
 export function localProvider(config) {
   const { image, memory, cpus } = config.launcher;
-  const docker = dockerLauncher({ image, memory, cpus, network: config.localDockerNetwork });
+  const docker = dockerLauncher({
+    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo,
+  });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);
   const secrets = fixed ?? createSecretSlot({ stateDir: config.stateDir, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) });

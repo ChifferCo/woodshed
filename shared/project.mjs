@@ -12,7 +12,9 @@
 //                                        line each (installsManifest)
 //
 // The repo is REPO_DIR. The checkout's own file is read first, so a branch can change it; a branch from before the file
-// existed gets the default branch's, and a repo with neither gets EMPTY_PROJECT: no dependencies, env files, databases or app.
+// existed gets the default branch's. A repo with neither gets the installation's file for it, when
+// WOODSHED_CLOUD_PROJECT_FILES_DIR names a folder holding one (installationProjectFile), and otherwise EMPTY_PROJECT: no
+// dependencies, env files, databases or app.
 // Only `version` must be written; a field that can be none and is left out is none. A misspelt field is refused.
 
 import { execFileSync } from 'node:child_process';
@@ -43,7 +45,7 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'editor', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'lines'],
@@ -82,6 +84,15 @@ function fields(value, field, names, defaults = {}) {
 
 function boolean(value, field) {
   if (typeof value !== 'boolean') fail(`${field} must be true or false`);
+  return value;
+}
+
+// How far a private session's GitHub token reaches: `full` is its owner's token as GitHub issued it, `repo` that token
+// scoped by GitHub to this repo and the session permissions.
+export const GITHUB_ACCESS = Object.freeze(['full', 'repo']);
+
+function githubAccess(value) {
+  if (!GITHUB_ACCESS.includes(value)) fail(`githubAccess must be one of ${GITHUB_ACCESS.join(', ')} (it is ${JSON.stringify(value)})`);
   return value;
 }
 
@@ -294,7 +305,8 @@ function pullRequests(value) {
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, rules: null, setup: null, pullRequests: null,
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true, githubAccess: 'full', rules: null,
+  setup: null, pullRequests: null,
 };
 
 /**
@@ -302,7 +314,7 @@ const TOP_DEFAULTS = {
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, lines: string[]}[], databases: object[], app: object|null,
- *   editor: boolean, rules: string|null, setup: string|null, pullRequests: object|null}}
+ *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
  */
 export function parseProject(raw) {
@@ -320,6 +332,8 @@ export function parseProject(raw) {
     databases: databases(project.databases, envFiles.map((f) => f.secret).filter(Boolean)),
     app: nullable(project.app, 'app', app),
     editor: boolean(project.editor, 'editor'),
+    consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
+    githubAccess: githubAccess(project.githubAccess),
     rules: nullable(project.rules, 'rules', repoPath),
     setup: nullable(project.setup, 'setup', repoPath),
     pullRequests: nullable(project.pullRequests, 'pullRequests', pullRequests),
@@ -328,8 +342,8 @@ export function parseProject(raw) {
 
 /** What a repo with no project file gets: Woodshed Cloud's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
-  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, rules: null, setup: null,
-  pullRequests: null,
+  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true,
+  githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 
 // The default branch's copy, or null when it has no such file. Anything else git fails on (no remote branch, not a
@@ -357,18 +371,98 @@ export function readRepoFile(repoDir, file) {
   return text === null ? null : { text, from: 'default branch' };
 }
 
-/** @returns {ReturnType<typeof parseProject> & {from: 'checkout'|'default branch'|'none'}} */
-export function loadProject(repoDir) {
+/**
+ * The repo a checkout is of, as GitHub names it, from its `origin`: every clone Woodshed makes (install.sh, the
+ * session image, a session on another project) fetches from `https://github.com/<owner>/<name>.git`.
+ * @returns {string|null}  owner/name, null when the origin is not on GitHub or the folder is no checkout
+ */
+export function repoOf(repoDir) {
+  let url;
+  try {
+    url = execFileSync('git', ['-C', repoDir, 'remote', 'get-url', 'origin'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return null;
+  }
+  const match = /^(?:https:\/\/(?:[^/@]*@)?github\.com\/|(?:ssh:\/\/)?git@github\.com[:/])([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/.exec(url);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+// The one entry in `dir` whose name is `name` in any case: GitHub's names are case-insensitive, and the folder's
+// writer may not spell them as the checkout's origin does.
+function entryIn(dir, name) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'ENOTDIR') return null;
+    throw err;
+  }
+  const found = names.filter((n) => n.toLowerCase() === name.toLowerCase());
+  if (found.length > 1) fail(`the installation has ${found.map((n) => path.join(dir, n)).join(' and ')}, which name one repo: keep one`);
+  return found.length ? path.join(dir, found[0]) : null;
+}
+
+/**
+ * The project file the installation supplies for a repo that has none of its own: `<dir>/<owner>/<name>.yaml`, the
+ * names matched in any case (docs/reference.md, "The project file"). A missing folder or file is none.
+ * @param {{dir: string|null|undefined, repo: string}} args  `repo` is owner/name
+ * @returns {{text: string, path: string}|null}
+ */
+export function installationProjectFile({ dir, repo }) {
+  if (!dir) return null;
+  const [owner, name] = String(repo).split('/');
+  if (!owner || !name) throw new Error(`not a repo, owner/name: ${repo}`);
+  const ownerDir = entryIn(dir, owner);
+  const file = ownerDir && entryIn(ownerDir, `${name}.yaml`);
+  if (!file || !fs.statSync(file).isFile()) return null;
+  try {
+    return { text: fs.readFileSync(file, 'utf8'), path: file };
+  } catch (err) {
+    // A session and the db-admin task read it as the image's node user, whose uid need not own it.
+    if (err.code === 'EACCES') throw new Error(`the installation's project file ${file} cannot be read by uid ${process.getuid?.()}: make it readable by everyone`);
+    throw err;
+  }
+}
+
+// The repo's own file, or else the installation's. A folder is named only by WOODSHED_CLOUD_PROJECT_FILES_DIR, so
+// the repo is told from the checkout only then; one that cannot be told is an error, not a repo with no file.
+function projectFileOf(repoDir, { projectFilesDir, repo }) {
   const file = readRepoFile(repoDir, PROJECT_FILE);
+  if (file || !projectFilesDir) return file;
+  const of = repo ?? repoOf(repoDir);
+  if (!of) fail(`not in the checkout or on the default branch, and the repo could not be told from its origin to find the installation's file in ${projectFilesDir}`);
+  const supplied = installationProjectFile({ dir: projectFilesDir, repo: of });
+  return supplied && { text: supplied.text, from: 'installation', path: supplied.path };
+}
+
+/**
+ * @param {string} repoDir
+ * @param {{projectFilesDir?: string|null, repo?: string}} [opts]  `projectFilesDir` is the installation's folder of
+ *   project files (WOODSHED_CLOUD_PROJECT_FILES_DIR by default); `repo` is owner/name, told from the checkout's origin
+ *   without it
+ * @returns {ReturnType<typeof parseProject> & {from: 'checkout'|'default branch'|'installation'|'none'}}
+ */
+export function loadProject(repoDir, { projectFilesDir = process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR || null, repo } = {}) {
+  const file = projectFileOf(repoDir, { projectFilesDir, repo });
   if (!file) return { ...EMPTY_PROJECT, from: 'none' };
+  try {
+    return { ...readProjectText(file.text), from: file.from };
+  } catch (err) {
+    // The installation's file is wrong in the same ways a repo's is, and is named by its path.
+    if (file.from === 'installation') err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file.path}`);
+    throw err;
+  }
+}
+
+function readProjectText(text) {
   let raw;
   try {
-    raw = parseYaml(file.text);
+    raw = parseYaml(text);
   } catch (err) {
     fail(`not read as YAML (${err.message})`);
   }
   if (raw === null) fail(`is empty: write version: ${PROJECT_VERSION} at least (docs/reference.md, "The project file")`);
-  return { ...parseProject(raw), from: file.from };
+  return parseProject(raw);
 }
 
 /**

@@ -29,7 +29,7 @@ export function createProjectAccess({ config, githubFor, viewPrefs = null, signI
       toldUnchecked = true;
       return true;
     }
-    const key = `${login}\n${project.name}`;
+    const key = `${login}\n${project.name}\n${project.repo}`;
     const kept = checked.get(key);
     if (kept && now() - kept.at < FRESH_MS) return kept.ok;
     try {

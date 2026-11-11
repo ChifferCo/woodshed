@@ -37,6 +37,8 @@ const NEEDS = {
     ['localDatabases', 'WOODSHED_LOCAL_DB_*'],
     ['localWebhooks', 'WOODSHED_LOCAL_WEBHOOK_PORT'],
     ['localDockerNetwork', 'WOODSHED_LOCAL_DOCKER_NETWORK'],
+    // The console would read the installation's project files while AWS's tasks, which are not given them, read none.
+    ['projectFilesDir', 'WOODSHED_CLOUD_PROJECT_FILES_DIR'],
   ],
 };
 

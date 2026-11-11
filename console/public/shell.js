@@ -1,11 +1,16 @@
-// The shed's shell around every page: the command palette (⌘K), the shortcuts sheet (⌘?), the settings sheet
-// (⇧⌘,) with the theme, and the keys that open them. The session page registers its sessions and their actions
-// (W.shell.register); every other page gets the commands alone. Keys pressed in a terminal frame reach here too
-// (W.shell.bindFrame), with ⌘ only: Ctrl there is the terminal's.
+// The shed's shell around every page: the command palette (⌘K or /), the shortcuts sheet (⌘? or ?), the settings
+// sheet (⇧⌘,) with the theme, the keys that open them, and the hover hint that names a control's key. Which key does
+// what is keys.cjs's. The session page registers its sessions and their actions (W.shell.register); every other page
+// gets the commands alone. Keys pressed in a terminal frame reach here too (W.shell.bindFrame), with ⌘ only: Ctrl and
+// a key alone there are the terminal's.
 (function () {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
+  const K = window.WoodshedKeys;
+  const MAC = K.isMac(window.navigator);
+  // A shortcut's key as text, for this computer: ⇧⌘O on a Mac, Ctrl+Shift+O elsewhere.
+  const keyText = (id) => K.label(K.byId[id].mod, MAC);
   const THEME_KEY = 'woodshed-cloud-theme';
   // Read by the shed's review page, which is framed on this origin: writing it fires a storage event there.
   const REVIEW_EXPAND_KEY = 'shed.review.expand';
@@ -73,9 +78,9 @@
       { group: 'Go to', label: 'My Woodshed', run: go('/') },
       { group: 'Go to', label: 'My settings', run: go('/settings') },
       ...(W.isAdmin?.() ? W.consoleLinks().map((link) => ({ group: 'Go to', label: link.label, run: go(link.href) })) : []),
-      { group: 'Commands', label: 'Keyboard shortcuts', meta: '⌘?', run: () => openSheet(keys) },
-      { group: 'Commands', label: 'Settings', meta: '⇧⌘,', run: () => openSheet(settings) },
-      page.toggleRail && { group: 'Commands', label: page.railShown() ? 'Hide the rail' : 'Show the rail', meta: '⌘.', run: page.toggleRail },
+      { group: 'Commands', label: 'Keyboard shortcuts', meta: '?', run: () => openSheet(keys) },
+      { group: 'Commands', label: 'Settings', meta: keyText('settings'), run: () => openSheet(settings) },
+      page.toggleRail && { group: 'Commands', label: page.railShown() ? 'Hide the rail' : 'Show the rail', meta: keyText('rail'), run: page.toggleRail },
     ].filter(Boolean);
   }
 
@@ -85,7 +90,7 @@
     const hit = (text) => !q || String(text || '').toLowerCase().includes(q);
     if (actionsFor) return page.actions(actionsFor).filter((a) => hit(a.label));
     const out = [];
-    if (hit('new session')) out.push({ group: 'Quick actions', label: 'New session', meta: '⇧⌘O', run: go('/?new=1') });
+    if (hit('new session')) out.push({ group: 'Quick actions', label: 'New session', meta: keyText('new'), run: go('/?new=1') });
     for (const s of page.sessions()) {
       // Stopped ones only once something is typed: the list is for jumping, and most of them are history.
       if (!s.live && !q) continue;
@@ -203,16 +208,17 @@
     else closeSheet(s);
   }
 
-  const KEYS = [
-    [['⌘', 'K'], 'Jump to a session, or run a command'],
-    [['⇧⌘', 'O'], 'New session'],
-    [['⌘', '.'], 'Show or hide the rail'],
-    [['⇧⌘', ','], 'Settings'],
-    [['⌘', '?'], 'This list'],
-  ];
-  const keys = sheet('Keyboard', [
-    KEYS.map(([combo, what]) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, combo.map((k) => h('kbd', null, k))), h('div', null, what))),
-    h('p', { class: 'sheet-note' }, 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. Sessions have no key of their own: ⌘K, then type a name.'),
+  // A shortcut's keys as key caps: its combo, then its key alone. A sequence (G M) is its keys one after the other.
+  function keyCaps(shortcut) {
+    const combo = shortcut.mod && K.caps(shortcut.mod, MAC).map((k) => h('kbd', null, k));
+    const bare = shortcut.bare && shortcut.bare.split(' ').map((k) => h('kbd', null, k));
+    return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
+  }
+  const keys = sheet('Keyboard shortcuts', [
+    K.SHORTCUTS.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what))),
+    h('p', { class: 'sheet-note' }, MAC
+      ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. Sessions have no key of their own: ⌘K, then type a name.'
+      : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),
   ]);
 
   // Appearance is this browser's.
@@ -273,24 +279,38 @@
   settings.onOpen = paintSettings;
 
   // ---- the keys ----
+  // G waits this long for the second key of a sequence.
+  const SEQUENCE_MS = 1500;
+  let gAt = 0;
+  const ACTS = {
+    keys: () => toggleSheet(keys),
+    palette: () => (palette.hidden ? openPalette() : closePalette()),
+    settings: () => toggleSheet(settings),
+    rail: () => page.toggleRail?.(),
+    new: go('/?new=1'),
+  };
   function onKey(e, inFrame) {
+    hideHint();
     if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden || !settings.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
       e.preventDefault();
       closeAll();
       return;
     }
-    if (!e.metaKey && !(e.ctrlKey && !inFrame)) return;
-    let act = null;
-    if (e.key === '?' || (e.shiftKey && e.code === 'Slash')) act = () => toggleSheet(keys);
-    else if (e.code === 'KeyK' && !e.shiftKey) act = () => (palette.hidden ? openPalette() : closePalette());
-    else if (e.code === 'Comma') act = () => toggleSheet(settings);
-    else if (e.code === 'Period' && page.toggleRail) act = page.toggleRail;
-    else if (e.code === 'KeyO' && e.shiftKey) act = go('/?new=1');
-    if (!act) return;
+    if (e.repeat || e.isComposing) return;
+    const afterG = Date.now() - gAt < SEQUENCE_MS;
+    gAt = 0;
+    // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
+    const overlayOpen = !palette.hidden || !keys.el.hidden || !settings.el.hidden;
+    const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
+    if (!id || (id === 'rail' && !page.toggleRail)) return;
     e.preventDefault();
     e.stopPropagation();
-    act();
+    if (id === 'g') {
+      gAt = Date.now();
+      return;
+    }
+    (ACTS[id] ?? go(K.byId[id].href))();
   }
   document.addEventListener('keydown', (e) => onKey(e, false), true);
 
@@ -306,7 +326,61 @@
     }
   }
 
+  // ---- the hover hint ----
+  // A control that has a key says so when the pointer rests on it, or when the keyboard brings focus to it:
+  // data-keys names its shortcut (keys.cjs), data-hint, when set, what it does in place of the shortcut's words.
+  // A phone has no hover and no keys, so it gets none.
+  const HINT_DELAY_MS = 400;
+  const hint = h('div', { class: 'keyhint', role: 'tooltip', hidden: true });
+  document.body.append(hint);
+  let hintTimer = null;
+  let hintFor = null;
+  function showHint(el) {
+    const shortcut = K.byId[el.dataset.keys];
+    if (!shortcut) return;
+    hint.replaceChildren(...[
+      h('div', { class: 'keyhint-row' }, h('span', null, el.dataset.hint || shortcut.what), h('span', { class: 'keyhint-keys' }, keyCaps(shortcut))),
+      shortcut.id !== 'keys' && h('div', { class: 'keyhint-more' }, 'Press ', h('kbd', null, '?'), ' for every shortcut'),
+    ].filter(Boolean));
+    hint.hidden = false;
+    const box = el.getBoundingClientRect();
+    const w = hint.offsetWidth;
+    const ht = hint.offsetHeight;
+    const left = Math.min(Math.max(8, box.left + box.width / 2 - w / 2), window.innerWidth - w - 8);
+    const below = box.bottom + 6 + ht <= window.innerHeight - 8;
+    hint.style.left = `${left}px`;
+    hint.style.top = `${below ? box.bottom + 6 : box.top - 6 - ht}px`;
+  }
+  function hideHint() {
+    clearTimeout(hintTimer);
+    hintFor = null;
+    hint.hidden = true;
+  }
+  function soon(el) {
+    if (el === hintFor) return;
+    hideHint();
+    hintFor = el;
+    hintTimer = setTimeout(() => { if (hintFor === el && el.isConnected) showHint(el); }, HINT_DELAY_MS);
+  }
+  if (window.matchMedia?.('(hover: hover)').matches) {
+    document.addEventListener('mouseover', (e) => {
+      const el = e.target.closest?.('[data-keys]');
+      if (el) soon(el);
+      else if (hintFor) hideHint();
+    });
+    document.addEventListener('focusin', (e) => {
+      const el = e.target.closest?.('[data-keys]');
+      if (el && el.matches(':focus-visible')) soon(el);
+    });
+    document.addEventListener('focusout', hideHint);
+    document.documentElement.addEventListener('mouseleave', hideHint);
+    document.addEventListener('mousedown', hideHint, true);
+    document.addEventListener('scroll', hideHint, true);
+    window.addEventListener('blur', hideHint);
+  }
+
   W.shell = {
     register, toast, bindFrame, openPalette, openSettings: () => openSheet(settings), openKeys: () => openSheet(keys),
+    keyText,
   };
 })();

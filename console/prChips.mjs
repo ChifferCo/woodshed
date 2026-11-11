@@ -114,16 +114,29 @@ export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = 
  * The chips of every project: one reader per project's repo, each with its own GitHub client. A session's pull request
  * URL names its repo, so each reader reads only its own project's sessions, and a webhook marks only the reader of the
  * project it is about.
- * @param {{projects: {name: string, repo: string, default?: boolean}[], githubFor: (project: object) => object|null,
+ * `projects` may be a function, read on every use, so a repo an admin adds or removes while the console runs is followed.
+ * @param {{projects: {name: string, repo: string, default?: boolean}[]|(() => {name: string, repo: string, default?: boolean}[]), githubFor: (project: object) => object|null,
  *          now?: () => number, webhooksFlowing?: () => boolean, fallbackMs?: number}} deps
  */
 export function createProjectPrChips({ projects, githubFor, ...rest }) {
-  const readers = projects.map((project) => ({ project, chips: createPrChips({ github: githubFor(project), repo: project.repo, ...rest }) }));
-  const defaultName = projects.find((p) => p.default)?.name ?? projects[0]?.name;
+  const current = typeof projects === 'function' ? projects : () => projects;
+  const kept = new Map();
+  // One reader per project now listed; a removed repo's goes, and one added again starts afresh.
+  function readersNow() {
+    const list = current();
+    const keys = new Set(list.map((p) => `${p.name}\n${p.repo}`));
+    for (const key of kept.keys()) if (!keys.has(key)) kept.delete(key);
+    return list.map((project) => {
+      const key = `${project.name}\n${project.repo}`;
+      if (!kept.has(key)) kept.set(key, { project, chips: createPrChips({ github: githubFor(project), repo: project.repo, ...rest }) });
+      return kept.get(key);
+    });
+  }
+  const defaultName = () => { const list = current(); return list.find((p) => p.default)?.name ?? list[0]?.name; };
   return {
     // One project's GitHub failing leaves its chips as they were, and the others are still read.
     async refresh(sessions) {
-      for (const { project, chips } of readers) {
+      for (const { project, chips } of readersNow()) {
         try {
           await chips.refresh(sessions);
         } catch (err) {
@@ -132,7 +145,7 @@ export function createProjectPrChips({ projects, githubFor, ...rest }) {
       }
     },
     view(prUrl) {
-      for (const { chips } of readers) {
+      for (const { chips } of readersNow()) {
         const pr = chips.view(prUrl);
         if (pr) return pr;
       }
@@ -140,8 +153,8 @@ export function createProjectPrChips({ projects, githubFor, ...rest }) {
     },
     /** @param {string|null} [project]  another project's name; none for the default project's */
     stale(numbers, project = null) {
-      const name = project ?? defaultName;
-      return readers.find((r) => r.project.name === name)?.chips.stale(numbers) ?? [];
+      const name = project ?? defaultName();
+      return readersNow().find((r) => r.project.name === name)?.chips.stale(numbers) ?? [];
     },
   };
 }

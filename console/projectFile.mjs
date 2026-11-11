@@ -3,9 +3,10 @@
 // pull request waits for before it is posted (`pullRequests`, prAnnouncer.mjs), and the databases whose engines the
 // installation must host before a session starts (`databases`), and where a database keeps its migrations, which Restore
 // a dump counts a copy's against (`databases[].migrations`, with the table it records them in, what its dump commands
-// leave out and its migrate command, dbRestore.mjs). Read from the repo's default branch
-// and kept for a while. A file that cannot be read leaves My settings without that list, never without the page, and
-// holds the pull requests until it can be read: an unread file is not a file with no gates.
+// leave out and its migrate command, dbRestore.mjs). Read from the repo's default branch, or the installation's file for a
+// repo with none there (WOODSHED_CLOUD_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot
+// be read leaves My settings without that list, never without the page, and holds the pull requests until it can be
+// read: an unread file is not a file with no gates.
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { parseProject } from '../shared/project.mjs';
 
@@ -24,19 +25,28 @@ export function appendedBySecret(text) {
 
 /**
  * @param {{github: {projectFile: () => Promise<string|null>, fileNames: (folder: string) => Promise<string[]>},
- *          now?: () => number}} deps
+ *          installationFile?: () => {text: string}|null, now?: () => number}} deps  `installationFile` is the
+ *   installation's project file for the repo (installationProjectFile), read only when its default branch has none
  */
-export function createProjectReader({ github, now = Date.now }) {
+export function createProjectReader({ github, installationFile = () => null, now = Date.now }) {
   let pending = null;
   let readAt = -Infinity;
   let keepMs = KEEP_MS;
 
+  // The repo's own file wins: the installation's is for a repo that has none.
+  async function readText() {
+    const text = await github.projectFile();
+    if (text !== null) return { text, from: 'default branch' };
+    const supplied = installationFile();
+    return supplied ? { text: supplied.text, from: 'installation' } : { text: null, from: 'none' };
+  }
+
   async function load() {
     try {
-      const text = await github.projectFile();
+      const { text, from } = await readText();
       const project = text === null ? null : parseProject(parseYaml(text));
       console.log('projectFile: read', {
-        found: text !== null, envFiles: project?.envFiles?.length ?? 0, pullRequests: Boolean(project?.pullRequests),
+        found: text !== null, from, envFiles: project?.envFiles?.length ?? 0, pullRequests: Boolean(project?.pullRequests),
         databases: project?.databases?.map((d) => d.engine) ?? [],
       });
       return { project, error: null };
@@ -73,6 +83,24 @@ export function createProjectReader({ github, now = Date.now }) {
       const { project, error } = await read();
       if (error) throw new Error(`the project file could not be read: ${String(error.message ?? error).split('\n')[0]}`);
       return project?.pullRequests ?? null;
+    },
+    /**
+     * @returns {Promise<boolean|null>}  whether what is posted to the repo may name the console's address (`consoleLinks`,
+     *   true with no project file); null when the file could not be read
+     */
+    async consoleLinks() {
+      const { project, error } = await read();
+      if (error) return null;
+      return project?.consoleLinks ?? true;
+    },
+    /**
+     * @returns {Promise<'full'|'repo'|null>}  how far a private session's GitHub token reaches (`githubAccess`, full with no
+     *   project file); null when the file could not be read
+     */
+    async githubAccess() {
+      const { project, error } = await read();
+      if (error) return null;
+      return project?.githubAccess ?? 'full';
     },
     /**
      * @returns {Promise<{engine: string, migrate: string|null, migrationsTable: object|null, dump: object}[]|null>}  the project's databases ([] with no project file); null when the file

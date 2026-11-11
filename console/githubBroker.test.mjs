@@ -182,3 +182,23 @@ test('with a broker, each project\'s console, sessions and ask sessions get thei
   assert.equal(asked.at(-1).repo, 'acme/api');
   assert.equal(createProjectTokens({ config: { ...config, githubBroker: null } }), null, 'neither an App nor a broker: no tokens');
 });
+
+test('with a broker, a repo an admin is adding is checked by borrowing a read-only token for it', async (t) => {
+  const asked = [];
+  const fetchImpl = async (url, init) => {
+    const body = JSON.parse(init.body);
+    asked.push(body);
+    if (body.repo === 'acme/elsewhere') return json(403, { error: 'not in this organization' });
+    return json(200, { token: 'ghs_check', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), permissions: body.permissions });
+  };
+  const config = {
+    githubApp: null, githubBroker: { url: 'https://host.example/t', tokenFile: tokenFile(t) },
+    projects: [{ name: 'app', repo: 'acme/app', default: true }],
+  };
+  const tokens = createProjectTokens({ config, fetchImpl });
+  assert.equal((await tokens.borrowFor('acme/new')).token, 'ghs_check');
+  assert.deepEqual(asked[0], { repo: 'acme/new', permissions: { contents: 'read', metadata: 'read' } });
+  await assert.rejects(logsOf(() => tokens.borrowFor('acme/elsewhere')), /403/);
+  assert.equal(createProjectTokens({ config: { ...config, githubBroker: null, githubApp: { appId: '1', installationId: '2' } }, privateKey: () => null }).borrowFor, null,
+    'with an App the App is asked instead');
+});

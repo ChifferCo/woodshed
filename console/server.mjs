@@ -72,6 +72,8 @@
 //   POST /api/people/slack       {"login": "<handle>", "slack": "U01ABC2DEF3" | "@handle" | ""}   links a member's Slack user by hand (slackPeople.mjs)
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
+//   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
+//   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
 //   GET  /api/webhook/deliveries GitHub's last 10 deliveries to the App's webhook, with their status codes
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
@@ -118,6 +120,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { hostedEngines, viewersOf } from '../shared/databases/index.mjs';
+import { installationProjectFile } from '../shared/project.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
@@ -167,6 +170,7 @@ import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvent
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
+import { createAddedProjects, repoChecker } from './addedProjects.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -177,6 +181,7 @@ const STATIC_FILES = {
   'logins.cjs': 'text/javascript; charset=utf-8',
   'setupSteps.cjs': 'text/javascript; charset=utf-8',
   'inviteLink.cjs': 'text/javascript; charset=utf-8',
+  'keys.cjs': 'text/javascript; charset=utf-8',
   'common.js': 'text/javascript; charset=utf-8',
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
@@ -207,6 +212,7 @@ const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignabl
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
+const PROJECTS_PATH = '/api/console-settings/projects';
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -309,6 +315,7 @@ export function pageShell({ title, script, login = null, provider = null }) {
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
 <script src="${staticUrl('common.js')}"></script>
+<script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
 </body>
@@ -427,7 +434,7 @@ export function createHandler({
   config, fleet, settings = null, events = { list: () => [] }, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
-  dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null,
+  dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   githubFor = null, trusted = null,
 }) {
   const hosts = knownHosts(config);
@@ -1309,6 +1316,7 @@ export function createHandler({
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
+      projects: addedProjects?.view() ?? null,
       data: heldData ? await heldData.report() : null,
     });
   }
@@ -1324,7 +1332,12 @@ export function createHandler({
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
     try {
-      if (pathname === '/api/console-settings') {
+      if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
+        if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+        const by = login ?? 'console';
+        if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
+        else addedProjects.remove({ name: body.name, by });
+      } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
         const values = body.values ?? {};
         consoleSettings.check(values);
@@ -1341,7 +1354,7 @@ export function createHandler({
         await heldData.clean({ kind: body.kind, id: body.id, by: login ?? 'console' });
       }
     } catch (err) {
-      if (err.shown) return reply(res, pathname === '/api/console-settings' ? 400 : 409, { error: err.message });
+      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message });
       console.error('console: console settings change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The change failed; the console log says why' });
     }
@@ -1394,7 +1407,7 @@ export function createHandler({
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
-    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean') return consoleSettingsWrite(req, res, pathname, login);
+    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
@@ -1811,11 +1824,12 @@ async function untilAppKey(appKey, everyMs) {
   }
 }
 
-function startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks }) {
+function startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks, githubAccess }) {
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   if (!config.sessionApi.host) return;
   const handle = createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
+    githubAccess,
   });
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
@@ -1859,11 +1873,13 @@ export async function startConsole({ provider, config: given = null }) {
   // Each project's repo, on that project's own token: the default project's is the console's own client.
   const projectClients = new Map([[defaultProject(config).name, github]]);
   const githubFor = (project) => {
-    if (!projectClients.has(project.name)) {
+    // A repo an admin removed and added again is a new client, since it may be on another installation.
+    const key = project.default ? project.name : `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
+    if (!projectClients.has(key)) {
       const token = tokens && (async () => (await tokens.forSession({ project: project.name }).console.token()).token);
-      projectClients.set(project.name, createGitHub({ repo: project.repo, token }));
+      projectClients.set(key, createGitHub({ repo: project.repo, token }));
     }
-    return projectClients.get(project.name);
+    return projectClients.get(key);
   };
   // The databases the provider's db-admin makes a copy of for each session: what the installation runs.
   const databases = createDatabases({ store, secrets, dbAdmin, engines: provider.databases ?? [] });
@@ -1876,13 +1892,19 @@ export async function startConsole({ provider, config: given = null }) {
   const slack = createSlack({ store, secrets });
   console.log('console: Slack posts', { available: slack.available, channel: slack.view().channel || null });
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
-  const projectReader = createProjectReader({ github });
+  // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
+  const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
+  const projectReader = createProjectReader({ github, installationFile: installationFileOf(defaultProject(config).repo) });
   // Each project's file, from its own repo: the gates its pull requests wait for. The default project's is the one above.
   const projectReaders = new Map([[defaultProject(config).name, projectReader]]);
   const readerOf = (name) => {
     const project = (name && projectNamed(config, name)) || defaultProject(config);
-    if (!projectReaders.has(project.name)) projectReaders.set(project.name, createProjectReader({ github: githubFor(project) }));
-    return projectReaders.get(project.name);
+    // Keyed by repo too: a repo removed and added again may be another repo under the same name.
+    const key = project.default ? project.name : `${project.name}\n${project.repo}`;
+    if (!projectReaders.has(key)) {
+      projectReaders.set(key, createProjectReader({ github: githubFor(project), installationFile: installationFileOf(project.repo) }));
+    }
+    return projectReaders.get(key);
   };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
@@ -1896,12 +1918,13 @@ export async function startConsole({ provider, config: given = null }) {
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const pullWebhooks = createPullWebhooks();
-  const prChips = createProjectPrChips({ projects: allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
+  const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
+    consoleLinks: (name) => readerOf(name).consoleLinks(),
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -1911,6 +1934,11 @@ export async function startConsole({ provider, config: given = null }) {
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   const appIdentity = createAppIdentity({ appApi });
+  // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
+  const brokerRead = tokens?.borrowFor
+    ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
+    : undefined;
+  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead }) });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
   const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
@@ -1936,14 +1964,15 @@ export async function startConsole({ provider, config: given = null }) {
   const reviewSources = new Map();
   const projectReview = (session) => {
     const project = projectFor(config, session);
-    if (!reviewSources.has(project.name)) reviewSources.set(project.name, createReviewSource({ github: githubFor(project) }));
-    return reviewSources.get(project.name)(session);
+    const key = `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
+    if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
+    return reviewSources.get(key)(session);
   };
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name, words: provider.words ?? null }, appIdentity,
-    databaseGate,
+    databaseGate, addedProjects,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
@@ -1969,7 +1998,10 @@ export async function startConsole({ provider, config: given = null }) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
   });
-  startSessionApi({ config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks });
+  startSessionApi({
+    config, fleet, tokens, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, asks,
+    githubAccess: (name) => readerOf(name).githubAccess(),
+  });
   await startTlsAsk({ config, sessions: () => fleet.sessions() });
   every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
   every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());

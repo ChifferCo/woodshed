@@ -22,8 +22,10 @@
 // reads are files in a folder mounted read-only, `--secrets-dir`, in place of Secrets Manager's `--region`.
 //
 // Which engines a run has is which engines' flags the entryPoint gives (each engine's `flags`): the installation's
-// choice. A project database on an engine the run has no flags for stops it; an installation with no database has no
-// db-admin task at all.
+// choice. `--project-files-dir` is the installation's folder of project files (WOODSHED_CLOUD_PROJECT_FILES_DIR), read
+// for a repo with no `.woodshed/project.yaml` of its own. A flag, not the variable: the project file names the commands
+// the seed runs, so a run's overrides must not be able to point the task at another one. A project database on an
+// engine the run has no flags for stops it; an installation with no database has no db-admin task at all.
 
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -43,6 +45,7 @@ import { isMain } from '../shared/isMain.mjs';
 
 // Every run's own flags; each engine adds its own. Where the secrets are is one of SECRET_SOURCES.
 const FLAGS = ['secret-prefix', 'repo'];
+const OPTIONAL_FLAGS = ['project-files-dir'];
 const SECRET_SOURCES = ['region', 'secrets-dir'];
 const ACTIONS = { template: 'none', reset: 'login', drop: 'login', clone: 'session', 'drop-session': 'session' };
 // A clone started while a refresh swaps the templates in waits for them, as does one before the first template.
@@ -88,7 +91,7 @@ export function runDatabases(flags) {
 export function parseArgs(argv) {
   const end = argv.indexOf('--');
   if (end === -1) throw refuse('the entryPoint must end its flags with --');
-  const known = [...FLAGS, ...SECRET_SOURCES, ...ENGINE_NAMES.flatMap((name) => ENGINES[name].flags)];
+  const known = [...FLAGS, ...OPTIONAL_FLAGS, ...SECRET_SOURCES, ...ENGINE_NAMES.flatMap((name) => ENGINES[name].flags)];
   const flags = {};
   for (let i = 0; i < end; i += 2) {
     const name = argv[i]?.replace(/^--/, '');
@@ -202,10 +205,11 @@ export function gitChangedSince(repoDir) {
 }
 
 // The task builds and copies the project's databases, so a project with none is a mistake to stop on, not a default.
-function projectDatabases(repo) {
-  const { databases } = loadProject(repo);
-  if (!databases.length) throw refuse(`${PROJECT_FILE} has no databases (databases: []), so there is nothing for this task to build or copy`);
-  return databases;
+// The installation's folder is the flag's alone, never the environment's.
+function readProject(flags) {
+  const project = loadProject(flags.repo, { projectFilesDir: flags['project-files-dir'] || null });
+  if (!project.databases.length) throw refuse(`${PROJECT_FILE} has no databases (databases: []), so there is nothing for this task to build or copy`);
+  return project;
 }
 
 /**
@@ -219,7 +223,7 @@ function projectDatabases(repo) {
  */
 export function createDbAdmin({
   flags, env, secrets = secretsClient({ region: flags.region }), seed, buildSha = null, changedSince = async () => true,
-  databases = projectDatabases(flags.repo), drivers = null,
+  databases = readProject(flags).databases, drivers = null,
 }) {
   const run = runDatabases(flags);
   const missing = databases.filter((d) => !run.includes(d.engine)).map((d) => d.engine);
@@ -452,6 +456,8 @@ export function seedEnv({ flags, env, databases, user, name, password, files }) 
     PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
     HOME: os.userInfo().homedir,
     ...Object.assign({}, ...databases.map((d) => engine(d.engine).seedEnv({ flags, user, password, name }))),
+    // The entrypoint's `seed` reads the project file again, for the commands: the same one as this task.
+    ...(flags['project-files-dir'] && { WOODSHED_CLOUD_PROJECT_FILES_DIR: flags['project-files-dir'] }),
     ...files,
   };
 }
@@ -485,9 +491,9 @@ async function main() {
   log('Started', { action, owner, services, databases: runDatabases(flags) });
   const secrets = flags['secrets-dir'] ? fileSecretsClient({ dir: flags['secrets-dir'] }) : secretsClient({ region: flags.region });
   log('Secrets from', { source: flags['secrets-dir'] ? 'files' : 'Secrets Manager' });
-  const databases = projectDatabases(flags.repo);
+  const { databases, from } = readProject(flags);
   const seedFiles = [...new Set(databases.flatMap((d) => d.envFiles))];
-  log('Project read', { databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles });
+  log('Project read', { from, databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles });
   const envFiles = async () => Object.fromEntries(await Promise.all(seedFiles.map(
     async (secret) => [secretEnvName(secret), (await secrets.get(`${flags['secret-prefix']}${secret}`)) ?? ''],
   )));

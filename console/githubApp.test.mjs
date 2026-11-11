@@ -99,3 +99,20 @@ test('deliveries reads the App webhook\'s last ten deliveries with the App JWT',
   assert.equal(seen[0].method, 'GET');
   assert.match(seen[0].auth, /^Bearer [\w-]+\.[\w-]+\.[\w-]+$/);
 });
+
+test('installationOf asks for the App\'s installation on a repo, and says null when it has none', async () => {
+  const seen = [];
+  async function fetchImpl(url, { headers }) {
+    seen.push({ url, auth: headers.authorization });
+    return url.includes('/acme/yes/')
+      ? new Response(JSON.stringify({ id: 4242 }), { status: 200 })
+      : new Response(JSON.stringify({ message: 'Not Found' }), { status: 404 });
+  }
+  const api = createAppApi({ appId: '1', privateKey: PEM, fetchImpl });
+  assert.equal(await api.installationOf('acme/yes'), '4242');
+  assert.equal(await api.installationOf('acme/no'), null);
+  assert.equal(seen[0].url, 'https://api.github.com/repos/acme/yes/installation');
+  assert.match(seen[0].auth, /^Bearer /, 'as the App itself');
+  const broken = createAppApi({ appId: '1', privateKey: PEM, fetchImpl: async () => new Response('{}', { status: 502 }) });
+  await assert.rejects(broken.installationOf('acme/yes'), /HTTP 502/);
+});

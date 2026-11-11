@@ -12,7 +12,7 @@ import {
 } from './dbAdmin.mjs';
 
 import { MONGO_READY } from '../shared/databases/mongo.mjs';
-import { fixtureProject } from '../shared/projectFixture.mjs';
+import { fixtureCheckout, fixtureProject, fixtureProjectFiles } from '../shared/projectFixture.mjs';
 
 // A project's databases as the project file gives them: a Postgres whose template is built from api/db, and a Mongo
 // seeded beside it.
@@ -393,4 +393,29 @@ test('with Mongo alone, the template is seeded, marked ready with its commit, an
   assert.ok(!dbs.has('woodshed__template_next'), 'the next template goes once it is swapped in');
   await make().template();
   assert.equal(seeded.length, 1, 'kept: built from this commit');
+});
+
+test('the installation\'s project file is read from the entryPoint\'s --project-files-dir alone, and the seed reads the same', (t) => {
+  const checkout = fixtureCheckout(fs.mkdtempSync(path.join(os.tmpdir(), 'dbAdmin-installation-')), { repo: 'acme/app' });
+  const files = fixtureProjectFiles(fs.mkdtempSync(path.join(os.tmpdir(), 'dbAdmin-files-')), { 'acme/app': fixtureProject({ databases: [database] }) });
+  t.after(() => [checkout, files].forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
+  const flags = parseArgs([...FIXED.slice(0, -1), '--project-files-dir', files, '--', 'template']).flags;
+  assert.equal(flags['project-files-dir'], files);
+  assert.throws(() => parseArgs([...FIXED.slice(0, -1), '--project-files-dir', files, '--', 'template', 'extra']), { refused: true });
+
+  const before = process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR;
+  t.after(() => {
+    if (before === undefined) delete process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR;
+    else process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR = before;
+  });
+  // A variable a run's overrides could set is not where the task finds its project file.
+  process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR = files;
+  assert.throws(() => createDbAdmin({ flags: { ...FLAGS, repo: checkout }, env: {}, secrets: {}, drivers: { postgres: {}, mongo: {} } }),
+    /has no databases \(databases: \[\]\)/);
+  delete process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR;
+  assert.doesNotThrow(() => createDbAdmin({ flags: { ...flags, repo: checkout, 'pg-ca': 'none' }, env: {}, secrets: {}, drivers: { postgres: {}, mongo: {} } }));
+
+  const env = seedEnv({ flags, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} });
+  assert.equal(env.WOODSHED_CLOUD_PROJECT_FILES_DIR, files);
+  assert.equal(seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} }).WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined);
 });

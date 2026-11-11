@@ -9,6 +9,7 @@ import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { envFiles, loadConfig, requireRepo } from '../console/config.mjs';
 import { defaultProject } from '../console/projects.mjs';
 import { createProvider, providerName } from '../providers/console.mjs';
+import { fixtureCheckout, fixtureProject, fixtureProjectFiles } from '../shared/projectFixture.mjs';
 
 // install.sh's functions, run in bash with its main left out (WOODSHED_INSTALL_LIB=1).
 const SCRIPT = path.resolve(import.meta.dirname, '..', 'install.sh');
@@ -205,4 +206,45 @@ test('an empty WOODSHED_SESSION_RUNTIME builds the runtime here without asking a
   const docker = fakeDocker(0);
   assert.equal(runInstallFunction('sessionRuntime 2>/dev/null', { PATH: docker.PATH, WOODSHED_SESSION_RUNTIME: '' }), 'runtime');
   assert.deepEqual(docker.calls(), []);
+});
+
+test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read from the installation\'s, and the folder saved in stack.env', () => {
+  const woodshed = path.resolve(import.meta.dirname, '..');
+  const clone = fixtureCheckout(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-clone-')), { repo: 'acme/app' });
+  const files = fixtureProjectFiles(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-')), {
+    'acme/app': fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] }),
+  });
+  const env = { DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main' };
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>/dev/null`, env), 'api-env=api/.env\napi-env\npostgres\n');
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "" 2>/dev/null`, env), '\n\nnone\n', 'without the folder, an empty project');
+  assert.match(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>&1 >/dev/null`, env), /project file from installation/);
+
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-home-'));
+  const file = path.join(home, 'stack.env');
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env postgres woodshed && saveProjectFilesDir "${file}" "${files}"`);
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const written = readEnvFile(file);
+  assert.equal(written.WOODSHED_CLOUD_PROJECT_FILES_DIR, files);
+  runInstallFunction(`writeSessionEnv "${written.WOODSHED_CLOUD_SESSION_ENV_FILE}" host.docker.internal postgres`);
+  assert.equal(loadConfig(written).projectFilesDir, files);
+  assert.equal(written.WOODSHED_CLOUD_REPO, 'acme/app', 'the rest of the file is kept');
+
+  runInstallFunction(`saveProjectFilesDir "${file}" /srv/project-files && saveProjectFilesDir "${file}" /srv/project-files && saveProjectFilesDir "${file}" ""`);
+  const moved = fs.readFileSync(file, 'utf8');
+  assert.equal(moved.match(/^WOODSHED_CLOUD_PROJECT_FILES_DIR=/gm).length, 1);
+  assert.deepEqual({ ...readEnvFile(file) }, { ...written, WOODSHED_CLOUD_PROJECT_FILES_DIR: '/srv/project-files' });
+  assert.equal(runInstallFunction(`savedSetting "${file}" WOODSHED_CLOUD_PROJECT_FILES_DIR`), '/srv/project-files\n', 'a second run reads it back');
+});
+
+// An install made before the installation had the repo's file keeps settings of no project file: install.sh says so.
+test('a stack.env written for another project file is named, and one written for this one is not', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-stale-'));
+  const file = path.join(home, 'stack.env');
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app '' '' none ''`);
+  const now = "$'api-env=api/.env\\napi-env\\npostgres'";
+  assert.match(runInstallFunction(`warnStaleStackEnv "${file}" ${now} postgres none`), /stack\.env was written for another project file/);
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${file}" $'\\n\\nnone' none none`), '');
+  const current = path.join(home, 'current.env');
+  runInstallFunction(`writeStackEnv "${current}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env 'mongo postgres' woodshed`);
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" $'api-env=api/.env\\napi-env\\nmongo postgres' 'mongo postgres' 'postgres mongo'`), '');
 });

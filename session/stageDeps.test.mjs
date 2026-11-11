@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { fixtureProject } from '../shared/projectFixture.mjs';
+import { fixtureCheckout, fixtureProject, fixtureProjectFiles } from '../shared/projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'stageDeps.sh');
 
@@ -104,4 +104,36 @@ test('the project file\'s editor goes beside the folder, never inside it, for th
     assert.match(out, new RegExp(`stageDeps: editor ${editor}`));
     assert.deepEqual(stagedFiles(path.join(repo, 'staged')), ['api/deps.lock'], 'the checkout gets no flag file');
   }
+});
+
+test('a repo with no project file stages the installs of the installation\'s file for it, and its own file wins', (t) => {
+  const repo = fixtureCheckout(fs.mkdtempSync(path.join(os.tmpdir(), 'stage-deps-installation-')), { repo: 'acme/app' });
+  const files = fixtureProjectFiles(fs.mkdtempSync(path.join(os.tmpdir(), 'stage-deps-files-')), {
+    'acme/app': fixtureProject({ dependencies: { installs: [install('api', ['deps.lock'])] }, editor: true }),
+  });
+  t.after(() => [repo, files].forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
+  fs.mkdirSync(path.join(repo, 'api'));
+  fs.writeFileSync(path.join(repo, 'api/deps.lock'), 'api/deps.lock');
+  const run = (env) => spawnSync('bash', [SCRIPT, path.join(repo, 'staged')], {
+    cwd: repo, encoding: 'utf8', env: { PATH: process.env.PATH, DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main', ...env },
+  });
+
+  const supplied = run({ WOODSHED_CLOUD_PROJECT_FILES_DIR: files });
+  assert.equal(supplied.status, 0, supplied.stderr);
+  assert.match(supplied.stdout, /stageDeps: project file from installation\n/);
+  assert.deepEqual(stagedFiles(path.join(repo, 'staged')), ['api/deps.lock']);
+  assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), 'install\tapi\tdeps.lock\tvendor\tmake deps\n');
+  assert.equal(fs.readFileSync(path.join(repo, 'staged.editor'), 'utf8'), 'true\n');
+
+  const without = run({});
+  assert.equal(without.status, 0, without.stderr);
+  assert.match(without.stdout, /stageDeps: project file from none\n/);
+  assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), '');
+
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ editor: false }));
+  const own = run({ WOODSHED_CLOUD_PROJECT_FILES_DIR: files });
+  assert.match(own.stdout, /stageDeps: project file from checkout\n/);
+  assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), '');
+  assert.equal(fs.readFileSync(path.join(repo, 'staged.editor'), 'utf8'), 'false\n');
 });

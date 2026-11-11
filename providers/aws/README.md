@@ -133,7 +133,8 @@ aws ssm describe-association-executions --association-id "$(aws ssm list-associa
   --query 'Associations[0].AssociationId' --output text)" --max-results 1
 ```
 
-Adding a repo sessions start on: add it to `projects` in the installation's tfvars (`example.tfvars` shows the
+Adding a repo sessions start on: an admin can do it on the console's Console settings page (Repos), once the GitHub App is
+installed on the repo, with no apply. To keep it in the installation's configuration instead, add it to `projects` in the installation's tfvars (`example.tfvars` shows the
 shape), with the current repo as the default, and install the GitHub App on it. The plan changes only the
 `woodshed-cloud-configure-base-box` document and its association: the console gets `WOODSHED_CLOUD_PROJECTS` and
 restarts, and its sessions carry on. Every project uses the one session image, task definition and databases for now.
