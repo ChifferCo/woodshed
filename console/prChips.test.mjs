@@ -128,3 +128,21 @@ test('one project\'s GitHub failing leaves the other projects\' chips read', asy
   assert.equal(chips.view('https://github.com/acme/app/pull/1'), null);
   assert.equal(chips.view('https://github.com/acme/tools/pull/2').title, 'tools 2');
 });
+
+test('a project added or removed while the console runs gets or loses its chips with no restart', async () => {
+  const { createProjectPrChips } = await import('./prChips.mjs');
+  const read = [];
+  const githubFor = (p) => ({ async pullStatuses(numbers) { read.push(p.name); return numbers.map((number) => ({ number, title: `${p.name} ${number}`, state: 'OPEN', isDraft: false })); } });
+  const list = [{ name: 'app', repo: 'acme/app', default: true }];
+  const chips = createProjectPrChips({ projects: () => list, githubFor });
+  const sessions = [{ prUrl: 'https://github.com/acme/app/pull/1' }, { prUrl: 'https://github.com/acme/api/pull/2' }];
+  await chips.refresh(sessions);
+  assert.equal(chips.view(sessions[1].prUrl), null, 'not a project yet');
+  list.push({ name: 'api', repo: 'acme/api', default: false });
+  await chips.refresh(sessions);
+  assert.equal(chips.view(sessions[1].prUrl).title, 'api 2');
+  assert.deepEqual(chips.stale([2], 'api'), [2]);
+  list.pop();
+  assert.equal(chips.view(sessions[1].prUrl), null, 'removed again');
+  assert.deepEqual(chips.stale([2], 'api'), []);
+});
