@@ -155,7 +155,8 @@
   }
 
   function addRepo() {
-    const repo = repoForm.repo.trim();
+    // A pasted link is read the way the server reads it (addedProjects.mjs).
+    const repo = repoForm.repo.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\/+$/, '').replace(/\.git$/, '');
     const name = repoForm.name.trim();
     if (!REPO_RE.test(repo)) { repoForm.error = 'Give the repo as owner/name, such as acme/api.'; render(); return; }
     if (name && !NAME_RE.test(name)) { repoForm.error = 'The name is lowercase letters and digits, in words joined by single dashes.'; render(); return; }
