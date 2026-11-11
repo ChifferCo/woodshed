@@ -128,7 +128,7 @@ pullRequests:
     workflow: .github/workflows/review.yml
     # Default: null. What a commit subject carries to run the review again.
     rerun: '[review]'
-    # Default: null. Who posts the review's inline comments, which the decision brief quotes.
+    # Default: null. Who posts the review's PR comment, whose risk areas the decision brief quotes.
     commentAuthor: review-bot[bot]
   # Default: []. Test suites that must pass on the head commit.
   suites:
