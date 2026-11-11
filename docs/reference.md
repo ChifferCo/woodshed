@@ -76,6 +76,9 @@ sign-in in front, hands both to the console with two settings, each off unless s
 
 "Hosted mode" in [console/README.md](../console/README.md) has the request, the header's format and what each changes.
 
+A service hosting many orgs runs one console process for all of them instead, an installation per org, each org's
+sessions on its own machine's Docker: [hosting.md](hosting.md).
+
 ## How it works
 
 ```

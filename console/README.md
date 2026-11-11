@@ -1119,6 +1119,20 @@ signs every request a signed-in browser sends, a cross-site one too. `woodshed-d
 which is not refused when the host later lets someone go: it lasts at most 12 hours. The console logs `console:
 hosted mode` with which of the two are on at start.
 
+## Many orgs in one console
+
+`console/hosted.mjs` runs one console process for many orgs, each a tenant with an installation of its own
+(`console/installation.mjs`: the fleet, GitHub clients, secrets, settings, pages and session API, built from the
+tenant's settings and services, with its own loops). The host signs people in, says which org is theirs now, and hands
+each GitHub event to its org; every request, websocket and session API call reaches exactly one tenant's installation.
+A self-hosted console is the same installation, one of it, built from the environment by `startConsole`. In this mode
+each tenant is a hosted-mode console as above (borrowed GitHub access, the host's sign-in), with three differences:
+the host gives the GitHub token source in the process, it delivers GitHub's webhooks (`dispatchGitHub`), so each
+tenant polls only as a fallback, and the menu has an org switcher and the host's own links. A person's Claude token
+or Codex sign-in the host wrote straight into the tenant's secret store counts as saved, as one saved on My settings
+does (`userSettings: sign-ins follow the secret store`). [docs/hosting.md](../docs/hosting.md) is the contract, what
+keeps tenants apart, and how to run two on a laptop (`node console/bin/devMultiTenant.mjs`).
+
 ## Slack
 
 When a shared session opens a pull request, the console posts it to one Slack
