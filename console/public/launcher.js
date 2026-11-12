@@ -15,8 +15,9 @@
   const EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
   const AGENTS = [['claude', 'Claude', 'Claude Code, on your Claude plan'], ['codex', 'Codex', 'OpenAI Codex, on your Codex sign-in or the team key']];
   // The same three lists for Codex (CODEX_MODELS, CODEX_EFFORTS and CODEX_PERMISSION_MODES in sessions.mjs).
-  const CODEX_MODELS = [['', 'default', 'Codex\u2019s own default'], ['gpt-5.5', 'gpt-5.5', 'Previous generation'], ['gpt-5.4-mini', 'gpt-5.4-mini', 'Smaller, fast'],
-    ['gpt-5.3-codex-spark', 'gpt-5.3-codex-spark', 'Fast coding']];
+  const CODEX_MODELS = [['', 'default', 'Codex\u2019s own default'], ['gpt-6-astra', 'gpt-6-astra', 'Most capable'],
+    ['gpt-6.1-sol', 'gpt-6.1-sol', 'Near Astra, lower cost'], ['gpt-6.1-terra', 'gpt-6.1-terra', 'Fast and efficient'],
+    ['gpt-6-luna', 'gpt-6-luna', 'Most efficient, for focused tasks']];
   const CODEX_EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
     ['default', 'default', 'Codex\u2019s own approval policy']];
@@ -272,13 +273,19 @@
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
     }
-    agent.addEventListener('change', () => {
+    function showAgent() {
       const codex = agent.value === 'codex';
       fill(model, codex ? CODEX_MODELS : MODELS);
       fill(effort, codex ? CODEX_EFFORTS : EFFORTS);
       fill(mode, codex ? CODEX_MODES : MODES);
       prompt.placeholder = `What should ${codex ? 'Codex' : 'Claude'} do? Type / for the repo\u2019s skills.`;
       showPicked();
+    }
+    // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
+    let agentPicked = false;
+    agent.addEventListener('change', () => {
+      agentPicked = true;
+      showAgent();
       if (me) update(me);
     });
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
@@ -348,6 +355,11 @@
 
     function update(next) {
       me = next;
+      const preferred = me?.codexAuth?.set && !me.claudeToken?.set ? 'codex' : 'claude';
+      if (me && !agentPicked && agent.value !== preferred) {
+        agent.value = preferred;
+        showAgent();
+      }
       // The server refuses a start until the databases are ready too, so the form waits for the same things the card does.
       const ready = Boolean(me) && W.setupDone(me);
       const refused = me?.databasesRefusal ?? null;

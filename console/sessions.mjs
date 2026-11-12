@@ -170,7 +170,7 @@ export const PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];
 // The agent a private session runs. Codex takes its model and reasoning effort as `codex --model` and
 // `-c model_reasoning_effort=`; its permission modes are the entrypoint's mapping onto codex's sandbox and approval flags.
 export const AGENTS = ['claude', 'codex'];
-export const CODEX_MODELS = ['', 'gpt-5.5', 'gpt-5.4-mini', 'gpt-5.3-codex-spark'];
+export const CODEX_MODELS = ['', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'];
 export const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
 export const CODEX_PERMISSION_MODES = ['auto', 'plan', 'default'];
 

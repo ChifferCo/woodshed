@@ -224,8 +224,9 @@ test('the New session form\'s Work on names an issue or PR by number, or a branc
   assert.deepEqual(parseWorkOn('master', { defaultBranch: 'main' }), { kind: 'branch', branch: 'master' }, 'only the repo\'s own default branch is refused');
   for (const bad of ['a b', '../x', 'x..y', 'x/', '-x', 'x.lock', 'a;rm']) assert.throws(() => parseWorkOn(bad), /not a branch name/, bad);
   assert.deepEqual(sessionOptions({}), { agent: 'claude', model: '', effort: '', permissionMode: 'auto' });
-  assert.deepEqual(sessionOptions({ agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan' }), { agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan' });
+  assert.deepEqual(sessionOptions({ agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'plan' }), { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'plan' });
   assert.throws(() => sessionOptions({ agent: 'codex', model: 'opus' }), /the model must be one of/);
+  assert.throws(() => sessionOptions({ agent: 'codex', model: 'gpt-5.5' }), /the model must be one of/, 'retired for ChatGPT sign-ins on 14 October 2026');
   assert.throws(() => sessionOptions({ agent: 'codex', permissionMode: 'acceptEdits' }), /permission mode/);
   assert.throws(() => sessionOptions({ agent: 'gemini' }), /the agent must be one of/);
   assert.throws(() => sessionOptions({ model: 'gpt' }), /the model must be one of/);
