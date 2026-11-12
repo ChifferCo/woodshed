@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { createRepoSettings, createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { parseProject } from '../shared/project.mjs';
 
+const layersSource = fs.readFileSync(new URL('./public/repoLayers.js', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('./public/repoSettings.js', import.meta.url), 'utf8');
 const SECRET_MARK = 'zq9-page-value';
 
@@ -121,6 +122,7 @@ async function loadPage({ project = 'app', search = '', file = APP_FILE, envFile
     window: { Woodshed: W, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
     document: { getElementById: () => app, activeElement: null },
   });
+  vm.runInContext(layersSource, context);
   vm.runInContext(source, context);
   await settle();
   return { app, calls, confirms, asked, history, store, secrets, repoSettings };

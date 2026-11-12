@@ -63,7 +63,7 @@ function fakeAws(values = {}) {
   return { aws, calls, values, written };
 }
 
-function setup({ values, keyRefused = false, githubFails = false, githubOff = false } = {}) {
+function setup({ values, keyRefused = false, githubFails = false, githubOff = false, repoSettings = null } = {}) {
   const store = fakeAws({
     'woodshed-cloud/anthropic-api-key': 'sk-ant-old',
     'woodshed-cloud/api-env': 'A=1\n',
@@ -92,6 +92,7 @@ function setup({ values, keyRefused = false, githubFails = false, githubOff = fa
     appApi,
     webhookUrl: createWebhookUrl({ functionName: 'woodshed-cloud-webhooks', aws: store.aws }),
     checkKey: async () => { if (keyRefused) throw new Error('GitHub refused an installation token: HTTP 401'); },
+    repoSettings,
   });
   return { settings, store, hookCalls, key: () => key };
 }
@@ -245,4 +246,21 @@ test('the Secrets page lists one secret for each env file and each install secre
   const specs = secretSpecs({ envFiles: [{ secret: 'app-env' }], installSecrets: INSTALL_SECRETS });
   assert.equal(specs.find((s) => s.name === 'app-env').kind, 'env');
   assert.deepEqual(specs.find((s) => s.name === 'registry-token'), { name: 'registry-token', group: 'session', kind: 'line', readable: true });
+});
+
+test('an env file\'s secret is listed as moved to Repo settings, and Replace is refused once they hold it', async () => {
+  // repoSettings.mjs's legacyState: api-env was copied at start, web-env had nothing to copy.
+  const moved = {
+    'api-env': { secret: 'api-env', path: 'api/.env', project: 'app', repo: 'o/r', key: 'api-env', copiedAt: '2026-11-12T10:00:00.000Z', saved: true },
+    'web-env': { secret: 'web-env', path: 'web/.env.local', project: 'app', repo: 'o/r', key: 'web-env', copiedAt: null, saved: false },
+  };
+  const { settings, store } = setup({ repoSettings: { legacyState: (name) => moved[name] ?? null } });
+  const view = await settings.view();
+  assert.deepEqual(view.secrets.filter((s) => s.moved).map((s) => [s.name, s.moved.saved]), [['api-env', true], ['web-env', false]]);
+  assert.equal(view.secrets.find((s) => s.name === 'registry-token').moved, undefined, 'an install secret has not moved');
+
+  await assert.rejects(settings.replace('api-env', 'B=2\n'), (err) => err.shown && /api-env moved to Repo settings: edit it on Console settings → Repos → o\/r → Settings/.test(err.message));
+  assert.equal(store.values['woodshed-cloud/api-env'], 'A=1\n', 'the Terraform secret is not changed');
+  await settings.replace('web-env', 'C=3\n');
+  assert.equal(store.values['woodshed-cloud/web-env'], 'C=3\n', 'until Repo settings hold a value, the secret is what sessions read, and may be set');
 });

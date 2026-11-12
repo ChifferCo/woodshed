@@ -502,18 +502,25 @@ what was forgotten. Forget it is refused while one of your sessions runs, since
 that session would save its home again within 5 minutes; Remove My Woodshed
 stops them first.
 
-**Env files and tmux**, on My settings, add your own lines to
-each of the repo's env files (the project file's `envFiles` that have a `secret`, one tab each, labelled with the file's path) and `~/.tmux.conf`:
-- Every session starts from the shared files: each env file's secret, and the session image's `tmux.conf`. The page shows
-  each one, with a link to Secrets & webhooks to change it for everyone.
-- Your lines go after the shared file, so a key set in both uses yours, and a
-  change to the shared file still reaches you. The page names the shared keys
-  yours replace.
-- Saving keeps them at `<prefix>/users/<login>/<file>`. **Clear mine**,
-  or saving nothing, deletes them.
-- The entrypoint still appends its own lines last (the databases, Redis,
-  ports and URLs, listed on the page), so those always win.
-- A running session keeps the files it started with.
+**Repo settings**, on My settings, hold your own values for each repo's env files and your own instructions, for your
+private sessions on that repo ("Repo settings" below says how they are kept and handed out):
+- The repos you can write to are tabs (New session's check), on your default project; `?repo=<project>` opens one and
+  `&file=<key>` one of its env files. A repo you cannot write to is not listed, and its routes answer 403.
+- Each env file shows its layers as a session writes them: the repo's `defaults`, this installation's values (read only,
+  behind **Show**, since reading them is logged), **Your values**, and what the session sets itself, then a table of
+  which wins each key, with a **Yours** column. Then the repo's rules, the installation's instructions and yours.
+- Saving keeps yours at `<prefix>/users/<login>/repos/<project>/env/<key>` (and `…/instructions`). **Clear mine**, or
+  saving nothing, deletes them. A shared session never gets them.
+- The entrypoint still writes the session's own lines last (the databases, Redis, ports and URLs, listed on the page),
+  so those always win. A running session keeps the files it started with.
+
+**tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's `tmux.conf`, so a setting in
+both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or saving nothing, deletes
+them. This card held each env file's own lines too until Repo settings: `GET`/`POST /api/my/files/<secret>` (and
+`/reset`) still answer, in their old shape, for a page opened before them, but read and write
+`users/<login>/repos/<default project>/env/<secret>`, with the same 403 as `/api/my/repos/<project>`, and the console
+logs `repoSettings: old own lines route, saved to repo settings`. They go when the fallback ends (`../docs/reference.md`,
+"The env files").
 
 **Your own files**, on My settings, are whole files of your own, by their path in the repo (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
@@ -1630,6 +1637,15 @@ A key saved for an env file the project file no longer names is listed with **De
 for it after a typed confirm. While an env file may still be read from its Terraform secret, the page says which one
 sessions read. The page loads for anyone signed in; its calls answer 403 to anyone but an admin, and it says so.
 
+Each person sets layer 3 on My settings' **Repo settings** card (public/myRepoSettings.js, with the layers drawn by
+public/repoLayers.js, which the admin page shares), for each repo they can write to: see "My Woodshed" above.
+
+On Secrets & webhooks, the env files' Terraform secrets (`WOODSHED_ENV_FILES`) are listed under **Moved to Repo
+settings**, each with a link to its repo's page and when it was copied. Once Repo settings hold a value for the file,
+**Replace** is gone from its row and the console refuses it (409, `settings: replace refused, the env file moved to
+repo settings`): sessions read the Repo settings value, so an edit there would reach none. Before that, the secret is
+what sessions read, and may be set as before.
+
 The JSON API:
 
 | Route | Who | Answers |
@@ -1638,7 +1654,7 @@ The JSON API:
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
-| `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it |
+| `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it, and `defaultProject`, the one My settings opens on |
 | `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`) |
 | `GET`, `POST /api/my/repos/<project>/env/<key>` | writers | `{"text": yours, "installation": the installation's or null}`; a POST saves yours |
 | `GET`, `POST /api/my/repos/<project>/instructions` | writers | the same, for the instructions |
@@ -1662,7 +1678,10 @@ the keys each layer gave and whether each has instructions. The session writes t
 At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
 `repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
 `users/<login>/repos/<default project>/env/<secret>`, only where the new name has no value yet: a value already there
-is never replaced, so a second start copies nothing. It logs `repoSettings: legacy env file copied` (`project`, `key`,
+is never replaced, so a second start copies nothing. Once a person saves or clears their own values for one of those
+files, their old lines for it (`users/<login>/<secret>`) are deleted (`repoSettings: legacy own lines removed, repo
+settings hold them now`): a session would fall back to them whenever the new value is empty, and the next start would
+copy them back, so a Clear would not stay cleared. It logs `repoSettings: legacy env file copied` (`project`, `key`,
 `bytes`), `legacy own lines copied` (`login`, `key`) and `legacy copy checked` with how many were copied, kept, empty or
 failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. A session
 reads a Terraform secret only for a file that has no value in Repo settings, and logs a warning when it does.

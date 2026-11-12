@@ -6,8 +6,9 @@ import { inspect } from 'node:util';
 import { createMembers } from './members.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import {
-  createRepoSettings, installationEnvName, installationInstructionsName, personalEnvName, personalInstructionsName, repoSettingsRoute,
+  createRepoSettings, installationEnvName, installationInstructionsName, legacyFileRoute, personalEnvName, personalInstructionsName, repoSettingsRoute,
 } from './repoSettings.mjs';
+import { createUserSettings } from './userSettings.mjs';
 import { createHandler } from './server.mjs';
 import { parseProject } from '../shared/project.mjs';
 
@@ -224,16 +225,18 @@ test('forget deletes a removed repo\'s values, the installation\'s and everyone\
 });
 
 // The routes behind the pages, over HTTP, as three people: an admin, a member who writes to tools, one who does not.
-async function startConsole(t) {
+async function startConsole(t, { envFiles = [], secrets: initial = memorySecrets(), people = {} } = {}) {
   const state = {
+    people,
     members: {
       'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true },
       'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' },
       'ana-k': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' },
     },
   };
-  const { store, secrets, config, repoSettings } = setup({ state });
+  const { store, secrets, config, repoSettings } = setup({ state, envFiles, secrets: initial });
   const members = createMembers({ store });
+  const userSettings = createUserSettings({ store, secrets, envFiles });
   const auth = {
     enabled: () => true, available: () => true,
     sessionFor: async (cookie) => {
@@ -244,7 +247,7 @@ async function startConsole(t) {
   const fullConfig = { ...config, host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const githubFor = (project) => ({ canWrite: async (login) => project.name !== 'tools' || login !== 'ana-k' });
   const handle = createHandler({
-    config: fullConfig, fleet: { sessions: () => [], find: () => null }, auth, members, repoSettings,
+    config: fullConfig, fleet: { sessions: () => [], find: () => null }, auth, members, repoSettings, userSettings,
     projectAccess: createProjectAccess({ config: fullConfig, githubFor }),
   });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -311,6 +314,7 @@ test('Console settings → a repo\'s settings are an admin\'s; My settings\' a w
   assert.deepEqual(results.adminOwnRead, { status: 200, body: { text: '', installation: INSTALLATION_ENV } }, 'an admin reads their own layer, never sam\'s');
   for (const name of ['cannotRead', 'cannotView', 'cannotWrite']) assert.equal(results[name].status, 403, name);
   assert.deepEqual(results.anaList.body.repos.map((r) => r.project), ['app']);
+  assert.equal(results.list.body.defaultProject, 'app', 'the repo My settings opens on');
   assert.equal(results.crossOrigin.status, 403);
   assert.equal(results.noHeader.status, 403);
   assert.equal(results.refusedInstructions.status, 400);
@@ -341,4 +345,107 @@ test('the routes: each path names one, and nothing else is one', () => {
   assert.deepEqual(repoSettingsRoute('/api/my/repos/app/instructions'), { scope: 'my', project: 'app', key: null, remove: false, instructions: true });
   assert.deepEqual(repoSettingsRoute('/api/my/repos'), { scope: 'my', project: null, key: null, remove: false, instructions: false });
   for (const path of ['/api/console-settings/projects/repos', '/api/my/repos/app/env', '/api/my/repos/app/env/a/remove', '/api/my/reposx']) assert.equal(repoSettingsRoute(path), null, path);
+});
+
+test('the old route of an env file\'s own lines is the default project\'s repo settings, in its old shape', async (t) => {
+  const secrets = memorySecrets({ 'api-env': `API_URL=http://legacy\nLEGACY=${SECRET_MARK}\n`, 'users/sam-ops/api-env': `OLD=${SECRET_MARK}\n` });
+  const people = { 'sam-ops': { files: { 'api-env': '2026-10-01T00:00:00.000Z' } } };
+  const { call, store } = await startConsole(t, { envFiles: [{ secret: 'api-env', path: 'api/.env' }], secrets, people });
+  const results = {};
+  const lines = await captureLog(async () => {
+    results.before = await call('sam-ops', 'GET', '/api/my/files/api-env');
+    results.save = await call('sam-ops', 'POST', '/api/my/files/api-env', { text: OWN_ENV });
+    results.saved = new Map(secrets.values);
+    results.view = await call('sam-ops', 'GET', '/api/my/repos/app');
+    await call('mia-dev', 'POST', '/api/console-settings/repos/app/env/api-env', { text: INSTALLATION_ENV });
+    results.after = await call('sam-ops', 'GET', '/api/my/files/api-env');
+    results.reset = await call('sam-ops', 'POST', '/api/my/files/api-env/reset', {});
+    results.notText = await call('sam-ops', 'POST', '/api/my/files/api-env', {});
+    results.getReset = await call('sam-ops', 'GET', '/api/my/files/api-env/reset');
+    results.noHeader = await call('sam-ops', 'POST', '/api/my/files/api-env', { text: 'X=1' }, { 'x-woodshed': '0' });
+    results.tmux = await call('sam-ops', 'POST', '/api/my/files/tmux-conf', { text: 'set -g mouse on\n' });
+  });
+
+  assert.equal(results.before.status, 200);
+  assert.deepEqual(results.before.body, {
+    key: 'api-env', label: 'api/.env', text: '', custom: false, sharedText: `API_URL=http://legacy\nLEGACY=${SECRET_MARK}\n`, editable: true,
+    appended: ['PORT', 'ANTHROPIC_API_KEY', 'NODE_ENV'],
+  }, 'with no installation value yet, the shared text is the Terraform secret sessions still read');
+assert.equal(results.save.status, 200);
+  assert.equal(results.saved.get('users/sam-ops/repos/app/env/api-env'), OWN_ENV, 'an edit the old way lands in the new name');
+  assert.equal(results.saved.has('users/sam-ops/api-env'), false, 'and the old own lines go, so a session never falls back to them');
+  assert.equal(store.state.people['sam-ops'].files['api-env'], null);
+  assert.deepEqual(results.view.body.envFiles.find((f) => f.key === 'api-env').personal.keys, ['LOG_LEVEL', 'API_TOKEN']);
+  assert.equal(results.after.body.text, OWN_ENV);
+  assert.equal(results.after.body.custom, true);
+  assert.equal(results.after.body.sharedText, INSTALLATION_ENV, 'the installation\'s repo settings, once there');
+  assert.equal(results.reset.status, 200);
+  assert.equal(results.reset.body.custom, false);
+  assert.equal(secrets.values.has('users/sam-ops/repos/app/env/api-env'), false, 'reset clears the new name');
+  assert.equal(results.notText.status, 400);
+  assert.equal(results.getReset.status, 405);
+  assert.equal(results.noHeader.status, 403);
+  assert.equal(results.tmux.status, 200, 'tmux-conf stays My settings\' own');
+  assert.equal(secrets.values.get('users/sam-ops/tmux-conf'), 'set -g mouse on\n');
+  assert.deepEqual(lines.filter((line) => line.includes(SECRET_MARK)), [], 'no value in any log line');
+  assert.ok(lines.some((l) => l.includes('repoSettings: old own lines route, saved to repo settings') && l.includes('sam-ops')));
+  assert.ok(lines.some((l) => l.includes('repoSettings: legacy own lines removed, repo settings hold them now')));
+});
+
+test('the old route is refused to someone who cannot write to the default project, as the new one is', async () => {
+  const { repoSettings, config } = setup({ envFiles: [{ secret: 'api-env', path: 'api/.env' }] });
+  const { createRepoSettingsApi } = await import('./repoSettings.mjs');
+  const api = createRepoSettingsApi({ repoSettings, config, projectAccess: { view: async () => ({ projects: [] }), forStart: async () => null } });
+  const res = { status: 0, writeHead(code) { this.status = code; }, end() {} };
+  const lines = await captureLog(() => api({ method: 'GET', resume() {} }, res, { route: legacyFileRoute('/api/my/files/api-env', config), login: 'ana-k' }));
+  assert.equal(res.status, 403);
+  assert.ok(lines.some((l) => l.includes('repoSettings: refused, cannot write to the repo')));
+});
+
+test('saving or clearing your own values for a legacy env file drops its old own lines, so a Clear stays cleared after a start', async () => {
+  const secrets = memorySecrets({ 'users/sam-ops/api-env': 'OLD=1\n' });
+  const state = { people: { 'sam-ops': { files: { 'api-env': '2026-10-01T00:00:00.000Z' } } } };
+  const { store, repoSettings } = setup({ state, secrets, envFiles: [{ secret: 'api-env', path: 'api/.env' }] });
+  await repoSettings.migrate();
+  assert.equal(secrets.values.get('users/sam-ops/repos/app/env/api-env'), 'OLD=1\n', 'copied at start');
+
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: '' });
+  assert.equal(secrets.values.has('users/sam-ops/repos/app/env/api-env'), false);
+  assert.equal(secrets.values.has('users/sam-ops/api-env'), false);
+  await repoSettings.migrate();
+  assert.equal(secrets.values.has('users/sam-ops/repos/app/env/api-env'), false, 'the next start copies nothing back');
+  assert.equal(store.state.people['sam-ops'].files['api-env'], null);
+
+  const other = setup({ secrets: memorySecrets({ 'users/sam-ops/web-env-local': 'A=1\n' }), state: { people: { 'sam-ops': { files: { 'web-env-local': 'x' } } } } });
+  await other.repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'web-env-local', text: 'B=2\n' });
+  assert.equal(other.secrets.values.get('users/sam-ops/web-env-local'), 'A=1\n', 'a key no Terraform pair names is left alone');
+});
+
+test('a clear that cannot drop the old own lines fails, rather than let them come back', async () => {
+  const secrets = memorySecrets({ 'users/sam-ops/api-env': 'OLD=1\n' });
+  const remove = secrets.remove;
+  secrets.remove = async (name) => { if (name === 'users/sam-ops/api-env') throw new Error('store down'); return remove.call(secrets, name); };
+  const state = { people: { 'sam-ops': { files: { 'api-env': 'x' } } } };
+  const { repoSettings } = setup({ state, secrets, envFiles: [{ secret: 'api-env', path: 'api/.env' }] });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: 'NEW=1\n' });
+  assert.equal(secrets.values.get('users/sam-ops/repos/app/env/api-env'), 'NEW=1\n', 'a save goes ahead: its value is what sessions read');
+  await assert.rejects(repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: '' }), /store down/);
+});
+
+test('each Terraform env file\'s secret says where it moved, and whether Repo settings hold it now', async () => {
+  const secrets = memorySecrets({ 'api-env': 'A=1\n' });
+  const { repoSettings } = setup({ secrets, envFiles: [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }] });
+  await repoSettings.migrate();
+  assert.deepEqual(repoSettings.legacyState('api-env'), {
+    secret: 'api-env', path: 'api/.env', project: 'app', repo: 'acme/app', key: 'api-env', copiedAt: '2026-11-12T10:00:01.000Z', saved: true,
+  });
+  assert.equal(repoSettings.legacyState('web-env').saved, false, 'nothing to copy: sessions still read the secret');
+  assert.equal(repoSettings.legacyState('anthropic-api-key'), null);
+});
+
+test('the old route names a Terraform env file only; tmux-conf and anything else stay userSettings\'', () => {
+  const config = { envFiles: [{ secret: 'api-env', path: 'api/.env' }] };
+  assert.deepEqual(legacyFileRoute('/api/my/files/api-env', config), { scope: 'legacy', project: null, key: 'api-env', reset: false, instructions: false, remove: false });
+  assert.equal(legacyFileRoute('/api/my/files/api-env/reset', config).reset, true);
+  for (const path of ['/api/my/files/tmux-conf', '/api/my/files/web-env', '/api/my/files/api-env/x']) assert.equal(legacyFileRoute(path, config), null, path);
 });

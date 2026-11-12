@@ -6,7 +6,8 @@
 //   users/<login>/claude-token   from `claude setup-token`: the person's own Claude plan
 //   users/<login>/codex-auth     the person's own Codex sign-in: an OpenAI API key, or the ~/.codex/auth.json of `codex login`.
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
-//   users/<login>/<env secret>   their own lines for each of the repo's env files (a secret's name, as api-env) and
+//   users/<login>/<env secret>   their own lines for each Terraform env file (a secret's name, as api-env), legacy: Repo settings
+//                                hold them now, and saving there deletes these (repoSettings.mjs); and
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
 //   users/<login>/own-files    their own whole files (an app/.env.production), as JSON {"<path>": "<text>"}, which their
@@ -306,7 +307,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     if (problem) throw Object.assign(new Error(problem), { shown: true });
     const key = ownFilePath(file);
     const envFile = envFiles.find((f) => f.path === key);
-    if (envFile) throw Object.assign(new Error(`${key} is one of the repo's env files: add your lines to it under Env files and tmux`), { shown: true });
+    if (envFile) throw Object.assign(new Error(`${key} is one of the repo's env files: set your values for it under Repo settings`), { shown: true });
     if (text !== undefined && typeof text !== 'string') throw Object.assign(new Error('the file must be text'), { shown: true });
     const value = String(text ?? '').replace(/\r\n/g, '\n');
     const files = await ownWholeFiles(login);

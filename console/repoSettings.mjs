@@ -287,8 +287,76 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   async function saveOwn({ login, project: name, key = null, text }) {
     const project = requireProject(name);
-    if (key) await requireEnvFile(project, key);
+    const file = key ? await requireEnvFile(project, key) : null;
     await saveValue({ login, project: project.name, key, text, by: login });
+    if (file) await dropLegacyOwn({ login, project, file, cleared: !String(text ?? '').trim() });
+  }
+
+  /**
+   * A person's own lines for a legacy env file (`users/<login>/<secret>`, My settings' old Env files tabs) go once
+   * they save or clear the file's repo settings: a session falls back to them whenever their repo settings value is
+   * empty, and the next start would copy them back, so a Clear would not stay cleared.
+   * @param {{cleared: boolean}} opts  a clear that cannot drop them fails, since the old lines would come back
+   */
+  async function dropLegacyOwn({ login, project, file, cleared }) {
+    const person = store.state.people?.[loginKey(login)];
+    if (!legacyFor(project, file) || !person?.files?.[file.secret]) return;
+    try {
+      await secrets.remove(`users/${loginKey(login)}/${file.secret}`);
+    } catch (err) {
+      console.warn('repoSettings: legacy own lines not removed', { login, key: file.key, cleared, message: firstLine(err) });
+      if (cleared) throw err;
+      return;
+    }
+    person.files = { ...person.files, [file.secret]: null };
+    store.save();
+    console.log('repoSettings: legacy own lines removed, repo settings hold them now', { login, key: file.key });
+  }
+
+  /**
+   * Each Terraform env file secret (WOODSHED_ENV_FILES), as the Secrets page lists it: whose repo settings it was
+   * copied into, when, and whether that value is there now. Once it is, sessions read it and not the secret.
+   * @returns {{secret: string, path: string, project: string, repo: string, key: string, copiedAt: string|null,
+   *   saved: boolean}|null}  null for a name that is not one
+   */
+  function legacyState(secret) {
+    const pair = (config.envFiles ?? []).find((f) => f.secret === secret);
+    const main = defaultProject(config);
+    if (!pair || !main.repo) return null;
+    return {
+      secret, path: pair.path, project: main.name, repo: main.repo, key: secret,
+      copiedAt: store.state.repoSettingsMigration?.files?.[secret] ?? null, saved: Boolean(recordOf({ project: main.name, key: secret })),
+    };
+  }
+
+  /**
+   * My settings' old route for one env file's own lines (`/api/my/files/<secret>`), kept while pages from before repo
+   * settings are open: it reads and writes the default project's repo settings, so an edit made the old way reaches
+   * sessions. Answered in the old shape.
+   * @param {{login: string, key: string, change?: {text: unknown}|null}} args  `change` saves first; '' clears
+   * @returns {Promise<{key: string, label: string, text: string, custom: boolean, sharedText: string, editable: true,
+   *   appended: string[]}>}
+   */
+  async function legacyFile({ login, key, change = null }) {
+    const state = legacyState(key);
+    if (!state) throw shown(`no file called ${key}`, 404);
+    if (change) {
+      await saveOwn({ login, project: state.project, key, text: change.text });
+      console.log('repoSettings: old own lines route, saved to repo settings', { login, project: state.project, key, cleared: !change.text?.trim?.() });
+    }
+    const [own, installation, layer] = await Promise.all([
+      ownText({ login, project: state.project, key }),
+      installationText({ project: state.project, key, by: login, on: 'my settings, old route' }),
+      repoLayer(requireProject(state.project)).catch(() => null),
+    ]);
+    // What sessions read where the installation has no value yet: the Terraform secret.
+    const sharedText = installation ?? (available() ? await secrets.read(key) : null) ?? '';
+    const file = layer?.envFiles.find((f) => f.key === key);
+    const wiring = file ? sessionWiring({ lines: file.lines, env: layer.env ?? {} }) : null;
+    return {
+      key, label: state.path, text: own ?? '', custom: own !== null, sharedText, editable: true,
+      appended: wiring ? [...new Set([...wiring.lines, ...wiring.env])] : [],
+    };
   }
 
   /**
@@ -428,8 +496,21 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   return {
     view, summary, installationText, saveInstallation, removeUnnamed, ownText, saveOwn, forSession, migrate, forget, forgetPerson,
-    available,
+    legacyState, legacyFile, available,
   };
+}
+
+const LEGACY_FILE_RE = /^\/api\/my\/files\/([a-z0-9-]+)(\/reset)?$/;
+
+/**
+ * My settings' old route for one env file's own lines, which writes repo settings now (`legacyFile`). tmux-conf, and
+ * any name that is not one of the Terraform env files, stays userSettings.mjs's.
+ * @returns {{scope: 'legacy', project: null, key: string, reset: boolean, instructions: false, remove: false}|null}
+ */
+export function legacyFileRoute(pathname, config) {
+  const match = LEGACY_FILE_RE.exec(pathname);
+  if (!match || !(config.envFiles ?? []).some((f) => f.secret === match[1])) return null;
+  return { scope: 'legacy', project: null, key: match[1], reset: Boolean(match[2]), instructions: false, remove: false };
 }
 
 const ADMIN_RE = /^\/api\/console-settings\/repos\/([^/]+)(?:\/env\/([^/]+)(\/remove)?|\/(instructions))?$/;
@@ -478,14 +559,17 @@ async function readText(req) {
  *   POST /api/console-settings/repos/<project>/env/<key>/remove  a key the project file no longer names, everyone's
  *   GET  /api/console-settings/repos/<project>/instructions      {"text"}
  *   POST /api/console-settings/repos/<project>/instructions      {"text"}; "" clears
- *   GET  /api/my/repos                                           the repos you can write to, with what you keep for each
+ *   GET  /api/my/repos                                           the repos you can write to, with what you keep for each,
+ *                                                                and the one New session opens on for you (defaultProject)
  *   GET  /api/my/repos/<project>                                 as the admin's, with your own records
  *   GET  /api/my/repos/<project>/env/<key>                       {"text": yours, "installation": the installation's|null}
  *   POST /api/my/repos/<project>/env/<key>                       {"text"}; "" clears yours
  *   GET  /api/my/repos/<project>/instructions                    {"text": yours, "installation"}
  *   POST /api/my/repos/<project>/instructions                    {"text"}; "" clears yours
+ *   GET  /api/my/files/<secret>                                  the old route of a Terraform env file's own lines, on the
+ *   POST /api/my/files/<secret>[/reset]                          default project's repo settings (legacyFile), in its old shape
  *
- * Every /api/my/repos/<project> route is refused (403) to someone who cannot write to the repo: they cannot start
+ * Every /api/my/repos/<project> route, and the old one for the default project, is refused (403) to someone who cannot write to the repo: they cannot start
  * sessions on it, so they keep nothing for it and read nothing of it.
  * @param {{repoSettings: ReturnType<typeof createRepoSettings>, config: object,
  *          projectAccess?: {view: Function, forStart: (login: string, name: string) => Promise<object|null>}|null}} deps
@@ -497,9 +581,9 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
   }
 
   async function writable(login) {
-    if (projectAccess) return (await projectAccess.view(login)).projects;
+    if (projectAccess) return projectAccess.view(login);
     const main = defaultProject(config);
-    return main.repo ? [main] : [];
+    return { projects: main.repo ? [main] : [], defaultProject: main.repo ? main.name : null };
   }
 
   async function admin(req, res, { project, key, remove, instructions }, by) {
@@ -512,14 +596,10 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
 
   async function mine(req, res, { project, key, instructions }, login) {
     if (!project) {
-      const projects = await writable(login);
-      return reply(res, 200, { repos: projects.map((p) => repoSettings.summary(login, projectNamed(config, p.name) ?? p)) });
+      const { projects, defaultProject: own } = await writable(login);
+      return reply(res, 200, { repos: projects.map((p) => repoSettings.summary(login, projectNamed(config, p.name) ?? p)), defaultProject: own });
     }
-    if (!(await canWrite(login, project))) {
-      console.log('repoSettings: refused, cannot write to the repo', { login, project: String(project).slice(0, 40), method: req.method });
-      req.resume();
-      return reply(res, 403, { error: `you cannot start sessions on a project named ${String(project).slice(0, 40)}, so you keep no settings for it` });
-    }
+    if (!(await refuseUnwritable(req, res, login, project))) return undefined;
     if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await repoSettings.view(project, { login }));
     if (req.method === 'GET') {
       const [text, installation] = await Promise.all([
@@ -532,16 +612,35 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return reply(res, 200, await repoSettings.view(project, { login }));
   }
 
+  // The old /api/my/files/<secret>, on the default project's repo settings, refused as /api/my/repos/<project> is.
+  async function legacy(req, res, { key, reset }, login) {
+    const main = defaultProject(config);
+    if (!(await refuseUnwritable(req, res, login, main.name))) return undefined;
+    if (req.method === 'GET') return reply(res, 200, await repoSettings.legacyFile({ login, key }));
+    const text = await readText(req);
+    return reply(res, 200, await repoSettings.legacyFile({ login, key, change: { text: reset ? '' : text } }));
+  }
+
+  /** @returns {Promise<boolean>}  true when the person may go on; else the 403 is sent */
+  async function refuseUnwritable(req, res, login, project) {
+    if (await canWrite(login, project)) return true;
+    console.log('repoSettings: refused, cannot write to the repo', { login, project: String(project).slice(0, 40), method: req.method });
+    req.resume();
+    reply(res, 403, { error: `you cannot start sessions on a project named ${String(project).slice(0, 40)}, so you keep no settings for it` });
+    return false;
+  }
+
   /**
    * @param {import('node:http').IncomingMessage} req  GET or POST
    * @param {{route: NonNullable<ReturnType<typeof repoSettingsRoute>>, login: string|null}} who
    */
   return async function handle(req, res, { route, login }) {
     if (req.method !== 'GET' && req.method !== 'POST') return reply(res, 405, { error: 'method not allowed' });
-    if (req.method === 'GET' && route.remove) return reply(res, 405, { error: 'method not allowed' });
-    if (route.scope === 'my' && !login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
+    if (req.method === 'GET' && (route.remove || route.reset)) return reply(res, 405, { error: 'method not allowed' });
+    if (route.scope !== 'admin' && !login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
     try {
       if (route.scope === 'admin') return await admin(req, res, route, login ?? 'console');
+      if (route.scope === 'legacy') return await legacy(req, res, route, login);
       return await mine(req, res, route, login);
     } catch (err) {
       if (err.shown) return reply(res, err.status ?? 400, { error: err.message });

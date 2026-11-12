@@ -7,9 +7,8 @@
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
-  const INSTRUCTIONS_MAX_BYTES = 16 * 1024;
-  const LAYER_WORDS = { repo: 'Repo', installation: 'Installation', personal: 'Person', session: 'Session' };
-  const NO_CREDENTIALS = 'No production credentials or integration tokens: sessions run unattended, and anything here can end up in a log, a commit or a pull request.';
+  const L = window.WoodshedRepoLayers;
+  const { INSTRUCTIONS_MAX_BYTES, NO_CREDENTIALS, bytesOf, plural, savedLine, layer } = L;
 
   const project = decodeURIComponent(location.pathname.split('/').pop() || '');
   const base = `/api/console-settings/repos/${encodeURIComponent(project)}`;
@@ -25,11 +24,8 @@
   const busy = new Set();
   const INSTRUCTIONS = '#instructions';
 
-  const bytesOf = (text) => new TextEncoder().encode(text).length;
-  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
   const fileOf = (key) => view.envFiles.find((f) => f.key === key) ?? null;
   const labelOf = (f) => f.path ?? f.key;
-  const githubFile = (filePath) => `https://github.com/${view.repo}/blob/HEAD/${filePath}`;
 
   function editorFor(key) {
     if (!editors.has(key)) {
@@ -165,12 +161,6 @@
     return block;
   }
 
-  function savedLine(record) {
-    if (!record) return 'None yet.';
-    const by = record.by === 'terraform env_files' ? 'copied from Terraform' : record.by ? `by @${record.by}` : '';
-    return [`Saved ${W.when(record.savedAt)}`, by, `${record.bytes.toLocaleString()} bytes`, record.keys && plural(record.keys.length, 'key', 'keys')].filter(Boolean).join(' · ');
-  }
-
   // While sessions may still read an env file's old Terraform secret, which one they read.
   function legacyNote(f) {
     if (!f.legacy) return null;
@@ -180,73 +170,23 @@
     return h('p', { class: 'cap-note' }, 'Sessions read these values now, not the Terraform secret ', secret, '.');
   }
 
-  function keyList(keys) {
-    return keys.map((k, i) => [i ? ', ' : '', h('code', null, k)]);
-  }
-
-  function sessionLayer(f) {
-    const optional = new Set(f.wiring.optional);
-    const always = f.wiring.lines.filter((k) => !optional.has(k));
-    const parts = [
-      always.length && h('p', { class: 'layer-text' }, 'Its lines: ', keyList(always), '.'),
-      optional.size > 0 && h('p', { class: 'layer-text' }, 'Only when the session has a value for it: ', keyList([...optional]), '.'),
-      f.wiring.env.length > 0 && h('p', { class: 'layer-text' }, 'The project file\'s env, set in every process: ', keyList(f.wiring.env), '.'),
-    ].filter(Boolean);
-    return layer('session', 'Set by the session', parts.length ? parts : h('p', { class: 'layer-text is-none' }, 'Nothing.'),
-      h('p', { class: 'sub' }, 'Woodshed writes these last, with the session\'s databases, ports and URLs, so they win whatever the layers above say.'));
-  }
-
-  function layer(word, title, ...body) {
-    return h('div', { class: `layer is-${word}` },
-      h('div', { class: 'layer-head' }, h('span', { class: 'layer-tag' }, LAYER_WORDS[word]), h('h3', null, title)),
-      body);
-  }
-
-  // What wins a key the session sets itself: its lines, the project file's env, or one of Woodshed's own variables.
-  function sessionCell(f, row) {
-    if (f.wiring.lines.includes(row.key)) return f.wiring.optional.includes(row.key) ? '✓ if set' : '✓';
-    if (f.wiring.env.includes(row.key)) return 'env';
-    return row.wins === 'session' ? 'Woodshed' : '';
-  }
-
-  function winsWord(f, row) {
-    if (row.wins === 'session' && f.wiring.optional.includes(row.key)) return 'Session, if set';
-    return LAYER_WORDS[row.wins];
-  }
-
-  function keyTable(f) {
-    if (!f.table.length) return h('p', { class: 'sub' }, 'No layer sets a key yet.');
-    const mark = (row, word) => (row.setBy.includes(word) ? '✓' : '');
-    return h('div', { class: 'table-box' },
-      h('table', { class: 'layer-table' },
-        h('thead', null, h('tr', null, h('th', null, 'Key'), h('th', null, 'Repo'), h('th', null, 'Installation'), h('th', null, 'Session'), h('th', null, 'Wins'))),
-        h('tbody', null, f.table.map((row) => h('tr', null,
-          h('td', { class: 'mono' }, row.key),
-          h('td', { class: 'mark' }, mark(row, 'repo')),
-          h('td', { class: 'mark' }, mark(row, 'installation')),
-          h('td', { class: 'mark' }, sessionCell(f, row)),
-          h('td', null, h('span', { class: `layer-tag is-wins is-${row.wins}` }, winsWord(f, row))))))));
-  }
-
   function envFilePanel(f) {
     const read = view.projectFile.read;
     return h('div', { class: 'layered', 'aria-labelledby': `file-${f.key}` },
       h('div', { class: 'layered-head' },
         h('h3', { id: `file-${f.key}`, class: 'mono' }, labelOf(f)),
         h('span', { class: 'data-meta' }, h('span', null, `key ${f.key}`))),
-      read && layer('repo', 'From the repo',
-        f.defaults.length ? h('pre', { class: 'layer-pre' }, f.defaults.join('\n')) : h('p', { class: 'layer-text is-none' }, 'No defaults.'),
-        h('p', { class: 'sub' }, 'Change it in ', h('a', { href: githubFile('.woodshed/project.yaml'), target: '_blank', rel: 'noopener' }, '.woodshed/project.yaml ↗'), '.')),
+      read && L.defaultsLayer(f, view.repo),
       layer('installation', 'This installation\'s values',
         h('p', { class: 'layer-meta' }, savedLine(f.installation)),
         editorBlock(f.key, f.installation, `This installation's values for ${labelOf(f)}`),
         note(f.key),
         legacyNote(f),
         h('p', { class: 'sub' }, `They replace the repo's defaults for the keys they set. ${NO_CREDENTIALS}`)),
-      read && sessionLayer(f),
+      read && L.sessionLayer(f),
       read && h('div', { class: 'layer-gets' },
         h('h3', null, 'What a session gets'),
-        keyTable(f),
+        L.keyTable(f),
         h('p', { class: 'sub' }, 'Keys only: each value stays in its own layer. In a person\'s private sessions, their own values from My settings come after this installation\'s.')));
   }
 
@@ -300,21 +240,13 @@
       note('unnamed'));
   }
 
-  function repoRules() {
-    const { rules, setup } = view.projectFile;
-    const link = (p) => h('a', { href: githubFile(p), target: '_blank', rel: 'noopener' }, `${p} ↗`);
-    if (!view.projectFile.read) return h('p', { class: 'layer-text is-none' }, 'Unknown: the project file could not be read.');
-    if (!rules && !setup) return h('p', { class: 'layer-text is-none' }, 'None: the project file names no rules or setup notes.');
-    return h('p', { class: 'layer-text' }, rules && ['Rules: ', link(rules)], rules && setup && ' · ', setup && ['Setup notes: ', link(setup)]);
-  }
-
   function instructionsCard() {
     const record = view.instructions.installation;
     return h('section', { class: 'settings-card', id: 'instructions', 'aria-labelledby': 'card-instructions' },
       h('h2', { id: 'card-instructions', class: 'label' }, 'Instructions'),
       h('p', { class: 'sub' }, 'Added to every session\'s prompt on this repo, after the repo\'s own rules. Woodshed\'s rules come first; below them, this installation\'s beat the repo\'s, and a person\'s own beat this installation\'s.'),
       h('div', { class: 'layered' },
-        layer('repo', 'From the repo', repoRules()),
+        layer('repo', 'From the repo', L.repoRules(view)),
         layer('installation', 'This installation\'s instructions',
           h('p', { class: 'layer-meta' }, savedLine(record)),
           editorBlock(INSTRUCTIONS, record, 'This installation\'s instructions'),
