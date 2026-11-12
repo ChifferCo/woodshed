@@ -14,11 +14,8 @@
     ['haiku', 'haiku', 'Smallest and quickest'], ['fable', 'fable', 'Newest generation']];
   const EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
   const AGENTS = [['claude', 'Claude', 'Claude Code, on your Claude plan'], ['codex', 'Codex', 'OpenAI Codex, on your Codex sign-in or the team key']];
-  // The same three lists for Codex (CODEX_MODELS, CODEX_EFFORTS and CODEX_PERMISSION_MODES in sessions.mjs).
-  const CODEX_MODELS = [['', 'default', 'Codex\u2019s own default'], ['gpt-6-astra', 'gpt-6-astra', 'Most capable'],
-    ['gpt-6.1-sol', 'gpt-6.1-sol', 'Near Astra, lower cost'], ['gpt-6.1-terra', 'gpt-6.1-terra', 'Fast and efficient'],
-    ['gpt-6-luna', 'gpt-6-luna', 'Most efficient, for focused tasks']];
-  const CODEX_EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+  // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
+  // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
     ['default', 'default', 'Codex\u2019s own approval policy']];
   const MODES = [['auto', 'auto', 'Works unattended; refuses what looks risky'], ['acceptEdits', 'acceptEdits', 'Edits freely, asks before commands'],
@@ -273,11 +270,44 @@
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
     }
+    // The Codex catalog, asked for the first time Codex is picked and again on each pick after, since OpenAI changes it.
+    let codexCatalog = null;
+    const codexNote = h('p', { class: 'sub lcatalog-note', hidden: true });
+    function codexModelOptions() {
+      return [['', 'default', 'Codex\u2019s own default'], ...(codexCatalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])];
+    }
+    // The efforts the picked model takes; with Codex's default model, any a listed model takes.
+    function codexEffortOptions() {
+      const picked = codexCatalog?.models.find((m) => m.slug === model.value);
+      const efforts = picked ? picked.efforts : [...new Set((codexCatalog?.models ?? []).flatMap((m) => m.efforts))];
+      return [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])];
+    }
+    function keepPick(select, options) {
+      const was = select.value;
+      fill(select, options);
+      if (options.some(([value]) => value === was)) select.value = was;
+    }
+    function showCodexCatalog() {
+      keepPick(model, codexModelOptions());
+      keepPick(effort, codexEffortOptions());
+      codexNote.textContent = codexCatalog?.note ? `Codex models: ${codexCatalog.note}.` : '';
+      codexNote.hidden = !codexCatalog?.note;
+      showPicked();
+    }
+    function loadCodexCatalog() {
+      W.getJson('/api/my/codex-models').then((answer) => {
+        codexCatalog = answer;
+        if (agent.value === 'codex') showCodexCatalog();
+      }, () => {});
+    }
+    model.addEventListener('change', () => { if (agent.value === 'codex') keepPick(effort, codexEffortOptions()); });
     function showAgent() {
       const codex = agent.value === 'codex';
-      fill(model, codex ? CODEX_MODELS : MODELS);
-      fill(effort, codex ? CODEX_EFFORTS : EFFORTS);
+      fill(model, codex ? codexModelOptions() : MODELS);
+      fill(effort, codex ? codexEffortOptions() : EFFORTS);
       fill(mode, codex ? CODEX_MODES : MODES);
+      if (codex) loadCodexCatalog();
+      codexNote.hidden = !codex || !codexCatalog?.note;
       prompt.placeholder = `What should ${codex ? 'Codex' : 'Claude'} do? Type / for the repo\u2019s skills.`;
       showPicked();
     }
@@ -292,7 +322,7 @@
     showPicked();
     const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
       h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
-      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)));
+      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)), codexNote);
     const form = h('form', { class: 'launch-form' },
       projects.el,
       field('l-prompt', 'Prompt', promptWrap, 'optional with a PR or branch below: opens its review'),

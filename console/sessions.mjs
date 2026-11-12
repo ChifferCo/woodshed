@@ -169,9 +169,11 @@ export const PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];
 
 // The agent a private session runs. Codex takes its model and reasoning effort as `codex --model` and
 // `-c model_reasoning_effort=`; its permission modes are the entrypoint's mapping onto codex's sandbox and approval flags.
+// Codex's models and efforts are OpenAI's catalog's (codexModels.mjs), which the console checks a start against: here
+// only their shape, since both end up on codex's command line.
 export const AGENTS = ['claude', 'codex'];
-export const CODEX_MODELS = ['', 'gpt-6-astra', 'gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-luna'];
-export const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
+export const CODEX_MODEL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+export const CODEX_EFFORT_RE = /^[a-z]{1,16}$/;
 export const CODEX_PERMISSION_MODES = ['auto', 'plan', 'default'];
 
 /**
@@ -187,10 +189,15 @@ export function sessionOptions({ agent = 'claude', model = '', effort = '', perm
   };
   const chosen = pick(agent || 'claude', AGENTS, 'the agent');
   const codex = chosen === 'codex';
+  const shaped = (value, re, what) => {
+    const v = String(value ?? '');
+    if (v && !re.test(v)) throw Object.assign(new Error(`${what} is not a Codex ${what.replace('the ', '')} name`), { shown: true });
+    return v;
+  };
   return {
     agent: chosen,
-    model: pick(model, codex ? CODEX_MODELS : MODELS, 'the model'),
-    effort: pick(effort, codex ? CODEX_EFFORTS : EFFORTS, 'the effort'),
+    model: codex ? shaped(model, CODEX_MODEL_RE, 'the model') : pick(model, MODELS, 'the model'),
+    effort: codex ? shaped(effort, CODEX_EFFORT_RE, 'the effort') : pick(effort, EFFORTS, 'the effort'),
     permissionMode: pick(permissionMode || 'auto', codex ? CODEX_PERMISSION_MODES : PERMISSION_MODES, 'the permission mode'),
   };
 }
