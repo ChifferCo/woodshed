@@ -345,6 +345,166 @@
         h('span', { class: 'sub', role: 'status' }, repoForm.notice || 'It applies at once; Remove takes it off again. Each change is logged with who made it.')));
   }
 
+  // The Woodshed card: the commit this console runs from its git clone, the newer ones on the branch the clone follows,
+  // and Update, which pulls them, builds the session image if it changed and restarts the console (woodshedUpdate.mjs).
+  // Read on its own, since it asks git.
+  let updates = null;
+  let updatesError = null;
+  const updateForm = { busy: null, error: null };
+  // Set once an update is restarting the console: the page reloads when the new one answers.
+  let awaitingRestart = false;
+  const STEP_WORDS = { pull: 'Pull the new commits', image: 'Build the session image', restart: 'Restart the console' };
+
+  function plural(n, one, many) {
+    return `${n} ${n === 1 ? one : many}`;
+  }
+
+  function took(seconds) {
+    if (seconds === null || seconds === undefined) return '';
+    return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+  }
+
+  function stepNote(step) {
+    if (step.state === 'failed') return step.detail ?? '';
+    if (step.state === 'now') return step.key === 'image' ? 'takes a few minutes' : '';
+    if (step.state === 'done') return [step.detail, took(step.seconds)].filter(Boolean).join(' · ');
+    return '';
+  }
+
+  // The job's steps as the design system's checklist (`.start-steps`).
+  function updateSteps(job) {
+    const mark = { done: '✓', now: '', next: '', failed: '✗' };
+    return h('ol', { class: 'start-steps' }, job.steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
+      h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
+      h('span', { class: 'start-label' }, STEP_WORDS[step.key]),
+      h('span', { class: 'start-secs' }, stepNote(step)))));
+  }
+
+  function versionLine(u) {
+    if (!u.upstream) return h('p', { class: 'cap-note' }, `The clone at ${u.clone} follows no branch, so there is nothing to compare it with. Check out a branch that tracks the remote, such as main.`);
+    if (u.error) return h('p', { class: 'form-error', role: 'alert' }, u.error);
+    if (!u.checkedAt) return h('p', { class: 'sub' }, `Not compared with ${u.upstream} yet.`);
+    const running = h('span', { class: 'rref' }, u.head);
+    if (!u.behindBy) return h('p', { class: 'empty-ok' }, `Up to date with ${u.upstream}. Running `, running, '.');
+    return h('p', { class: 'set-name', style: 'margin: 0' }, `${plural(u.behindBy, 'commit', 'commits')} behind ${u.upstream}. Running `, running, '.');
+  }
+
+  function commitList(u) {
+    if (!u.behindBy || !u.commits?.length) return null;
+    return [
+      h('ul', { class: 'update-commits', 'aria-label': 'Newer commits, newest first' }, u.commits.map((c) => h('li', null,
+        h('span', { class: 'sha' }, c.sha), h('span', { class: 'what' }, c.title),
+        h('span', { class: 'when' }, [c.author, c.date && W.ago(c.date)].filter(Boolean).join(' · '))))),
+      u.more > 0 && h('p', { class: 'sub', style: 'margin: 0' }, `and ${u.more} more.`),
+    ];
+  }
+
+  // What keeps Update off, in the card's words; null when it can run.
+  function blocked(u) {
+    if (!u.upstream || u.error || !u.checkedAt) return 'Nothing to update to yet.';
+    if (!u.behindBy) return 'Already up to date.';
+    if (u.aheadBy) return `The clone has ${plural(u.aheadBy, 'commit', 'commits')} of its own that ${u.upstream} does not, so it cannot simply move forward: merge it by hand.`;
+    if (u.job && ['running', 'restarting'].includes(u.job.state)) return 'An update is running.';
+    return null;
+  }
+
+  function byHand(u) {
+    return h('div', { class: 'cap-note' },
+      h('p', { style: 'margin: 0 0 6px' }, 'Nothing would start this console again after an update (it is not run by install.sh\'s bin/woodshed or a systemd unit), so there is no Update button. By hand:'),
+      h('pre', { class: 'update-cmd' }, `git -C ${u.clone} pull --ff-only\n# then start the console again; if session/ or shared/ changed, build the session image too:\nWOODSHED_REBUILD=1 WOODSHED_NO_START=1 bash ${u.clone}/install.sh`));
+  }
+
+  function lastLine(u) {
+    if (!u.last || u.job) return null;
+    return h('p', { class: 'sub', style: 'margin: 0' },
+      `Last updated ${W.ago(u.last.at)}, from ${u.last.from} to ${u.last.to}, by @${u.last.by}${u.last.imageBuilt ? ', with a new session image' : ''}.`);
+  }
+
+  function jobBlock(job) {
+    if (!job) return null;
+    return [
+      h('div', { class: 'sub-head' }, 'Update', h('span', { class: `pill ${job.state === 'failed' ? 'is-bad' : 'is-work'}` },
+        job.state === 'failed' ? 'Failed' : job.state === 'restarting' || awaitingRestart ? 'Restarting' : 'Updating')),
+      updateSteps(job),
+      job.state === 'failed' && h('p', { class: 'form-error', role: 'alert' }, `${job.error}. ${job.to ? `The clone was put back on ${job.from}, so ` : ''}the console runs as it did.`),
+      job.logTail?.length > 0 && job.state !== 'restarting' && h('pre', { class: 'update-cmd' }, job.logTail.join('\n')),
+      (job.state === 'restarting' || awaitingRestart) && h('p', { class: 'sub', role: 'status' }, 'The console is restarting on the new code. Running sessions carry on; this page reloads once it answers.'),
+    ];
+  }
+
+  async function updateAction(kind) {
+    if (updateForm.busy) return;
+    updateForm.busy = kind;
+    updateForm.error = null;
+    render();
+    try {
+      updates = await W.postJson(`/api/console-settings/updates/${kind}`, {});
+    } catch (err) {
+      updateForm.error = err.message;
+    }
+    updateForm.busy = null;
+    render();
+    scheduleUpdates();
+  }
+
+  function updatesCard() {
+    if (!updates && !updatesError) return null;
+    const u = updates;
+    const why = u ? blocked(u) : null;
+    const running = u?.job && ['running', 'restarting'].includes(u.job.state);
+    return h('section', { class: 'settings-card', 'aria-labelledby': 'card-updates' },
+      h('h2', { id: 'card-updates', class: 'label' }, 'Woodshed'),
+      h('p', { class: 'sub' }, u
+        ? `The Woodshed this console runs, from its git clone at ${u.clone}${u.remote ? `, against ${u.remote}` : ''}. Checked every hour. Update pulls the new commits, builds the session image again when what it is made from changed, and restarts the console: running sessions carry on, new ones start on the new image.`
+        : 'The Woodshed this console runs.'),
+      updatesError && h('p', { class: 'form-error', role: 'alert' }, `Could not load it: ${updatesError}`),
+      u && [versionLine(u), commitList(u), lastLine(u), jobBlock(u.job), !u.supervisor && u.behindBy > 0 && byHand(u)],
+      u && h('div', { class: 'card-foot' },
+        u.supervisor && h('button', {
+          type: 'button', class: 'btn btn-open', disabled: Boolean(updateForm.busy) || Boolean(why), title: why,
+          onclick: () => updateAction('update'),
+        }, updateForm.busy === 'update' ? 'Starting…' : running ? 'Updating…' : 'Update to latest'),
+        u.upstream && h('button', { type: 'button', class: 'btn btn-quiet', disabled: Boolean(updateForm.busy) || running, onclick: () => updateAction('check') },
+          updateForm.busy === 'check' ? 'Checking…' : 'Check now'),
+        updateForm.error ? h('span', { class: 'form-error', role: 'alert' }, updateForm.error)
+          : h('span', { class: 'sub', role: 'status' }, u.supervisor && why && u.behindBy ? why : u.checkedAt ? `Checked ${W.ago(u.checkedAt)}.` : '')));
+  }
+
+  async function loadUpdates() {
+    try {
+      updates = await W.getJson('/api/console-settings/updates');
+      updatesError = null;
+      return true;
+    } catch (err) {
+      // A console that runs from no git clone answers 404: no card. While one restarts, nothing answers.
+      if (following) return false;
+      if (err.status === 404) updates = null;
+      else updatesError = err.message;
+      return true;
+    }
+  }
+
+  // Every 2 seconds while an update runs, so its steps follow; every minute otherwise. An update ends by restarting the
+  // console, which then answers with no update running: the page reloads, for the new code's pages and the menu's count.
+  let updatesTimer = null;
+  let following = false;
+  function scheduleUpdates() {
+    clearTimeout(updatesTimer);
+    const job = updates?.job;
+    if (job && ['running', 'restarting'].includes(job.state)) following = true;
+    if (job?.state === 'restarting') awaitingRestart = true;
+    updatesTimer = setTimeout(async () => {
+      const answered = await loadUpdates();
+      if (following && answered && updates && !updates.job) {
+        location.reload();
+        return;
+      }
+      if (updates?.job?.state === 'failed') following = false;
+      if (!(document.activeElement?.closest?.('.settings-card') && document.activeElement.matches('input'))) render();
+      scheduleUpdates();
+    }, following ? 2_000 : DATA_REFRESH_MS);
+  }
+
   function refOf(r) {
     if (r.prUrl) return `PR ${r.prUrl.split('/').pop()}`;
     return r.number ? W.ref({ kind: r.sessionKind, number: r.number }) : '';
@@ -469,7 +629,7 @@
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, projectsCard(), CARDS.map(settingsCard), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), dataCard()));
   }
 
   async function load() {
@@ -481,6 +641,9 @@
     }
     render();
     if (data?.projects) await loadRepoChoices();
+    await loadUpdates();
+    render();
+    scheduleUpdates();
   }
 
   // Only the list: the cards keep what is typed into them.

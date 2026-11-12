@@ -30,7 +30,7 @@ function walk(el, out = []) {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-async function loadPage(answer, { repos } = {}) {
+async function loadPage(answer, { repos, updates = null } = {}) {
   const app = element('div');
   const posted = [];
   const confirms = [];
@@ -52,8 +52,14 @@ async function loadPage(answer, { repos } = {}) {
         if (repos instanceof Error) throw repos;
         return structuredClone(typeof repos === 'function' ? repos() : repos);
       }
+      // The Woodshed card's own read: a console that runs from no git clone answers 404.
+      if (path === '/api/console-settings/updates') {
+        if (!updates) throw Object.assign(new Error('this console does not run from a git clone'), { status: 404 });
+        return structuredClone(updates);
+      }
       return structuredClone(answer);
     },
+    ago: () => '5 min ago',
     postJson: async (path, body) => {
       posted.push({ path, body });
       if (posted.hold) await posted.hold;
@@ -64,7 +70,7 @@ async function loadPage(answer, { repos } = {}) {
     errorParts: (err) => [err.message, ...(err.link ? [' ', h('a', { href: err.link.href, target: '_blank' }, `${err.link.text} ↗`)] : [])],
   };
   const context = vm.createContext({
-    window: { Woodshed: W }, console, setInterval: () => 0, Date,
+    window: { Woodshed: W }, console, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date,
     document: { getElementById: () => app, activeElement: null },
   });
   vm.runInContext(source, context);
@@ -224,4 +230,67 @@ test('with no App to ask, or GitHub not answering, Add a repo takes owner/name t
   const down = await loadPage(ANSWER, { repos: new Error('GitHub did not list the App\'s repos. Type the repo instead, or try again; the console log says why.') });
   assert.equal(walk(down.app).find((e) => e.attrs.id === 'repo-new').tag, 'input');
   assert.match(textOf(down.app), /GitHub did not list the App's repos\. Type the repo instead/);
+});
+
+const UPDATES = {
+  clone: '/home/me/.woodshed/src', upstream: 'origin/main', remote: 'https://github.com/ChifferCo/woodshed.git', supervisor: 'setting',
+  checkedAt: '2026-11-12T00:00:00.000Z', error: null, head: '0ca189f', behindBy: 2, aheadBy: 0, more: 0,
+  commits: [{ sha: 'bbbbbbb', title: 'newer', author: 'Octo Cat', date: null }, { sha: 'aaaaaaa', title: 'older', author: 'Hu Bot', date: null }],
+  job: null, last: null,
+};
+const button = (app, words) => walk(app).find((e) => e.tag === 'button' && textOf(e) === words);
+
+test('the Woodshed card lists the newer commits, and Update shows the update\'s steps', async () => {
+  const { app, posted } = await loadPage(ANSWER, { updates: UPDATES });
+  await tick();
+  assert.match(textOf(app), /2 commits behind origin\/main\. Running 0ca189f/);
+  assert.match(textOf(app), /bbbbbbbnewer.*aaaaaaaolder/, 'newest first');
+  posted.reply = () => ({
+    ...UPDATES,
+    job: { state: 'running', from: '0ca189f', to: null, logTail: [], steps: [{ key: 'pull', state: 'done', detail: '0ca189f → bbbbbbb', seconds: 0 }, { key: 'image', state: 'now' }, { key: 'restart', state: 'next' }] },
+  });
+  button(app, 'Update to latest').listeners.click();
+  await tick();
+  assert.deepEqual(posted.map((p) => p.path), ['/api/console-settings/updates/update']);
+  const steps = walk(app).filter((e) => e.tag === 'li' && /^is-/.test(e.className));
+  assert.deepEqual(steps.map((e) => [e.className, textOf(e)]), [
+    ['is-done', '✓Pull the new commits0ca189f → bbbbbbb · 0 s'],
+    ['is-now', 'Build the session imagetakes a few minutes'],
+    ['is-next', 'Restart the console'],
+  ]);
+  assert.equal(button(app, 'Updating…').attrs.disabled, '', 'no second start while it runs');
+});
+
+test('a failed update says the console runs as it did, with the build\'s last lines', async () => {
+  const { app } = await loadPage(ANSWER, {
+    updates: {
+      ...UPDATES,
+      job: {
+        state: 'failed', from: '0ca189f', to: 'bbbbbbb', error: 'install.sh stopped with code 1: no space left on device', logTail: ['no space left on device'],
+        steps: [{ key: 'pull', state: 'done' }, { key: 'image', state: 'failed', detail: 'install.sh stopped with code 1' }, { key: 'restart', state: 'next' }],
+      },
+    },
+  });
+  await tick();
+  assert.match(textOf(app), /Failed/);
+  assert.match(textOf(app), /The clone was put back on 0ca189f, so the console runs as it did/);
+  assert.equal(button(app, 'Update to latest').attrs.disabled, undefined, 'it can be tried again');
+});
+
+test('the Woodshed card: up to date, a clone of its own, nothing to restart it, and no clone at all', async () => {
+  const upToDate = await loadPage(ANSWER, { updates: { ...UPDATES, behindBy: 0, commits: [], last: { from: 'aaaaaaa', to: '0ca189f', by: 'mia-dev', at: '2026-11-12T00:00:00.000Z', imageBuilt: true } } });
+  await tick();
+  assert.match(textOf(upToDate.app), /Up to date with origin\/main/);
+  assert.match(textOf(upToDate.app), /Last updated 5 min ago, from aaaaaaa to 0ca189f, by @mia-dev, with a new session image/);
+  assert.equal(button(upToDate.app, 'Update to latest').attrs.disabled, '');
+  const ahead = await loadPage(ANSWER, { updates: { ...UPDATES, aheadBy: 1 } });
+  await tick();
+  assert.match(textOf(ahead.app), /has 1 commit of its own that origin\/main does not/);
+  const alone = await loadPage(ANSWER, { updates: { ...UPDATES, supervisor: null } });
+  await tick();
+  assert.ok(!button(alone.app, 'Update to latest'));
+  assert.match(textOf(alone.app), /git -C \/home\/me\/\.woodshed\/src pull --ff-only/);
+  const none = await loadPage(ANSWER);
+  await tick();
+  assert.ok(!/Woodshed this console runs/.test(textOf(none.app)));
 });

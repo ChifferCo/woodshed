@@ -761,6 +761,18 @@
     return (me.workflows ?? []).map(({ label, file }) => ({ href: `https://github.com/${me.repo}/actions/workflows/${encodeURIComponent(file)}`, label: `${label} ↗` }));
   }
 
+  // What waits on an admin, so the menu says so wherever you are: someone asking to join, and newer Woodshed commits
+  // than the console runs (woodshedUpdate.mjs).
+  function waitingOn(link, me) {
+    if (link.href === '/people' && me?.asking > 0) return h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
+    if (link.href === '/console-settings' && me?.updates > 0) return h('span', { class: 'menu-count', title: `Woodshed has ${me.updates} newer ${me.updates === 1 ? 'commit' : 'commits'}` }, me.updates);
+    return null;
+  }
+
+  function dotTitle(me) {
+    return [me.asking > 0 && `${me.asking} asking to join`, me.updates > 0 && 'a Woodshed update'].filter(Boolean).join(', ');
+  }
+
   function initials(login) {
     const shown = names[login] || login;
     const parts = String(shown).split(/[-_.\s]+/).filter(Boolean);
@@ -773,14 +785,12 @@
   function userMenu(me, current) {
     const button = h('button', { type: 'button', class: 'user-btn', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
       h('span', { class: 'avatar', 'aria-hidden': 'true' }, me.login ? initials(me.login) : '··'),
-      me.asking > 0 && h('span', { class: 'asking-dot', title: `${me.asking} asking to join` }),
+      (me.asking > 0 || me.updates > 0) && h('span', { class: 'asking-dot', title: dotTitle(me) }),
       h('span', { class: 'user-name' }, me.login ? personText(me.login) : 'Not signed in',
         // Under the name, what a program embedding the console says the person is in (server.mjs, menuOf).
         me.menuSubtitle && h('span', { class: 'user-sub' }, me.menuSubtitle)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
-    // Someone asking to join waits on an admin, so the menu says so wherever you are.
-    const asking = (link) => link.href === '/people' && me.asking > 0 && h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
-    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, asking(link));
+    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, waitingOn(link, me));
     const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
@@ -853,7 +863,7 @@
   const consoleSlot = h('div', { class: 'side-console' });
   function fillConsoleSlot() {
     const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': link.href === navCurrent ? 'page' : null },
-      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
+      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label, waitingOn(link, meNow));
     consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...consoleLinks(meNow).map(item)] : []));
   }
   fetch('/api/me', { cache: 'no-store' }).then((r) => r.json()).then(learnNames).then((me) => {
@@ -892,7 +902,7 @@
   async function getJson(path) {
     const res = await fetch(path, { cache: 'no-store' });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `GET ${path} answered ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body.error || `GET ${path} answered ${res.status}`), { status: res.status });
     return learnNames(body);
   }
 

@@ -278,6 +278,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     // (shared/project.mjs, installationProjectFile). The local provider hands a session its repo's.
     projectFilesDir: env.WOODSHED_CLOUD_PROJECT_FILES_DIR || null,
     actionsWorkflows: actionsWorkflows(env.WOODSHED_CLOUD_ACTIONS_WORKFLOWS),
+    // The Woodshed clone the Console settings page's Update follows (woodshedUpdate.mjs): the console's own, unless set.
+    checkout: env.WOODSHED_CLOUD_CHECKOUT || null,
     label: env.WOODSHED_CLOUD_LABEL || 'woodshed',
     // The secrets holding the repo's env files, which the Secrets page and My settings show. None when it has none.
     envFiles: envFiles(env),
