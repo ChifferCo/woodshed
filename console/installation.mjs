@@ -50,8 +50,9 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { createAddedProjects, repoChecker, repoLister } from './addedProjects.mjs';
+import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
 import { createProjectColors } from './projectColors.mjs';
+import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
@@ -256,7 +257,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
     }
     return projectReaders.get(key);
   };
-  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
+  // A local install that named no repo hosts no database: install.sh, given the repo, builds its image and starts them.
+  const databasesFix = () => {
+    const project = defaultProject(config);
+    return provider.name === 'local' && project.clonedAtStart
+      ? `run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases`
+      : null;
+  };
+  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
@@ -293,7 +301,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     : undefined;
   const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
   const addedProjects = createAddedProjects({
-    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), list: appApi ? repoLister({ appApi, appSlug }) : null,
+    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), 
+    // With no App, a console on its own gh login lists what that login can push to; borrowed access lists nothing.
+    list: appApi ? repoLister({ appApi, appSlug }) : config.ghToken && !brokerRead ? ghRepoLister() : null,
   });
   const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
@@ -325,9 +335,15 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
     return reviewSources.get(key)(session);
   };
-  // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one.
+  // Session apps on ports of the console's own name, where it has one name and nobody signs in (appPorts.mjs).
+  const appPorts = config.appPorts?.length ? createAppPorts({
+    store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
+  }) : null;
+  // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one. The image
+  // is built for the environment's repo, not one an admin added, so a console that started with none builds it with no
+  // checkout again, as install.sh did.
   const woodshedUpdate = createWoodshedUpdate({
-    config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(config).repo,
+    config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(loaded).repo || null,
     token: tokens ? async () => (await tokens.console.token()).token : null,
   });
   const handle = createHandler({
@@ -340,9 +356,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     githubFor,
     trusted,
     userMenu,
+    appPorts,
     woodshedUpdate,
   });
-  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted });
+  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
@@ -401,6 +418,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     handle,
     upgrade,
     sessionApi,
+    appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => loops.stop(),
@@ -412,6 +430,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
+      appPorts: appPorts ? appPorts.ports.length : 0,
     }),
   };
 }

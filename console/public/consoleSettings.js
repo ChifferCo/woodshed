@@ -317,14 +317,14 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be given access to a repo before it is added here. An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel.'),
       data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
         : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
         h('div', null,
           h('label', { class: 'set-name', for: 'repo-new' }, 'Add a repo'),
           h('div', { class: 'set-help' }, picking()
-            ? 'One of the repos the GitHub App may reach. The name sessions show for it is the repo\'s own, unless you give one.'
+            ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}. The name sessions show for it is the repo\'s own, unless you give one.`
             : 'As owner/name. The name sessions show for it is the repo\'s own, unless you give one.')),
         h('div', { class: 'set-value' },
           picking() ? repoSelect() : h('input', {

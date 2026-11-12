@@ -3,6 +3,7 @@
 //
 // WOODSHED_PROVIDER is `aws` or `local`. Without it, WOODSHED_LAUNCHER says, as it always has: `ecs` is AWS, and
 // `docker` (its default) is local.
+import { requireAppPortsSafe } from '../console/appPorts.mjs';
 import { loadConfig, requireClosedWhenReachable, requireRepo } from '../console/config.mjs';
 import { startConsole } from '../console/server.mjs';
 import { envValue } from '../shared/envNames.mjs';
@@ -66,6 +67,7 @@ if (isMain(import.meta.url)) {
     config = loadConfig();
     requireRepo(config);
     requireClosedWhenReachable(config);
+    requireAppPortsSafe(config);
     provider = createProvider(config);
   } catch (err) {
     cannotStart(err);

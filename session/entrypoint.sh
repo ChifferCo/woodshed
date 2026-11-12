@@ -38,7 +38,8 @@
 #                        there read-only
 #   PROJECT_REPO         owner/name: a session on a project other than the installation's default. Every project runs
 #                        in the default project's image for now, so its repo is cloned at start, next to the image's
-#                        checkout, and used as REPO_DIR (useProjectRepo)
+#                        checkout, and used as REPO_DIR (useProjectRepo). An image built with no repo has no checkout,
+#                        so the console names the repo for every session, the default project's too
 #   ISSUE | PR | PROMPT, STARTED_BY, BRANCH                         what to work on
 #   REVIEW_ONLY          1: claude opens with no prompt, for a session started only to read a PR or branch's review
 #   ATTACHMENTS          how many files were attached to New session: fetched from the console into /tmp/uploads
@@ -47,6 +48,9 @@
 #                        the project file says `consoleLinks: false`)
 #   SESSION_APP_DOMAIN   the domain session apps are served under, so this session's app is <SESSION_ID>.<it>;
 #                        unset when the console has session apps off (Woodshed's own app reads it, devConsole.mjs)
+#   WOODSHED_SESSION_DOCKER=1  the machine's Docker socket is mounted and DOCKER_HOST names it (the docker launcher's
+#                        hostDocker): claude's rules say so (hostDocker.md), and dockerPorts.mjs forwards what its
+#                        containers publish to 127.0.0.1 here
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -140,15 +144,21 @@ configureGitCredentials() {
 # A session on another project than the image's repo works in a clone of that project's repo, made at start next to
 # the image's checkout. The image's installs are its own repo's: the project's run on their own, as any install whose
 # record is missing (refreshDeps). The clone authenticates through the credential helper, so no token is in its URL.
+# An image built with no repo (session/Dockerfile, REPO empty) has no checkout at all: every session clones its own,
+# and keeps the secrets the console handed it, since there is no image repo they could belong to instead.
 useProjectRepo() {
-  [ -n "${PROJECT_REPO:-}" ] || return 0
   local origin dir start=$SECONDS
-  origin=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#^https://([^/@]*@)?github\.com/##; s#\.git$##' || true)
-  if [ "${origin,,}" = "${PROJECT_REPO,,}" ]; then
-    log "Project repo is the image's checkout" "(repo: $PROJECT_REPO)"
-    return 0
+  if [ ! -e "$REPO_DIR/.git" ]; then
+    [ -n "${PROJECT_REPO:-}" ] || die "the session image has no checkout and the console named no repo (PROJECT_REPO): a console older than its image?"
+  else
+    [ -n "${PROJECT_REPO:-}" ] || return 0
+    origin=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#^https://([^/@]*@)?github\.com/##; s#\.git$##' || true)
+    if [ "${origin,,}" = "${PROJECT_REPO,,}" ]; then
+      log "Project repo is the image's checkout" "(repo: $PROJECT_REPO)"
+      return 0
+    fi
+    withholdInstallationSecrets
   fi
-  withholdInstallationSecrets
   dir="$(dirname "$REPO_DIR")/${PROJECT_REPO##*/}"
   local base=$dir n=1
   [ ! -e "$dir" ] || dir="$base-project"
@@ -438,8 +448,23 @@ writeRules() {
   # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
   apps=$(project apps-rules) || die "the project's apps could not be read"
   [ -z "$apps" ] || rules+=$'\n'"$apps"
+  # This machine's Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file.
+  if [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ]; then
+    local docker
+    docker=$(cat "$SESSION_DIR/hostDocker.md")
+    docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"}
+    rules+=$'\n'"$docker"
+  fi
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, host docker: ${WOODSHED_SESSION_DOCKER:-0}, apps: $(project get apps | grep -c . || true))"
+}
+
+# With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where
+# tools such as Supabase's CLI dial them (dockerPorts.mjs). After Redis, so a container publishing 6379 never takes it.
+startDockerPorts() {
+  [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ] || return 0
+  node "$SESSION_DIR/dockerPorts.mjs" >/tmp/woodshed-docker-ports.log 2>&1 &
+  log "Forwarding the ports this machine's containers publish" "(log: /tmp/woodshed-docker-ports.log)"
 }
 
 # Each container has its own throwaway Redis, for whatever of the app connects to it. A shared Redis would let one
@@ -763,6 +788,7 @@ startClaude() {
   if [ "${SESSION_MODE:-}" != ask ]; then
     startRedisIfUsed viewer
     startDbViewers
+    startDockerPorts
   fi
   tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
   tmux set-option -t claude remain-on-exit on
@@ -819,6 +845,8 @@ writeAskPrompt() {
 # reads only (sessionApi.mjs). The start steps are all reported, so the page's checklist reads as for any session.
 runAsk() {
   requireEnv SESSION_ID SESSION_TOKEN WOODSHED_CONSOLE_URL PROMPT
+  # On an image with no checkout, the question's repo is cloned first, as for any session.
+  useProjectRepo
   log "Container started" "(session: $SESSION_ID, mode: ask)"
   progress container
   configureGitCredentials

@@ -615,7 +615,11 @@ in their env file, use it directly.
 
 A console with a secret store (AWS, or the local provider's secrets folder) and no GitHub App
 (`WOODSHED_GITHUB_APP_ID` unset) offers `/setup/github`, and My Woodshed's setup card lists **Connect a GitHub App**
-first. It starts without `gh` too, but needs it for every GitHub call afterwards, the App's included: without it the
+first. On one person's console with a `gh` token, the App is
+optional: one that listens on loopback and asks nobody to sign in (`isOnePersonConsole`), whatever name a proxy of
+theirs (Tailscale's `serve` to their own devices) reaches it by. There the card lists **Connect a GitHub App (optional)**, which never holds New session back, since sessions push
+and open pull requests as that person with their `gh` token and nobody else reaches the console to sign in
+(`githubAppSetup.mjs`, `optional`). An App still pushes as a bot scoped to the repo, and is what lets teammates sign in. It starts without `gh` too, but needs it for every GitHub call afterwards, the App's included: without it the
 console logs `console: gh not installed, GitHub calls will fail` at start. The page has three steps:
 
 1. **Make the App.** *Create the App on GitHub* posts GitHub's App manifest (`githubAppSetup.mjs`, `appManifest`: the
@@ -948,6 +952,26 @@ per name on demand instead. Before each, the proxy asks the console on a loopbac
 (`WOODSHED_TLS_ASK_PORT`, `console/tlsAsk.mjs`) whether the name is the console's own or a session's;
 `providers/local/README.md`, "Session apps without a wildcard certificate", has the Caddyfile.
 A session started before its image had **Start app** shows no app.
+
+### Session apps on ports
+
+A console with a single name and no wildcard, such as one person's console that Tailscale's `serve` puts at
+`https://<machine>.<tailnet>.ts.net` for their own devices (`providers/local/README.md`, "From your other devices, with
+Tailscale"), gives each app a port of that name instead: `WOODSHED_APP_PORTS=7701-7710`. The console listens on each
+port too, on its own host, and the proxy in front maps the same port of the name to it (`console/appPorts.mjs`). A
+port is lent to a session once its app is starting or up, and the session keeps it while it is active, so an open tab
+keeps working; a stopped session's port goes to the next one. The session list carries each running session's
+`appUrl` (null until a port is lent, when Open app and Editor ↗ go through `/auth/app`, which lends one). The console
+logs `appPorts: listening` at start, `appPorts: port lent` with the `id`, `port` and the session it was `from`, and
+`appPorts: no port free for the session's app` when every port is held: stop a session, or name more ports.
+
+An app port answers its session's app alone, never the console's own pages, which would then share the app's origin;
+a port lent to nobody answers 404. The console's writes and websockets need its own origin, and a port is part of an
+origin, so an app's page cannot drive the console. Cookies do not keep ports apart, though: the apps share their own
+cookies by name (two sessions' `session` cookies overwrite each other), and the console's app sign-in cookie could not
+keep one app's viewers from another's. So app ports are for a console nobody signs in to: the console refuses to start
+with them beside `WOODSHED_REQUIRE_SIGN_IN`, a hosting proxy, a host past loopback or `WOODSHED_APP_DOMAIN`, and
+**Share the app** is not offered.
 
 ### Sharing the app
 
@@ -1545,7 +1569,7 @@ clone has commits the branch lacks, and otherwise runs as a checklist on the car
 `providers/console.mjs` with `WOODSHED_START_CHECK=1`, which loads every module, reads the console's settings and
 makes its provider, then exits without listening; 60 seconds at most), **Build the
 session image** (only when `session/` or `shared/` changed and sessions run in docker: the new clone's `install.sh` with
-`WOODSHED_BUILD_ONLY=1`, `WOODSHED_IMAGE` set to the console's own, `WOODSHED_REPO` the default project's and the
+`WOODSHED_BUILD_ONLY=1`, `WOODSHED_IMAGE` set to the console's own, `WOODSHED_REPO` the environment's default project's (none on a console that started with no repo, which builds the image with no checkout again: an added repo is never in the image) and the
 App's token as `GH_TOKEN`; its output goes to `woodshed-update.log` in the state folder and its last lines to the page),
 then **Restart the console**, which exits with code 75 for its supervisor (`supervisorOf`, as the GitHub App setup's
 Restart). A failed step puts the clone back on the commit it was on (`git reset --keep`), so the console runs as it
@@ -1563,8 +1587,10 @@ The **Repos** card, next, lists the repos sessions can start on (the projects ab
 `GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
 the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links each installation's settings on GitHub,
 where the repos it may reach are picked (Repository access), and the App's install page for another account; the list
-is read again on **List again** and when the tab comes back into view. On a console with no App (the local provider,
-or borrowed GitHub access), or when GitHub did not list them, the field takes `owner/name` typed in (a `github.com`
+is read again on **List again** and when the tab comes back into view. On a console with no App that runs on its `gh` login (one person's own machine),
+the list is every repo that login can push to (`gh api user/repos`, `ghRepoLister`), since sessions push with it, and the
+console logs `projects: repos listed` with `via: 'gh'`. With borrowed GitHub access, or when GitHub did not list them,
+the field takes `owner/name` typed in (a `github.com`
 link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
 Add repo, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be able to reach
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
@@ -1575,7 +1601,7 @@ project, or a name in use, is refused with its reason. The added repos are kept 
 and appended to `WOODSHED_PROJECTS`'s list in the live config (`liveConfig`), so one applies at once, with no
 restart, and a project's New session **Project** field shows it to whoever can write to it. On a console that started
 with no repo the card says so, and the first repo added is the default (`liveConfig`), until it is removed and the next
-one takes its place; until then New session's setup card lists **Add a repo** (`repoNeeded` in `/api/my`), and a start
+one takes its place. No session image holds an added default's checkout, so `liveConfig` marks it `clonedAtStart` and its sessions get `PROJECT_REPO` and clone it at start, like any added repo's (`fleet.mjs`); on the local provider a refusal for its databases names the install that hosts them (`WOODSHED_REPO=<repo> bash install.sh`, `databaseGate.mjs`'s `fix`); until then New session's setup card lists **Add a repo** (`repoNeeded` in `/api/my`), and a start
 is refused with `Not started: the console has no repo yet` (`fleet: session refused, the console has no repo yet`).
 **Remove**
 (`POST /api/console-settings/projects/remove`) takes an added repo off, and is disabled while a session is running on it
@@ -1624,6 +1650,8 @@ Remove My Woodshed.
 | `WOODSHED_CONSOLE_NAME` | `Woodshed` | What the console calls itself: the pages' title, the sign-in page's heading, the installed app's name (the manifest and the Apple title) and the console's GitHub comments. 1 to 40 printable characters, trimmed, without `< > " '` or a backtick; any other value gives the default, with a warning once. Set on the base box from Terraform's `console_name`. An installed app keeps the name it was installed with until it is installed again |
 | `WOODSHED_PUBLIC_URL` | `http://localhost:<port>` | The base of the link posted on GitHub; its host is accepted |
 | `WOODSHED_HOSTS` | none | More names to accept, comma-separated |
+| `WOODSHED_APP_DOMAIN` | none | Session apps answer at `<id>.<this>` ("Session apps"); none turns them off, unless `WOODSHED_APP_PORTS` is set |
+| `WOODSHED_APP_PORTS` | none | On one person's console only (loopback, no sign-in): ports such as `7701-7710` the console also listens on, each lent to one session's app, which answers at `<public URL's name>:<port>` (`appPorts.mjs`, "Session apps on ports"). Not beside `WOODSHED_APP_DOMAIN`. The installer sets it with `WOODSHED_TAILSCALE=1` |
 | `WOODSHED_TLS_ASK_PORT` | none | A port on `127.0.0.1` where a reverse proxy asks before getting a certificate on demand: `GET /tls-ask?domain=<name>` answers 200 for the public URL's host, `WOODSHED_HOSTS` and a session's app name, 403 otherwise (`tlsAsk.mjs`). For a console with no wildcard certificate; `providers/local/README.md` has the Caddyfile |
 | `WOODSHED_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |
@@ -1631,7 +1659,7 @@ Remove My Woodshed.
 | `WOODSHED_GITHUB_BROKER_URL`, `_GITHUB_BROKER_TOKEN_FILE` | none | Hosted mode: where the console asks its host for every installation token, and a file holding the bearer it asks with. Both or neither, and never with `WOODSHED_GITHUB_APP_ID`. See "Hosted mode" |
 | `WOODSHED_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
 | `WOODSHED_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
-| `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on. Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer always sets one: it builds the session image from it |
+| `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on. Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer sets it only when given `WOODSHED_REPO`, and then builds the session image from it; without, the console starts with no repo, on `woodshed-session:generic`, an image with no checkout, and every session clones its repo at start |
 | `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack and the database check still run on the default project. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
 | `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | The repo's env files as `secret=path` pairs (`api-env=api/.env,web-env=web/.env.local`): each is a secret on the Secrets page and a tab on My settings. The second lists which of those secrets the databases' commands read (every `envFiles` of the project file's `databases`). Terraform sets both from `env_files` and `database_env_secrets`; the project file's own `envFiles` must name the same secrets |
 | `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) or an env file's stops the start. Terraform sets it from `install_secrets` |
@@ -1647,6 +1675,7 @@ Remove My Woodshed.
 | `WOODSHED_ECS_CLUSTER`, `_ECS_TASK_DEFINITION`, `_ECS_SUBNETS`, `_ECS_SECURITY_GROUP`, `_ECS_LOG_GROUP` | none | For `ecs`; the base box bootstrap sets them from Terraform. Region from `AWS_REGION` |
 | `WOODSHED_IMAGE` | `woodshed-session` | |
 | `WOODSHED_SESSION_MEMORY`, `WOODSHED_SESSION_CPUS` | `6g`, `2` | Docker limits per session |
+| `WOODSHED_SESSION_DOCKER` | on with the `docker` launcher on one person's console (loopback, no sign-in, no hosting proxy); off on a console others sign in to, and with `ecs` | Sessions use the machine's Docker: its socket, so Claude can run a repo's compose services, Supabase local or Testcontainers (`../providers/local/README.md`, "Docker in a session"). That is root on the machine for whoever can start a session: on a console others use, a GitHub label or comment is enough, and it reaches the secrets key and every other session, so there it takes `1`. `0` turns it off. A question from Slack never gets it, nor does a project file decide it. With `ecs`, `1` only logs that a Fargate task cannot have it |
 | `WOODSHED_SESSION_ENV_FILE` | none | A JSON object of strings passed to every session: the shared services and secrets from the table above |
 | `WOODSHED_GITHUB_APP_ID`, `_GITHUB_APP_INSTALLATION_ID`, `_GITHUB_APP_KEY_FILE` | none | The GitHub App. When set, the console mints installation tokens with the key (`githubApp.mjs`) for its own GitHub calls and for sessions, and `GH_TOKEN` is not used. With the `ecs` launcher and no key file, the key is read from `<prefix>/github-app-key`; until it has a value the console runs without GitHub |
 | `WOODSHED_SECRET_PREFIX`, `WOODSHED_WEBHOOK_FUNCTION` | `woodshed-cloud/`, `woodshed-cloud-webhooks` | With the `ecs` launcher: where the Secrets page finds its secrets (and the `project` tag of those it makes), and the Lambda whose URL it sets on the GitHub App. Set on the base box from Terraform's `name_prefix`; the defaults are for a box whose stack predates that, and go later |

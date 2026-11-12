@@ -13,7 +13,7 @@ To run real sessions, pick one:
 
 | Where | Sessions run on | Effort | Section |
 | --- | --- | --- | --- |
-| This machine, to try it | Docker here | One script and two browser steps | [On this machine](#on-this-machine) |
+| This machine, to try it | Docker here | One script, then a repo and a token in the browser | [On this machine](#on-this-machine) |
 | A server your team reaches (Hetzner, OVH, any VM) | Docker on that machine | An afternoon: HTTPS, a service, a firewall | [On a server](#on-a-server) |
 | AWS | Fargate | Terraform in an account of its own | [On AWS](#on-aws) |
 
@@ -25,8 +25,8 @@ and says that a computer you already have works as well as a rented one.
 Claude's own use is apart from all of these: each person's Claude plan, or the team's API key.
 
 **This machine.** Nothing is rented and nothing is billed. Docker containers on it: the console (on localhost only,
-with no sign-in), Postgres and Mongo when the project file has `databases`, the project's shared services, and one
-container a session, about 4 GB of memory each. Sessions stop when the machine sleeps, and only you reach it.
+with no sign-in), Postgres and Mongo when the install is made for a repository whose project file has `databases`,
+the project's shared services, and one container a session, about 4 GB of memory each. Sessions stop when the machine sleeps, and only you reach it.
 
 **A server.** The same containers, on a machine your team reaches, with Caddy in front for HTTPS. It can be a VM you
 rent (on Hetzner Cloud a CPX41 or CAX31, 16 GB for about four sessions at once) or a computer you already have that
@@ -58,7 +58,9 @@ skip it until something breaks, then use its "By symptom" list.
 ## Before any of them: the project file
 
 A session is only as useful as the repository's `.woodshed/project.yaml`: without one it gets a checkout and Claude,
-but no installs, no databases and no app to check its change in. Writing it is the step an agent does best.
+but no installs, no databases and no app to check its change in. Writing it is the step an agent does best. On a
+server or AWS it comes before the install; on this machine after it, for the repository you pick in the console
+("On this machine", step 5), since that install builds nothing from it.
 
 1. **Agent.** Read the repository: its package files, docker compose file, env examples, migration and seed commands,
    and how its app starts. Then copy what fits from `project.reference.yaml` (every field, with an example) into
@@ -100,63 +102,135 @@ production ones: `CLAUDE.md`, "Rules") are set on the console's Secrets & webhoo
 
 ## On this machine
 
-Needs Docker with compose, Node 22 or later, git, and `gh` signed in to an account that can read the repository. On
-macOS and Windows, Docker Desktop must be running.
+Needs Docker with compose, Node 22 or later, git, and `gh` signed in. On macOS and Windows, Docker Desktop must be
+running. No repository is named up front: the install makes a console with none, and you pick one in it, from the
+repos your `gh` login can push to. The project file comes after that, for the repo you picked.
 
 1. **Agent.** Check the tools: `docker info`, `docker compose version`, `node -v` (22 or later), `gh auth status`.
+   **You**, before anything else: install what is missing, and sign `gh` in with `gh auth login` (an agent asks you to
+   type `! gh auth login` at its prompt). The console and every session run on that login: they clone, push and open
+   pull requests as you, and the repos you can pick are the ones it can push to.
+   **You**, and decide now: will you use it from your other devices, through Tailscale? If so, only you, or others on
+   the tailnet too? "From your other devices", below, says what each sets up.
 2. **Agent.** Run the installer without starting the console, since it would hold the terminal:
 
    ```bash
-   WOODSHED_REPO=owner/name WOODSHED_NO_START=1 bash <woodshed>/install.sh
+   WOODSHED_NO_START=1 bash <woodshed>/install.sh
    ```
 
-   From no checkout: `curl -fsSL https://woodshed.run/install | WOODSHED_REPO=owner/name WOODSHED_NO_START=1 bash`.
-   It asks nothing when `WOODSHED_REPO` is set and `gh auth token` works (or `GH_TOKEN` is set); with neither it fails
-   with what to set rather than waiting. The first run builds the session image: several minutes on the published
-   runtime, much longer when it cannot pull that and builds the runtime too (its log says which).
+   With Tailscale add `WOODSHED_TAILSCALE=1` for only you, or `WOODSHED_TAILSCALE=shared` for others on the tailnet too.
 
-   **Done when** it exits 0 having printed `Set up in ~/.woodshed`. Before that it printed `Starting <engines>, for a
-   copy of the databases in each session`, or `The project file has no databases: sessions get none of their own`.
-   With databases, read "Known gaps", below, before the first session.
+   From no checkout: `curl -fsSL https://woodshed.run/install | WOODSHED_NO_START=1 bash`. It asks nothing. The first
+   run builds a session image for any repository, `woodshed-session:generic`, with no checkout in it: a few minutes on
+   the published runtime, much longer when it cannot pull that and builds the runtime too (its log says which). Each
+   session then clones its repo and runs its installs at start.
+
+   **Done when** it exits 0 having printed `Set up in ~/.woodshed`, after `No repository yet, so no databases`.
+
+   Without `WOODSHED_NO_START`, it first checks that nothing else listens on 7690, 7691 or (with
+   `WOODSHED_TAILSCALE=1`) the app ports, and stops with what holds one (`port 7690, which the console needs, is taken
+   by node (pid …)`): often a console left from another install. Its own console is not in the way: a second run
+   stops it and starts it again with the new settings.
 3. **Agent.** Start the console in the background, and keep its log:
 
    ```bash
    ~/.woodshed/bin/woodshed >~/.woodshed/console.log 2>&1 &
    ```
 
-   **Done when** `curl -fsS -o /dev/null http://localhost:7690/` succeeds.
-4. **You.** Open `http://localhost:7690`. The setup card's **Connect a GitHub App** leads to `/setup/github`: create the
-   App on GitHub (one confirmation there, under the repository's organization or your own account; an organization
-   may need an owner to approve it), install it on the repository, then press **Restart the console**. The launcher
-   starts it again by itself.
+   **Done when** `curl -fsS -o /dev/null http://localhost:7690/` succeeds, and the log's `console: listening` line has
+   `repo: ''`.
+4. **You.** Open the console: `http://localhost:7690` here, or with Tailscale `https://<name>` on your phone or any of
+   your devices. Its setup card's **Add a repo** opens **Console settings**, Repos: pick the repository from the list
+   of those your `gh` login can push to, and **Add**. The first one added is the console's default.
 
-   **Done when** the console's log has `console: GitHub App from the setup page`.
-5. **You.** Choose your agent: the setup card's **Claude** or **Codex** opens that box on **My settings**, and either one
+   **Done when** the console's log has `projects: repo added` with that repo.
+5. **Agent**, when that repository has no `.woodshed/project.yaml` on its default branch yet: write it, as "Before any
+   of them: the project file", above, says (the `write-project-file` skill), and have it committed. Sessions read the
+   file at start, from their branch, so nothing is rebuilt for it.
+
+   If the file has `databases`, this install hosts none yet, and the console refuses sessions with `the project file's
+   databases need postgres, which this installation does not host (it hosts none): run WOODSHED_REPO=owner/name bash
+   install.sh again on this machine`. Do that, with `WOODSHED_NO_START=1` and the same `WOODSHED_TAILSCALE`, then stop
+   the console and start it again as in step 3: the run builds that repository's own session image (several minutes)
+   and starts its databases, and keeps the rest of the install.
+   Do the same when the file has env files with a `secret`, so they get their slot on **Secrets & webhooks**. Read
+   "Known gaps", below, before the first session.
+6. **You**, optional. Sessions push and open pull requests as you, with your `gh` sign-in, so a GitHub App is not
+   needed on this machine: skip this step unless you want sessions to push as a bot scoped to the repository. Then
+   the setup card's **Connect a GitHub App (optional)** leads to `/setup/github`: create the App on GitHub (one
+   confirmation there, under the repository's organization or your own account; an organization may need an owner to
+   approve it), install it on the repository, then press **Restart the console**. The launcher starts it again by
+   itself.
+
+   **Done when** the console's log has `console: GitHub App from the setup page`, or you skipped it.
+7. **You.** Choose your agent: the setup card's **Claude** or **Codex** opens that box on **My settings**, and either one
    is enough. For Claude on a Claude plan: run `claude setup-token` in a terminal, and save the token. Copy it in one
    piece: a token that lost a character to a wrapped line looks right and fails in the session. With an Anthropic API
    key instead: save it as `anthropic-api-key` on **Secrets & webhooks**. For Codex: run `codex login` and paste
    `~/.codex/auth.json`, or paste an OpenAI API key; then pick Codex as the agent in New session.
-6. **You**, if the project file has env files with a `secret`: set each on **Secrets & webhooks**.
-7. **You.** Press **New session** and say what to build.
+8. **You**, if step 5 ran the installer with the repository and its project file has env files with a `secret`: set
+   each on **Secrets & webhooks**.
+9. **You.** Press **New session** and say what to build.
 
-   **Done when** the session reaches its terminal and claude is working. A session that fails at start shows why; the
+   **Done when** the session reaches its terminal and claude is working. Its log starts `Cloning the project's repo`
+   (`image: none` on the generic image) and `Project repo cloned`. A session that fails at start shows why; the
    console's log and `CLAUDE.md`, "By symptom", say more.
+
+To set it up for one repository from the start instead, as before: `WOODSHED_REPO=owner/name WOODSHED_NO_START=1 bash
+<woodshed>/install.sh`, with the project file committed first, since the image is built from it. It reads the
+repository with `gh auth token` (or `GH_TOKEN`), builds `woodshed-session:<owner>-<name>` with its checkout and
+installs, so sessions start without either, and starts Postgres and Mongo for the file's `databases`.
 
 What to know on this machine:
 
-- Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690.
-- Session apps (**Open app**) need a name and HTTPS (`WOODSHED_APP_DOMAIN`), which the installer does not set:
-  on this machine the session runs and checks the app itself, but there is no link to open it from your browser.
+- Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690
+  other than through Tailscale's `serve`, below.
+- Sessions use this machine's Docker, so a repo's compose services, Supabase local or Testcontainers run: the
+  containers Claude starts run on this machine beside the session, and their published ports are forwarded into it.
+  That is root on this machine for Claude in every session: it can do anything here that you can. That is part of
+  what "only you" means. `WOODSHED_SESSION_DOCKER=0` (in `~/.woodshed/stack.env`, or with the installer) turns it off.
+  Those containers outlive the session that started them: `docker ps` lists them, and `docker rm -f` removes them.
+  A browser-side address in the app's env (`SUPABASE_URL=http://127.0.0.1:54321` in an Expo web app) works in the
+  session's own Playwright browser, but not from your phone through Open app, which reaches only the app's own port.
+- Session apps (**Open app**) need HTTPS and a name or port of their own, which the installer sets only with
+  `WOODSHED_TAILSCALE=1`: without it the session runs and checks the app itself, but there is no link to open it from
+  your browser.
+- More repos: **Console settings**, Repos, **Add a repo** lists every repo your `gh` login can push to. Each starts its
+  sessions in the install's session image, cloning its own repo at start, so its dependencies install then. Only the
+  install's repository (`WOODSHED_REPO`) has databases and env file secrets.
 - GitHub webhooks need a public address, so the console polls GitHub every 30 seconds: a `woodshed` label or a
   `/woodshed` comment takes up to that long. **New session** is immediate.
 - Everything is in `~/.woodshed`. `WOODSHED_REBUILD=1` with the installer builds the session image again, which it
-  needs after the project file's installs change. Back up `~/.woodshed`'s secrets key apart: losing it loses every
-  secret.
+  needs after the project file's installs change when the install has a repository. Back up `~/.woodshed`'s secrets
+  key apart: losing it loses every secret.
+
+### From your other devices
+
+Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net`, for your tailnet's devices alone.
+`providers/local/README.md`, "From your other devices, with Tailscale", has the detail.
+
+- **Only you**: `WOODSHED_TAILSCALE=1`. No sign-in and no GitHub App, as on localhost: the tailnet is the gate, so
+  every device on it must be yours (`tailscale status`), and no server on it may be one others have a shell on (a
+  shared dev box reaches the console as you). Each session's app opens on a port of that name,
+  `https://<name>:7701/` and on. **Done when** `tailscale serve status` lists 443 and the app ports, and
+  `https://<name>` opens the console on your phone.
+- **Others too**: `WOODSHED_TAILSCALE=shared`, then step 6 is not optional and comes first, before step 4, at
+  `https://<name>/setup/github`; then set `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env`, restart the console
+  and sign in first. Open app needs a domain of your own for this. Sessions get no Docker here unless you add
+  `WOODSHED_SESSION_DOCKER=1` to `stack.env`, and with it everyone who can start one has this machine, as on a
+  server (below). **Done when** the console's log has
+  `console: GitHub App from the setup page`, and opening it from another device asks to sign in with GitHub.
 
 ## On a server
 
 There is no installer for a server. `providers/local/README.md`, "Setting it up" and "On a server your team reaches",
 has every step; this is the order, with the checks. Steps marked **Server** run on the machine.
+
+Sessions get the server's Docker (for a repo's compose services, Supabase local or Testcontainers) when `stack.env`
+says `WOODSHED_SESSION_DOCKER=1`, which step 5 sets: a console others sign in to never has it by default, nor gains it
+from an Update. With it, anyone who can start a session, from a GitHub label or comment too, gets root on the server:
+the secrets key, so every stored secret and Claude token, and every other session's containers and databases. Only
+people you would give root on the box should be able to start sessions there; leave it out otherwise.
 
 1. **You.** Make the machine: Ubuntu 24.04, about 4 GB of memory a session (16 GB holds about four). On Hetzner Cloud,
    a CPX41 or CAX31.
@@ -171,7 +245,8 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
    `stack.env` and `session-env.json` (outside the checkout, mode 600), start the databases, make the secrets key and
    store the root passwords. Keep the key off the Volume: `WOODSHED_LOCAL_SECRETS_KEY_FILE=/etc/woodshed/secrets.key`.
    For a server also set `WOODSHED_PUBLIC_URL` and `WOODSHED_APP_DOMAIN` to the name from step 3, and
-   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate.
+   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate. Add `WOODSHED_SESSION_DOCKER=1` for sessions to use
+   the server's Docker, knowing what it gives (above).
 
    **Done when** `docker compose … ps` shows the databases healthy and `node <woodshed>/providers/local/bin/secret.mjs
    list` lists `db-root/postgres` (and `db-root/mongo`).

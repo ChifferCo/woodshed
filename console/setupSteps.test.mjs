@@ -45,3 +45,11 @@ test('a console with no repo puts adding one first, and is not done until it has
   assert.equal(setupDone({ ...me({ token: true }), repoNeeded: true }), false);
   assert.equal(setupDone({ ...me({ token: true }), repoNeeded: false }), true);
 });
+
+test('an optional GitHub App is offered on the card and never holds New session back', () => {
+  const m = { ...me({ token: false }), githubSetupOptional: true };
+  assert.deepEqual(rows(m), ['github:waiting', 'token:waiting']);
+  assert.equal(setupSteps(m)[0].optional, true);
+  assert.match(setupSteps(m)[0].label, /optional/);
+  assert.equal(setupDone({ ...me({ token: true }), githubSetupOptional: true }), true);
+});

@@ -295,6 +295,38 @@ secrets.
   stop reason. An empty secret shows as `ResourceInitializationError`. A
   missing image shows as `CannotPullContainerError`. Otherwise read the
   session's log stream: the entrypoint logs each step (`[woodshed …]`).
+- **A session fails at once with `the session image has no checkout and the console named no repo`.** The image was
+  built with no repo (install.sh's `woodshed-session:generic`) and the session got no `PROJECT_REPO`, which the console sets for
+  every session on a repo an admin added (`fleet.mjs`, `clonedAtStart`): a console older than its image does not. Its log otherwise starts `Cloning the
+  project's repo (repo: <repo>, image: none)`, then `Project repo cloned` with its seconds; the installs run after
+  claude starts (`/tmp/woodshed-deps`).
+- **install.sh stops with `port 7690, which the console needs, is taken by …`.** Something else listens where the
+  console would: often a console left running from another install or `WOODSHED_HOME`. The message names the process
+  and its pid, from `lsof -nP -iTCP:<port> -sTCP:LISTEN` (`ss -ltnp` on Linux); `this machine will not say by what`
+  means neither could see it, such as another user's process. The install's own console is never in the way: it is
+  told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
+  A Tailscale `serve` listener on the same port does not count.
+- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider sessions
+  use the machine's Docker on one person's console unless `WOODSHED_SESSION_DOCKER=0`, and on a console others sign in
+  to only with `WOODSHED_SESSION_DOCKER=1` (providers/local/README.md, "Docker in a session"): the console logs `local:
+  sessions use this machine's Docker` with `on` at start (`onWith` when it is off by default), then `launcher: sessions get this
+  machine's Docker` with the socket's `group` at the first session, and `launcher: session given this machine's Docker`
+  for each. A start that fails with `its socket could not be given to the session` gives docker's reason. In the
+  session's Terminal, `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists
+  the socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found`
+  is an image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions
+  never get it.
+- **A tool in a session cannot reach a container it started on `127.0.0.1:<port>`, or a dev server fails with
+  `EADDRINUSE`.** `session/dockerPorts.mjs` forwards each port the machine's containers publish to the same port on the
+  session's 127.0.0.1: `/tmp/woodshed-docker-ports.log` has `dockerPorts: port forwarded` with the container, `port
+  not forwarded` with `why` (something in the session already listens on it, or it is one of the session's own), and
+  `forward ended` when the container went. A dev server refused its port because a container on the machine (often
+  another session's stack) publishes it and the forward holds it: stop that container or move one of them. Nothing
+  forwarded on Linux for a port published on `127.0.0.1` alone: the forward reaches the machine through the gateway,
+  so that port must be published on every address.
+- **Containers from an ended session are still running.** Containers a session starts with the machine's Docker
+  carry no label of Woodshed's and outlive it: `docker ps` lists them, and `docker rm -f` or `docker compose -p
+  <project> down` removes them. Claude names a stack after its session id, so the id in a name says whose it was.
 - **A session takes a minute and a half to start.** The image has lost its
   SOCI index, so Fargate pulls it in full: `describe-tasks` shows about 85
   seconds between `pullStartedAt` and `pullStoppedAt`, against under 10 with
@@ -324,7 +356,9 @@ secrets.
   console reads the default branch's file and logs `console: project databases not hosted` with `needs` and `hosted`,
   then `fleet: session refused, its databases are not hosted` for each start it refused (`fleet: trigger refused` for a
   label or comment, which gets the reason on its issue). A session started from a branch whose own file differs stops
-  at start with the same words. The console logs `console: databases` at start with the `engines` it makes and the ones
+  at start with the same words. On a local install made with no repository, the refusal ends `run WOODSHED_REPO=<repo>
+  bash install.sh again on this machine`: that builds the repo's own image and starts its databases
+  (providers/local/README.md, "Setting it up"). The console logs `console: databases` at start with the `engines` it makes and the ones
   sessions are `hosted` on; a session in an installation with none logs `No databases to fetch`. A db-admin run logs
   `Started` with its `databases`, and refuses a project database whose engine it has no flags for.
 - **Every copy waits five minutes and fails with `there is no database template`, the log saying `Waiting for the
@@ -435,6 +469,14 @@ secrets.
   statusd `statusd: app start finished` with the script's exit code. A page that
   loads but never comes to life means the app's dev server refused the name: it must allow `*.<domain>` (the
   installation's `.woodshed/install/README.md` says where).
+- **Open app on a port (`https://<name>:7701/`, a console with `WOODSHED_APP_PORTS`) does not load, or says no app is on
+  the port.** The console logs `appPorts: listening` at start (`appPorts: could not listen` with the port when
+  something else holds it), `appPorts: port lent` when a session's app gets one, and `appPorts: no port free for the
+  session's app` when all are held. `no session's app is on this port` is a port lent to nobody, or to a session that
+  stopped: open the app from the console again. A page that never loads from another device means the proxy does not
+  serve that port: `tailscale serve status` must list it (providers/local/README.md, "From your other devices, with
+  Tailscale"). A console that will not start, saying `WOODSHED_APP_PORTS is for one person's console`, has sign-in
+  required or a host past loopback beside it: app ports are for a console nobody signs in to.
 - **Open app answers with a certificate error on a local install, or on AWS with no `domain`.** With no wildcard certificate, Caddy gets one per
   app name on demand, after asking the console (providers/local/README.md, "Session apps without a wildcard
   certificate"). No `tls: ask listening` at start means `WOODSHED_TLS_ASK_PORT` is not set. `tls: certificate

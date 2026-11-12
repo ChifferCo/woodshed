@@ -4,7 +4,10 @@
 // The installation's own can only be changed where they are set, and the default project is always one of them.
 
 import { addedProjectsOf, allProjects, projectNameOf, validProjectName, validRepo } from './projects.mjs';
-import { createGitHub } from './github.mjs';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+import { createGitHub, explainGhError } from './github.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 
 // `link`, when given, is {href, text}: where the page can send the admin to fix what the message says.
@@ -172,6 +175,31 @@ export function repoLister({ appApi, appSlug = async () => null }) {
       repos,
       grant: installations.filter((i) => i.settingsUrl).map((i) => ({ account: i.account, href: i.settingsUrl })),
       install: slug ? installUrl(slug) : null,
+      via: 'app',
     };
+  };
+}
+
+/**
+ * What `list` is in a console with no App that runs on its `gh` login (one person's own machine): every repo that
+ * login can push to, since a session pushes its branch with it. Nothing to grant: GitHub's own access is the list.
+ * @param {{run?: Function}} [deps]  `run` stands in for execFile in tests
+ */
+export function ghRepoLister({ run = promisify(execFile) } = {}) {
+  return async () => {
+    let stdout;
+    try {
+      ({ stdout } = await run('gh', ['api', '--paginate', 'user/repos?per_page=100&sort=full_name',
+        '--jq', '.[] | select(.permissions.push) | [.full_name, .private] | @tsv'], { maxBuffer: 16 * 1024 * 1024 }));
+    } catch (err) {
+      console.warn('projects: repos not listed', { via: 'gh', message: firstLine(explainGhError(err)) });
+      throw shown('gh did not list your repos. Type the repo instead, or try again; the console log says why.');
+    }
+    const repos = stdout.split('\n').filter(Boolean).map((line) => {
+      const [repo, priv] = line.split('\t');
+      return { repo, private: priv === 'true' };
+    }).filter((r) => validRepo(r.repo)).sort((a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' }));
+    console.log('projects: repos listed', { via: 'gh', repos: repos.length });
+    return { repos, grant: [], install: null, via: 'gh' };
   };
 }

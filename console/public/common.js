@@ -241,11 +241,12 @@
 
   /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false } = {}) {
-    const rows = setupSteps(me).map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
+    const steps = setupSteps(me);
+    const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
       h('span', { class: 'setup-check', 'aria-hidden': 'true' }, step.done ? '✓' : ''),
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
-        : step.key === 'github' ? h('a', { class: 'btn btn-primary btn-sm', href: '/setup/github' }, 'Set up')
+        : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
         // Two equal choices, each to its own box on My settings: neither agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
@@ -253,7 +254,7 @@
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
       h('h3', null, 'Set up your Woodshed'),
-      h('p', null, 'New session needs these, and nothing else does.'),
+      h('p', null, steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
       rows);
   }
 
@@ -479,6 +480,9 @@
    *   scheme and port (a local console's `http://<id>.localhost:7690/`)
    */
   function appUrl(s, appDomain) {
+    // With app ports (WOODSHED_APP_PORTS) the console says which port of its own name each running app is on.
+    // One with none yet goes through the console, which lends it one; what follows `next=/` (the editor's path) is kept.
+    if (s.appUrl !== undefined) return s.appUrl || `/auth/app?id=${encodeURIComponent(s.id)}&next=/`;
     return `${location.protocol}//${s.id}.${appDomain}${location.port ? `:${location.port}` : ''}/`;
   }
 

@@ -19,22 +19,42 @@ The console picks this provider with `WOODSHED_PROVIDER=local`, or with no provi
 and the other way round (`../console.mjs`).
 
 
-You need Docker with the compose plugin, Node 22, the GitHub CLI (`gh`, https://cli.github.com) on the console's
-PATH, and a GitHub App for the repo its sessions work on. Every GitHub call the console makes goes through `gh`, with
-the App's token when it has one. The console can
-make it for you at `/setup/github` (below); `providers/aws/README.md`, "Setting it up", step 2, says which permissions. Without the App the console runs on your
-own `gh` token, which reaches far more than one repo.
+You need Docker with the compose plugin, Node 22, and the GitHub CLI (`gh`, https://cli.github.com) on the console's
+PATH, signed in. Every GitHub call the console makes goes through `gh`, with the App's token when it has one.
+
+On your own machine, used by you alone (on loopback, with no sign-in, even when your other devices reach it through
+Tailscale), a GitHub App is optional: without one the console and its sessions run on your own `gh` token, so
+sessions push and open pull requests as you, and the setup card offers the App without requiring it. That token
+reaches far more than one repo; an App pushes as a bot scoped to the repo, and is what lets teammates sign in, so a
+console others reach (on a server) needs one. The console can make it for you at `/setup/github` (below);
+`providers/aws/README.md`, "Setting it up", step 2, says which permissions.
 
 ## Setting it up
 
-On a laptop, `install.sh` at Woodshed's root does steps 1 to 5 for one repository, with everything in `~/.woodshed`:
-`bash woodshed/install.sh`, or `curl -fsSL https://woodshed.run/install | bash` with no checkout. It reads your
-`gh` token to fetch the repository and builds the image as `woodshed-session:<owner>-<name>`, on the published
-runtime (`ghcr.io/chifferco/woodshed-session-runtime`, `session/README.md`) when it can pull it, so the machine builds
-only the checkout and its installs. When the repository's
-project file has `databases`, it starts the server of each engine they are on, Postgres on 15432 and Mongo on
-17017, so a laptop's own databases keep theirs, and each session gets its own copy; with none it starts neither, and
-sessions get none.
+On a laptop, `install.sh` at Woodshed's root does steps 1 to 5, with everything in `~/.woodshed`:
+`bash woodshed/install.sh`, or `curl -fsSL https://woodshed.run/install | bash` with no checkout. It asks for no
+repository. With none it builds `woodshed-session:generic`, an image with no checkout (`session/Dockerfile` with `REPO`
+empty), on the published runtime (`ghcr.io/chifferco/woodshed-session-runtime`, `session/README.md`) when it can pull
+it, so the machine builds only Woodshed's own layers; it starts no database, and the console starts with no repo.
+Repos are then added on its Console settings page, Repos (`console/README.md`), and each session clones its repo at
+start and runs its project file's installs there (`PROJECT_REPO`, `session/README.md`). That is work a repo's own image
+does ahead, so each start takes as long as the clone and the installs; adding a repo builds nothing.
+
+With `WOODSHED_REPO=owner/name` it makes that repository's install instead: it reads your `gh` token to fetch the
+repository and builds the image as `woodshed-session:<owner>-<name>`, holding its checkout and its installs. When the
+repository's project file has `databases`, it starts the server of each engine they are on, Postgres on 15432 and
+Mongo on 17017, so a laptop's own databases keep theirs, and each session gets its own copy; with none it starts
+neither, and sessions get none. An install made with no repository takes one this way later, keeping the rest of its
+`stack.env`, and that is the way to host the databases of a repo added on the console whose project file has some:
+until then its sessions are refused with `the project file's databases need postgres, which this installation does
+not host (it hosts none): run WOODSHED_REPO=owner/name bash install.sh again on this machine`. An env file's `secret`
+likewise gets its slot on Secrets & webhooks only from the install's repository (`WOODSHED_ENV_FILES`). Once an install
+has a repository it refuses another: a second one gets its own `WOODSHED_HOME`.
+
+Before it builds anything, it checks the ports the console will listen on (7690, the session API's 7691, and with
+`WOODSHED_TAILSCALE=1` the app ports) and stops with what holds one, from `lsof -nP -iTCP:<port> -sTCP:LISTEN`, or
+`ss` on Linux. Its own console (the one started from this `stack.env`) is not in the way: it is stopped and started
+again with the new settings at the end. `WOODSHED_NO_START=1` checks nothing.
 `WOODSHED_NETWORK` puts sessions on a docker network of the repository's own, such as its compose file's
 `<folder>_default`, to reach the services it runs there. `WOODSHED_PROJECT_FILES_DIR`, an absolute path, is a folder of
 project files the installation supplies, `<owner>/<name>.yaml`, for a repository with no `.woodshed/project.yaml` of its
@@ -82,7 +102,8 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
    set -a && . ~/woodshed/stack.env && set +a && node woodshed/providers/console.mjs
    ```
 
-6. Open the console: with no GitHub App, My Woodshed's setup card and `/setup/github` walk through making one (GitHub's
+6. Open the console. On your own machine the GitHub App is optional (above). To add one, or on a server where it is
+   needed, My Woodshed's setup card and `/setup/github` walk through making one (GitHub's
    manifest flow, or paste an App's ID and key), installing it on the repo and restarting the console. Started from a
    shell as in step 5, restart it by hand: stop it and run the same command. Run by a systemd unit with
    `Restart=on-failure`, the page's Restart button does it (console/README.md, "Setting up the GitHub App from the
@@ -137,6 +158,88 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
 - **A shared service keeps nothing across restarts** unless its compose file gives it a volume. A fake S3's buckets
   can be made on every start by an init script it mounts, such as localstack's `/etc/localstack/init/ready.d/`.
 
+## Docker in a session
+
+Sessions use this machine's Docker, so a repo whose dev setup is a compose file of services, Supabase local
+(`supabase start`) or Testcontainers runs in them. It is on by default only on one person's console: on loopback,
+with no sign-in and no hosting proxy, where the person starting sessions already owns the machine.
+`WOODSHED_SESSION_DOCKER=0` in `stack.env` (or with `install.sh`, which saves it) turns it off there. A console others
+sign in to (a server, or `WOODSHED_TAILSCALE=shared`) has it only with `WOODSHED_SESSION_DOCKER=1`, so an existing team
+console never gains it from an Update. Only the console's settings decide it, never a project file. A question from Slack never
+gets it, nor a db-admin run. On AWS it is always off: a Fargate task cannot be given a Docker socket, and
+`WOODSHED_SESSION_DOCKER=1` there only logs that it does nothing.
+
+**It is root on this machine for whoever can start a session.** On your own laptop that is you, through Claude. On a
+console others use with `WOODSHED_SESSION_DOCKER=1`, anyone who can start a session, from a GitHub label or
+comment too, gets root on the machine: the secrets key, so every stored secret and Claude token, and every other
+session's containers and databases. Only people you would give root on the box should be able to start sessions there.
+
+How it works:
+
+- The docker launcher (`dockerLauncher.mjs`, `hostDocker`) mounts `/var/run/docker.sock` into the session and adds
+  the group that owns it there to the session's `node` user (uid 1000): root's (0) on Docker Desktop and OrbStack, the
+  docker group's on Linux. It asks a container for that group once, with the session image and the socket mounted
+  (`docker run --rm --entrypoint stat …`), and logs `launcher: sessions get this machine's Docker` with it. It also
+  sets `DOCKER_HOST=unix:///var/run/docker.sock` and `WOODSHED_SESSION_DOCKER=1`, which the project file's scripts can
+  read. The console logs `local: sessions use this machine's Docker` with `on` at start.
+- The session image has the docker CLI and its compose plugin (`session/Dockerfile`). Its last stage adds them to a
+  published runtime from before they were in it.
+- Claude's rules say that the containers are the machine's and outlive the session, that a bind mount names a folder on
+  the machine, and to name a stack after the session with its own ports (`session/hostDocker.md`).
+- `session/dockerPorts.mjs` forwards each TCP port the machine's containers publish to the same port on the session's
+  127.0.0.1, where tools such as Supabase's CLI dial them, and stops when the container goes. A port something in the
+  session already listens on, or one of the session's own (6379, 7681 to 7688), is left alone. Its log is
+  `/tmp/woodshed-docker-ports.log` in the session.
+
+What to know:
+
+- **Containers Claude starts outlive the session.** They carry no label of Woodshed's, so removing the session does not
+  remove them: `docker ps` lists them, and `docker rm -f` (or `docker compose -p <project> down`) removes them.
+- **Two sessions' stacks share the machine's ports and names.** Claude is told to name a stack after its session and
+  to give a second one other ports, but a compose file with fixed ports and a fixed name collides with itself.
+- **An app's browser-side address does not reach your phone.** An env file line such as
+  `SUPABASE_URL=http://127.0.0.1:54321` in an Expo web app works in the session's own Playwright browser, through the
+  forward, but Open app reaches only the app's own port, so the page on your phone cannot reach Supabase.
+- **On Linux**, the forward reaches a port through `host.docker.internal`, the sessions' network gateway: a port a
+  container publishes on `127.0.0.1` alone is not reachable there, only one published on every address.
+
+## From your other devices, with Tailscale
+
+The console listens on loopback alone. To use it from your phone or another computer, Tailscale's `serve` puts it at
+`https://<this machine>.<tailnet>.ts.net` with a real certificate, for the devices on your tailnet and nobody else.
+Never `tailscale funnel`, which opens it to the internet. Needs Tailscale signed in on this machine and the other
+devices, with MagicDNS and HTTPS certificates on in the tailnet's DNS settings. On a Mac the CLI is inside the app
+(`/Applications/Tailscale.app/Contents/MacOS/Tailscale`) unless you added it to the PATH.
+
+**Only you.** `WOODSHED_TAILSCALE=1 bash install.sh` (or `~/.woodshed`'s run again with it) does it all:
+
+- `WOODSHED_PUBLIC_URL=https://<name>` in `stack.env`, so the console's links name the address your devices open.
+- `WOODSHED_APP_PORTS=7701-7710` (or the range you set): Tailscale gives the machine one name, so each session's app
+  answers on a port of it, `https://<name>:7701/` and on, in place of a name of its own (console/README.md, "Session
+  apps on ports").
+- `tailscale serve --bg --https=443 http://127.0.0.1:7690`, and the same for each app port.
+
+The console stays with no sign-in and no GitHub App: the tailnet is the gate, so check with `tailscale status` that
+every device on it is yours. A tailnet shared with someone (a device shared in, an organization's tailnet) lets them in
+as you: take the next way instead. Owning every device is not enough either: a server on the tailnet that other people
+have a shell on, such as a shared dev box, reaches the console as you too, so check the Linux and server peers. Restart the console after the change. `tailscale serve status` lists what is
+served; `tailscale serve reset` takes it all down. The app's dev server must accept the name (Vite's
+`server.allowedHosts`, Next's `allowedDevOrigins`), and anything that builds absolute URLs from its port sees the
+session's own port, not the app port.
+
+**Others on the tailnet too.** Then it needs sign-in, and sign-in needs the GitHub App:
+
+1. `WOODSHED_TAILSCALE=shared bash install.sh`: the same, with no app ports, since the apps' sign-in
+   cookies are kept apart only on names of their own. Until step 3 anyone on the tailnet who opens it is its admin, so
+   do steps 2 and 3 straight away.
+2. Make the App at `https://<name>/setup/github`, so its sign-in comes back to that name, and install it on the repo.
+3. Add `WOODSHED_REQUIRE_SIGN_IN=1` to `stack.env`, restart the console, and sign in first: you are its admin. Add the
+   others on People.
+
+Open app then needs a name per session: a domain of your own with a wildcard record pointed at this machine's
+Tailscale address and a wildcard certificate from a DNS challenge, as "Session apps without a wildcard certificate"
+below sets out for a domain, with `WOODSHED_APP_DOMAIN`. Without one the apps run, and have no link.
+
 ## On a server your team reaches
 
 There is no installer: how the machine is set up is yours to decide, with your agent. These are the choices to make
@@ -154,6 +257,8 @@ and what tripped up the first install on a plain VM (Ubuntu 24.04, for a repo wi
   admin. Let the proxy answer only your IP until the App is in, then set `WOODSHED_REQUIRE_SIGN_IN=1` and open it.
 - **Docker skips the firewall, both ways.** A published port (`-p 5432:5432`, `ports:` in a compose file) is open to
   the internet whatever ufw says: publish on `127.0.0.1` or not at all, and check the repo's own compose file too.
+  Sessions use the machine's Docker ("Docker in a session", above), so what Claude starts publishes the same way:
+  keep the provider's firewall in front of the machine, and remember that whoever starts a session has root here.
   The other way, ufw's default deny drops the sessions' calls to the session API: allow the sessions' bridge in on
   7691 only (`ufw allow in on br-<network id> to <gateway> port 7691 proto tcp`).
 - **The repo's own services.** Without each session's own databases (the table above),
@@ -311,6 +416,9 @@ retry, which the GitHub poll then finds.
    docker ps -aq --filter label=woodshed-cloud.session | xargs -r docker rm -f
    docker ps -aq --filter label=woodshed.db-admin=1 | xargs -r docker rm -f
    ```
+
+   Containers that sessions started with this machine's Docker carry no label of ours: `docker ps` lists them, to
+   remove by name.
 
 3. Delete the folders the settings name: the state folder, the secrets folder and its key, the homes folder and the
    data folder. The secrets go with the key alone, but the data folder holds every session's databases in the clear.

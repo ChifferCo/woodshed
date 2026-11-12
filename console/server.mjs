@@ -439,6 +439,9 @@ function readJson(req, maxBytes = MAX_BODY_BYTES) {
   });
 }
 
+// The app states in which a session's app holds one of WOODSHED_APP_PORTS (appPorts.mjs).
+const APP_HOLDS_PORT = new Set(['starting', 'running', 'api-down', 'frontend-down']);
+
 function appUrl(config, id, path) {
   return `https://${id}.${config.appDomain}${path}`;
 }
@@ -519,7 +522,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null,
 }) {
   const hosts = knownHosts(config);
@@ -815,6 +818,23 @@ export function createHandler({
     return redirect(res, `${config.publicUrl}/auth/app?id=${id}&next=${encodeURIComponent(url.pathname + url.search)}`);
   }
 
+  // A request on one of WOODSHED_APP_PORTS: the app of the session the port is lent to (appPorts.mjs).
+  function appPortRequest(req, res, port) {
+    // The name is the console's, so the same check as its own pages: a rebinding page's name is refused (sameOrigin.mjs).
+    if (!isKnownHost(req.headers.host, hosts)) {
+      console.warn('appPorts: unknown host refused', { port, host: String(req.headers.host).slice(0, 100) });
+      return reply(res, 421, { error: 'unknown host' });
+    }
+    // A cookie is the name's, whatever the port, so with sign-in on these apps could not keep theirs apart.
+    if (signInOn()) return reply(res, 403, { error: 'app ports are for a console nobody signs in to: use WOODSHED_APP_DOMAIN' });
+    const id = appPorts.idFor(port);
+    if (!id) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end('no session\'s app is on this port: open it from the console\n');
+    }
+    return appRequest(req, res, id);
+  }
+
   // The editor, on the app's name, for whoever can open the session itself: the app's sign-in cookie says who, and a
   // share link's cookie never counts (editorProxy.mjs).
   async function editorRequest(req, res, id, url) {
@@ -833,7 +853,11 @@ export function createHandler({
   async function appSignIn(req, res, url, login) {
     const id = url.searchParams.get('id') || '';
     const next = safeNext(url.searchParams.get('next'));
-    if (!config.appDomain || !APP_ID_RE.test(id) || !findAppFor(id, login)) return reply(res, 404, { error: 'no such session' });
+    if ((!config.appDomain && !appPorts) || !APP_ID_RE.test(id) || !findAppFor(id, login)) return reply(res, 404, { error: 'no such session' });
+    if (appPorts) {
+      const at = appPorts.urlFor(id, next);
+      return at ? redirect(res, at) : reply(res, 503, { error: 'every app port is lent to another session: stop one, or add ports to WOODSHED_APP_PORTS' });
+    }
     if (!signInOn()) return redirect(res, appUrl(config, id, next));
     // The hosting proxy signs the app's name in itself (appRequest).
     if (trusted) return redirect(res, appUrl(config, id, `${APP_AUTH_PATH}?next=${encodeURIComponent(next)}`));
@@ -881,7 +905,10 @@ export function createHandler({
       label: config.label,
       maxRunning: config.maxRunning,
       login,
-      appDomain: config.appDomain || null,
+      // Whether session apps are on: their name's domain, or with app ports the console's own name.
+      appDomain: config.appDomain || (appPorts ? new URL(config.publicUrl).hostname : null),
+      // With app ports each running session carries its `appUrl`, and an app is not shared: nobody signs in to it.
+      appPorts: Boolean(appPorts),
       // What Data ▾ offers: the viewers of the databases each session has a copy of.
       databases: databases?.available ? databases.engines : [],
       viewers: databases?.available ? viewersOf(databases.engines).filter((v) => !v.own).map(({ route, name, program }) => ({ route, name, program })) : [],
@@ -896,6 +923,9 @@ export function createHandler({
       running: sharedRunningCount(all),
       queued: all.filter((s) => s.status === 'queued' && !s.owner).length,
       sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null,
+        // A port is lent once the app is up or starting; until then `appUrl` is null and the page opens it through
+        // /auth/app, which lends one.
+        ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
         // Every pull request it opened, oldest first, for its chips (common.js shownPrs).
         prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
@@ -1063,12 +1093,16 @@ export function createHandler({
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
-      // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
-      githubSetupNeeded: Boolean(githubSetup?.available()),
+      // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github. On
+      // one person's own machine with a gh token it is optional, and does not hold New session back.
+      githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional?.(),
+      githubSetupOptional: Boolean(githubSetup?.optional?.()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
       app: appIdentity?.known() ?? null,
+      // With no App, sessions push with this machine's gh login, as its owner.
+      pushesWithGh: !config.githubApp && !config.githubBroker && Boolean(config.ghToken),
     };
   }
 
@@ -1693,6 +1727,8 @@ export function createHandler({
   }
 
   return async function handle(req, res) {
+    // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
+    if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
     const appId = appIdFor(req.headers.host, config.appDomain);
     if (appId) return appRequest(req, res, appId);
     if (!isKnownHost(req.headers.host, hosts)) {
@@ -1903,12 +1939,22 @@ function terminalTarget(fleet, login, members) {
  *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
  * @returns {(req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void}
  */
-export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null }) {
+export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null }) {
   const hosts = knownHosts(config);
   const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares, trusted });
   return function upgrade(req, socket, head) {
     // An error on a socket nobody listens to is an uncaught exception.
     socket.on('error', () => socket.destroy());
+    // An app port's websockets are its app's alone, as its requests are (appPortRequest).
+    if (appPorts?.owns(socket.localPort)) {
+      if (!isKnownHost(req.headers.host, hosts)) {
+        console.warn('appPorts: unknown host refused', { port: socket.localPort, host: String(req.headers.host).slice(0, 100) });
+        return socket.end('HTTP/1.1 421 Misdirected Request\r\n\r\n');
+      }
+      const portId = !auth?.enabled() && !trusted ? appPorts.idFor(socket.localPort) : null;
+      if (!portId) return socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+      return appUpgrade(req, socket, head, portId);
+    }
     const appId = appIdFor(req.headers.host, config.appDomain);
     if (appId) return appUpgrade(req, socket, head, appId);
     // woodshed-db.mjs is no browser: no Origin, no cookie, and a token that does what the same-origin check does here.
@@ -1969,6 +2015,16 @@ export async function startConsole({ provider, config: given = null }) {
   server.listen(config.port, config.host, () => {
     console.log('console: listening', { host: config.host, port: config.port, ...installation.summary() });
   });
+  // Each app port is the same server: a request's own port says which session's app it is (appPorts.mjs).
+  for (const appPort of installation.appPorts?.ports ?? []) {
+    const onPort = http.createServer(server.listeners('request')[0]);
+    onPort.requestTimeout = server.requestTimeout;
+    onPort.on('upgrade', installation.upgrade);
+    onPort.on('error', (err) => console.error('appPorts: could not listen', { port: appPort, message: err?.message }));
+    onPort.listen(appPort, config.host);
+    servers.push({ server: onPort, open: countRequests(onPort) });
+  }
+  if (installation.appPorts) console.log('appPorts: listening', { host: config.host, ports: installation.appPorts.ports.length, first: installation.appPorts.ports[0] });
   if (installation.sessionApi) {
     const api = listenSessionApi({ config, handle: installation.sessionApi });
     servers.push({ server: api, open: countRequests(api) });

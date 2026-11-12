@@ -4,6 +4,7 @@
 // /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
 // analysis already written (devReviewSession.mjs). /s/abbaabba is running on a project with two apps, web and admin,
 // behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs.
+// DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
@@ -241,7 +242,10 @@ function startConsole() {
     stdio: 'inherit',
     env: {
       ...inherited, PATH: `${twoApps.binDir}${path.delimiter}${process.env.PATH}`, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
-      WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_APP_DOMAIN: 'apps.localhost',
+      WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
+      // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
+      // through Tailscale's serve has them (appPorts.mjs).
+      ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
       WOODSHED_CHECKOUT: devClone, WOODSHED_SUPERVISED: '1',
       // Its own links name the port people open, not the one behind it.
       ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),

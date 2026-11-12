@@ -3,26 +3,39 @@
 #
 #   curl -fsSL https://woodshed.run/install | bash
 #
-# or `bash install.sh` from a checkout. It builds the session image for your repository, starts Postgres and Mongo in
-# Docker for each database engine its project file names, so each session gets its own copy, writes the settings to ~/.woodshed and runs the console at http://localhost:7690. Running it again keeps
-# what it made and starts the console. The console's first page then makes the GitHub App and asks for your Claude
-# token. providers/local/README.md says what each piece is.
+# or `bash install.sh` from a checkout. It asks for no repository: it builds a session image with no checkout, writes
+# the settings to ~/.woodshed and runs the console at http://localhost:7690, where you add repos on Console settings,
+# Repos. Each session clones its repo and runs its installs at start. With WOODSHED_REPO it builds the session image for
+# that repository instead, holding its checkout and installs, and starts Postgres and Mongo in Docker for each database
+# engine its project file names, so each session gets its own copy. Running it again keeps what it made and starts the
+# console, after stopping this install's own console if it runs; a port the console needs that something else holds
+# stops it before anything is built, with WOODSHED_NO_START too. The console's first page then asks for your Claude token; sessions push as you,
+# with your gh sign-in, so a GitHub App is optional on this machine. providers/local/README.md says what each piece is.
 #
-# Optional settings: WOODSHED_REPO (owner/name, asked otherwise), WOODSHED_HOME (~/.woodshed), WOODSHED_GIT (where the
+# Optional settings: WOODSHED_REPO (owner/name: a repository whose image and databases this install makes; a later run
+# can add one to an install that had none, but not change it), WOODSHED_HOME (~/.woodshed), WOODSHED_GIT (where the
 # code is cloned from), WOODSHED_NETWORK (a docker network sessions join to reach the repository's own services, such
 # as its compose file's `<folder>_default`), WOODSHED_PROJECT_FILES_DIR (an absolute path: a folder of project files,
 # `<owner>/<name>.yaml`, one for a repository with no .woodshed/project.yaml of its own, which this script and every
 # session then read in its place; saved in stack.env), WOODSHED_REBUILD=1 (build the session image again),
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
 # empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
-# DOCKER_HOST set, on that docker host), WOODSHED_IMAGE (the session image's tag, woodshed-session:<owner>-<name>
-# otherwise; the console's Update passes its own WOODSHED_IMAGE).
+# DOCKER_HOST set, on that docker host), WOODSHED_IMAGE (the session image's tag, woodshed-session:<owner>-<name>, or
+# woodshed-session:generic with no repository, otherwise; the console's Update passes its own WOODSHED_IMAGE), WOODSHED_TAILSCALE=1 (also serve the console to your
+# own Tailscale devices, at https://<this machine>.<tailnet>.ts.net, with each session's app on a port of that name:
+# providers/local/README.md, "From your other devices, with Tailscale"), or WOODSHED_TAILSCALE=shared for a console
+# others on the tailnet use, which signs them in once its GitHub App is made: no app ports, since sign-in keeps apps
+# apart only on names of their own.
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
 # Everything in the session image that is the same for every repository (session/Dockerfile's `runtime` stage).
 SESSION_RUNTIME_DEFAULT=ghcr.io/chifferco/woodshed-session-runtime:latest
 CONSOLE_PORT=7690
+SESSION_API_PORT=7691
+# The session image of an install that names no repository: no checkout, so every session clones its own at start.
+GENERIC_IMAGE=woodshed-session:generic
+NO_CHECKOUT_DIR=/work/.no-checkout
 # Off Postgres's and Mongo's usual ports, so the databases a laptop already runs keep theirs.
 PG_PORT=15432
 MONGO_PORT=17017
@@ -154,15 +167,29 @@ projectSettings() {
   '
 }
 
-# The session image is built for one repository: it holds a checkout and that checkout's node_modules.
+# The session image is built for one repository: it holds a checkout and that checkout's node_modules. With no
+# repository (an empty `repo`) it holds neither, and keeps the editor, which only a repo's project file turns off: every
+# session clones its repo and runs its installs at start (session/Dockerfile, REPO empty), so the build needs no token.
 buildImage() {
   local src=$1 repo=$2 repoDir=$3 image=$4 token=$5 context=$6 projectFilesDir=${7:-}
   rm -rf "$context"
   mkdir -p "$context/woodshed"
   cp -R "$src/session" "$src/shared" "$context/woodshed/"
-  (cd "$repoDir" && WOODSHED_PROJECT_FILES_DIR=$projectFilesDir bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
+  if [ -z "$repo" ]; then
+    mkdir -p "$context/woodshed-deps"
+    : >"$context/woodshed-deps.installs"
+    printf 'true\n' >"$context/woodshed-deps.editor"
+  else
+    (cd "$repoDir" && WOODSHED_PROJECT_FILES_DIR=$projectFilesDir bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
+  fi
   local runtime
   runtime=$(sessionRuntime)
+  if [ -z "$repo" ]; then
+    say "Building the session image $image, for any repository (the first build takes a few minutes)"
+    docker build -f "$context/woodshed/session/Dockerfile" \
+      --build-arg RUNTIME="$runtime" --build-arg REPO= --build-arg REPO_DIR="$NO_CHECKOUT_DIR" -t "$image" "$context"
+    return
+  fi
   say "Building the session image $image (the first build takes several minutes)"
   GH_TOKEN=$token docker build -f "$context/woodshed/session/Dockerfile" --secret id=gh_token,env=GH_TOKEN \
     --build-arg RUNTIME="$runtime" --build-arg REPO="$repo" --build-arg REPO_DIR="/work/${repo#*/}" -t "$image" "$context"
@@ -210,9 +237,10 @@ WOODSHED_LOCAL_DB_MONGO_HOST=mongo:27017
 EOF
       fi
       if anyEngine "$engines"; then echo; fi
+      printf 'WOODSHED_PROVIDER=local\n'
+      # None for an install that names no repository: the console starts with none, and an admin adds them.
+      if [ -n "$repo" ]; then printf 'WOODSHED_REPO=%s\n' "$repo"; fi
       cat <<EOF
-WOODSHED_PROVIDER=local
-WOODSHED_REPO=$repo
 WOODSHED_ENV_FILES=$envFiles
 WOODSHED_DB_ENV_SECRETS=$dbEnvSecrets
 WOODSHED_PORT=$CONSOLE_PORT
@@ -229,6 +257,31 @@ EOF
       if [ -n "$network" ]; then printf 'WOODSHED_LOCAL_DOCKER_NETWORK=%s\n' "$network"; fi
     } >"$file"
   )
+}
+
+# A stack.env written with no repository, given one now: the repository decides its image, env files and seed
+# secrets, and adds its databases' settings; every other line stays as it was (a Tailscale name, the session API's
+# address, a line of its owner's). Takes writeStackEnv's arguments after the file.
+addRepoToStackEnv() {
+  local file=$1 fresh=$1.new kept line name
+  shift
+  rm -f "$fresh"
+  writeStackEnv "$fresh" "$@"
+  kept=$(grep -v -E '^WOODSHED_(CLOUD_)?(REPO|IMAGE|ENV_FILES|DB_ENV_SECRETS)=' "$file" || true)
+  (
+    umask 077
+    {
+      printf '%s\n' "$kept"
+      printf '# Added by install.sh for %s\n' "$2"
+      while IFS= read -r line; do
+        case $line in WOODSHED_*=*) ;; *) continue ;; esac
+        name=${line%%=*}
+        # Kept under either name: a file from before the rename has WOODSHED_CLOUD_ ones.
+        grep -q -E "^($name|WOODSHED_CLOUD_${name#WOODSHED_})=" <<<"$kept" || printf '%s\n' "$line"
+      done <"$fresh"
+    } >"$file"
+  )
+  rm -f "$fresh"
 }
 
 # Where session containers reach the console's session API. Docker Desktop and OrbStack run containers in a VM that
@@ -256,17 +309,23 @@ hostedEngines() {
   printf '%s' "${engines[*]:-none}"
 }
 
-# Written once; a later run only moves WOODSHED_CONSOLE_URL, so a shared service added to the file stays. Each engine's
-# server, in the names its engine reads (shared/databases/).
+# Written once; a later run only moves WOODSHED_CONSOLE_URL, and adds the server of an engine hosted since (an install
+# that had no repository, given one), so a shared service added to the file stays. Each engine's server, in the names
+# its engine reads (shared/databases/).
 writeSessionEnv() {
   local file=$1 consoleHost=$2 engines=$3
-  local url=http://$consoleHost:7691
+  local apiPort
+  apiPort=$(consoleSetting SESSION_API_PORT)
+  local url=http://$consoleHost:${apiPort:-$SESSION_API_PORT}
   if [ -f "$file" ]; then
     # shellcheck disable=SC2016 # JavaScript, not shell, expands these
-    SESSION_ENV_FILE=$file CONSOLE_URL=$url node -e '
+    SESSION_ENV_FILE=$file CONSOLE_URL=$url ENGINES=" $engines " node -e '
       const fs = require("node:fs");
       const file = process.env.SESSION_ENV_FILE;
       const env = JSON.parse(fs.readFileSync(file, "utf8"));
+      const hosted = (name) => process.env.ENGINES.includes(` ${name} `);
+      if (hosted("postgres") && !env.PGHOST) Object.assign(env, { PGHOST: "postgres", PGPORT: "5432", PGSSLMODE: "disable" });
+      if (hosted("mongo") && !env.WOODSHED_MONGO_HOST) env.WOODSHED_MONGO_HOST = "mongo:27017";
       env.WOODSHED_CONSOLE_URL = process.env.CONSOLE_URL;
       fs.writeFileSync(file, `${JSON.stringify(env, null, 2)}\n`);
     '
@@ -307,11 +366,188 @@ warnStaleStackEnv() {
   say "$file was written for another project file: its env files, seed secrets or database engines are not the ones it names now. providers/local/README.md, \"Project files the installation supplies\", says what to change"
 }
 
-# An install works on one repository: its stack.env, image and databases are that repository's.
+# A setting in stack.env, set to `value`, or taken out when it is empty. The rest of the file stays as it was.
+setStackSetting() {
+  local file=$1 name=$2 value=$3 kept
+  kept=$(grep -v "^WOODSHED_\(CLOUD_\)\{0,1\}$name=" "$file" || true)
+  (
+    umask 077
+    if [ -n "$value" ]; then printf '%s\nWOODSHED_%s=%s\n' "$kept" "$name" "$value" >"$file"; else printf '%s\n' "$kept" >"$file"; fi
+  )
+}
+
+# Sessions use this machine's Docker on one person's console unless stack.env says WOODSHED_SESSION_DOCKER=0, and on a
+# console others sign in to only when it says 1 (console/config.mjs, sessionDocker).
+# Saved only when this run sets it: 0 turns it off, 1 back on, and unset keeps what the file says.
+saveSessionDocker() {
+  local file=$1
+  [ -n "${WOODSHED_SESSION_DOCKER+set}" ] || return 0
+  case $WOODSHED_SESSION_DOCKER in
+    0|1) setStackSetting "$file" SESSION_DOCKER "$WOODSHED_SESSION_DOCKER" ;;
+    *) fail "WOODSHED_SESSION_DOCKER is 0 (sessions do not use this machine's Docker) or 1 (they do; the default on one person's console), not $WOODSHED_SESSION_DOCKER" ;;
+  esac
+}
+
+APP_PORTS_DEFAULT=7701-7710
+
+# Where the tailscale CLI is: on the PATH, or inside the Mac app, which does not put it there.
+tailscaleCli() {
+  if command -v tailscale >/dev/null; then printf tailscale; return; fi
+  local app=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  [ -x "$app" ] && printf '%s' "$app" && return
+  fail 'WOODSHED_TAILSCALE=1, but tailscale is not installed: https://tailscale.com/download'
+}
+
+# This machine's name on the tailnet, as MagicDNS gives it, with no trailing dot.
+tailscaleName() {
+  local cli=$1 name
+  name=$("$cli" status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).Self?.DNSName??"").replace(/\.$/,""))}catch{}})')
+  [ -n "$name" ] || fail 'tailscale is not up, or has no MagicDNS name for this machine: run `tailscale up`, and turn on MagicDNS and HTTPS certificates in the admin console'
+  printf '%s' "$name"
+}
+
+# The ports of a range such as 7701-7710, one per line.
+portsOf() {
+  local from=${1%-*} to=${1#*-}
+  seq "$from" "$to"
+}
+
+# Serves the console, and on one person's console each app port, to this tailnet's devices with Tailscale's HTTPS
+# (`serve`, never `funnel`, which would put it on the internet). The console keeps listening on loopback alone.
+setUpTailscale() {
+  local file=$1 cli name shared=
+  if [ "${WOODSHED_TAILSCALE:-}" = shared ] || [ "$(savedConsoleSetting "$1" REQUIRE_SIGN_IN)" = 1 ]; then shared=1; fi
+  cli=$(tailscaleCli)
+  name=$(tailscaleName "$cli")
+  setStackSetting "$file" PUBLIC_URL "https://$name"
+  "$cli" serve --bg --https=443 "http://127.0.0.1:$CONSOLE_PORT" >/dev/null
+  if [ "$shared" = 1 ]; then
+    setStackSetting "$file" APP_PORTS ''
+    say "Serving the console to your tailnet at https://$name. Others use it: make the GitHub App first, then set WOODSHED_REQUIRE_SIGN_IN=1 (docs/self-host.md)"
+    return 0
+  fi
+  local ports=${WOODSHED_APP_PORTS:-$(savedConsoleSetting "$file" APP_PORTS)}
+  ports=${ports:-$APP_PORTS_DEFAULT}
+  [[ $ports =~ ^[0-9]+-[0-9]+$ ]] || fail "WOODSHED_APP_PORTS must be a range such as $APP_PORTS_DEFAULT for Tailscale, not $ports"
+  setStackSetting "$file" APP_PORTS "$ports"
+  local port
+  for port in $(portsOf "$ports"); do "$cli" serve --bg --https="$port" "http://127.0.0.1:$port" >/dev/null; done
+  say "Serving the console to your own Tailscale devices at https://$name, and session apps on its ports $ports"
+}
+
+# An install works on one repository: its stack.env, image and databases are that repository's. One that named none
+# takes one later (addRepoToStackEnv), and keeps it from then on.
 refuseOtherRepo() {
   local file=$1 repo=$2 saved
   saved=$(savedConsoleSetting "$file" REPO)
   [ -z "$saved" ] || [ "$saved" = "$repo" ] || fail "this install works on $saved: set WOODSHED_HOME to another folder for $repo"
+}
+
+# Whether something already listens on 127.0.0.1:<port>, where the console would: the bind it would make, tried.
+loopbackTaken() {
+  node -e '
+    const server = require("node:net").createServer();
+    server.once("error", (err) => process.exit(err.code === "EADDRINUSE" ? 0 : 1));
+    server.listen(Number(process.argv[1]), "127.0.0.1", () => server.close(() => process.exit(1)));
+  ' "$1"
+}
+
+# What listens on <port> where the console would collide with it: loopback, every address, or <address> (the session
+# API's, on Linux the docker gateway). A listener on another address does not count, nor Tailscale's own, which is
+# `tailscale serve` handing that port to the console. One line, `<pid> <command>`, the pid empty when the system will
+# not say whose it is (another user's); nothing, and status 1, when the port is free. lsof where there is one (macOS
+# has it), else Linux's ss, and the bind in the end.
+portHolder() {
+  local port=$1 address=${2:-} out=
+  if command -v lsof >/dev/null; then
+    out=$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -Fpcn 2>/dev/null | awk -v port="$port" -v address="$address" '
+      /^p/ { pid = substr($0, 2) }
+      /^c/ { command = substr($0, 2) }
+      /^n/ {
+        at = substr($0, 2); sub(":" port "$", "", at)
+        if (tolower(command) ~ /tailscale|ipnextension/) next
+        if (at ~ /^(127\.|\*$|0\.0\.0\.0$|\[::1\]$|\[::\]$|\[::ffff:127\.|localhost$)/ || (address != "" && at == address)) { print pid " " command; exit }
+      }' || true)
+  elif command -v ss >/dev/null; then
+    out=$(ss -ltnpH 2>/dev/null | awk -v port="$port" -v address="$address" '{
+        at = $4; if (at !~ (":" port "$")) next; sub(":" port "$", "", at)
+        if (!(at ~ /^(127\.|\*$|0\.0\.0\.0$|\[::1\]$|\[::\]$|\[::ffff:127\.|localhost$)/ || (address != "" && at == address))) next
+        pid = ""; command = ""
+        if (match($0, /pid=[0-9]+/)) pid = substr($0, RSTART + 4, RLENGTH - 4)
+        if (match($0, /\(\("[^"]*"/)) command = substr($0, RSTART + 3, RLENGTH - 4)
+        if (tolower(command) ~ /tailscale/) next
+        print pid " " command; exit
+      }' || true)
+  fi
+  # Neither could say (another user's process hides from both): the bind itself still tells a taken port.
+  if [ -z "$out" ] && loopbackTaken "$port"; then out=' '; fi
+  [ -n "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+# The environment of <pid>, one variable a line, where the system shows it: /proc on Linux, `ps -E` on macOS (whose
+# lines split at a value's spaces, which only makes a match fail).
+processEnv() {
+  if [ -r "/proc/$1/environ" ]; then tr '\0' '\n' <"/proc/$1/environ"; else ps -E -ww -o command= -p "$1" 2>/dev/null | tr ' ' '\n'; fi
+}
+
+# Whether <pid> is this install's console: one started from its stack.env, whose state folder is in its environment
+# however it was started, or one its bin/woodshed runs.
+isOwnConsole() {
+  local home=$1 pid=$2 stateDir=$3 parent
+  if [ -n "$stateDir" ] && processEnv "$pid" | grep -qxF -e "WOODSHED_STATE_DIR=$stateDir" -e "WOODSHED_CLOUD_STATE_DIR=$stateDir"; then return 0; fi
+  parent=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+  [ -n "$parent" ] && ps -o command= -p "$parent" 2>/dev/null | grep -qF "$home/bin/woodshed"
+}
+
+# The ports the console will listen on, one a line: its own, the session API's, and each app port, as stack.env (or
+# this run's settings) will have them.
+consolePorts() {
+  local file=$1 console api ports part
+  console=${WOODSHED_PORT:-$(savedConsoleSetting "$file" PORT)}
+  api=${WOODSHED_SESSION_API_PORT:-$(savedConsoleSetting "$file" SESSION_API_PORT)}
+  printf '%s\n%s\n' "${console:-$CONSOLE_PORT}" "${api:-$SESSION_API_PORT}"
+  # Others on the tailnet get no app ports (setUpTailscale).
+  [ "${WOODSHED_TAILSCALE:-}" != shared ] || return 0
+  ports=${WOODSHED_APP_PORTS:-$(savedConsoleSetting "$file" APP_PORTS)}
+  [ -n "$ports" ] || [ "${WOODSHED_TAILSCALE:-}" != 1 ] || ports=$APP_PORTS_DEFAULT
+  for part in ${ports//,/ }; do
+    if [[ $part =~ ^[0-9]+(-[0-9]+)?$ ]]; then portsOf "$part"; fi
+  done
+}
+
+# Before anything is built or started: each port the console needs, refused when something else holds it, with what
+# that is, rather than after the build, when the console would stop at its start (a console left running from another
+# install once held 7690). This install's own console holding them is not refused: running this again restarts it with
+# the new settings (stopOwnConsole), so its pid is printed.
+checkPorts() {
+  local home=$1 file=$2 port holder pid command own=
+  local address stateDir
+  address=$(savedConsoleSetting "$file" SESSION_API_HOST)
+  stateDir=$(savedConsoleSetting "$file" STATE_DIR)
+  for port in $(consolePorts "$file"); do
+    holder=$(portHolder "$port" "$address") || continue
+    pid=${holder%% *}
+    if [ -z "$pid" ]; then
+      fail "port $port, which the console needs, is taken, and this machine will not say by what (another user's process?): sudo lsof -nP -iTCP:$port -sTCP:LISTEN shows it. Stop it, then run this again"
+    fi
+    if isOwnConsole "$home" "$pid" "$stateDir"; then own=$pid; continue; fi
+    command=$(ps -o command= -p "$pid" 2>/dev/null | cut -c1-160 || true)
+    fail "port $port, which the console needs, is taken by ${holder#* } (pid $pid${command:+: $command}). Stop it, then run this again: a console left from another install or WOODSHED_HOME stops with kill $pid"
+  done
+  printf '%s' "$own"
+}
+
+# Stops this install's console, which checkPorts found running, so the one this run starts gets its ports.
+stopOwnConsole() {
+  local pid=$1 port=$2
+  say "Stopping this install's running console (pid $pid), to start it again with these settings"
+  kill "$pid" 2>/dev/null || true
+  for _ in $(seq 40); do
+    loopbackTaken "$port" || return 0
+    sleep 0.5
+  done
+  fail "this install's console (pid $pid) did not stop: stop it, then run this again"
 }
 
 writeLauncher() {
@@ -339,7 +575,7 @@ openWhenReady() {
   command -v xdg-open >/dev/null && opener=xdg-open
   (
     for _ in $(seq 60); do
-      if curl -fsS -o /dev/null "$url"; then
+      if curl -fsS -o /dev/null "$url" 2>/dev/null; then
         if [ -n "$opener" ]; then "$opener" "$url" >/dev/null 2>&1 || true; fi
         exit 0
       fi
@@ -358,22 +594,42 @@ main() {
   local src
   src=$(findSource "$home")
 
+  case ${WOODSHED_TAILSCALE:-} in
+    ''|1|shared) ;;
+    *) fail "WOODSHED_TAILSCALE is 1 (only you) or shared (others on the tailnet too), not $WOODSHED_TAILSCALE" ;;
+  esac
+
+  # No repository is asked for: with none, the console starts with none, and you add them on its Console settings
+  # page. Named (or named by an earlier run), the install makes that repository's image and databases.
   local repo=${WOODSHED_REPO:-$(savedConsoleSetting "$stackEnv" REPO)}
-  [ -n "$repo" ] || repo=$(ask 'Which GitHub repository should sessions work on? (owner/name): ')
-  validRepo "$repo" || fail "not a repository, owner/name: $repo"
-  refuseOtherRepo "$stackEnv" "$repo"
-  local slug
-  slug=$(printf '%s' "$repo" | tr '/[:upper:]' '-[:lower:]')
-  local image=${WOODSHED_IMAGE:-woodshed-session:$slug} repoDir=$home/repos/$slug
+  local image repoDir='' slug
+  if [ -n "$repo" ]; then
+    validRepo "$repo" || fail "not a repository, owner/name: $repo"
+    refuseOtherRepo "$stackEnv" "$repo"
+    slug=$(printf '%s' "$repo" | tr '/[:upper:]' '-[:lower:]')
+    image=${WOODSHED_IMAGE:-woodshed-session:$slug}
+    repoDir=$home/repos/$slug
+  else
+    image=${WOODSHED_IMAGE:-$(savedConsoleSetting "$stackEnv" IMAGE)}
+    image=${image:-$GENERIC_IMAGE}
+  fi
 
   local projectFilesDir=${WOODSHED_PROJECT_FILES_DIR:-$(savedConsoleSetting "$stackEnv" PROJECT_FILES_DIR)}
   [ -z "$projectFilesDir" ] || [[ $projectFilesDir = /* ]] || fail "WOODSHED_PROJECT_FILES_DIR must be an absolute path: $projectFilesDir"
 
-  local token
-  token=$(githubToken)
-  [ -n "$token" ] || fail 'a GitHub token is needed to read the repository'
-  say "Fetching $repo"
-  fetchRepo "$repo" "$repoDir" "$token"
+  # Before anything slow, so a port the console cannot have stops the run now rather than after the build. Also with
+  # WOODSHED_NO_START, which an agent's run always has (docs/self-host.md): the console it starts next would stop
+  # there. Not for a build alone, which may be for another docker host.
+  local ownConsole=''
+  if [ -z "${WOODSHED_BUILD_ONLY:-}" ]; then ownConsole=$(checkPorts "$home" "$stackEnv"); fi
+
+  local token=''
+  if [ -n "$repo" ]; then
+    token=$(githubToken)
+    [ -n "$token" ] || fail 'a GitHub token is needed to read the repository'
+    say "Fetching $repo"
+    fetchRepo "$repo" "$repoDir" "$token"
+  fi
 
   # Every docker call goes where DOCKER_HOST points, so with it set this builds the session image on that machine.
   if [ -n "${WOODSHED_BUILD_ONLY:-}" ]; then
@@ -388,13 +644,21 @@ main() {
     say "Using the session image $image (WOODSHED_REBUILD=1 builds it again)"
   fi
 
-  local settings engines network
-  settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir")
+  # With no repository there is no project file yet: no env files, seed secrets or databases.
+  local settings=$'\n\nnone' engines network
+  if [ -n "$repo" ]; then settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir"); fi
   engines=$(sed -n 3p <<<"$settings")
   network=${WOODSHED_NETWORK:-}
   [ -n "$network" ] || ! anyEngine "$engines" || network=woodshed
-  writeStackEnv "$stackEnv" "$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network"
+  local stackArgs=("$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network")
+  if [ -n "$repo" ] && [ -f "$stackEnv" ] && [ -z "$(savedConsoleSetting "$stackEnv" REPO)" ]; then
+    addRepoToStackEnv "$stackEnv" "${stackArgs[@]}"
+    say "This install had no repository: it works on $repo now, in its own session image. Repos added on Console settings still clone theirs at start"
+  else
+    writeStackEnv "$stackEnv" "${stackArgs[@]}"
+  fi
   saveProjectFilesDir "$stackEnv" "$projectFilesDir"
+  saveSessionDocker "$stackEnv"
   set -a
   # shellcheck source=/dev/null
   . "$stackEnv"
@@ -410,8 +674,10 @@ main() {
     # Each engine is a compose file of its own, added to the network's (providers/local/README.md).
     for engine in $hosted; do files+=(-f "$src/providers/local/$engine.yml"); done
     docker compose -f "$src/providers/local/compose.yml" "${files[@]}" --env-file "$stackEnv" up -d --quiet-pull
-  else
+  elif [ -n "$repo" ]; then
     say 'The project file has no databases: sessions get none of their own'
+  else
+    say "No repository yet, so no databases: a repo whose project file has some needs WOODSHED_REPO=owner/name bash install.sh"
   fi
   network=${WOODSHED_LOCAL_DOCKER_NETWORK:-}
   if [ -n "$network" ] && ! docker network inspect "$network" >/dev/null 2>&1; then
@@ -436,12 +702,20 @@ main() {
     printf %s "$WOODSHED_LOCAL_MONGO_ROOT_PASSWORD" | node "$secretCli" put db-root/mongo >/dev/null
   fi
 
+  if [ -n "${WOODSHED_TAILSCALE:-}" ]; then setUpTailscale "$stackEnv"; fi
   writeLauncher "$home/bin/woodshed" "$home" "$src"
   say "Set up in $home. Start the console again any time with $home/bin/woodshed"
   say "Back up $WOODSHED_LOCAL_SECRETS_KEY_FILE somewhere else: losing it loses every secret"
-  [ -z "${WOODSHED_NO_START:-}" ] || return 0
+  local url publicUrl
+  url=http://localhost:$(consoleSetting PORT)
+  publicUrl=$(consoleSetting PUBLIC_URL)
+  [ -n "$repo" ] || say "Repositories are added in the console: Console settings, Repos, at ${publicUrl:-$url}/console-settings#card-projects"
+  if [ -n "${WOODSHED_NO_START:-}" ]; then
+    [ -z "$ownConsole" ] || say "This install's console is running (pid $ownConsole): stop it (kill $ownConsole) and start it again with $home/bin/woodshed to take these settings"
+    return 0
+  fi
 
-  local url=http://localhost:$CONSOLE_PORT
+  [ -z "$ownConsole" ] || stopOwnConsole "$ownConsole" "$(consoleSetting PORT)"
   say "Starting the console at $url"
   openWhenReady "$url"
   exec "$home/bin/woodshed"

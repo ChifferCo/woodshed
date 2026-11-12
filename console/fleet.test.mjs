@@ -1777,6 +1777,15 @@ test('a private session on another project records it, clones its repo, and read
   assert.equal(calls.started[1].env.PROJECT_REPO, undefined, 'the image\'s own repo: nothing to clone');
 });
 
+test('a session on the default repo an admin added to a console that started with none clones it, since no image holds it', async () => {
+  // As liveConfig marks the first repo added when the environment names none.
+  const projects = [{ name: 'api', repo: 'acme/api', default: true, clonedAtStart: true }, { name: 'web', repo: 'acme/web', default: false }];
+  const { fleet, calls } = setup({ projects });
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: projects[1] });
+  assert.deepEqual(calls.started.map((s) => s.env.PROJECT_REPO), ['acme/api', 'acme/web']);
+});
+
 // Another project's issues and pull requests are its repo's: its #12 is not the default project's #12.
 function twoProjects({ toolWriters = ['joel'], links = { r: true, tools: false }, ...options } = {}) {
   const projects = [{ name: 'r', repo: 'o/r', default: true }, { name: 'tools', repo: 'o/tools', default: false }];
