@@ -76,7 +76,13 @@ function setUp(t) {
     try {
       pane = tmux('capture-pane', '-p', '-t', 'claude');
     } catch {}
-    assert.fail(`${what} within 10 s; log: ${fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : 'none'}; claude's pane: ${pane.trimEnd()}; state: ${fs.existsSync(path.join(runDir, 'woodshed-claude-state.json')) ? fs.readFileSync(path.join(runDir, 'woodshed-claude-state.json'), 'utf8') : 'none'}; now: ${Date.now()}`);
+    assert.fail(`${what} within 10 s; log: ${fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : 'none'}; claude's pane: ${pane.trimEnd()}; state: ${fs.existsSync(path.join(runDir, 'woodshed-claude-state.json')) ? fs.readFileSync(path.join(runDir, 'woodshed-claude-state.json'), 'utf8') : 'none'}; now: ${Date.now()}; running: ${(() => {
+      try {
+        return execFileSync('pgrep', ['-af', 'woodshed-login'], { encoding: 'utf8' }).trim();
+      } catch {
+        return 'none';
+      }
+    })()}`);
   };
   const hook = (fields) => fs.writeFileSync(path.join(runDir, 'woodshed-claude-state.json'), JSON.stringify({ at: Date.now(), ...fields }));
   return { bin, runDir, home, env, tmux, login, until, hook };
@@ -128,7 +134,8 @@ test('a code that works reopens claude\'s conversation on the login once its tur
   await new Promise((resolve) => setTimeout(resolve, 500));
   assert.doesNotThrow(() => process.kill(Number(claudePid), 0), 'claude is left alone while its turn goes on');
   hook({ state: 'done', event: 'Stop' });
-  await until(() => fs.existsSync(path.join(runDir, 'typed')), '/remote-control typed into the reopened claude');
+  // The log's last line, not the typed file: the script logs it only once claude's panel shows, after the Enter.
+  await until(() => /\/remote-control typed in/.test(fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : ''), '/remote-control typed into the reopened claude');
   assert.throws(() => process.kill(Number(claudePid), 0), 'the old claude was stopped');
   assert.equal(fs.readFileSync(path.join(runDir, 'claude-args'), 'utf8').trim(), '--settings /x/hooks.json --plugin-dir /x/claudePlugin --resume sess-1234');
   assert.equal(fs.readFileSync(path.join(runDir, 'typed'), 'utf8'), '/remote-control\n');
