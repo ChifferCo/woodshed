@@ -131,10 +131,12 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
  *          localDatabases: object|null, localWebhooks: object|null, sessionEnv: Record<string, string>}} config  loadConfig()'s
  */
 export function localProvider(config) {
-  const { image, memory, cpus } = config.launcher;
+  const { image, memory, cpus, hostDocker = false } = config.launcher;
   const docker = createDockerLauncher({
-    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo,
+    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, hostDocker,
   });
+  // Root on this machine for whoever can start a session (providers/local/README.md, "Docker in a session").
+  console.log('local: sessions use this machine\'s Docker', { on: hostDocker, ...(hostDocker ? { off: 'WOODSHED_SESSION_DOCKER=0' } : {}) });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);
   const secrets = fixed ?? createSecretSlot({ stateDir: config.stateDir, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) });

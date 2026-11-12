@@ -151,6 +151,25 @@ function tlsAskPort(env) {
   return port;
 }
 
+// Whether sessions get this machine's Docker (providers/local/dockerLauncher.mjs, `hostDocker`): on by default on the
+// local provider, where sessions are containers on this machine, and off with WOODSHED_SESSION_DOCKER=0. It is root on
+// the machine for whoever can start a session (providers/local/README.md, "Docker in a session"). Only the console's
+// own settings decide it, never a project file. A Fargate task cannot be given a Docker socket, so it is off on AWS.
+let warnedSessionDockerOnEcs = false;
+export function sessionDocker(env) {
+  const value = String(env.WOODSHED_SESSION_DOCKER ?? '').trim();
+  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 1 (sessions use this machine\'s Docker, the default on the local provider) or 0 (they do not)');
+  if (value === '0') return false;
+  if ((envValue(env, 'LAUNCHER') || 'docker') !== 'docker') {
+    if (value === '1' && !warnedSessionDockerOnEcs) {
+      warnedSessionDockerOnEcs = true;
+      console.warn('config: WOODSHED_SESSION_DOCKER=1 does nothing on AWS: a Fargate task cannot be given a Docker socket');
+    }
+    return false;
+  }
+  return true;
+}
+
 function localLogin(env) {
   const login = (envValue(env, 'LOCAL_LOGIN') || 'local').trim();
   if (!/^[A-Za-z0-9-]{1,39}$/.test(login)) throw new Error('WOODSHED_LOCAL_LOGIN must be a handle: letters, digits and hyphens');
@@ -316,6 +335,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
       image: envValue(env, 'IMAGE') || 'woodshed-session',
       memory: envValue(env, 'SESSION_MEMORY') || '6g',
       cpus: envValue(env, 'SESSION_CPUS') || '2',
+      // Sessions use this machine's Docker (sessionDocker above).
+      hostDocker: sessionDocker(env),
       ecs: {
         cluster: envValue(env, 'ECS_CLUSTER'),
         taskDefinition: envValue(env, 'ECS_TASK_DEFINITION'),

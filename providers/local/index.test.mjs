@@ -89,3 +89,35 @@ test('a secrets folder needs its key, from a file only its owner reads and kept 
   const provider = localProvider(loadConfig({ GH_TOKEN: 'x', WOODSHED_LOCAL_SECRETS_DIR: dir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile() }));
   assert.equal(typeof provider.secrets.read, 'function');
 });
+
+test('sessions use this machine\'s Docker on the local provider unless WOODSHED_SESSION_DOCKER=0, on a console others sign in to too', async (t) => {
+  const { loadConfig } = await import('../../console/config.mjs');
+  const { localProvider } = await import('./index.mjs');
+  const logs = [];
+  t.mock.method(console, 'log', (...line) => logs.push(line));
+  const hostDocker = (env) => loadConfig({ GH_TOKEN: 'x', ...env }).launcher.hostDocker;
+  assert.equal(hostDocker({}), true, 'one person\'s laptop');
+  assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: '1' }), true);
+  assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: '0' }), false);
+  assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: ' 0 ' }), false);
+  // A server others sign in to keeps it: the docs say plainly that whoever can start a session has the machine.
+  assert.equal(hostDocker({ WOODSHED_HOST: '0.0.0.0', WOODSHED_REQUIRE_SIGN_IN: '1' }), true);
+  assert.throws(() => hostDocker({ WOODSHED_SESSION_DOCKER: 'yes' }), /WOODSHED_SESSION_DOCKER is 1 .* or 0/);
+
+  localProvider(loadConfig({ GH_TOKEN: 'x' }));
+  assert.deepEqual(logs.find(([m]) => m === 'local: sessions use this machine\'s Docker'), ['local: sessions use this machine\'s Docker', { on: true, off: 'WOODSHED_SESSION_DOCKER=0' }]);
+  localProvider(loadConfig({ GH_TOKEN: 'x', WOODSHED_SESSION_DOCKER: '0' }));
+  assert.deepEqual(logs.filter(([m]) => m === 'local: sessions use this machine\'s Docker').at(-1), ['local: sessions use this machine\'s Docker', { on: false }]);
+});
+
+test('on AWS sessions never get a Docker socket, and WOODSHED_SESSION_DOCKER=1 there is said once, not refused', async (t) => {
+  const { loadConfig } = await import('../../console/config.mjs');
+  const warnings = [];
+  t.mock.method(console, 'warn', (...line) => warnings.push(line));
+  const ecs = { GH_TOKEN: 'x', WOODSHED_LAUNCHER: 'ecs' };
+  assert.equal(loadConfig(ecs).launcher.hostDocker, false);
+  assert.equal(warnings.length, 0, 'nothing to say when it is not asked for');
+  assert.equal(loadConfig({ ...ecs, WOODSHED_SESSION_DOCKER: '1' }).launcher.hostDocker, false);
+  assert.equal(loadConfig({ ...ecs, WOODSHED_SESSION_DOCKER: '1' }).launcher.hostDocker, false);
+  assert.deepEqual(warnings, [['config: WOODSHED_SESSION_DOCKER=1 does nothing on AWS: a Fargate task cannot be given a Docker socket']]);
+});

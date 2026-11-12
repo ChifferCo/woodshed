@@ -400,6 +400,28 @@ test('with no WOODSHED_REPO, install.sh asks nothing, fetches nothing, and sets 
   assert.equal(fs.readFileSync(path.join(home, 'stack.env'), 'utf8'), before);
 });
 
+test('sessions use this machine\'s Docker with nothing set, and WOODSHED_SESSION_DOCKER=0 is saved in stack.env, where a later run keeps it', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-docker-'));
+  const file = path.join(home, 'stack.env');
+  runMain({ WOODSHED_HOME: home });
+  assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, undefined, 'nothing to say for the default');
+  assert.equal(loadConfig(readEnvFile(file), { readGhToken: false }).launcher.hostDocker, true);
+
+  runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: '0' });
+  assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '0');
+  assert.equal(loadConfig(readEnvFile(file), { readGhToken: false }).launcher.hostDocker, false);
+  runMain({ WOODSHED_HOME: home });
+  assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '0', 'a run that does not set it keeps it');
+
+  runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: '1' });
+  const text = fs.readFileSync(file, 'utf8');
+  assert.equal(text.match(/^WOODSHED_SESSION_DOCKER=/gm).length, 1);
+  assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '1');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+
+  assert.throws(() => runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: 'yes' }), (err) => /WOODSHED_SESSION_DOCKER is 0 .* or 1 .*, not yes/.test(err.stdout));
+});
+
 test('with the generic image missing, install.sh builds it with no repository and no token', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-norepo-build-'));
   const out = runInstallFunction([

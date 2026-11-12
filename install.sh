@@ -376,6 +376,17 @@ setStackSetting() {
   )
 }
 
+# Sessions use this machine's Docker unless stack.env says WOODSHED_SESSION_DOCKER=0 (console/config.mjs, sessionDocker).
+# Saved only when this run sets it: 0 turns it off, 1 back on, and unset keeps what the file says.
+saveSessionDocker() {
+  local file=$1
+  [ -n "${WOODSHED_SESSION_DOCKER+set}" ] || return 0
+  case $WOODSHED_SESSION_DOCKER in
+    0|1) setStackSetting "$file" SESSION_DOCKER "$WOODSHED_SESSION_DOCKER" ;;
+    *) fail "WOODSHED_SESSION_DOCKER is 0 (sessions do not use this machine's Docker) or 1 (they do, the default), not $WOODSHED_SESSION_DOCKER" ;;
+  esac
+}
+
 APP_PORTS_DEFAULT=7701-7710
 
 # Where the tailscale CLI is: on the PATH, or inside the Mac app, which does not put it there.
@@ -645,6 +656,7 @@ main() {
     writeStackEnv "$stackEnv" "${stackArgs[@]}"
   fi
   saveProjectFilesDir "$stackEnv" "$projectFilesDir"
+  saveSessionDocker "$stackEnv"
   set -a
   # shellcheck source=/dev/null
   . "$stackEnv"
