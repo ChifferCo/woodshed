@@ -1,13 +1,13 @@
 // The local provider's secret store from a shell. The folder and its key are WOODSHED_LOCAL_SECRETS_DIR and
-// WOODSHED_LOCAL_SECRETS_KEY_FILE, as the console's, and `list` shows the secrets for WOODSHED_ENV_FILES
-// and WOODSHED_INSTALL_SECRET_PAIRS.
+// WOODSHED_LOCAL_SECRETS_KEY_FILE, as the console's, and `list` shows the Secrets page's, those for
+// WOODSHED_INSTALL_SECRET_PAIRS among them.
 //   new-key <file>   writes a new key, readable by its owner only, and never over one that is there
 //   put <name>       saves the value on stdin, so it is never on a command line or in a shell's history:
 //                    `printf %s "$VALUE" | node secret.mjs put db-root/postgres`
 //   list             which of the Secrets page's secrets have a value, never a value
 import { text } from 'node:stream/consumers';
 
-import { envFiles, installSecrets } from '../../../console/config.mjs';
+import { installSecrets } from '../../../console/config.mjs';
 import { secretSpecs } from '../../../console/secrets.mjs';
 import { isMain } from '../../../shared/isMain.mjs';
 import { readKey, writeNewKey } from '../secretKey.mjs';
@@ -30,7 +30,7 @@ export async function runSecretCommand({ argv, env, stdin }) {
   const dir = env.WOODSHED_LOCAL_SECRETS_DIR;
   if (!dir) throw new Error('set WOODSHED_LOCAL_SECRETS_DIR to the console\'s secrets folder');
   if (!env.WOODSHED_LOCAL_SECRETS_KEY_FILE) throw new Error('set WOODSHED_LOCAL_SECRETS_KEY_FILE to the key its files are sealed with');
-  const store = createSecretStore({ dir, specs: secretSpecs({ envFiles: envFiles(env), installSecrets: installSecrets(env) }), key: readKey({ file: env.WOODSHED_LOCAL_SECRETS_KEY_FILE, secretsDir: dir }) });
+  const store = createSecretStore({ dir, specs: secretSpecs({ installSecrets: installSecrets(env) }), key: readKey({ file: env.WOODSHED_LOCAL_SECRETS_KEY_FILE, secretsDir: dir }) });
   if (command === 'list' && !name) return (await store.list()).map((s) => `${s.set ? 'set  ' : 'unset'} ${s.name}`).join('\n');
   if (command !== 'put' || !name || rest.length) throw new Error(USAGE);
   const value = (await text(stdin)).replace(/\r?\n$/, '');

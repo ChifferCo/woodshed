@@ -275,21 +275,21 @@ test('an App the setup page saved stays unused when the console borrows its GitH
 });
 
 test('the Secrets page keeps everything but the App\'s own secrets, with no webhook card, when GitHub access is borrowed', async () => {
-  const list = ['anthropic-api-key', 'api-env', 'github-app-key', 'github-webhook-secret', 'github-app-client-secret', 'slack-bot-token'].map((name) => ({ name, set: false }));
+  const list = ['anthropic-api-key', 'registry-token', 'github-app-key', 'github-webhook-secret', 'github-app-client-secret', 'slack-bot-token'].map((name) => ({ name, set: false }));
   const written = [];
   const secrets = { list: async () => list, write: async (name) => { written.push(name); }, read: async () => null };
-  const config = { repo: 'acme/app', envFiles: [{ secret: 'api-env', path: 'api/.env' }], githubBroker: { url: 'https://host.example/t', tokenFile: '/f' } };
+  const config = { repo: 'acme/app', installSecrets: [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }], githubBroker: { url: 'https://host.example/t', tokenFile: '/f' } };
   const settings = createSettings({ config, secrets, appKey: null, appApi: null, webhookUrl: async () => null });
   const view = await settings.view();
-  assert.deepEqual(view.secrets.map((s) => s.name), ['anthropic-api-key', 'api-env', 'slack-bot-token']);
+  assert.deepEqual(view.secrets.map((s) => s.name), ['anthropic-api-key', 'registry-token', 'slack-bot-token']);
   assert.equal(view.webhook, null);
   await assert.rejects(settings.replace('github-app-key', 'x'), /no secret called github-app-key/);
   await assert.rejects(settings.replace('github-app-client-secret', 'x'), /no secret called github-app-client-secret/);
   for (const call of [settings.deliveries(), settings.rotateWebhookSecret(), settings.applyWebhook(), settings.setWebhookUrl('https://x.example')]) {
     await assert.rejects(call, /borrows its GitHub access from its host, so it has no GitHub App webhook/);
   }
-  await settings.replace('api-env', 'A=1\n');
-  assert.deepEqual(written, ['api-env']);
+  await settings.replace('registry-token', 'npm_x');
+  assert.deepEqual(written, ['registry-token']);
 });
 
 test('a program embedding the console adds to the user menu, and only links a page may hold get through', async (t) => {

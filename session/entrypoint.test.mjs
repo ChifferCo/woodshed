@@ -294,19 +294,20 @@ test('a default plugin list that cannot be read leaves the start going', () => {
   assert.match(installDefaultPlugins({ kind: 'private', brokenList: true }).out, /WARNING: the default plugins could not be read, none installed/);
 });
 
-test('an ask session clears the env files\' secrets and the install secrets, and stops when the project file cannot say which', (t) => {
+test('an ask session clears the install secrets and the fixed ones, whatever the project file says', (t) => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-ask-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
   // The lines of runAsk that clear the secrets, run as they are written there.
   const body = fn('runAsk');
-  const clearing = body.slice(body.indexOf('  local name secretVars'), body.indexOf('  local restoring'));
+  const clearing = body.slice(body.indexOf('  local name\n'), body.indexOf('  local restoring'));
   const run = () => spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
-    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'f() {', clearing, 'env | grep -E "^(API_ENV|REGISTRY_TOKEN|OTHER_TOKEN|GH_TOKEN)=" || echo cleared', '}', 'f',
+    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
+    'f() {', clearing, 'env | grep -E "^(REGISTRY_TOKEN|OTHER_TOKEN|GH_TOKEN)=" || echo cleared', '}', 'f',
   ].join('\n')], {
     encoding: 'utf8',
     env: {
-      PATH: process.env.PATH, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, API_ENV: 's', GH_TOKEN: 's',
+      PATH: process.env.PATH, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, GH_TOKEN: 's',
       WOODSHED_INSTALL_SECRETS: 'OTHER_TOKEN REGISTRY_TOKEN', REGISTRY_TOKEN: 's', OTHER_TOKEN: 's',
     },
   });
@@ -314,12 +315,8 @@ test('an ask session clears the env files\' secrets and the install secrets, and
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({
     envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }],
   }));
-  assert.equal(run().stdout, 'cleared\n', 'the project\'s secret, each install secret WOODSHED_INSTALL_SECRETS lists, and the fixed ones');
-  fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), '{ not json');
-  const broken = run();
-  assert.equal(broken.status, 1);
-  assert.match(broken.stdout, /ERROR: the project's secret variables could not be read/);
-  assert.doesNotMatch(broken.stdout, /API_ENV=/);
+  assert.equal(run().stdout, 'cleared\n', 'each install secret WOODSHED_INSTALL_SECRETS lists, and the fixed ones');
+  assert.doesNotMatch(clearing, /project secret-vars/, 'an env file is no task secret, so there is no variable of its to clear');
 });
 
 // A repo with one install, whose command stands in for a package manager and counts its runs, and the image's record
@@ -441,7 +438,7 @@ test('a session starts only the services its project\'s env uses, and warns of a
   const uses = [{ path: 'a/.env', secret: null, lines: ['STORE_URL={{STORE_URL}}', 'REDIS_URL=redis://127.0.0.1:6379'] }];
   const missing = run(uses);
   assert.equal(missing.status, 0, 'a service is the installation\'s, so one missing is a warning, not a stop');
-  assert.match(missing.stdout, /a\/\.env \(base: 0 bytes, unset: STORE_URL\)/);
+  assert.match(missing.stdout, /a\/\.env \(layers: session, installation: 0 bytes, replaced by the session: none, unset: STORE_URL\)/);
   assert.match(missing.stdout, /WARNING: an env file line needs a variable that is not set/);
   const given = run(uses, { STORE_URL: 'http://store:4566', WOODSHED_SERVICES: 'STORE_URL' });
   assert.equal(given.status, 0);
@@ -586,7 +583,7 @@ async function seedEnvFilesWritten(t, { secretValues, project = 'app' }) {
   const found = await seedEnvFiles({ flags, project: loadProject(repoDir), secrets: { get: async (name) => secretValues[name] ?? null } });
   const settingsFile = found.settings && path.join(repoDir, 'settings.json');
   if (settingsFile) fs.writeFileSync(settingsFile, JSON.stringify(found.settings), { mode: 0o600 });
-  const env = seedEnv({ flags, env: {}, databases: [PG], user: 'woodshed__seed', name: 'next', password: 'ab', files: found.files, settingsFile });
+  const env = seedEnv({ flags, env: {}, databases: [PG], user: 'woodshed__seed', name: 'next', password: 'ab', settingsFile });
   const result = spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
@@ -611,22 +608,20 @@ test('the seed writes its env files from the default project\'s repo settings, a
   assert.match(seeded.log, /Templates ready for the swap \(mode: seed, commands: 1\)/);
 });
 
-test('the seed falls back to an env file\'s legacy secret with the session\'s warning, and writes one with neither from the repo alone', async (t) => {
+test('the seed writes a file with no repo settings value from the repo alone, and never from the old Terraform secret', async (t) => {
   const seeded = await seedEnvFilesWritten(t, { secretValues: { 'p/api-env': 'API_KEY=old\n' } });
-  assert.equal(seeded.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.equal(seeded.api, `\n\n# Woodshed overrides\n${SEED_URL}\n`);
   assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nNEXT_PUBLIC_MODE=dev\n\n# Woodshed overrides\n\n');
-  assert.match(seeded.log, /WARNING: api\/\.env from the legacy env file secret api-env: set it on Console settings → Repos/);
-  assert.match(seeded.log, /api\/\.env \(layers: installation session, installation: 12 bytes from the legacy secret,/);
-  assert.deepEqual(seeded.read, [{ key: 'api-env', from: 'legacy secret' }, { key: 'web-env-local', from: 'none' }]);
+  assert.doesNotMatch(seeded.log, /legacy|WARNING/);
+  assert.match(seeded.log, /api\/\.env \(layers: session, installation: 0 bytes,/);
+  assert.deepEqual(seeded.read, [{ key: 'api-env', from: 'none' }, { key: 'web-env-local', from: 'none' }]);
 });
 
-test('a seed with no --project writes the env files from the legacy secrets as before, byte for byte', async (t) => {
+test('a seed with no --project writes the env files from the repo and the session alone', async (t) => {
   const values = { 'p/api-env': 'API_KEY=old\n', 'p/repos/app/env/api-env': 'API_KEY=new\n' };
-  const legacy = await seedEnvFilesWritten(t, { secretValues: values, project: null });
-  assert.equal(legacy.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
-  assert.match(legacy.log, /Env files written \(api\/\.env \(base: 12 bytes\), web\/\.env\.local \(base: 0 bytes, defaults: 1\)\)/, 'the line from before repo settings');
-  const fromSettings = await seedEnvFilesWritten(t, { secretValues: { ...values, 'p/repos/app/env/api-env': 'API_KEY=old\n' } });
-  assert.deepEqual([fromSettings.api, fromSettings.web], [legacy.api, legacy.web], 'the same text from either name gives the same bytes');
+  const bare = await seedEnvFilesWritten(t, { secretValues: values, project: null });
+  assert.equal(bare.api, `\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.match(bare.log, /Env files written \(api\/\.env \(layers: session, installation: 0 bytes, replaced by the session: none\), web\/\.env\.local \(layers: repo, defaults: 1, installation: 0 bytes,/);
 });
 
 test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.md', () => {
@@ -664,11 +659,11 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
     'die() { log "ERROR: $*"; exit 1; }',
     'configureGitCredentials() { log "credentials"; }',
     // The default project's env files' secrets, as project.mjs names them from the image's checkout.
-    'project() { [ "$1" = secret-vars ] && [ "$REPO_DIR" = "$IMAGE_DIR" ] && echo API_ENV; }',
+    'project() { :; }',
     fn('useProjectRepo').replace('"https://github.com/$PROJECT_REPO.git"', `"${remotes}/$PROJECT_REPO.git"`),
     fn('withholdInstallationSecrets'),
     'useProjectRepo',
-    'echo "secrets: npm=${NPM_TOKEN:-unset} api=${API_ENV:-unset} other=${OTHER_VAR:-unset}"',
+    'echo "secrets: npm=${NPM_TOKEN:-unset} other=${OTHER_VAR:-unset}"',
     'echo "session link: ${SESSION_URL:-unset}"',
     'echo "REPO_DIR=$REPO_DIR"',
     'git -C "$REPO_DIR" log -1 --format=%s',
@@ -679,7 +674,7 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
       encoding: 'utf8',
       env: {
         PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1', REPO_DIR: path.join(work, 'app'), IMAGE_DIR: path.join(work, 'app'),
-        WOODSHED_INSTALL_SECRETS: 'NPM_TOKEN', NPM_TOKEN: 'npm-s3cret', API_ENV: 'api-s3cret', OTHER_VAR: 'kept',
+        WOODSHED_INSTALL_SECRETS: 'NPM_TOKEN', NPM_TOKEN: 'npm-s3cret', OTHER_VAR: 'kept',
         SESSION_URL: 'https://console.example/s/0a1b2c3d',
         ...(projectRepo ? { PROJECT_REPO: projectRepo } : {}),
       },
@@ -696,8 +691,8 @@ test('a session on another project clones its repo next to the image\'s checkout
   assert.match(run.stdout, /Cloning the project's repo \(repo: acme\/tools, image: acme\/app\)/);
   assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/tools\\n`));
   assert.match(run.stdout, /acme\/tools\n$/, 'the project\'s own files');
-  assert.match(run.stdout, /Installation secrets withheld \(another project\) \(variables: NPM_TOKEN API_ENV\)/);
-  assert.match(run.stdout, /secrets: npm=unset api=unset other=kept/, 'the installation\'s install and env file secrets are gone');
+  assert.match(run.stdout, /Installation secrets withheld \(another project\) \(variables: NPM_TOKEN\)/);
+  assert.match(run.stdout, /secrets: npm=unset other=kept/, 'the installation\'s install secrets are gone');
   assert.doesNotMatch(run.stdout, /s3cret/, 'no value is ever printed');
   assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'the project file decides the link, in writeRules');
 });
@@ -708,7 +703,7 @@ test('a session on the image\'s own repo, or with no project named, keeps the im
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/app\\n`), String(projectRepo));
     assert.doesNotMatch(run.stdout, /Cloning|withheld/);
-    assert.match(run.stdout, /secrets: npm=npm-s3cret api=api-s3cret/, 'the default project keeps them, as before');
+    assert.match(run.stdout, /secrets: npm=npm-s3cret other=kept/, 'the default project keeps them, as before');
     assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'and links the session from its pull requests');
   }
 });

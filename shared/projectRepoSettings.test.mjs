@@ -1,5 +1,5 @@
 // The session's side of repo settings in project.mjs: reading the console's answer, writing each env file from its
-// layers with the legacy secrets as the fallback, the log lines, and the instructions added to the rules.
+// layers, the log lines, and the instructions added to the rules.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -24,7 +24,7 @@ function settingsFile(t, answer) {
   return file;
 }
 
-// Two env files: one with a secret (and so a legacy variable), one keyed by its path alone.
+// Two env files: one with a secret (its key), one keyed by its path alone.
 const PROJECT = parseProject({
   version: 1,
   env: { APP_PORT: '8000' },
@@ -34,6 +34,8 @@ const PROJECT = parseProject({
   ],
 });
 const ENV = { PGPASSWORD: 'session-password', SESSION_APP_URL: 'https://x.app.example' };
+// What a session's environment held before repo settings: an env file's Terraform secret and the owner's old own lines.
+// Nothing reads them now.
 const LEGACY = { API_ENV: 'AUTH_DOMAIN=legacy.test\nLOG_LEVEL=warn', OWN_FILES: JSON.stringify({ 'api-env': 'LOG_LEVEL=legacy-own' }) };
 const ANSWER = {
   project: 'app',
@@ -92,25 +94,22 @@ test('with repo settings, each env file is the repo\'s defaults, the installatio
   ].join('\n'), 'the console\'s values, not the legacy secret\'s or the /settings answer\'s');
   assert.equal(web, 'NEXT_PUBLIC_FLAG=on\n\n# Your own lines, from My settings\nNEXT_PUBLIC_FLAG=off\n\n# Woodshed overrides\nAPI_URL=https://x.app.example\n',
     'a file with no secret gets its values by the key made from its path');
-  assert.deepEqual(written.map((w) => [w.layers, w.legacy, w.replaced]), [
-    [['repo', 'installation', 'personal', 'session'], [], ['DB_PASSWORD']],
-    [['installation', 'personal', 'session'], [], []],
+  assert.deepEqual(written.map((w) => [w.layers, w.replaced]), [
+    [['repo', 'installation', 'personal', 'session'], ['DB_PASSWORD']],
+    [['installation', 'personal', 'session'], []],
   ]);
 });
 
-test('a layer the console has no value for falls back to its legacy text, and says so; a shared session gets no owner lines', (t) => {
+test('a layer the console has no value for is empty, never the old secret\'s text; a shared session gets no owner lines', (t) => {
   const none = readRepoSettings(settingsFile(t, { project: 'app', envFiles: {}, instructions: {}, personalFor: 'octocat' }));
-  const legacy = write(t, { settings: none, env: LEGACY });
-  const before = write(t, { settings: null, env: LEGACY });
-  assert.equal(legacy.api, before.api, 'byte for byte what the legacy secrets give');
-  assert.deepEqual(legacy.written[0].legacy, ['installation', 'personal']);
-  assert.deepEqual(legacy.lines.slice(1), [
-    'WARNING: api/.env from the legacy env file secret api-env: set it on Console settings → Repos',
-    'WARNING: api/.env\'s own lines from the legacy env file lines (api-env) of My settings: save them on its Repo settings',
-  ]);
+  const empty = write(t, { settings: none, env: LEGACY });
+  assert.equal(empty.api, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\nFEATURE=false\n\n# Woodshed overrides\nDB_PASSWORD=session-password\n');
+  assert.doesNotMatch(empty.api + empty.web, /legacy/);
+  assert.deepEqual(empty.written.map((w) => w.layers), [['repo', 'session'], ['session']]);
+  assert.equal(empty.lines.length, 1, 'no warning');
   const shared = readRepoSettings(settingsFile(t, { ...ANSWER, personalFor: null }));
-  const { api, web } = write(t, { settings: shared, env: { API_ENV: LEGACY.API_ENV } });
-  assert.doesNotMatch(api + web, /Your own lines|LOG_LEVEL=debug|NEXT_PUBLIC_FLAG=off/);
+  const { api, web } = write(t, { settings: shared, env: LEGACY });
+  assert.doesNotMatch(api + web, /Your own lines|LOG_LEVEL=debug|NEXT_PUBLIC_FLAG=off|legacy/);
   assert.match(api, /AUTH_DOMAIN=installation\.test/);
 });
 
@@ -130,9 +129,13 @@ test('the log names layers, sizes and keys, never a value, and the repo settings
   }
 });
 
-test('without repo settings the log line is the one Woodshed printed before them', (t) => {
-  assert.deepEqual(write(t, { settings: null, env: LEGACY }).lines, [
-    'api/.env (base: 38 bytes, defaults: 2, own lines), web/.env.local (base: 0 bytes)',
+test('without repo settings (an ask, or a console that offers none) each file is the repo\'s and the session\'s alone', (t) => {
+  const none = write(t, { settings: null, env: LEGACY });
+  const empty = write(t, { settings: readRepoSettings(settingsFile(t, { project: 'app', envFiles: {} })), env: LEGACY });
+  assert.deepEqual([none.api, none.web], [empty.api, empty.web], 'the same as an answer with nothing in it');
+  assert.deepEqual(none.lines, [
+    'api/.env (layers: repo session, defaults: 2, installation: 0 bytes, replaced by the session: none), '
+      + 'web/.env.local (layers: session, installation: 0 bytes, replaced by the session: none)',
   ]);
 });
 

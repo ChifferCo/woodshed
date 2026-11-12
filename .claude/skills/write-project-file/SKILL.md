@@ -22,8 +22,9 @@ Look for, and note the file each answer came from:
 - **Databases**: docker compose services, env examples (`.env.example`), ORM config (Prisma, Drizzle, Knex, Alembic,
   Django, Rails, Mongoose), the migration and seed commands, the migrations folder, and the table the migration tool
   records runs in. Only `postgres` and `mongo` are engines; one database an engine.
-- **Env files**: each file the app reads that git ignores, and which of its lines are secret (go in an env file's
-  `secret`, set later on the console) and which are derived (go in its `lines`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
+- **Env files**: each file the app reads that git ignores, and which of its lines are secret (set later on the
+  console's Repo settings for the file, never in the project file), which are plain dev defaults (its `defaults`) and
+  which are derived (go in its `lines`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
   and the rest, `project.reference.yaml`'s `databases` comment).
 - **The app**: how it starts in dev (one command that returns once it is up, or a script that backgrounds it), how it
   stops, its frontend and backend ports, its log files, and the folders whose change is an app change.
@@ -67,8 +68,8 @@ installation must provide, so list them for the person.
   default branch, so a file on another branch is not read by the install.
 - Offer the CI check from `docs/self-host.md`, "Before any of them: the project file", step 4: a workflow of the
   repository's own calling Woodshed's reusable `project-check.yml`.
-- List what the installation must still provide: each env file `secret` (set on the console's Secrets & webhooks
-  page), each install variable, each `from the session` variable.
+- List what the installation must still provide: each env file's values (set on Console settings → Repos → the repo
+  → Settings, by its key), each install variable, each `from the session` variable.
 
 ## When a session refused the file
 

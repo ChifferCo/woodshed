@@ -44,7 +44,7 @@ function firstLine(err) {
 // checkValue's errors are written for the page, so they are shown as they are.
 function checked(name, value) {
   try {
-    return checkValue(secretSpecs({ envFiles: [] }).find((spec) => spec.name === name), value);
+    return checkValue(secretSpecs().find((spec) => spec.name === name), value);
   } catch (err) {
     throw refusal(err.message);
   }

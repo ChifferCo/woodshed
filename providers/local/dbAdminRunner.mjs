@@ -6,9 +6,9 @@
 // and the console picks only the command. The root passwords are `db-root/postgres` and `db-root/mongo` in the local
 // secret store, each needed only for a database the console has an address for, handed over by name in the
 // environment, never on a command line. A run sees only the secrets the AWS
-// task role reads: the database password its command makes, and the env files the project's seed reads, both the default
-// project's repo settings for them (`repos/<project>/env/<key>`) and their legacy secrets. They are copied into a
-// folder of the run's own, mounted read-only, and that folder goes once the run is over.
+// task role reads: the database password its command makes, and the default project's repo settings for its env files
+// (`repos/<project>/env/<key>`, each one the store has), which the seed reads those of its databases' `envFiles` from.
+// They are copied into a folder of the run's own, mounted read-only, and that folder goes once the run is over.
 //
 // The runs' folders are under one the console's user alone can open (`runsDir`, in its state folder by default).
 // Inside it, each run's folder and files can be read by anyone: the image runs as its own `node` user, whatever uid
@@ -35,12 +35,14 @@ const ENTRYPOINT = ['-u', 'NODE_OPTIONS', '-u', 'NODE_TLS_REJECT_UNAUTHORIZED', 
   'node', '/opt/woodshed/session/dbAdmin.mjs'];
 
 /**
- * @param {{project: string|null, keys: string[]}} seed  the default project, and the keys of its databases' env files
- * @returns {string[]}  the secrets the seed's env files are read from: each key's repo settings, then its legacy secret
- *   (a key is its file's secret when it has one: shared/project.mjs, envFileKey)
+ * @param {{project: string|null, secrets: {names?: (folder: string) => Promise<string[]>}}} seed  the default project,
+ *   and the local store, which lists the names it holds
+ * @returns {Promise<string[]>}  the secrets the seed's env files are read from: the project's repo settings for each of
+ *   its env files (`repos/<project>/env/<key>`); none without a project
  */
-export function seedSecretNames({ project, keys }) {
-  return [...(project ? keys.map((key) => `repos/${project}/env/${key}`) : []), ...keys];
+export async function seedSecretNames({ project, secrets }) {
+  if (!project || !secrets.names) return [];
+  return secrets.names(`repos/${project}/env`);
 }
 
 /** @returns {string[]}  the secrets a command reads, beyond the seed's env files, by dbAdmin.mjs's names for them */
@@ -82,11 +84,11 @@ function sharedServiceEnv(sessionEnv) {
 }
 
 /**
- * @param {{image: string, repoDir: string, secrets: {read: (name: string) => Promise<string|null>},
+ * @param {{image: string, repoDir: string, secrets: {read: (name: string) => Promise<string|null>, names?: (folder: string) => Promise<string[]>},
  *          postgresHost?: string|null, postgresRootUser?: string|null, mongoHost?: string|null, network?: string|null,
  *          sessionEnv?: Record<string, string>, runsDir?: string, docker?: (args: string[], env?: object) => Promise<string>}} opts
- *   `repoDir` is the checkout's folder in the image (`checkoutDir`); `seedSecrets` the keys of the env files the project's seed
- *   reads (its databases' `envFiles`), and `seedProject` the default project, whose repo settings the seed reads them from; `mongoHost` is host:port and `postgresHost` a host on 5432, as dbAdmin.mjs takes them, and
+ *   `repoDir` is the checkout's folder in the image (`checkoutDir`); `seedProject` the default project, whose repo settings
+ *   the seed reads its databases' env files from; `mongoHost` is host:port and `postgresHost` a host on 5432, as dbAdmin.mjs takes them, and
  *   a database with no host is one the installation does not host; `network` is the docker
  *   network the databases are on, if any; `sessionEnv` gives the seed the shared services it lists in WOODSHED_SERVICES, as
  *   sessions get them; `projectFilesDir` the installation's folder of project files and `repo` the image's repo, owner/name,
@@ -96,7 +98,7 @@ function sharedServiceEnv(sessionEnv) {
  *            outcomes: (ids: string[]) => Promise<Array<{done: false}|{done: true, ok: boolean, reason: string|null}>>}}
  */
 export function createDbAdminRunner({
-  image, repoDir, seedSecrets = [], seedProject = null, secrets, postgresHost = null, postgresRootUser = null, mongoHost = null, network = null, sessionEnv = {},
+  image, repoDir, seedProject = null, secrets, postgresHost = null, postgresRootUser = null, mongoHost = null, network = null, sessionEnv = {},
   runsDir = path.join(os.tmpdir(), 'woodshed-db-admin'), docker, projectFilesDir = null, projectFilesHostDir = null, repo = null, dockerHost = null,
 }) {
   const hostEnv = dockerHost ? { DOCKER_HOST: dockerHost } : {};
@@ -166,7 +168,7 @@ export function createDbAdminRunner({
     const mounts = projectFileMounts({ dir: projectFilesDir, hostDir: projectFilesHostDir, repos: [repo] });
     const folder = await makeRunFolder(id);
     try {
-      await copySecrets(folder, [...secretsFor(command), ...seedSecretNames({ project: seedProject, keys: seedSecrets })]);
+      await copySecrets(folder, [...secretsFor(command), ...(await seedSecretNames({ project: seedProject, secrets }))]);
       const container = [
         '--name', id, '--label', 'woodshed.db-admin=1', '--label', `woodshed.db-admin.for=${forLabel}`,
         '--add-host=host.docker.internal:host-gateway',

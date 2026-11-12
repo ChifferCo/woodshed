@@ -3,15 +3,13 @@
 # will not start until every one has a value.
 
 locals {
-  # A secret's resource key is its name with dashes made underscores, and its name the other way round.
-  env_file_keys = { for name, path in var.env_files : name => replace(name, "-", "_") }
-  # Each install secret's variable and its resource key, keyed like the rest: a `registry-token` secret is
+  # A secret's resource key is its name with dashes made underscores, and its name the other way round. Each install
+  # secret's variable and its resource key, keyed like the rest: a `registry-token` secret is
   # session["registry_token"], whatever variable it reaches sessions in.
   install_secret_keys = { for name, env_name in var.install_secrets : env_name => replace(name, "-", "_") }
 
   secrets = merge(
     { anthropic_api_key = "Dedicated Anthropic API key for sessions, with its own spend limit" },
-    { for name, path in var.env_files : replace(name, "-", "_") => "The whole base ${path} for sessions; the shared services' addresses are appended to it" },
     { for name, env_name in var.install_secrets : replace(name, "-", "_") => "Read by the repo's dependency installs, in ${env_name}: when a session runs an install again, and in claude's terminal" },
   )
 }

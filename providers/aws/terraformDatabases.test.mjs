@@ -61,13 +61,30 @@ test('the db-admin task seeds from the default project\'s repo settings, and may
   const ecs = fs.readFileSync(path.join(DIR, 'ecs.tf'), 'utf8');
   const entryPoint = /entryPoint = concat\(([^]*?)\n {4}\)/.exec(ecs)[1];
   assert.match(entryPoint, /"--repo", [^\n]+,\n {8}"--project", local\.seed_project,\n {8}"--",/);
-  const statement = /sid {5}= "TheSeedsEnvFiles"[^]*?resources = concat\(([^]*?)\n {4}\)/.exec(ecs)[1];
-  assert.match(statement, /"arn:aws:secretsmanager:\$\{var\.region\}:\$\{local\.account_id\}:secret:\$\{local\.p\}\/repos\/\$\{local\.seed_project\}\/env\/\*"/);
-  assert.doesNotMatch(statement, /repos\/\*/, 'never every repo\'s');
-  assert.doesNotMatch(statement, /users\//, 'never anyone\'s own values');
+  const statement = /sid {7}= "TheSeedsEnvFiles"\n[^]*?resources = (\[[^\n]*\])\n/.exec(ecs)[1];
+  assert.equal(statement, '["arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/repos/${local.seed_project}/env/*"]',
+    'that project\'s repo settings alone: never every repo\'s, anyone\'s own values, or an env file\'s old Terraform secret');
   const database = fs.readFileSync(path.join(DIR, 'database.tf'), 'utf8');
   assert.match(database, /seed_project = coalesce\(\n {4}one\(\[for p in var\.projects : p\.name if p\.default \|\| length\(var\.projects\) == 1\]\),/,
     'the projects\' default first, as console/projects.mjs\'s defaultProject');
+});
+
+// Env files are repo settings only: the Terraform secrets that held them before, their variables and every role that
+// read them are gone. The two variables stay declared, refusing a value, so a tfvars that still sets them fails the
+// plan with the reason instead of its secrets going without a word.
+test('no env file is a Terraform secret: env_files and database_env_secrets only refuse a value', () => {
+  const variables = fs.readFileSync(path.join(DIR, 'variables.tf'), 'utf8');
+  const others = files.filter((f) => f !== 'variables.tf').map((f) => fs.readFileSync(path.join(DIR, f), 'utf8')).join('\n');
+  assert.doesNotMatch(others, /var\.env_files|var\.database_env_secrets|env_file_keys/);
+  for (const name of ['env_files', 'database_env_secrets']) {
+    const block = new RegExp(`variable "${name}" \\{([^]*?)\\n\\}`).exec(variables)[1];
+    assert.match(block, new RegExp(`condition {5}= length\\(var\\.${name}\\) == 0`), name);
+    assert.match(block, /default {5}= (\{\}|\[\])/, `${name}: optional, so a tfvars without it plans`);
+  }
+  const template = fs.readFileSync(path.join(DIR, 'baseBoxStack.sh.tftpl'), 'utf8');
+  assert.doesNotMatch(template, /ENV_FILES|DB_ENV_SECRETS/, 'the console is given neither setting');
+  const example = fs.readFileSync(path.join(DIR, 'example.tfvars'), 'utf8');
+  assert.doesNotMatch(example, /env_files|database_env_secrets/);
 });
 
 // A session's databases are its engines' (shared/databases/): the task definition gives each engine's server in the

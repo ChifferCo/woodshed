@@ -30,11 +30,9 @@
 #   WOODSHED_SERVICES    the installation's shared services' variables, space-separated, each set to its URL (the
 #                        shared_services Terraform variable, or the local provider's session env). An env file
 #                        line needing one that is not set is logged as a warning when the files are written
-#   each env file's secret, by its name in capitals (`app-env` is APP_ENV)   legacy base env files, whole: one for each
-#                        of the project file's envFiles with a secret (woodshed/shared/project.mjs), read only where
-#                        the console's repo settings have no value for it, or the console offers none (fetchRepoSettings)
 #   WOODSHED_SEED_REPO_SETTINGS  seed and migrate only: the file of repo settings dbAdmin.mjs read for the databases'
-#                        env files (seedEnvFiles), in the session API's answer's shape; without it, the legacy secrets
+#                        env files (seedEnvFiles), in the session API's answer's shape; without it, the files get the
+#                        repo's defaults and the project file's lines alone
 #   REPO_DIR             the checkout; the image sets it, and the working folder is used without it
 #   WOODSHED_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
 #                        .woodshed/project.yaml of its own (shared/project.mjs): the docker launcher mounts the files
@@ -163,13 +161,11 @@ useProjectRepo() {
   log "Project repo cloned" "(dir: $REPO_DIR, seconds: $((SECONDS - start)))"
 }
 
-# A session on another project's repo gets none of the installation's secrets: the install secrets and the env files'
-# secrets are the default project's, whose repo the image holds. Their names are read from the image's checkout, so
-# this runs while REPO_DIR is still it. Names only are logged, never values.
+# A session on another project's repo gets none of the installation's install secrets: they are the default project's,
+# whose repo the image holds. Names only are logged, never values.
 withholdInstallationSecrets() {
-  local name secretVars names=()
-  secretVars=$(project secret-vars) || die "the installation's secret variables could not be read"
-  for name in ${WOODSHED_INSTALL_SECRETS:-} $secretVars; do
+  local name names=()
+  for name in ${WOODSHED_INSTALL_SECRETS:-}; do
     unset "$name"
     names+=("$name")
   done
@@ -184,8 +180,8 @@ configureGitIdentity() {
 
 # Each of the project's env files, in layers (shared/repoSettings.mjs): the repo's defaults, the installation's text, the
 # owner's own lines, then the project's lines, filled in from the variables set here. The installation's and the
-# owner's come from the console's repo settings (fetchRepoSettings), each falling back to its legacy secret, with a
-# warning, while it has no value there; without repo settings, from the legacy secrets as before. dotenv keeps the last
+# owner's come from the console's repo settings (fetchRepoSettings); without them (an ask, or a console that offers
+# none) a file has the repo's defaults and the project's lines alone. dotenv keeps the last
 # value of a repeated key, and the same values are exported, which wins anyway. Each database's engine exports its
 # variables first, from the console's credentials, so the project's `env` and lines can name them; a database the
 # environment does not name takes the project file's user and name.
@@ -201,7 +197,7 @@ writeEnvFiles() {
   exports=$(project env) || die "the project file's env could not be read"
   eval "$exports"
   [ ! -f "${REPO_SETTINGS_JSON:-}" ] || settings=$REPO_SETTINGS_JSON
-  written=$(OWN_FILES=${OWN_FILES:-} REPO_SETTINGS_FILE=$settings project write-env-files) \
+  written=$(REPO_SETTINGS_FILE=$settings project write-env-files) \
     || die "the project's env files could not be written"
   # The first line names each file; each line after it is a warning, or the repo settings this checkout has no file for.
   log "Env files written" "(${written%%$'\n'*})"
@@ -542,9 +538,8 @@ OWN_FILES_JSON=$HOME/.config/woodshed/own-files.json
 OWN_CODEX_AUTH_FILE=$HOME/.config/woodshed/codex-auth
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
 
-# A private session's owner's settings, before the env files are written: their own lines go after the shared
-# files from the task definition, so a key set in both is theirs, and the console's overrides still go on top in
-# writeEnvFiles.
+# A private session's owner's settings, before the env files are written: their Claude and Codex sign-ins, databases,
+# git identity, tmux lines and own whole files. Their env file values come with the repo settings (fetchRepoSettings).
 fetchOwnerSettings() {
   [ "${SESSION_KIND:-}" = private ] || return 0
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || die "a private session needs the console's session API (WOODSHED_CONSOLE_URL)"
@@ -555,11 +550,9 @@ fetchOwnerSettings() {
   answer=$(cat "$SETTINGS_ANSWER" 2>/dev/null || true)
   rm -f "$SETTINGS_ANSWER"
   [ "$code" = 200 ] || die "could not get the owner's settings from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
-  # The env files' own lines, by their secret's name, for writeEnvFiles (project.mjs puts each after its secret's text).
-  OWN_FILES=$(jq -c '(.files // {}) | with_entries(select(.key != "tmux-conf" and (.value // "") != ""))' <<< "$answer")
-  owned=$(jq -r 'keys | join(" ")' <<< "$OWN_FILES")
+  # Only tmux's own lines are read from `files`: a console from before repo settings also sent each env file's there.
   own=$(jq -r '.files["tmux-conf"] // empty' <<< "$answer")
-  if [ -n "$own" ]; then printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.tmux.conf"; owned="$owned tmux-conf"; fi
+  if [ -n "$own" ]; then printf '\n# Your own lines, from My settings\n%s\n' "$own" >> "$HOME/.tmux.conf"; owned=tmux-conf; fi
   # null where the console makes no databases (the docker launcher): the environment's stay.
   if jq -e '.database' <<< "$answer" >/dev/null; then useDatabaseFrom "$answer"; fi
   # For claude alone (session/bin/claude), outside ~/.claude, which is saved to the console. A console from before
@@ -589,8 +582,8 @@ fetchOwnerSettings() {
 # installation's values for each env file and its instructions for the repo, and a private session's owner's own, for
 # writeEnvFiles and writeRules, after which runSession deletes the file. Only this user reads it (consoleCall), and it is
 # outside ~/.claude, which is saved. Every session but an ask asks, which gets none. A console from before the route
-# answers 404, and the env files are written from the legacy secrets as before. The log has keys and sizes, never a
-# value.
+# answers 404, and the env files get the repo's defaults and the project's lines alone, with a warning. The log has
+# keys and sizes, never a value.
 REPO_SETTINGS_JSON=$HOME/.config/woodshed/repo-settings.json
 fetchRepoSettings() {
   [ "${SESSION_MODE:-}" != ask ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
@@ -600,7 +593,7 @@ fetchRepoSettings() {
   code=$(consoleCall /repo-settings "$REPO_SETTINGS_JSON" --max-time 15)
   if [ "$code" = 404 ]; then
     rm -f "$REPO_SETTINGS_JSON"
-    log "Repo settings not offered by the console, using the legacy env files"
+    log "WARNING: repo settings not offered by the console, so the env files have no installation or own values"
     return 0
   fi
   if [ "$code" != 200 ]; then
@@ -866,11 +859,7 @@ runAsk() {
   configureGitCredentials
   findDefaultBranch
   configureGitIdentity
-  # The task definition's own secrets go whatever the project file says; its names are added on top. A command
-  # substitution in a for list does not stop the script under set -e, so it is read on its own first.
-  local name secretVars
-  secretVars=$(project secret-vars) || die "the project's secret variables could not be read"
-  for name in $secretVars; do unset "$name"; done
+  local name
   # The installation's install secrets, by the variables they arrive in: an ask installs nothing.
   for name in ${WOODSHED_INSTALL_SECRETS:-}; do unset "$name"; done
   for name in $(databases secret-vars); do unset "$name"; done
@@ -976,7 +965,7 @@ runTemplateCommands() {
   local mode=$1 engine dir command ran=0 list=/tmp/woodshed-template-commands
   requireDatabases
   # The default project's repo settings for the databases' env files, in the session API's shape, which dbAdmin.mjs
-  # read for the seed (seedEnvFiles) and deletes after it. Without them, the legacy secrets alone.
+  # read for the seed (seedEnvFiles) and deletes after it. Without them, the repo's defaults and lines alone.
   REPO_SETTINGS_JSON=${WOODSHED_SEED_REPO_SETTINGS:-}
   writeEnvFiles
   startRedisIfUsed

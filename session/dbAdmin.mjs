@@ -28,9 +28,9 @@
 // engine the run has no flags for stops it; an installation with no database has no db-admin task at all.
 //
 // `--project` is the default project's name, whose repo settings the seed's env files are written from (seedEnvFiles):
-// the installation's values for each of the databases' `envFiles`, at `repos/<project>/env/<key>`, falling back to the
-// file's legacy secret while that has no value. A flag for the same reason: a run's overrides must not be able to point
-// the seed at another repo's values. Without it, the legacy secrets alone, as before repo settings.
+// the installation's values for each of the databases' `envFiles`, at `repos/<project>/env/<key>`. A flag for the same
+// reason: a run's overrides must not be able to point the seed at another repo's values. Without it, the seed's env
+// files get the repo's defaults and the project file's lines alone.
 
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -45,7 +45,7 @@ import { secretsClient } from './awsSecrets.mjs';
 import { ENGINES, ENGINE_NAMES, engine } from '../shared/databases/index.mjs';
 import { SEEDER, TEMPLATE_NEXT } from '../shared/databases/names.mjs';
 import { fileSecretsClient } from '../shared/fileSecrets.mjs';
-import { loadProject, PROJECT_FILE, secretEnvName } from '../shared/project.mjs';
+import { loadProject, PROJECT_FILE } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
 
 // Every run's own flags; each engine adds its own. Where the secrets are is one of SECRET_SOURCES.
@@ -460,14 +460,13 @@ export function sharedServices(env) {
 
 /**
  * The environment the next templates' commands run in: the shared services, then each project database's variables,
- * pointed at its engine's next template as the seeder, then the env files' legacy secrets, then where the repo settings
- * are. None of the root passwords.
+ * pointed at its engine's next template as the seeder, then where the repo settings are. None of the root passwords.
  * @param {{flags: Record<string, string>, env: Record<string, string|undefined>, databases: {engine: string}[],
- *          user: string, name: string, password: string, files: Record<string, string>, settingsFile?: string|null}} args
+ *          user: string, name: string, password: string, settingsFile?: string|null}} args
  *   `settingsFile` the seed's repo settings, in the session API's shape (seedEnvFiles), for the entrypoint's writeEnvFiles
  * @returns {Record<string, string>}
  */
-export function seedEnv({ flags, env, databases, user, name, password, files, settingsFile = null }) {
+export function seedEnv({ flags, env, databases, user, name, password, settingsFile = null }) {
   return {
     // The services first, so none can stand in for a variable the seed is given here.
     ...sharedServices(env),
@@ -476,46 +475,35 @@ export function seedEnv({ flags, env, databases, user, name, password, files, se
     ...Object.assign({}, ...databases.map((d) => engine(d.engine).seedEnv({ flags, user, password, name }))),
     // The entrypoint's `seed` reads the project file again, for the commands: the same one as this task.
     ...(flags['project-files-dir'] && { WOODSHED_PROJECT_FILES_DIR: flags['project-files-dir'] }),
-    ...files,
     ...(settingsFile && { WOODSHED_SEED_REPO_SETTINGS: settingsFile }),
   };
 }
 
 /**
  * The installation's text of each env file the project's databases name, as a shared session gets it: the repo
- * settings' value (`repos/<project>/env/<key>`, `--project`), else the file's legacy secret, which the entrypoint
- * then writes with the session's warning. No personal layer: the seed is no one's. Without `--project`, the legacy
- * secrets alone, as before repo settings.
- * @param {{flags: Record<string, string>, project: {envFiles: {key: string, secret: string|null}[], databases: {envFiles: string[]}[]},
+ * settings' value (`repos/<project>/env/<key>`, `--project`). No personal layer: the seed is no one's.
+ * @param {{flags: Record<string, string>, project: {databases: {envFiles: string[]}[]},
  *          secrets: {get: (name: string) => Promise<string|null>}}} args
  * @returns {Promise<{settings: {project: string, envFiles: Record<string, {installation: string, personal: null}>,
- *   instructions: {installation: null, personal: null}, personalFor: null}|null, files: Record<string, string>,
- *   read: {key: string, from: 'repo settings'|'legacy secret'|'none'}[]}>}
+ *   instructions: {installation: null, personal: null}, personalFor: null}|null,
+ *   read: {key: string, from: 'repo settings'|'none'}[]}>}
  *   `settings` shaped like the session API's answer (shared/project.mjs, readRepoSettings), null without `--project`;
- *   `files` each legacy secret read, by the variable it arrives in (secretEnvName); `read` where each key came from
+ *   `read` where each key came from
  */
 export async function seedEnvFiles({ flags, project, secrets }) {
   const prefix = flags['secret-prefix'];
   const keys = [...new Set(project.databases.flatMap((d) => d.envFiles))];
   const envFiles = {};
-  const files = {};
   const read = [];
   for (const key of keys) {
-    const { secret } = project.envFiles.find((f) => f.key === key);
     const installation = flags.project ? await secrets.get(installationEnvSecretName(prefix, flags.project, key)) : null;
-    if (installation?.trim()) {
-      envFiles[key] = { installation, personal: null };
-      read.push({ key, from: 'repo settings' });
-      continue;
-    }
-    const legacy = secret ? await secrets.get(`${prefix}${secret}`) : null;
-    if (secret) files[secretEnvName(secret)] = legacy ?? '';
-    read.push({ key, from: legacy?.trim() ? 'legacy secret' : 'none' });
+    if (installation?.trim()) envFiles[key] = { installation, personal: null };
+    read.push({ key, from: installation?.trim() ? 'repo settings' : 'none' });
   }
   const settings = flags.project
     ? { project: flags.project, envFiles, instructions: { installation: null, personal: null }, personalFor: null }
     : null;
-  return { settings, files, read };
+  return { settings, read };
 }
 
 // Readable by this user alone, as a session's copy of its answer is, and gone once the seed is done.
@@ -535,13 +523,13 @@ function writeSettingsFile(settings) {
  */
 export function seedWith({ flags, env, databases, envFiles }) {
   return async ({ user, name, password, migrateOnly = false }) => {
-    const { settings, files } = await envFiles();
+    const { settings } = await envFiles();
     const written = settings && writeSettingsFile(settings);
     try {
       await new Promise((resolve, reject) => {
         const child = spawn('bash', [ENTRYPOINT, migrateOnly ? 'migrate' : 'seed'], {
           stdio: 'inherit',
-          env: seedEnv({ flags, env, databases, user, name, password, files, settingsFile: written?.file ?? null }),
+          env: seedEnv({ flags, env, databases, user, name, password, settingsFile: written?.file ?? null }),
         });
         child.on('error', reject);
         child.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${migrateOnly ? 'migrating' : 'seeding'} ${name} failed (exit ${code})`))));
@@ -566,8 +554,9 @@ async function main() {
   log('Project read', { from, databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles });
   const envFiles = async () => {
     const found = await seedEnvFiles({ flags, project, secrets });
-    // Keys and where each came from, never a value. The entrypoint warns of each legacy one, as a session does.
+    // Keys and where each came from, never a value.
     log('Seed env files read', { project: flags.project ?? null, files: found.read });
+    if (!flags.project && found.read.length) log('WARNING: no --project, so the seed\'s env files have no installation values', { files: found.read.length });
     return found;
   };
   const buildSha = fs.existsSync(BUILD_SHA_FILE) ? fs.readFileSync(BUILD_SHA_FILE, 'utf8').trim() || null : null;

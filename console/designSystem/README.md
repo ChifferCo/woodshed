@@ -111,8 +111,6 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `is-wide`): the repos as tabs, then each env file's layers with **Person** · Your values between Installation and
   Session, and a **Yours** column in the table, then the Instructions. The installation's layer is read only there.
   `?repo=<project>` (and `&file=<key>`) opens one. tmux keeps a card of its own.
-- On Secrets & webhooks the env files' Terraform secrets are a group of their own, **Moved to Repo settings**, each row
-  with a `cap-note` linking the repo's page; **Replace** is gone from a row once Repo settings hold its values.
 
 ## Ownership tags
 

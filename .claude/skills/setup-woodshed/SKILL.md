@@ -48,7 +48,7 @@ Then ask them to say go.
 
 | Where | From them |
 | --- | --- |
-| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. Make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. A dev value for each env file `secret` the project file names (never production) |
+| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. Make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. Dev values for each env file the project file names, on **Console settings → Repos → the repo → Settings** (never production) |
 | A server, also | The machine (Ubuntu 24.04, about 4 GB a session) and SSH access to it for you. A firewall in their provider's panel. A name: a domain with an `A` and a wildcard record, or none with sslip.io. Their own IP, for the fence until sign-in. Signing in first, so they are the first admin |
 | AWS, also | An AWS account for Woodshed alone, with credentials in this shell. A domain to delegate, with NS records at its parent's DNS. An email for the budget alerts. The GitHub App made by hand (its permissions are in `providers/aws/README.md`, "Setting it up", step 2), its private key uploaded on the console later. Approving each Terraform apply after reading its plan |
 
@@ -99,7 +99,7 @@ These come from `CLAUDE.md`, "Rules"; read it if a step touches secrets.
 
 - **Never print a secret's value.** Check a secret by `node providers/local/bin/secret.mjs list` (names only) or a call
   that prints only a status code. Pass a value to a tool on stdin, never on its command line.
-- **No production credentials in a session.** An env file's secrets are the dev setup's keys only. A team-wide key
+- **No production credentials in a session.** An env file's values are the dev setup's keys only. A team-wide key
   goes on the Secrets & webhooks page, never in `session-env.json`, which every session reads.
 - **Nothing open before sign-in.** On a server, the proxy answers only the person's IP until the GitHub App is made,
   `WOODSHED_REQUIRE_SIGN_IN=1` is set and they signed in as the first admin ("On a server", steps 7 and 9).

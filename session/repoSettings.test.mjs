@@ -125,25 +125,25 @@ test('a shared session gets the installation\'s layer alone, whatever the answer
   assert.match(run.rules, /# This installation's instructions for acme\/app\nUse pnpm/);
 });
 
-test('an empty installation value falls back to the legacy secret, with a warning; the rules are then as before', async () => {
+test('an empty installation value is the repo\'s defaults alone: an old Terraform secret in the environment is not read', async () => {
   const fake = await fakeConsole([{ json: { project: 'app', envFiles: {}, instructions: { installation: null, personal: null }, personalFor: null } }]);
   const run = await start({ consoleUrl: fake.url, kind: 'shared', env: { API_ENV: 'AUTH_DOMAIN=legacy.test' } });
   assert.equal(run.status, 0, run.out);
-  assert.match(run.out, /\[woodshed\] WARNING: api\/\.env from the legacy env file secret api-env: set it on Console settings → Repos/);
-  assert.match(run.env, /^# From the repo \(\.woodshed\/project\.yaml\)\nLOG_LEVEL=info\n\n# From this installation\nAUTH_DOMAIN=legacy\.test\n/);
+  assert.doesNotMatch(run.out, /legacy|WARNING/);
+  assert.match(run.out, /Env files written \(api\/\.env \(layers: repo session, defaults: 1, installation: 0 bytes, replaced by the session: none\)\)/);
+  assert.equal(run.env, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\n\n# Woodshed overrides\nDB_PASSWORD=session-password\n');
   assert.doesNotMatch(run.out, /Instructions added/);
   assert.doesNotMatch(run.rules, /Which instructions win/);
 });
 
-test('an older console answers 404: the session writes its env files from the legacy secrets as before', async () => {
+test('an older console answers 404: the env files get the repo\'s defaults and the session\'s lines alone, with a warning', async () => {
   const fake = await fakeConsole([{ status: 404, json: { error: 'not found' } }]);
   const run = await start({ consoleUrl: fake.url, env: { API_ENV: 'AUTH_DOMAIN=legacy.test', OWN_FILES: JSON.stringify({ 'api-env': 'MINE=1' }) } });
   assert.equal(run.status, 0, run.out);
-  assert.match(run.out, /\[woodshed\] Repo settings not offered by the console, using the legacy env files/);
+  assert.match(run.out, /\[woodshed\] WARNING: repo settings not offered by the console, so the env files have no installation or own values/);
   assert.match(run.out, /answer kept: no/);
-  assert.match(run.out, /Env files written \(api\/\.env \(base: 23 bytes, defaults: 1, own lines\)\)/, 'the log line from before repo settings');
-  assert.doesNotMatch(run.out, /WARNING/);
-  assert.match(run.env, /AUTH_DOMAIN=legacy\.test/);
+  assert.match(run.out, /Env files written \(api\/\.env \(layers: repo session, defaults: 1, installation: 0 bytes, replaced by the session: none\)\)/);
+  assert.doesNotMatch(run.env, /legacy\.test|MINE/, 'neither the old Terraform secret nor the old own lines');
 });
 
 test('a 503 is tried again, and a refusal stops the start with the console\'s reason', async () => {

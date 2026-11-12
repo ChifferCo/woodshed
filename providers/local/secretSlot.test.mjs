@@ -7,7 +7,7 @@ import path from 'node:path';
 import { secretSpecs } from '../../console/secrets.mjs';
 import { createSecretSlot } from './secretSlot.mjs';
 
-const specs = secretSpecs({ envFiles: [{ secret: 'api-env', path: 'api/.env' }], installSecrets: [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }] });
+const specs = secretSpecs({ installSecrets: [{ secret: 'npm-token', variable: 'NPM_TOKEN' }, { secret: 'registry-token', variable: 'REGISTRY_TOKEN' }] });
 
 function stateDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'secret-slot-'));
@@ -16,7 +16,7 @@ function stateDir() {
 test('until a store is chosen a read finds nothing and a write says to choose one', async () => {
   const slot = createSecretSlot({ stateDir: stateDir(), specs });
   assert.equal(slot.configured(), false);
-  assert.equal(await slot.read('api-env'), null);
+  assert.equal(await slot.read('npm-token'), null);
   await assert.rejects(slot.save('users/a/claude-token', 'x', 'd'), (err) => err.shown && /choose one/.test(err.message));
 });
 
@@ -50,7 +50,7 @@ test('AWS is tried before it is kept, and a first write creates the secret', asy
   };
   const ok = createSecretSlot({ stateDir: dir, specs, aws });
   assert.equal((await ok.configure({ kind: 'aws', prefix: 'mine/' })).prefix, 'mine/');
-  await ok.write('api-env', 'A=1');
+  await ok.write('npm-token', 'A=1');
   assert.deepEqual(calls, ['secretsmanager list-secrets', 'secretsmanager put-secret-value', 'secretsmanager create-secret']);
   await assert.rejects(ok.configure({ kind: 'aws', prefix: 'bad prefix!' }), /prefix may hold/);
   await assert.rejects(ok.configure({ kind: 'ftp' }), /choose local or aws/);

@@ -7,8 +7,7 @@
 
   let me = null;
   let loadError = null;
-  // Your own tmux config. /api/my still lists the Terraform env files' own lines beside it, for pages from before
-  // Repo settings, which hold those now (myRepoSettings.js).
+  // Your own tmux config: a repo's env files are under Repo settings (myRepoSettings.js).
   const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => key === 'tmux-conf');
   const files = {};
   let fileKey = null;

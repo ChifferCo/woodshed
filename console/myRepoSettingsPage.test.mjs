@@ -86,7 +86,7 @@ async function call(api, { method, path, body, login }) {
 async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
-  const config = { projects: PROJECTS, repo: 'acme/app', envFiles: [{ secret: 'api-env', path: 'api/.env' }] };
+  const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = (name) => ({ async repoLayer() { const f = FILES[name]; return { envFiles: f.envFiles, env: f.env ?? {}, rules: f.rules ?? null, setup: null }; } });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
   if (before) await before({ repoSettings, store, secrets });
@@ -258,9 +258,9 @@ test('a link to a repo they cannot write to opens their default one instead, and
   assert.ok(!calls.some((c) => c.path.startsWith('/api/my/repos/infra')));
 });
 
-test('an env file still read from its Terraform secret says so on the installation\'s layer', async () => {
+test('an env file with no installation values says nothing of a Terraform secret', async () => {
   const { app } = await loadCard();
-  assert.match(textOf(app), /No values here yet: sessions still read the Terraform secret api-env\./);
+  assert.doesNotMatch(textOf(app), /Terraform/);
 });
 
 test('an admin is pointed at the repo\'s page on Console settings for the installation\'s values', async () => {

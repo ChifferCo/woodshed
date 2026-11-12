@@ -76,10 +76,10 @@ async function call(api, { method, path, body, login }) {
  * The page for `project`, signed in as an admin unless `admin` is false (the server's ADMIN_API_RE answers 403 then).
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', file = APP_FILE, envFiles = [{ secret: 'api-env', path: 'api/.env' }], admin = true, before = null, confirmAnswer = true } = {}) {
+async function loadPage({ project = 'app', search = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
-  const config = { projects: PROJECTS, repo: 'acme/app', envFiles };
+  const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = () => ({
     async repoLayer() {
       if (file instanceof Error) throw file;
@@ -198,7 +198,7 @@ test('a saved value stays hidden until Show and edit, which reads it from the co
   assert.equal(editorOf(app, 'env-api-env'), undefined);
 });
 
-test('Clear asks first, says the Terraform secret is read again, and empties the layer', async () => {
+test('Clear asks first, says sessions get the repo\'s defaults alone, and empties the layer', async () => {
   const { app, calls, asked, secrets } = await loadPage({
     before: ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'A=1\n', by: 'mia-dev' }),
   });
@@ -206,25 +206,25 @@ test('Clear asks first, says the Terraform secret is read again, and empties the
   await settle();
   button(app, 'Clear').listeners.click();
   await settle();
-  assert.deepEqual(asked, ['Clear this installation\'s values for api/.env? Sessions then read the Terraform secret api-env again.']);
+  assert.deepEqual(asked, ['Clear this installation\'s values for api/.env?']);
   assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/repos/app/env/api-env', body: { text: '' } });
   assert.equal(secrets.values.has('repos/app/env/api-env'), false);
-  assert.match(textOf(app), /Cleared\. Sessions read the Terraform secret api-env again\./);
-  assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
+  assert.match(textOf(app), /Cleared\. Sessions get the repo's defaults alone\./);
+  assert.doesNotMatch(textOf(app), /Terraform/, 'no file is read from its Terraform secret any more');
 });
 
-test('an env file copied from its Terraform secret says so, with the date', async () => {
+test('a value an older console copied from its Terraform secret says so, and that is all', async () => {
   const { app } = await loadPage({
-    before: async ({ secrets, repoSettings }) => {
-      secrets.values.set('api-env', 'A=1\n');
-      await repoSettings.migrate();
+    before: async ({ secrets, store }) => {
+      secrets.values.set('repos/app/env/api-env', 'A=1\n');
+      store.state.repoSettings = { app: { env: { 'api-env': { savedAt: '2026-10-01T00:00:00.000Z', by: 'terraform env_files', bytes: 4, keys: ['A'] } } } };
     },
   });
-  assert.match(textOf(app), /Copied from the Terraform secret api-env on at 20\d\d-.*\. Sessions read this one now\./);
-  assert.match(textOf(app), /copied from Terraform/);
+  assert.match(textOf(app), /Saved at 2026-10-01T00:00:00\.000Z · copied from Terraform · 4 bytes · 1 key/);
+  assert.doesNotMatch(textOf(app), /Terraform secret|Sessions read this one now/);
 });
 
-test('an env file with no Terraform secret behind it has no legacy note, and its tab is deep-linked', async () => {
+test('an env file\'s tab is deep-linked', async () => {
   const { app, history } = await loadPage({ search: '?file=web-env-local' });
   assert.deepEqual(buttons(app, 'web/.env.local').map((b) => b.attrs['aria-pressed']), ['true']);
   assert.doesNotMatch(textOf(app), /Terraform/);
@@ -339,17 +339,4 @@ test('a console with no secret store says nothing can be saved, and turns the ed
   const { app } = await loadPage({ before: ({ secrets }) => { secrets.configured = () => false; } });
   assert.match(textOf(app), /This console has no secret store, so nothing can be saved here\./);
   assert.equal(editorOf(app, 'env-api-env').disabled, true);
-});
-
-test('a copied value, cleared, says sessions read the Terraform secret again, not that they read the copy', async () => {
-  const { app } = await loadPage({
-    before: async ({ secrets, repoSettings }) => {
-      secrets.values.set('api-env', 'A=1\n');
-      await repoSettings.migrate();
-      await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: '', by: 'mia-dev' });
-      await repoSettings.migrate();
-    },
-  });
-  assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
-  assert.doesNotMatch(textOf(app), /Sessions read this one now/);
 });
