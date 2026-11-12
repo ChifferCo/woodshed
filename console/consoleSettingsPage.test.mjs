@@ -30,7 +30,7 @@ function walk(el, out = []) {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-async function loadPage(answer) {
+async function loadPage(answer, { repos } = {}) {
   const app = element('div');
   const posted = [];
   const confirms = [];
@@ -47,7 +47,13 @@ async function loadPage(answer) {
   };
   const W = {
     h, nav: () => element('nav'), providerWords: {},
-    getJson: async () => structuredClone(answer),
+    getJson: async (path) => {
+      if (path === '/api/console-settings/projects/repos' && repos) {
+        if (repos instanceof Error) throw repos;
+        return structuredClone(typeof repos === 'function' ? repos() : repos);
+      }
+      return structuredClone(answer);
+    },
     postJson: async (path, body) => {
       posted.push({ path, body });
       if (posted.hold) await posted.hold;
@@ -165,4 +171,57 @@ test('the Slack card sends its channel with the values, and a refusal shows on t
   const error = walk(cardOf(app, 'slack')).find((e) => e.className === 'form-error');
   assert.equal(textOf(error), 'Slack says the bot is not in that channel.');
   assert.equal(walk(cardOf(app, 'slack')).find((e) => e.tag === 'button').attrs.disabled, undefined, 'the typed channel is kept to try again');
+});
+
+const REPOS = {
+  repos: [{ repo: 'akurilin/social', private: true }, { repo: 'acme/web', private: false }],
+  grant: [{ account: 'acme', href: 'https://github.com/organizations/acme/settings/installations/1' }, { account: 'akurilin', href: 'https://github.com/settings/installations/2' }],
+  install: 'https://github.com/apps/w/installations/new',
+};
+
+test('with the App, Add a repo is a list of the repos it may reach, and says where on GitHub to give it more', async () => {
+  const { app, posted } = await loadPage(ANSWER, { repos: REPOS });
+  const select = walk(app).find((e) => e.attrs.id === 'repo-new');
+  assert.equal(select.tag, 'select');
+  assert.deepEqual(walk(select).filter((e) => e.tag === 'option').map((o) => [o.attrs.value, textOf(o)]),
+    [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web']]);
+  const card = cardOf(app, 'projects');
+  assert.match(textOf(card), /Not listed\? Give the App access to it on GitHub: acme ↗, akurilin ↗; or install it on another account ↗\. Then List again/);
+  assert.deepEqual(walk(card).filter((e) => e.tag === 'a').map((a) => [a.attrs.href, a.attrs.target]), [
+    ['https://github.com/organizations/acme/settings/installations/1', '_blank'], ['https://github.com/settings/installations/2', '_blank'], ['https://github.com/apps/w/installations/new', '_blank'],
+  ]);
+
+  const addOf = () => walk(app).find((e) => e.tag === 'button' && /^(Add repo|Checking with GitHub…)$/.test(textOf(e)));
+  addOf().listeners.click();
+  await tick();
+  assert.equal(posted.length, 0, 'nothing picked, nothing sent');
+  assert.match(textOf(walk(app).find((e) => e.className === 'form-error')), /Choose a repo first/);
+  walk(app).find((e) => e.attrs.id === 'repo-new').listeners.change({ target: { value: 'akurilin/social' } });
+  posted.reply = () => ({ projects: ANSWER.projects });
+  addOf().listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects', body: { repo: 'akurilin/social', name: '' } }]);
+  assert.match(textOf(app), /akurilin\/social added/);
+});
+
+test('List again reads the App\'s repos again, so one just given on GitHub shows up', async () => {
+  let repos = { ...REPOS, repos: [] };
+  const { app } = await loadPage(ANSWER, { repos: () => repos });
+  const select = () => walk(app).find((e) => e.attrs.id === 'repo-new');
+  assert.equal(select().attrs.disabled, '');
+  assert.equal(textOf(select()), 'No repo left to add');
+  repos = REPOS;
+  walk(app).find((e) => e.tag === 'button' && textOf(e) === 'List again').listeners.click();
+  await tick();
+  assert.equal(select().attrs.disabled, undefined);
+  assert.match(textOf(select()), /akurilin\/social/);
+});
+
+test('with no App to ask, or GitHub not answering, Add a repo takes owner/name typed in', async () => {
+  const none = await loadPage(ANSWER, { repos: { repos: null, grant: [], install: null } });
+  assert.equal(walk(none.app).find((e) => e.attrs.id === 'repo-new').tag, 'input');
+  assert.doesNotMatch(textOf(none.app), /Not listed/);
+  const down = await loadPage(ANSWER, { repos: new Error('GitHub did not list the App\'s repos. Type the repo instead, or try again; the console log says why.') });
+  assert.equal(walk(down.app).find((e) => e.attrs.id === 'repo-new').tag, 'input');
+  assert.match(textOf(down.app), /GitHub did not list the App's repos\. Type the repo instead/);
 });

@@ -75,6 +75,7 @@
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
+//   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
@@ -1427,6 +1428,18 @@ export function createHandler({
     });
   }
 
+  // `repos: null` where the console has no App to ask: the page then takes owner/name typed in.
+  async function repoChoicesReply(res) {
+    if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+    try {
+      const found = await addedProjects.choices();
+      return reply(res, 200, found ?? { repos: null, grant: [], install: null });
+    } catch (err) {
+      if (err.shown) return reply(res, 502, { error: err.message });
+      throw err;
+    }
+  }
+
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
@@ -1662,6 +1675,7 @@ export function createHandler({
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
     if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
+    if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/people') return html(res, pageShell({ title: consoleName, script: 'people.js', provider }));
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
