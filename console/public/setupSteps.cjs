@@ -8,8 +8,8 @@
   'use strict';
 
   /**
-   * What is left before New session works: the Claude token, which is the person's to do, and the databases, which the
-   * console makes by itself once the token is saved. They are progress while they copy, and `todo` when the copy failed
+   * What is left before New session works: a Claude token or a Codex sign-in, which is the person's to do, and the
+   * databases, which the console makes by itself once either is saved. They are progress while they copy, and `todo` when the copy failed
    * or never started, which is when the card gives them a button.
    * @returns {{key: string, label: string, hint: string, done: boolean, todo?: boolean}[]}
    */
@@ -28,12 +28,12 @@
       // A console that started with no repo: sessions have nothing to work on until an admin adds one.
       ...(me.repoNeeded ? [{ key: 'repo', label: 'Add a repo', hint: 'Sessions work on a repo an admin adds on Console settings', done: false }] : []),
       ...(me.githubSetupNeeded ? [{ key: 'github', label: 'Connect a GitHub App', hint: 'Sessions push, open pull requests and sign people in through it', done: false }] : []),
-      { key: 'token', label: 'Save your Claude token', hint: 'Your own sessions run on your plan. Or save a Codex sign-in on My settings', done: tokenSet },
+      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token or a Codex sign-in: either one is enough', done: tokenSet },
       ...(showDb ? [{ key: 'databases', label: 'Your databases', hint: dbHint[db.status], done: db.status === 'ready', todo: db.status === 'failed' || db.status === 'none' }] : []),
     ];
   }
 
-  /** @returns {boolean}  nothing is left: the console has a repo, the token is saved and the databases are ready (or this console has none) */
+  /** @returns {boolean}  nothing is left: the console has a repo, a Claude token or a Codex sign-in is saved and the databases are ready (or this console has none) */
   function setupDone(me) {
     return !me.repoNeeded && !me.githubSetupNeeded && Boolean(me.claudeToken?.set || me.codexAuth?.set) && (!me.databases?.available || me.databases.status === 'ready');
   }

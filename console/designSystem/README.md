@@ -43,9 +43,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Setup card
 
-- A member who has not saved a Claude token (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The token row has the one primary button, Set up, which goes to My settings. The databases row appears once the token is saved: progress while it copies, and an outline Open My settings button when it failed or never started.
+- A member who has saved neither a Claude token nor a Codex sign-in (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The agent row, Choose your agent, has two outline buttons, Claude and Codex: equal choices that go to that box on My settings, so neither is orange. The databases row appears once either is saved: progress while it copies, and an outline Open My settings button when it failed or never started.
 - Show only what a person can do or is waiting on: no "signed in" row, no step for something the console does by itself, and Connect GitHub stays on My settings.
-- The same card fills the pane when New session is pressed before the token is saved and the databases are ready.
+- The same card fills the pane when New session is pressed before a Claude token or a Codex sign-in is saved and the databases are ready.
 
 ## Checklists
 

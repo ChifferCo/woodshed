@@ -258,9 +258,9 @@ My Woodshed sessions are unchanged: Active and Stopped, and their own Resume.
 ## My Woodshed
 
 **My Woodshed** (`/`) is for every member, whatever their switches on People, and has nothing to create or turn on. Until your
-Claude token is saved and your databases are ready, the top of the rail's Mine view has a **setup card** and **+ New session**
-opens the same card in the pane in place of the form. The card lists the token, with **Set up** taking you to My settings,
-and, once the token is saved, the databases (the console starts the copy then, so it is progress; if it failed or never
+Claude token or Codex sign-in is saved and your databases are ready, the top of the rail's Mine view has a **setup card** and **+ New session**
+opens the same card in the pane in place of the form. The card lists Choose your agent, whose **Claude** and **Codex** take you to
+that box on My settings, and, once either is saved, the databases (the console starts the copy then, so it is progress; if it failed or never
 started the row has an **Open My settings** button). It goes when both are done. Connect GitHub, which makes your sessions push and review as you, is on My settings and not a
 step: sessions work without it. My Woodshed is the shed's launcher, inside the console. The rail
 lists your own sessions, Active and Stopped, under **+ New session**. On a console
@@ -532,7 +532,8 @@ on Shared.
 it with `claude setup-token` on your laptop. The console keeps it in Secrets
 Manager at `woodshed-cloud/users/<login>/claude-token`, makes that secret itself,
 and never shows it again. `state.json` notes only when it was saved.
-New session is refused until a token is saved. Your private sessions get it
+The setup card, and New session, wait until a Claude token or a Codex sign-in is saved: either
+is enough, and a Claude session still needs the Claude token. Your private sessions get it
 at start, for claude alone: the entrypoint keeps it in
 `~/.config/woodshed/claude-token`, outside the Claude home it saves, and
 `session/bin/claude` hands it to claude as `CLAUDE_CODE_OAUTH_TOKEN`. claude
