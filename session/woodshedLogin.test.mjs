@@ -71,7 +71,12 @@ function setUp(t) {
       if (check()) return;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    assert.fail(`${what} within 10 s; log: ${fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : 'none'}`);
+    // What claude's pane shows says where a slow or stuck step stopped, which the log alone does not.
+    let pane = 'none';
+    try {
+      pane = tmux('capture-pane', '-p', '-t', 'claude');
+    } catch {}
+    assert.fail(`${what} within 10 s; log: ${fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : 'none'}; claude's pane: ${pane.trimEnd()}`);
   };
   const hook = (fields) => fs.writeFileSync(path.join(runDir, 'woodshed-claude-state.json'), JSON.stringify({ at: Date.now(), ...fields }));
   return { bin, runDir, home, env, tmux, login, until, hook };
