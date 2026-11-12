@@ -97,7 +97,7 @@
         showPaste && pasteForm());
     }
     return step(1, 'Make the GitHub App', false,
-      h('p', null, 'Woodshed needs a GitHub App for ', h('code', null, data.repo), ': it pushes, opens pull requests and comments as the App, and people sign in through it. ',
+      h('p', null, data.optional ? 'A GitHub App for ' : 'Woodshed needs a GitHub App for ', h('code', null, data.repo), ': it pushes, opens pull requests and comments as the App, and people sign in through it. ',
         'One click makes it with the right permissions: GitHub asks you to confirm the name, then brings you back here.'),
       h('label', { class: 'field-label' }, 'Make it under',
         h('select', { class: 'field', onchange: (e) => { ownerType = e.target.value; } },
@@ -170,7 +170,9 @@
     const head = h('header', { class: 'page-head' }, h('div', null,
       h('a', { class: 'side-back', href: '/' }, '‹ Back to sessions'),
       h('h1', { class: 'title' }, 'Set up the GitHub App'),
-      h('p', { class: 'sub' }, 'Sessions push, open pull requests and sign people in through a GitHub App. This console has none yet.')));
+      h('p', { class: 'sub' }, data?.optional
+        ? 'Optional on this machine: sessions already push and open pull requests as you, with your gh sign-in. An App does it as a bot scoped to the repo, and lets teammates sign in.'
+        : 'Sessions push, open pull requests and sign people in through a GitHub App. This console has none yet.')));
     let body;
     if (!data) body = h('p', { class: 'empty' }, loadError ? `Could not load: ${loadError}` : 'Loading…');
     else if (data.configuredBy) body = h('p', { class: 'form-ok' }, `This console already runs on a GitHub App (${data.configuredBy === 'setup' ? 'from this page' : 'from its settings'}). Change its key on the Secrets page.`);

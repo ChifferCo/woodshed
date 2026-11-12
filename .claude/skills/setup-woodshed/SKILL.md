@@ -40,7 +40,8 @@ the like) at the prompt, so its output lands here. Never ask for a token in the 
 2. **What the checks found**: what is ready, and what they must fix first.
 3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
    so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).
-4. **The order**, in one line each: the project file, the install, the GitHub App, their Claude, the first session.
+4. **The order**, in one line each: the project file, the install, the GitHub App (not on this machine, where it is
+   optional), their Claude, the first session.
 
 Then ask them to say go.
 
@@ -48,7 +49,7 @@ Then ask them to say go.
 
 | Where | From them |
 | --- | --- |
-| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. Make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. A dev value for each env file `secret` the project file names (never production) |
+| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. On a server or AWS, make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. On this machine it is optional: sessions push as them with their `gh` sign-in, so leave it out unless they ask for one. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. A dev value for each env file `secret` the project file names (never production) |
 | A server, also | The machine (Ubuntu 24.04, about 4 GB a session) and SSH access to it for you. A firewall in their provider's panel. A name: a domain with an `A` and a wildcard record, or none with sslip.io. Their own IP, for the fence until sign-in. Signing in first, so they are the first admin |
 | AWS, also | An AWS account for Woodshed alone, with credentials in this shell. A domain to delegate, with NS records at its parent's DNS. An email for the budget alerts. The GitHub App made by hand (its permissions are in `providers/aws/README.md`, "Setting it up", step 2), its private key uploaded on the console later. Approving each Terraform apply after reading its plan |
 
@@ -56,8 +57,8 @@ Everything else is yours: say so in the briefing, so they know the list above is
 
 ### The person's steps come as early as they can
 
-- **The GitHub App first.** On AWS it is the first step anyway, before Terraform. On this machine and a server, it is
-  made from the console's `/setup/github` page, so it can only come once the console runs: start the console the
+- **The GitHub App first**, where it is needed. On AWS it is the first step anyway, before Terraform. On a server, it
+  is made from the console's `/setup/github` page, so it can only come once the console runs: start the console the
   moment the runbook allows and make the App the first thing they do on it.
 - **Fill the waits.** While the session image builds, ask them for what does not need the console: `claude setup-token`
   in their own terminal (they keep the token to paste on **My settings**), the env file values ready, on a server the

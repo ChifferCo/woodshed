@@ -5,8 +5,8 @@
 #
 # or `bash install.sh` from a checkout. It builds the session image for your repository, starts Postgres and Mongo in
 # Docker for each database engine its project file names, so each session gets its own copy, writes the settings to ~/.woodshed and runs the console at http://localhost:7690. Running it again keeps
-# what it made and starts the console. The console's first page then makes the GitHub App and asks for your Claude
-# token. providers/local/README.md says what each piece is.
+# what it made and starts the console. The console's first page then asks for your Claude token; sessions push as you,
+# with your gh sign-in, so a GitHub App is optional on this machine. providers/local/README.md says what each piece is.
 #
 # Optional settings: WOODSHED_REPO (owner/name, asked otherwise), WOODSHED_HOME (~/.woodshed), WOODSHED_GIT (where the
 # code is cloned from), WOODSHED_NETWORK (a docker network sessions join to reach the repository's own services, such

@@ -94,6 +94,17 @@ export function supervisorOf(env = process.env) {
   return env.INVOCATION_ID ? 'systemd' : null;
 }
 
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** @returns {boolean}  the URL names this machine's loopback, so only someone at this machine opens it */
+export function isLoopbackUrl(url) {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * @param {{store: {state: object, save: () => void}, secrets: {read: Function, save: Function, list: Function}|null,
  *          config: {githubApp: object|null, publicUrl: string, repo: string}, fetchImpl?: typeof fetch, now?: () => number,
@@ -122,6 +133,16 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     return Boolean(secrets) && !config.githubApp;
   }
 
+  /**
+   * On one person's own machine the App is a choice, not a step: the console runs on their own `gh` token, sessions
+   * push as them, and nobody else reaches the console to sign in. A console others reach (any public URL that is not
+   * loopback) still needs it, for sign-in.
+   * @returns {boolean}
+   */
+  function optional() {
+    return available() && Boolean(config.ghToken) && isLoopbackUrl(config.publicUrl);
+  }
+
   function requireAvailable() {
     if (!secrets) throw refusal('this console has no secret store, so it cannot keep an App key: see woodshed/providers/local/README.md for the secrets folder');
     if (secrets.configured?.() === false) throw refusal('this console has no secrets manager yet: choose one on the Secrets page first, then come back');
@@ -139,6 +160,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     const needsRestart = Boolean(found?.installationId) && !config.githubApp;
     return {
       available: available(),
+      optional: optional(),
       hasSecretStore: Boolean(secrets),
       configuredBy: config.githubApp ? (found && found.appId === String(config.githubApp.appId) ? 'setup' : 'environment') : null,
       repo: defaultProject(config).repo,
@@ -282,7 +304,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     return { restarting: true };
   }
 
-  return { available, view, startManifest, completeManifest, saveManual, findInstallation, restart };
+  return { available, optional, view, startManifest, completeManifest, saveManual, findInstallation, restart };
 }
 
 /**

@@ -125,12 +125,14 @@ macOS and Windows, Docker Desktop must be running.
    ```
 
    **Done when** `curl -fsS -o /dev/null http://localhost:7690/` succeeds.
-4. **You.** Open `http://localhost:7690`. The setup card's **Connect a GitHub App** leads to `/setup/github`: create the
-   App on GitHub (one confirmation there, under the repository's organization or your own account; an organization
-   may need an owner to approve it), install it on the repository, then press **Restart the console**. The launcher
-   starts it again by itself.
+4. **You**, optional. Open `http://localhost:7690`. Sessions push and open pull requests as you, with your `gh`
+   sign-in, so a GitHub App is not needed on this machine: skip this step unless you want sessions to push as a bot
+   scoped to the repository. Then the setup card's **Connect a GitHub App (optional)** leads to `/setup/github`: create
+   the App on GitHub (one confirmation there, under the repository's organization or your own account; an
+   organization may need an owner to approve it), install it on the repository, then press **Restart the console**.
+   The launcher starts it again by itself.
 
-   **Done when** the console's log has `console: GitHub App from the setup page`.
+   **Done when** the console's log has `console: GitHub App from the setup page`, or you skipped it.
 5. **You.** Choose your agent: the setup card's **Claude** or **Codex** opens that box on **My settings**, and either one
    is enough. For Claude on a Claude plan: run `claude setup-token` in a terminal, and save the token. Copy it in one
    piece: a token that lost a character to a wrapped line looks right and fails in the session. With an Anthropic API

@@ -19,11 +19,14 @@ The console picks this provider with `WOODSHED_PROVIDER=local`, or with no provi
 and the other way round (`../console.mjs`).
 
 
-You need Docker with the compose plugin, Node 22, the GitHub CLI (`gh`, https://cli.github.com) on the console's
-PATH, and a GitHub App for the repo its sessions work on. Every GitHub call the console makes goes through `gh`, with
-the App's token when it has one. The console can
-make it for you at `/setup/github` (below); `providers/aws/README.md`, "Setting it up", step 2, says which permissions. Without the App the console runs on your
-own `gh` token, which reaches far more than one repo.
+You need Docker with the compose plugin, Node 22, and the GitHub CLI (`gh`, https://cli.github.com) on the console's
+PATH, signed in. Every GitHub call the console makes goes through `gh`, with the App's token when it has one.
+
+On your own machine, a GitHub App is optional: without one the console and its sessions run on your own `gh` token, so
+sessions push and open pull requests as you, and the setup card offers the App without requiring it. That token
+reaches far more than one repo; an App pushes as a bot scoped to the repo, and is what lets teammates sign in, so a
+console others reach (on a server) needs one. The console can make it for you at `/setup/github` (below);
+`providers/aws/README.md`, "Setting it up", step 2, says which permissions.
 
 ## Setting it up
 
@@ -82,7 +85,8 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
    set -a && . ~/woodshed/stack.env && set +a && node woodshed/providers/console.mjs
    ```
 
-6. Open the console: with no GitHub App, My Woodshed's setup card and `/setup/github` walk through making one (GitHub's
+6. Open the console. On your own machine the GitHub App is optional (above). To add one, or on a server where it is
+   needed, My Woodshed's setup card and `/setup/github` walk through making one (GitHub's
    manifest flow, or paste an App's ID and key), installing it on the repo and restarting the console. Started from a
    shell as in step 5, restart it by hand: stop it and run the same command. Run by a systemd unit with
    `Restart=on-failure`, the page's Restart button does it (console/README.md, "Setting up the GitHub App from the

@@ -1031,8 +1031,10 @@ export function createHandler({
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
-      // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
-      githubSetupNeeded: Boolean(githubSetup?.available()),
+      // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github. On
+      // one person's own machine with a gh token it is optional, and does not hold New session back.
+      githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional(),
+      githubSetupOptional: Boolean(githubSetup?.optional()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.

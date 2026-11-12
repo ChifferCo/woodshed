@@ -585,7 +585,10 @@ in their env file, use it directly.
 
 A console with a secret store (AWS, or the local provider's secrets folder) and no GitHub App
 (`WOODSHED_CLOUD_GITHUB_APP_ID` unset) offers `/setup/github`, and My Woodshed's setup card lists **Connect a GitHub App**
-first. It starts without `gh` too, but needs it for every GitHub call afterwards, the App's included: without it the
+first. On one person's own machine, a public URL on loopback (`localhost`, `127.0.0.1`) with a `gh` token, the App is
+optional: the card lists **Connect a GitHub App (optional)**, which never holds New session back, since sessions push
+and open pull requests as that person with their `gh` token and nobody else reaches the console to sign in
+(`githubAppSetup.mjs`, `optional`). An App still pushes as a bot scoped to the repo, and is what lets teammates sign in. It starts without `gh` too, but needs it for every GitHub call afterwards, the App's included: without it the
 console logs `console: gh not installed, GitHub calls will fail` at start. The page has three steps:
 
 1. **Make the App.** *Create the App on GitHub* posts GitHub's App manifest (`githubAppSetup.mjs`, `appManifest`: the
