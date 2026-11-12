@@ -326,7 +326,33 @@ test('a console that has not come back two minutes after an update\'s restart sa
   clock.now += 2 * 60_000;
   await next();
   const text = textOf(app);
-  assert.match(text, /The console has not answered for 3 minutes since it restarted on bbbbbbb/);
+  assert.match(text, /The console has not answered for 3 minutes since the update restarted it on bbbbbbb/);
   assert.match(text, /git -C \/home\/me\/\.woodshed\/src reset --keep 0ca189f/);
   assert.match(text, /This page still reloads if it comes back/);
+});
+
+test('an update that restarts between two reads, onto a console that never answers, still says so after two minutes', async () => {
+  const clock = { now: Date.parse('2026-11-12T01:00:00.000Z') };
+  const timers = [];
+  let down = false;
+  const { app, posted } = await loadPage(ANSWER, { clock, timers, updates: () => { if (down) throw new Error('fetch failed'); return UPDATES; } });
+  await tick();
+  // Update answers while it pulls; by the next read it has restarted, and nothing answers again.
+  posted.reply = () => ({
+    ...UPDATES,
+    job: { state: 'running', from: '0ca189f', to: null, logTail: [], steps: [{ key: 'pull', state: 'now' }, { key: 'starts', state: 'next' }, { key: 'image', state: 'next' }, { key: 'restart', state: 'next' }] },
+  });
+  button(app, 'Update to latest').listeners.click();
+  await tick();
+  const next = async () => { await timers.at(-1)(); await tick(); };
+  down = true;
+  clock.now += 2_000;
+  await next();
+  assert.match(textOf(app), /Restarting/);
+  assert.match(textOf(app), /The console is restarting on the new code/);
+  clock.now += 2 * 60_000 + 30_000;
+  await next();
+  const text = textOf(app);
+  assert.match(text, /The console has not answered for 2 minutes since the update restarted it\. Its log says why/);
+  assert.match(text, /git -C \/home\/me\/\.woodshed\/src reset --keep 0ca189f/);
 });

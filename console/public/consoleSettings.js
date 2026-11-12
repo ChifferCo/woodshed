@@ -450,7 +450,7 @@
       return h('p', { class: 'sub', role: 'status' }, 'The console is restarting on the new code. Running sessions carry on; this page reloads once it answers.');
     }
     return h('div', { class: 'cap-note', role: 'alert' },
-      h('p', { class: 'form-error', style: 'margin: 0 0 6px' }, `The console has not answered for ${Math.floor((Date.now() - restartSince) / 60_000)} minutes since it restarted on ${job.to ?? 'the new code'}. Its log says why: bin/woodshed's output, or journalctl for its systemd unit. To go back to the code that ran, on its machine:`),
+      h('p', { class: 'form-error', style: 'margin: 0 0 6px' }, `The console has not answered for ${Math.floor((Date.now() - restartSince) / 60_000)} minutes since the update restarted it${job.to ? ` on ${job.to}` : ''}. Its log says why: bin/woodshed's output, or journalctl for its systemd unit. To go back to the code that ran, on its machine:`),
       h('pre', { class: 'update-cmd' }, `git -C ${updates?.clone ?? '<clone>'} reset --keep ${job.from}\n# then start the console again: ~/.woodshed/bin/woodshed, or systemctl restart <its unit>`),
       h('p', { class: 'sub', style: 'margin: 6px 0 0' }, 'This page still reloads if it comes back.'));
   }
@@ -524,6 +524,12 @@
       if (following && answered && updates && !updates.job) {
         location.reload();
         return;
+      }
+      // An update with no image to build reaches its restart within a poll or two, so the page may never see it
+      // restarting: a console that stops answering while one runs is taken for that restart.
+      if (following && !answered) {
+        awaitingRestart = true;
+        restartSince ??= Date.now();
       }
       if (updates?.job?.state === 'failed') following = false;
       if (!(document.activeElement?.closest?.('.settings-card') && document.activeElement.matches('input'))) render();
