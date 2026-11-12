@@ -645,6 +645,10 @@ secrets.
   shows. A session from an image before `session/sessionDiff.mjs` answers 404.
 - **The App log tab is empty.** statusd's `GET /applog` reads
   `/tmp/woodshed-app.log` and the project file's `app.logs` in the session; the tab says `Nothing logged yet` until Start app ran.
+- **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console
+  logs `codexModels: catalog read` with `source` (`own` or `team`) and how many `models`, `OpenAI refused the catalog`
+  with the `status` (a 401 is a sign-in OpenAI no longer takes), `catalog not read`, `own sign-in expired, not read`
+  (a Codex session refreshes it at its stop) or `credential not read`. It tries again a minute after a failure.
 - **The `/` list in New session is empty.** The console logs `console: skills
   read` with the count, or `console: skills not readable` with gh's error.
 - **A pin or rename does not stick.** The page says `Not saved` with the

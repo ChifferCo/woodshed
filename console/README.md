@@ -545,6 +545,16 @@ command run there can read the file, so treat a token you suspect leaked as
 you would any other, and save a new one. Saving a new token or removing it
 reaches running sessions only at their next start.
 
+New session opens on **Codex** for someone with a Codex sign-in saved and no Claude token, and on Claude otherwise,
+until they pick an agent. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+(`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
+your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
+ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT
+sign-in, since that rotates the refresh token your sessions hold: with its access token expired, or OpenAI not
+answering, the menus are your last list read, or else codex's built-in list (`BUILT_IN`, from `codex debug models
+--bundled` of the image's codex), and a line under them says so. `CODEX_CLIENT_VERSION` follows the image's
+`CODEX_VERSION`, which `codexModels.test.mjs` checks; refresh `BUILT_IN` with it.
+
 Under the token, the switch **Also use it for shared sessions I start from
 GitHub** (on by default, and only with a token saved) runs the shared
 sessions you start, with the label or a `/woodshed` comment, on your plan too.
