@@ -342,3 +342,9 @@ test('routeQa starts QA on a pull request unless a QA session is testing it, and
   assert.deepEqual(routeQa({ sessions: [{ ...qa, qa: undefined }], number: 7 }), { action: 'start' }, 'a coding session on it is no QA');
   assert.deepEqual(routeTrigger({ sessions: [qa], number: 7, trigger: 'comment', kind: 'pr', text: 'go' }), { action: 'start', resumeBranch: null });
 });
+
+test('planUsageFrom preserves Codex attribution through status updates', () => {
+  const usage = { agent: 'codex', asOf: '2026-11-12T12:00:00.000Z', fiveHour: { usedPercent: 12, resetsAt: null }, sevenDay: { usedPercent: 28, resetsAt: null } };
+  assert.deepEqual(planUsageFrom(usage), usage);
+  assert.deepEqual(statusUpdate({ ...session({}), owner: 'octocat', options: { agent: 'codex' } }, { state: 'done', planUsage: usage }, 'now').planUsage, usage);
+});
