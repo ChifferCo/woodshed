@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildBrief, decisionsFrom, mergeRiskFrom, mergeRiskRunIds, qaCheckFrom, qaCommentIn, qaReportFrom, riskAreasFrom, riskLineFrom } from './decisionBrief.mjs';
+import { buildBrief, decisionsFrom, mergeRiskFrom, mergeRiskRunIds, qaCheckFrom, qaCommentIn, qaReportFrom, riskAreasFrom, riskLineFrom, tierAfterQa } from './decisionBrief.mjs';
 
 const GATES = {
   review: { author: 'review-bot[bot]', heading: '## Code review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: 'review-bot[bot]' },
@@ -398,4 +398,21 @@ test('the QA report is read from the headings a QA workflow counts', () => {
 test('a QA with no author (a Woodshed QA session) trusts no comment', () => {
   const comments = [{ user: { login: 'someone' }, body: '## QA\nPassed' }, { user: { login: null }, body: '## QA' }];
   assert.equal(qaCommentIn(comments, { author: null, heading: '## QA' }), null);
+});
+
+test('a failed QA raises the review\'s tier to High, and a pass or a skip never lowers it', () => {
+  assert.equal(tierAfterQa('Low', 'failure'), 'High');
+  assert.equal(tierAfterQa('Medium', 'failure'), 'High');
+  assert.equal(tierAfterQa('Medium', 'success'), 'Medium');
+  assert.equal(tierAfterQa('High', 'success'), 'High');
+  assert.equal(tierAfterQa('Low', 'neutral'), 'Low');
+  assert.equal(tierAfterQa(null, 'failure'), null, 'no tier from the review: QA does not make one up');
+
+  const failed = brief({ runs: [...shards, mergeRisk('Low: Only changes the empty-state text.'), qaCheck('Fail: 1 of 2 test cases failed', 'failure')] });
+  assert.equal(failed.tier, 'High');
+  assert.equal(failed.facts.raisedByQa, true);
+  assert.match(failed.comment, /\*\*Raised to High: QA failed on this commit\.\*\* The review rated it \*\*Low: Only changes/);
+  const passed = brief();
+  assert.equal(passed.tier, 'Low');
+  assert.doesNotMatch(passed.comment, /Raised to High/);
 });

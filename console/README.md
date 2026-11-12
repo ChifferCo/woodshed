@@ -1299,7 +1299,9 @@ a signal that is missing is said to be missing:
   `⚪ Risk not posted` on the post and the session's own `Risk:` line from the
   PR body in the thread (`Self-assessed risk`), which `prompt.md` asks for. A
   repo with no `mergeRisk` gets no risk tag on the post, and no merge risk
-  section in the brief.
+  section in the brief. A failed trusted QA check raises any tier to High, and
+  the brief says so; a pass or a skip never lowers it. QA's runner also swaps
+  the review's `merge risk:` label for `merge risk: high`.
 - **QA** is the `qa` check's own verdict and counts, and the first
   thing its PR comment (by `qa.author`, starting with `qa.heading`) lists as untested.
 - **Risk areas** are the review comment's `What you accept by merging`, then its

@@ -2118,6 +2118,25 @@ test('a commit the review approved while QA ran on an older one is tested once t
   assert.deepEqual([later?.qa.sha, later?.startedBy], ['c'.repeat(40), 'joel']);
 });
 
+test('a failed QA makes the review\'s merge risk label High, and a pass or an unrated pull request keeps its labels', async () => {
+  const FAIL = { ...QA_VERDICT, conclusion: 'failure', title: 'Fail: 1 of 2 test cases failed' };
+  const run = async (labels, verdict) => {
+    const { fleet, github, calls } = qaSetup();
+    github.pull = async () => ({ ...QA_PULL, labels: [{ name: 'qa' }, ...labels.map((name) => ({ name }))] });
+    const added = [];
+    github.addLabel = async (number, label) => { added.push({ number, label }); return true; };
+    await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+    await fleet.qaFinished(fleet.sessions()[0], { verdict, report: '## TC-1: a ❌', sha: 'a'.repeat(40), costUsd: 1 });
+    return { added, removed: calls.unlabeled };
+  };
+  assert.deepEqual(await run(['merge risk: low'], FAIL), {
+    added: [{ number: 7, label: 'merge risk: high' }], removed: [{ number: 7, label: 'merge risk: low' }],
+  });
+  assert.deepEqual(await run(['merge risk: medium'], QA_VERDICT), { added: [], removed: [] }, 'a pass never lowers or changes it');
+  assert.deepEqual(await run(['merge risk: high'], FAIL), { added: [], removed: [] }, 'already High');
+  assert.deepEqual(await run([], FAIL), { added: [], removed: [] }, 'no merge risk label: none is added');
+});
+
 test('a review starts no QA without the label, without approval, or for a project with no review gate', async () => {
   const unlabelled = qaSetup();
   unlabelled.github.pull = async () => ({ ...QA_PULL, labels: [] });

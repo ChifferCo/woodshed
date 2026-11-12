@@ -30,6 +30,7 @@ const STARTING_STATUS_TIMEOUT_MS = 1_500;
 // filters on updated_at, which can trail the moment a comment shows up.
 const COMMENT_OVERLAP_MS = 60_000;
 const LABEL_DEDUPE_MS = 2 * 60_000;
+const RISK_LABEL_HIGH = 'merge risk: high';
 const RECENT_LABELS_KEPT = 50;
 // A receive is a 20-second long poll; two missed in a row means the queue is not being read.
 const WEBHOOKS_FRESH_MS = 60_000;
@@ -1464,6 +1465,16 @@ export function createFleet({
     store.save();
   }
 
+  // A failed QA makes the review's merge risk label High, as the brief's tier does (`tierAfterQa`). Only a pull request
+  // the review already labelled: a repo that does not rate merge risk gets no label.
+  async function raiseRiskLabel(gh, number, pull) {
+    const current = (pull?.labels ?? []).map((l) => l.name).filter((n) => /^merge risk: (low|medium|high)$/.test(n));
+    if (!current.length || current.includes(RISK_LABEL_HIGH)) return;
+    for (const name of current) await safely('merge risk label', () => gh.removeLabel(number, name));
+    const added = await safely('merge risk label', () => gh.addLabel(number, RISK_LABEL_HIGH));
+    console.log('fleet: merge risk raised to High after QA failed', { number, from: current, added: Boolean(added) });
+  }
+
   /**
    * A QA session's report (POST /qa-report): written into the pull request's QA comment, then the session stops.
    * @param {object} session
@@ -1477,12 +1488,14 @@ export function createFleet({
     await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl }));
     // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
     // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
-    const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
+    const pull = await safely('QA pull request', () => gh.pull(session.number));
+    const ours = sha === session.qa.sha || sha === pull?.head?.sha;
     if (!ours) console.warn('fleet: QA check skipped, not the pull request\'s commit', { id: session.id, number: session.number, reported: sha, started: session.qa.sha });
     const checkUrl = ours ? await safely('QA check', () => gh.createCheckRun({
       sha, name: session.qa.check ?? 'QA', conclusion: verdict.conclusion, title: verdict.title,
       summary: `${verdict.status}\n\n${report}`.trim(), detailsUrl: sessionUrl, externalId: session.id,
     })) : null;
+    if (checkUrl && verdict.conclusion === 'failure') await raiseRiskLabel(gh, session.number, pull);
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
     console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
     // In the background: the session waits on this reply, and the stop saves its home through it first.

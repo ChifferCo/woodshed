@@ -291,7 +291,7 @@ function gateWords(gates) {
  *   `suites` are each suite's outcome; `qa.notRun` says why there is no QA check: no label, not configured, or it did
  *   not finish in time; `gates` is the project file's `pullRequests`; `reviewRuns` as for `mergeRiskFrom`
  * @returns {{slack: string, tier: 'Low'|'Medium'|'High'|null, comment: string, canMerge: boolean, facts: object}}
- *   `slack` is the thread reply; `tier` is the trusted merge risk's, null without one
+ *   `slack` is the thread reply; `tier` is the trusted merge risk's after QA (`tierAfterQa`), null without one
  */
 export function buildBrief({ pull, review, runs, comments, suites, qa, gates, reviewRuns = new Set(), commentUrl = null, ownApp = null }) {
   const words = gateWords(gates);
@@ -309,9 +309,11 @@ export function buildBrief({ pull, review, runs, comments, suites, qa, gates, re
   const approved = !gates?.review || review?.state === 'APPROVED';
   const green = approved && suites.every((s) => s.outcome === 'green') && !pending.length;
   const canMerge = mergeRisk.tier === 'Low' && qa.check?.conclusion === 'success' && green;
+  const tier = tierAfterQa(mergeRisk.tier ?? null, qa.check?.conclusion);
+  const raised = Boolean(mergeRisk.tier) && tier !== mergeRisk.tier;
   const riskLine = riskLineFrom(pull.body);
   const facts = {
-    mergeRisk: mergeRisk.tier ?? mergeRisk.missing ?? 'untiered', qa: qa.check?.conclusion ?? 'not run', riskAreas: risk.items.length,
+    mergeRisk: mergeRisk.tier ?? mergeRisk.missing ?? 'untiered', raisedByQa: raised, qa: qa.check?.conclusion ?? 'not run', riskAreas: risk.items.length,
     decisions: decisions.length, notGreen: pending.length, canMerge,
   };
 
@@ -329,8 +331,19 @@ export function buildBrief({ pull, review, runs, comments, suites, qa, gates, re
   // A blank line between sections, so each reads on its own.
   const slack = sections.join('\n\n');
 
-  const comment = briefComment({ pull, mergeRisk, riskLine, qa, qaComment, report, risk, ranked, pending, green, canMerge, words });
-  return { slack, tier: mergeRisk.tier ?? null, comment, canMerge, facts };
+  const comment = briefComment({ pull, mergeRisk, raised, riskLine, qa, qaComment, report, risk, ranked, pending, green, canMerge, words });
+  return { slack, tier, comment, canMerge, facts };
+}
+
+/**
+ * QA can raise the review's tier but never lower it: a failed QA makes any tier High, as the change broke something a
+ * test could see. A pass or a run that could not test leaves the review's tier.
+ * @param {'Low'|'Medium'|'High'|null} tier  the review's
+ * @param {string|undefined} conclusion  the trusted QA check's
+ * @returns {'Low'|'Medium'|'High'|null}
+ */
+export function tierAfterQa(tier, conclusion) {
+  return tier && conclusion === 'failure' ? 'High' : tier;
 }
 
 function riskAreasText({ risk, words, list }) {
@@ -346,7 +359,7 @@ function checksText({ green, pending, words }) {
     + `${pending.slice(0, CHECKS_NAMED).map((r) => `\`${r.name}\` ${r.status === 'completed' ? r.conclusion : r.status}`).join(', ')}.`;
 }
 
-function briefComment({ pull, mergeRisk, riskLine, qa, qaComment, report, risk, ranked, pending, green, canMerge, words }) {
+function briefComment({ pull, mergeRisk, raised, riskLine, qa, qaComment, report, risk, ranked, pending, green, canMerge, words }) {
   const short = String(pull.head?.sha ?? '').slice(0, 7);
   const list = (items, empty) => (items.length ? items.map((i) => `- ${forGithub(i)}`).join('\n') : empty);
   const marked = (items) => items.map((i) => `- ${i.mark} ${forGithub(i.title)}`).join('\n');
@@ -362,7 +375,8 @@ function briefComment({ pull, mergeRisk, riskLine, qa, qaComment, report, risk, 
     ...(words.riskCheck ? [
       '### Merge risk',
       mergeRisk.title
-        ? `**${forGithub(mergeRisk.title)}**${mergeRisk.url ? ` ([check](${mergeRisk.url}))` : ''}\n\n${forGithub(mergeRisk.summary)}`
+        ? `${raised ? '**Raised to High: QA failed on this commit.** The review rated it ' : ''}`
+          + `**${forGithub(mergeRisk.title)}**${mergeRisk.url ? ` ([check](${mergeRisk.url}))` : ''}\n\n${forGithub(mergeRisk.summary)}`
         : `${words.riskCheck} not posted.${others} `
           + `Self-assessed by the session: ${riskLine ? `“${forGithub(riskLine)}”` : 'the PR body has no Risk line.'}`,
       '',

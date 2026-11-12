@@ -381,7 +381,8 @@ holds the earlier reviews; each run's verdict is its own pull request review. Th
 with an alert for whoever merges, in the tier's colour: the tier and its reason, what they accept by merging, and what
 no test covers that they should try first, each a line that opens to what changed, why, and a link to the lines. Size counts only code: tests and docs are left out of the Low limit (under 5 files and 200 lines). That is
 why the caller grants `checks: write`. The label is only for people: anyone who can triage can change it, so the
-console reads the check. To show it in the decision brief and
+console reads the check. A failed QA raises the tier to High: QA's report swaps a `merge risk: low` or `medium` label
+for `merge risk: high`, and the decision brief shows High, over the review's tier. A passing QA never lowers it. To show it in the decision brief and
 Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
 
 An input left empty takes its default. The rules, the instructions and the risk areas are read from the branch the pull request merges into, so a pull request cannot soften

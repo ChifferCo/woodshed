@@ -119,3 +119,23 @@ runs:
           '{name: $name, head_sha: $sha, status: "completed", conclusion: $conclusion, details_url: $url,
             external_id: $cost, output: {title: $title, summary: $summary}}' \
           | gh api "repos/${GITHUB_REPOSITORY}/check-runs" --input - --jq '.html_url'
+
+    - name: Raise the merge risk after a failed QA
+      if: steps.verdict.outputs.conclusion == 'failure'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        # A failed QA makes the review's merge risk label High; the console reads the QA check, not the label, for the same rule.
+        # Only a pull request the review already labelled, so a repo that does not rate merge risk gets no label.
+        source .qa/state.env
+        [ -n "${QA_PR:-}" ] || exit 0
+        current=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${QA_PR}/labels" --jq '.[].name | select(test("^merge risk: (low|medium|high)$"))')
+        if [ -z "$current" ] || grep -qx 'merge risk: high' <<< "$current"; then
+          echo "Merge risk label left as it is: ${current:-none}"
+          exit 0
+        fi
+        while read -r name; do
+          gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/${QA_PR}/labels/$(jq -rn --arg n "$name" '$n|@uri')" > /dev/null || true
+        done <<< "$current"
+        gh api "repos/${GITHUB_REPOSITORY}/issues/${QA_PR}/labels" -f 'labels[]=merge risk: high' --jq '[.[].name] | join(", ")'

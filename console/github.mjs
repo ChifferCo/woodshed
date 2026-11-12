@@ -413,6 +413,10 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
       return created?.id ?? null;
     },
+    async addLabel(number, label) {
+      await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/labels`, '-f', `labels[]=${label}`]);
+      return true;
+    },
     /** @returns {Promise<true>}  once GitHub took the label off; a label that was not there answers 404 and throws */
     async removeLabel(number, label) {
       await ghApi(['--method', 'DELETE', `repos/${currentRepo()}/issues/${number}/labels/${encodeURIComponent(label)}`]);
