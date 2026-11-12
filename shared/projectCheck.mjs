@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { databaseEnv, ENGINES } from './databases/index.mjs';
-import { PROJECT_FILE, readRepoFile, secretEnvName } from './project.mjs';
+import { PROJECT_FILE, SINGLE_APP_NAME, readRepoFile, secretEnvName } from './project.mjs';
 import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
 
@@ -180,22 +180,28 @@ function prefixExists(repoDir, prefix) {
   }
 }
 
+// The field an app's problems name: `app` for the one a project file's `app` gives, `apps[i]` for one of `apps`.
+export function appField(project, i) {
+  return project.apps.length === 1 && project.apps[0].name === SINGLE_APP_NAME ? 'app' : `apps[${i}]`;
+}
+
 function appProblems(project, repoDir) {
-  const { app } = project;
-  if (!app) return [];
   const taken = { ...SESSION_PORTS, ...Object.fromEntries(Object.values(ENGINES).flatMap((e) => e.viewers.map((v) => [v.port, `the ${v.name} viewer (${v.program})`]))) };
-  const problems = [];
-  for (const name of ['frontendPort', 'backendPort']) {
-    const port = app[name];
-    if (port < 1024) problems.push(`app.${name} is ${port}: a session runs the app as an unprivileged user, which cannot listen below 1024`);
-    if (taken[port]) problems.push(`app.${name} is ${port}, which ${taken[port]} listens on in every session`);
-  }
-  for (const name of ['start', 'stop']) if (app[name]) problems.push(...commandProblems(app[name], { repoDir, dir: '.', field: `app.${name}` }));
-  app.paths.forEach((p, i) => { if (!prefixExists(repoDir, p)) problems.push(`app.paths[${i}] is ${p}, and nothing in the checkout starts with it`); });
-  for (const [name, file] of Object.entries(app.logs)) {
-    if (!file.startsWith('~/') && (path.isAbsolute(file) || file.split('/').includes('..'))) problems.push(`app.logs.${name} must be under the home (~/...) or a path inside the repo`);
-  }
-  return problems;
+  return project.apps.flatMap((app, i) => {
+    const at = appField(project, i);
+    const problems = [];
+    for (const name of ['frontendPort', 'backendPort']) {
+      const port = app[name];
+      if (port < 1024) problems.push(`${at}.${name} is ${port}: a session runs the app as an unprivileged user, which cannot listen below 1024`);
+      if (taken[port]) problems.push(`${at}.${name} is ${port}, which ${taken[port]} listens on in every session`);
+    }
+    for (const name of ['start', 'stop']) if (app[name]) problems.push(...commandProblems(app[name], { repoDir, dir: '.', field: `${at}.${name}` }));
+    app.paths.forEach((p, j) => { if (!prefixExists(repoDir, p)) problems.push(`${at}.paths[${j}] is ${p}, and nothing in the checkout starts with it`); });
+    for (const [name, file] of Object.entries(app.logs)) {
+      if (!file.startsWith('~/') && (path.isAbsolute(file) || file.split('/').includes('..'))) problems.push(`${at}.logs.${name} must be under the home (~/...) or a path inside the repo`);
+    }
+    return problems;
+  });
 }
 
 function workflowText(repoDir, file, field) {
@@ -269,6 +275,13 @@ function takenFromSession(project) {
   return [...new Set(texts.flatMap(placeholderNames))].filter((name) => !given.has(name) && !isSessionVariable(name));
 }
 
+// One app as it always read; several by name, the default first.
+function appLine({ apps }) {
+  if (!apps.length) return 'app: none (no Start app)';
+  if (apps.length === 1 && apps[0].name === SINGLE_APP_NAME) return `app: \`${apps[0].start}\`, frontend on ${apps[0].frontendPort}`;
+  return `apps: ${apps.length} (${apps.map((a, i) => `${a.name}: \`${a.start}\`, frontend on ${a.frontendPort}${i === 0 ? ', the default' : ''}`).join('; ')})`;
+}
+
 /**
  * What a session would take from the project file, one line each, for someone (or their agent) writing one: it
  * throws as a session's start would, and with every problem repoProblems finds in the checkout.
@@ -279,7 +292,7 @@ export function checkSummary(project, repoDir) {
   const problems = repoProblems(project, repoDir);
   if (problems.length) throw new Error(problems.map((p) => `${label}: ${p}`).join('\n'));
   const list = (items) => (items.length ? `${items.length} (${items.join(', ')})` : 'none');
-  const { app, pullRequests: gates } = project;
+  const { pullRequests: gates } = project;
   return [
     `${PROJECT_FILE}: read from the ${project.from}`,
     `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
@@ -287,7 +300,7 @@ export function checkSummary(project, repoDir) {
     `databases: ${list(project.databases.map((d) => d.engine))}`,
     `env files: ${list(project.envFiles.map((f) => (f.secret ? `${f.path} from ${f.secret}` : f.path)))}`,
     `from the session: ${list(takenFromSession(project))}`,
-    `app: ${app ? `\`${app.start}\`, frontend on ${app.frontendPort}` : 'none (no Start app)'}`,
+    appLine(project),
     `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,
     `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
   ];

@@ -386,7 +386,7 @@ leaveOutConsoleLinks() {
 }
 
 writeRules() {
-  local rules setup notes tag
+  local rules setup notes tag apps
   leaveOutConsoleLinks
   # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
@@ -420,8 +420,11 @@ writeRules() {
     rules=${rules//"{{SHARED_ONLY}}"/}
   fi
   [ -z "${setup:-}" ] || rules+=$'\n'"$setup"
+  # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
+  apps=$(project apps-rules) || die "the project's apps could not be read"
+  [ -z "$apps" ] || rules+=$'\n'"$apps"
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none})"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, apps: $(project get apps | grep -c . || true))"
 }
 
 # Each container has its own throwaway Redis, for whatever of the app connects to it. A shared Redis would let one

@@ -94,3 +94,15 @@ test('past the cap, the older pull requests fold into one +N chip, the newest sh
   assert.match(chips[0].attrs.title, /2 more pull requests:\n#1\n#2/);
   assert.deepEqual([...W2.prChips({ prs: prs.slice(0, 2) }, { max: 2 }).map((c) => c.text)], ['PR #1', 'PR #2'], 'at the cap, nothing folds');
 });
+
+test('Start app offers a pick only with more than one app, and each line says what picking it does', () => {
+  const apps = [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }];
+  assert.equal(W.appChoices({ apps: null }), null, 'a session from an image before several apps');
+  assert.equal(W.appChoices({ apps: [apps[0]] }), null, 'one app: one Start app');
+  assert.equal(W.appChoices({ apps }).length, 2);
+  const running = { status: 'running', app: 'running', appName: 'admin', apps };
+  assert.equal(W.runningAppLabel(running), 'Admin');
+  assert.deepEqual(W.appChoiceItems(running, () => {}).map((i) => [i.label, i.note]),
+    [['Web', 'Stops Admin first, then starts this one'], ['Admin', 'Running now: starts it again']]);
+  assert.deepEqual(W.appChoiceItems({ ...running, app: 'stopped' }, () => {}).map((i) => i.note), ['Start it in this session', 'Start it in this session']);
+});

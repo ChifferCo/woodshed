@@ -636,6 +636,26 @@ test('Stop app asks the session\'s statusd and takes the app\'s state from its a
   assert.equal(session.app, 'stopping', 'statusd answered without a state, as the fake does, so the console assumes one');
 });
 
+test('Start app names one of several apps to statusd, and none for one app or an image from before several', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', app: 'stopped' };
+  await fleet.tick();
+  await assert.rejects(fleet.startApp(session, { app: 'admin' }), (err) => err.refused && /starts its one app only/.test(err.message),
+    'a statusd that listed no apps runs its one');
+  await fleet.startApp(session);
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/app/start').map((c) => c.body), [undefined], 'no body: the default, for any image');
+
+  statuses[session.id] = { state: 'done', app: 'running', appName: 'web', apps: [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }] };
+  await fleet.tick();
+  assert.deepEqual([session.appName, session.apps.map((a) => a.name)], ['web', ['web', 'admin']]);
+  await assert.rejects(fleet.startApp(session, { app: 'mobile' }), (err) => err.refused && /no app named mobile/.test(err.message));
+  await fleet.startApp(session, { app: 'admin' });
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/app/start').map((c) => c.body), [undefined, { app: 'admin' }]);
+  assert.equal(session.appName, 'admin', 'the pick shows before the next status check');
+});
+
 test('Set up app types the setup request into claude, only for a running session whose project has no app', async () => {
   const { fleet, calls, statuses } = setup();
   await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });

@@ -277,6 +277,21 @@ function appServersFrom(servers) {
   return { frontend: servers.frontend, backend: servers.backend, frontendPort: portFrom(servers.frontendPort), backendPort: portFrom(servers.backendPort) };
 }
 
+// As shared/project.mjs names an app; a label is the project's own words, kept short for a menu.
+const APP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MAX_APPS = 20;
+const MAX_APP_LABEL = 60;
+
+/**
+ * @returns {{name: string, label: string}[]|null}  the apps Start app can pick, as statusd listed them; null from a
+ *   statusd from before several apps, which runs its one app
+ */
+export function appsFrom(apps) {
+  if (!Array.isArray(apps)) return null;
+  const valid = apps.slice(0, MAX_APPS).filter((a) => APP_NAME_RE.test(a?.name ?? ''));
+  return valid.map((a) => ({ name: a.name, label: typeof a.label === 'string' && a.label.trim() ? a.label.trim().slice(0, MAX_APP_LABEL) : a.name }));
+}
+
 // Numbers only, and in range: the answer is the session's own.
 function usageFrom(usage) {
   if (!usage || typeof usage !== 'object') return null;
@@ -352,6 +367,9 @@ export function statusUpdate(session, status, nowIso) {
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),
+    // Which of the project's apps runs, or would run, and the ones Start app can pick. One of them, or none.
+    apps: appsFrom(status.apps),
+    appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
     // The project file turns the editor on and the image has it: Editor ↗ shows, and the console lets it through.
     editor: status.editor === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so

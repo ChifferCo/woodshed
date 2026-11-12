@@ -22,14 +22,15 @@
 //   ANY  /__woodshed/code/*  forwarded to openvscode-server, the console's Editor, websockets too; loopback only.
 //                      statusd starts it on the first request (codeEditor.mjs). Not in an ask session. The console
 //                      sends these for `<id>.<app domain>/__woodshed/code/`, with this token in Authorization
-//   POST /app/start   start the repo's app (the project file's app.start) in the background
+//   POST /app/start   start the repo's app (the project file's app.start) in the background; {"app": "<name>"} picks
+//                     one of several (`apps`), the default without it, after stopping the one running
 //   POST /app/stop    stop it (app.stop), a start still in progress included
 //   POST /upload?name=<file>&pane=agent|terminal   the body saved under /tmp/uploads, and its path typed at that
 //                     pane's prompt with no Enter (terminalFiles.mjs)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
 //   POST /scroll      {"steps": -3, "pane": "agent"}   a phone's swipe, as tmux's wheel would take it
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
-//        app's frontend on 127.0.0.1, at the project file's app.frontendPort. The console sends these for `<id>.<app domain>`. The token
+//        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own
 //
 // Reachable only from the console's security group, and every request must
@@ -38,7 +39,7 @@
 
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { createReadStream, existsSync, openSync } from 'node:fs';
+import { appendFileSync, createReadStream, existsSync, openSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -90,19 +91,33 @@ function readProject() {
   }
 }
 const PROJECT = readProject();
-// No app, no ports: nothing is probed or proxied. A project with no app yet is read again (refreshApp), so an app Set up
-// app had claude write starts from Start app in the same session; an app it already has is kept as it was read.
-let PROJECT_APP = null;
+// The project's apps (`apps` in shared/project.mjs: a file's one `app` is a list of one) and the one statusd runs: the
+// default until a Start app picks another, then the last one picked. One runs at a time, so only its ports are probed
+// and proxied, and only its logs read. No app, no ports: nothing is probed or proxied. A project with no app yet is read
+// again (refreshApp), so an app Set up app had claude write starts from Start app in the same session; the apps it
+// already has are kept as they were read.
+let PROJECT_APPS = [];
+let CURRENT_APP = null;
 let APP_PORT = null;
 let APP_API_PORT = null;
 let SERVER_LOGS = [];
-function useApp(app) {
-  PROJECT_APP = app ?? null;
-  APP_PORT = Number(process.env.APP_PORT || PROJECT_APP?.frontendPort) || null;
-  APP_API_PORT = Number(process.env.APP_API_PORT || PROJECT_APP?.backendPort) || null;
-  SERVER_LOGS = Object.entries(PROJECT_APP?.logs ?? {}).map(([name, file]) => [name, expandPath(file, { repoDir: REPO_DIR })]);
+
+// APP_PORT and APP_API_PORT (a test's) stand in for whichever app's ports.
+function portsOf(app) {
+  return { frontendPort: Number(process.env.APP_PORT || app?.frontendPort) || null, backendPort: Number(process.env.APP_API_PORT || app?.backendPort) || null };
 }
-useApp(PROJECT?.app);
+
+function useApp(app) {
+  CURRENT_APP = app ?? null;
+  ({ frontendPort: APP_PORT, backendPort: APP_API_PORT } = portsOf(CURRENT_APP));
+  SERVER_LOGS = Object.entries(CURRENT_APP?.logs ?? {}).map(([name, file]) => [name, expandPath(file, { repoDir: REPO_DIR })]);
+}
+
+function useApps(apps) {
+  PROJECT_APPS = apps ?? [];
+  useApp(PROJECT_APPS[0]);
+}
+useApps(PROJECT?.apps);
 const APP_HEADER = 'x-woodshed-app';
 const APP_LOG = '/tmp/woodshed-app.log';
 // The console asks for /status every few seconds: a project with no app is read again at most this often, and on
@@ -112,20 +127,20 @@ let appReadAt = Date.now();
 let appReadError = null;
 
 function refreshApp({ force = false } = {}) {
-  if (PROJECT_APP || (!force && Date.now() - appReadAt < APP_REREAD_MS)) return;
+  if (PROJECT_APPS.length || (!force && Date.now() - appReadAt < APP_REREAD_MS)) return;
   appReadAt = Date.now();
-  let app = null;
+  let apps = [];
   try {
-    app = loadProject(REPO_DIR).app ?? null;
+    apps = loadProject(REPO_DIR).apps;
   } catch (err) {
     // Asked every few seconds: each reason is said once, so a file claude wrote that does not parse is in the log.
     if (err.message !== appReadError) console.warn('statusd: project file not read again, still no app', { message: err.message });
     appReadError = err.message;
     return;
   }
-  if (!app) return;
-  useApp(app);
-  console.log('statusd: the project file has an app now', { frontendPort: APP_PORT, backendPort: APP_API_PORT });
+  if (!apps.length) return;
+  useApps(apps);
+  console.log('statusd: the project file has an app now', { apps: apps.length, frontendPort: APP_PORT, backendPort: APP_API_PORT });
 }
 const APP_LOG_TAIL_BYTES = 48 * 1024;
 const APP_PROBE_MS = 500;
@@ -380,13 +395,20 @@ function listening(port) {
   });
 }
 
-async function appServers() {
-  const [frontend, backend] = await Promise.all([listening(APP_PORT), listening(APP_API_PORT)]);
-  return { frontend, backend, frontendPort: APP_PORT, backendPort: APP_API_PORT };
+async function serversOf(app) {
+  const { frontendPort, backendPort } = portsOf(app);
+  const [frontend, backend] = await Promise.all([listening(frontendPort), listening(backendPort)]);
+  return { frontend, backend, frontendPort, backendPort };
+}
+
+function appServers() {
+  return serversOf(CURRENT_APP);
 }
 
 let appStart = null;
 let appStop = null;
+// While Start app of another app waits on the running one's stop: Stop app in that time keeps it from starting.
+let appSwitch = null;
 
 /**
  * After the shed's app line: up, half up, or why not.
@@ -412,7 +434,12 @@ export function appState(servers, start, stop = null, { hasApp = true } = {}) {
 async function appStatus() {
   refreshApp();
   const servers = await appServers();
-  return { app: appState(servers, appStart, appStop, { hasApp: Boolean(PROJECT_APP) }), appServers: servers };
+  return { app: appState(servers, appStart, appStop, { hasApp: Boolean(CURRENT_APP) }), appServers: servers };
+}
+
+// Which app runs, and the ones Start app can pick: a console from before several apps reads neither.
+function appsStatus() {
+  return { appName: CURRENT_APP?.name ?? null, apps: PROJECT_APPS.map(({ name, label }) => ({ name, label })) };
 }
 
 // The project's own start or stop command: the project file's `app.start` or `app.stop`.
@@ -421,68 +448,130 @@ function runAppCommand(command) {
   return spawn('bash', ['-c', command], { cwd: REPO_DIR, detached: true, stdio: ['ignore', out, out] });
 }
 
-// The start command waits until the servers are healthy, then leaves them running on their own.
-async function startApp() {
+/**
+ * The app Start app was asked for: by its name, or the default (the first) with none.
+ * @param {unknown} name  the request's `app`
+ * @returns {object}  the app
+ * @throws {Error}  with `status` 400, for a name that is none of them
+ */
+export function pickApp(apps, name) {
+  if (name === undefined || name === null || name === '') return apps[0];
+  const app = typeof name === 'string' ? apps.find((a) => a.name === name) : null;
+  if (!app) throw Object.assign(new Error(`no app named ${JSON.stringify(name)}: the project's apps are ${apps.map((a) => a.name).join(', ')}`), { status: 400 });
+  return app;
+}
+
+// The start command waits until the servers are healthy, then leaves them running on their own. One app runs at a
+// time: starting another stops the running one first, with its own stop command.
+async function startApp(name) {
   refreshApp({ force: true });
-  if (!PROJECT_APP) {
+  if (!CURRENT_APP) {
     console.log('statusd: app start skipped, the project has no app');
     return { started: false, app: (await appStatus()).app };
   }
-  if ((appStart && appStart.exitCode === null) || (appStop && appStop.exitCode === null)) {
-    console.log('statusd: app start skipped', { starting: appStart?.exitCode === null, stopping: appStop?.exitCode === null });
+  const app = pickApp(PROJECT_APPS, name);
+  // Another app's start still going is stopped like a running one: only the same app's start is waited for.
+  if ((app === CURRENT_APP && appStart && appStart.exitCode === null) || (appStop && appStop.exitCode === null)) {
+    console.log('statusd: app start skipped', { app: app.name, starting: appStart?.exitCode === null, stopping: appStop?.exitCode === null });
     return { started: false, app: (await appStatus()).app };
   }
-  const child = runAppCommand(PROJECT_APP.start);
+  if (app === CURRENT_APP) {
+    runStart(app);
+    return { started: true, app: (await appStatus()).app };
+  }
+  const from = CURRENT_APP;
+  const fromServers = await serversOf(from);
+  // Whatever of it may still run: what this statusd started, or servers claude started some other way.
+  const fromRan = Boolean(appStart) || fromServers.frontend || fromServers.backend;
+  interruptStart();
+  useApp(app);
+  appStart = null;
+  appStop = null;
+  console.log('statusd: app switched', { from: from.name, to: app.name, stopFirst: fromRan && Boolean(from.stop) });
+  if (!fromRan || !from.stop) {
+    if (fromRan) console.warn('statusd: the running app has no stop command, starting the next beside it', { from: from.name, to: app.name });
+    runStart(app);
+    return { started: true, app: (await appStatus()).app };
+  }
+  const pending = { to: app.name, cancelled: false };
+  appSwitch = pending;
+  runStop(from, () => {
+    if (appSwitch === pending) appSwitch = null;
+    if (pending.cancelled) return console.log('statusd: app switch cancelled by Stop app', { to: app.name });
+    runStart(app);
+  });
+  return { started: true, app: (await appStatus()).app };
+}
+
+function runStart(app) {
+  // One log for every start: with several apps, a line says which one each start is.
+  if (PROJECT_APPS.length > 1) appendFileSync(APP_LOG, `\n# Woodshed: starting ${app.name}\n`);
+  const child = runAppCommand(app.start);
   const start = { exitCode: null, startedAt: Date.now(), pid: child.pid, stopped: false };
   appStart = start;
   child.on('exit', (code) => {
     start.exitCode = code ?? 1;
-    console.log('statusd: app start finished', { exitCode: start.exitCode, stopped: start.stopped, seconds: Math.round((Date.now() - start.startedAt) / 1000) });
+    console.log('statusd: app start finished', { app: app.name, exitCode: start.exitCode, stopped: start.stopped, seconds: Math.round((Date.now() - start.startedAt) / 1000) });
   });
   child.on('error', (err) => {
     start.exitCode = 1;
-    console.warn('statusd: app start could not run', { message: err.message });
+    console.warn('statusd: app start could not run', { app: app.name, message: err.message });
   });
   child.unref();
-  console.log('statusd: app starting', { log: APP_LOG });
-  return { started: true, app: (await appStatus()).app };
+  console.log('statusd: app starting', { app: app.name, log: APP_LOG });
 }
 
 // The stop command stops what the start started, as the project's commands decide: servers claude ran some other way
 // may keep running.
 async function stopApp() {
-  if (!PROJECT_APP?.stop) {
+  // First: during a switch the app named is already the next one, whose own stop has nothing to do with this.
+  if (appStop && appStop.exitCode === null) {
+    if (appSwitch) appSwitch.cancelled = true;
+    return { stopping: false, app: 'stopping' };
+  }
+  if (!CURRENT_APP?.stop) {
     console.log('statusd: app stop skipped, the project has no stop command');
     return { stopping: false, app: (await appStatus()).app };
   }
-  if (appStop && appStop.exitCode === null) return { stopping: false, app: 'stopping' };
-  // A start still waiting on its health checks would otherwise go on to report the servers this stops as failed.
-  // Its servers run in sessions of their own (setsid), so this stops the script and leaves them to the stop below.
-  if (appStart && appStart.exitCode === null) {
-    appStart.stopped = true;
-    try {
-      process.kill(-appStart.pid, 'SIGTERM');
-      console.log('statusd: app start interrupted', { pid: appStart.pid });
-    } catch (err) {
-      console.warn('statusd: app start could not be interrupted', { message: err.message });
-    }
+  interruptStart();
+  runStop(CURRENT_APP);
+  return { stopping: true, app: 'stopping' };
+}
+
+// A start still waiting on its health checks would otherwise go on to report the servers a stop stops as failed.
+// Its servers run in sessions of their own (setsid), so this stops the script and leaves them to the stop after it.
+function interruptStart() {
+  if (!appStart || appStart.exitCode !== null) return;
+  appStart.stopped = true;
+  try {
+    process.kill(-appStart.pid, 'SIGTERM');
+    console.log('statusd: app start interrupted', { pid: appStart.pid });
+  } catch (err) {
+    console.warn('statusd: app start could not be interrupted', { message: err.message });
   }
-  const child = runAppCommand(PROJECT_APP.stop);
+}
+
+function runStop(app, then) {
+  const child = runAppCommand(app.stop);
   const stop = { exitCode: null, startedAt: Date.now() };
   appStop = stop;
-  child.on('exit', async (code) => {
-    stop.exitCode = code ?? 1;
-    const left = await appServers();
+  let done = false;
+  const finish = async (code) => {
+    if (done) return;
+    done = true;
+    stop.exitCode = code;
+    const left = await serversOf(app);
     const log = left.frontend || left.backend ? console.warn : console.log;
-    log('statusd: app stop finished', { exitCode: stop.exitCode, frontendStillUp: left.frontend, backendStillUp: left.backend });
-  });
+    log('statusd: app stop finished', { app: app.name, exitCode: stop.exitCode, frontendStillUp: left.frontend, backendStillUp: left.backend });
+    then?.();
+  };
+  child.on('exit', (code) => finish(code ?? 1));
   child.on('error', (err) => {
-    stop.exitCode = 1;
-    console.warn('statusd: app stop could not run', { message: err.message });
+    console.warn('statusd: app stop could not run', { app: app.name, message: err.message });
+    finish(1);
   });
   child.unref();
-  console.log('statusd: app stopping', { log: APP_LOG });
-  return { stopping: true, app: 'stopping' };
+  console.log('statusd: app stopping', { app: app.name, log: APP_LOG });
 }
 
 let lastState = null;
@@ -551,6 +640,7 @@ async function status() {
     usage: await usage(),
     planUsage: await readPlanUsage().catch(planUsageFailed),
     ...(await appStatus()),
+    ...appsStatus(),
   };
 }
 
@@ -1005,7 +1095,21 @@ async function handle(req, res) {
       throw err;
     }
   }
-  if (route === 'POST /app/start') return reply(res, 200, await startApp());
+  if (route === 'POST /app/start') {
+    // A console from before several apps sends no body: the default app.
+    let name;
+    try {
+      name = JSON.parse((await readBody(req)) || '{}')?.app;
+    } catch {
+      return reply(res, 400, { error: 'body must be JSON' });
+    }
+    try {
+      return reply(res, 200, await startApp(name));
+    } catch (err) {
+      if (err.status === 400) return reply(res, 400, { error: err.message });
+      throw err;
+    }
+  }
   if (route === 'POST /app/stop') return reply(res, 200, await stopApp());
   return reply(res, 404, { error: 'not found' });
 }

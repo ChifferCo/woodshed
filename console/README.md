@@ -912,6 +912,15 @@ ends, as a message would be) to work out how the app runs, write the `app` secti
 project with no app again on each Start app, so the button turns into **Start app** once the file has one, and that
 start runs it.
 
+A project file with several apps (`apps`, docs/reference.md) runs one at a time. **Start app ▾** opens a menu of their
+labels, and picking one sends its name (`POST /api/sessions/<id>/app/start` with `{"app": "<name>"}`, passed on to
+statusd's `/app/start`); statusd stops the app that runs first, with that app's own `stop`, then starts the one picked.
+While one runs, the button beside **Open app** carries its label (`Admin ▾`) and opens the same menu, and Open app
+goes to whichever runs. With one app there is no menu, and the request has no body. statusd's `/status` lists the apps
+and names the one running (`apps`, `appName`); a session from an image before several apps lists none, so the console
+shows it one Start app and refuses a name for it, and an older console's Start app sends no name, which starts the
+default, the first.
+
 The session has 2 vCPU, so a start is the one moment its CPU badge runs high:
 both cores are busy while the app's servers load, then the container idles.
 What a project's start command runs in a session, and why, is the project's to
