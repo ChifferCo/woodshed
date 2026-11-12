@@ -14,7 +14,7 @@ import { createSecretStore as createAwsStore } from '../aws/secretStore.mjs';
 import { readKey, writeNewKey } from './secretKey.mjs';
 import { createSecretStore as createLocalStore } from './secretStore.mjs';
 
-export const DEFAULT_AWS_PREFIX = 'woodshed-cloud/';
+export const DEFAULT_AWS_PREFIX = 'woodshed/';
 const PREFIX_RE = /^[A-Za-z0-9/_+=.@-]{0,100}$/;
 
 function shown(message) {

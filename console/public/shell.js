@@ -11,7 +11,7 @@
   const MAC = K.isMac(window.navigator);
   // A shortcut's key as text, for this computer: ⇧⌘O on a Mac, Ctrl+Shift+O elsewhere.
   const keyText = (id) => K.label(K.byId[id].mod, MAC);
-  const THEME_KEY = 'woodshed-cloud-theme';
+  const THEME_KEY = 'woodshed-theme';
   // Read by the shed's review page, which is framed on this origin: writing it fires a storage event there.
   const REVIEW_EXPAND_KEY = 'shed.review.expand';
 

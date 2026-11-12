@@ -12,7 +12,7 @@ one row: a **Mine | Everyone** switch, **+ New session**, and on Everyone a **Pe
 of its own: `/all` (Everyone) shows the shared sessions in the pane, with a status filter, and `/` (Mine) shows New
 session. **People** filters Everyone by who started a session (it takes several people; `?by=<login>,<login>` in
 the URL). Your avatar menu (My settings, the console's pages, Sign out) is at the foot of the rail and opens upward.
-A card shows the title and its tag (on Everyone, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. On a console with more than one project, each card's left edge is its project's colour (the name is in its tooltip), and a row of chips under the head (**All**, then each project with its colour and count) filters the rail to one project; the browser keeps the pick (`woodshed-cloud-rail-project`), and one naming a project that is gone is All. How long it ran and who started it are under its Details; the app's button and the
+A card shows the title and its tag (on Everyone, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. On a console with more than one project, each card's left edge is its project's colour (the name is in its tooltip), and a row of chips under the head (**All**, then each project with its colour and count) filters the rail to one project; the browser keeps the pick (`woodshed-rail-project`), and one naming a project that is gone is All. How long it ran and who started it are under its Details; the app's button and the
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
 turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones assigned
@@ -406,7 +406,7 @@ And what the shed shows about each session:
 **GitHub**, on My settings: **Connect GitHub** signs you in once more, and this
 time the console keeps GitHub's answer. That's a GitHub App user token, and
 with the App's expiring user tokens (its default), a refresh token too. It goes
-in Secrets Manager at `woodshed-cloud/users/<login>/github` and never reaches a
+in Secrets Manager at `<prefix>/users/<login>/github` (on AWS, `<prefix>` is Terraform's `name_prefix`, here and below) and never reaches a
 session. A connected owner's private session then:
 - gets their own token from the session API's `/github-token`, which an
   installation token answers for everyone else, so it pushes and opens pull
@@ -439,7 +439,7 @@ to pushing as the App within 5 minutes.
   `~/.claude.json` to the session API (`POST /home`), as a gzipped tar without
   caches, and its checkpoint does once more at the stop. A session that ends
   without a stop, such as a crash, so loses 5 minutes at most. The console
-  streams it into the private S3 bucket `woodshed-cloud-homes-<account>`, up
+  streams it into the private S3 bucket `<prefix>-homes-<account>`, up
   to 200 MB, as the session's own (`<login>/sessions/<id>/claude-home.tar.gz`).
   At the stop it also copies it inside S3 to yours
   (`<login>/claude-home.tar.gz`), which is the last of your sessions to stop.
@@ -502,7 +502,7 @@ each of the repo's env files (the project file's `envFiles` that have a `secret`
 - Your lines go after the shared file, so a key set in both uses yours, and a
   change to the shared file still reaches you. The page names the shared keys
   yours replace.
-- Saving keeps them at `woodshed-cloud/users/<login>/<file>`. **Clear mine**,
+- Saving keeps them at `<prefix>/users/<login>/<file>`. **Clear mine**,
   or saving nothing, deletes them.
 - The entrypoint still appends its own lines last (the databases, Redis,
   ports and URLs, listed on the page), so those always win.
@@ -511,7 +511,7 @@ each of the repo's env files (the project file's `envFiles` that have a `secret`
 **Your own files**, on My settings, are whole files of your own, by their path in the repo (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
 writes into its checkout at start:
-- All of them are one secret, `woodshed-cloud/users/<login>/own-files` (JSON, path to text; 64 KB and 20 files at
+- All of them are one secret, `<prefix>/users/<login>/own-files` (JSON, path to text; 64 KB and 20 files at
   most). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
 - A path is checked as it is saved and again in the session (`shared/ownFiles.mjs`): inside the repo, no `..`, not
   under `.git`, and not one of the env files above, which take your lines instead.
@@ -540,7 +540,7 @@ on Shared.
 
 **My settings** (`/settings`, in the avatar menu) holds your Claude token: make
 it with `claude setup-token` on your laptop. The console keeps it in Secrets
-Manager at `woodshed-cloud/users/<login>/claude-token`, makes that secret itself,
+Manager at `<prefix>/users/<login>/claude-token`, makes that secret itself,
 and never shows it again. `state.json` notes only when it was saved.
 The setup card, and New session, wait until a Claude token or a Codex sign-in is saved: either
 is enough, and a Claude session still needs the Claude token. Your private sessions get it
@@ -592,7 +592,7 @@ to its own env files, however it was started, and calls Anthropic itself on
 whatever key they hold: the env file secret's, or the owner's own line. A call with the
 session token in
 `x-api-key` goes on the team key, which the console reads from
-`woodshed-cloud/anthropic-api-key` and keeps 5 minutes; a call with it as a
+`<prefix>/anthropic-api-key` and keeps 5 minutes; a call with it as a
 bearer, which is what claude sends when it has it as
 `CLAUDE_CODE_OAUTH_TOKEN`, goes on the session's plan: a shared one's `plan`,
 or an older private session's owner's. Copied out of a terminal, the session token
@@ -704,12 +704,12 @@ each engine, that reaches nothing else:
 
 | Database (on each engine) | User | Password | Who connects | Lives |
 | --- | --- | --- | --- | --- |
-| `woodshed__<session id>` | the same | `woodshed-cloud/sessions/<id>/database` | That shared session, from the session API, and the viewers inside it | From the session's start until it ends |
-| `woodshed_<login>` | the same | `woodshed-cloud/users/<login>/database` | That person's private sessions, from the session API, and the viewers inside them | Until **Reset my data** or **Remove My Woodshed** |
+| `woodshed__<session id>` | the same | `<prefix>/sessions/<id>/database` | That shared session, from the session API, and the viewers inside it | From the session's start until it ends |
+| `woodshed_<login>` | the same | `<prefix>/users/<login>/database` | That person's private sessions, from the session API, and the viewers inside them | Until **Reset my data** or **Remove My Woodshed** |
 | `woodshed__template` | `woodshed__template`, which cannot log in | none kept | Nobody: Postgres's is closed to connections, which a copy needs | Until the next template |
 
 The template is the session image's: after each session build (by hand, or
-every morning), the deploy workflow's session job runs the `woodshed-cloud-refresh-db-template`
+every morning), the deploy workflow's session job runs the `<prefix>-refresh-db-template`
 SSM document on the base box, which runs the db-admin task's `template` and
 waits for it. That migrates and seeds `woodshed__template_next` from the image's
 checkout, then swaps it in: Postgres by a rename, Mongo, which has no rename,
@@ -736,8 +736,8 @@ can hold migrations the copy lacks, so the project's setup notes (its `setup`) s
 the database's `migrate` before the app.
 
 Root is RDS's master user (Terraform's `database_user`, its password in RDS's own secret)
-and Mongo's `root` (`woodshed-cloud-root/mongo`), each only where the installation runs that database. Only the **db-admin task**
-reads either: a one-off Fargate task, `woodshed-cloud-db-admin`, running
+and Mongo's `root` (`<prefix>-root/mongo`), each only where the installation runs that database. Only the **db-admin task**
+reads either: a one-off Fargate task, `<prefix>-db-admin`, running
 `session/dbAdmin.mjs` from the session image. The console never sees a root
 password. It can run the task, but only with one of these commands:
 
@@ -772,7 +772,7 @@ database password at all: every session's entrypoint asks the session API for
 its own.
 
 Mongo runs with `--auth`. Its root user is made once on the base box
-(`woodshed-cloud-mongo-root`, through Mongo's localhost exception), and its
+(`<prefix>-mongo-root`, through Mongo's localhost exception), and its
 password is written to the secret, which the box may write but not read.
 
 A session's databases open from the session's page, under **Data ▾** with
@@ -991,7 +991,7 @@ sign-in, like `devConsole.mjs`, treats everyone as an admin, and so does a list
 with no admin yet (the one a console starts from the people already using it),
 until the first is switched on. The first person to sign in to a console with
 an empty list is its first admin. Locked out with no admin left: stop the console, set `"admin": true` on your entry under `members`
-in `/var/lib/woodshed-cloud/console/state.json`, and start it again.
+in `/var/lib/<prefix>/console/state.json`, and start it again.
 
 **What each member can do.** People is a table, one row per member and one
 column per switch, each off for a new member and set by an admin:
@@ -1057,10 +1057,10 @@ Setting it up, or locked out by a wrong or missing client secret:
    plus `/auth/callback`), and **Generate a new client secret**.
 2. Save it to a file only you can read, upload it, and delete the file:
    `aws secretsmanager put-secret-value --secret-id
-   woodshed-cloud/github-app-client-secret --secret-string file://<file>`.
+   <prefix>/github-app-client-secret --secret-string file://<file>`.
    On the local provider, `node woodshed/providers/local/bin/secret.mjs put
    github-app-client-secret < <file>`.
-3. Restart the console on the base box (`cd /opt/woodshed-cloud && sudo docker
+3. Restart the console on the base box (`cd /opt/<prefix> && sudo docker
    compose restart console`): it reads the secret at start. Then sign in.
 
 Once signed in, the Secrets & webhooks tab replaces the secret without a
@@ -1572,7 +1572,7 @@ Remove My Woodshed.
 | `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | The repo's env files as `secret=path` pairs (`api-env=api/.env,web-env=web/.env.local`): each is a secret on the Secrets page and a tab on My settings. The second lists which of those secrets the databases' commands read (every `envFiles` of the project file's `databases`). Terraform sets both from `env_files` and `database_env_secrets`; the project file's own `envFiles` must name the same secrets |
 | `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) or an env file's stops the start. Terraform sets it from `install_secrets` |
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |
-| `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off |
+| `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |
 | `WOODSHED_FALLBACK_POLL_SECONDS` | `300` | How often the poll runs while webhooks arrive, and how often a pull request is read on its own while pull request webhooks arrive |
 | `WOODSHED_ACTIONS_WORKFLOWS` | none | The avatar menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the repo's workflows that build the images and apply the infrastructure. None leaves the group out. Set on the base box from Terraform's `console_workflow_links` |
 | `WOODSHED_MAX_SESSIONS` | `5` | Shared sessions at once, until the Console settings page says otherwise. Set on the base box from Terraform's `max_sessions` |
@@ -1583,8 +1583,8 @@ Remove My Woodshed.
 | `WOODSHED_IMAGE` | `woodshed-session` | |
 | `WOODSHED_SESSION_MEMORY`, `WOODSHED_SESSION_CPUS` | `6g`, `2` | Docker limits per session |
 | `WOODSHED_SESSION_ENV_FILE` | none | A JSON object of strings passed to every session: the shared services and secrets from the table above |
-| `WOODSHED_GITHUB_APP_ID`, `_GITHUB_APP_INSTALLATION_ID`, `_GITHUB_APP_KEY_FILE` | none | The GitHub App. When set, the console mints installation tokens with the key (`githubApp.mjs`) for its own GitHub calls and for sessions, and `GH_TOKEN` is not used. With the `ecs` launcher and no key file, the key is read from `woodshed-cloud/github-app-key`; until it has a value the console runs without GitHub |
-| `WOODSHED_SECRET_PREFIX`, `WOODSHED_WEBHOOK_FUNCTION` | `woodshed-cloud/`, `woodshed-cloud-webhooks` | With the `ecs` launcher: where the Secrets page finds its secrets, and the Lambda whose URL it sets on the GitHub App |
+| `WOODSHED_GITHUB_APP_ID`, `_GITHUB_APP_INSTALLATION_ID`, `_GITHUB_APP_KEY_FILE` | none | The GitHub App. When set, the console mints installation tokens with the key (`githubApp.mjs`) for its own GitHub calls and for sessions, and `GH_TOKEN` is not used. With the `ecs` launcher and no key file, the key is read from `<prefix>/github-app-key`; until it has a value the console runs without GitHub |
+| `WOODSHED_SECRET_PREFIX`, `WOODSHED_WEBHOOK_FUNCTION` | `woodshed-cloud/`, `woodshed-cloud-webhooks` | With the `ecs` launcher: where the Secrets page finds its secrets (and the `project` tag of those it makes), and the Lambda whose URL it sets on the GitHub App. Set on the base box from Terraform's `name_prefix`; the defaults are for a box whose stack predates that, and go later |
 | `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` | none | On the local provider: the folder the Secrets page keeps its secrets in, one `<name>.json` each, readable by the console's user only (`providers/local/secretStore.mjs`), and the key each file is sealed with, AES-256-GCM, from a file of its own outside the folder, mode 600 (`secretKey.mjs`; `bin/secret.mjs new-key` makes one). The folder needs the key; a plain file in it is sealed at start. Each session also gets each env file's secret and each install secret from it as it starts, unless `WOODSHED_SESSION_ENV_FILE` sets them. With the GitHub App and no key file, the App's key is read from it too. Without it, the local provider has no Secrets page |
 | `WOODSHED_LOCAL_HOMES_DIR` | none | On the local provider: the folder saved Claude homes are kept in, at the same names as the S3 bucket's keys (`providers/local/homeStore.mjs`), readable by the console's user only. Without it, the local provider keeps no Claude home between sessions |
 | `WOODSHED_LOCAL_DB_POSTGRES_HOST`, `_DB_POSTGRES_ROOT_USER`, `_DB_MONGO_HOST` | none | On the local provider: where each session's own databases are made, Postgres on 5432 by the first two (both or neither) and Mongo as `host:port`, each only for an engine the installation hosts, each on its own (`providers/local/postgres.yml` and `mongo.yml` run them). A db-admin run is a container of the session image (`providers/local/dbAdminRunner.mjs`); it reads the root passwords from `db-root/postgres` and `db-root/mongo` in `WOODSHED_LOCAL_SECRETS_DIR`, each for a database it runs, and sees only the database password its command makes and the env file secrets the databases' commands read (their `envFiles`), as the AWS task role does. A failed run's container is kept for `docker logs`, root passwords in its environment, until the next run of the same action and owner removes it. Each run's secrets are copied under `db-admin-runs/` in `WOODSHED_STATE_DIR`, which must be the same path for the docker daemon, as it is when the console runs on that machine |

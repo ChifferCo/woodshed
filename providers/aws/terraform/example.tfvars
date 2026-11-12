@@ -4,6 +4,10 @@
 github_repo  = "your-org/your-repo"
 budget_email = "you@example.com"
 
+# What every AWS resource, tag, secret and base box path is named after. woodshed for a new installation; one made
+# before this setting existed keeps everything it has only with woodshed-cloud.
+name_prefix = "woodshed"
+
 # Optional. The console's name, with a Route 53 zone the parent domain must delegate. Left out, the console is
 # woodshed.<its IP with dashes>.sslip.io, with nothing to set up in DNS.
 # domain = "woodshed.example.com"

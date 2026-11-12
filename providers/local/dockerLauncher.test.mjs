@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fixtureProject, fixtureProjectFiles } from '../../shared/projectFixture.mjs';
-import { createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
+import { OLD_SESSION_LABEL, SESSION_LABEL, createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 test('parseDockerPort reads the host port docker published', () => {
@@ -26,6 +26,19 @@ function launch({ projectFilesDir, repo = 'acme/app', env = {} }) {
   });
   return launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4', ...env }).then(() => runs[0]);
 }
+
+test('a session is labelled woodshed.session, and what lists them reads that and the label it had before', async () => {
+  const { args } = await launch({ projectFilesDir: null });
+  const labels = args.flatMap((a, i) => (args[i - 1] === '--label' ? [a] : []));
+  assert.deepEqual(labels, [`${SESSION_LABEL}=a1b2c3d4`]);
+  assert.equal(SESSION_LABEL, 'woodshed.session');
+  // Nothing in the console lists sessions by label: the README's removal step does, and must still find a container
+  // started before the rename.
+  const readme = fs.readFileSync(path.join(import.meta.dirname, 'README.md'), 'utf8');
+  for (const label of [SESSION_LABEL, OLD_SESSION_LABEL]) {
+    assert.ok(readme.includes(`docker ps -aq --filter label=${label} | xargs -r docker rm -f`), label);
+  }
+});
 
 function mountsOf(args) {
   return args.flatMap((a, i) => (args[i - 1] === '--mount' ? [a] : []));

@@ -47,5 +47,5 @@ test('without sessions_on_github_repo the console gets no WOODSHED_REPO, and may
   assert.match(read('baseBox.tf'), / {4}repo {15}= var\.sessions_on_github_repo \? var\.github_repo : ""\n/);
   assert.match(read('baseBoxStack.sh.tftpl'), /%\{ if repo != "" ~\}\n {6}- \$\{prefix\}REPO=\$\{repo\}\n%\{ endif ~\}\n/);
   // The deploy workflow's roles and the image still come from github_repo.
-  assert.match(read('github.tf'), /repo:\$\{var\.github_repo\}:environment:woodshed-cloud-images/);
+  assert.match(read('github.tf'), /repo:\$\{var\.github_repo\}:environment:\$\{local\.p\}-images/);
 });

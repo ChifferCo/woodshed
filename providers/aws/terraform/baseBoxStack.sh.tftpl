@@ -1,23 +1,23 @@
 #!/bin/bash
 # The base box's stack: the compose file, Caddy's config, the helper scripts and systemd units under
-# /opt/woodshed-cloud, then the stack (re)started with them. Applied over SSM by the
-# woodshed-cloud-configure-base-box association (terraform/baseBox.tf) on a new box and after every
+# /opt/${name_prefix}, then the stack (re)started with them. Applied over SSM by the
+# ${name_prefix}-configure-base-box association (terraform/baseBox.tf) on a new box and after every
 # change to this file, so `terraform apply` is all a change here needs. Safe to run again.
 set -euo pipefail
 
-STACK=/opt/woodshed-cloud
+STACK=/opt/${name_prefix}
 
 # On a new box SSM can get here before cloud-init has installed Docker and mounted the data volume.
 for _ in $(seq 90); do
-  docker info >/dev/null 2>&1 && mountpoint -q /var/lib/woodshed-cloud && break
+  docker info >/dev/null 2>&1 && mountpoint -q /var/lib/${name_prefix} && break
   sleep 10
 done
-docker info >/dev/null 2>&1 || { echo "woodshed-cloud: Docker never came up" >&2; exit 1; }
-mountpoint -q /var/lib/woodshed-cloud || { echo "woodshed-cloud: the data volume is not mounted" >&2; exit 1; }
+docker info >/dev/null 2>&1 || { echo "${name_prefix}: Docker never came up" >&2; exit 1; }
+mountpoint -q /var/lib/${name_prefix} || { echo "${name_prefix}: the data volume is not mounted" >&2; exit 1; }
 
-mkdir -p "$STACK/caddy" /var/lib/woodshed-cloud/mongo /var/lib/woodshed-cloud/console /var/lib/woodshed-cloud/caddy
+mkdir -p "$STACK/caddy" /var/lib/${name_prefix}/mongo /var/lib/${name_prefix}/console /var/lib/${name_prefix}/caddy
 # The console runs as the image's uid 1000 user.
-chown 1000:1000 /var/lib/woodshed-cloud/console
+chown 1000:1000 /var/lib/${name_prefix}/console
 
 # The shared services' files (the shared_services variable), each mounted read-only into its container by compose.yml.
 # Base64 here, so no text of the installation's meets this script's quoting.
@@ -111,7 +111,7 @@ services:
     command: ["--auth"]
     mem_limit: 1g
     ports: ["${private_ip}:27017:27017"]
-    volumes: ["/var/lib/woodshed-cloud/mongo:/data/db"]
+    volumes: ["/var/lib/${name_prefix}/mongo:/data/db"]
 
 %{ endif ~}
 %{ for name, service in services ~}
@@ -124,7 +124,7 @@ services:
     environment: ${jsonencode([for key in keys(service.environment) : "${key}=${replace(service.environment[key], "$", "$$")}"])}
 %{ endif ~}
 %{ if length(service.files) > 0 ~}
-    volumes: ${jsonencode([for i, file in keys(service.files) : "/opt/woodshed-cloud/services/${name}/${i}:${file}:ro"])}
+    volumes: ${jsonencode([for i, file in keys(service.files) : "/opt/${name_prefix}/services/${name}/${i}:${file}:ro"])}
 %{ endif ~}
 
 %{ endfor ~}
@@ -173,6 +173,10 @@ services:
       - ${prefix}ECS_SUBNETS=${subnets}
       - ${prefix}ECS_SECURITY_GROUP=${session_sg}
       - ${prefix}ECS_LOG_GROUP=${log_group}
+      # The names Terraform gave the console's secrets, webhooks queue and webhooks Lambda (the name_prefix variable).
+      - ${prefix}SECRET_PREFIX=${name_prefix}/
+      - ${prefix}WEBHOOK_QUEUE=${webhook_queue}
+      - ${prefix}WEBHOOK_FUNCTION=${webhook_function}
       # The databases the installation runs (the databases variable), which the db-admin task makes for each session.
       - ${prefix}DATABASES=${databases}
 %{ if db_admin_task != "" ~}
@@ -187,19 +191,19 @@ services:
 %{ endif ~}
 %{ endfor ~}
     volumes:
-      - /var/lib/woodshed-cloud/console:/var/lib/woodshed-cloud
+      - /var/lib/${name_prefix}/console:/var/lib/woodshed-cloud
 
   caddy:
-    # Built by woodshed-cloud-up with `docker build`: Compose's own build needs a newer buildx than
+    # Built by ${name_prefix}-up with `docker build`: Compose's own build needs a newer buildx than
     # Amazon Linux ships.
-    image: woodshed-cloud-caddy
+    image: ${name_prefix}-caddy
     pull_policy: never
     restart: unless-stopped
     mem_limit: 128m
     network_mode: host
     volumes:
-      - /opt/woodshed-cloud/Caddyfile:/etc/caddy/Caddyfile:ro
-      - /var/lib/woodshed-cloud/caddy:/data
+      - /opt/${name_prefix}/Caddyfile:/etc/caddy/Caddyfile:ro
+      - /var/lib/${name_prefix}/caddy:/data
     environment:
       - AWS_REGION=${region}
 EOF
@@ -209,13 +213,13 @@ EOF
 # The password goes to a secret this box may write and never read: only the db-admin task reads it. Without mongo in
 # the databases variable there is no Mongo, and the script goes; Mongo's folder on the data volume stays as it was.
 %{ if !mongo ~}
-rm -f /usr/local/bin/woodshed-cloud-mongo-root
+rm -f /usr/local/bin/${name_prefix}-mongo-root
 %{ else ~}
-cat > /usr/local/bin/woodshed-cloud-mongo-root <<'EOF'
+cat > /usr/local/bin/${name_prefix}-mongo-root <<'EOF'
 #!/bin/bash
 set -euo pipefail
 umask 077
-cd /opt/woodshed-cloud
+cd /opt/${name_prefix}
 for _ in $(seq 30); do
   docker compose exec -T mongo mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' >/dev/null 2>&1 && break
   sleep 2
@@ -224,7 +228,7 @@ ROOT_PW=$(openssl rand -hex 24)
 export ROOT_PW
 if ! docker compose exec -T -e ROOT_PW mongo mongosh --quiet \
     --eval 'db.getSiblingDB("admin").createUser({ user: "root", pwd: process.env.ROOT_PW, roles: ["root"] })' >/dev/null 2>&1; then
-  echo "woodshed-cloud: Mongo has its root user already"
+  echo "${name_prefix}: Mongo has its root user already"
   exit 0
 fi
 file=$(mktemp)
@@ -232,74 +236,74 @@ trap 'rm -f "$file"' EXIT
 printf '%s' "$ROOT_PW" > "$file"
 for _ in 1 2 3; do
   if aws secretsmanager put-secret-value --region ${region} --secret-id '${mongo_root_secret}' --secret-string "file://$file" >/dev/null; then
-    echo "woodshed-cloud: Mongo's root user made, its password saved"
+    echo "${name_prefix}: Mongo's root user made, its password saved"
     exit 0
   fi
   sleep 5
 done
 # Kept for root alone, so the user just made is not lost: put it in the secret by hand, then delete the file.
-cp "$file" /root/woodshed-cloud-mongo-root
-echo "woodshed-cloud: Mongo's root password could not be saved; it is in /root/woodshed-cloud-mongo-root" >&2
+cp "$file" /root/${name_prefix}-mongo-root
+echo "${name_prefix}: Mongo's root password could not be saved; it is in /root/${name_prefix}-mongo-root" >&2
 exit 1
 EOF
-chmod 0755 /usr/local/bin/woodshed-cloud-mongo-root
+chmod 0755 /usr/local/bin/${name_prefix}-mongo-root
 %{ endif ~}
 
 # Fetches the newest images, then (re)starts the stack. The console reads its secrets itself.
-cat > /usr/local/bin/woodshed-cloud-up <<'EOF'
+cat > /usr/local/bin/${name_prefix}-up <<'EOF'
 #!/bin/bash
 set -euo pipefail
 umask 077
 # Where a box set up earlier kept a GitHub token, then a copy of the App's key.
-rm -rf /opt/woodshed-cloud/console.env /opt/woodshed-cloud/github-app
+rm -rf /opt/${name_prefix}/console.env /opt/${name_prefix}/github-app
 # --no-pull: apply a changed config with the images already on the box.
 PULL=1
 [ "$${1:-}" = --no-pull ] && PULL=0
 [ "$PULL" = 1 ] && aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${registry}
-cd /opt/woodshed-cloud
+cd /opt/${name_prefix}
 [ "$PULL" = 1 ] && docker compose pull --quiet
 # The build cache makes an unchanged Dockerfile a no-op.
-docker build --quiet --tag woodshed-cloud-caddy /opt/woodshed-cloud/caddy
+docker build --quiet --tag ${name_prefix}-caddy /opt/${name_prefix}/caddy
 docker compose up -d --remove-orphans
 # The images the stack ran before: running containers keep theirs (the redeploy-console document does the same).
 docker image prune -af
 %{ if mongo ~}
-/usr/local/bin/woodshed-cloud-mongo-root
+/usr/local/bin/${name_prefix}-mongo-root
 %{ endif ~}
 # A new Caddyfile changes a mounted file, not Caddy's container, so Compose leaves Caddy on the old config.
 # A Caddy that has only just started may not answer a reload yet; a restart reads the file too.
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || docker compose restart caddy
 EOF
-chmod 0755 /usr/local/bin/woodshed-cloud-up
+chmod 0755 /usr/local/bin/${name_prefix}-up
 
 # Where a box set up earlier kept the viewers that opened a database from here: every session has its own now.
-systemctl disable --now woodshed-cloud-pgweb.timer 2>/dev/null || true
-rm -f /etc/systemd/system/woodshed-cloud-pgweb.timer /etc/systemd/system/woodshed-cloud-pgweb.service \
-  /usr/local/bin/woodshed-cloud-pgweb /usr/local/bin/woodshed-cloud-pgweb-url "$STACK/rds-ca.pem"
+systemctl disable --now ${name_prefix}-pgweb.timer 2>/dev/null || true
+rm -f /etc/systemd/system/${name_prefix}-pgweb.timer /etc/systemd/system/${name_prefix}-pgweb.service \
+  /usr/local/bin/${name_prefix}-pgweb /usr/local/bin/${name_prefix}-pgweb-url "$STACK/rds-ca.pem"
 
-cat > /etc/systemd/system/woodshed-cloud.service <<'EOF'
+cat > /etc/systemd/system/${name_prefix}.service <<'EOF'
 [Unit]
 Description=Woodshed console and shared services
 After=docker.service network-online.target
 Requires=docker.service
-RequiresMountsFor=/var/lib/woodshed-cloud
+RequiresMountsFor=/var/lib/${name_prefix}
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/bin/woodshed-cloud-up
+ExecStart=/usr/local/bin/${name_prefix}-up
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable woodshed-cloud.service
+systemctl enable ${name_prefix}.service
 # A running stack takes the new config without pulling a newer console image: deploying one is the
 # deploy workflow's console job (providers/aws/README.md, "The deploy workflow"). A stack that never started (its console image did not exist yet) starts in full.
 if [ -n "$(cd "$STACK" && docker compose ps --quiet console)" ]; then
-  /usr/local/bin/woodshed-cloud-up --no-pull
+  /usr/local/bin/${name_prefix}-up --no-pull
 else
-  systemctl start woodshed-cloud.service || echo "woodshed-cloud: first start failed, see README.md"
+  systemctl start ${name_prefix}.service || echo "${name_prefix}: first start failed, see README.md"
 fi

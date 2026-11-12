@@ -27,7 +27,8 @@ export const AWS_WORDS = {
   databasesPlace: 'RDS and Mongo',
   webhookReceiver: 'the webhook function',
   webhookUrlFix: 'run terraform apply, then open this again',
-  webhookLog: 'aws logs tail /aws/lambda/woodshed-cloud-webhooks',
+  // awsProvider names the installation's own function here.
+  webhookLog: 'aws logs tail /aws/lambda/<name_prefix>-webhooks',
 };
 
 const PLACES = { postgres: 'RDS', mongo: 'Mongo' };
@@ -60,7 +61,11 @@ export function awsProvider(config) {
   const databases = awsDatabases(ecs);
   return {
     name: 'aws',
-    words: { ...AWS_WORDS, databasesPlace: databases.map((d) => PLACES[d]).join(' and ') || null },
+    words: {
+      ...AWS_WORDS,
+      databasesPlace: databases.map((d) => PLACES[d]).join(' and ') || null,
+      ...(config.webhookFunction && { webhookLog: `aws logs tail /aws/lambda/${config.webhookFunction}` }),
+    },
     databases,
     launcher: ecsLauncher(ecs),
     secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) }) : null,

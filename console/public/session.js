@@ -482,7 +482,7 @@
   }
 
   // Which zones are folded is this viewer's own choice, kept in their browser when it lets us.
-  const ZONES_KEY = 'woodshed-cloud-rail-zones';
+  const ZONES_KEY = 'woodshed-rail-zones';
   function readZones() {
     try {
       return JSON.parse(window.localStorage.getItem(ZONES_KEY) || '{}');
@@ -512,7 +512,7 @@
 
   // The project the rail is filtered to, this viewer's own choice, kept in their browser when it lets us. One that
   // names a project the console no longer has is All.
-  const PROJECT_KEY = 'woodshed-cloud-rail-project';
+  const PROJECT_KEY = 'woodshed-rail-project';
   let savedProject = null;
   try {
     savedProject = window.localStorage.getItem(PROJECT_KEY);
@@ -784,7 +784,7 @@
   }
 
   // ⌘. hides the rail, as the shed's; this browser remembers it.
-  const RAIL_KEY = 'woodshed-cloud-rail-hidden';
+  const RAIL_KEY = 'woodshed-rail-hidden';
   let railHidden = false;
   try {
     railHidden = window.localStorage.getItem(RAIL_KEY) === '1';
@@ -1087,8 +1087,8 @@
     ['esc', '\x1b'], ['↑', null, 'A'], ['↓', null, 'B'],
     ['tab', '\t'], ['⇧tab', '\x1b[Z'], ['⏎', '\r'], ['^C', '\x03'],
   ];
-  const TERM_SCALE_KEY = 'woodshed-cloud-term-scale';
-  const KEY_BAR_KEY = 'woodshed-cloud-key-bar';
+  const TERM_SCALE_KEY = 'woodshed-term-scale';
+  const KEY_BAR_KEY = 'woodshed-key-bar';
   const TERM_SCALE_MIN = 0.5;
   const TERM_SCALE_MAX = 1;
   let termScale = 0.7;
@@ -1742,7 +1742,7 @@
   // showing Loading… first. Only this tab's, gone when it closes, and never anything the page did not already show.
   // Kept with whose it was, the login the page was served to, and drawn only for that same person: a tab someone else
   // signs into after a sign-out never shows the last one's private sessions. Sign out also clears it (common.js).
-  const LAST_KEY = 'woodshed-cloud-last';
+  const LAST_KEY = 'woodshed-last';
   const signedInAs = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
   // Until the first answer confirms it, the kept list is a guess: a first refresh that fails drops it.
   let fromLast = false;

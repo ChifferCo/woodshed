@@ -1,7 +1,7 @@
 # The whole account's spend: the account holds nothing but Woodshed.
 
 resource "aws_budgets_budget" "monthly" {
-  name         = "woodshed-cloud"
+  name         = local.p
   budget_type  = "COST"
   limit_amount = tostring(var.monthly_budget_usd)
   limit_unit   = "USD"

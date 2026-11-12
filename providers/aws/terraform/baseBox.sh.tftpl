@@ -1,7 +1,7 @@
 #!/bin/bash
 # Base box first boot, run once by cloud-init: Docker, Compose and the data volume.
 # Everything that runs on the box after that is baseBoxStack.sh.tftpl, which the
-# woodshed-cloud-configure-base-box SSM association applies, then again whenever it changes.
+# ${name_prefix}-configure-base-box SSM association applies, then again whenever it changes.
 # Terraform ignores changes to this file: they would replace the box.
 set -euo pipefail
 
@@ -20,8 +20,8 @@ install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-com
 # formatted only when it has no filesystem yet: a replacement box keeps the data.
 DATA_DEVICE=/dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_${replace(data_volume_id, "-", "")}
 for _ in $(seq 60); do [ -e "$DATA_DEVICE" ] && break; sleep 5; done
-[ -e "$DATA_DEVICE" ] || { echo "woodshed-cloud: data volume ${data_volume_id} never appeared" >&2; exit 1; }
+[ -e "$DATA_DEVICE" ] || { echo "${name_prefix}: data volume ${data_volume_id} never appeared" >&2; exit 1; }
 blkid "$DATA_DEVICE" >/dev/null || mkfs.xfs "$DATA_DEVICE"
-mkdir -p /var/lib/woodshed-cloud
-grep -q " /var/lib/woodshed-cloud " /etc/fstab || echo "UUID=$(blkid -s UUID -o value "$DATA_DEVICE") /var/lib/woodshed-cloud xfs defaults,nofail 0 2" >> /etc/fstab
-mountpoint -q /var/lib/woodshed-cloud || mount /var/lib/woodshed-cloud
+mkdir -p /var/lib/${name_prefix}
+grep -q " /var/lib/${name_prefix} " /etc/fstab || echo "UUID=$(blkid -s UUID -o value "$DATA_DEVICE") /var/lib/${name_prefix} xfs defaults,nofail 0 2" >> /etc/fstab
+mountpoint -q /var/lib/${name_prefix} || mount /var/lib/${name_prefix}

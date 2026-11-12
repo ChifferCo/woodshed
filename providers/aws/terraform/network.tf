@@ -16,13 +16,13 @@ resource "aws_vpc" "main" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = { Name = "woodshed-cloud" }
+  tags = { Name = local.p }
 }
 
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
-  tags = { Name = "woodshed-cloud" }
+  tags = { Name = local.p }
 }
 
 # Two subnets in two zones: RDS will not create a subnet group with fewer.
@@ -34,7 +34,7 @@ resource "aws_subnet" "public" {
   availability_zone       = local.azs[count.index]
   map_public_ip_on_launch = true
 
-  tags = { Name = "woodshed-cloud-public-${count.index + 1}" }
+  tags = { Name = "${local.p}-public-${count.index + 1}" }
 }
 
 resource "aws_route_table" "public" {
@@ -45,7 +45,7 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.main.id
   }
 
-  tags = { Name = "woodshed-cloud-public" }
+  tags = { Name = "${local.p}-public" }
 }
 
 resource "aws_route_table_association" "public" {
@@ -57,13 +57,13 @@ resource "aws_route_table_association" "public" {
 
 # The description predates opening the console to the internet; changing it would replace the group.
 resource "aws_security_group" "base_box" {
-  name        = "woodshed-cloud-base-box"
+  name        = "${local.p}-base-box"
   description = "Console over HTTPS from the allowlist; shared services for sessions"
   vpc_id      = aws_vpc.main.id
 }
 
 resource "aws_security_group" "sessions" {
-  name        = "woodshed-cloud-sessions"
+  name        = "${local.p}-sessions"
   description = "Session tasks: ttyd and statusd, reachable only from the base box"
   vpc_id      = aws_vpc.main.id
 }
@@ -71,7 +71,7 @@ resource "aws_security_group" "sessions" {
 resource "aws_security_group" "database" {
   count = local.postgres ? 1 : 0
 
-  name        = "woodshed-cloud-database"
+  name        = "${local.p}-database"
   description = "RDS Postgres, from the base box and sessions only"
   vpc_id      = aws_vpc.main.id
 }

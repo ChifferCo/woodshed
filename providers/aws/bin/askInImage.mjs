@@ -6,7 +6,7 @@
 //
 //   node woodshed/providers/aws/bin/askInImage.mjs <image> [question]
 //
-// Needs Docker, the image (the installation's ECR `woodshed-cloud-session` repository, from Terraform's
+// Needs Docker, the image (the installation's ECR `<name_prefix>-session` repository, from Terraform's
 // `ecr_repositories` output, with `:latest`, after `aws ecr get-login-password | docker login`; or a tag built
 // locally), `gh auth token` for a GitHub token, and ANTHROPIC_API_KEY in the environment. Nothing
 // reaches Slack. WOODSHED_INSTALL_SECRET_PAIRS, as the console's (`secret=VARIABLE` pairs, from its compose.yml), adds
