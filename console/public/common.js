@@ -759,9 +759,9 @@
     return u && h('span', { class: `usage${u.level ? ` is-${u.level}` : ''}`, title: u.tip }, u.text);
   }
 
-  // The owner's Claude plan, which all their private sessions draw on, so the newest reading any of them saw stands for
-  // each (sessions.mjs keeps a stopped session's last one). Claude Code reports a reading after each answer and leaves
-  // a window out on its own, so either can be missing.
+  // The owner's Claude plan is shared by their private Claude sessions, so the newest reading stands for each
+  // (sessions.mjs keeps a stopped session's last one). Claude Code reports after each answer and can leave either
+  // window out. Codex sessions neither draw on this plan nor contribute readings or the running count.
   const PLAN_WINDOWS = [
     { key: 'fiveHour', short: '5h', label: 'Five-hour session', ms: 5 * 3600_000 },
     { key: 'sevenDay', short: 'wk', label: 'Week, all models', ms: 7 * 86400_000 },
@@ -779,8 +779,9 @@
    *   `pace` is how much of the window has gone by, from 0 to 1; a window whose reset has passed reads 0% however old the reading
    */
   function planUsageOf(s, sessions) {
-    if (!isPrivate(s)) return null;
-    const newest = sessions.filter((o) => o.owner === s.owner && o.planUsage).map((o) => o.planUsage)
+    if (!isPrivate(s) || s.options?.agent === 'codex') return null;
+    const claudeSessions = sessions.filter((o) => o.owner === s.owner && o.options?.agent !== 'codex');
+    const newest = claudeSessions.filter((o) => o.planUsage).map((o) => o.planUsage)
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
@@ -795,7 +796,7 @@
     return {
       asOf: newest.asOf,
       stale: Boolean(newest.asOf) && now - Date.parse(newest.asOf) > PLAN_STALE_MS,
-      running: sessions.filter((o) => o.owner === s.owner && o.status === 'running').length,
+      running: claudeSessions.filter((o) => o.status === 'running').length,
       windows,
     };
   }
