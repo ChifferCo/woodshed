@@ -48,7 +48,12 @@ is applied (`docs/reference.md` here, then `console/`, `session/` and
   ships.** Tests of the console and of the entrypoint's pieces do not prove the
   start: run the session image with the environment ECS gives it, as
   "Running a session start in the real image" below shows, and put its log in
-  the PR.
+  the PR. A session, which has no Docker, runs the start beside itself instead
+  ("Running a session start inside a session"): that is enough only for a change
+  to `session/` and `shared/` scripts. Its log goes in the PR with the list of
+  what it does not prove, which it prints. When it says `NOT COVERED`, or the
+  change is to the image itself, the real image run is still due: say so in the
+  PR's Proof as not proven.
 
 ## Changing how the console looks
 
@@ -774,6 +779,37 @@ image from the worktree and pass its tag. For another kind of session, copy it: 
 the stand-in session API serves.
 `providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
 instead of writing the pull request's comment and check.
+
+## Running a session start inside a session
+
+A session has no Docker, but it runs in the session image already. `node woodshed/providers/aws/bin/startInSession.mjs
+[--console-away <seconds>] [--timeout <seconds>] [--keep]` runs the pushed branch's `session/entrypoint.sh session` as
+a private session, beside the live one, with the image's own bash, curl, jq, node, tmux, ttyd and claude:
+
+- **The environment** is the fleet's for a private session, filtered by `sessionOverrides` as ECS does.
+- **The console** is the real session API on loopback, with a made-up owner and a dummy Claude token, so claude opens
+  and is asked nothing.
+- **Kept apart:** the start writes under a scratch `WOODSHED_TMP`, `HOME`, `TMUX_TMPDIR` and checkout, and
+  `WOODSHED_PORT_OFFSET` moves its ports by 100, so it never touches the live session.
+- **The run's checks:** the start reached statusd, claude opened, no GitHub or Anthropic token was left in claude's
+  environment, everything it started has stopped, and the live session's `/tmp` files hold nothing of the run's.
+- **`--console-away N`** drops every connection to the console for the start's first N seconds, as a redeploy does,
+  and the start must wait it out.
+
+**What it does not prove.** It prints this list first and last; put it in the PR's Proof with the log:
+
+- **The image is the one the session runs in, as last deployed.** A change to `session/Dockerfile`, a system package
+  or claude's version is not tried. Neither is a change to a file the image copies outside `/opt/woodshed`
+  (`session/gh.sh`, `session/tmux.conf`): when the branch changes one, the run says `NOT COVERED`. Then the image run
+  above is still due.
+- **It is not the container's first process.** How the session takes a signal and how the container exits are not
+  tried.
+- **No ECS, Fargate or task definition:** no IAM, network or secret injection.
+- **The console is a stand-in:** no own env lines, no saved Claude home, no databases.
+- **A project with databases or Redis is refused.** They would need ports and data of their own.
+
+A failed run keeps its folder, under `/tmp/start-in-session-*`, and names it. `--keep` leaves the start running, on
+statusd port 7782.
 
 ## Checking a console page change in a browser
 

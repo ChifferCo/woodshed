@@ -352,20 +352,24 @@ async function main() {
   console.log = realLog;
   console.warn = realWarn;
 
+  // 'skip' where the check needs a start that got through.
   const checks = [
     [outcome.ok, outcome.ok ? `the start reached statusd in ${seconds} s` : `the start failed: ${outcome.why}`],
-    [!outcome.ok || claudeOpened, claudeOpened ? 'claude opened in the start\'s own tmux' : `claude did not open in the start's tmux; its pane says: ${pane.trim().split('\n').slice(-3).join(' / ') || 'nothing'}`],
-    [!args.consoleAway || dropped > 0, args.consoleAway ? `the console dropped ${dropped} connection(s) in its first ${args.consoleAway} s, and the start waited them out` : 'the console answered throughout (no --console-away)'],
+    [outcome.ok ? claudeOpened : 'skip', claudeOpened ? 'claude opened in the start\'s own tmux' : outcome.ok ? `claude did not open in the start's tmux; its pane says: ${pane.trim().split('\n').slice(-3).join(' / ') || 'nothing'}` : 'claude opening in the start\'s tmux'],
+    !args.consoleAway ? [true, 'the console answered throughout (no --console-away)']
+      : [dropped > 0 ? (outcome.ok || 'skip') : false, dropped === 0 ? 'the console was to drop connections, and the start made no call in that time'
+        : outcome.ok ? `the console dropped ${dropped} connection(s) in its first ${args.consoleAway} s, and the start waited them out`
+          : `the console dropped ${dropped} connection(s) in its first ${args.consoleAway} s`],
     [leaked.length === 0, leaked.length ? `left in claude's environment: ${leaked.join(', ')}` : 'no GitHub or Anthropic token left in claude\'s environment'],
     [stopped, stopped ? (args.keep ? 'left running (--keep)' : 'everything the run started has stopped') : `processes of the run still running: ${runProcesses(dirs.tmp).join(' ')}`],
     [touched.length === 0, touched.length ? `the live session's files changed during the run: ${touched.join(', ')}` : 'the live session\'s /tmp files were left as they were'],
   ];
   realLog('\n=== Result ===');
-  for (const [ok, what] of checks) realLog(`${ok ? 'ok  ' : 'FAIL'} ${what}`);
+  for (const [ok, what] of checks) realLog(`${ok === 'skip' ? 'skip' : ok ? 'ok  ' : 'FAIL'} ${what}`);
   banner(LIMITS, 'What this run does not prove (put these in the pull request with the log)');
-  const passed = checks.every(([ok]) => ok);
-  realLog(passed ? `startInSession: PASSED, within the limits above. Log: ${logFile}` : `startInSession: FAILED. Log: ${logFile}`);
-  if (args.keep) realLog(`startInSession: left running (--keep): statusd on ${7682 + PORT_OFFSET}, its tmux with TMUX_TMPDIR=${dirs.tmux}. Stop it with: TMUX_TMPDIR=${dirs.tmux} tmux kill-server; pkill -f -- '${dirs.tmp}' or kill each pid whose environment has WOODSHED_TMP=${dirs.tmp}`);
+  const passed = checks.every(([ok]) => ok === true);
+  realLog(passed ? `startInSession: PASSED, within the limits above. Log: ${logFile}` : `startInSession: FAILED. Log: ${logFile}; the run's files are kept in ${scratch}`);
+  if (args.keep) realLog(`startInSession: left running (--keep): statusd on ${7682 + PORT_OFFSET}, its tmux with TMUX_TMPDIR=${dirs.tmux}. To stop it: TMUX_TMPDIR=${dirs.tmux} tmux kill-server; kill ${runProcesses(dirs.tmp).join(' ')}`);
   else if (passed) fs.rmSync(scratch, { recursive: true, force: true });
   process.exit(passed ? 0 : 1);
 }
