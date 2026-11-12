@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -361,4 +361,195 @@ test('WOODSHED_TAILSCALE=shared, for others on the tailnet, serves the console a
   fs.writeFileSync(file, 'WOODSHED_REQUIRE_SIGN_IN=1\nWOODSHED_APP_PORTS=7701-7710\n', { mode: 0o600 });
   runInstallFunction(`setUpTailscale "${file}"`, { PATH: `${ts.dir}:${process.env.PATH}`, WOODSHED_TAILSCALE: '1' });
   assert.equal(readEnvFile(file).WOODSHED_APP_PORTS, undefined, 'a console that already requires sign-in keeps none on a later run');
+});
+
+// main, run as a person runs it, with the slow or outside parts stood in for: docker answers yes to everything (the
+// image is there, so nothing is built), the session API's address is the Mac's, and each call to buildImage or
+// fetchRepo is said.
+function runMain(env, extra = []) {
+  const docker = fakeDocker(0);
+  return runInstallFunction([
+    'checkTools() { :; }',
+    'sessionApiHost() { echo "127.0.0.1 host.docker.internal"; }',
+    'buildImage() { echo "build repo=$2 image=$4"; }',
+    ...extra,
+    'main 2>&1',
+  ].join('; '), { PATH: docker.PATH, WOODSHED_NO_START: '1', ...env });
+}
+
+test('with no WOODSHED_REPO, install.sh asks nothing, fetches nothing, and sets up a console with no repo on the generic image', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-norepo-'));
+  const out = runMain({ WOODSHED_HOME: home }, ['fetchRepo() { echo "fetched $1"; }', 'githubToken() { echo "token asked"; }']);
+  assert.doesNotMatch(out, /fetched|token asked|Which GitHub repository/);
+  assert.match(out, /Using the session image woodshed-session:generic/);
+  assert.match(out, /No repository yet, so no databases/);
+  assert.match(out, /Repositories are added in the console: Console settings, Repos, at http:\/\/localhost:7690\/console-settings#card-projects/);
+  const env = readEnvFile(path.join(home, 'stack.env'));
+  assert.equal(env.WOODSHED_REPO, undefined, 'the console starts with no repo');
+  assert.equal(env.WOODSHED_IMAGE, 'woodshed-session:generic');
+  assert.deepEqual(Object.keys(env).filter((key) => /^WOODSHED_LOCAL_(DB_|PG_|MONGO_|DATA_DIR|DOCKER_NETWORK)/.test(key)), []);
+  assert.deepEqual(JSON.parse(fs.readFileSync(env.WOODSHED_SESSION_ENV_FILE, 'utf8')), { WOODSHED_CONSOLE_URL: 'http://host.docker.internal:7691' });
+  const config = loadConfig(env, { readGhToken: false });
+  requireRepo(config);
+  assert.equal(defaultProject(config).repo, '');
+  assert.equal(createProvider(config, env).dbAdmin, null);
+
+  // Again with no repo: the same install, nothing asked.
+  const before = fs.readFileSync(path.join(home, 'stack.env'), 'utf8');
+  assert.doesNotMatch(runMain({ WOODSHED_HOME: home }), /Which GitHub repository|fetch/);
+  assert.equal(fs.readFileSync(path.join(home, 'stack.env'), 'utf8'), before);
+});
+
+test('with the generic image missing, install.sh builds it with no repository and no token', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-norepo-build-'));
+  const out = runInstallFunction([
+    'checkTools() { :; }',
+    'githubToken() { echo "token asked"; }',
+    'buildImage() { echo "build repo=[$2] dir=[$3] image=$4 token=[$5]"; }',
+    'main',
+  ].join('; '), { WOODSHED_HOME: home, WOODSHED_BUILD_ONLY: '1' });
+  assert.match(out, /build repo=\[\] dir=\[\] image=woodshed-session:generic token=\[\]/);
+  assert.doesNotMatch(out, /token asked/);
+});
+
+test('the generic image is built from session/ and shared/ alone, with no checkout, installs or token', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-generic-'));
+  const docker = fakeDocker(0);
+  const woodshed = path.resolve(import.meta.dirname, '..');
+  runInstallFunction(`buildImage "${woodshed}" "" "" woodshed-session:generic "" "${home}/build" "" >/dev/null 2>&1`, { PATH: docker.PATH });
+  const build = docker.calls().find((call) => call.startsWith('build '));
+  assert.match(build, /--build-arg REPO= --build-arg REPO_DIR=\/work\/\.no-checkout -t woodshed-session:generic /);
+  assert.doesNotMatch(build, /--secret/, 'nothing to clone, so no token');
+  assert.deepEqual(fs.readdirSync(path.join(home, 'build/woodshed-deps')), []);
+  assert.equal(fs.readFileSync(path.join(home, 'build/woodshed-deps.installs'), 'utf8'), '');
+  assert.equal(fs.readFileSync(path.join(home, 'build/woodshed-deps.editor'), 'utf8'), 'true\n');
+  assert.ok(fs.existsSync(path.join(home, 'build/woodshed/session/entrypoint.sh')));
+});
+
+test('a later run with WOODSHED_REPO gives a repo-less install that repo\'s image and databases, keeping the rest of stack.env', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-addrepo-'));
+  runMain({ WOODSHED_HOME: home });
+  const file = path.join(home, 'stack.env');
+  // As a Tailscale run left it, and a line of the owner's.
+  runInstallFunction(`setStackSetting "${file}" PUBLIC_URL https://mac.tail1234.ts.net`);
+  fs.appendFileSync(file, 'WOODSHED_MAX_SESSIONS=3\n');
+  const project = fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] });
+  const fetch = `fetchRepo() { mkdir -p "$2/.woodshed"; printf '%s' '${project}' >"$2/.woodshed/project.yaml"; echo "fetched $1"; }`;
+  const out = runMain({ WOODSHED_HOME: home, WOODSHED_REPO: 'acme/app', GH_TOKEN: 't' }, [fetch]);
+  assert.match(out, /fetched acme\/app/);
+  assert.match(out, /This install had no repository: it works on acme\/app now/);
+  assert.match(out, /Starting postgres/);
+  const env = readEnvFile(file);
+  assert.equal(env.WOODSHED_REPO, 'acme/app');
+  assert.equal(env.WOODSHED_IMAGE, 'woodshed-session:acme-app');
+  assert.equal(env.WOODSHED_ENV_FILES, 'api-env=api/.env');
+  assert.equal(env.WOODSHED_DB_ENV_SECRETS, 'api-env');
+  assert.equal(env.WOODSHED_LOCAL_DB_POSTGRES_HOST, 'postgres');
+  assert.match(env.WOODSHED_LOCAL_PG_ROOT_PASSWORD, /^[0-9a-f]{48}$/);
+  assert.equal(env.WOODSHED_LOCAL_DOCKER_NETWORK, 'woodshed');
+  assert.equal(env.WOODSHED_PUBLIC_URL, 'https://mac.tail1234.ts.net', 'the Tailscale name is kept');
+  assert.equal(env.WOODSHED_MAX_SESSIONS, '3', 'and the owner\'s line');
+  const text = fs.readFileSync(file, 'utf8');
+  for (const name of ['WOODSHED_REPO', 'WOODSHED_IMAGE', 'WOODSHED_PUBLIC_URL', 'WOODSHED_SESSION_API_HOST', 'WOODSHED_STATE_DIR']) {
+    assert.equal(text.match(new RegExp(`^${name}=`, 'gm')).length, 1, name);
+  }
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(fs.readFileSync(env.WOODSHED_SESSION_ENV_FILE, 'utf8')).PGHOST, 'postgres', 'sessions reach the new server');
+  assert.equal(defaultProject(loadConfig(env, { readGhToken: false })).repo, 'acme/app');
+
+  assert.throws(() => runMain({ WOODSHED_HOME: home, WOODSHED_REPO: 'other/repo', GH_TOKEN: 't' }),
+    (err) => /this install works on acme\/app: set WOODSHED_HOME to another folder for other\/repo/.test(err.stdout));
+  assert.match(runMain({ WOODSHED_HOME: home, GH_TOKEN: 't' }, [fetch]), /fetched acme\/app/, 'with none named, it keeps its repo');
+});
+
+test('the ports the console listens on: its own, the session API\'s, and the app ports only for Tailscale for one person', () => {
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-ports-')), 'stack.env');
+  const ports = (env = {}) => runInstallFunction(`consolePorts "${file}"`, env).trim().split('\n');
+  assert.deepEqual(ports(), ['7690', '7691']);
+  assert.deepEqual(ports({ WOODSHED_TAILSCALE: '1' }), ['7690', '7691', '7701', '7702', '7703', '7704', '7705', '7706', '7707', '7708', '7709', '7710']);
+  assert.deepEqual(ports({ WOODSHED_TAILSCALE: 'shared' }), ['7690', '7691']);
+  fs.writeFileSync(file, 'WOODSHED_PORT=8690\nWOODSHED_APP_PORTS=8701-8702,8705\n');
+  assert.deepEqual(ports(), ['8690', '7691', '8701', '8702', '8705'], 'as stack.env has them');
+});
+
+// A server on a free loopback port, in a process of its own, until `stop`.
+function listener(script = '') {
+  const port = 40000 + Math.floor(Math.random() * 20000);
+  const child = spawn('node', ['-e', `${script}require('node:net').createServer().listen(${port}, '127.0.0.1', () => console.log('up'))`], { stdio: ['ignore', 'pipe', 'inherit'] });
+  return { port, child, up: new Promise((resolve) => child.stdout.once('data', resolve)), stop: () => child.kill() };
+}
+
+// A stand-in lsof that prints `lines` as `-F pcn` does.
+function fakeLsof(lines) {
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-lsof-'));
+  fs.writeFileSync(path.join(bin, 'lsof'), `#!/usr/bin/env bash\nprintf '%s\\n' ${lines.map((l) => `'${l}'`).join(' ')}\n`, { mode: 0o755 });
+  return `${bin}:${process.env.PATH}`;
+}
+
+test('a port is held where it would collide: loopback or every address, not the tailnet\'s, nor by Tailscale\'s own serve', () => {
+  const port = 40000 + Math.floor(Math.random() * 20000);
+  const holder = (lines) => runInstallFunction(`portHolder ${port} || echo free`, { PATH: fakeLsof(lines) });
+  assert.equal(holder(['p41', 'cnode', `n127.0.0.1:${port}`]), '41 node\n');
+  assert.equal(holder(['p41', 'cnode', `n*:${port}`]), '41 node\n');
+  assert.equal(holder(['p41', 'cnode', `n[::1]:${port}`]), '41 node\n');
+  assert.equal(holder(['p41', 'cnode', `n100.101.1.2:${port}`]), 'free\n', 'only on the tailnet\'s address');
+  assert.equal(holder(['p52', 'cIPNExtension', `n*:${port}`]), 'free\n', 'tailscale serve handing the port to the console');
+  assert.equal(runInstallFunction(`portHolder ${port} 172.18.0.1 || echo free`, { PATH: fakeLsof(['p41', 'cnode', `n172.18.0.1:${port}`]) }), '41 node\n', 'the session API\'s own address');
+});
+
+test('a port something else holds stops install.sh before anything is built, naming what holds it', async () => {
+  const other = listener();
+  await other.up;
+  try {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-taken-'));
+    assert.throws(() => runInstallFunction([
+      'checkTools() { :; }',
+      'buildImage() { echo built; }',
+      'main',
+    ].join('; '), { WOODSHED_HOME: home, WOODSHED_PORT: String(other.port), WOODSHED_SESSION_API_PORT: String(other.port + 1) }), (err) => {
+      assert.equal(err.status, 1);
+      assert.doesNotMatch(err.stdout, /built/);
+      const named = new RegExp(`woodshed install: port ${other.port}, which the console needs, is taken by node \\(pid ${other.child.pid}: node -e`);
+      const unnamed = new RegExp(`woodshed install: port ${other.port}, which the console needs, is taken, and this machine will not say by what`);
+      assert.match(err.stderr, hasPortTool ? named : unnamed);
+      return true;
+    });
+  } finally {
+    other.stop();
+  }
+});
+
+const hasPortTool = ['lsof', 'ss'].some((tool) => {
+  try { execFileSync('bash', ['-c', `command -v ${tool}`], { stdio: 'ignore' }); return true; } catch { return false; }
+});
+
+test('this install\'s own console holding the ports is not refused, and its pid is given to restart it', { skip: !hasPortTool && 'no lsof or ss to say whose a port is' }, async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-own-'));
+  const src = path.join(home, 'src');
+  fs.mkdirSync(path.join(src, 'providers'), { recursive: true });
+  const port = 40000 + Math.floor(Math.random() * 20000);
+  fs.writeFileSync(path.join(src, 'providers/console.mjs'), `import net from 'node:net';\nnet.createServer().listen(${port}, '127.0.0.1', () => console.log('up'));\n`);
+  const other = path.join(home, 'other.env');
+  fs.writeFileSync(other, `WOODSHED_PORT=${port}\nWOODSHED_SESSION_API_PORT=${port + 1}\nWOODSHED_STATE_DIR=${home}-other/console\n`);
+  runInstallFunction(`writeLauncher "${home}/bin/woodshed" "${home}" "${src}"`);
+  // Started as install.sh starts it, by the launcher's full path; then by hand from its folder, with the state folder
+  // in its environment.
+  for (const [how, stackEnv, start] of [
+    ['its launcher', `WOODSHED_PORT=${port}\nWOODSHED_SESSION_API_PORT=${port + 1}\n`, [path.join(home, 'bin/woodshed'), { cwd: home }]],
+    ['its environment', `WOODSHED_PORT=${port}\nWOODSHED_SESSION_API_PORT=${port + 1}\nWOODSHED_STATE_DIR=${home}/console\n`, ['./bin/woodshed', { cwd: home }]],
+  ]) {
+    fs.writeFileSync(path.join(home, 'stack.env'), stackEnv);
+    const own = spawn(start[0], { ...start[1], stdio: ['ignore', 'pipe', 'inherit'] });
+    await new Promise((resolve) => own.stdout.once('data', resolve));
+    try {
+      const pid = runInstallFunction(`checkPorts "${home}" "${home}/stack.env"`);
+      assert.match(pid, /^\d+$/, how);
+      assert.notEqual(pid, String(own.pid), 'the console, not its launcher');
+      assert.throws(() => runInstallFunction(`checkPorts "${home}-other" "${other}"`), (err) => /is taken by node/.test(err.stderr), 'another install\'s is refused');
+      runInstallFunction(`stopOwnConsole ${pid} ${port}`);
+      assert.equal(runInstallFunction(`portHolder ${port} || echo free`), 'free\n');
+    } finally {
+      own.kill();
+    }
+  }
 });
