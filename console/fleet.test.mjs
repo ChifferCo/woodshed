@@ -2078,6 +2078,25 @@ test('a QA check GitHub refuses still leaves the report in the comment and stops
   assert.equal(session.status, 'stopped');
 });
 
+test('a QA report naming another commit posts no check, though its comment is still written', async () => {
+  const { fleet, calls } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'b'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.equal(calls.checks.length, 0, 'the pull request\'s code could name another pull request\'s head');
+  assert.match(calls.comments.at(-1).body, /✅ \*\*Pass\*\*/);
+});
+
+test('a QA report on a commit pushed since the session started is checked on it', async () => {
+  const { fleet, calls, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  github.pull = async () => ({ ...QA_PULL, head: { ...QA_PULL.head, sha: 'c'.repeat(40) } });
+  await fleet.qaFinished(fleet.sessions()[0], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'c'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.equal(calls.checks[0].sha, 'c'.repeat(40));
+});
+
 test('a QA session is not where a /woodshed comment on its pull request goes', async () => {
   const { fleet } = qaSetup();
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });

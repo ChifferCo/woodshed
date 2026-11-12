@@ -576,6 +576,8 @@ secrets.
   lifetime) never sent one: label the pull request again.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
+  `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the
+  session started on nor the pull request's head: the pull request's code can send the report, so it gets no check.
 - **A question got 👀 and no answer.** Open the session from the link in the
   thread. The session's log says `mode: ask`; the console logs `asks: answer
   posted` with `posted: false` when Slack refused the reply (`slack: call

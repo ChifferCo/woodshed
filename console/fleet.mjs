@@ -1414,10 +1414,13 @@ export function createFleet({
     const sessionUrl = await qaSessionUrl(session, project);
     await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl }));
     // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
-    const checkUrl = await safely('QA check', () => gh.createCheckRun({
+    // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
+    const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
+    if (!ours) console.warn('fleet: QA check skipped, not the pull request\'s commit', { id: session.id, number: session.number, reported: sha, started: session.qa.sha });
+    const checkUrl = ours ? await safely('QA check', () => gh.createCheckRun({
       sha, name: session.qa.check ?? 'QA', conclusion: verdict.conclusion, title: verdict.title,
       summary: `${verdict.status}\n\n${report}`.trim(), detailsUrl: sessionUrl, externalId: session.id,
-    }));
+    })) : null;
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
     console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
     // In the background: the session waits on this reply, and the stop saves its home through it first.
