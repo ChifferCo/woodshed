@@ -49,7 +49,7 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
      one of its own (on-demand TLS, `console/tlsAsk.mjs`). Let's Encrypt counts every `sslip.io` certificate,
      everyone's, against one weekly limit, and Caddy falls back to ZeroSSL when it refuses; each session app's first
      visit waits a few seconds for its certificate. With a domain, Terraform makes it a Route 53 zone of its own, the
-     parent domain delegates it (step 6), and one wildcard certificate covers every session app. Setting one later
+     parent domain delegates it (step 7), and one wildcard certificate covers every session app. Setting one later
      changes the console's address: the GitHub App's Callback URL then needs the new one.
    - `sessions_on_github_repo`, true unless set. `github_repo` is where the deploy workflow runs (the GitHub roles
      trust it) and what the session image is built from; with true it is also the repo sessions work on, the console's
@@ -65,15 +65,30 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    and Pull requests and Actions (read and write), and Metadata, Checks and
    Commit statuses (read), installable only on
    this account. Install it on this repo only (on the repos sessions will work on, too, with
-   `sessions_on_github_repo = false`). The App ID is on its settings
-   page; the installation ID ends the installation page's URL.
+   `sessions_on_github_repo = false`, and then also give it Organization permissions, Members: read). The App ID is
+   on its settings page; the installation ID ends the installation page's URL. Its Callback URL and client secret come
+   in step 4, once the console's address is known.
 
 3. From `providers/aws/terraform/`: `terraform init -backend-config=<your backend.hcl>`, then
    `terraform plan -var-file=<your terraform.tfvars> -out=woodshed.tfplan`, read it, and
    `terraform apply woodshed.tfplan`. With them at `.woodshed/install/aws/`, those are
    `../../../../.woodshed/install/aws/backend.hcl` and `../../../../.woodshed/install/aws/terraform.tfvars`, and the
    deploy workflow ("The deploy workflow", below) runs the same.
-4. Create the three GitHub environments the deploy workflow's roles trust, before its first run (a workflow naming an
+4. Before the console's first start, give it what sign-in needs: the base box requires sign-in from the start
+   (`WOODSHED_CLOUD_REQUIRE_SIGN_IN=1`), and a console without these lets nobody in, so the Secrets & webhooks tab
+   cannot be reached to set them. On the App's settings page (General), set **Callback URL** to the `console_url`
+   output plus `/auth/callback`, then **Generate a new client secret** and **Generate a private key**. Save the secret
+   to a file only you can read, upload both, and delete both files:
+
+   ```bash
+   aws secretsmanager put-secret-value --secret-id woodshed-cloud/github-app-client-secret --secret-string file://<secret file>
+   aws secretsmanager put-secret-value --secret-id woodshed-cloud/github-app-key --secret-string file://<key>.pem
+   ```
+
+   The console reads both at start. Set later, they need `sudo docker compose restart console` in
+   `/opt/woodshed-cloud` on the base box (console/README.md, "Sign-in"). **Done when** the console's first start
+   (step 6) logs `console: GitHub sign-in` with `available: true`, and no `console: no GitHub App key yet`.
+5. Create the three GitHub environments the deploy workflow's roles trust, before its first run (a workflow naming an
    environment that does not exist creates it, with no reviewers): `woodshed-cloud-plan` and `woodshed-cloud-images`,
    each with deployment branches limited to the default branch, and `woodshed-cloud-infra` (the default branch only,
    with required reviewers, and administrators may not bypass them; whoever starts the run may approve it). Set the
@@ -81,23 +96,22 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    `WOODSHED_CLOUD_AWS_ROLE_ARN` to the `github_plan_role_arn`, `github_infra_role_arn` and `github_images_role_arn`
    outputs, `WOODSHED_CLOUD_BASE_BOX_ID` to the `base_box_instance_id` output, plus `WOODSHED_CLOUD_AWS_REGION` if not
    us-east-1.
-5. Run the deploy workflow. With nothing to apply after step 3, it builds both images. The console job ends
+6. Run the deploy workflow. With nothing to apply after step 3, it builds both images. The console job ends
    by starting the stack on the base box over SSM. Its first start at boot
    fails until the console image exists, and this is what starts it.
-6. Open the `console_url` output. With a domain, first delegate it: an NS record for it where the parent domain's
+7. Open the `console_url` output. With a domain, first delegate it: an NS record for it where the parent domain's
    DNS is hosted, holding the `dns_nameservers` output, until `dig <domain>` answers the Elastic IP. With none there
    is nothing to wait for. Before that, `https://<Elastic IP>` works with Caddy's own
    certificate: accept the browser's warning for that one address. Do not
    install Caddy's root certificate: it is not limited to this site, and its key
    lives on the base box.
-7. On the Secrets & webhooks tab, set the four session secrets (a session will
-   not start until all have a value) and upload the GitHub App's key: generate
-   one on the App's settings page, upload it, then delete the `.pem`.
-8. With a database in `databases`, build the database template once with the `db_template_command` output:
-   step 5's session job tried, before the secrets were set. Every session's
+8. Sign in, then on the Secrets & webhooks tab set the four session secrets (a session will not start until all
+   have a value).
+9. With a database in `databases`, build the database template once with the `db_template_command` output:
+   step 6's session job tried, before the secrets were set. Every session's
    databases are copied from it, so a session started before it waits five
    minutes for one, then fails. After this, each session build makes it again.
-9. Webhooks: on the same tab, **Set up webhook** and follow its three steps.
+10. Webhooks: on the same tab, **Set up webhook** and follow its three steps.
    The console finds the queue by name, so nothing restarts.
 
 ## The deploy workflow

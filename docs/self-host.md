@@ -200,8 +200,9 @@ Found by running this runbook with an agent. Each is a problem in Woodshed, not 
 
 `providers/aws/README.md`, "Setting it up", is already a numbered runbook: follow it. Its **you** steps are the AWS
 account (one for Woodshed alone), the GitHub App (made by hand on AWS, before Terraform), reading `terraform plan`
-before `apply`, the GitHub environments, the DNS delegation when there is a `domain`, and the secrets on the console's
-Secrets & webhooks page. An agent with AWS credentials in that account can run the rest, and must stop and show the plan
+before `apply`, the App's Callback URL, client secret and private key right after the apply (uploaded from a shell,
+before the console first starts: without them nobody can sign in to set anything), the GitHub environments, the DNS
+delegation when there is a `domain`, and the session secrets on the console's Secrets & webhooks page. An agent with AWS credentials in that account can run the rest, and must stop and show the plan
 when it changes or destroys anything.
 
 Two choices are optional, and an agent should not ask for them as if they were required: a console domain (left out,
