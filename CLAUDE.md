@@ -770,6 +770,8 @@ The console's real session API and Anthropic proxy answer the container from the
 environment, and the answer, and exits 1 without an answer. To try a start change before the image is built, build the
 image from the worktree and pass its tag. For another kind of session, copy it: change the `createSession` call and what
 the stand-in session API serves.
+`providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
+instead of writing the pull request's comment and check.
 
 ## Checking a console page change in a browser
 
