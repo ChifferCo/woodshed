@@ -67,3 +67,15 @@ test('a key alone is ours only when focus takes no text', () => {
   assert.equal(takesTyping({ tagName: 'SELECT' }), true);
   assert.equal(takesTyping({ tagName: 'DIV', isContentEditable: true }), true);
 });
+
+test('⌘↵ or Ctrl+Enter is Start on New session, written Ctrl+Enter off a Mac, and left to the form', () => {
+  assert.equal(match({ key: 'Enter', code: 'Enter', metaKey: true }, { typing: true }), 'start');
+  assert.equal(match({ key: 'Enter', code: 'Enter', ctrlKey: true }, { typing: true }), 'start');
+  assert.equal(match({ key: 'Enter', code: 'NumpadEnter', metaKey: true }), 'start');
+  assert.equal(match({ key: 'Enter', code: 'Enter', metaKey: true, shiftKey: true }), null);
+  assert.equal(match({ key: 'Enter', code: 'Enter' }), null, 'Enter alone is a new line in the prompt');
+  assert.equal(match({ key: 'Enter', code: 'Enter', ctrlKey: true }, { inFrame: true }), null, 'Ctrl+Enter is the terminal\'s');
+  assert.deepEqual(caps(byId.start.mod, true), ['⌘', '↵']);
+  assert.deepEqual(caps(byId.start.mod, false), ['Ctrl', 'Enter']);
+  assert.equal(byId.start.where, 'New session');
+});
