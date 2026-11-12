@@ -36,7 +36,8 @@ export const START_STEPS = ['container', 'settings', 'home', 'branch', 'database
 
 const CLAUDE_SESSION_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export const APP_STATES = new Set(['running', 'api-down', 'frontend-down', 'starting', 'stopping', 'failed', 'stopped']);
+// `none`: the project file has no app, so the page offers Set up app instead of Start app.
+export const APP_STATES = new Set(['running', 'api-down', 'frontend-down', 'starting', 'stopping', 'failed', 'stopped', 'none']);
 
 /** @returns {string} 8 hex characters, also ttyd's base path and part of the branch name */
 export function newSessionId() {
@@ -185,9 +186,11 @@ export const PERMISSION_MODES = ['auto', 'acceptEdits', 'plan', 'default'];
 
 // The agent a private session runs. Codex takes its model and reasoning effort as `codex --model` and
 // `-c model_reasoning_effort=`; its permission modes are the entrypoint's mapping onto codex's sandbox and approval flags.
+// Codex's models and efforts are OpenAI's catalog's (codexModels.mjs), which the console checks a start against: here
+// only their shape, since both end up on codex's command line.
 export const AGENTS = ['claude', 'codex'];
-export const CODEX_MODELS = ['', 'gpt-5.5', 'gpt-5.4-mini', 'gpt-5.3-codex-spark'];
-export const CODEX_EFFORTS = ['', 'low', 'medium', 'high', 'xhigh'];
+export const CODEX_MODEL_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+export const CODEX_EFFORT_RE = /^[a-z]{1,16}$/;
 export const CODEX_PERMISSION_MODES = ['auto', 'plan', 'default'];
 
 /**
@@ -203,10 +206,15 @@ export function sessionOptions({ agent = 'claude', model = '', effort = '', perm
   };
   const chosen = pick(agent || 'claude', AGENTS, 'the agent');
   const codex = chosen === 'codex';
+  const shaped = (value, re, what) => {
+    const v = String(value ?? '');
+    if (v && !re.test(v)) throw Object.assign(new Error(`${what} is not a Codex ${what.replace('the ', '')} name`), { shown: true });
+    return v;
+  };
   return {
     agent: chosen,
-    model: pick(model, codex ? CODEX_MODELS : MODELS, 'the model'),
-    effort: pick(effort, codex ? CODEX_EFFORTS : EFFORTS, 'the effort'),
+    model: codex ? shaped(model, CODEX_MODEL_RE, 'the model') : pick(model, MODELS, 'the model'),
+    effort: codex ? shaped(effort, CODEX_EFFORT_RE, 'the effort') : pick(effort, EFFORTS, 'the effort'),
     permissionMode: pick(permissionMode || 'auto', codex ? CODEX_PERMISSION_MODES : PERMISSION_MODES, 'the permission mode'),
   };
 }
@@ -286,6 +294,21 @@ function appServersFrom(servers) {
   return { frontend: servers.frontend, backend: servers.backend, frontendPort: portFrom(servers.frontendPort), backendPort: portFrom(servers.backendPort) };
 }
 
+// As shared/project.mjs names an app; a label is the project's own words, kept short for a menu.
+const APP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MAX_APPS = 20;
+const MAX_APP_LABEL = 60;
+
+/**
+ * @returns {{name: string, label: string}[]|null}  the apps Start app can pick, as statusd listed them; null from a
+ *   statusd from before several apps, which runs its one app
+ */
+export function appsFrom(apps) {
+  if (!Array.isArray(apps)) return null;
+  const valid = apps.slice(0, MAX_APPS).filter((a) => APP_NAME_RE.test(a?.name ?? ''));
+  return valid.map((a) => ({ name: a.name, label: typeof a.label === 'string' && a.label.trim() ? a.label.trim().slice(0, MAX_APP_LABEL) : a.name }));
+}
+
 // Numbers only, and in range: the answer is the session's own.
 function usageFrom(usage) {
   if (!usage || typeof usage !== 'object') return null;
@@ -318,6 +341,19 @@ export function planUsageFrom(usage) {
   return out.fiveHour || out.sevenDay ? out : null;
 }
 
+const MAX_PR_URLS = 20;
+
+/** @returns {string[]}  the session's pull requests, oldest first; one from before the list is its only `prUrl` */
+export function prUrlsOf(session) {
+  if (Array.isArray(session?.prUrls) && session.prUrls.length) return session.prUrls;
+  return session?.prUrl ? [session.prUrl] : [];
+}
+
+function withPrUrl(session, prUrl) {
+  const known = prUrlsOf(session);
+  return prUrl && !known.includes(prUrl) ? [...known, prUrl].slice(-MAX_PR_URLS) : known;
+}
+
 /**
  * Folds one statusd answer into a session. Only a working claude counts as
  * activity: a session parked on a question for an hour is idle.
@@ -342,10 +378,15 @@ export function statusUpdate(session, status, nowIso) {
     branch: status.branch || session.branch,
     head: status.head || session.head,
     prUrl: prUrl || session.prUrl || null,
+    // Every pull request the session has reported, oldest first: a session can open another after one merged.
+    prUrls: withPrUrl(session, prUrl),
     app: APP_STATES.has(status.app) ? status.app : null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),
+    // Which of the project's apps runs, or would run, and the ones Start app can pick. One of them, or none.
+    apps: appsFrom(status.apps),
+    appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
     // The project file turns the editor on and the image has it: Editor ↗ shows, and the console lets it through.
     editor: status.editor === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so

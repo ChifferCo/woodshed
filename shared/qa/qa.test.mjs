@@ -10,35 +10,24 @@ import { promptFor, verdictOf, verdictIn, writePrompts } from './qa.mjs';
 const QA = path.join(path.dirname(fileURLToPath(import.meta.url)), 'qa.mjs');
 const none = { report: null, skip: null, noPlan: null, notCovered: null };
 
-test('every test case passing passes, and an edge case to look at is flagged without changing that', () => {
-  const v = verdictOf({ ...none, report: '## TC-1: a ✅\n\n## TC-2: b ✅\n\n## EC-1: c ⚠️\n' });
-  assert.equal(v.conclusion, 'success');
-  assert.equal(v.title, 'Pass: 2 test cases passed');
-  assert.equal(v.status, '✅ **Pass**: all 2 test cases passed · ⚠️ 1 edge case to look at');
-});
-
-test('one failed test case fails the run', () => {
-  const v = verdictOf({ ...none, report: '## TC-1: a ✅\n## TC-2: b ❌\n' });
-  assert.deepEqual([v.conclusion, v.title], ['failure', 'Fail: 1 of 2 test cases failed']);
-});
-
-test('a test case that could not be verified is neutral, not a pass', () => {
-  const v = verdictOf({ ...none, report: '## TC-1: a ✅\n## TC-2: b ❓\n' });
-  assert.deepEqual([v.conclusion, v.title], ['neutral', 'Not covered: 1 of 2 test cases unverified']);
-});
-
-test('nothing to test, no plan, no report or an app that did not start are neutral, and say why', () => {
+test('the verdict: a failed test case fails, anything short of a verdict is neutral, and edge cases never decide it', () => {
+  const cases = [
+    [{ report: '## TC-1: a ✅\n\n## TC-2: b ✅\n\n## EC-1: c ⚠️\n' }, 'success', 'Pass: 2 test cases passed'],
+    [{ report: '## TC-1: a ✅\n## TC-2: b ❌\n' }, 'failure', 'Fail: 1 of 2 test cases failed'],
+    [{ report: '## TC-1: a ✅\n## TC-2: b ❓\n' }, 'neutral', 'Not covered: 1 of 2 test cases unverified'],
+    [{ report: '## TC-1: a ✅\n## EC-1: b ❌\n' }, 'success', 'Pass: 1 test cases passed'],
+    [{ report: '## TC-1: ❌ in the title, then ✅\n' }, 'success', 'Pass: 1 test cases passed'],
+    [{ skip: 'Docs only' }, 'neutral', 'Not covered: nothing to test'],
+    [{ noPlan: 'the planner ran out of turns' }, 'neutral', 'Not covered: no test plan'],
+    [{}, 'neutral', 'Not covered: no QA report'],
+    [{ report: '## TC-1: a ✅\n', notCovered: 'the app did not start' }, 'neutral', 'Not covered: the app did not start'],
+  ];
+  for (const [given, conclusion, title] of cases) {
+    const v = verdictOf({ ...none, ...given });
+    assert.deepEqual([v.conclusion, v.title], [conclusion, title], JSON.stringify(given));
+  }
+  assert.equal(verdictOf({ ...none, report: cases[0][0].report }).status, '✅ **Pass**: all 2 test cases passed · ⚠️ 1 edge case to look at');
   assert.equal(verdictOf({ ...none, skip: 'Docs only' }).status, '⏭️ **Not covered**: Docs only');
-  assert.equal(verdictOf({ ...none, noPlan: 'the planner ran out of turns' }).title, 'Not covered: no test plan');
-  assert.equal(verdictOf(none).title, 'Not covered: no QA report');
-  const down = verdictOf({ ...none, report: '## TC-1: a ✅\n', notCovered: 'the app did not start' });
-  assert.deepEqual([down.conclusion, down.title], ['neutral', 'Not covered: the app did not start']);
-  for (const v of [verdictOf({ ...none, skip: 'x' }), verdictOf(none)]) assert.equal(v.conclusion, 'neutral');
-});
-
-test('an edge case marked ❌ never fails the run, and a mark mid-title does not count', () => {
-  assert.equal(verdictOf({ ...none, report: '## TC-1: a ✅\n## EC-1: b ❌\n' }).conclusion, 'success');
-  assert.equal(verdictOf({ ...none, report: '## TC-1: ❌ in the title, then ✅\n' }).conclusion, 'success');
 });
 
 test('the prompts fill in the app, the base and the rubric, and end with the repo notes or say there are none', () => {

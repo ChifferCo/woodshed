@@ -10,12 +10,22 @@ import { parseYaml } from '../shared/yamlLite.mjs';
 // parser knows, in every section, so a field added to the parser cannot go undocumented.
 const REFERENCE = path.resolve(import.meta.dirname, '../project.reference.yaml');
 
+// `apps` is written commented out, since a file may not have it beside `app`: the block uncommented, as a file of its own.
+function appsBlock(text) {
+  const block = /^# apps:\n(?:# .*\n|#\n)+/m.exec(text)?.[0];
+  assert.ok(block, 'the reference writes an apps block');
+  return parseYaml(block.replace(/^# ?/gm, '')).apps;
+}
+
 test('the reference project file parses, and writes every field of every section', () => {
   const text = fs.readFileSync(REFERENCE, 'utf8');
   const raw = parseYaml(text);
   parseProject(raw);
+  const apps = appsBlock(text);
+  const { app, ...rest } = raw;
+  assert.deepEqual(parseProject({ ...rest, apps }).apps.map((a) => a.name), ['web', 'admin'], 'the apps block parses too');
   const sections = {
-    '': raw, dependencies: raw.dependencies, 'dependencies.installs': raw.dependencies.installs[0], envFiles: raw.envFiles[0], databases: raw.databases[0], 'databases.migrationsTable': raw.databases[0].migrationsTable, 'databases.dump': raw.databases[0].dump, app: raw.app, pullRequests: raw.pullRequests,
+    '': { ...raw, apps }, dependencies: raw.dependencies, 'dependencies.installs': raw.dependencies.installs[0], envFiles: raw.envFiles[0], databases: raw.databases[0], 'databases.migrationsTable': raw.databases[0].migrationsTable, 'databases.dump': raw.databases[0].dump, app: raw.app, apps: apps[0], pullRequests: raw.pullRequests,
     'pullRequests.review': raw.pullRequests.review, 'pullRequests.suites': raw.pullRequests.suites[0],
     'pullRequests.qa': raw.pullRequests.qa, 'pullRequests.mergeRisk': raw.pullRequests.mergeRisk,
   };

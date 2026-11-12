@@ -497,7 +497,7 @@ dialog.wizard:focus { outline: none; }
   .pphone-meta > * { flex: none; }
   .pane-bar .pmore { display: grid; place-items: center; order: 2; flex: none; width: 38px; height: 34px; margin: 0; padding: 0; font: inherit; font-size: 17px; letter-spacing: 1px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 6px; cursor: pointer; }
   .pane-bar .pmore[aria-expanded="true"] { background: var(--bar-on); }
-  .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-template-columns: repeat(4, 1fr); }
+  .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .pane-bar .ptab { justify-content: center; padding: 6px 0; font-size: 13px; }
   .pane-bar > .ptitle, .pane-bar > .status, .pane-bar > .prchip, .pane-bar .pright, .pane-bar .pkeys,
   .pane-bar .pref, .pane-bar .pmark, .pane-bar .pbtn { display: none; }
@@ -585,6 +585,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 /* The Project select, with Make my default beside it when the pick is not the person's default. */
 .project-pick { display: flex; gap: 8px; align-items: center; }
 .project-pick select { flex: 1; min-width: 0; }
+.project-only { padding: 6px 0; overflow-wrap: anywhere; }
 .lgrid2, .lgrid3, .lgrid4 { display: grid; gap: 12px; }
 .loptions > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; cursor: pointer; list-style: none; }
 .loptions > summary::-webkit-details-marker { display: none; }
@@ -674,6 +675,11 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .restore-done { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--stopped); }
 .restore-done .start-mark { width: 20px; height: 20px; background: var(--green); color: var(--ground); font-size: 12px; }
 .restore-done .sub { margin: 4px 0 0; }
+.cmd-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; color: var(--ink); font-size: 14px; }
+.cmd-steps li::marker { color: var(--meta); font-weight: 600; }
+.cmd-steps p { margin: 0; }
+.cmd-steps .value-box, .cmd-aside .value-box { flex: 0 1 auto; white-space: pre; overflow-x: auto; }
+.cmd-aside { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .restore-cmd { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .restore-cmd-title { margin: 0; font-size: 12.5px; color: var(--meta); }
 .restore-cmd .value-box { white-space: pre; overflow-x: auto; }
@@ -702,12 +708,13 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-value { display: flex; align-items: center; gap: 8px; }
 .set-value .field { width: 84px; text-align: right; font-family: var(--mono); }
 .set-value .field.is-text { width: 150px; text-align: left; }
+.set-value .field.is-repo { width: 240px; text-align: left; }
 .set-value .unit { font-size: 13px; color: var(--sub); min-width: 42px; }
 .set-row.is-changed .field { border-color: var(--amber); background: var(--amber-tint); }
 .set-row.is-changed .set-bounds::after { content: " · changed"; color: var(--amber-ink); }
 .set-row.is-bad .field { border-color: var(--bad); }
 .set-row .form-error { grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--bad); }
-@media (max-width: 560px) { .set-row { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .set-row { grid-template-columns: 1fr; } .set-value { flex-wrap: wrap; } .set-value .field.is-repo { width: 100%; } }
 .card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .card-foot .sub { font-size: 12.5px; }
 .cap-note { margin: 0; font-size: 12.5px; color: var(--sub); padding: 9px 11px; border-radius: 6px; background: var(--slate-tint); }
@@ -813,9 +820,6 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   .card-menu-item b { font-size: 15px; }
   .card-menu-item span { font-size: 12.5px; }
 
-  /* The session's bar: the four tabs across the whole width. */
-  .pane-bar .ptabs { grid-template-columns: repeat(4, 1fr); }
-
   /* / is the list; New session is a screen of its own, /?new=1, with a way back. */
   .shell.is-launcher:not(.is-new) .launch { display: none; }
   .shell.is-new .rail { display: none; }
@@ -886,6 +890,9 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .prompt-wrap.is-dragover .field { border-color: var(--amber); background: var(--amber-tint); }
 .attach-row { display: flex; align-items: center; gap: 10px; }
 .attach-row .hint.is-error { color: var(--bad); }
+/* Dictate's line while it listens (launcher.js): a word, no motion; the words still settling in mono. */
+.dictate-line { margin: 6px 0 0; color: var(--sub); font-size: 12.5px; }
+.dictate-heard { color: var(--meta); font-family: var(--mono); font-size: 12px; }
 .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .attach-chips:empty { display: none; }
 .attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 4px 3px 3px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
@@ -902,7 +909,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 
 /* ---- session info: the pull request's chip, the container's usage, the app log ---- */
 .prchip { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 5px; border: 1px solid #a8ddc0; border-radius: 4px; background: #e8f6ee; color: #1a7f4b; font: 600 10.5px/1.6 var(--mono); text-decoration: none; white-space: nowrap; }
-.prchip.is-draft { border-color: #d8d3ca; background: #f1f0ed; color: #6e7681; }
+.prchip.is-draft, .prchip.is-more { border-color: #d8d3ca; background: #f1f0ed; color: #6e7681; }
 .prchip.is-merged { border-color: #cdb8f0; background: #f2ecfd; color: #7a4fc0; }
 .prchip.is-closed { border-color: #f0bdb8; background: #fbeceb; color: #b3261e; }
 .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
@@ -914,7 +921,7 @@ a.prchip:hover { border-color: currentColor; }
 .pane-bar .prchip { border-color: var(--bar-well-line); background: var(--bar-well); color: var(--bar-green); }
 .pane-bar .prchip.is-merged { color: #b190f5; }
 .pane-bar .prchip.is-closed { color: #f08b81; }
-.pane-bar .prchip.is-draft { color: var(--bar-sub); }
+.pane-bar .prchip.is-draft, .pane-bar .prchip.is-more { color: var(--bar-sub); }
 .pane-bar .prchip.is-queued { color: #e6c04a; }
 .usage { font: 10.5px var(--mono); color: var(--meta); white-space: nowrap; }
 .usage.is-warn { color: var(--needs); }
@@ -952,13 +959,13 @@ a.prchip:hover { border-color: currentColor; }
 .prow.is-busy { opacity: 0.6; pointer-events: none; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .prchip { border-color: #1f4d36; background: #132a1f; color: #57c785; }
-  :root:not([data-theme="light"]) .prchip.is-draft { border-color: #3a4152; background: #21252e; color: #8a93a8; }
+  :root:not([data-theme="light"]) .prchip.is-draft, :root:not([data-theme="light"]) .prchip.is-more { border-color: #3a4152; background: #21252e; color: #8a93a8; }
   :root:not([data-theme="light"]) .prchip.is-merged { border-color: #4a3878; background: #241b3a; color: #b190f5; }
   :root:not([data-theme="light"]) .prchip.is-closed { border-color: #6b2b26; background: #2d1614; color: #f08b81; }
   :root:not([data-theme="light"]) .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
 }
 :root[data-theme="dark"] .prchip { border-color: #1f4d36; background: #132a1f; color: #57c785; }
-:root[data-theme="dark"] .prchip.is-draft { border-color: #3a4152; background: #21252e; color: #8a93a8; }
+:root[data-theme="dark"] .prchip.is-draft, :root[data-theme="dark"] .prchip.is-more { border-color: #3a4152; background: #21252e; color: #8a93a8; }
 :root[data-theme="dark"] .prchip.is-merged { border-color: #4a3878; background: #241b3a; color: #b190f5; }
 :root[data-theme="dark"] .prchip.is-closed { border-color: #6b2b26; background: #2d1614; color: #f08b81; }
 :root[data-theme="dark"] .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
@@ -1006,6 +1013,7 @@ a.prchip:hover { border-color: currentColor; }
 .setup-label { flex: 1; min-width: 0; font-weight: 600; }
 .setup-label small { display: block; font-weight: 400; font-size: 11.5px; color: var(--sub); }
 .setup-card.is-compact .setup-label small { display: none; }
+.setup-choices { flex: none; display: flex; gap: 6px; }
 .setup-card.is-nudged { animation: setup-nudge 0.9s ease-out; }
 @keyframes setup-nudge { 0%, 60% { box-shadow: 0 0 0 3px var(--amber); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .setup-card.is-nudged { animation: none; } }

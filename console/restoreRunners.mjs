@@ -101,7 +101,7 @@ function ident(name) {
 export function pgRunner({ address, creds, live, copy, previous, migrationsTable = null, bin = PG_BIN, run = runProgram, retryPauseMs = RETRY_PAUSE_MS }) {
   const env = {
     PATH: process.env.PATH ?? '/usr/bin:/bin', PGHOST: address.host, PGPORT: String(address.port), PGUSER: creds.user,
-    PGPASSWORD: creds.password, PGSSLMODE: 'require', PGCONNECT_TIMEOUT: '15', PGAPPNAME: 'woodshed-cloud-restore',
+    PGPASSWORD: creds.password, PGSSLMODE: 'require', PGCONNECT_TIMEOUT: '15', PGAPPNAME: 'woodshed-restore',
     ...(process.env.LD_LIBRARY_PATH ? { LD_LIBRARY_PATH: process.env.LD_LIBRARY_PATH } : {}),
   };
   const program = (name) => path.join(bin, name);

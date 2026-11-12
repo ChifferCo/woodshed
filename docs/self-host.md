@@ -2,7 +2,9 @@
 
 A runbook for setting Woodshed up for one repository, written to be followed by a person or by their coding agent.
 Each step says who does it, the command, and how to tell it worked. **You** marks a step only the person can do: it
-needs a browser, an account or a decision. An agent stops there, says what to do, and waits.
+needs a browser, an account or a decision. An agent stops there, says what to do, and waits. Claude Code, run in this
+checkout, follows it through the `setup-woodshed` skill (`.claude/skills/`), with `write-project-file` for the project
+file and `debug-woodshed` when a check fails.
 
 To only look at the console, with made-up sessions and nothing else (no Docker, GitHub or Claude):
 `node <woodshed>/console/bin/devConsole.mjs`, then `http://localhost:7690/s/aaaa1111`.
@@ -14,6 +16,39 @@ To run real sessions, pick one:
 | This machine, to try it | Docker here | One script and two browser steps | [On this machine](#on-this-machine) |
 | A server your team reaches (Hetzner, OVH, any VM) | Docker on that machine | An afternoon: HTTPS, a service, a firewall | [On a server](#on-a-server) |
 | AWS | Fargate | Terraform in an account of its own | [On AWS](#on-aws) |
+
+**You** pick. An agent shows "What each one sets up", below, before asking, so nothing it makes later is a surprise,
+and says that a computer you already have works as well as a rented one.
+
+### What each one sets up
+
+Claude's own use is apart from all of these: each person's Claude plan, or the team's API key.
+
+**This machine.** Nothing is rented and nothing is billed. Docker containers on it: the console (on localhost only,
+with no sign-in), Postgres and Mongo when the project file has `databases`, the project's shared services, and one
+container a session, about 4 GB of memory each. Sessions stop when the machine sleeps, and only you reach it.
+
+**A server.** The same containers, on a machine your team reaches, with Caddy in front for HTTPS. It can be a VM you
+rent (on Hetzner Cloud a CPX41 or CAX31, 16 GB for about four sessions at once) or a computer you already have that
+stays on, such as a desktop in the office: then the only cost is its power. You keep its firewall, updates and
+backups.
+
+**AWS.** Terraform makes, in an AWS account that holds nothing else:
+
+| What | Monthly, us-east-1 |
+| --- | --- |
+| The base box, an EC2 that runs the console and Caddy around the clock. `t3.small`; `t3.medium` when Mongo or a shared service runs on it too | about $15; $30 |
+| Its two disks, 50 GB | about $4 |
+| Its public IP address | about $3.65 |
+| A Route 53 zone for the console's name | $0.50 |
+| Secrets Manager, about seven secrets | about $3 |
+| With `postgres` in `databases`: RDS Postgres, `db.t4g.micro`, 20 GB | about $14 |
+| ECR images, the webhooks Lambda and its queue, the session logs | cents |
+| **Before any session runs** | **about $26** without databases, $40 with Postgres, $42 with Mongo, $56 with both |
+| Each session on Fargate (2 vCPU, 8 GB), only while it runs | about $0.13 an hour: about $6 a month at 2 hours a workday, $22 at 8 |
+
+It also sets an AWS budget, $150 a month by default, which emails at 80% and 100% and stops nothing.
+`providers/aws/README.md`, "How it is built", lists every piece.
 
 Everything here is described in more depth in `providers/local/README.md` and `providers/aws/README.md`; this page
 only orders it. `<woodshed>` below is where Woodshed is checked out. Older docs write its paths as `woodshed/…`, from
@@ -96,9 +131,11 @@ macOS and Windows, Docker Desktop must be running.
    starts it again by itself.
 
    **Done when** the console's log has `console: GitHub App from the setup page`.
-5. **You.** Give sessions a Claude. On a Claude plan: run `claude setup-token` in a terminal, and save the token on
-   **My settings**. Copy it in one piece: a token that lost a character to a wrapped line looks right and fails in the
-   session. With an Anthropic API key instead: save it as `anthropic-api-key` on **Secrets & webhooks**.
+5. **You.** Choose your agent: the setup card's **Claude** or **Codex** opens that box on **My settings**, and either one
+   is enough. For Claude on a Claude plan: run `claude setup-token` in a terminal, and save the token. Copy it in one
+   piece: a token that lost a character to a wrapped line looks right and fails in the session. With an Anthropic API
+   key instead: save it as `anthropic-api-key` on **Secrets & webhooks**. For Codex: run `codex login` and paste
+   `~/.codex/auth.json`, or paste an OpenAI API key; then pick Codex as the agent in New session.
 6. **You**, if the project file has env files with a `secret`: set each on **Secrets & webhooks**.
 7. **You.** Press **New session** and say what to build.
 
@@ -108,7 +145,7 @@ macOS and Windows, Docker Desktop must be running.
 What to know on this machine:
 
 - Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690.
-- Session apps (**Open app**) need a name and HTTPS (`WOODSHED_CLOUD_APP_DOMAIN`), which the installer does not set:
+- Session apps (**Open app**) need a name and HTTPS (`WOODSHED_APP_DOMAIN`), which the installer does not set:
   on this machine the session runs and checks the app itself, but there is no link to open it from your browser.
 - GitHub webhooks need a public address, so the console polls GitHub every 30 seconds: a `woodshed` label or a
   `/woodshed` comment takes up to that long. **New session** is immediate.
@@ -133,12 +170,12 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 5. **Server.** Steps 1 to 4 of `providers/local/README.md`, "Setting it up": build the session image, fill in
    `stack.env` and `session-env.json` (outside the checkout, mode 600), start the databases, make the secrets key and
    store the root passwords. Keep the key off the Volume: `WOODSHED_LOCAL_SECRETS_KEY_FILE=/etc/woodshed/secrets.key`.
-   For a server also set `WOODSHED_CLOUD_PUBLIC_URL` and `WOODSHED_CLOUD_APP_DOMAIN` to the name from step 3, and
-   `WOODSHED_CLOUD_TLS_ASK_PORT=7692` without a wildcard certificate.
+   For a server also set `WOODSHED_PUBLIC_URL` and `WOODSHED_APP_DOMAIN` to the name from step 3, and
+   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate.
 
    **Done when** `docker compose … ps` shows the databases healthy and `node <woodshed>/providers/local/bin/secret.mjs
    list` lists `db-root/postgres` (and `db-root/mongo`).
-6. **Server.** Run the console as a systemd service. Leave `WOODSHED_CLOUD_REQUIRE_SIGN_IN` unset for now.
+6. **Server.** Run the console as a systemd service. Leave `WOODSHED_REQUIRE_SIGN_IN` unset for now.
 
    ```ini
    [Unit]
@@ -173,7 +210,7 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 8. **Server.** Let sessions reach the session API: `ufw allow in on br-<network id> to <gateway> port 7691 proto tcp`,
    with the `woodshed` network's id and gateway from `docker network inspect woodshed`.
 9. **You.** On `https://<name>/setup/github`: create the App, install it, and press **Restart the console**.
-   **Server.** Set `WOODSHED_CLOUD_REQUIRE_SIGN_IN=1` and restart the service. **You.** Sign in, so you are the first
+   **Server.** Set `WOODSHED_REQUIRE_SIGN_IN=1` and restart the service. **You.** Sign in, so you are the first
    admin. **Server.** Only then take the IP fence out of the Caddyfile and reload Caddy.
 
    **Done when** the log has `console: GitHub App from the setup page` and `auth: signed in`, and opening the console
@@ -200,9 +237,21 @@ Found by running this runbook with an agent. Each is a problem in Woodshed, not 
 
 `providers/aws/README.md`, "Setting it up", is already a numbered runbook: follow it. Its **you** steps are the AWS
 account (one for Woodshed alone), the GitHub App (made by hand on AWS, before Terraform), reading `terraform plan`
-before `apply`, the GitHub environments, the DNS delegation, and the secrets on the console's Secrets & webhooks page.
-An agent with AWS credentials in that account can run the rest, and must stop and show the plan when it changes or
-destroys anything.
+before `apply`, the App's Callback URL, client secret and private key right after the apply (uploaded from a shell,
+before the console first starts: without them nobody can sign in to set anything), the GitHub environments, the DNS
+delegation when there is a `domain`, and the session secrets on the console's Secrets & webhooks page. An agent with AWS credentials in that account can run the rest, and must stop and show the plan
+when it changes or destroys anything.
+
+`name_prefix` is required and names every AWS resource: `woodshed` for a new installation. An installation set up
+before the setting existed must set `woodshed-cloud`, the name its resources already have, or the plan makes everything
+again under the new name and leaves its secrets, Claude homes bucket, images and state behind. Changing it on a live
+installation needs a migration of the base box too (its `/etc/fstab` entry and data folders, `providers/aws/README.md`,
+"Setting it up", step 2).
+
+Two choices are optional, and an agent should not ask for them as if they were required: a console domain (left out,
+the console is named on sslip.io and needs no DNS), and which repos sessions work on. `github_repo` is required, since
+the deploy workflow runs there and the session image is built from it, but with `sessions_on_github_repo = false` it is
+only that: the console starts with no repo, and its first admin adds them on the Console settings page.
 
 ## When a step fails
 

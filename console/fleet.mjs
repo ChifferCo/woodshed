@@ -44,6 +44,16 @@ const NO_ROOM_RETRY_MS = 60_000;
 // The triggers whose starter GitHub vouches for, so the only ones a personal Claude plan may run on.
 const GITHUB_TRIGGERS = new Set(['label', 'comment']);
 
+// What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
+// the session image, so they are named here.
+export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
+  + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
+  + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
+  + 'same port twice for one server), `logs` (a name for each server\'s log file) and `howToProve` (how to check a '
+  + 'change in the running app); `start`, both ports and `howToProve` are required. Write .woodshed/project.yaml '
+  + 'with `version: 1` if there is none, and check it with `node /opt/woodshed/shared/project.mjs get app`. Run the '
+  + 'start command yourself and check both ports answer, run the stop, then commit the file on this branch. Start app reads the file again, so tell me when to press it.';
+
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
 }
@@ -183,7 +193,7 @@ export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
-  consoleLinks = async () => true, newId = newSessionId,
+  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null,
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -192,7 +202,7 @@ export function createFleet({
   const announcer = createPrAnnouncer({
     store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
     events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
-    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs,
+    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
   });
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
@@ -365,10 +375,18 @@ export function createFleet({
    *   the `slack` thread; `owner` makes a session private to that login; `attach` moves the files attached to New
    *   session under it before it launches, and says how many; `background` answers without waiting for the launch
    */
+  // A console that started with no repo has nothing to check out until an admin adds one on the Console settings page.
+  function refuseWithoutRepo(project, { kind, trigger }) {
+    if (project?.repo) return;
+    console.warn('fleet: session refused, the console has no repo yet', { kind, trigger });
+    throw shown('Not started: the console has no repo yet. An admin adds one on the Console settings page, under Repos.');
+  }
+
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null,
   }) {
+    refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack gets no databases, so it needs none hosted.
     const refused = kind === 'ask' ? null : await databasesRefusal();
     if (refused) {
@@ -808,7 +826,7 @@ export function createFleet({
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null, endpoint: null,
       startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       pendingMessages: message ? [...session.pendingMessages, message] : session.pendingMessages,
-      lastActiveAt: null, checkedAt: null, app: null, appServers: null,
+      lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null,
       prClosedAt: null, prMerged: null, deletesAt: null, resumedAt: nowIso(), resumedBy: by,
     });
     prCheckedAt.delete(session.id);
@@ -875,7 +893,7 @@ export function createFleet({
       console.log('fleet: review feedback dropped, the session is deleted', { id: session.id, number: item.number });
       return false;
     }
-    await resumeShared(session, { text, by: 'woodshed-cloud', why: 'review feedback' });
+    await resumeShared(session, { text, by: 'woodshed', why: 'review feedback' });
     return true;
   }
 
@@ -1070,6 +1088,7 @@ export function createFleet({
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
   async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), ...picked }) {
+    refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
     const text = String(prompt ?? '').trim();
@@ -1124,7 +1143,7 @@ export function createFleet({
     update(session, {
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
-      lastActiveAt: null, checkedAt: null, app: null, appServers: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
+      lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
     });
     console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background });
     await runStartQueued({ background });
@@ -1439,9 +1458,14 @@ export function createFleet({
 
   // Each project's repo is polled on its own client: the default's cursors are `state.github`, as before projects, and
   // another's are `state.githubProjects` under its name. GitHub's comment ids are unique across repos, so the one seen
-  // list in `state.github` serves them all.
+  // list in `state.github` serves them all. The default's name the repo they were read on: on a console that started
+  // with no repo, removing the first one added makes the next the default, which must start from now, not from the old
+  // repo's last event and replay its own labels. Cursors kept from before they named one are the environment's repo's.
   function cursorsOf(project) {
-    if (project.default) return state.github;
+    if (project.default) {
+      const kept = state.github;
+      return kept && (!kept.repo || kept.repo.toLowerCase() === project.repo.toLowerCase()) ? kept : null;
+    }
     const kept = state.githubProjects?.[project.name];
     return kept && kept.repo.toLowerCase() === project.repo.toLowerCase() ? kept : null;
   }
@@ -1472,7 +1496,8 @@ export function createFleet({
   async function startCursors(project, gh) {
     const startedAt = nowIso();
     const cursors = { lastEventId: await gh.latestEventId(), commentsSince: startedAt, notBefore: startedAt };
-    if (project.default) state.github = { ...cursors, seenComments: [] };
+    // The comments already acted on stay seen: their ids are unique across repos.
+    if (project.default) state.github = { repo: project.repo, ...cursors, seenComments: state.github?.seenComments ?? [] };
     else state.githubProjects = { ...state.githubProjects, [project.name]: { repo: project.repo, ...cursors } };
     store.save();
     console.log('fleet: github cursors initialised', { lastEventId: cursors.lastEventId, ...projectField(project) });
@@ -1550,12 +1575,28 @@ export function createFleet({
   }
 
   // The session's statusd runs the project file's `app.start`; the next status check says when the app is up, or down.
-  async function startApp(session) {
+  // `app` picks one of several by name; without it statusd starts the default, as an image from before several apps
+  // starts its one app whatever it is sent.
+  async function startApp(session, { app = null } = {}) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
-    const result = await statusd(session, 'POST', '/app/start');
-    update(session, { app: APP_STATES.has(result?.app) ? result.app : 'starting' });
-    console.log('fleet: app start asked', { id: session.id, started: Boolean(result?.started), app: session.app });
+    if (app !== null && !session.apps?.some((a) => a.name === app)) {
+      throw Object.assign(new Error(session.apps ? `the project has no app named ${app}` : 'this session\'s image starts its one app only'), { refused: true });
+    }
+    const result = await statusd(session, 'POST', '/app/start', ...(app === null ? [] : [{ body: { app } }]));
+    update(session, { app: APP_STATES.has(result?.app) ? result.app : 'starting', ...(app !== null && { appName: app }) });
+    console.log('fleet: app start asked', { id: session.id, started: Boolean(result?.started), app: session.app, appName: session.appName ?? null });
     return session;
+  }
+
+  // A project file with no app leaves Start app nothing to run: Set up app asks the session's claude to write one, which
+  // its statusd reads at the next Start app.
+  async function setupApp(session) {
+    if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
+    if (isAsk(session)) throw Object.assign(new Error('a question from Slack has no app'), { refused: true });
+    if (session.app !== 'none') throw Object.assign(new Error('the project already has an app: Start app runs it'), { refused: true });
+    const sent = await send(session, SETUP_APP_PROMPT);
+    console.log('fleet: app setup asked', { id: session.id, sent });
+    return { session, sent };
   }
 
   // A private session's claude is asked for /woodshed:remote-control, which signs in without leaving it
@@ -1579,7 +1620,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

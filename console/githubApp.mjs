@@ -50,7 +50,8 @@ export function createTokenSource({ appId, installationId, privateKey, repo, per
   let pending = null;
 
   async function mint() {
-    const body = { repositories: [repo.split('/').pop()] };
+    // Scoped to its repo; with none (a key checked on a console that has no repo yet) to the installation's.
+    const body = repo ? { repositories: [repo.split('/').pop()] } : {};
     if (permissions) body.permissions = permissions;
     const res = await fetchImpl(`${GITHUB_API}/app/installations/${installationId}/access_tokens`, {
       method: 'POST',
@@ -124,6 +125,54 @@ export function createAppApi({ appId, privateKey, fetchImpl = fetch, now = Date.
         if (err.status === 404) return null;
         throw err;
       }
+    },
+    /**
+     * @returns {Promise<{id: string, account: string, settingsUrl: string}[]>}  the App's installations: the account
+     *   each is on, and its settings page on GitHub, where the repos it may reach are picked
+     */
+    async installations() {
+      const answer = await call('GET', '/app/installations?per_page=100');
+      return (Array.isArray(answer) ? answer : []).map((i) => ({ id: String(i.id), account: i.account?.login ?? '', settingsUrl: i.html_url ?? '' }));
+    },
+    /**
+     * Asked with a token of the installation narrowed to reading metadata, a page of 100 at a time.
+     * @returns {Promise<{repo: string, private: boolean}[]>}  the repos the installation may reach
+     */
+    async installationRepos(installationId, { maxPages = 10 } = {}) {
+      const { token } = await call('POST', `/app/installations/${encodeURIComponent(installationId)}/access_tokens`, { permissions: { metadata: 'read' } });
+      const repos = [];
+      for (let page = 1; page <= maxPages; page += 1) {
+        const res = await fetchImpl(`${GITHUB_API}/installation/repositories?per_page=100&page=${page}`, {
+          headers: { authorization: `Bearer ${token}`, ...GITHUB_HEADERS },
+        });
+        const answer = await res.json().catch(() => ({}));
+        if (!res.ok) throw Object.assign(new Error(`GitHub refused the installation's repos: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`), { status: res.status });
+        const got = answer.repositories ?? [];
+        repos.push(...got.map((r) => ({ repo: r.full_name, private: Boolean(r.private) })));
+        if (got.length < 100) break;
+      }
+      return repos;
+    },
+    /** @returns {Promise<{login: string, type: 'User'|'Organization'}>}  the account the installation is on */
+    async installationAccount(installationId) {
+      const answer = await call('GET', `/app/installations/${encodeURIComponent(installationId)}`);
+      return { login: answer.account?.login ?? '', type: answer.account?.type ?? '' };
+    },
+    /**
+     * Asked with a token of the installation narrowed to reading the org's members, which the App must be granted
+     * (Organization permissions, Members: read).
+     * @returns {Promise<{role: string, state: string}|null>}  `login`'s membership of `org`, null when not a member
+     * @throws {Error}  with `status` 403 when the App may not read the org's members
+     */
+    async orgMembership(installationId, org, login) {
+      const { token } = await call('POST', `/app/installations/${encodeURIComponent(installationId)}/access_tokens`, { permissions: { members: 'read' } });
+      const res = await fetchImpl(`${GITHUB_API}/orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`, {
+        headers: { authorization: `Bearer ${token}`, ...GITHUB_HEADERS },
+      });
+      if (res.status === 404) return null;
+      const answer = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(`GitHub refused the org membership read: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`), { status: res.status });
+      return { role: answer.role ?? '', state: answer.state ?? '' };
     },
     /**
      * @returns {Promise<{active: boolean, url: string, contentType: string, insecureSsl: string}>}

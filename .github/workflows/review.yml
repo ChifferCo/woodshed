@@ -35,9 +35,9 @@ on:
         type: string
         default: .woodshed/riskAreas.md
       allowed-bots:
-        description: Bots whose pull requests are reviewed, such as the App a Woodshed installation opens them as.
+        description: Bots whose pull requests are reviewed, such as the App a Woodshed installation opens them as. None by default.
         type: string
-        default: woodshed-cloud
+        default: ''
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -167,11 +167,11 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Shared Woodshed sessions open pull requests as this App; the action refuses bots it is not told of.
-          allowed_bots: ${{ inputs.allowed-bots || 'woodshed-cloud' }}
-          # One comment on the pull request: a live checklist while the review runs, then the full review.
-          track_progress: true
-          use_sticky_comment: true
+          # Shared Woodshed sessions open pull requests as their installation's App; the action refuses bots it is not
+          # told of. This repo's own runs name its App in the REVIEW_ALLOWED_BOTS repository variable.
+          allowed_bots: ${{ inputs.allowed-bots || vars.REVIEW_ALLOWED_BOTS }}
+          # No comment of the action's own: it posts as github-actions[bot], whose comment it cannot find again, so each
+          # run would add one. The review goes to a file, and the next step edits the pull request's one review comment.
           prompt: |
             You are reviewing a pull request to this repository. Your verdict is the pull request's approval, so be
             careful, and fair.
@@ -216,19 +216,54 @@ jobs:
                  migration, or stored data rewritten or deleted; billing, secrets or environment variables; messages
                  sent or writes to a system outside this repository; instructions coding agents or CI follow
                  (anything under `.github/` or `.claude/`, any `CLAUDE.md`, the rule files from step 2).
-               - LOW, all of: nothing on the HIGH list; fewer than 5 files and under 200 changed lines; only text,
-                 styles or layout, only tests that add or strengthen checks, only docs for people, or a small fix with
-                 a test inside code that one feature uses; no API route, stored field, prompt or CI workflow touched.
+               - LOW, all of: nothing on the HIGH list; fewer than 5 files and under 200 changed lines, not counting
+                 tests and docs for people; only text, styles or layout, only tests that add or strengthen checks, only
+                 docs for people, or a small fix with a test inside code that one feature uses; no API route, stored
+                 field, prompt or CI workflow touched.
                - MEDIUM: everything else. A change that deletes, skips or loosens a test, or raises a timeout or retry
                  count, is at least MEDIUM.
-            8. Post the full review on the pull request by calling `mcp__github_comment__update_claude_comment` with
-               this body, before you finish. The action does not post your final message: it only adds a header to
-               whatever that comment already holds, so a review you only write as a reply is lost.
+               Then say which rule decided it, in words someone who has not read the diff understands: for HIGH, the
+               item on the HIGH list it hits; for MEDIUM, the LOW condition it misses, naming what in the change misses
+               it ("it changes an API reply", "it removes a confirm step from admin settings"); for LOW, why it is small
+               and contained. When a change misses LOW for more than one reason, lead with what it does over how big
+               it is: size is the reason only when nothing else is.
+            8. Write the full review to `/tmp/review-comment.md` with the Write tool, before you finish, in this
+               form. The next step puts it on the pull request, in place of the last review; your final message is
+               not posted, so a review you only write as a reply is lost.
 
-               Start with the risks a person must look at, outside the fold:
+               Start with what the person who merges must know, outside the fold, as one GitHub alert: `[!CAUTION]`
+               for High, `[!WARNING]` for Medium, `[!TIP]` for Low, the colours of the merge risk labels. Every line of it starts with `> `. Write it for
+               someone who has not read the diff and wants to decide in a minute: plain words, what happens to whom,
+               no code walkthrough.
 
-               **Risk areas to eyeball manually**
-               - (one item each, or "None")
+               > [!WARNING]
+               > **Merge risk: Medium**: the sentence from step 7 saying which rule decided it.
+               >
+               > **What you accept by merging**
+               >
+               > <details><summary>One line: the risk the merge takes on, what could go wrong and for whom.</summary>
+               >
+               > What changed, in a sentence or two, and why it is a risk. A link to the lines, as
+               > `[path:10-24](${{ github.server_url }}/${{ github.repository }}/blob/${{ github.event.pull_request.head.sha }}/path#L10-L24)`,
+               > then the changed lines that show it in a ```diff block, at most about 15, so nobody has to go and
+               > find them. Every item has its diff.
+               >
+               > </details>
+               >
+               > **Not tested: check before merging**
+               >
+               > <details><summary>One line: what to try that no test or run covers.</summary>
+               >
+               > The steps, a few, and what they should see. A link to the lines it depends on, as above, and those
+               > changed lines in a ```diff block.
+               >
+               > </details>
+
+               Inside a `<details>`, leave a `>` line empty after `</summary>`, around the ```diff block and before
+               `</details>`, or GitHub shows the markdown as plain text. Do not start a line in an item's body with
+               bold text. One `<details>` for each item, in the order that matters most first: the ones that are hard to undo or
+               reach users first. The one line must make sense without opening it. Write `None` as the whole list, with
+               no `<details>`, when there is nothing to accept beyond the change itself, or when the tests cover it.
 
                Then the rest in a collapsible block:
 
@@ -260,15 +295,39 @@ jobs:
                - `/tmp/review-summary.md`: a short body for the formal review, a few lines, not the full review. For
                  `REQUEST_CHANGES`, list each blocking issue as `path/to/file.mjs:123 — one-line explanation`.
                - `/tmp/merge-risk.md`: the tier from step 7 alone on the first line (`LOW`, `MEDIUM` or `HIGH`), then
-                 one plain sentence of at most 120 characters naming what decided it, then at most three short `- `
-                 bullets with anything else that pushed the tier up.
+                 one plain sentence of at most 120 characters saying which rule decided it, as step 7 says, then at
+                 most three short `- ` bullets with anything else that kept it from a lower tier.
                - `/tmp/claude-resolved.txt`: the id of each of your earlier inline comments from step 5 that the
                  current head fixes, one a line, digits only. Leave out one you are not sure of, and any comment by
                  someone else. After an APPROVE their threads are resolved; with none fixed, write the file empty.
                If you do not write the first two, no formal review is submitted and the pull request stays unapproved.
           claude_args: |
             --model opus
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read(./**),Read(//tmp/**),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read(./**),Read(//tmp/**),Grep(*),Glob(*),Write(//tmp/**),Write(/tmp/**),Edit(//tmp/**),Edit(/tmp/**)"
+
+      - name: Post the review comment
+        if: steps.gate.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # One review comment per pull request, edited by each run: it keeps its place, and GitHub keeps each earlier review in its edit history
+          if [ ! -s /tmp/review-comment.md ]; then
+            echo "::warning::The reviewer wrote no review comment, so the last one stays"
+            exit 0
+          fi
+          { head -c 60000 /tmp/review-comment.md; printf '\n\n<sub>Updated on each review · [view run](%s)</sub>\n' "$RUN_URL"; } > /tmp/review-comment-body.md
+          # The first review comment on it, by this workflow's token, the action's own from before included
+          comment=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --paginate \
+            --jq '.[] | select(.user.login == "github-actions[bot]" and (.body | contains("<summary>Claude review</summary>"))) | .id' | head -1)
+          if [ -n "$comment" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/issues/comments/${comment}" -X PATCH -F body=@/tmp/review-comment-body.md > /dev/null
+            echo "Review comment updated: ${comment}"
+          else
+            comment=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" -F body=@/tmp/review-comment-body.md --jq '.id')
+            echo "Review comment posted: ${comment}"
+          fi
 
       - name: Post the verdict
         id: verdict
@@ -331,8 +390,10 @@ jobs:
             *) echo "::warning::Unknown merge risk tier '${tier}', so no Merge risk check was posted"; exit 0 ;;
           esac
           reason=$(sed -n 2p /tmp/merge-risk.md | cut -c1-200)
-          summary=$(printf '%s\n\n%s\n\nSet by the AI review ([run](%s)). It does not block merging.' \
-            "$reason" "$(tail -n +3 /tmp/merge-risk.md)" "$RUN_URL")
+          # How the tiers are decided, under every rating, so a reader can see which rule a change hit
+          tiers='**High** when it touches any of: the repo'"'"'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests that add or strengthen checks, docs or a small tested fix. **Medium** is everything between.'
+          summary=$(printf '%s\n\n%s\n\n%s\n\nSet by the AI review ([run](%s)). It does not block merging.' \
+            "$reason" "$(tail -n +3 /tmp/merge-risk.md)" "$tiers" "$RUN_URL")
           jq -n --arg sha "$HEAD_SHA" --arg title "${label}: ${reason}" --arg summary "$summary" --arg url "$RUN_URL" \
             '{name: "Merge risk", head_sha: $sha, status: "completed", conclusion: "neutral", details_url: $url,
               output: {title: $title, summary: $summary}}' \

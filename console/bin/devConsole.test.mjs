@@ -16,10 +16,8 @@ function freePort() {
   });
 }
 
-// CLAUDE.md proves console changes with it, so it must start with nothing set in the shell.
-test('the dev console starts with no WOODSHED_CLOUD_* settings and serves its sessions', async (t) => {
+async function startsAndServes(t, env) {
   const port = await freePort();
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_')));
   const child = spawn(process.execPath, [SCRIPT, String(port)], { env, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (d) => { stderr += d; });
@@ -31,7 +29,18 @@ test('the dev console starts with no WOODSHED_CLOUD_* settings and serves its se
   }
   assert.ok(sessions, `the dev console answered (stderr: ${stderr.slice(0, 300)})`);
   assert.ok((sessions.sessions ?? sessions).length > 0);
-});
+}
+
+const SHELL = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_')));
+
+// CLAUDE.md proves console changes with it, so it must start with nothing set in the shell.
+test('the dev console starts with no console settings and serves its sessions', (t) => startsAndServes(t, SHELL));
+
+// A real console's settings in the shell, under either name, and a session's own variables, are left behind.
+test('the dev console leaves the shell\'s console settings out, under the old names and the new', (t) => startsAndServes(t, {
+  ...SHELL, WOODSHED_LAUNCHER: 'ecs', WOODSHED_CLOUD_LAUNCHER: 'ecs', WOODSHED_REQUIRE_SIGN_IN: '1', WOODSHED_CLOUD_REQUIRE_SIGN_IN: '1',
+  WOODSHED_CLOUD_GITHUB_APP_ID: '1', WOODSHED_INSTALL_SECRETS: 'REGISTRY_TOKEN', WOODSHED_PROJECT_FILES_DIR: '/nowhere',
+}));
 
 function get(port, { host, method = 'GET', path: urlPath = '/api/sessions', headers = {} }) {
   return new Promise((resolve, reject) => {

@@ -4,6 +4,8 @@
 // token. A failure keeps what was last read. While pull request webhooks arrive, a webhook marks the pull request it
 // is about as due, and the rest are read only every `fallbackMs`, for a lost delivery.
 
+import { prUrlsOf } from './sessions.mjs';
+
 const REFRESH_MS = 60_000;
 // A settled pull request changes rarely; it is asked again every 15 minutes.
 const SETTLED_MS = 15 * 60_000;
@@ -85,7 +87,7 @@ export function createPrChips({ github, repo, now = Date.now, webhooksFlowing = 
   /** Reads the pull requests of the sessions listed that are due, in calls of 50. */
   async function refresh(sessions) {
     if (!github?.pullStatuses) return;
-    const numbers = [...new Set(sessions.map((s) => prNumberOf(s.prUrl, repo)).filter(Boolean))].filter(due);
+    const numbers = [...new Set(sessions.flatMap((s) => prUrlsOf(s).map((url) => prNumberOf(url, repo))).filter(Boolean))].filter(due);
     for (let i = 0; i < numbers.length; i += MAX_PER_CALL) {
       const batch = numbers.slice(i, i + MAX_PER_CALL);
       const from = now();

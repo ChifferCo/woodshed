@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { commentConsoleUrl, createFleet, failedComment, refusalComment, resumeComment, startComment } from './fleet.mjs';
+import { commentConsoleUrl, createFleet, failedComment, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -636,6 +636,47 @@ test('Stop app asks the session\'s statusd and takes the app\'s state from its a
   assert.equal(session.app, 'stopping', 'statusd answered without a state, as the fake does, so the console assumes one');
 });
 
+test('Start app names one of several apps to statusd, and none for one app or an image from before several', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', app: 'stopped' };
+  await fleet.tick();
+  await assert.rejects(fleet.startApp(session, { app: 'admin' }), (err) => err.refused && /starts its one app only/.test(err.message),
+    'a statusd that listed no apps runs its one');
+  await fleet.startApp(session);
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/app/start').map((c) => c.body), [undefined], 'no body: the default, for any image');
+
+  statuses[session.id] = { state: 'done', app: 'running', appName: 'web', apps: [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }] };
+  await fleet.tick();
+  assert.deepEqual([session.appName, session.apps.map((a) => a.name)], ['web', ['web', 'admin']]);
+  await assert.rejects(fleet.startApp(session, { app: 'mobile' }), (err) => err.refused && /no app named mobile/.test(err.message));
+  await fleet.startApp(session, { app: 'admin' });
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/app/start').map((c) => c.body), [undefined, { app: 'admin' }]);
+  assert.equal(session.appName, 'admin', 'the pick shows before the next status check');
+});
+
+test('Set up app types the setup request into claude, only for a running session whose project has no app', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  await assert.rejects(fleet.setupApp(session), (err) => err.notRunning === true);
+
+  statuses[session.id] = { state: 'idle', app: 'stopped' };
+  await fleet.tick();
+  await assert.rejects(fleet.setupApp(session), (err) => err.refused === true, 'a project with an app is started, not set up');
+
+  statuses[session.id] = { state: 'idle', app: 'none' };
+  await fleet.tick();
+  assert.equal(session.app, 'none', 'the console keeps statusd\'s none');
+  const { sent } = await fleet.setupApp(session);
+  assert.equal(sent, 'sent');
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body), [{ text: SETUP_APP_PROMPT }]);
+  assert.match(SETUP_APP_PROMPT, /\.woodshed\/project\.yaml/);
+  assert.doesNotMatch(SETUP_APP_PROMPT, /\n/, 'typed as one message');
+  for (const field of ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'howToProve']) assert.match(SETUP_APP_PROMPT, new RegExp(`\`${field}\``), `names ${field}, which the project file's app reads`);
+});
+
 test('a starting session records each start step once, and opens on the quick check without an aws call', async () => {
   const { fleet, calls, statuses, alive, advance } = setup();
   await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
@@ -1159,7 +1200,7 @@ test('review feedback is typed into a running session, and resumes a stopped one
   advance(60_000);
   await fleet.tick();
   assert.equal(session.status, 'starting', 'resumed by the failed suite');
-  assert.equal(session.resumedBy, 'woodshed-cloud');
+  assert.equal(session.resumedBy, 'woodshed');
   assert.match(session.pendingMessages.at(-1), /e2e run \(2\/4\) u2/);
   assert.equal(fleet.sessions().length, 1);
 });
@@ -2053,4 +2094,39 @@ test('a QA report is written over the running comment, the session stops and is 
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
   assert.equal(fleet.sessions()[1].qa.commentId, 9001);
   assert.equal(calls.comments.at(-1).id, 9001, 'the second run updates the same comment');
+});
+
+test('a console with no repo yet starts nothing, and says an admin adds one on Console settings', async () => {
+  const { fleet, calls } = setup();
+  // As loadConfig leaves it with neither WOODSHED_REPO nor WOODSHED_PROJECTS, and no repo added yet.
+  const none = { name: 'default', repo: '', default: true };
+  const said = { shown: true, message: 'Not started: the console has no repo yet. An admin adds one on the Console settings page, under Repos.' };
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: none }), said);
+  await assert.rejects(fleet.createSession({ kind: 'ask', title: 'Why?', startedBy: 'joel', trigger: 'slack', project: none }), said);
+  assert.equal(calls.started.length, 0);
+  assert.equal(fleet.sessions().length, 0);
+});
+
+test('when the default repo is removed, the next default starts its poll from now, not from the old repo\'s last event', async () => {
+  const { fleet, github, store, projects } = twoProjects();
+  await fleet.pollGitHub();
+  assert.equal(store.state.github.repo, 'o/r', 'the default\'s cursors name their repo');
+  // The first repo added is removed on a console that started with none: the next one is the default, and the
+  // console's own client follows it (installation.mjs), so its events come from that client from here on.
+  projects.splice(0, 2, { name: 'tools', repo: 'o/tools', default: true });
+  github.latestEventId = async () => 500;
+  github.events = [toolsLabel(499, 3)];
+  await fleet.pollGitHub();
+  assert.deepEqual([store.state.github.repo, store.state.github.lastEventId], ['o/tools', 500], 'started again from where the new repo is');
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 0, 'the new default\'s older label is not handled again');
+});
+
+test('the default\'s cursors from before they named a repo are kept, as the environment\'s repo\'s', async () => {
+  const { fleet, github, store } = setup();
+  store.state.github = { lastEventId: 100, commentsSince: '2026-10-21T09:00:00.000Z', notBefore: '2026-10-21T09:00:00.000Z', seenComments: [7] };
+  github.events = [{ id: 101, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 4, title: 'x' } }];
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 1, 'polled from the kept cursor, not started again');
+  assert.ok(store.state.github.seenComments.includes(7), 'the comments seen before are still seen');
 });

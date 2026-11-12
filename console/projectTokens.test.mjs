@@ -24,7 +24,7 @@ test('without a GitHub App there are no tokens', () => {
 });
 
 test('each project\'s tokens reach its repo alone, from its own installation', async () => {
-  const projects = loadProjects({ WOODSHED_CLOUD_PROJECTS: '[{"name":"app","repo":"acme/app","default":true},{"name":"tools","repo":"other/tools","installationId":"42"}]' });
+  const projects = loadProjects({ WOODSHED_PROJECTS: '[{"name":"app","repo":"acme/app","default":true},{"name":"tools","repo":"other/tools","installationId":"42"}]' });
   const github = fakeGitHub();
   const tokens = createProjectTokens({ config: { projects, githubApp: { appId: '1', installationId: '7' } }, privateKey, fetchImpl: github.fetchImpl, now });
 
@@ -38,8 +38,7 @@ test('each project\'s tokens reach its repo alone, from its own installation', a
 
   const onApp = tokens.forSession({ repo: 'acme/app' });
   assert.equal(onApp.project, 'app', 'a record with no project is on the one with its repo');
-  assert.equal(onApp.sessions, tokens.sessions, 'the default project\'s sources are the ones the console already had');
-  await onApp.asks.token();
+  assert.equal(await onApp.asks.token(), await tokens.asks.token(), 'the default project\'s sources are the ones the console already had: one token, minted once');
   assert.deepEqual(github.asked[1], { installation: '7', repositories: ['app'], permissions: { contents: 'read', pull_requests: 'read', issues: 'read', metadata: 'read' } });
 
   await tokens.console.token();

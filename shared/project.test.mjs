@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -111,6 +111,44 @@ test('only version must be written: a field left out is none, and a misspelt one
   assert.throws(() => parseProject({ ...EMPTY_PROJECT, app: { ...fixtureApp(), stopp: 'x' } }), /app has stopp, which is not a field/);
   assert.throws(() => parseProject({ ...EMPTY_PROJECT, app: {} }), /app is missing start, frontendPort, backendPort, howToProve$/);
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, app: null }).app, null, 'null still says it has none');
+});
+
+test('apps: several named apps, the first the default and `app` to every reader of one', () => {
+  const web = { name: 'web', label: 'Web app', ...fixtureApp({ frontendPort: 3001, paths: ['web/'] }) };
+  const admin = { name: 'admin', ...fixtureApp({ frontendPort: 3000, paths: ['admin/'] }) };
+  const project = parseProject({ version: 1, apps: [web, admin] });
+  assert.deepEqual(project.apps.map((a) => [a.name, a.label, a.frontendPort, a.paths]), [['web', 'Web app', 3001, ['web/']], ['admin', 'admin', 3000, ['admin/']]],
+    'a label left out is the name');
+  assert.equal(project.app, project.apps[0], 'the default is what a reader of `app` gets');
+  assert.equal(appNamed(project, 'admin').frontendPort, 3000);
+  assert.equal(appNamed(project, undefined).name, 'web', 'no name is the default');
+  assert.equal(appNamed(project, 'mobile'), null);
+  assert.equal(appNamed(EMPTY_PROJECT, undefined), null);
+});
+
+test('one app is a project of one app, named app, and none is no apps', () => {
+  const project = parseProject({ version: 1, app: fixtureApp() });
+  assert.deepEqual(project.app, fixtureApp(), 'app reads as it always did');
+  assert.deepEqual(project.apps, [{ name: 'app', label: 'app', ...fixtureApp() }]);
+  assert.equal(appNamed(project, null), project.apps[0]);
+  assert.deepEqual(parseProject({ version: 1 }).apps, []);
+  assert.deepEqual(parseProject({ version: 1, app: null, apps: [] }).apps, [], 'both written as none is none');
+});
+
+test('apps refuses app beside it, a repeated or bad name, bad ports and a misspelt field', () => {
+  const full = (overrides) => () => parseProject({ ...EMPTY_PROJECT, ...overrides });
+  const named = (name, overrides = {}) => ({ name, ...fixtureApp(overrides) });
+  assert.throws(full({ app: fixtureApp(), apps: [named('web')] }), /has both app and apps: write app for one app, or apps for several/);
+  assert.throws(full({ apps: [named('web'), named('admin'), named('web')] }), /apps has web more than once/);
+  assert.throws(full({ apps: [named('Web')] }), /apps\[0\]\.name must be lowercase letters, digits and dashes/);
+  assert.throws(full({ apps: [fixtureApp()] }), /apps\[0\] is missing name/);
+  assert.throws(full({ apps: [named('web'), named('admin', { frontendPort: 70000 })] }), /apps\[1\]\.frontendPort must be a port number/);
+  assert.throws(full({ apps: [named('web', { backendPort: 'api' })] }), /apps\[0\]\.backendPort must be a port number/);
+  assert.throws(full({ apps: [{ ...named('web'), lable: 'Web' }] }), /apps\[0\] has lable, which is not a field/);
+  assert.throws(full({ apps: [{ ...named('web'), label: '' }] }), /apps\[0\]\.label must be a non-empty string/);
+  assert.throws(full({ apps: { web: fixtureApp() } }), /apps must be a list of apps/);
+  const { howToProve, ...noAdvice } = fixtureApp();
+  assert.throws(full({ apps: [{ name: 'web', ...noAdvice }] }), /apps\[0\] is missing howToProve/);
 });
 
 const API_INSTALL = { dir: 'api', files: ['deps.lock'], command: 'make deps', output: ['vendor', '~/.cache/tool'] };
@@ -401,16 +439,21 @@ test('the installation\'s file needs the repo, told from the checkout\'s origin 
   assert.equal(repoOf(scratch(t)), null, 'not a checkout');
 });
 
-test('the CLI reads the installation\'s file from WOODSHED_CLOUD_PROJECT_FILES_DIR, and says so in `from`', (t) => {
+test('the CLI reads the installation\'s file from WOODSHED_PROJECT_FILES_DIR, and says so in `from`', (t) => {
   const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
   const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject({ dependencies: { installs: [API_INSTALL] } }) });
   const cli = (args, env = {}) => execFileSync('node', [SCRIPT, ...args], {
     encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: checkout, DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main', ...env },
   });
-  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'installation\n');
-  assert.equal(cli(['installs'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
+  assert.equal(cli(['get', 'from'], { WOODSHED_PROJECT_FILES_DIR: dir }), 'installation\n');
+  assert.equal(cli(['installs'], { WOODSHED_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
   assert.equal(cli(['get', 'from']), 'none\n');
-  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: '' }), 'none\n');
+  assert.equal(cli(['get', 'from'], { WOODSHED_PROJECT_FILES_DIR: '' }), 'none\n');
+  // A session the console gives both names, while older images read only the old one, and an older console's.
+  const both = { WOODSHED_PROJECT_FILES_DIR: dir, WOODSHED_CLOUD_PROJECT_FILES_DIR: dir };
+  assert.equal(cli(['get', 'from'], both), 'installation\n', 'both names, as the docker launcher passes them');
+  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'installation\n', 'the old name alone');
+  assert.equal(cli(['get', 'from'], { WOODSHED_PROJECT_FILES_DIR: '', WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'none\n', 'the new name wins, empty too');
 });
 
 // The image runs as uid 1000, which need not own the installation's files.

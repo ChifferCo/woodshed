@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { bothNames } from '../../shared/envNames.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -23,6 +24,10 @@ export function parseDockerPort(output) {
 }
 
 // The docker CLI's own settings: a session's environment never chooses which daemon the console's calls go to.
+// What finds a session's containers (providers/local/README.md, "Removing it"). Containers started before this one was
+// named carry OLD_SESSION_LABEL instead, so what lists them reads both for one release; the old one goes after it.
+export const SESSION_LABEL = 'woodshed.session';
+export const OLD_SESSION_LABEL = 'woodshed-cloud.session';
 const DOCKER_SETTINGS = new Set(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']);
 
 /**
@@ -65,12 +70,14 @@ export function createDockerLauncher({
       if (projectFilesDir) console.log('launcher: installation project files', { sessionId, mounted: mounts.repos });
       const named = Object.fromEntries(Object.entries(given).filter(([key]) => !DOCKER_SETTINGS.has(key)));
       if (Object.keys(named).length !== Object.keys(given).length) console.warn('launcher: docker\'s own settings left out of the session\'s environment', { sessionId });
-      const env = mounts.repos.length ? { ...named, WOODSHED_CLOUD_PROJECT_FILES_DIR: PROJECT_FILES_MOUNT } : named;
+      // Both names while a session image older than shared/envNames.mjs, which reads only the old one, may be running;
+      // the old name goes in a later release.
+      const env = mounts.repos.length ? { ...named, ...bothNames('PROJECT_FILES_DIR', PROJECT_FILES_MOUNT) } : named;
       const args = [
         'run', '-d', '--name', ref, '--init', '--memory', memory, '--cpus', cpus,
         '--add-host=host.docker.internal:host-gateway',
         '-p', `${bind}::7681`, '-p', `${bind}::7682`, '-p', `${bind}::7684`,
-        '--label', `woodshed-cloud.session=${sessionId}`,
+        '--label', `${SESSION_LABEL}=${sessionId}`,
         ...(network ? ['--network', network] : []),
         ...mounts.args,
       ];

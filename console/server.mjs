@@ -11,6 +11,7 @@
 //   GET  /api/my                 your settings' state (never a value), your running count and limit
 //   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
+//   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
 //   POST /api/my/projects/default {"project": "<name>"}   New session opens on it for you
 //   POST /api/my/claude-token    {"value": "sk-ant-..."}
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
@@ -75,6 +76,7 @@
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
+//   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
@@ -89,8 +91,9 @@
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
 //   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs)
 //   GET  /api/me                 who is signed in, and whether sign-in is on
-//   POST /api/sessions/<id>/app/start  start the session's app
+//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
 //   POST /api/sessions/<id>/app/stop   stop it
+//   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
 //   GET  /api/sessions/<id>/review     what the session's branch changes, from GitHub (review.mjs)
 //   *    https://<id>.<app domain>/...  the session's running app, through its statusd (appProxy.mjs)
@@ -105,7 +108,7 @@
 //        Editor ↗, for whoever can open the session itself (editorProxy.mjs)
 //
 // In AWS it sits behind Caddy, open to the internet, and every page, API call and terminal needs a GitHub
-// sign-in with write access (auth.mjs, always required there by WOODSHED_CLOUD_REQUIRE_SIGN_IN). Locally it
+// sign-in with write access (auth.mjs, always required there by WOODSHED_REQUIRE_SIGN_IN). Locally it
 // listens on loopback and has no sign-in. Hosted, a trusted proxy in front of it signs people in instead, with a
 // header on every request (trustedIdentity.mjs), and there is no GitHub sign-in at all. Every request must name a
 // host the console answers to, which stops DNS rebinding, and writes and terminal websockets must
@@ -132,9 +135,10 @@ import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
+import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, publicSession, sharedRunningCount } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -145,12 +149,13 @@ import { startTlsAsk } from './tlsAsk.mjs';
 import { providerMetaContent } from './providerWords.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
-import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
+import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -164,6 +169,7 @@ const STATIC_FILES = {
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
+  'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
@@ -223,7 +229,7 @@ function consoleManifest(name) {
 const PWA_PATHS = new Set(['/manifest.webmanifest', '/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png']);
 const MAX_RESUME_MESSAGE_CHARS = 4000;
 const CLAUDE_LOGIN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/claude-login$/;
-const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop)$/;
+const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop|setup)$/;
 const REVIEW_RE = /^\/api\/sessions\/([0-9a-f]{8})\/review$/;
 const SECRET_RE = /^\/api\/secrets\/([a-z0-9-]+)(\/reveal)?$/;
 const SETUP_WRITE_RE = /^\/api\/setup\/github\/(manifest|paste|installation|restart)$/;
@@ -506,7 +512,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, codexModels = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -878,7 +884,9 @@ export function createHandler({
       // The slots are shared sessions' alone: My Woodshed's start at once.
       running: sharedRunningCount(all),
       queued: all.filter((s) => s.status === 'queued' && !s.owner).length,
-      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null })).reverse(),
+      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null,
+        // Every pull request it opened, oldest first, for its chips (common.js shownPrs).
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],
@@ -1018,6 +1026,7 @@ export function createHandler({
   async function projectsView(login) {
     if (projectAccess) return projectAccess.view(login);
     const { name, repo } = defaultProject(config);
+    if (!repo) return { projects: [], defaultProject: null, saved: false };
     return { projects: [{ name, repo }], defaultProject: name, saved: false };
   }
 
@@ -1026,6 +1035,8 @@ export function createHandler({
     return {
       login, ...view, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
+      // A console that started with no repo: the setup card sends an admin to add one on Console settings.
+      repoNeeded: !hasRepo(config),
       // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
       githubSetupNeeded: Boolean(githubSetup?.available()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
@@ -1176,6 +1187,9 @@ export function createHandler({
         await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
+        // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
+        const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
+        if (codexRefusal) return reply(res, 400, { error: codexRefusal });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
         const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
         if (project === null) {
@@ -1228,6 +1242,8 @@ export function createHandler({
           await userSettings.setCodexAuth(login, body.value);
           await firstDatabases(login);
         }
+        // The models list was read on the sign-in that is gone: the next look reads it on the new one.
+        codexModels?.forget(login);
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {
@@ -1423,6 +1439,18 @@ export function createHandler({
     });
   }
 
+  // `repos: null` where the console has no App to ask: the page then takes owner/name typed in.
+  async function repoChoicesReply(res) {
+    if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+    try {
+      const found = await addedProjects.choices();
+      return reply(res, 200, found ?? { repos: null, grant: [], install: null });
+    } catch (err) {
+      if (err.shown) return reply(res, 502, { error: err.message });
+      throw err;
+    }
+  }
+
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
@@ -1469,7 +1497,7 @@ export function createHandler({
         await heldData.clean({ kind: body.kind, id: body.id, by: login ?? 'console' });
       }
     } catch (err) {
-      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message });
+      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message, ...(err.link && { link: err.link }) });
       console.error('console: console settings change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The change failed; the console log says why' });
     }
@@ -1553,9 +1581,20 @@ export function createHandler({
       const session = findFor(id, login);
       if (!session) return reply(res, 404, { error: 'no such session' });
       try {
-        return reply(res, 200, publicSession(await (action === 'start' ? fleet.startApp(session) : fleet.stopApp(session))));
+        if (action === 'setup') {
+          const { session: after, sent } = await fleet.setupApp(session);
+          return reply(res, 200, { ...publicSession(after), sent });
+        }
+        if (action === 'start') {
+          // Which of several apps, by name; none is the default. A console page from before several apps sends no body.
+          const body = await readJson(req).catch(() => null);
+          if (!body || (body.app !== undefined && typeof body.app !== 'string')) return reply(res, 400, { error: 'app must be an app\'s name' });
+          return reply(res, 200, publicSession(await fleet.startApp(session, { app: body.app || null })));
+        }
+        return reply(res, 200, publicSession(await fleet.stopApp(session)));
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
+        if (err.refused) return reply(res, 409, { error: err.message });
         const message = String(err?.message ?? err).split('\n')[0];
         console.warn('console: app action failed', { id: session.id, action, message });
         // A session started before its image had the action has a statusd without the route.
@@ -1653,6 +1692,7 @@ export function createHandler({
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
     if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
+    if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/people') return html(res, pageShell({ title: consoleName, script: 'people.js', provider }));
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
@@ -1669,6 +1709,7 @@ export function createHandler({
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
+    if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
     if (pathname === '/api/skills') {
       // Another project's list only for someone who may start sessions on it, as New session offers it; anyone else,
       // and a project this console does not have, gets the default project's.
@@ -1871,11 +1912,19 @@ export async function startConsole({ provider, config: given = null }) {
   // A dump of a gigabyte or two takes longer to send than Node's 5-minute default for a whole request. Caddy is in front.
   server.requestTimeout = 60 * 60_000;
   server.on('upgrade', installation.upgrade);
+  const servers = [{ server, open: countRequests(server) }];
   server.listen(config.port, config.host, () => {
     console.log('console: listening', { host: config.host, port: config.port, ...installation.summary() });
   });
-  if (installation.sessionApi) listenSessionApi({ config, handle: installation.sessionApi });
-  await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (installation.sessionApi) {
+    const api = listenSessionApi({ config, handle: installation.sessionApi });
+    servers.push({ server: api, open: countRequests(api) });
+  }
+  const tlsAsk = await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (tlsAsk) servers.push({ server: tlsAsk, open: countRequests(tlsAsk) });
+  // Docker's stop on every redeploy (shutdown.mjs): sessions retry their calls to the console while it is away.
+  const shutdown = createShutdown({ servers, stop: () => installation.stop() });
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => shutdown(signal));
   installation.start({ webhooks: provider.webhooks ?? null });
 }
 

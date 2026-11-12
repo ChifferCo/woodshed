@@ -29,6 +29,7 @@
 
 import { tokenizeLine } from './highlight.mjs';
 import { createAskState } from './askState.mjs';
+import { layoutDiagram } from './diagram.mjs';
 
 // The dark palette, written once here and interpolated into both blocks that
 // need it — the device query and the explicit [data-theme="dark"] stamp. Two
@@ -775,6 +776,33 @@ ${DARK_PALETTE}
     .s-dec { --sec: var(--c-dec); }
     .arch { font-size: 14px; line-height: 1.65; color: var(--ink); margin-bottom: 1.4rem; max-width: var(--prose-measure); }
     .arch p { margin-bottom: 0.8rem; }
+    /* --- the architecture before and after: one layout, two drawings --- */
+    .archdiagram { margin: 0.2rem 0 1.2rem; max-width: var(--prose-measure); }
+    .archpanes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+    .archpanes.stacked { grid-template-columns: 1fr; }
+    @media (max-width: 900px) { .archpanes { grid-template-columns: 1fr; } }
+    .archpane { border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); padding: 0.6rem 0.7rem 0.4rem; min-width: 0; }
+    .archpane h4 { font: 600 12px/1.4 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 0.3rem; }
+    .archpane svg { display: block; width: 100%; height: auto; margin: 0 auto; }
+    .archpane .archnone { font-size: 13px; color: var(--muted); padding: 1.2rem 0; }
+    .archpane .node rect { fill: var(--sunk); stroke: var(--rule-strong); stroke-width: 1; }
+    .archpane .node text { fill: var(--ink); font: 500 13px/1 ui-monospace, monospace; }
+    .archpane .node.added rect { fill: var(--add-bg); stroke: var(--add); stroke-width: 1.5; }
+    .archpane .node.changed rect { stroke: var(--warn); stroke-width: 1.5; }
+    .archpane .node.removed rect { fill: var(--del-bg); stroke: var(--del); stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .archpane .edge path { fill: none; stroke: var(--faint); stroke-width: 1.2; }
+    .archpane .edge.added path { stroke: var(--add); stroke-width: 1.6; }
+    .archpane .edge.removed path { stroke: var(--del); stroke-width: 1.6; stroke-dasharray: 4 3; }
+    .archpane .edge text { fill: var(--muted); font: 500 12px/1 "Red Hat Display", -apple-system, system-ui, sans-serif; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
+    .archpane marker path { fill: var(--faint); }
+    .archpane marker.added path { fill: var(--add); }
+    .archpane marker.removed path { fill: var(--del); }
+    .archlegend { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 0.45rem; font-size: 12px; color: var(--muted); }
+    .archlegend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .archlegend i { width: 14px; height: 10px; border-radius: 2px; border: 1.5px solid var(--rule-strong); background: var(--sunk); }
+    .archlegend i.added { border-color: var(--add); background: var(--add-bg); }
+    .archlegend i.changed { border-color: var(--warn); }
+    .archlegend i.removed { border-color: var(--del); border-style: dashed; background: var(--del-bg); }
     /* --- decisions: what was chosen, and why --- */
     .decisions { margin: 0 0 1.4rem; padding: 0; list-style: none; counter-reset: decision; max-width: var(--prose-measure); }
     .decisions li {
@@ -793,6 +821,33 @@ ${DARK_PALETTE}
     }
     .decisions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
     .decisions .why { color: var(--muted); }
+    .decisions .qacts { margin-top: 0.4rem; }
+    .qacts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.4rem; }
+    .qfile, .qask {
+      display: inline-flex; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem;
+      border: 1px solid var(--rule-strong); border-radius: 4px; background: var(--panel);
+      font: 500 12px/1 ui-monospace, monospace; color: var(--slate); cursor: pointer;
+    }
+    .qask { font-family: "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); }
+    .qfile:hover, .qask:hover { border-color: var(--slate); color: var(--ink); filter: none; }
+    .qask svg { width: 12px; height: 12px; fill: currentColor; flex: none; }
+    /* The way from the prose to the diff, at the end of the prose. */
+    .tofiles { margin: 1.4rem 0 2.5rem; font-size: 13.5px; }
+    /* Above the file list: how it is ordered, and folding every file at once. */
+    .filesbar {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      margin: -0.4rem 0 0.9rem; font-size: 12.5px; color: var(--muted);
+    }
+    .filesbar .grow { flex: 1; }
+    .filesbar button { height: 26px; padding: 0 0.6rem; font-size: 12.5px; }
+    /* Starters in the empty conversation: the analysis's own decisions first. */
+    .chat-starters { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.2rem 0 0.4rem; }
+    .chat-starter {
+      text-align: left; padding: 0.45rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 8px;
+      background: var(--panel); color: var(--ink); font-size: 13px; line-height: 1.45; cursor: pointer;
+    }
+    .chat-starter:hover { border-color: var(--slate); filter: none; }
+    .chat-starter:disabled { opacity: 0.55; cursor: default; }
     /* --- acts --- */
     /* The chip beside a column holding the title and its note, so the note
        starts exactly under the title however wide the chip is — a fixed
@@ -1388,7 +1443,7 @@ ${DARK_PALETTE}
     <div class="sheet-body">
       <div>This throws away, for this review:</div>
       <ul>
-        <li>the overview, architecture, decisions and reading order</li>
+        <li>the overview, decisions, architecture and reading order</li>
         <li>the conversation about the change</li>
       </ul>
       <div class="keeps" id="discardKeeps"></div>
@@ -1490,6 +1545,10 @@ ${DARK_PALETTE}
     // Inlined from review/askState.mjs, same contract, same reason: it is unit
     // tested there, and this page is the only thing that runs it.
     ${createAskState.toString()}
+
+    // Inlined from review/diagram.mjs, same contract: where the architecture's
+    // before and after draw each piece, tested there.
+    ${layoutDiagram.toString()}
 
     // The launcher owns the theme for both pages. It is the same origin, so
     // its choice is readable here directly rather than passed through the
@@ -1748,16 +1807,28 @@ ${DARK_PALETTE}
       return { seen: seen, total: files.length };
     }
 
-    // 'all' opens every file's diff with the page. Written by the launcher's
-    // settings sheet and read here, the way the theme is — same origin, so
-    // the choice needs no URL of its own, and a review opened in its own tab
-    // obeys it too.
+    // Every file's diff shows unless the reader folded them: 'collapsed'
+    // folds them, anything else ('all', or nothing saved) opens them. Folded
+    // by default, the diff was the hardest thing on the page to find. Written
+    // by the launcher's settings sheet and by the files tab's own Fold all,
+    // and read here the way the theme is: same origin, so the choice needs no
+    // URL of its own, and a review opened in its own tab obeys it too.
     function expandsByDefault() {
       try {
-        return localStorage.getItem('shed.review.expand') === 'all';
+        return localStorage.getItem('shed.review.expand') !== 'collapsed';
       } catch (e) {
-        return false;
+        return true;
       }
+    }
+
+    function setExpandAll(open) {
+      try {
+        if (open) localStorage.removeItem('shed.review.expand');
+        else localStorage.setItem('shed.review.expand', 'collapsed');
+      } catch (e) {}
+      // A file opened or folded by hand goes with the rest.
+      openFiles = {};
+      render();
     }
 
     function isFileOpen(path) {
@@ -1909,6 +1980,7 @@ ${DARK_PALETTE}
       var aside = buildTree();
       if (aside) split.appendChild(aside);
       var list = el('div', 'filelist');
+      list.appendChild(renderFilesBar());
       renderFiles(list, byPath);
       split.appendChild(list);
       content.appendChild(split);
@@ -1920,13 +1992,13 @@ ${DARK_PALETTE}
     function renderTabs(fileCount) {
       var bar = el('div', 'tabbar');
       bar.setAttribute('role', 'tablist');
-      bar.appendChild(tabButton('analysis', 'Analysis', null));
+      bar.appendChild(tabButton('analysis', 'Overview', null));
       // Only a pull request has a description and a discussion, so a branch
       // with none has no tab rather than an empty one.
       if (state.livePr) {
         bar.appendChild(tabButton('discussion', 'Discussion', draftLoading ? 'loading' : (draft.said.length || null)));
       }
-      bar.appendChild(tabButton('files', 'Reading order \\u00b7 files changed', fileCount));
+      bar.appendChild(tabButton('files', 'Files changed', fileCount));
       var right = el('div', 'right');
       var tally = viewedCount();
       if (tally.seen) {
@@ -2338,9 +2410,11 @@ ${DARK_PALETTE}
         });
     }
 
-    // What the model made of the change: what it does, how it fits, what was
-    // chosen. Order is deliberate, and three sections is on purpose — more
-    // were tried and cut, a drawing among them.
+    // What the model made of the change: what it does, what a reviewer has to
+    // make up their mind about, how it fits. Order is deliberate: the
+    // decisions come straight after the overview because they are what a
+    // reviewer is here for, and the architecture is reference.
+    // It ends on the way into the diff, which is the next thing to do.
     function renderAnalysis(content) {
       var described = renderDescription(content);
       if (state.review && state.review.overview) {
@@ -2349,11 +2423,20 @@ ${DARK_PALETTE}
         renderMarkdown(overview, state.review.overview);
         content.appendChild(overview);
       }
+      renderWhatMatters(content);
       renderArchitecture(content);
-      renderDecisions(content);
       if (!state.review || !state.review.overview) {
         content.appendChild(el('div', 'tabnote', 'There is no analysis to show yet.'));
       }
+      content.appendChild(toFilesButton());
+    }
+
+    function toFilesButton() {
+      var n = ((state.diff && state.diff.files) || []).length;
+      var go = el('button', 'quiet tofiles', 'Read the diff: ' + n + (n === 1 ? ' file' : ' files') + ' changed \u2192');
+      go.type = 'button';
+      go.addEventListener('click', function onGo() { showTab('files'); });
+      return go;
     }
 
     // The author's own account, above the model's. Set in a box so the two
@@ -2494,6 +2577,24 @@ ${DARK_PALETTE}
 
     // The files, in the order the analysis put them in, under the acts that
     // say why that is the order.
+    function renderFilesBar() {
+      var bar = el('div', 'filesbar');
+      var acts = groupsToRender().filter(function titled(g) { return g.title; }).length;
+      bar.appendChild(el('span', null, acts
+        ? 'In reading order: ' + acts + (acts === 1 ? ' act' : ' acts') + ', the one to understand first at the top.'
+        : 'In the order git lists them.'));
+      bar.appendChild(el('span', 'grow'));
+      var open = el('button', 'quiet', 'Expand all');
+      open.type = 'button';
+      open.addEventListener('click', function onOpen() { setExpandAll(true); });
+      var fold = el('button', 'quiet', 'Collapse all');
+      fold.type = 'button';
+      fold.addEventListener('click', function onFold() { setExpandAll(false); });
+      bar.appendChild(open);
+      bar.appendChild(fold);
+      return bar;
+    }
+
     function renderFiles(content, byPath) {
       var groups = groupsToRender();
       var rendered = {};
@@ -2572,9 +2673,118 @@ ${DARK_PALETTE}
       var text = state.review && state.review.architecture;
       if (!text) return;
       content.appendChild(el('div', 'secthead s-arch', 'Architecture'));
+      var drawing = renderArchDiagram(state.review.diagram);
+      if (drawing) content.appendChild(drawing);
       var box = el('div', 'arch prose');
       renderMarkdown(box, text);
       content.appendChild(box);
+    }
+
+    // The before and the after, side by side, from one layout of the whole
+    // graph so each piece sits in the same place in both. Nothing to draw (an
+    // analysis from before the diagram, or a change with no structure) draws
+    // nothing.
+    var ARCH_WORDS = { added: 'Added', changed: 'Changed', removed: 'Removed', unchanged: 'Unchanged' };
+    function renderArchDiagram(diagram) {
+      if (!diagram || !diagram.nodes || !diagram.nodes.length) return null;
+      var layout = layoutDiagram(diagram);
+      var wrap = el('div', 'archdiagram');
+      // Side by side while each drawing still reads at half the column;
+      // a wider graph puts the after under the before instead.
+      var panes = el('div', 'archpanes' + (layout.width > 600 ? ' stacked' : ''));
+      panes.appendChild(archPane(layout, 'before'));
+      panes.appendChild(archPane(layout, 'after'));
+      wrap.appendChild(panes);
+      var legend = el('div', 'archlegend');
+      var used = {};
+      for (var i = 0; i < layout.nodes.length; i++) used[layout.nodes[i].change] = true;
+      for (var j = 0; j < layout.edges.length; j++) used[layout.edges[j].change] = true;
+      ['added', 'changed', 'removed'].forEach(function key(change) {
+        if (!used[change]) return;
+        var item = el('span');
+        item.appendChild(el('i', change));
+        item.appendChild(document.createTextNode(ARCH_WORDS[change]));
+        legend.appendChild(item);
+      });
+      if (legend.childNodes.length) wrap.appendChild(legend);
+      return wrap;
+    }
+
+    var archMarkers = 0;
+    function archPane(layout, side) {
+      var pane = el('div', 'archpane');
+      pane.appendChild(el('h4', null, side === 'before' ? 'Before' : 'After'));
+      var gone = side === 'before' ? 'added' : 'removed';
+      var shown = {};
+      var count = 0;
+      for (var i = 0; i < layout.nodes.length; i++) {
+        if (layout.nodes[i].change === gone) continue;
+        shown[layout.nodes[i].id] = true;
+        count += 1;
+      }
+      if (!count) {
+        pane.appendChild(el('div', 'archnone', side === 'before' ? 'None of this was there before.' : 'None of this is left after.'));
+        return pane;
+      }
+      var svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 ' + layout.width + ' ' + layout.height);
+      svg.setAttribute('role', 'img');
+      // Never drawn larger than its own size: a three-piece graph blown up
+      // to the pane's width reads as a poster.
+      svg.style.maxWidth = layout.width + 'px';
+      svg.setAttribute('aria-label', (side === 'before' ? 'Before' : 'After') + ' the change: ' + count + (count === 1 ? ' piece' : ' pieces'));
+      // Marker ids are document-wide, and the page rebuilds itself, so each
+      // drawing names its own.
+      var prefix = 'arch' + (archMarkers++) + '-';
+      var defs = svgEl('defs');
+      ['plain', 'added', 'removed'].forEach(function marker(kind) {
+        var m = svgEl('marker', { id: prefix + kind, viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse' });
+        if (kind !== 'plain') m.setAttribute('class', kind);
+        m.appendChild(svgEl('path', { d: 'M0,0 L10,5 L0,10 z' }));
+        defs.appendChild(m);
+      });
+      svg.appendChild(defs);
+      for (var e = 0; e < layout.edges.length; e++) {
+        var edge = layout.edges[e];
+        if (edge.change === gone || !shown[edge.from] || !shown[edge.to]) continue;
+        // Unchanged reads as unchanged on both sides; what the change did to
+        // an edge is shown on the side where it is.
+        var kind = edge.change === 'unchanged' ? '' : edge.change;
+        var g = svgEl('g', { 'class': 'edge' + (kind ? ' ' + kind : '') });
+        g.appendChild(svgEl('path', { d: edge.d, 'marker-end': 'url(#' + prefix + (kind || 'plain') + ')' }));
+        if (edge.label) {
+          var t = svgEl('text', { x: String(edge.labelX), y: String(edge.labelY + 3.5), 'text-anchor': 'middle' });
+          t.textContent = edge.label;
+          g.appendChild(t);
+        }
+        var title = svgEl('title');
+        title.textContent = edge.from + ' → ' + edge.to + (edge.label ? ': ' + edge.label : '') + ' (' + ARCH_WORDS[edge.change].toLowerCase() + ')';
+        g.appendChild(title);
+        svg.appendChild(g);
+      }
+      for (var n = 0; n < layout.nodes.length; n++) {
+        var node = layout.nodes[n];
+        if (!shown[node.id]) continue;
+        var ng = svgEl('g', { 'class': 'node ' + node.change });
+        ng.appendChild(svgEl('rect', { x: String(node.x), y: String(node.y), width: String(node.w), height: String(node.h), rx: '5' }));
+        for (var l = 0; l < node.lines.length; l++) {
+          var text = svgEl('text', { x: String(node.x + node.w / 2), y: String(node.y + 9 + 16 * l + 12), 'text-anchor': 'middle' });
+          text.textContent = node.lines[l];
+          ng.appendChild(text);
+        }
+        var nt = svgEl('title');
+        nt.textContent = node.label + ' (' + ARCH_WORDS[node.change].toLowerCase() + ')';
+        ng.appendChild(nt);
+        svg.appendChild(ng);
+      }
+      pane.appendChild(svg);
+      return pane;
+    }
+
+    function svgEl(tag, attrs) {
+      var n = document.createElementNS(SVG_NS, tag);
+      for (var k in attrs || {}) n.setAttribute(k, attrs[k]);
+      return n;
     }
 
     // Shared by the failed strip's Retry and by the offer a Re-review makes
@@ -2594,12 +2804,49 @@ ${DARK_PALETTE}
         });
     }
 
-    // A numbered list of a bold title and a sentence of why.
-    function renderDecisions(content) {
-      var items = (state.review && state.review.decisions) || [];
+    // The choices a reviewer has to agree with before approving, each linked
+    // to the files that carry it and able to be taken to the conversation.
+    // An analysis from before questions were folded into the decisions still
+    // has its questions: they are listed after the decisions, the same way.
+    function renderWhatMatters(content) {
+      var items = ((state.review && state.review.decisions) || []).slice();
+      var legacy = (state.review && state.review.questions) || [];
+      for (var i = 0; i < legacy.length; i++) items.push({ title: legacy[i].question, why: legacy[i].why, files: legacy[i].files });
       if (!items.length) return;
       content.appendChild(el('div', 'secthead s-dec', 'Decisions'));
+      renderDecisions(content, items);
+    }
+
+    function askButton(title) {
+      var askIt = el('button', 'qask');
+      askIt.type = 'button';
+      askIt.appendChild(svgIcon(BOT_D));
+      askIt.appendChild(el('span', null, 'Ask in the conversation'));
+      askIt.addEventListener('click', function onAsk() { askInChat('Talk me through this decision: ' + title); });
+      return askIt;
+    }
+
+    // A changed file named in the analysis, as a way to its diff.
+    function fileLink(path) {
+      var link = el('button', 'qfile');
+      link.type = 'button';
+      // The name and its folder: a bare action.yml or index.mjs could be any of several.
+      link.textContent = path.split('/').slice(-2).join('/');
+      link.dataset.tip = path;
+      link.setAttribute('aria-label', 'Show the diff of ' + path);
+      link.addEventListener('click', function onFile() {
+        openFiles[path] = true;
+        showTab('files');
+        jumpToFile(path);
+      });
+      return link;
+    }
+
+    // A numbered list of a bold title, a sentence of why, and the way to its
+    // files and to the conversation.
+    function renderDecisions(content, items) {
       var list = el('ol', 'decisions');
+      var byPath = fileByPath();
       for (var i = 0; i < items.length; i++) {
         var li = document.createElement('li');
         var b = document.createElement('b');
@@ -2608,6 +2855,13 @@ ${DARK_PALETTE}
         var why = el('span', 'why prose');
         inline(why, items[i].why || '');
         li.appendChild(why);
+        var acts = el('div', 'qacts');
+        var files = items[i].files || [];
+        for (var f = 0; f < files.length; f++) {
+          if (byPath[files[f]]) acts.appendChild(fileLink(files[f]));
+        }
+        acts.appendChild(askButton(items[i].title));
+        li.appendChild(acts);
         list.appendChild(li);
       }
       content.appendChild(list);
@@ -3019,7 +3273,7 @@ ${DARK_PALETTE}
         say('dim', 'no new commits.');
         if (offer) offer.remove();
         offer = el('button', 'quiet', 'Read it again anyway');
-        offer.dataset.tip = 'Read the same commit again and rebuild the overview, architecture, decisions and reading order. A minute or two.';
+        offer.dataset.tip = 'Read the same commit again and rebuild the overview, decisions, architecture and reading order. A minute or two.';
         offer.addEventListener('click', function onReanalyse() {
           offer.textContent = 'reading\\u2026';
           startAnalysis(offer);
@@ -3164,7 +3418,7 @@ ${DARK_PALETTE}
         box.appendChild(el('span', 'grow'));
         box.appendChild(el('span', 'aside', 'the diff below is complete and in git order'));
         var run = el('button', 'quiet', 'Run analysis');
-        run.dataset.tip = 'Read the diff and build the overview, architecture, decisions and reading order. A minute or two.';
+        run.dataset.tip = 'Read the diff and build the overview, decisions, architecture and reading order. A minute or two.';
         run.addEventListener('click', function onRun() { startAnalysis(run); });
         box.appendChild(run);
         return box;
@@ -4318,8 +4572,11 @@ ${DARK_PALETTE}
       els.log.classList.toggle('blank', !chat.messages.length && !chat.pending && !chat.busy);
       if (!chat.messages.length && !chat.pending) {
         var hint = el('div', 'chat-hint');
-        hint.appendChild(el('p', null, 'A conversation about the change as a whole, with the branch checked out to read from.'));
-        hint.appendChild(el('p', null, 'Try: what should I look at first? Why was this done this way? What could break?'));
+        hint.appendChild(el('p', null, 'A conversation about the change as a whole, with the branch checked out to read from. Start with one of these, or ask your own:'));
+        var starters = el('div', 'chat-starters');
+        var picks = chatStarters();
+        for (var s = 0; s < picks.length; s++) starters.appendChild(starterButton(picks[s]));
+        hint.appendChild(starters);
         els.log.appendChild(hint);
       }
       for (var i = 0; i < chat.messages.length; i++) els.log.appendChild(renderChatMessage(chat.messages[i]));
@@ -4333,6 +4590,57 @@ ${DARK_PALETTE}
       if (chat.error) els.log.appendChild(el('div', 'chat-err', chat.error));
       els.send.disabled = chat.busy;
       els.log.scrollTop = els.log.scrollHeight;
+    }
+
+    // The analysis's own decisions first, since they are about this change
+    // (or the questions of an analysis written before they were folded in),
+    // then general ones to fill out to five.
+    var GENERAL_STARTERS = [
+      'What should I look at first?',
+      'What could this break, and for whom?',
+      'What is not covered by tests?',
+      'Why was it done this way rather than the obvious alternative?',
+      'What should I try by hand before approving?',
+    ];
+    function chatStarters() {
+      var out = [];
+      var qs = (state.review && state.review.questions) || [];
+      for (var i = 0; i < qs.length && out.length < 3; i++) out.push(qs[i].question);
+      var ds = (state.review && state.review.decisions) || [];
+      for (var d = 0; d < ds.length && out.length < 3; d++) out.push('Talk me through this decision: ' + ds[d].title);
+      for (var j = 0; j < GENERAL_STARTERS.length && out.length < 5; j++) out.push(GENERAL_STARTERS[j]);
+      return out;
+    }
+
+    function starterButton(text) {
+      var b = el('button', 'chat-starter');
+      // The analysis writes its questions as markdown, so a name in one is drawn as code here.
+      inline(b, text);
+      b.type = 'button';
+      b.disabled = chat.busy;
+      b.addEventListener('click', function onStarter(ev) {
+        // A link in the question opens the link, not the question.
+        if (ev.target && ev.target.closest && ev.target.closest('a')) return;
+        askInChat(text);
+      });
+      return b;
+    }
+
+    // Opens the conversation and sends the question as if it had been typed:
+    // without the analysis's code marks, which a typed message would show as
+    // they are.
+    function askInChat(markdown) {
+      var text = String(markdown).split(String.fromCharCode(96)).join('');
+      if (!chat.open) setChatOpen(true);
+      if (chat.busy) {
+        // Something is being answered: leave it in the box to send after.
+        var input = chatEls().input;
+        input.value = text;
+        autosize(input);
+        return;
+      }
+      chatEls().input.value = text;
+      sendChat();
     }
 
     function renderChatMessage(m) {

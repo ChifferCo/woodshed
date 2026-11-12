@@ -626,10 +626,11 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-6), ['terminal.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-7), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'], `${page} is the shell`);
   }
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
+  assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
 
   // The version a page names is kept by the browser; any other is asked for again, so a deploy is never stale.
   const named = /href="(\/static\/style\.css\?v=[0-9a-f]{12})"/.exec(await getBody(port, '/', as('octocat')))[1];
@@ -1062,6 +1063,9 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   }, store);
   const check = async (repo) => {
     if (repo === 'o/missing') throw Object.assign(new Error('The GitHub App is not installed on o/missing.'), { shown: true });
+    if (repo === 'o/uninstalled') {
+      throw Object.assign(new Error('The GitHub App is not installed on o/uninstalled.'), { shown: true, link: { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' } });
+    }
     return { installationId: null };
   };
   const addedProjects = createAddedProjects({ store, config, check });
@@ -1075,12 +1079,44 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.deepEqual(added.body.projects.map((p) => [p.name, p.removable]), [['r', false], ['api', true]]);
   assert.deepEqual(config.projects.map((p) => p.name), ['r', 'api'], 'the live config has it, with no restart');
   assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/missing' }), { status: 400, body: { error: 'The GitHub App is not installed on o/missing.' } });
+  assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/uninstalled' }), {
+    status: 400, body: { error: 'The GitHub App is not installed on o/uninstalled.', link: { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' } },
+  }, 'the App\'s install page goes with the reason');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/api' })).status, 400, 'twice');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
   const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
+});
+
+test('Console settings: Add a repo\'s list is the App\'s repos less the projects, null with no App, and a 502 when GitHub did not answer', async (t) => {
+  const store = { state: { sessions: [] }, save() {} };
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store);
+  let fail = false;
+  const list = async () => {
+    if (fail) throw Object.assign(new Error('GitHub did not list the App\'s repos.'), { shown: true });
+    return { repos: [{ repo: 'o/R', private: true }, { repo: 'o/web', private: false }], grant: [{ account: 'o', href: 'https://github.com/settings/installations/1' }], install: null };
+  };
+  const serve = (addedProjects) => {
+    const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    t.after(() => server.close());
+    return listen(server);
+  };
+  const port = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }), list }));
+  const ask = async (p) => {
+    const res = await fetch(`http://127.0.0.1:${p}/api/console-settings/projects/repos`);
+    return { status: res.status, body: await res.json() };
+  };
+  assert.deepEqual(await ask(port), { status: 200, body: { repos: [{ repo: 'o/web', private: false }], grant: [{ account: 'o', href: 'https://github.com/settings/installations/1' }], install: null } });
+  fail = true;
+  assert.deepEqual(await ask(port), { status: 502, body: { error: 'GitHub did not list the App\'s repos.' } });
+  const noApp = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }) }));
+  assert.deepEqual(await ask(noApp), { status: 200, body: { repos: null, grant: [], install: null } });
 });
 
 test('Console settings: a repo\'s colour is picked from the palette, never one another repo has, and the rail gets it', async (t) => {

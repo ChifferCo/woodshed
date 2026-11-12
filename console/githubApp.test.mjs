@@ -116,3 +116,36 @@ test('installationOf asks for the App\'s installation on a repo, and says null w
   const broken = createAppApi({ appId: '1', privateKey: PEM, fetchImpl: async () => new Response('{}', { status: 502 }) });
   await assert.rejects(broken.installationOf('acme/yes'), /HTTP 502/);
 });
+
+test('a token source with no repo asks for the installation\'s token, as a key check does on a console with no repo yet', async () => {
+  const clock = { now: Date.parse('2026-10-22T10:00:00Z') };
+  const github = fakeGitHub({ clock });
+  const source = createTokenSource({ appId: '1', installationId: '99', privateKey: PEM, repo: '', label: 'new key check', fetchImpl: github.fetchImpl, now: () => clock.now });
+  await source.token();
+  assert.deepEqual(github.calls[0].body, {}, 'no repositories: an empty name would be refused');
+});
+
+test('installations and their repos: the App\'s installations with their settings pages, and each one\'s repos page by page', async () => {
+  const seen = [];
+  async function fetchImpl(url, { method = 'GET', headers, body }) {
+    seen.push([method, url.replace('https://api.github.com', ''), headers.authorization.startsWith('Bearer ey') ? 'jwt' : headers.authorization, body ?? null]);
+    if (url.endsWith('/app/installations?per_page=100')) {
+      return Response.json([{ id: 5, account: { login: 'acme' }, html_url: 'https://github.com/organizations/acme/settings/installations/5' }]);
+    }
+    if (url.endsWith('/access_tokens')) return Response.json({ token: 'ghs_x' }, { status: 201 });
+    const page = Number(new URL(url).searchParams.get('page'));
+    const n = page === 1 ? 100 : 2;
+    return Response.json({ repositories: Array.from({ length: n }, (_, i) => ({ full_name: `acme/r${page}-${i}`, private: i === 0 })) });
+  }
+  const api = createAppApi({ appId: '1', privateKey: PEM, fetchImpl });
+  assert.deepEqual(await api.installations(), [{ id: '5', account: 'acme', settingsUrl: 'https://github.com/organizations/acme/settings/installations/5' }]);
+  const repos = await api.installationRepos('5');
+  assert.equal(repos.length, 102);
+  assert.deepEqual(repos[0], { repo: 'acme/r1-0', private: true });
+  assert.deepEqual(seen.slice(1).map((c) => c.slice(0, 3)), [
+    ['POST', '/app/installations/5/access_tokens', 'jwt'],
+    ['GET', '/installation/repositories?per_page=100&page=1', 'Bearer ghs_x'],
+    ['GET', '/installation/repositories?per_page=100&page=2', 'Bearer ghs_x'],
+  ]);
+  assert.deepEqual(JSON.parse(seen[1][3]), { permissions: { metadata: 'read' } }, 'narrowed to reading metadata');
+});

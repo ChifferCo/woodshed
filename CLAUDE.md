@@ -73,24 +73,25 @@ where). It is not the source: the repo is. Say in the PR when that copy needs to
 
 ## Where everything is
 
-All in us-east-1, everything named `woodshed-cloud*` and tagged
-`project = woodshed-cloud`. `terraform output` (run from `providers/aws/terraform/` after
+All in us-east-1, everything named `<prefix>*` and tagged
+`project = <prefix>`, where `<prefix>` is the installation's `name_prefix` in its `terraform.tfvars`: `woodshed`, or
+`woodshed-cloud` for one set up before the setting existed. `terraform output` (run from `providers/aws/terraform/` after
 `terraform init -backend-config=../../../../.woodshed/install/aws/backend.hcl`) prints the ids.
 
 | Thing | Name | Look at it with |
 | --- | --- | --- |
-| Base box | EC2 `woodshed-cloud-base-box` | `aws ssm start-session --target <base_box_instance_id>` |
-| Its stack | `/opt/woodshed-cloud/compose.yml`, unit `woodshed-cloud.service`, written by the SSM association `woodshed-cloud-configure-base-box` from `providers/aws/terraform/baseBoxStack.sh.tftpl` | `sudo systemctl status woodshed-cloud`, `cd /opt/woodshed-cloud && sudo docker compose ps` / `logs console` |
-| Its data | EBS `woodshed-cloud-data` at `/var/lib/woodshed-cloud` (Mongo, `console/` state, Caddy) | `findmnt /var/lib/woodshed-cloud` |
-| Sessions | ECS cluster `woodshed-cloud`, task definition `woodshed-cloud-session` | `aws ecs list-tasks --cluster woodshed-cloud`, `describe-tasks` for `stoppedReason` |
-| Session logs | CloudWatch `/woodshed-cloud/sessions`, stream `session/session/<taskId>` | `aws logs tail /woodshed-cloud/sessions --follow` |
+| Base box | EC2 `<prefix>-base-box` | `aws ssm start-session --target <base_box_instance_id>` |
+| Its stack | `/opt/<prefix>/compose.yml`, unit `<prefix>.service`, written by the SSM association `<prefix>-configure-base-box` from `providers/aws/terraform/baseBoxStack.sh.tftpl` | `sudo systemctl status <prefix>`, `cd /opt/<prefix> && sudo docker compose ps` / `logs console` |
+| Its data | EBS `<prefix>-data` at `/var/lib/<prefix>` (Mongo, `console/` state, Caddy) | `findmnt /var/lib/<prefix>` |
+| Sessions | ECS cluster `<prefix>`, task definition `<prefix>-session` | `aws ecs list-tasks --cluster <prefix>`, `describe-tasks` for `stoppedReason` |
+| Session logs | CloudWatch `/<prefix>/sessions`, stream `session/session/<taskId>` | `aws logs tail /<prefix>/sessions --follow` |
 | Postgres | RDS, password in the RDS-managed secret | Reachable from the base box and sessions only. It refuses unencrypted connections, so the task definition sets `PGSSLMODE=verify-full` and the image trusts AWS's RDS CA bundle (`NODE_EXTRA_CA_CERTS`). `no pg_hba.conf entry … no encryption` means `PGSSLMODE` is missing; `self-signed certificate in certificate chain` means the bundle is missing from the image (an image built before it was added) |
-| Databases | Postgres on RDS and Mongo on the base box: `woodshed__template`, which the db-admin task builds after each session image (SSM document `woodshed-cloud-refresh-db-template`) when its `paths` (the project file's `databases[].paths`) changed since the commit it was built from (`Template kept`, `Migrating a copy of the template` or `Building the template again` in its log, with why; the deploy workflow's session job skips the task when the last session build had the same `paths`), and a copy of it for each shared session (`woodshed__<id>`) and each person (`woodshed_<login>`). The console's `state.json` keeps where each copy is, under `sessionDatabases` and `databases` | The db-admin task's log: `/woodshed-cloud/sessions`, stream `db-admin/db-admin/<taskId>`. The deploy workflow's session job prints the template task's exit code and log stream |
+| Databases | Postgres on RDS and Mongo on the base box: `woodshed__template`, which the db-admin task builds after each session image (SSM document `<prefix>-refresh-db-template`) when its `paths` (the project file's `databases[].paths`) changed since the commit it was built from (`Template kept`, `Migrating a copy of the template` or `Building the template again` in its log, with why; the deploy workflow's session job skips the task when the last session build had the same `paths`), and a copy of it for each shared session (`woodshed__<id>`) and each person (`woodshed_<login>`). The console's `state.json` keeps where each copy is, under `sessionDatabases` and `databases` | The db-admin task's log: `/<prefix>/sessions`, stream `db-admin/db-admin/<taskId>`. The deploy workflow's session job prints the template task's exit code and log stream |
 | Database viewers | `pgweb` and `mongo-express` inside each session, on its own databases (a private session's pgweb also on its restored copy, through bookmarks in `/tmp/woodshed-pgweb-bookmarks`, and a second mongo-express on its Mongo copy at `/mongo-copy/<id>/`), at `/pg/<id>/` and `/mongo/<id>/` | In the session, `/tmp/pgweb.log` and `/tmp/mongo-express.log` |
-| Claude homes | S3 `woodshed-cloud-homes-<account id>`, `<login>/claude-home.tar.gz`: each person's `~/.claude` between their private sessions (the last to stop), `<login>/sessions/<id>/claude-home.tar.gz`: one private session's own, for its Resume, and `_sessions/<id>/claude-home.tar.gz`: a kept shared session's, between its runs, and `<login>/claude-settings.json`: the settings every private session of theirs keeps in step with. Only the console's role reaches it | `aws s3 ls s3://woodshed-cloud-homes-<account id>/` (names and sizes; never download someone's) |
-| Images | ECR `woodshed-cloud-session`, `woodshed-cloud-console` | `aws ecr describe-images --repository-name …` |
-| Terraform state | S3 `woodshed-cloud-tfstate-<account id>`, see `.woodshed/install/aws/backend.hcl` | Created by hand, so `terraform destroy` leaves it |
-| Webhooks | Lambda `woodshed-cloud-webhooks` (URL: the `github_webhook_url` output), queue `woodshed-cloud-webhooks` and `-dead`. The console's Webhook events tab lists what it did with each message | `aws logs tail /aws/lambda/woodshed-cloud-webhooks`, `aws sqs get-queue-attributes --queue-url <url> --attribute-names All` |
+| Claude homes | S3 `<prefix>-homes-<account id>`, `<login>/claude-home.tar.gz`: each person's `~/.claude` between their private sessions (the last to stop), `<login>/sessions/<id>/claude-home.tar.gz`: one private session's own, for its Resume, and `_sessions/<id>/claude-home.tar.gz`: a kept shared session's, between its runs, and `<login>/claude-settings.json`: the settings every private session of theirs keeps in step with. Only the console's role reaches it | `aws s3 ls s3://<prefix>-homes-<account id>/` (names and sizes; never download someone's) |
+| Images | ECR `<prefix>-session`, `<prefix>-console` | `aws ecr describe-images --repository-name …` |
+| Terraform state | S3 `<prefix>-tfstate-<account id>` (or the tfvars' `tfstate_bucket`), see `.woodshed/install/aws/backend.hcl` | Created by hand, so `terraform destroy` leaves it |
+| Webhooks | Lambda `<prefix>-webhooks` (URL: the `github_webhook_url` output), queue `<prefix>-webhooks` and `-dead`. The console's Webhook events tab lists what it did with each message | `aws logs tail /aws/lambda/<prefix>-webhooks`, `aws sqs get-queue-attributes --queue-url <url> --attribute-names All` |
 
 ## The secrets
 
@@ -108,7 +109,7 @@ All in us-east-1, everything named `woodshed-cloud*` and tagged
 | `users/<login>/<env secret>`, `users/<login>/tmux-conf` | One person's own lines for the env files and tmux config, from My settings, written after the shared env file secrets and the image's `tmux.conf` in their private sessions only. Readable by them there, since their sessions hold the same text | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings fixes it. The rules above apply to these too: no production credentials |
 | `users/<login>/github` | One person's GitHub App user token from Connect GitHub (JSON: the token, its expiry, the refresh token), for their private sessions' git and `gh`. Made and rotated by the console (`githubUser.mjs`); never in a session | Their next push fails with `GitHub no longer accepts @<login>'s authorization`: the console logs `githubUser: GitHub refused the refresh, disconnecting`. Connect GitHub again on My settings. A session whose project file says `githubAccess: repo` gets it scoped to that project's repo (`githubUser: scoped token made`); `githubUser: GitHub refused a scoped token` or `no scoped token, the console has no client secret`, then `sessionApi: no scoped owner token for the session's project`, means it pushes as the App instead |
 | `sessions/<id>/database`, `users/<login>/database` | The password of each database's own user: `woodshed__<id>` for that shared session and the viewers inside it, deleted with its databases; `woodshed_<login>` for that person's private sessions and the viewers inside them. Made by the console. Not on the Secrets tab | See the database symptoms below |
-| RDS's own master secret, `woodshed-cloud-root/mongo` | Each only where the installation runs that database (`databases` in Terraform). Root, for the db-admin task alone, through its execution role. Not the console, not the base box (which writes Mongo's once and cannot read it back), not a session | The db-admin task's log (`/woodshed-cloud/sessions`, stream `db-admin/...`) fails at its first connection. A Mongo root password that could not be saved is in `/root/woodshed-cloud-mongo-root` on the base box: put it in the secret, then delete the file |
+| RDS's own master secret, `<prefix>-root/mongo` | Each only where the installation runs that database (`databases` in Terraform). Root, for the db-admin task alone, through its execution role. Not the console, not the base box (which writes Mongo's once and cannot read it back), not a session | The db-admin task's log (`/<prefix>/sessions`, stream `db-admin/...`) fails at its first connection. A Mongo root password that could not be saved is in `/root/<prefix>-mongo-root` on the base box: put it in the secret, then delete the file |
 | Each install secret (`install_secrets` in Terraform, such as `registry-token`) | The repo's dependency installs: the image build's (a line of the build's `install_env` secret, which the deploy workflow's session job writes from a repo secret) and a session's, only when a branch changed an install's files since the image was built. A session gets it in the variable `install_secrets` names, which claude's terminal has too; an ask session unsets each variable `WOODSHED_INSTALL_SECRETS` lists | `/tmp/woodshed-deps` says `failed: \`<command>\` in <dir>. Are the install secrets (<variables>) right?`, the log has `ERROR: the install failed` with the dir, and Claude asks for help. The image build logs `deps: install secrets in <variables>`, or `deps: no install secrets` when it got no `install_env`. In a session's Terminal, `[ -n "$<variable>" ] && echo set` |
 
 The entrypoint adds the session's databases, Mongo, Redis (when the project uses it), the shared services, port and
@@ -119,10 +120,20 @@ secrets.
 ## By symptom
 
 - **The console URL does not load.** On the base box: `systemctl status
-  woodshed-cloud`. Its first start fails until the console image exists;
-  `sudo woodshed-cloud-up` once it does. A 421 means
+  <prefix>`. Its first start fails until the console image exists;
+  `sudo <prefix>-up` once it does. A 421 means
   the host name is not one the console knows, which is the DNS rebinding check
   working.
+- **A console on sslip.io (no `domain` in Terraform) gives a certificate error.** Caddy gets each name's certificate
+  on demand, after asking the console on 127.0.0.1:7692: the console logs `tls: ask listening` at start, then `tls:
+  certificate asked` with `allowed` and `why` for each name, as in "Open app answers with a certificate error on a local
+  install, or on AWS with no `domain`" below. `sudo docker compose logs caddy` on the base box has the issuer's answer; a Let's Encrypt rate limit
+  on `sslip.io` is shared with everyone, and Caddy then tries ZeroSSL.
+- **Nobody can sign in to a console with no repo yet.** Until an admin adds one (Console settings, Repos), only the
+  owner of the account the GitHub App is installed on gets in: the console logs `appOwner: owner checked` with the
+  `account`, its `type`, the `role` for an organization and `owner`. `appOwner: the App may not read the org's
+  members` means the App lacks Organization permissions, Members: read, and the login page says so. Starts on such a
+  console log `fleet: session refused, the console has no repo yet`.
 - **The console's domain gives a certificate error, while the bare IP works.**
   Caddy has no certificate for the name yet: `sudo docker compose logs caddy`
   on the base box. `dig NS <domain>` must list the zone's
@@ -134,7 +145,7 @@ secrets.
   --instance-id <base_box_instance_id>` shows past runs. The base box must be a
   managed SSM node (`aws ssm describe-instance-information`). `no space left on
   device` in that output means old images filled the box's root disk: the restart
-  and `woodshed-cloud-up` prune unused images, so this is an image from before
+  and `<prefix>-up` prune unused images, so this is an image from before
   they did. On the box, `sudo docker system df`, then `sudo docker image prune -af`
   (running containers keep theirs) and re-run the job. The console keeps running on
   its old image meanwhile.
@@ -163,12 +174,12 @@ secrets.
   arriving and the fallback poll found it. The webhook card on the Secrets &
   webhooks tab says which of its four checks fails; **Check again** opens the
   test step, which lists GitHub's last deliveries. A 401 means the App's
-  webhook secret and `woodshed-cloud/github-webhook-secret` differ, and
+  webhook secret and `<prefix>/github-webhook-secret` differ, and
   Reconnect sets the stored one again. No deliveries at all after a label means
   the webhook is not Active in the App's settings. The Lambda's log shows each
   `queued` or `ignored` event, and the console logs `webhooks: listening` at
   start or `webhooks: queue not reachable` when its role cannot see the queue.
-  Messages the console failed on three times sit in `woodshed-cloud-webhooks-dead`.
+  Messages the console failed on three times sit in `<prefix>-webhooks-dead`.
 - **Signing in fails.** The login page says why. "The console could not
   check your access with GitHub" is the console's own failure, not the
   person's: it logs `auth: sign-in failed` with `step` and the error.
@@ -191,10 +202,10 @@ secrets.
   (`auth: sign-in refused, the handle was another account's`; a label or
   comment from it logs `fleet: trigger ignored, the handle was another
   account's`). Once you are sure the old owner is gone, stop the console
-  (`sudo docker compose stop console` in `/opt/woodshed-cloud`), delete the
+  (`sudo docker compose stop console` in `/opt/<prefix>`), delete the
   handle's entries under `githubAccounts`, `slackAccounts`, `people` and `databases` in
-  `/var/lib/woodshed-cloud/console/state.json`, start it again, and delete the
-  `woodshed-cloud/users/<handle>/` secrets. Leaving any of them hands the new
+  `/var/lib/<prefix>/console/state.json`, start it again, and delete the
+  `<prefix>/users/<handle>/` secrets. Leaving any of them hands the new
   account the old one's token or databases. The login page
   saying nobody can sign in means the client secret is missing: the console
   logs `console: GitHub sign-in` with `available: false` at start. Locked out
@@ -204,16 +215,16 @@ secrets.
   `App created from the manifest` or `App details saved`, `installation saved` or `App not installed on the repo yet`,
   and after the restart `console: GitHub App from the setup page`. `manifest conversion refused` means the code was used
   or older than an hour: start again. No Restart button on step 3: the start's `githubSetup: restart from the page`
-  line has `offered: false`, so neither systemd (`INVOCATION_ID`) nor `WOODSHED_CLOUD_SUPERVISED=1` said something
+  line has `offered: false`, so neither systemd (`INVOCATION_ID`) nor `WOODSHED_SUPERVISED=1` said something
   starts the console again. A click logs `githubSetup: restart asked` and the process exits with code 75; a console that
   stays down after it has a unit without `Restart=on-failure` (or a container with no restart policy).
 - **Sign-in fails and every poll logs `spawn gh ENOENT` or `gh is not installed on the console`.** The console's
   machine has no `gh`, which every GitHub call goes through, the App's included: it logs `console: gh not installed,
   GitHub calls will fail` at start, and `auth: sign-in failed` and `console: github poll failed` name it. Install it
   (https://cli.github.com) and restart. The console image has it; the local provider's host needs it.
-- **The console does not start, logging `WOODSHED_CLOUD_REQUIRE_SIGN_IN needs
+- **The console does not start, logging `WOODSHED_REQUIRE_SIGN_IN needs
   the GitHub App`.** The base box always requires sign-in, and sign-in needs
-  the App: check `WOODSHED_CLOUD_GITHUB_APP_ID` in `compose.yml`.
+  the App: check `WOODSHED_GITHUB_APP_ID` in `compose.yml`.
 - **New session says to save a Claude token, or a private session fails at
   start.** No token is saved for that login, or the session API refused: the
   session's log has `could not get the owner's settings from the console`, and
@@ -221,6 +232,19 @@ secrets.
   `AccessDeniedException` on `create-secret` means the base box role lacks the
   `PeoplesOwnSecrets` statement (an apply is due). A teammate's private session
   is invisible by design: nobody else can see it in the console.
+- **A session fails at start with `could not get the owner's settings` (or the
+  session's databases) and `status 000`, after `Empty reply from server` or
+  `Couldn't connect to server`.** The console was away for longer than the
+  session waits: its calls to the console (`consoleCall` in `session/entrypoint.sh`,
+  and `githubToken.sh`) try again for about 40 s on anything but a 4xx. A
+  redeploy stops the console for a few seconds: it logs `console: stopping` with
+  the signal, then `console: stopped` with its seconds, and `requests still open
+  at the stop, cut off` when some had not answered in 7 s. Check the
+  `woodshed-cloud-redeploy-console` SSM commands (`aws ssm list-command-invocations
+  --details --instance-id <base_box_instance_id>`) and the deploy workflow's runs
+  at that time. No `console: stopping` before the new console's `console: listening`
+  means it was killed, not stopped: a crash, an out-of-memory kill or the box
+  rebooting. A status other than 000 is the console's own answer, given after it.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5
@@ -274,7 +298,7 @@ secrets.
 - **A session takes a minute and a half to start.** The image has lost its
   SOCI index, so Fargate pulls it in full: `describe-tasks` shows about 85
   seconds between `pullStartedAt` and `pullStoppedAt`, against under 10 with
-  the index. `aws ecr describe-images --repository-name woodshed-cloud-session`
+  the index. `aws ecr describe-images --repository-name <prefix>-session`
   lists an `application/vnd.amazon.soci.index.v2+json` artifact pushed with
   each build; when it is missing, adding it (`session/addSociIndex.sh`) failed in the deploy workflow's session job.
 - **A starting session's checklist stays on one step.** The console logs
@@ -309,10 +333,10 @@ secrets.
   marker stood for both) or a template run that failed midway leaves one without: run the `db_template_command`
   output once. `WARNING: the templates were built from different commits` means one engine's swap failed after
   another's; the next `template` run builds them again.
-- **The console stops at start with `WOODSHED_CLOUD_DATABASES is not set`, `names no database for it to make` or
-  `there is no WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION`.** The base box's stack predates the setting, or was
+- **The console stops at start with `WOODSHED_DATABASES is not set`, `names no database for it to make` or
+  `there is no WOODSHED_ECS_DB_ADMIN_TASK_DEFINITION`.** The base box's stack predates the setting, or was
   written by hand: `terraform apply`, which writes it from `databases`, and sets
-  `WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION` only when there is a database. A console image built before the apply
+  `WOODSHED_ECS_DB_ADMIN_TASK_DEFINITION` only when there is a database. A console image built before the apply
   stops here, so the apply goes first.
 - **A shared session fails at start with `the session's databases were not
   ready` or `could not get the session's databases`.** The console logs
@@ -355,7 +379,7 @@ secrets.
   and `slack: channel changed` for the channel; a value out of range is
   refused with its range and nothing of that card is kept. The new value is
   read on the next tick, about 10 seconds later. With nothing saved a setting is
-  its environment value (`WOODSHED_CLOUD_MAX_SESSIONS`, `_IDLE_HOURS`,
+  its environment value (`WOODSHED_MAX_SESSIONS`, `_IDLE_HOURS`,
   `_LIFETIME_HOURS`) or the page's default.
 - **A session waits in the queue with `AWS has no room for another session`.**
   The account's Fargate vCPU quota is used up: `aws service-quotas
@@ -368,12 +392,13 @@ secrets.
   `limit` and how many were `ahead`, then `fleet: starting session` when a
   slot frees up. A Done or Needs you session still holds its task until the
   idle pause.
-- **A session fails at start with `.woodshed/project.yaml: …`, or has no Start app.** The project file
+- **A session fails at start with `.woodshed/project.yaml: …`, or shows Set up app instead of Start app.** The project file
   (docs/reference.md, "The project file") does not parse: the error names the field (`is missing app`, `has envfiles, which is not a field`), or says
   `not read as YAML (line N: …)` for YAML that `woodshed/shared/yamlLite.mjs` does not read. A field that can be none
   may be left out; a misspelt one never is read as none. The same file broken on a branch makes `readyGate` refuse `gh pr create` with `Not opened:
   .woodshed/project.yaml: …`. statusd logs `statusd: project file not read, no app` and `statusd: app start skipped,
-  the project has no app`. The session log's `Project file read (from: …)` says whether it read the checkout's
+  the project has no app`; Set up app logs `fleet: app setup asked` with `sent`, and statusd `statusd: the project file has
+  an app now` once claude wrote one, or `project file not read again, still no app` with the reason. The session log's `Project file read (from: …)` says whether it read the checkout's
   copy (`checkout`), the default branch's (`default branch`) or none. To see what it read, `cd` into the session's checkout and run
   `node /opt/woodshed/shared/project.mjs get app`.
 - **A session's dependencies are missing or old, or `/tmp/woodshed-deps` says `failed`.** At start the session's log
@@ -398,10 +423,10 @@ secrets.
   statusd `statusd: app start finished` with the script's exit code. A page that
   loads but never comes to life means the app's dev server refused the name: it must allow `*.<domain>` (the
   installation's `.woodshed/install/README.md` says where).
-- **Open app answers with a certificate error on a local install.** With no wildcard certificate, Caddy gets one per
+- **Open app answers with a certificate error on a local install, or on AWS with no `domain`.** With no wildcard certificate, Caddy gets one per
   app name on demand, after asking the console (providers/local/README.md, "Session apps without a wildcard
-  certificate"). No `tls: ask listening` at start means `WOODSHED_CLOUD_TLS_ASK_PORT` is not set. `tls: certificate
-  asked` with `allowed: false, why: 'unknown'` for the app's name means it is not `<id>.<WOODSHED_CLOUD_APP_DOMAIN>` of a
+  certificate"). No `tls: ask listening` at start means `WOODSHED_TLS_ASK_PORT` is not set. `tls: certificate
+  asked` with `allowed: false, why: 'unknown'` for the app's name means it is not `<id>.<WOODSHED_APP_DOMAIN>` of a
   session on the list (refusals log at most once a minute, with `refused`), and `why: 'not loopback'` that something
   other than Caddy on this machine asked, or a proxy sits in front of the port. No `tls:` line at all means Caddy never
   asked: `curl -s -w '%{http_code}' 'http://127.0.0.1:<port>/tls-ask?domain=<name>'` from the machine, then Caddy's own
@@ -642,6 +667,10 @@ secrets.
   shows. A session from an image before `session/sessionDiff.mjs` answers 404.
 - **The App log tab is empty.** statusd's `GET /applog` reads
   `/tmp/woodshed-app.log` and the project file's `app.logs` in the session; the tab says `Nothing logged yet` until Start app ran.
+- **New session's Codex models are old, or say `codex's built-in list`.** The line under the menus says why. The console
+  logs `codexModels: catalog read` with `source` (`own` or `team`) and how many `models`, `OpenAI refused the catalog`
+  with the `status` (a 401 is a sign-in OpenAI no longer takes), `catalog not read`, `own sign-in expired, not read`
+  (a Codex session refreshes it at its stop) or `credential not read`. It tries again a minute after a failure.
 - **The `/` list in New session is empty.** The console logs `console: skills
   read` with the count, or `console: skills not readable` with gh's error.
 - **A pin or rename does not stick.** The page says `Not saved` with the
@@ -680,7 +709,7 @@ secrets.
   seconds and bytes, `tunnel: refused, no valid token`, `tunnel: closing open
   tunnels` with why, and `tunnel: database unreachable` when it cannot reach
   RDS or Mongo. psql saying `server does not support SSL` means it reached
-  something other than RDS: check `WOODSHED_CLOUD_TUNNEL_POSTGRES` in
+  something other than RDS: check `WOODSHED_TUNNEL_POSTGRES` in
   `compose.yml`.
 - **Restore a dump fails, or is missing from My settings.** It shows only with own databases ready and a tunnel
   address: the console logs `dbRestore: ready` with `kinds` (`postgres`, `mongo`) at start. Then `dbRestore: dump
@@ -706,12 +735,12 @@ secrets.
   `/tmp/mongo-express-copy.log` is its log. The Ready card's `The default branch has N migrations` comes from GitHub; with no
   line about it, the console logged `dbRestore: the default branch's migrations not read` with GitHub's answer.
 - **S3 files are gone.** Expected: localstack's free edition keeps nothing
-  across restarts, and `woodshed-cloud-up` restarts it.
+  across restarts, and `<prefix>-up` restarts it.
 - **Mongo or the session list is empty after a box change.** The data volume
-  did not mount. `findmnt /var/lib/woodshed-cloud`, then the first boot's log
+  did not mount. `findmnt /var/lib/<prefix>`, then the first boot's log
   in `/var/log/cloud-init-output.log`.
 - **A change to `baseBoxStack.sh.tftpl` did not reach the box.** The
-  `woodshed-cloud-configure-base-box` association runs it after the apply, on
+  `<prefix>-configure-base-box` association runs it after the apply, on
   its own: `aws ssm describe-association-executions` (providers/aws/README.md has the full
   command) shows the last run, and `aws ssm list-command-invocations --details
   --instance-id <base_box_instance_id>` its output. A new box's first run waits
@@ -745,11 +774,14 @@ the stand-in session API serves.
 `node woodshed/console/bin/devConsole.mjs [port]` runs the console on loopback (default 7690) with
 three made-up sessions and no AWS, GitHub, Docker or sign-in. Open `http://localhost:<port>/s/aaaa1111` in the
 Playwright browser. The rail folds its stopped zones, so run
-`localStorage['woodshed-cloud-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
+`localStorage['woodshed-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
 cards. Pull request chips show without their state or checks, since polling GitHub is off. `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
-fails it. Add a session to `devConsole.mjs` to cover another state.
+fails it. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
+the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
+chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
+`devConsole.mjs` to cover another state.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

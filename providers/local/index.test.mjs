@@ -52,7 +52,7 @@ test('own databases need each database\'s settings and the secrets folder; witho
   assert.throws(() => loadConfig({ GH_TOKEN: 'x', WOODSHED_LOCAL_DB_POSTGRES_HOST: 'postgres' }),
     /WOODSHED_LOCAL_DB_POSTGRES_HOST needs WOODSHED_LOCAL_DB_POSTGRES_ROOT_USER too/);
   assert.throws(() => localProvider(loadConfig({ GH_TOKEN: 'x', ...db })), /needs WOODSHED_LOCAL_SECRETS_DIR/);
-  const secrets = { WOODSHED_CLOUD_REPO: 'o/app', WOODSHED_LOCAL_SECRETS_DIR: '/tmp/never-written', WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile() };
+  const secrets = { WOODSHED_REPO: 'o/app', WOODSHED_LOCAL_SECRETS_DIR: '/tmp/never-written', WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile() };
   const provider = localProvider(loadConfig({ GH_TOKEN: 'x', ...db, ...secrets }));
   assert.deepEqual([typeof provider.dbAdmin.start, provider.databases, provider.words.databasesPlace], ['function', ['postgres', 'mongo'], 'Postgres and Mongo']);
   const pgOnly = localProvider(loadConfig({ GH_TOKEN: 'x', ...pg, ...secrets }));

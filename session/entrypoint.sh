@@ -33,7 +33,7 @@
 #   each env file's secret, by its name in capitals (`app-env` is APP_ENV)   base env files, whole: one for each of
 #                        the project file's envFiles with a secret (woodshed/shared/project.mjs)
 #   REPO_DIR             the checkout; the image sets it, and the working folder is used without it
-#   WOODSHED_CLOUD_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
+#   WOODSHED_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
 #                        .woodshed/project.yaml of its own (shared/project.mjs): the docker launcher mounts the files
 #                        there read-only
 #   PROJECT_REPO         owner/name: a session on a project other than the installation's default. Every project runs
@@ -62,7 +62,7 @@
 #   each install secret, by the variable the installation names for it   what the repo's installs read, such as a
 #                        package registry's token; claude's terminal has them too
 #   WOODSHED_INSTALL_SECRETS  those variables' names, space-separated (the install_secrets Terraform variable, or the
-#                        local provider's WOODSHED_CLOUD_INSTALL_SECRETS): an ask session unsets each
+#                        local provider's WOODSHED_INSTALL_SECRET_PAIRS): an ask session unsets each
 #   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
 #   SESSION_MODE=qa      QA of the pull request PR against its base branch QA_BASE (console/qaSessions.mjs): its branch,
@@ -86,15 +86,29 @@ databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }
 log() { echo "[woodshed $(date -u +%H:%M:%S)] $*"; }
 die() { log "ERROR: $*"; exit 1; }
 
+# A POST to the console's session API, its answer into <file>, and the status code on stdout: 000 when the console
+# never answered whole. Only for a call that is safe to repeat. The console is away for a few seconds on each
+# redeploy (Docker stops it, then starts the new image) and when it crashes or its box reboots, so curl tries again
+# for up to about 40 s on any failure but a 4xx: a refused or dropped connection (curl's own --retry leaves out
+# `Empty reply from server`, the one a restart gives), a cut answer, a timeout, a 408, 429 or 5xx. A 409 answers at
+# once. No --fail, which would make --retry-all-errors repeat a 4xx too, and the answer goes to a file, which curl
+# empties before each try, made readable by this user alone: answers hold tokens and passwords. The session token goes
+# to curl on stdin, not in its arguments, where `ps` would show it.
+consoleCall() {
+  local route=$1 out=$2 code
+  shift 2
+  code=$(umask 077 && printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+    | curl -sS -X POST -K - -o "$out" -w '%{http_code}' --retry 8 --retry-delay 5 --retry-max-time 60 --retry-all-errors \
+      "$@" "$WOODSHED_CONSOLE_URL$route") || code=000
+  printf '%s' "$code"
+}
+
 # Tells the console a start step has finished, for the checklist on the session's page. In the background and its
 # failure ignored: the page is a nicety, and the start must never wait on it. The outer subshell exits at once, so the
 # report belongs to the init, which reaps it: one still running when this shell becomes statusd would stay a zombie.
 progress() {
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
-  # The session token goes to curl on stdin, not in its arguments, where `ps` would show it.
-  ( { printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 5 -o /dev/null -X POST -K - -H 'content-type: application/json' \
-      --data "{\"step\":\"$1\"}" "$WOODSHED_CONSOLE_URL/progress"; } >/dev/null 2>&1 & )
+  ( consoleCall /progress /dev/null --max-time 5 -H 'content-type: application/json' --data "{\"step\":\"$1\"}" >/dev/null 2>&1 & )
 }
 
 # Whether the project file's env uses a variable (project.mjs, usesVariable). Read each time, from the checkout.
@@ -334,9 +348,7 @@ fetchAttachments() {
   [ -n "${ATTACHMENTS:-}" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   local code=000 dir=${UPLOADS_DIR:-/tmp/uploads} n=0 f
   mkdir -p "$dir"
-  # The session token goes to curl on stdin, not in its arguments, where `ps` would show it.
-  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 120 -X POST -K - -o /tmp/woodshed-attachments.tar -w '%{http_code}' "$WOODSHED_CONSOLE_URL/attachments") || code=000
+  code=$(consoleCall /attachments /tmp/woodshed-attachments.tar --max-time 120)
   if [ "$code" != 200 ] || ! tar xf /tmp/woodshed-attachments.tar -C "$dir" --no-same-owner; then
     log "WARNING: attachments not fetched" "(status: $code, expected: $ATTACHMENTS)"
     printf '\n[%s file(s) were attached, but the session could not fetch them.]\n' "$ATTACHMENTS" > /tmp/woodshed-attachments.md
@@ -389,7 +401,7 @@ leaveOutConsoleLinks() {
 }
 
 writeRules() {
-  local rules setup notes tag
+  local rules setup notes tag apps
   leaveOutConsoleLinks
   # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
@@ -423,8 +435,11 @@ writeRules() {
     rules=${rules//"{{SHARED_ONLY}}"/}
   fi
   [ -z "${setup:-}" ] || rules+=$'\n'"$setup"
+  # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
+  apps=$(project apps-rules) || die "the project's apps could not be read"
+  [ -z "$apps" ] || rules+=$'\n'"$apps"
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none})"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, apps: $(project get apps | grep -c . || true))"
 }
 
 # Each container has its own throwaway Redis, for whatever of the app connects to it. A shared Redis would let one
@@ -474,6 +489,8 @@ useDatabaseFrom() {
 # 503 until they are made. A database the environment already names (the docker launcher) is used as it is, and an
 # installation that runs no database gives no address for one.
 DATABASE_WAIT_SECONDS=600
+# The console's /settings answer, between consoleCall and its reader, which deletes it: it holds a database password.
+SETTINGS_ANSWER=/tmp/woodshed-settings.json
 fetchSessionDatabases() {
   [ "${SESSION_KIND:-}" != private ] && [ -z "$(databases given)" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   if [ -z "$(databases hosted)" ]; then
@@ -482,13 +499,11 @@ fetchSessionDatabases() {
   fi
   local answer code start=$SECONDS
   while :; do
-    # The session token goes to curl on stdin, not in its arguments, where `ps` would show it. The status code
-    # comes back as the last line.
-    answer=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-      | curl -sS --max-time 15 -X POST -K - -w '\n%{http_code}' "$WOODSHED_CONSOLE_URL/settings") || answer=$'\n000'
-    code=${answer##*$'\n'}
-    answer=${answer%$'\n'*}
-    # 503 while the copy runs; no answer, 502 or 504 while the console restarts (when the deploy workflow's console job redeploys it).
+    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+    answer=$(cat "$SETTINGS_ANSWER" 2>/dev/null || true)
+    rm -f "$SETTINGS_ANSWER"
+    # 503 while the copy runs, which consoleCall tries again for its 40 s; no answer, 502 or 504 while the console
+    # restarts for longer than that.
     case "$code" in 503 | 000 | 502 | 504) ;; *) break ;; esac
     [ $((SECONDS - start)) -lt "$DATABASE_WAIT_SECONDS" ] || die "the session's databases were not ready after $DATABASE_WAIT_SECONDS s (last status $code)"
     sleep 2
@@ -519,10 +534,13 @@ CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
 fetchOwnerSettings() {
   [ "${SESSION_KIND:-}" = private ] || return 0
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || die "a private session needs the console's session API (WOODSHED_CONSOLE_URL)"
-  local answer own owned
-  # The session token goes to curl on stdin, not in its arguments, where `ps` would show it.
-  answer=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -fsS --max-time 15 -X POST -K - "$WOODSHED_CONSOLE_URL/settings") || die "could not get the owner's settings from the console"
+  local answer own owned code
+  # Read-only on the console (settingsReply), so safe to repeat while it restarts. A 409 (no Claude token saved, the
+  # owner's databases not ready) is the owner's to fix, and stops the start at once.
+  code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+  answer=$(cat "$SETTINGS_ANSWER" 2>/dev/null || true)
+  rm -f "$SETTINGS_ANSWER"
+  [ "$code" = 200 ] || die "could not get the owner's settings from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
   # The env files' own lines, by their secret's name, for writeEnvFiles (project.mjs puts each after its secret's text).
   OWN_FILES=$(jq -c '(.files // {}) | with_entries(select(.key != "tmux-conf" and (.value // "") != ""))' <<< "$answer")
   owned=$(jq -r 'keys | join(" ")' <<< "$OWN_FILES")
@@ -586,9 +604,7 @@ dropClaudeLogin() {
 restoreHome() {
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   local code
-  # The session token goes to curl on stdin, not in its arguments, where `ps` would show it.
-  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 120 -X POST -K - -o /tmp/woodshed-home.tgz -w '%{http_code}' "$WOODSHED_CONSOLE_URL/home/restore") || code=000
+  code=$(consoleCall /home/restore /tmp/woodshed-home.tgz --max-time 120)
   if [ "$code" = 200 ] && tar xzf /tmp/woodshed-home.tgz -C "$HOME"; then
     log "Claude home restored" "(bytes: $(wc -c < /tmp/woodshed-home.tgz))"
     dropClaudeLogin

@@ -19,7 +19,7 @@ locals {
 resource "aws_secretsmanager_secret" "session" {
   for_each = local.secrets
 
-  name        = "woodshed-cloud/${replace(each.key, "_", "-")}"
+  name        = "${local.p}/${replace(each.key, "_", "-")}"
   description = each.value
   # Gone at once on destroy, so a later apply can create the same names again.
   recovery_window_in_days = 0
@@ -28,32 +28,32 @@ resource "aws_secretsmanager_secret" "session" {
 # Not in local.secrets: the session execution role reads every one of those, and this key must stay on the base
 # box. Sessions get installation tokens from the console instead (console/sessionApi.mjs).
 resource "aws_secretsmanager_secret" "github_app_key" {
-  name                    = "woodshed-cloud/github-app-key"
+  name                    = "${local.p}/github-app-key"
   description             = "The Woodshed GitHub App's private key (.pem). Only the console reads it, to mint installation tokens"
   recovery_window_in_days = 0
 }
 
 # Console only, like the App key: it signs people in, and sign-in stays off until it has a value.
 resource "aws_secretsmanager_secret" "github_app_client_secret" {
-  name                    = "woodshed-cloud/github-app-client-secret"
+  name                    = "${local.p}/github-app-client-secret"
   description             = "The Woodshed GitHub App's client secret. The console signs people in with GitHub through it"
   recovery_window_in_days = 0
 }
 
 # Console only: the bot that posts each pull request a session opens (console/slack.mjs).
 resource "aws_secretsmanager_secret" "slack_bot_token" {
-  name                    = "woodshed-cloud/slack-bot-token"
+  name                    = "${local.p}/slack-bot-token"
   description             = "A Slack bot token (xoxb-...) with chat:write, reactions:write, users:read and users:read.email. The console posts each session's new pull request, and each answer to a question, with it"
   recovery_window_in_days = 0
 }
 
-# Mongo's root, made once on the base box (woodshed-cloud-mongo-root in baseBoxStack.sh.tftpl), which may write it
-# but never read it. Outside the console's woodshed-cloud/ prefix, like RDS's own master secret: only the db-admin
+# Mongo's root, made once on the base box (<name_prefix>-mongo-root in baseBoxStack.sh.tftpl), which may write it
+# but never read it. Outside the console's <name_prefix>/ prefix, like RDS's own master secret: only the db-admin
 # task's execution role reads either. Only with mongo in var.databases.
 resource "aws_secretsmanager_secret" "mongo_root" {
   count = local.mongo ? 1 : 0
 
-  name                    = "woodshed-cloud-root/mongo"
+  name                    = "${local.p}-root/mongo"
   description             = "Mongo's root password. Only the db-admin task reads it"
   recovery_window_in_days = 0
 }

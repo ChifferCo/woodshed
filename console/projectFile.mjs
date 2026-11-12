@@ -4,7 +4,7 @@
 // installation must host before a session starts (`databases`), and where a database keeps its migrations, which Restore
 // a dump counts a copy's against (`databases[].migrations`, with the table it records them in, what its dump commands
 // leave out and its migrate command, dbRestore.mjs). Read from the repo's default branch, or the installation's file for a
-// repo with none there (WOODSHED_CLOUD_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot
+// repo with none there (WOODSHED_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot
 // be read leaves My settings without that list, never without the page, and holds the pull requests until it can be
 // read: an unread file is not a file with no gates.
 import { parseYaml } from '../shared/yamlLite.mjs';
@@ -32,9 +32,11 @@ export function createProjectReader({ github, installationFile = () => null, now
   let pending = null;
   let readAt = -Infinity;
   let keepMs = KEEP_MS;
+  let readFrom;
 
-  // The repo's own file wins: the installation's is for a repo that has none.
+  // The repo's own file wins: the installation's is for a repo that has none. A console with no repo yet has neither.
   async function readText() {
+    if (github.repo === '') return { text: null, from: 'none' };
     const text = await github.projectFile();
     if (text !== null) return { text, from: 'default branch' };
     const supplied = installationFile();
@@ -59,7 +61,9 @@ export function createProjectReader({ github, installationFile = () => null, now
   // One read at a time, shared: My settings asks for each file at once, and a second caller must wait for the first's
   // answer, not see none.
   function read() {
-    if (!pending || now() - readAt >= keepMs) {
+    // The default project's client follows the console's default repo, which changes when the first one is added.
+    if (!pending || now() - readAt >= keepMs || github.repo !== readFrom) {
+      readFrom = github.repo;
       readAt = now();
       keepMs = KEEP_MS;
       pending = load().then((answer) => {

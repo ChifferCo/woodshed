@@ -77,7 +77,7 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p', options: { model: 'opus', effort: 'high', permissionMode: 'plan' } });
   await fleet.createSession({ kind: 'pr', number: 8, title: 'r', startedBy: 'joel', trigger: 'console', branch: 'a/b', reviewOnly: true });
   await fleet.createSession({ kind: 'task', number: null, title: 't', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', attach: async () => 2 });
-  await fleet.createSession({ kind: 'task', number: null, title: 'c', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', options: { agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'auto' } });
+  await fleet.createSession({ kind: 'task', number: null, title: 'c', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', options: { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'auto' } });
   await fleet.createSession({ kind: 'task', number: null, title: 'o', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', project: config.projects[1] });
   await fleet.createSession({ kind: 'pr', number: 9, title: 'QA', startedBy: 'joel', trigger: 'qa', branch: 'a/c', qa: { base: 'main', sha: 'a'.repeat(40), heading: '## QA', commentId: null } });
   assert.equal(started.length, 7);

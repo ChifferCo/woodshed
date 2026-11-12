@@ -403,19 +403,19 @@ test('the installation\'s project file is read from the entryPoint\'s --project-
   assert.equal(flags['project-files-dir'], files);
   assert.throws(() => parseArgs([...FIXED.slice(0, -1), '--project-files-dir', files, '--', 'template', 'extra']), { refused: true });
 
-  const before = process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR;
+  const before = process.env.WOODSHED_PROJECT_FILES_DIR;
   t.after(() => {
-    if (before === undefined) delete process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR;
-    else process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR = before;
+    if (before === undefined) delete process.env.WOODSHED_PROJECT_FILES_DIR;
+    else process.env.WOODSHED_PROJECT_FILES_DIR = before;
   });
   // A variable a run's overrides could set is not where the task finds its project file.
-  process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR = files;
+  process.env.WOODSHED_PROJECT_FILES_DIR = files;
   assert.throws(() => createDbAdmin({ flags: { ...FLAGS, repo: checkout }, env: {}, secrets: {}, drivers: { postgres: {}, mongo: {} } }),
     /has no databases \(databases: \[\]\)/);
-  delete process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR;
+  delete process.env.WOODSHED_PROJECT_FILES_DIR;
   assert.doesNotThrow(() => createDbAdmin({ flags: { ...flags, repo: checkout, 'pg-ca': 'none' }, env: {}, secrets: {}, drivers: { postgres: {}, mongo: {} } }));
 
   const env = seedEnv({ flags, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} });
-  assert.equal(env.WOODSHED_CLOUD_PROJECT_FILES_DIR, files);
-  assert.equal(seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} }).WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined);
+  assert.equal(env.WOODSHED_PROJECT_FILES_DIR, files);
+  assert.equal(seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} }).WOODSHED_PROJECT_FILES_DIR, undefined);
 });
