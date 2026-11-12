@@ -823,6 +823,7 @@ test('New session on My Woodshed starts a private session, posts nothing, and te
   const reviewOnly = await fleet.startPrivate({ owner: 'mia', prompt: '', workOn: '#77' });
   assert.equal(reviewOnly.kind, 'pr', 'a pull request with no prompt starts a session to review it');
   await assert.rejects(fleet.startPrivate({ owner: 'mia', prompt: '', workOn: '12' }), /say what Claude should do/);
+  await assert.rejects(fleet.startPrivate({ owner: 'mia', prompt: '  ', agent: 'codex' }), /say what Codex should do/);
   const onBranch = await fleet.startPrivate({ owner: 'mia', prompt: '', workOn: 'mia/branch' });
   assert.equal(onBranch.title, 'Review mia/branch', 'a branch with no prompt is named for the branch');
   assert.equal(reviewOnly.prompt, '', 'claude is given nothing to do');
