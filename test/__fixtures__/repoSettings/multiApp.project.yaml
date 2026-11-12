@@ -1,0 +1,90 @@
+# A project file of the shape a real repo of several apps writes: two apps on one backend, two databases, and three
+# env files (two with a secret, one without), whose lines wire the session's databases, ports and services. The golden
+# test (test/repoSettingsGolden.test.mjs) writes its env files and rules and compares them with what Woodshed wrote
+# before env files had defaults.
+version: 1
+
+dependencies:
+  installs:
+    - dir: api
+      files: [package.json, package-lock.json, .npmrc]
+      command: npm ci --no-audit --no-fund
+      output: [node_modules]
+    - dir: web
+      files: [package.json, package-lock.json]
+      command: npm ci --no-audit --no-fund && npx playwright install chromium
+      output: [node_modules, ~/.cache/ms-playwright]
+
+env:
+  NODE_ENV: development
+  API_PORT: '9000'
+  DATABASE_HOST: '{{PGHOST}}'
+
+envFiles:
+  - path: api/.env
+    secret: api-env
+    lines:
+      - DATABASE_URL={{PG_URL}}
+      - DB_HOST={{PGHOST}}
+      - DB_PASSWORD={{PGPASSWORD}}
+      - MONGO_URL={{MONGODB_URI}}
+      - REDIS_URL=redis://localhost:6379
+      - PORT=9000
+      - S3_ENDPOINT={{S3_ENDPOINT?}}
+      - ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}
+      - '# The session serves the app on its own host.'
+      - PUBLIC_URL={{SESSION_APP_URL}}
+  - path: web/.env.local
+    secret: web-env
+    lines:
+      - NEXT_PUBLIC_API_URL=http://localhost:9000
+      - NEXT_PUBLIC_SKIP_LOGIN=true
+      - PORT=3001
+  - path: worker/.env
+    lines:
+      - QUEUE_URL={{PG_URL}}
+      - WORKER_CONCURRENCY=2
+
+databases:
+  - engine: postgres
+    dir: api
+    migrate: npm run migrate
+    seed: npm run seed
+    envFiles: [api-env]
+    paths: [api/db/]
+    migrations: api/db/migrations
+    migrationsTable:
+      table: public.schema_migrations
+      column: name
+    user: app_user
+    name: app
+  - engine: mongo
+    dir: api
+    envFiles: [api-env]
+    paths: [api/mongo/]
+
+apps:
+  - name: web
+    label: Web app
+    start: make serve
+    stop: make stop
+    frontendPort: 3001
+    backendPort: 9000
+    logs:
+      api: ~/.cache/app/{{CHECKOUT}}/api.log
+      web: ~/.cache/app/{{CHECKOUT}}/web.log
+    paths: [web/]
+    howToProve: Run `make serve` and check each change in the browser.
+  - name: admin
+    start: make serve-admin
+    stop: make stop
+    frontendPort: 3000
+    backendPort: 9000
+    logs:
+      admin: ~/.cache/app/{{CHECKOUT}}/admin.log
+    paths: [admin/]
+    howToProve: Run `make serve-admin` and check the admin pages in the browser.
+
+editor: true
+rules: .woodshed/rules.md
+setup: .woodshed/setup.md

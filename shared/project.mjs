@@ -6,7 +6,8 @@
 //   node project.mjs get <field>         a field, dotted (`app.start`); an array prints one item a line (a mapping as
 //                                        JSON), a missing field prints nothing
 //   node project.mjs env                 the project's `env`, as `export` lines for the entrypoint to eval
-//   node project.mjs write-env-files     each of `envFiles`: its secret's text, the owner's own lines, then its lines;
+//   node project.mjs write-env-files     each of `envFiles`: its defaults, its secret's text, the owner's own lines,
+//                                        then its lines;
 //                                        prints each file, with the variables its lines need that are unset
 //   node project.mjs file <rules|setup>  the text of the file that field names, empty without one
 //   node project.mjs secret-vars         the variables the env files' secrets arrive in, one a line
@@ -31,6 +32,7 @@ import { defaultBranchOf } from './defaultBranch.mjs';
 import { envValue } from './envNames.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
+import { layeredEnvText } from './repoSettings.mjs';
 
 export const PROJECT_FILE = '.woodshed/project.yaml';
 // While Woodshed is in beta the format changes in place, with every project file in the same change (README.md,
@@ -53,7 +55,7 @@ export const PROJECT_FIELDS = Object.freeze({
   '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
-  envFiles: ['path', 'secret', 'lines'],
+  envFiles: ['path', 'secret', 'defaults', 'lines'],
   databases: ['engine', 'dir', 'migrate', 'seed', 'envFiles', 'paths', 'migrations', 'migrationsTable', 'dump', 'user', 'name'],
   'databases.migrationsTable': ['table', 'column'],
   'databases.dump': ['skip', 'extensions'],
@@ -143,9 +145,44 @@ function secretName(value, field) {
   return value;
 }
 
+/**
+ * The env file's name in the console's store of repo settings: its secret, or else its path as one (lowercase, each run
+ * of anything but letters and digits a dash), so `web/.env.local` is `web-env-local`. Never the path itself: the local
+ * secret store refuses a name segment starting with a dot.
+ * @param {{path: string, secret: string|null}} file
+ */
+export function envFileKey({ path: file, secret }) {
+  if (secret) return secret;
+  const key = file.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!key) fail(`envFiles has ${JSON.stringify(file)}, whose path makes no key: give it a secret`);
+  return key;
+}
+
+// A default is the repo's value, which an installation's or a person's replaces: a placeholder is the session's, so it
+// belongs in `lines`, and the file is in git, so it is never a secret.
+function defaultLine(value, field) {
+  string(value, field);
+  if (/\{\{[^{}]*\}\}/.test(value)) fail(`${field} has a {{…}} placeholder: a default is plain text, and a line the session fills in goes in lines`);
+  return value;
+}
+
 function envFile(value, field) {
-  const file = fields(value, field, PROJECT_FIELDS.envFiles, { secret: null, lines: [] });
-  return { path: repoPath(file.path, `${field}.path`), secret: nullable(file.secret, `${field}.secret`, secretName), lines: list(file.lines, `${field}.lines`, string) };
+  const file = fields(value, field, PROJECT_FIELDS.envFiles, { secret: null, defaults: [], lines: [] });
+  const read = {
+    path: repoPath(file.path, `${field}.path`), secret: nullable(file.secret, `${field}.secret`, secretName),
+    defaults: list(file.defaults, `${field}.defaults`, defaultLine), lines: list(file.lines, `${field}.lines`, string),
+  };
+  return { ...read, key: envFileKey(read) };
+}
+
+// One key a file: the console keeps each env file's values under it.
+function envFileList(value) {
+  const all = list(value, 'envFiles', envFile);
+  all.forEach((file, i) => {
+    const j = all.findIndex((other) => other.key === file.key);
+    if (j < i) fail(`envFiles[${j}] (${all[j].path}) and envFiles[${i}] (${file.path}) both have the key ${file.key}: give one a secret of its own`);
+  });
+  return all;
 }
 
 // Written into SQL and into the dump commands as it is, so only a plain name, or `schema.name` where one may have a
@@ -376,7 +413,8 @@ const TOP_DEFAULTS = {
  * @param {unknown} raw  the file, parsed
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
  *   output: string[]}[]}, env: Record<string, string>,
- *   envFiles: {path: string, secret: string|null, lines: string[]}[], databases: object[], app: object|null,
+ *   envFiles: {path: string, secret: string|null, key: string, defaults: string[], lines: string[]}[], databases: object[],
+ *   app: object|null,
  *   apps: {name: string, label: string}[],
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
@@ -387,7 +425,7 @@ export function parseProject(raw) {
     fail(`version must be ${PROJECT_VERSION}, the format this version of Woodshed reads (it is ${JSON.stringify(raw.version)})`);
   }
   const project = fields(raw, '', PROJECT_FIELDS[''], TOP_DEFAULTS);
-  const envFiles = list(project.envFiles, 'envFiles', envFile);
+  const envFiles = envFileList(project.envFiles);
   return {
     version: project.version,
     dependencies: dependencies(project.dependencies),
@@ -550,19 +588,19 @@ export function expandPath(value, { repoDir, home = os.homedir() }) {
 }
 
 /**
- * An env file as the session writes it: the shared secret's text, the owner's own lines, then the project's lines.
- * dotenv keeps the last value of a repeated key, so the project's lines win, then the owner's.
+ * An env file as the session writes it: the repo's defaults, the shared secret's text, the owner's own lines, then the
+ * project's lines (layeredEnvText in repoSettings.mjs). dotenv keeps the last value of a repeated key, so the project's
+ * lines win, then the owner's, then the secret's.
  */
-export function envFileText({ base, own, lines, env }) {
-  const withOwn = own ? `${base}\n\n# Your own lines, from My settings\n${own}` : base;
-  const rendered = lines.map((line) => renderLine(line, env)).filter((line) => line !== null);
-  return `${withOwn}\n\n# Woodshed overrides\n${rendered.join('\n')}\n`;
+export function envFileText({ defaults = [], base, own, lines, env }) {
+  const session = lines.map((line) => renderLine(line, env)).filter((line) => line !== null);
+  return layeredEnvText({ defaults, installation: base, personal: own, session });
 }
 
 /**
  * @param {{project: ReturnType<typeof parseProject>, repoDir: string, env: NodeJS.ProcessEnv}} args
  *   `env.OWN_FILES` is the owner's own lines, as the console's `/settings` answer has them: `{<secret>: text}`
- * @returns {{path: string, baseBytes: number, own: boolean}[]}
+ * @returns {{path: string, baseBytes: number, own: boolean, defaults?: number, unset?: string[]}[]}
  */
 export function writeEnvFiles({ project, repoDir, env }) {
   const own = env.OWN_FILES ? JSON.parse(env.OWN_FILES) : {};
@@ -571,9 +609,12 @@ export function writeEnvFiles({ project, repoDir, env }) {
     const ownLines = file.secret ? own[file.secret] ?? '' : '';
     const target = path.join(repoDir, file.path);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, envFileText({ base, own: ownLines, lines: file.lines, env }));
+    fs.writeFileSync(target, envFileText({ defaults: file.defaults, base, own: ownLines, lines: file.lines, env }));
     const unset = unsetPlaceholders(file.lines, env);
-    return { path: file.path, baseBytes: Buffer.byteLength(base), own: Boolean(ownLines), ...(unset.length && { unset }) };
+    return {
+      path: file.path, baseBytes: Buffer.byteLength(base), own: Boolean(ownLines), ...(file.defaults.length && { defaults: file.defaults.length }),
+      ...(unset.length && { unset }),
+    };
   });
 }
 
@@ -598,11 +639,12 @@ export function exportLines({ project, env }) {
 /**
  * Whether the project's env uses a variable: it exports it, writes it into an env file, or takes it from the session's
  * environment (`{{NAME}}`). A repo that never mentions Redis, say, is not given one.
- * @param {{env: Record<string, string>, envFiles: {lines: string[]}[]}} project
+ * @param {{env: Record<string, string>, envFiles: {defaults?: string[], lines: string[]}[]}} project
  */
 export function usesVariable(project, name) {
   if (name in project.env) return true;
-  return project.envFiles.some((f) => f.lines.some((line) => line.startsWith(`${name}=`) || line.includes(`{{${name}}}`) || line.includes(`{{${name}?}}`))) ||
+  return project.envFiles.some((f) => f.defaults?.some((line) => line.startsWith(`${name}=`))
+    || f.lines.some((line) => line.startsWith(`${name}=`) || line.includes(`{{${name}}}`) || line.includes(`{{${name}?}}`))) ||
     Object.values(project.env).some((value) => value.includes(`{{${name}}}`));
 }
 
@@ -649,7 +691,8 @@ async function main([command, arg]) {
   } else if (command === 'write-env-files') {
     const written = writeEnvFiles({ project, repoDir, env: process.env });
     const unset = (w) => (w.unset ? `, unset: ${w.unset.join(' ')}` : '');
-    process.stdout.write(`${written.map((w) => `${w.path} (base: ${w.baseBytes} bytes${w.own ? ', own lines' : ''}${unset(w)})`).join(', ') || 'none'}\n`);
+    const defaults = (w) => (w.defaults ? `, defaults: ${w.defaults}` : '');
+    process.stdout.write(`${written.map((w) => `${w.path} (base: ${w.baseBytes} bytes${defaults(w)}${w.own ? ', own lines' : ''}${unset(w)})`).join(', ') || 'none'}\n`);
   } else if (command === 'file') {
     if (arg !== 'rules' && arg !== 'setup') fail('file takes rules or setup');
     const name = project[arg];
