@@ -36,15 +36,15 @@ fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n-
 function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
-    'set -euo pipefail',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}',
     'log() { echo "[woodshed] $*"; }',
     'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }',
     fn('taskText'),
     // The function writes and reads under /tmp; point both at this test's own folder.
-    fn('writePrompt').replaceAll('/tmp/', `${tmp}/`),
+    fn('writePrompt'),
     fn('leaveOutConsoleLinks'),
-    fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
+    fn('writeRules'),
     'writePrompt',
     'writeRules',
     'echo "after writePrompt"',
@@ -53,7 +53,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}) },
+      env: { PATH: process.env.PATH, WOODSHED_TMP: tmp, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}) },
     });
     return {
       out,
@@ -177,7 +177,7 @@ test('a project file with consoleLinks: false keeps the session\'s link out of i
 
 test('a consoleLinks read that fails never stops the start: the link stays', () => {
   const script = [
-    'set -euo pipefail',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}',
     'log() { echo "[woodshed] $*"; }',
     'die() { log "ERROR: $*"; exit 1; }',
     'project() { return 1; }',
@@ -209,7 +209,7 @@ test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (
 });
 
 test('claude gets the rules as a system prompt on a fresh start and on a resume, which rewrites them', () => {
-  assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' \/tmp\/woodshed-rules\.md/);
+  assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' "\$WOODSHED_TMP\/woodshed-rules\.md"/);
   const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
@@ -219,7 +219,7 @@ test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statu
   assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
   const start = fn('startClaude');
   const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
-  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
+  assert.ok(qa.indexOf('touch "$WOODSHED_TMP/qa-running"') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
   assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
 
@@ -239,7 +239,7 @@ function installDefaultPlugins({ kind, installed = null, offered = null, failIns
     `#!/bin/bash\necho "$*" >> ${tmp}/calls\n${failInstall ? 'echo "no network" >&2; exit 1' : 'exit 0'}\n`, { mode: 0o755 });
   if (installed) fs.writeFileSync(path.join(home, '.claude', 'plugins', 'installed_plugins.json'), JSON.stringify(installed));
   if (offered) fs.writeFileSync(path.join(home, '.claude', 'woodshed-default-plugins.json'), JSON.stringify(offered));
-  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', fn('installDefaultPlugins'), 'installDefaultPlugins', 'echo "start goes on"'].join('\n');
+  const script = ['set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', fn('installDefaultPlugins'), 'installDefaultPlugins', 'echo "start goes on"'].join('\n');
   try {
     let out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
@@ -299,7 +299,7 @@ test('an ask session clears the env files\' secrets and the install secrets, and
   const body = fn('runAsk');
   const clearing = body.slice(body.indexOf('  local name secretVars'), body.indexOf('  local restoring'));
   const run = () => spawnSync('bash', ['-c', [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'f() {', clearing, 'env | grep -E "^(API_ENV|REGISTRY_TOKEN|OTHER_TOKEN|GH_TOKEN)=" || echo cleared', '}', 'f',
   ].join('\n')], {
     encoding: 'utf8',
@@ -342,7 +342,7 @@ function depsRepo(t, { command = 'echo run >> ran' } = {}) {
 // refreshDeps as it is written there, with deps.sh sourced as the entrypoint does, and `env` the session's own.
 function refreshDeps({ root, repoDir, records }, env = {}) {
   const script = [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', `. "${SESSION_DIR}/deps.sh"`,
     `DEPS_STATUS=${root}/woodshed-deps`, fn('refreshDeps'), 'refreshDeps',
   ].join('\n');
@@ -411,7 +411,7 @@ test('the default branch is what the remote says, not a name the entrypoint assu
   sh(clone, 'commit', '-q', '--allow-empty', '-m', 'first');
   sh(clone, 'push', '-q', 'origin', 'trunk');
   const run = (extra = '') => spawnSync('bash', ['-c', [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }', fn('findDefaultBranch'), extra, 'findDefaultBranch', 'echo "$DEFAULT_BRANCH"',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }', fn('findDefaultBranch'), extra, 'findDefaultBranch', 'echo "$DEFAULT_BRANCH"',
   ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: clone } });
   assert.equal(run().stdout.trim().split('\n').at(-1), 'trunk');
   // The remote cannot be asked: the clone's own origin/HEAD answers.
@@ -427,7 +427,7 @@ test('a session starts only the services its project\'s env uses, and warns of a
   const run = (envFiles, env = {}) => {
     fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({ env: { NODE_ENV: 'test' }, envFiles }));
     return spawnSync('bash', ['-c', [
-      'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+      'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
       fn('usesVariable'), fn('writeEnvFiles'), 'writeEnvFiles', 'usesVariable REDIS_URL && echo redis || echo no-redis',
     ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, ...env } });
@@ -460,7 +460,7 @@ test('a session starts Redis and its viewer only when its project uses REDIS_URL
     fs.rmSync(calls, { force: true });
     fs.writeFileSync(path.join(dir, 'repo/.woodshed/project.yaml'), fixtureProject(project));
     const result = spawnSync('bash', ['-c', [
-      'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'project() { node "$SHARED_DIR/project.mjs" "$@"; }',
+      'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'project() { node "$SHARED_DIR/project.mjs" "$@"; }',
       fn('usesVariable'), fn('startRedis'), fn('startRedisViewer'), fn('startRedisIfUsed'), `startRedisIfUsed ${args}`, 'wait',
     ].join('\n')], { encoding: 'utf8', env: { PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, SHARED_DIR, REPO_DIR: path.join(dir, 'repo'), SESSION_ID: '0a1b2c3d' } });
     assert.equal(result.status, 0, result.stderr);
@@ -489,7 +489,7 @@ test('a project with no databases needs no engine to start, and one with databas
   const run = (project, env = {}) => {
     fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject(project));
     return spawnSync('bash', ['-c', [
-      'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+      'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
       fn('usesVariable'), fn('requireDatabases'), fn('writeEnvFiles'),
       'requireDatabases', 'writeEnvFiles', 'echo "mongo=${MONGODB_URI:-none} pg=${PG_URL:-none} app=${APP_DB:-none}"', 'cat a/.env',
@@ -527,7 +527,7 @@ test('a shared session in an installation that hosts no database engine asks the
   fs.mkdirSync(path.join(repoDir, '.woodshed'));
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({}));
   const out = spawnSync('bash', ['-c', [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
     'curl() { echo "curl called"; exit 1; }', fn('fetchSessionDatabases'), 'fetchSessionDatabases', 'echo "db=${WOODSHED_DB_NAME:-none}"',
   ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_CONSOLE_URL: 'http://console:7691', SESSION_TOKEN: 't' } });
@@ -552,13 +552,13 @@ test('the template commands run each database\'s migrate, then its seed for a ne
   const run = (mode) => {
     fs.rmSync(out, { force: true });
     const result = spawnSync('bash', ['-c', [
-      'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+      'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
       'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('writeEnvFiles'), fn('runTemplateCommands').replaceAll('/tmp/', `${repoDir}/`),
+      fn('usesVariable'), fn('startRedisIfUsed'), fn('requireDatabases'), fn('writeEnvFiles'), fn('runTemplateCommands'),
       `runTemplateCommands ${mode}`,
     ].join('\n')], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, PGHOST: 'pg', PGUSER: 'woodshed__seed', PGPASSWORD: 'x', PGDATABASE: 'next', MONGODB_URI: 'mongodb://m/next' },
+      env: { PATH: process.env.PATH, WOODSHED_TMP: repoDir, SHARED_DIR, REPO_DIR: repoDir, PGHOST: 'pg', PGUSER: 'woodshed__seed', PGPASSWORD: 'x', PGDATABASE: 'next', MONGODB_URI: 'mongodb://m/next' },
     });
     assert.equal(result.status, 0, result.stdout + result.stderr);
     return fs.readFileSync(out, 'utf8').trim().split('\n');
@@ -569,10 +569,10 @@ test('the template commands run each database\'s migrate, then its seed for a ne
 
 test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.md', () => {
   const flags = execFileSync('bash', ['-c', `${fn('codexFlags')}\ncodexFlags`], {
-    encoding: 'utf8', env: { PATH: process.env.PATH, PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
+    encoding: 'utf8', env: { PATH: process.env.PATH, WOODSHED_TMP: '/tmp', PERMISSION_MODE: 'plan', MODEL: 'gpt-5.5', EFFORT: 'high' },
   });
   assert.equal(flags, ' --add-dir /tmp/uploads --sandbox read-only --ask-for-approval on-request --model gpt-5.5 -c model_reasoning_effort=\\"high\\"');
-  assert.match(fn('configureCodex'), /cp \/tmp\/woodshed-rules\.md "\$CODEX_HOME_DIR\/AGENTS\.md"/);
+  assert.match(fn('configureCodex'), /cp \"\$WOODSHED_TMP\/woodshed-rules\.md\" "\$CODEX_HOME_DIR\/AGENTS\.md"/);
   assert.ok(ENTRYPOINT.indexOf('  writeRules\n  if [ "${AGENT:-claude}" = codex ]') > 0, 'the rules are written before codex is configured');
 });
 
@@ -597,7 +597,7 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
   git(['clone', '-q', path.join(remotes, 'acme/app.git'), path.join(work, 'app')]);
   git(['remote', 'set-url', 'origin', `https://github.com/${imageOrigin}.git`], path.join(work, 'app'));
   const script = [
-    'set -euo pipefail',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}',
     'log() { echo "[woodshed] $*"; }',
     'die() { log "ERROR: $*"; exit 1; }',
     'configureGitCredentials() { log "credentials"; }',
@@ -685,7 +685,7 @@ function checkoutWithSubmodule({ withSubmodule }) {
   const checkout = path.join(tmp, 'work');
   git(['clone', '-q', remote, checkout]);
   const script = [
-    'set -euo pipefail',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}',
     'log() { echo "[woodshed] $*"; }',
     fn('updateSubmodules'),
     fn('checkoutBranch'),
@@ -720,7 +720,7 @@ test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped,
   fs.writeFileSync(path.join(repo, '.gitignore'), '.env*\n');
   const json = path.join(dir, 'own-files.json');
   fs.writeFileSync(json, JSON.stringify({ 'app/.env.production': 'NOTION_TOKEN=x\n', 'notes.txt': 'not ignored' }));
-  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', `SESSION_DIR=${SESSION_DIR}`, `REPO_DIR=${repo}`, `OWN_FILES_JSON=${json}`, fn('writeOwnFiles'), 'writeOwnFiles'].join('\n');
+  const script = ['set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', `SESSION_DIR=${SESSION_DIR}`, `REPO_DIR=${repo}`, `OWN_FILES_JSON=${json}`, fn('writeOwnFiles'), 'writeOwnFiles'].join('\n');
   const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
   assert.equal(out, '[woodshed] WARNING: some of the owner\'s own files were not written (written: app/.env.production, skipped: notes.txt (git does not ignore it))\n');
   assert.equal(fs.readFileSync(path.join(repo, 'app/.env.production'), 'utf8'), 'NOTION_TOKEN=x\n');

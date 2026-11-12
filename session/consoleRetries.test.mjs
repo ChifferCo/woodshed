@@ -80,7 +80,7 @@ const SETTINGS = { files: { 'api-env': 'OWN=1' }, ownFiles: {}, git: { name: 'Oc
 function fetchOwnerSettings(consoleUrl) {
   const home = fs.mkdtempSync(path.join(TMP, 'home-'));
   const script = [
-    'set -euo pipefail',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}',
     'log() { echo "[woodshed] $*"; }',
     'die() { log "ERROR: $*"; exit 1; }',
     `SETTINGS_ANSWER=${home}/settings.json`,
@@ -132,7 +132,7 @@ test('a 503 is tried again: a shared session\'s databases arrive once they are c
   const fake = await fakeConsole({ awayMs: 0, answer: () => (++n < 3 ? { status: 503, json: { error: 'still copying' } } : { json: { database: { user: 'u', password: 'p', name: 'woodshed__ab12cd34' } } }) });
   const home = fs.mkdtempSync(path.join(TMP, 'home-'));
   const script = [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
+    'set -euo pipefail', 'WOODSHED_TMP=${WOODSHED_TMP:-/tmp}', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'databases() { case "$1" in hosted) echo postgres ;; *) : ;; esac; }',
     `SETTINGS_ANSWER=${home}/settings.json DATABASE_WAIT_SECONDS=60`,
     fast(fn('consoleCall')), fn('useDatabaseFrom'), fn('fetchSessionDatabases'), 'fetchSessionDatabases',
@@ -148,7 +148,7 @@ const GITHUB_TOKEN_SH = fs.readFileSync(path.join(SESSION_DIR, 'githubToken.sh')
 
 function githubToken(consoleUrl) {
   const dir = fs.mkdtempSync(path.join(TMP, 'gh-'));
-  return bash(fast(GITHUB_TOKEN_SH).replace('CACHE=/tmp/woodshed-github-token', `CACHE=${dir}/cache`), { SESSION_TOKEN: 't', WOODSHED_CONSOLE_URL: consoleUrl });
+  return bash(fast(GITHUB_TOKEN_SH), { SESSION_TOKEN: 't', WOODSHED_CONSOLE_URL: consoleUrl, WOODSHED_TMP: dir });
 }
 
 test('githubToken.sh waits out a console restart, and says a 409\'s reason at once', async () => {

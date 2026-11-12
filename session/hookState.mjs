@@ -12,7 +12,8 @@
 import fs from 'node:fs';
 import { isMain } from '../shared/isMain.mjs';
 
-export const STATE_FILE = '/tmp/woodshed-claude-state.json';
+// WOODSHED_TMP: a start run beside a live session keeps its own (entrypoint.sh).
+export const STATE_FILE = `${process.env.WOODSHED_TMP || '/tmp'}/woodshed-claude-state.json`;
 
 // PreToolUse comes 30 ms before PermissionRequest for the same call, so needs-you is the later write. Notification
 // repeats it 6 s on, in case a parallel tool's PostToolUse landed in between.

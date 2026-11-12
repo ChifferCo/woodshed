@@ -120,7 +120,8 @@ function useApps(apps) {
 }
 useApps(PROJECT?.apps);
 const APP_HEADER = 'x-woodshed-app';
-const APP_LOG = '/tmp/woodshed-app.log';
+const TMP = process.env.WOODSHED_TMP || '/tmp';
+const APP_LOG = `${TMP}/woodshed-app.log`;
 // The console asks for /status every few seconds: a project with no app is read again at most this often, and on
 // each Start app.
 const APP_REREAD_MS = 10_000;
@@ -165,7 +166,7 @@ const ASK = process.env.SESSION_MODE === 'ask';
 // A QA session (session/qa.sh) tests a pull request's branch and changes nothing on it: it pushes nothing, and the
 // pull request it tests is not one it opened. Its run is working while QA_RUNNING is there, and done after.
 const QA = process.env.SESSION_MODE === 'qa';
-const QA_RUNNING = '/tmp/qa-running';
+const QA_RUNNING = `${TMP}/qa-running`;
 // The entrypoint starts Redis and its viewer only for a project whose env mentions REDIS_URL (startRedisIfUsed), so
 // Data ▾ offers Redis only then.
 const REDIS = !ASK && PROJECT !== null && usesVariable(PROJECT, 'REDIS_URL');
@@ -690,7 +691,7 @@ async function appLogs() {
 }
 
 // Where /woodshed:remote-control is: claude was started with Woodshed's plugin (claudeFlags in entrypoint.sh).
-const CLAUDE_FLAGS_FILE = process.env.WOODSHED_CLAUDE_FLAGS_FILE || '/tmp/woodshed-claude-flags';
+const CLAUDE_FLAGS_FILE = process.env.WOODSHED_CLAUDE_FLAGS_FILE || `${TMP}/woodshed-claude-flags`;
 async function hasRemoteControlCommand() {
   if (CODEX) return false;
   try {
