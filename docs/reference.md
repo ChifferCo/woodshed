@@ -177,7 +177,7 @@ sign-in in front, hands both to the console with two settings, each off unless s
 | Attribution | Claude Code's own `Co-Authored-By` trailer and PR footer, unless the repo's `.claude/settings.json` turns them off (`attribution`), as this one does |
 
 The only long-lived GitHub credential is the App's private key, in
-`woodshed-cloud/github-app-key`, which only the console reads (it never touches
+`<prefix>/github-app-key` (`<prefix>` is Terraform's `name_prefix`), which only the console reads (it never touches
 the disk) and never shows. The console
 mints installation tokens from it: one hour, this repo only. Sessions ask the
 console for one (`POST /github-token` on port 7691, with their `SESSION_TOKEN`)
@@ -368,8 +368,8 @@ jobs:
   `.woodshed/review.md`; none is fine).
 - `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
   `.woodshed/riskAreas.md`; none is fine).
-- `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default
-  `woodshed-cloud`).
+- `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default none,
+  or the calling repo's `REVIEW_ALLOWED_BOTS` variable).
 
 The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
 commit, which never blocks merging, and as a `merge risk: low`, `medium` or `high` label on the pull request. The

@@ -35,9 +35,9 @@ on:
         type: string
         default: .woodshed/riskAreas.md
       allowed-bots:
-        description: Bots whose pull requests are reviewed, such as the App a Woodshed installation opens them as.
+        description: Bots whose pull requests are reviewed, such as the App a Woodshed installation opens them as. None by default.
         type: string
-        default: woodshed-cloud
+        default: ''
     secrets:
       ANTHROPIC_API_KEY:
         required: true
@@ -167,8 +167,9 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Shared Woodshed sessions open pull requests as this App; the action refuses bots it is not told of.
-          allowed_bots: ${{ inputs.allowed-bots || 'woodshed-cloud' }}
+          # Shared Woodshed sessions open pull requests as their installation's App; the action refuses bots it is not
+          # told of. This repo's own runs name its App in the REVIEW_ALLOWED_BOTS repository variable.
+          allowed_bots: ${{ inputs.allowed-bots || vars.REVIEW_ALLOWED_BOTS }}
           # No comment of the action's own: it posts as github-actions[bot], whose comment it cannot find again, so each
           # run would add one. The review goes to a file, and the next step edits the pull request's one review comment.
           prompt: |

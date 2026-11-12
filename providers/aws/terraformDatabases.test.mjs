@@ -42,7 +42,7 @@ test('the rules and settings keyed by a database keep their keys, and come only 
   assert.match(text, /local\.mongo \? \{ mongo = 27017 \} : \{\}/, 'the Mongo ingress rule keeps its key, mongo');
   const stack = fs.readFileSync(path.join(DIR, 'baseBoxStack.sh.tftpl'), 'utf8');
   assert.match(stack, /%\{ if mongo ~\}\n {2}# Every database has a user of its own[^]*?\n {2}mongo:\n[^]*?%\{ endif ~\}\n%\{ for name, service in services ~\}/);
-  assert.match(stack, /%\{ if mongo ~\}\n\/usr\/local\/bin\/woodshed-cloud-mongo-root\n%\{ endif ~\}/);
+  assert.match(stack, /%\{ if mongo ~\}\n\/usr\/local\/bin\/\$\{name_prefix\}-mongo-root\n%\{ endif ~\}/);
   assert.match(stack, / {6}- \$\{prefix\}DATABASES=\$\{databases\}\n/);
   assert.match(stack, /%\{ if db_admin_task != "" ~\}\n {6}- \$\{prefix\}ECS_DB_ADMIN_TASK_DEFINITION=\$\{db_admin_task\}\n%\{ endif ~\}/);
 });

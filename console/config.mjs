@@ -220,11 +220,16 @@ export function actionsWorkflows(value) {
   });
 }
 
+// Terraform names the AWS resources after its name_prefix and passes their names. A base box whose stack was written
+// before it did passes none, and its resources are named woodshed-cloud: these fallbacks go once every box has had an
+// apply that passes them.
+const OLD_AWS_PREFIX = 'woodshed-cloud';
+
 function webhookQueue(env) {
   const value = envValue(env, 'WEBHOOK_QUEUE');
   if (value === '0') return '';
   if (value) return value;
-  return envValue(env, 'LAUNCHER') === 'ecs' ? 'woodshed-cloud-webhooks' : '';
+  return envValue(env, 'LAUNCHER') === 'ecs' ? `${OLD_AWS_PREFIX}-webhooks` : '';
 }
 
 const LOOPBACK = /^(127\.\d+\.\d+\.\d+|::1|\[::1\]|localhost)$/i;
@@ -338,12 +343,12 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     // Who a local console with no sign-in treats the person using it as, for My Woodshed (server.mjs, soloLoginOf).
     localLogin: localLogin(env),
     // The Secrets page's store. In AWS, Secrets Manager: it needs the base box role's access to these secrets.
-    secrets: envValue(env, 'LAUNCHER') === 'ecs' ? { prefix: envValue(env, 'SECRET_PREFIX') || 'woodshed-cloud/' } : null,
+    secrets: envValue(env, 'LAUNCHER') === 'ecs' ? { prefix: envValue(env, 'SECRET_PREFIX') || `${OLD_AWS_PREFIX}/` } : null,
     // On the local provider, a folder only the console's user can open; none leaves it without a Secrets page.
     localSecretsDir: env.WOODSHED_LOCAL_SECRETS_DIR || null,
     // The key that folder's files are sealed with, in a file of its own outside it (providers/local/secretKey.mjs).
     localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
-    webhookFunction: envValue(env, 'WEBHOOK_FUNCTION') || (envValue(env, 'LAUNCHER') === 'ecs' ? 'woodshed-cloud-webhooks' : ''),
+    webhookFunction: envValue(env, 'WEBHOOK_FUNCTION') || (envValue(env, 'LAUNCHER') === 'ecs' ? `${OLD_AWS_PREFIX}-webhooks` : ''),
     ghToken: app || broker || !readGhToken ? null : ghToken(env),
     // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
     sessionApi: { host: envValue(env, 'SESSION_API_HOST') || null, port: number(envValue(env, 'SESSION_API_PORT'), 7691) },

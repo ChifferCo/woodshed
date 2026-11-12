@@ -3,7 +3,7 @@
 (function () {
   'use strict';
   try {
-    const theme = window.localStorage.getItem('woodshed-cloud-theme');
+    const theme = window.localStorage.getItem('woodshed-theme');
     if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme;
   } catch {
     // A private window follows the device.

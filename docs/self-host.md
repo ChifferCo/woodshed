@@ -242,6 +242,12 @@ before the console first starts: without them nobody can sign in to set anything
 delegation when there is a `domain`, and the session secrets on the console's Secrets & webhooks page. An agent with AWS credentials in that account can run the rest, and must stop and show the plan
 when it changes or destroys anything.
 
+`name_prefix` is required and names every AWS resource: `woodshed` for a new installation. An installation set up
+before the setting existed must set `woodshed-cloud`, the name its resources already have, or the plan makes everything
+again under the new name and leaves its secrets, Claude homes bucket, images and state behind. Changing it on a live
+installation needs a migration of the base box too (its `/etc/fstab` entry and data folders, `providers/aws/README.md`,
+"Setting it up", step 2).
+
 Two choices are optional, and an agent should not ask for them as if they were required: a console domain (left out,
 the console is named on sslip.io and needs no DNS), and which repos sessions work on. `github_repo` is required, since
 the deploy workflow runs there and the session image is built from it, but with `sessions_on_github_repo = false` it is

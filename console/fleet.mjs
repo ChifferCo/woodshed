@@ -883,7 +883,7 @@ export function createFleet({
       console.log('fleet: review feedback dropped, the session is deleted', { id: session.id, number: item.number });
       return false;
     }
-    await resumeShared(session, { text, by: 'woodshed-cloud', why: 'review feedback' });
+    await resumeShared(session, { text, by: 'woodshed', why: 'review feedback' });
     return true;
   }
 

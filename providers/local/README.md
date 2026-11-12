@@ -275,9 +275,11 @@ retry, which the GitHub poll then finds.
 1. Stop the console, then the services, with the same env file as `up`, since compose reads its required values for
    `down` too: `docker compose -f woodshed/providers/local/compose.yml -f woodshed/providers/local/postgres.yml -f woodshed/providers/local/mongo.yml -f ~/woodshed/services.yml --env-file ~/woodshed/stack.env down`, with the files you run.
 2. Remove the sessions' containers and any kept db-admin run (two filters in one `docker ps` must both match, so one
-   each):
+   each). A session started before its label was `woodshed.session` has `woodshed-cloud.session`, the second line, which
+   goes in a later release:
 
    ```bash
+   docker ps -aq --filter label=woodshed.session | xargs -r docker rm -f
    docker ps -aq --filter label=woodshed-cloud.session | xargs -r docker rm -f
    docker ps -aq --filter label=woodshed.db-admin=1 | xargs -r docker rm -f
    ```

@@ -5,6 +5,37 @@ variable "region" {
 
 # No default for the values that name one installation: an apply without its -var-file fails on them, naming them,
 # rather than using another installation's.
+# No default for name_prefix either: an installation made before it existed is named woodshed-cloud, and an apply that
+# guessed woodshed would make every resource again under the new name, empty.
+variable "name_prefix" {
+  description = "What every AWS resource, tag, secret and base box path of this installation is named after, such as woodshed (woodshed-base-box, /opt/woodshed). woodshed-cloud for an installation made before this setting existed: any other value replaces all of it, and its secrets, Claude homes, images and state are left behind under the old names."
+  type        = string
+
+  # The tightest limit is an S3 bucket's 63 characters, with -tfstate- and the 12-digit account id after it, and RDS's
+  # identifier, which is the prefix itself: a letter first, no "--" and no "-" last.
+  validation {
+    condition     = can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.name_prefix)) && !strcontains(var.name_prefix, "--") && length(var.name_prefix) <= 20
+    error_message = "name_prefix is lowercase letters, digits and single dashes, starts with a letter, ends with a letter or digit, and is at most 20 long, such as woodshed."
+  }
+}
+
+locals {
+  p = var.name_prefix
+}
+
+# The installation's backend.hcl bucket and key, which the deploy workflow's plan role may write the lock beside.
+variable "tfstate_bucket" {
+  description = "The S3 bucket holding this Terraform's state, as backend.hcl names it. Empty (the default) for <name_prefix>-tfstate-<account id>."
+  type        = string
+  default     = ""
+}
+
+variable "tfstate_key" {
+  description = "The state's key in that bucket, as backend.hcl names it. Empty (the default) for <name_prefix>/terraform.tfstate."
+  type        = string
+  default     = ""
+}
+
 # Empty, the default, needs no DNS of your own: the console is woodshed.<the base box's IP, dashed>.sslip.io (dns.tf).
 variable "domain" {
   description = "The console's name, given its own Route 53 zone (dns.tf), whose parent must delegate it. Empty (the default) names the console woodshed.<the base box's IP, with dashes>.sslip.io, with no zone and no DNS to set up: Caddy then gets a certificate for each name the first time it is opened, after asking the console (on-demand TLS)."

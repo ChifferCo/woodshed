@@ -3,12 +3,12 @@
 Woodshed on AWS: the console on one always-on EC2 machine (the base box), each session a Fargate task, and the
 secrets, Claude homes, webhooks and databases in AWS services, all in an AWS account of its own. `index.mjs` is what
 it hands the console; Terraform in `terraform/` builds the rest. An installation keeps its values for it in its
-own repo, such as in `.woodshed/install/aws/`.
+own repo, such as in `.woodshed/install/aws/`. `<prefix>` below is its `name_prefix` ("Setting it up", step 2).
 
 | Part | File | In AWS |
 | --- | --- | --- |
-| Session containers | `ecsLauncher.mjs` | Fargate tasks in the `woodshed-cloud` ECS cluster |
-| Secrets | `secretStore.mjs` | Secrets Manager, under `woodshed-cloud/` |
+| Session containers | `ecsLauncher.mjs` | Fargate tasks in the `<prefix>` ECS cluster |
+| Secrets | `secretStore.mjs` | Secrets Manager, under `<prefix>/` |
 | Saved Claude homes | `homeStore.mjs` | A private S3 bucket only the console's role reaches |
 | Each session's own databases | `dbAdminRunner.mjs` | Those `databases` names: RDS Postgres, and the base box's Mongo, copied by a db-admin Fargate task. None of them, and no task, for `[]` |
 | GitHub and Slack webhooks | `webhooks/` (a Lambda), `webhookQueue.mjs`, `webhookUrl.mjs` | A Lambda Function URL that checks each delivery and queues it in SQS, which the console long-polls |
@@ -23,8 +23,9 @@ them. A setting only the local provider serves stops a console started here.
 `terraform plan` must only ever create resources the first time. If it wants to change or destroy anything, stop.
 Keep the account for Woodshed alone: "How it is built", below, says why.
 
-1. Once, the state bucket (versioned, private). Its name is yours to pick, such as
-   `woodshed-cloud-tfstate-<account id>`:
+1. Once, the state bucket (versioned, private). Its name is yours to pick. The deploy workflow's plan role may take
+   the state's lock only in `<prefix>-tfstate-<account id>`, at the key `<prefix>/terraform.tfstate`, unless the
+   tfvars name another with `tfstate_bucket` and `tfstate_key`:
 
    ```bash
    bucket=<your state bucket>
@@ -41,7 +42,16 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    `providers/aws/terraform/example.tfvars`, and keeps it in its own repo. Its `backend.hcl` names where the state
    lives (`example.backend.hcl`). Check both in, such as at `.woodshed/install/aws/`.
 
-   Two of them are optional:
+   `name_prefix` names every AWS resource, tag, secret and base box path: `woodshed` for a new installation
+   (`woodshed-base-box`, `woodshed/github-app-key`, `/opt/woodshed`). It has no default, and an installation made
+   before it existed must set `woodshed-cloud`, the name everything there already has. Any other value plans to make
+   all of it again under new names, empty: the secrets, the Claude homes bucket, the images and the database would be
+   left behind under the old ones, and the plan role could no longer take the state's lock. Never change it on a live
+   installation without a migration: besides the AWS names, the base box keeps its data volume at
+   `/var/lib/<prefix>` (in `/etc/fstab`) and its stack at `/opt/<prefix>`, which the stack's unit and scripts are named
+   after. At most 20 lowercase letters, digits and single dashes, starting with a letter.
+
+   Two others are optional:
 
    - `domain`, the console's name. Left out, the console is `https://woodshed.<Elastic IP with dashes>.sslip.io`
      (the `console_url` output): sslip.io answers any name with an IP in it with that IP, so there is no DNS to set
@@ -81,16 +91,16 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    to a file only you can read, upload both, and delete both files:
 
    ```bash
-   aws secretsmanager put-secret-value --secret-id woodshed-cloud/github-app-client-secret --secret-string file://<secret file>
-   aws secretsmanager put-secret-value --secret-id woodshed-cloud/github-app-key --secret-string file://<key>.pem
+   aws secretsmanager put-secret-value --secret-id <prefix>/github-app-client-secret --secret-string file://<secret file>
+   aws secretsmanager put-secret-value --secret-id <prefix>/github-app-key --secret-string file://<key>.pem
    ```
 
    The console reads both at start. Set later, they need `sudo docker compose restart console` in
-   `/opt/woodshed-cloud` on the base box (console/README.md, "Sign-in"). **Done when** the console's first start
+   `/opt/<prefix>` on the base box (console/README.md, "Sign-in"). **Done when** the console's first start
    (step 6) logs `console: GitHub sign-in` with `available: true`, and no `console: no GitHub App key yet`.
 5. Create the three GitHub environments the deploy workflow's roles trust, before its first run (a workflow naming an
-   environment that does not exist creates it, with no reviewers): `woodshed-cloud-plan` and `woodshed-cloud-images`,
-   each with deployment branches limited to the default branch, and `woodshed-cloud-infra` (the default branch only,
+   environment that does not exist creates it, with no reviewers): `<prefix>-plan` and `<prefix>-images`,
+   each with deployment branches limited to the default branch, and `<prefix>-infra` (the default branch only,
    with required reviewers, and administrators may not bypass them; whoever starts the run may approve it). Set the
    repository variables `WOODSHED_CLOUD_PLAN_ROLE_ARN`, `WOODSHED_CLOUD_INFRA_ROLE_ARN` and
    `WOODSHED_CLOUD_AWS_ROLE_ARN` to the `github_plan_role_arn`, `github_infra_role_arn` and `github_images_role_arn`
@@ -125,10 +135,10 @@ because it names where Woodshed comes from (a fork, a pinned commit or this repo
 | --- | --- | --- |
 | resolve | none | Turns the Woodshed ref being deployed into one commit, which every job below checks out, so a merge during the run cannot mix versions |
 | check | none | Runs Woodshed's reusable `.github/workflows/project-check.yml` at that commit on the repo's project file, before anything touches AWS |
-| plan | `woodshed-cloud-plan`, `WOODSHED_CLOUD_PLAN_ROLE_ARN` | `terraform init` with the installation's `backend.hcl` and `-lockfile=readonly`, then `terraform plan -var-file=<its terraform.tfvars> -out=... -detailed-exitcode`. It writes the plan to the run summary, with anything it destroys or replaces first, and uploads the plan file with `providers/aws/terraform/.build/` (the Lambda zip the plan was made with) |
-| apply | `woodshed-cloud-infra`, `WOODSHED_CLOUD_INFRA_ROLE_ARN` | Waits for a reviewer, then applies exactly the uploaded plan. Skipped when the plan has no changes. One at a time (a `concurrency` group, never cancelled) |
-| console | `woodshed-cloud-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the console image, then runs the `woodshed-cloud-redeploy-console` SSM document on the base box (`WOODSHED_CLOUD_BASE_BOX_ID`) |
-| session | `woodshed-cloud-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the session image with the repo checked out in it, adds its SOCI index (`session/addSociIndex.sh`), and builds the database template again when its `paths` changed |
+| plan | `<prefix>-plan`, `WOODSHED_CLOUD_PLAN_ROLE_ARN` | `terraform init` with the installation's `backend.hcl` and `-lockfile=readonly`, then `terraform plan -var-file=<its terraform.tfvars> -out=... -detailed-exitcode`. It writes the plan to the run summary, with anything it destroys or replaces first, and uploads the plan file with `providers/aws/terraform/.build/` (the Lambda zip the plan was made with) |
+| apply | `<prefix>-infra`, `WOODSHED_CLOUD_INFRA_ROLE_ARN` | Waits for a reviewer, then applies exactly the uploaded plan. Skipped when the plan has no changes. One at a time (a `concurrency` group, never cancelled) |
+| console | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the console image, then runs the `<prefix>-redeploy-console` SSM document on the base box (`WOODSHED_CLOUD_BASE_BOX_ID`) |
+| session | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the session image with the repo checked out in it, adds its SOCI index (`session/addSociIndex.sh`), and builds the database template again when its `paths` changed |
 
 The image jobs run after a successful apply, or when apply was skipped because the plan had no changes, never after a
 rejected or failed one: the images could need what it changes. A job whose role variable is unset is skipped. The
@@ -156,7 +166,7 @@ what a shared service keeps in its container, such as files in a fake S3, which 
 Run the deploy workflow after a change to `providers/aws/terraform/`, `providers/aws/webhooks/` or the installation's
 values in `.woodshed/install/aws/` (or at any time, to catch drift). Its plan job puts the plan in the run summary with
 anything it destroys or replaces listed first, and its apply job waits for a reviewer on the
-`woodshed-cloud-infra` environment. Approving applies that saved plan and
+`<prefix>-infra` environment. Approving applies that saved plan and
 nothing else; Terraform refuses it if the state changed since, and then a
 re-run plans again. Rejecting leaves AWS as it was, behind the default branch, until the
 next run. The plan role reads everything in the account except object
@@ -166,34 +176,34 @@ why its environment needs a reviewer, and why that environment must never be
 given to a Claude workflow.
 
 Updating the console: the deploy workflow's console job does it. After the push it runs
-the `woodshed-cloud-redeploy-console` SSM document on the base box, which pulls
+the `<prefix>-redeploy-console` SSM document on the base box, which pulls
 the new image and recreates only the console container. Running sessions carry
 on; open terminal tabs need a reload. The GitHub role can run that one
 document on that one instance and nothing else.
 
 Changing the base box's stack (`baseBoxStack.sh.tftpl`: the compose file,
 the Caddyfile, the helper scripts and units): `terraform apply` is all it
-takes. The stack is an SSM document, `woodshed-cloud-configure-base-box`, and
+takes. The stack is an SSM document, `<prefix>-configure-base-box`, and
 an association of the same name runs it on the box whenever it changes. It
-applies the new config with the images already there (`woodshed-cloud-up
+applies the new config with the images already there (`<prefix>-up
 --no-pull`), so it never deploys a console image by the way. The run is
 asynchronous: check it after the apply with
 
 ```bash
 aws ssm describe-association-executions --association-id "$(aws ssm list-associations \
-  --association-filter-list key=AssociationName,value=woodshed-cloud-configure-base-box \
+  --association-filter-list key=AssociationName,value=<prefix>-configure-base-box \
   --query 'Associations[0].AssociationId' --output text)" --max-results 1
 ```
 
 Adding a repo sessions start on: an admin can do it on the console's Console settings page (Repos), once the GitHub App is
 installed on the repo, with no apply. To keep it in the installation's configuration instead, add it to `projects` in the installation's tfvars (`example.tfvars` shows the
 shape), with the current repo as the default, and install the GitHub App on it. The plan changes only the
-`woodshed-cloud-configure-base-box` document and its association: the console gets `WOODSHED_PROJECTS` and
+`<prefix>-configure-base-box` document and its association: the console gets `WOODSHED_PROJECTS` and
 restarts, and its sessions carry on. Every project uses the one session image, task definition and databases for now.
 With `projects` empty, the default, the compose file has no such line.
 
 Naming the console: set `console_name` in the installation's tfvars, such as `"Acme Woodshed"` (default `"Woodshed"`).
-Like `projects`, the plan changes only the `woodshed-cloud-configure-base-box` document and its association: the
+Like `projects`, the plan changes only the `<prefix>-configure-base-box` document and its association: the
 console gets `WOODSHED_CONSOLE_NAME` and restarts. The pages and the manifest follow at once; an app already
 installed from the browser keeps the old name until it is installed again, since the browser keeps the name it was
 installed with.
@@ -228,20 +238,20 @@ its root user (Account settings, Close account).
 ## How it is built
 
 `providers/aws/terraform/` builds the AWS side in an AWS account of its own, everything named
-`woodshed-cloud*` and tagged `project = woodshed-cloud`. Keep it in an account
+`<prefix>*` and tagged `project = <prefix>`, where `<prefix>` is the `name_prefix` variable. Keep it in an account
 that holds nothing else: the security below relies on that.
 
 | Piece | What |
 | --- | --- |
 | Network | Its own VPC, two public subnets, no NAT. Security groups: 443 to the base box from anywhere, and 80, which only redirects to HTTPS; Mongo (with `mongo` in `databases`) and each of `shared_services` from sessions only; ttyd and statusd on sessions from the base box only; Postgres from both (with `postgres`) |
 | RDS | With `postgres` in `databases`: Postgres 16 `db.t4g.micro`, 20 GB, backups off. RDS keeps the master (root) password in its own Secrets Manager secret, which only the db-admin task reads |
-| Base box | EC2 `t3.small`, or `t3.medium` with Mongo or a shared service on it (`base_box_instance_type` picks another; one with less memory, or not x86 like the session image, is refused at plan), with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/woodshed-cloud/compose.yml`, each service's `files` from `/opt/woodshed-cloud/services/`. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
-| Data volume | A 20 GB EBS volume at `/var/lib/woodshed-cloud` holding Mongo, the console's session list and Caddy's certificate, so they survive restarts, resizes (`base_box_instance_type`) and a replaced box. `terraform destroy` removes it with the rest. Localstack's S3 files are not kept: the free edition has no persistence |
-| Sessions | ECS cluster and one Fargate task definition for shared and private sessions, 2 vCPU / 8 GB / 50 GB disk. Secrets come from Secrets Manager through the task definition, all but the Anthropic key, which only the console's proxy holds; a run passes only the per-session values, and the databases come from the session API. No task role, so session code has no AWS credentials. A second, `woodshed-cloud-db-admin`, is the db-admin task, with a database in `databases`: the root passwords of those it runs through its execution role, and a task role that reads the database users' passwords |
-| Images | ECR `woodshed-cloud-session` and `woodshed-cloud-console`, built by the installation's deploy workflow ("The deploy workflow", above) through GitHub OIDC, from the default branch only. They build in separate jobs, and a console build restarts the console on the base box. The session image gets a SOCI index (`session/addSociIndex.sh`), so Fargate starts a session in seconds and fetches files as they are read instead of pulling the whole image first, and then the database template is built again from it |
+| Base box | EC2 `t3.small`, or `t3.medium` with Mongo or a shared service on it (`base_box_instance_type` picks another; one with less memory, or not x86 like the session image, is refused at plan), with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/<prefix>/compose.yml`, each service's `files` from `/opt/<prefix>/services/`. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
+| Data volume | A 20 GB EBS volume at `/var/lib/<prefix>` holding Mongo, the console's session list and Caddy's certificate, so they survive restarts, resizes (`base_box_instance_type`) and a replaced box. `terraform destroy` removes it with the rest. Localstack's S3 files are not kept: the free edition has no persistence |
+| Sessions | ECS cluster and one Fargate task definition for shared and private sessions, 2 vCPU / 8 GB / 50 GB disk. Secrets come from Secrets Manager through the task definition, all but the Anthropic key, which only the console's proxy holds; a run passes only the per-session values, and the databases come from the session API. No task role, so session code has no AWS credentials. A second, `<prefix>-db-admin`, is the db-admin task, with a database in `databases`: the root passwords of those it runs through its execution role, and a task role that reads the database users' passwords |
+| Images | ECR `<prefix>-session` and `<prefix>-console`, built by the installation's deploy workflow ("The deploy workflow", above) through GitHub OIDC, from the default branch only. They build in separate jobs, and a console build restarts the console on the base box. The session image gets a SOCI index (`session/addSociIndex.sh`), so Fargate starts a session in seconds and fetches files as they are read instead of pulling the whole image first, and then the database template is built again from it |
 | Budget | $150 a month for the whole account, alerts at 80% and 100% |
 | DNS | Route 53 zone for `domain` (such as `woodshed.example.com`) with an A record for the Elastic IP. The parent domain's DNS, wherever it is, delegates the name with NS records holding the `dns_nameservers` output; until it does, nothing resolves it. A recreated zone (after a `destroy`, or a new `domain`) gets new nameservers, so those NS records must be changed to match. A CAA record lets only Let's Encrypt and ZeroSSL (Caddy's fallback) issue for the name |
-| Webhooks | Lambda `woodshed-cloud-webhooks` behind a public Function URL, queue `woodshed-cloud-webhooks` with a dead-letter queue. The Lambda can only send to that queue and read `woodshed-cloud/github-webhook-secret`; the base box role can only read and delete from it |
+| Webhooks | Lambda `<prefix>-webhooks` behind a public Function URL, queue `<prefix>-webhooks` with a dead-letter queue. The Lambda can only send to that queue and read `<prefix>/github-webhook-secret`; the base box role can only read and delete from it |
 
 The base box's role can run tasks of those two task definitions, in that one
 cluster, passing only their roles; stop and describe them; read
@@ -255,7 +265,7 @@ sessions talk to (Mongo and the shared services) cannot. The base box reads no
 database password, and writes Mongo's root password once without being able to
 read it back.
 
-The image jobs' AWS role trusts the `woodshed-cloud-images` GitHub
+The image jobs' AWS role trusts the `<prefix>-images` GitHub
 environment, not the branch: workflows triggered by issues and comments also
 run as the default branch. Create that environment with deployment branches limited to
 the default branch before the first run.

@@ -1180,7 +1180,7 @@ test('review feedback is typed into a running session, and resumes a stopped one
   advance(60_000);
   await fleet.tick();
   assert.equal(session.status, 'starting', 'resumed by the failed suite');
-  assert.equal(session.resumedBy, 'woodshed-cloud');
+  assert.equal(session.resumedBy, 'woodshed');
   assert.match(session.pendingMessages.at(-1), /e2e run \(2\/4\) u2/);
   assert.equal(fleet.sessions().length, 1);
 });

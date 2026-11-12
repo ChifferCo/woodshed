@@ -837,7 +837,7 @@
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it.
       me.login && !me.hosted && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
-        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-cloud-last'); } catch { /* nothing kept */ } },
+        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-last'); } catch { /* nothing kept */ } },
       },
         h('button', { type: 'submit', class: 'menu-item', role: 'menuitem' }, 'Sign out')));
     function setOpen(open) {
