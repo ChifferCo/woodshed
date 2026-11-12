@@ -355,6 +355,11 @@
   let awaitingRestart = false;
   const STEP_WORDS = { pull: 'Pull the new commits', image: 'Build the session image', restart: 'Restart the console' };
 
+  // How long ago, with "just now" for the first minute, which W.ago rounds up to one.
+  function since(iso) {
+    return Date.now() - Date.parse(iso) < 60_000 ? 'just now' : W.ago(iso);
+  }
+
   function plural(n, one, many) {
     return `${n} ${n === 1 ? one : many}`;
   }
@@ -417,7 +422,7 @@
   function lastLine(u) {
     if (!u.last || u.job) return null;
     return h('p', { class: 'sub', style: 'margin: 0' },
-      `Last updated ${W.ago(u.last.at)}, from ${u.last.from} to ${u.last.to}, by @${u.last.by}${u.last.imageBuilt ? ', with a new session image' : ''}.`);
+      `Last updated ${since(u.last.at)}, from ${u.last.from} to ${u.last.to}, by @${u.last.by}${u.last.imageBuilt ? ', with a new session image' : ''}.`);
   }
 
   function jobBlock(job) {
@@ -467,7 +472,7 @@
         u.upstream && h('button', { type: 'button', class: 'btn btn-quiet', disabled: Boolean(updateForm.busy) || running, onclick: () => updateAction('check') },
           updateForm.busy === 'check' ? 'Checking…' : 'Check now'),
         updateForm.error ? h('span', { class: 'form-error', role: 'alert' }, updateForm.error)
-          : h('span', { class: 'sub', role: 'status' }, u.supervisor && why && u.behindBy ? why : u.checkedAt ? `Checked ${W.ago(u.checkedAt)}.` : '')));
+          : h('span', { class: 'sub', role: 'status' }, u.supervisor && why && u.behindBy ? why : u.checkedAt ? `Checked ${since(u.checkedAt)}.` : '')));
   }
 
   async function loadUpdates() {
