@@ -501,19 +501,27 @@ function projectFileOf(repoDir, { projectFilesDir, repo }) {
 
 /**
  * @param {string} repoDir
- * @param {{projectFilesDir?: string|null, repo?: string}} [opts]  `projectFilesDir` is the installation's folder of
+ * @param {{projectFilesDir?: string|null, repo?: string, savedAppFile?: string|null}} [opts]  `projectFilesDir` is the installation's folder of
  *   project files (WOODSHED_PROJECT_FILES_DIR by default); `repo` is owner/name, told from the checkout's origin
  *   without it
  * @returns {ReturnType<typeof parseProject> & {from: 'checkout'|'default branch'|'installation'|'none'}}
  */
-export function loadProject(repoDir, { projectFilesDir = envValue(process.env, 'PROJECT_FILES_DIR') || null, repo } = {}) {
+export function loadProject(repoDir, { projectFilesDir = envValue(process.env, 'PROJECT_FILES_DIR') || null, repo, savedAppFile = process.env.WOODSHED_APP_CONFIG_FILE || null } = {}) {
   const file = projectFileOf(repoDir, { projectFilesDir, repo });
-  if (!file) return { ...EMPTY_PROJECT, from: 'none' };
   try {
-    return { ...readProjectText(file.text), from: file.from };
+    const project = file ? { ...readProjectText(file.text), from: file.from } : { ...EMPTY_PROJECT, from: 'none' };
+    // Only app settings are supplied by the console. A project with an app of its own always wins.
+    if (!project.apps.length && savedAppFile && fs.existsSync(savedAppFile)) {
+      const saved = JSON.parse(fs.readFileSync(savedAppFile, 'utf8'));
+      if (saved.app && saved.repo === (repo ?? repoOf(repoDir))?.toLowerCase()) {
+        const { app, apps } = parseProject({ version: 1, app: saved.app });
+        return { ...project, app, apps, appFrom: 'woodshed' };
+      }
+    }
+    return project;
   } catch (err) {
     // The installation's file is wrong in the same ways a repo's is, and is named by its path.
-    if (file.from === 'installation') err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file.path}`);
+    if (file?.from === 'installation') err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file.path}`);
     throw err;
   }
 }

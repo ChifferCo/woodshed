@@ -222,6 +222,15 @@ container, given the files they need read-only (`providers/local/README.md`). Th
 its tasks yet, so its console refuses to start with the setting, rather than read a file its sessions would not. The files hold no secrets, as a committed one holds none, and must be
 readable by the session image's `node` user (uid 1000).
 
+**App settings saved by Set up app.** The console's **Set up app** dialog defaults to **This Woodshed**, saving app
+commands in the installation's state for that repository, without editing its files. This app-only setting works
+on both Docker and AWS: new sessions fetch it through the authenticated session API into a cache outside the
+checkout. It fills in an app only when the project defines none; app settings in the checkout, default branch or
+installation project file take precedence. Other project settings are unchanged. **Repository** writes the project
+file and leaves it uncommitted. The agent verifies both starting and stopping before saving either way. Commands
+saved in This Woodshed must be self-contained or use files already in the repository, so a new session can run them.
+This does not extend AWS support for the full installation-supplied project files described above.
+
 Only `version` must be written. A field that can be none (`null`, `[]`, `{}`, or `false` for `editor`) may be left
 out, and is then none (`consoleLinks` left out is `true`): a file of `version: 1` alone is a repo with no dependencies, env files, databases or app. Inside
 a section the same holds (`app.stop`, an env file's `secret`, `pullRequests.review.rerun`), while what the section

@@ -73,7 +73,7 @@ const sessions = [
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
   session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true }),
   // Running on a project whose file has no app: Set up app in place of Start app.
-  session('a0a0b1b1', 26329, 'A project with no app yet', { status: 'running', stoppedAt: null, stopReason: null, app: 'none', appServers: { frontend: false, backend: false, frontendPort: null, backendPort: null }, hasShell: true }),
+  session('a0a0b1b1', 26329, 'A project with no app yet', { status: 'running', stoppedAt: null, stopReason: null, app: 'none', appSetupSupported: true, appServers: { frontend: false, backend: false, frontendPort: null, backendPort: null }, hasShell: true }),
   // The rail's names: one started and assigned to octocat, one handed to him, one someone else has, and a private
   // one. Mine needs a signed-in octocat, which a stub of the page's data call gives.
   session('abcd7777', 26627, 'Merge Shared and My Woodshed tabs', { status: 'running', state: 'done', stoppedAt: null, stopReason: null, assignee: 'octocat' }),

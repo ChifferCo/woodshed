@@ -863,15 +863,8 @@
         group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener'),
       },
       data.appDomain && none && s.kind !== 'ask' && {
-        group: 'App', label: 'Set up app', note: 'The project file has no app: ask claude to write one',
-        run: async () => {
-          try {
-            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent));
-          } catch (err) {
-            window.alert(`Could not set up the app: ${err.message}`);
-          }
-          refresh();
-        },
+        group: 'App', label: 'Set up app', note: 'Find and test app commands, then save in This Woodshed or the repository',
+        run: () => W.setupApp(s, refresh),
       },
       ...choices,
       data.appDomain && !up && !busy && !none && !choices.length && {

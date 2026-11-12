@@ -78,6 +78,15 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - With no PR and no branch on GitHub yet the button says why in its own words ("Invite an engineer: push the branch first"), sits at 70% and copies nothing. Never copy a dead link.
 - The link holds the PR number or branch name and nothing else. The session stays private.
 
+## Set up app
+
+- Set up app opens a `confirm` dialog using the existing field and button styles (`components/AppSetup`). Its Save in
+  select defaults to This Woodshed. Explain reuse across sessions and no commit; Repository explains the uncommitted
+  project file. Always state that repository app settings take precedence.
+- Set up app (or Save to repository) is the dialog's one orange action; Cancel is quiet. An unsupported session keeps
+  This Woodshed selected, explains the required image update and disables the action until Repository is chosen.
+- The agent tests start and stop before saving; the dialog's action requests that work, rather than claiming it is saved.
+
 ## Commands to copy
 
 - A command a person runs on their own computer is a `value-box` in mono, one argument a line, with its own **Copy**

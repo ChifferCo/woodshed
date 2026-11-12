@@ -1,0 +1,11 @@
+<!-- @dsCard group="Actions" height=350 subtitle="Choose where the agent saves verified app commands" -->
+<link rel="stylesheet" href="/style.css">
+<dialog open class="confirm" style="position:static;margin:12px auto">
+  <h2>Set up app</h2>
+  <p class="sub">The agent will find the start and stop commands and test them before saving.</p>
+  <label class="field-label" for="destination">Save in</label>
+  <select class="field" id="destination"><option>This Woodshed</option><option>Repository</option></select>
+  <p class="sub">Reuse this setup in future sessions for this repository in this Woodshed. No repository changes or commit.</p>
+  <p class="sub">App settings in the repository take precedence over settings saved in This Woodshed.</p>
+  <div class="dialog-actions"><button class="btn btn-quiet">Cancel</button><button class="btn btn-open">Set up app</button></div>
+</dialog>

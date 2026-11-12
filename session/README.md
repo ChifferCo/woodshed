@@ -74,7 +74,11 @@ change to the stage by the workflow's run, about the time the build takes.
    Each is offered once (`~/.claude/woodshed-default-plugins.json` in the saved
    home), so one its owner uninstalls stays uninstalled.
    A shared session never gets them: it holds no integration token.
-2. Writes the project file's env files from the base files it is given,
+2. Fetches this repository's app settings saved in This Woodshed through `appConfig.mjs pull`, after checkout.
+   The cache is `/tmp/woodshed-app-config.json`, named by `WOODSHED_APP_CONFIG_FILE`. `loadProject` uses its app only
+   when the project defines none. `appConfig.mjs check <app.json>` validates an app object; `save <app.json>` saves it
+   through the console and refreshes the cache, without writing to the repository.
+   Writes the project file's env files from the base files it is given,
    with the shared services' addresses appended (see "The project file" in `../README.md`).
 3. Starts its own Redis on 127.0.0.1, with redis-commander for Data ▾, when the
    project file's `env` or `envFiles` mention `REDIS_URL` (`startRedisIfUsed`), and

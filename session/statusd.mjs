@@ -465,7 +465,7 @@ async function appStatus() {
 
 // Which app runs, and the ones Start app can pick: a console from before several apps reads neither.
 function appsStatus() {
-  return { appName: CURRENT_APP?.name ?? null, apps: PROJECT_APPS.map(({ name, label }) => ({ name, label })) };
+  return { appSetupSupported: Boolean(process.env.WOODSHED_CONSOLE_URL && process.env.WOODSHED_APP_CONFIG_FILE), appName: CURRENT_APP?.name ?? null, apps: PROJECT_APPS.map(({ name, label }) => ({ name, label })) };
 }
 
 // The project's own start or stop command: the project file's `app.start` or `app.stop`.

@@ -9,6 +9,7 @@ import path from 'node:path';
 
 import { hostedEngines } from '../shared/databases/index.mjs';
 import { installationProjectFile } from '../shared/project.mjs';
+import { createSavedApps } from './savedApps.mjs';
 import { createAsks } from './asks.mjs';
 import { CLIENT_SECRET, createAuth } from './auth.mjs';
 import { createAttachments } from './attachments.mjs';
@@ -347,6 +348,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
+    savedApps: createSavedApps({ store, config }),
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity });
   const loops = createLoops();

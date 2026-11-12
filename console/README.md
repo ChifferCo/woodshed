@@ -916,10 +916,19 @@ progress. Half an app says which half: `API down` when the page loads but every
 call under it would fail, `frontend down` when only the backend answers (Start
 app then starts the frontend). The GitHub comment that announces a session gives
 the app's address. A project file with no `app` has nothing to start, so the button is **Set up app**
-instead: it types a request into the session's claude (`SETUP_APP_PROMPT` in `console/fleet.mjs`; held until its turn
-ends, as a message would be) to work out how the app runs, write the `app` section and commit it. statusd reads a
-project with no app again on each Start app, so the button turns into **Start app** once the file has one, and that
-start runs it.
+instead. Its dialog defaults to **This Woodshed**: the agent discovers and tests start and stop commands, then saves
+only the app settings through `session/appConfig.mjs`. `console/savedApps.mjs` keeps them in the console's state,
+keyed by repository, for future sessions on either provider. No repository file or commit is needed. **Repository**
+asks the agent to write `.woodshed/project.yaml` and leave it uncommitted. Both requests are queued until the agent's
+turn ends, as a message would be. An older session image offers Repository and explains that This Woodshed needs a
+new session after the image update.
+
+The session API's authenticated `POST /app-config` reads only that session's repository's saved app; `/app-config/save`
+accepts only an app object, and only after the page asked that session to set up in This Woodshed. Ask and QA sessions
+cannot save. A second, different setup is refused rather than replacing another session's saved app. The entrypoint
+fetches the settings into `/tmp/woodshed-app-config.json` after checkout; saving also refreshes that cache. Project app
+settings (including a default-branch or installation project file's app) win over the saved app. Other project fields
+are preserved. statusd reads a project with no app again, so Start app becomes available after setup.
 
 A project file with several apps (`apps`, docs/reference.md) runs one at a time. **Start app ▾** opens a menu of their
 labels, and picking one sends its name (`POST /api/sessions/<id>/app/start` with `{"app": "<name>"}`, passed on to

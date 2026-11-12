@@ -483,9 +483,10 @@
   }
 
   // `app` picks one of several to start; without it the session starts the default.
-  async function appAction(s, action, { app = null } = {}) {
+  async function appAction(s, action, { app = null, destination = null } = {}) {
+    const payload = destination ? { destination } : app ? { app } : null;
     const res = await fetch(`/api/sessions/${s.id}/app/${action}`, {
-      method: 'POST', headers: { 'x-woodshed': '1', ...(app && { 'content-type': 'application/json' }) }, body: app ? JSON.stringify({ app }) : undefined,
+      method: 'POST', headers: { 'x-woodshed': '1', ...(payload && { 'content-type': 'application/json' }) }, body: payload ? JSON.stringify(payload) : undefined,
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `${action} answered ${res.status}`);
@@ -574,6 +575,55 @@
     return sent === 'queued' ? 'claude will be asked to set up the app when its turn ends' : 'Asked claude to set up the app';
   }
 
+  function setupApp(s, onDone = () => {}) {
+    const destination = h('select', { class: 'field', id: 'setup-app-destination' },
+      h('option', { value: 'woodshed' }, 'This Woodshed'),
+      h('option', { value: 'repository' }, 'Repository'));
+    const note = h('p', { class: 'sub' });
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const go = h('button', { type: 'button', class: 'btn btn-open' }, 'Set up app');
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'setup-app-title' },
+      h('h2', { id: 'setup-app-title' }, 'Set up app'),
+      h('p', { class: 'sub' }, 'The agent will find the start and stop commands and test them before saving.'),
+      h('label', { class: 'field-label', for: 'setup-app-destination' }, 'Save in'), destination, note,
+      h('p', { class: 'sub' }, 'App settings in the repository take precedence over settings saved in This Woodshed.'),
+      error,
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'), go));
+    function describe() {
+      const repository = destination.value === 'repository';
+      note.textContent = repository
+        ? 'Write .woodshed/project.yaml and leave it uncommitted. Commit and push it when you want to share it through the repository.'
+        : s.appSetupSupported
+          ? 'Reuse this setup in future sessions for this repository in this Woodshed. No repository changes or commit.'
+          : 'Update the session image and start a new session to save in This Woodshed. You can choose Repository in this session.';
+      go.textContent = repository ? 'Save to repository' : 'Set up app';
+      go.disabled = !repository && !s.appSetupSupported;
+    }
+    destination.addEventListener('change', describe);
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      destination.disabled = true;
+      error.hidden = true;
+      try {
+        const { sent } = await appAction(s, 'setup', { destination: destination.value });
+        window.Woodshed.shell?.toast(setupAppToast(sent));
+        dialog.close();
+        onDone();
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+        destination.disabled = false;
+        describe();
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    describe();
+    document.body.append(dialog);
+    dialog.showModal();
+    destination.focus();
+  }
+
   /**
    * The app's controls, after the shed's app line: Open app while it runs, Start app otherwise, and Stop app
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
@@ -617,18 +667,11 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: 'This project\'s .woodshed/project.yaml has no app, so there is nothing to start. Asks claude to work out how the app runs and write it there.',
-        onclick: async (e) => {
+        title: 'Find and test the app commands, then choose where to save them.',
+        onclick: (e) => {
           e.preventDefault();
           e.stopPropagation();
-          setup.disabled = true;
-          try {
-            const { sent } = await appAction(s, 'setup');
-            window.Woodshed.shell?.toast(setupAppToast(sent));
-          } catch (err) {
-            window.alert(`Could not set up the app: ${err.message}`);
-          }
-          onDone();
+          setupApp(s, onDone);
         },
       }, 'Set up app');
       const ctl = group(setup);
@@ -1142,7 +1185,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupApp, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

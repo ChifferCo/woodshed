@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
+import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, REPO_APP_SETUP_PROMPT, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -689,7 +689,7 @@ test('Set up app types the setup request into claude, only for a running session
   await fleet.tick();
   await assert.rejects(fleet.setupApp(session), (err) => err.refused === true, 'a project with an app is started, not set up');
 
-  statuses[session.id] = { state: 'idle', app: 'none' };
+  statuses[session.id] = { state: 'idle', app: 'none', appSetupSupported: true };
   await fleet.tick();
   assert.equal(session.app, 'none', 'the console keeps statusd\'s none');
   const { sent } = await fleet.setupApp(session);
@@ -697,6 +697,14 @@ test('Set up app types the setup request into claude, only for a running session
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body), [{ text: SETUP_APP_PROMPT }]);
   assert.match(SETUP_APP_PROMPT, /\.woodshed\/project\.yaml/);
   assert.doesNotMatch(SETUP_APP_PROMPT, /\n/, 'typed as one message');
+  assert.equal(session.appSetupDestination, 'woodshed');
+  await fleet.setupApp(session, { destination: 'repository' });
+  assert.equal(session.appSetupDestination, 'repository');
+  assert.equal(calls.statusd.at(-1).body.text, REPO_APP_SETUP_PROMPT);
+  assert.match(REPO_APP_SETUP_PROMPT, /Leave the changes uncommitted/);
+  await assert.rejects(fleet.setupApp(session, { destination: 'other' }), /choose This Woodshed or Repository/);
+  session.appSetupSupported = false;
+  await assert.rejects(fleet.setupApp(session), /start a new session/);
   for (const field of ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'howToProve']) assert.match(SETUP_APP_PROMPT, new RegExp(`\`${field}\``), `names ${field}, which the project file's app reads`);
 });
 

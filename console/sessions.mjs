@@ -384,6 +384,7 @@ export function statusUpdate(session, status, nowIso) {
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),
+    appSetupSupported: status.appSetupSupported === true,
     // Which of the project's apps runs, or would run, and the ones Start app can pick. One of them, or none.
     apps: appsFrom(status.apps),
     appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
