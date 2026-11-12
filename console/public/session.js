@@ -246,7 +246,7 @@
   // A card's ⋯ menu, after the shed's: what can be done to this session, each with what it does. Ending ones last.
   function cardActions(s) {
     const live = W.isLive(s);
-    const stoppedPrivate = W.isPrivate(s) && s.status === 'stopped';
+    const stoppedPrivate = W.canResumePrivate(s);
     const removable = W.isPrivate(s) && s.status !== 'stopping';
     const deletable = !s.owner && s.status !== 'stopping' && (live || s.kept);
     const gone = !s.owner && !live && !s.kept && s.status !== 'stopping';
@@ -477,7 +477,7 @@
         h('span', { class: 'rsub-text' }, sub),
         pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
-        !live && W.isPrivate(s) && s.status === 'stopped' && resumeButton(s, true),
+        !live && W.canResumePrivate(s) && resumeButton(s, true),
         W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
   }
 
@@ -636,7 +636,7 @@
     const main = projectList().find((p) => p.default)?.name ?? null;
     const on = (x) => (x ?? main) === (project ?? main);
     const mineOn = data.sessions.filter((s) => W.isPrivate(s) && s.branch === branch && on(s.project));
-    return mineOn.find(W.isLive) ?? mineOn.find((s) => s.status === 'stopped') ?? null;
+    return mineOn.find(W.isLive) ?? mineOn.find(W.canResumePrivate) ?? null;
   }
 
   // The shed's third group: your open pull requests on every repo you may start on, and those waiting on your review.
@@ -1280,7 +1280,7 @@
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
         ? [h('p', null, 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
-          h('div', { class: 'row' }, s.status === 'stopped' && resumeButton(s, false), removeButton(s))]
+          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
       h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));

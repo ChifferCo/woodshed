@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { commentConsoleUrl, createFleet, failedComment, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
+import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -51,7 +51,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       if (fail.taskStates) throw new Error('aws ecs describe-tasks failed: ThrottlingException: Rate exceeded');
       return new Map(refs.map((ref) => [ref, { alive: alive.has(ref), pullStartedAt: pulls[ref] ?? null }]));
     },
-    async logTail() { return 'ERROR: PGHOST is not set'; },
+    async logTail() { return fail.logTail ?? '[woodshed 10:00:00] ERROR: PGHOST is not set'; },
     async stop(ref) { calls.stopped.push(ref); alive.delete(ref); },
   };
   const github = {
@@ -337,7 +337,29 @@ test('a container that dies while starting fails with its last log line', async 
   alive.clear();
   await fleet.tick();
   assert.equal(session.status, 'failed');
-  assert.equal(session.error, 'ERROR: PGHOST is not set');
+  assert.equal(session.error, 'PGHOST is not set');
+});
+
+test('a failed start shows the entrypoint\'s ERROR, not ECS\'s stop reason after it', async () => {
+  const { fleet, alive, fail } = setup();
+  fail.logTail = [
+    '[woodshed 17:23:08] Cloning the project\'s repo (repo: o/r)',
+    '[woodshed 17:23:10] ERROR: .woodshed/project.yaml: pullRequests.qa is missing author',
+    'Essential container in task exited: exit code 1',
+  ].join('\n');
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  alive.clear();
+  await fleet.tick();
+  assert.equal(session.status, 'failed');
+  assert.equal(session.error, '.woodshed/project.yaml: pullRequests.qa is missing author');
+});
+
+test('failureReason falls back to the last line, ECS\'s reason for a task that never logged', () => {
+  assert.equal(failureReason('CannotPullContainerError: image not found'), 'CannotPullContainerError: image not found');
+  assert.equal(failureReason('[woodshed 10:00:00] Cloning\nEssential container in task exited: exit code 137'), 'Essential container in task exited: exit code 137');
+  assert.equal(failureReason('[woodshed 1] ERROR: first\n[woodshed 2] ERROR: second\nstop'), 'second');
+  assert.equal(failureReason(''), null);
 });
 
 test('a start that fails at once is announced as failed, never as started', async () => {
@@ -894,6 +916,24 @@ test('Remove My Woodshed stops the owner\'s private sessions, then takes them al
   assert.ok(calls.stopped.includes(`c-${halfStopped.id}`), 'an interrupted stop is finished, so its task does not run on');
   assert.deepEqual(store.state.sessions.map((s) => s.owner ?? 'shared').sort(), ['mia', 'shared']);
   assert.equal(fleet.find(mia.id).status, 'starting', 'a teammate\'s session is untouched');
+});
+
+test('Resume starts a private session whose start failed again, with the conversation it had before', async () => {
+  const { fleet, calls, statuses, alive } = setup();
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'joel/fix' });
+  statuses[first.id] = { state: 'working', claudeSession: '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c', branch: 'joel/fix' };
+  await fleet.tick();
+  await fleet.stop(first, 'stopped from the console', { by: 'joel' });
+  await fleet.resumePrivate({ owner: 'joel', id: first.id });
+  delete statuses[first.id];
+  alive.clear();
+  await fleet.tick();
+  assert.equal(first.status, 'failed');
+  await fleet.resumePrivate({ owner: 'joel', id: first.id });
+  assert.equal(first.status, 'starting');
+  assert.equal(first.error, null);
+  assert.equal(first.resumeClaude, '0b6e9c7a-1d2f-4e5a-9b8c-7d6e5f4a3b2c');
+  assert.equal(calls.started.length, 3);
 });
 
 test('Resume starts a stopped private session again on its branch, reopening claude\'s conversation, for its owner only', async () => {
