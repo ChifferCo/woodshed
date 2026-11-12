@@ -58,6 +58,20 @@ function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
 }
 
+/**
+ * Why a container died, from its log's tail: the last `ERROR:` the entrypoint wrote, which says what went wrong, or
+ * else the last line, which for a task that never ran is ECS's stop reason. The tail ends with that stop reason even
+ * when the session logged, and on its own it says only "Essential container in task exited".
+ * @param {string} tail  the launcher's logTail
+ * @returns {string|null}
+ */
+export function failureReason(tail) {
+  const lines = String(tail ?? '').split('\n').map((line) => line.trim()).filter(Boolean);
+  const error = lines.findLast((line) => /(^|\] )ERROR: /.test(line));
+  const reason = error ? error.replace(/^.*?ERROR: /, '') : lines.at(-1);
+  return reason ? reason.slice(0, 500) : null;
+}
+
 function shown(message) {
   return Object.assign(new Error(message), { shown: true });
 }
@@ -505,13 +519,13 @@ export function createFleet({
 
   async function containerGone(session) {
     const tail = await launcher.logTail(session.ref);
-    const lastLine = tail.split('\n').filter(Boolean).pop() || 'container exited';
+    const reason = failureReason(tail) || 'container exited';
     const failed = session.status === 'starting';
-    console.warn('fleet: container is gone', { id: session.id, failed, lastLine });
+    console.warn('fleet: container is gone', { id: session.id, failed, reason });
     await launcher.stop(session.ref);
     update(session, {
       status: failed ? 'failed' : 'stopped', stoppedAt: nowIso(), endpoint: null,
-      stopReason: failed ? null : 'container exited', error: failed ? lastLine : null,
+      stopReason: failed ? null : 'container exited', error: failed ? reason : null,
       ...(failed ? {} : keptFields(session)),
     });
     if (failed) await announceFailure(session);

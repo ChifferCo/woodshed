@@ -206,8 +206,12 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
         'logs', 'get-log-events', '--log-group-name', logGroup, '--log-stream-name', stream, '--limit', String(lines), '--no-start-from-head',
       ]).catch(() => null);
       const text = (events?.events ?? []).map((e) => e.message.trimEnd()).join('\n');
-      // A task that never ran has no logs; its stop reason (a pull or secrets error) is the line that explains it.
-      return [text, task?.stoppedReason].filter(Boolean).join('\n');
+      // A task that never ran has no logs; its stop reason (a pull or secrets error) is the line that explains it. The
+      // exit code tells a crash (1) from an out-of-memory kill (137) when the session logged no ERROR.
+      const container = task?.containers?.find((c) => c.name === CONTAINER) ?? task?.containers?.[0];
+      const exit = typeof container?.exitCode === 'number' ? `exit code ${container.exitCode}` : null;
+      const stopped = task?.stoppedReason ? [task.stoppedReason, [exit, container?.reason].filter(Boolean).join(', ')].filter(Boolean).join(': ') : null;
+      return [text, stopped].filter(Boolean).join('\n');
     },
 
     async stop(ref) {

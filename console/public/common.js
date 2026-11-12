@@ -420,6 +420,11 @@
     return Boolean(s.owner);
   }
 
+  /** @returns {boolean}  a private session Resume starts again: one that stopped, or failed (its saved home and branch are kept) */
+  function canResumePrivate(s) {
+    return isPrivate(s) && (s.status === 'stopped' || s.status === 'failed');
+  }
+
   function issueUrl(repo, s) {
     return `https://github.com/${repo}/${s.kind === 'pr' ? 'pull' : 'issues'}/${s.number}`;
   }
@@ -1136,7 +1141,7 @@
 
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
-    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
+    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,

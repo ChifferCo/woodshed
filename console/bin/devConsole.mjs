@@ -96,6 +96,12 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'octocat', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
     planUsage: planReading({ minutesAgo: 1, fiveHour: [42, 132], sevenDay: [78, 2 * 1440 + 600] }),
   }),
+  // A private session whose Resume failed at start: Resume stays, and the reason is the entrypoint's ERROR. Owned by
+  // `local`, the dev console's viewer, so its page opens.
+  session('fa11ed01', null, 'Update EC2 Woodshed to latest master', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'failed', state: null, prUrl: null,
+    error: '.woodshed/project.yaml: pullRequests.qa is missing author', startedAt: new Date(Date.parse(now) - 60_000).toISOString(),
+  }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
   session('de1e7e01', 26689, 'manage_datasets convert_file keeps headers', { cleanedAt: now, stopReason: 'its pull request merged 3 days ago', prClosedAt: now, prMerged: true }),

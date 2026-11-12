@@ -221,6 +221,15 @@ test('logTail ends with the stop reason, which explains a task that never ran', 
   assert.equal(logs[logs.indexOf('--log-stream-name') + 1], 'session/session/abc123');
 });
 
+test('logTail\'s stop reason carries the exit code, which tells a crash from an out-of-memory kill', async () => {
+  const { aws } = fakeAws({
+    'ecs describe-tasks': { tasks: [{ lastStatus: 'STOPPED', stoppedReason: 'Essential container in task exited', containers: [{ name: 'session', exitCode: 137, reason: 'OutOfMemoryError: Container killed due to memory usage' }] }] },
+    'logs get-log-events': { events: [{ message: '[woodshed] Cloning\n' }] },
+  });
+  const tail = await launcher(aws).logTail(ARN);
+  assert.equal(tail.split('\n').pop(), 'Essential container in task exited: exit code 137, OutOfMemoryError: Container killed due to memory usage');
+});
+
 test('stop by session id finds the task a lost start left running', async () => {
   const { aws, calls } = fakeAws({ 'ecs list-tasks': { taskArns: [ARN] }, 'ecs stop-task': {} });
   const l = launcher(aws);
