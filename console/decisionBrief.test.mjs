@@ -394,3 +394,8 @@ test('the QA report is read from the headings a QA workflow counts', () => {
   assert.equal(qa(brief({ comments: [RISKY, { ...QA_COMMENT, body: QA_COMMENT.body.replace(/Untested:\*\* .*/, 'Untested:** nothing; every test case ran.') }] })),
     'QA ✅ 2/2 passed · [Full brief →](https://github.com/o/r/pull/7#issuecomment-9)', 'nothing untested adds nothing');
 });
+
+test('a QA with no author (a Woodshed QA session) trusts no comment', () => {
+  const comments = [{ user: { login: 'someone' }, body: '## QA\nPassed' }, { user: { login: null }, body: '## QA' }];
+  assert.equal(qaCommentIn(comments, { author: null, heading: '## QA' }), null);
+});

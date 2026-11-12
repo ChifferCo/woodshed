@@ -212,6 +212,10 @@ test('a wrong pullRequests section names the field', () => {
   const { runner, ...noRunner } = PULL_REQUESTS.qa;
   assert.equal(full({ ...PULL_REQUESTS, qa: noRunner }).pullRequests.qa.runner, 'actions', 'left out, QA runs in the repo\'s CI');
   assert.equal(full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed' } }).pullRequests.qa.runner, 'woodshed');
+  const { author, ...noAuthor } = PULL_REQUESTS.qa;
+  assert.equal(full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed' } }).pullRequests.qa.author, null, 'a QA session has no comment author');
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: noAuthor }), /pullRequests\.qa is missing author/);
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed', author: '' } }), /pullRequests\.qa\.author must be a non-empty string/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'jenkins' } }), /pullRequests\.qa\.runner must be one of actions, woodshed/);
 });
 

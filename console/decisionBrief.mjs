@@ -111,6 +111,7 @@ export function qaReportFrom(body) {
  * @returns {object|null}  the latest QA comment
  */
 export function qaCommentIn(comments, qa) {
+  if (!qa.author) return null;
   return (comments ?? []).filter((c) => c.user?.login === qa.author && (c.body ?? '').startsWith(qa.heading)).at(-1) ?? null;
 }
 

@@ -168,6 +168,7 @@ pullRequests:
   # Default: null (no QA waited for).
   qa:
     # Required. The QA check run's name, the label that asks for it, and the author and heading of its comment.
+    # `author` may be left out with `runner: woodshed`, whose report is the console's check, not a comment.
     check: QA
     label: qa
     heading: '## QA'
