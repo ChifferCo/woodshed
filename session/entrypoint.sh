@@ -71,7 +71,7 @@
 set -euo pipefail
 
 export REPO_DIR=${REPO_DIR:-$PWD}
-# The image's copies. A start run beside a live session (session/bin/startInSession.mjs) points them at a checkout.
+# The image's copies. A start run beside a live session (providers/aws/bin/startInSession.mjs) points them at a checkout.
 SESSION_DIR=${WOODSHED_SESSION_DIR:-/opt/woodshed/session}
 # What the shed and Woodshed's sessions share (woodshed/shared/ in the repo): the project file's reader among it.
 SHARED_DIR=${WOODSHED_SHARED_DIR:-/opt/woodshed/shared}

@@ -3,7 +3,7 @@
 // how a session starts can be proven from the session that made it. It needs no Docker: a session already runs in the
 // session image, so the start uses the image's own bash, curl, jq, node, tmux, ttyd and claude.
 //
-//   node session/startInSession.mjs [--console-away <seconds>] [--timeout <seconds>] [--keep]
+//   node providers/aws/bin/startInSession.mjs [--console-away <seconds>] [--timeout <seconds>] [--keep]
 //
 // What it runs: the pushed branch's session/entrypoint.sh, with the environment the fleet builds for a private session,
 // filtered as the ECS launcher filters it, against the console's real session API on loopback, with a made-up owner.
@@ -22,14 +22,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 
-import { createClaudeSettings } from '../console/claudeSettings.mjs';
-import { createFleet } from '../console/fleet.mjs';
-import { createSessionApi } from '../console/sessionApi.mjs';
-import { sessionOverrides } from '../providers/aws/ecsLauncher.mjs';
-import { isMain } from '../shared/isMain.mjs';
-import { loadProject, usesVariable } from '../shared/project.mjs';
+import { createClaudeSettings } from '../../../console/claudeSettings.mjs';
+import { createFleet } from '../../../console/fleet.mjs';
+import { createSessionApi } from '../../../console/sessionApi.mjs';
+import { sessionOverrides } from '../ecsLauncher.mjs';
+import { isMain } from '../../../shared/isMain.mjs';
+import { loadProject, usesVariable } from '../../../shared/project.mjs';
 
-const REPO = path.resolve(import.meta.dirname, '..');
+const REPO = path.resolve(import.meta.dirname, '../../..');
 // Where the image keeps its own copies (session/Dockerfile).
 export const IMAGE_SESSION_DIR = '/opt/woodshed/session';
 // The files the image copies from session/ to somewhere else than /opt/woodshed, and which this run therefore uses as
@@ -53,7 +53,7 @@ const OWNER = 'start-in-session';
 export function limits({ imageOnlyChanged = [] } = {}) {
   const changed = IMAGE_ONLY.filter((f) => imageOnlyChanged.includes(f.file));
   return [
-    ...changed.map((f) => `NOT COVERED: this branch changes ${f.what}, and this run uses the image's copy. Build the image from this branch and run providers/aws/bin/askInImage.mjs to prove it.`),
+    ...changed.map((f) => `NOT COVERED: this branch changes ${f.what}, and this run uses the image's copy. Build the image from this branch and run providers/aws/bin/askInImage.mjs on it to prove it.`),
     'The image is the one this session runs in, as last deployed: only the branch\'s session/ and shared/ scripts are new. A change to the Dockerfile, a system package or claude\'s version is not tried.',
     'It runs beside a live session, not as a container\'s first process under /dev/init: signals and the container\'s exit are not tried.',
     'The environment is the fleet\'s for a private session, filtered as ECS filters it, but ECS, Fargate and the task definition are not involved: no IAM, network or secret injection.',
@@ -129,6 +129,35 @@ export function liveFilesTouched(sinceMs, marks, dir = '/tmp') {
     if (/^(woodshed-|ttyd|redis-commander|openvscode|pgweb|mongo-express|uploads$)/.test(name)) visit(path.join(dir, name), name);
   }
   return touched;
+}
+
+/**
+ * The pids of every process the run started: each carries its scratch WOODSHED_TMP in its environment, whatever it
+ * became (tmux's server, claude, ttyd, statusd, an install in the background).
+ * @param {string} tmpDir
+ * @returns {number[]}
+ */
+export function runProcesses(tmpDir, proc = '/proc') {
+  const mark = `WOODSHED_TMP=${tmpDir}\0`;
+  const pids = [];
+  for (const name of fs.readdirSync(proc)) {
+    if (!/^\d+$/.test(name) || Number(name) === process.pid) continue;
+    try {
+      if (`${fs.readFileSync(path.join(proc, name, 'environ'), 'latin1')}\0`.includes(mark)) pids.push(Number(name));
+    } catch { /* gone, or not ours */ }
+  }
+  return pids;
+}
+
+// Stops what the run started and waits for it: claude writes its home as it exits, which would outlive the folder.
+async function stopRun(tmpDir, tmux) {
+  tmux(['kill-server']);
+  for (const signal of ['SIGTERM', 'SIGKILL']) {
+    for (const pid of runProcesses(tmpDir)) { try { process.kill(pid, signal); } catch { /* gone */ } }
+    for (let i = 0; i < 50 && runProcesses(tmpDir).length; i += 1) await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!runProcesses(tmpDir).length) return true;
+  }
+  return !runProcesses(tmpDir).length;
 }
 
 function banner(lines, heading) {
@@ -250,6 +279,11 @@ async function main() {
   for (let p = 7681; p <= 7688; p += 1) {
     if (!(await portFree(p + PORT_OFFSET))) throw new Error(`port ${p + PORT_OFFSET} is taken: another start in session still running? (--keep leaves one up)`);
   }
+  // claude is installed under the home it was installed for (~/.local/bin/claude, a link to its version): the image's.
+  const claudeBin = path.join(os.homedir(), '.local/bin/claude');
+  if (!fs.existsSync(claudeBin)) throw new Error(`no ${claudeBin}: run this inside a Woodshed session, which installs claude there`);
+  fs.mkdirSync(path.join(dirs.home, '.local/bin'), { recursive: true });
+  fs.symlinkSync(fs.realpathSync(claudeBin), path.join(dirs.home, '.local/bin/claude'));
   // The branch's gh wrapper, ahead of the image's /usr/local/bin/gh, which would ask the image's githubToken.sh.
   fs.copyFileSync(path.join(checkout, 'session/gh.sh'), path.join(dirs.bin, 'gh'));
   fs.chmodSync(path.join(dirs.bin, 'gh'), 0o755);
@@ -259,9 +293,9 @@ async function main() {
   const consolePort = await freePort();
   const realLog = console.log;
   const realWarn = console.warn;
-  const standIn = await standInConsole({ repo: repoSlug, branch, port: consolePort, ghToken, gitIdentity });
   console.log = (...a) => realLog('[console]', ...a);
   console.warn = (...a) => realWarn('[console]', ...a);
+  const standIn = await standInConsole({ repo: repoSlug, branch, port: consolePort, ghToken, gitIdentity });
 
   // A fresh environment: nothing of the live session's (its token, its Anthropic variables, its tmux) reaches the start.
   const env = {
@@ -301,23 +335,29 @@ async function main() {
   }
   const seconds = Math.round((Date.now() - startedAt) / 100) / 10;
 
-  const tmuxEnv = (cmd) => { try { return execFileSync('tmux', cmd, { env: { ...env, TMUX: '' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return ''; } };
-  const leaked = tmuxEnv(['show-environment', '-g']).split('\n').filter((l) => /^(GH_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)=/.test(l)).map((l) => l.split('=')[0]);
+  const tmux = (cmd) => { try { return execFileSync('tmux', cmd, { env: { ...env, TMUX: '' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }); } catch { return ''; } };
+  // claude draws its screen a few seconds after statusd listens.
+  let pane = '';
+  for (let i = 0; outcome.ok && i < 30 && !/claude code/i.test(pane); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    pane = tmux(['capture-pane', '-p', '-t', 'claude']);
+  }
+  const claudeOpened = /claude code/i.test(pane);
+  const leaked = tmux(['show-environment', '-g']).split('\n').filter((l) => /^(GH_TOKEN|ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN)=/.test(l)).map((l) => l.split('=')[0]);
   const touched = liveFilesTouched(startedAt - 1000, [standIn.env.SESSION_ID, standIn.env.SESSION_TOKEN, scratch]);
   const dropped = standIn.calls.filter((c) => c.away).length;
 
-  if (!args.keep) {
-    tmuxEnv(['kill-server']);
-    try { process.kill(-child.pid, 'SIGTERM'); } catch { /* already gone */ }
-  }
+  const stopped = args.keep || await stopRun(dirs.tmp, tmux);
   standIn.close();
   console.log = realLog;
   console.warn = realWarn;
 
   const checks = [
     [outcome.ok, outcome.ok ? `the start reached statusd in ${seconds} s` : `the start failed: ${outcome.why}`],
+    [!outcome.ok || claudeOpened, claudeOpened ? 'claude opened in the start\'s own tmux' : `claude did not open in the start's tmux; its pane says: ${pane.trim().split('\n').slice(-3).join(' / ') || 'nothing'}`],
     [!args.consoleAway || dropped > 0, args.consoleAway ? `the console dropped ${dropped} connection(s) in its first ${args.consoleAway} s, and the start waited them out` : 'the console answered throughout (no --console-away)'],
     [leaked.length === 0, leaked.length ? `left in claude's environment: ${leaked.join(', ')}` : 'no GitHub or Anthropic token left in claude\'s environment'],
+    [stopped, stopped ? (args.keep ? 'left running (--keep)' : 'everything the run started has stopped') : `processes of the run still running: ${runProcesses(dirs.tmp).join(' ')}`],
     [touched.length === 0, touched.length ? `the live session's files changed during the run: ${touched.join(', ')}` : 'the live session\'s /tmp files were left as they were'],
   ];
   realLog('\n=== Result ===');
@@ -325,7 +365,7 @@ async function main() {
   banner(LIMITS, 'What this run does not prove (put these in the pull request with the log)');
   const passed = checks.every(([ok]) => ok);
   realLog(passed ? `startInSession: PASSED, within the limits above. Log: ${logFile}` : `startInSession: FAILED. Log: ${logFile}`);
-  if (args.keep) realLog(`startInSession: left running (--keep): statusd on ${7682 + PORT_OFFSET}; stop it with TMUX_TMPDIR=${dirs.tmux} tmux kill-server; kill -- -${child.pid}`);
+  if (args.keep) realLog(`startInSession: left running (--keep): statusd on ${7682 + PORT_OFFSET}, its tmux with TMUX_TMPDIR=${dirs.tmux}. Stop it with: TMUX_TMPDIR=${dirs.tmux} tmux kill-server; pkill -f -- '${dirs.tmp}' or kill each pid whose environment has WOODSHED_TMP=${dirs.tmp}`);
   else if (passed) fs.rmSync(scratch, { recursive: true, force: true });
   process.exit(passed ? 0 : 1);
 }
