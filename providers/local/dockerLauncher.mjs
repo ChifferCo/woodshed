@@ -23,11 +23,12 @@ export function parseDockerPort(output) {
   return match ? Number(match[1]) : null;
 }
 
-// The docker CLI's own settings: a session's environment never chooses which daemon the console's calls go to.
 // What finds a session's containers (providers/local/README.md, "Removing it"). Containers started before this one was
 // named carry OLD_SESSION_LABEL instead, so what lists them reads both for one release; the old one goes after it.
 export const SESSION_LABEL = 'woodshed.session';
 export const OLD_SESSION_LABEL = 'woodshed-cloud.session';
+
+// The docker CLI's own settings: a session's environment never chooses which daemon the console's calls go to.
 const DOCKER_SETTINGS = new Set(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']);
 
 /**
