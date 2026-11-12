@@ -763,9 +763,8 @@
     return u && h('span', { class: `usage${u.level ? ` is-${u.level}` : ''}`, title: u.tip }, u.text);
   }
 
-  // The owner's Claude plan, which all their private sessions draw on, so the newest reading any of them saw stands for
-  // each (sessions.mjs keeps a stopped session's last one). Claude Code reports a reading after each answer and leaves
-  // a window out on its own, so either can be missing.
+  // Each agent's plan is shared by the owner's private sessions on that agent. Keep readings and counts separate;
+  // an untagged reading is from Claude. Either window can be missing.
   const PLAN_WINDOWS = [
     { key: 'fiveHour', short: '5h', label: 'Five-hour session', ms: 5 * 3600_000 },
     { key: 'sevenDay', short: 'wk', label: 'Week, all models', ms: 7 * 86400_000 },
@@ -784,7 +783,9 @@
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
-    const newest = sessions.filter((o) => o.owner === s.owner && o.planUsage).map((o) => o.planUsage)
+    const agent = s.options?.agent === 'codex' ? 'codex' : 'claude';
+    const agentSessions = sessions.filter((o) => o.owner === s.owner && (o.options?.agent === 'codex' ? 'codex' : 'claude') === agent);
+    const newest = agentSessions.filter((o) => o.planUsage && (o.planUsage.agent ?? 'claude') === agent).map((o) => o.planUsage)
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
@@ -794,12 +795,13 @@
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
       const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      return { key, short, label: agent === 'codex' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
     });
     return {
+      agent,
       asOf: newest.asOf,
       stale: Boolean(newest.asOf) && now - Date.parse(newest.asOf) > PLAN_STALE_MS,
-      running: sessions.filter((o) => o.owner === s.owner && o.status === 'running').length,
+      running: agentSessions.filter((o) => o.status === 'running').length,
       windows,
     };
   }
@@ -832,17 +834,19 @@
       h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
         h('i', { style: `width:${w.usedPercent ?? 0}%` }),
         w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? 'Claude Code has not reported it yet'
+      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${u.agent === 'codex' ? 'Codex' : 'Claude Code'} has not reported it yet`
         : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
     const others = u.running - 1;
+    const codex = u.agent === 'codex';
+    const name = codex ? 'Codex' : 'Claude';
     return h('div', { class: 'plan-detail' },
-      h('div', { class: 'card-menu-group' }, 'Your Claude plan'),
+      h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
-        `Read from Claude Code after its last answer${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
-        others > 0 ? `Shared with your ${others} other running private session${others === 1 ? '' : 's'}. ` : '',
+        `${codex ? 'Last reported by Codex' : 'Read from Claude Code after its last answer'}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
+        others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
         'The tick marks how much of each window has gone by. ',
-        h('a', { href: 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, 'claude.ai usage ↗')));
+        h('a', { href: codex ? 'https://chatgpt.com/codex/settings/usage' : 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, codex ? 'Codex usage ↗' : 'claude.ai usage ↗')));
   }
 
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,

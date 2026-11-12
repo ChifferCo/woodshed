@@ -2081,14 +2081,64 @@ test('with no console channel, a pull request on a project without its own is no
 });
 
 const QA_GATES = { ...PULL_GATES, qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'console[bot]', runner: 'woodshed' } };
-const QA_PULL = { state: 'open', title: 'Add GTM', head: { ref: 'joel/gtm', sha: 'a'.repeat(40) }, base: { ref: 'main' } };
+const QA_PULL = { state: 'open', title: 'Add GTM', head: { ref: 'joel/gtm', sha: 'a'.repeat(40) }, base: { ref: 'main' }, labels: [{ name: 'qa' }] };
+const reviewOn = (sha, state = 'APPROVED') => [{ user: { login: 'review-bot[bot]' }, state, body: '## Code review', commit_id: sha }];
 const QA_VERDICT = { conclusion: 'success', title: 'Pass: 2 test cases passed', status: '✅ **Pass**: all 2 test cases passed', total: 2 };
 
 function qaSetup(options = {}) {
   const t = setup({ gates: QA_GATES, ...options });
   t.github.pull = async () => QA_PULL;
+  t.github.reviews = async () => reviewOn(QA_PULL.head.sha);
+  t.github.labeledBy = async () => 'joel';
   return t;
 }
+
+test('a QA label before the review approves the head posts a waiting check and starts nothing', async () => {
+  const { fleet, calls, github } = qaSetup();
+  github.reviews = async () => reviewOn('b'.repeat(40));
+  assert.deepEqual(await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' }), { outcome: 'waiting', reason: 'the review has not approved the latest commit' });
+  assert.equal(fleet.sessions().length, 0);
+  assert.deepEqual([calls.checks[0].sha, calls.checks[0].conclusion], ['a'.repeat(40), 'neutral']);
+  assert.match(calls.checks[0].title, /^Waiting\b/, 'the brief reads a Waiting check as no result');
+});
+
+test('the review approving a labelled pull request starts QA as whoever added the label, once for each commit', async () => {
+  const { fleet, github } = qaSetup();
+  github.labeledBy = async () => 'joel';
+  const first = await fleet.qaAfterReview({ number: 7 });
+  assert.equal(first.outcome, 'started');
+  const [session] = fleet.sessions();
+  assert.deepEqual([session.startedBy, session.qa.sha], ['joel', 'a'.repeat(40)]);
+  session.status = 'stopped';
+  assert.deepEqual(await fleet.qaAfterReview({ number: 7 }), { unrecorded: true }, 'already tested at this commit');
+  assert.equal(fleet.sessions().length, 1);
+});
+
+test('a commit the review approved while QA ran on an older one is tested once that run finishes', async () => {
+  const { fleet, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const newer = { ...QA_PULL, head: { ...QA_PULL.head, sha: 'c'.repeat(40) } };
+  github.pull = async () => newer;
+  github.reviews = async () => reviewOn(newer.head.sha);
+  assert.equal((await fleet.qaAfterReview({ number: 7 })).reason, 'QA is already running on it');
+  await fleet.qaFinished(fleet.sessions()[0], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  const later = fleet.sessions()[1];
+  assert.deepEqual([later?.qa.sha, later?.startedBy], ['c'.repeat(40), 'joel']);
+});
+
+test('a review starts no QA without the label, without approval, or for a project with no review gate', async () => {
+  const unlabelled = qaSetup();
+  unlabelled.github.pull = async () => ({ ...QA_PULL, labels: [] });
+  assert.deepEqual(await unlabelled.fleet.qaAfterReview({ number: 7 }), { unrecorded: true });
+  const changes = qaSetup();
+  changes.github.reviews = async () => reviewOn(QA_PULL.head.sha, 'CHANGES_REQUESTED');
+  assert.deepEqual(await changes.fleet.qaAfterReview({ number: 7 }), { unrecorded: true });
+  assert.deepEqual([changes.fleet.sessions().length, changes.calls.checks.length], [0, 0], 'no session, and no second Waiting check');
+  const noReview = qaSetup({ gates: { ...QA_GATES, review: null } });
+  assert.deepEqual(await noReview.fleet.qaAfterReview({ number: 7 }), { unrecorded: true });
+  assert.equal((await noReview.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' })).outcome, 'started', 'with no review, the label starts QA');
+});
 
 test('the QA label on a pull request starts a QA session on its branch, read only, and says so in the QA comment', async () => {
   const { fleet, calls } = qaSetup();

@@ -15,6 +15,8 @@
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
     { id: 'rail', mod: '⌘.', what: 'Show or hide the rail' },
     { id: 'settings', mod: '⇧⌘,', what: 'Settings' },
+    // Read by the New session form itself (launcher.js), from any of its fields: `where` says so on the sheet.
+    { id: 'start', mod: '⌘↵', what: 'Start the session', where: 'New session' },
     // ⌘? opens it too (match, below), and is left off the list: it is ? with ⌘ held, which says nothing more.
     { id: 'keys', bare: '?', what: 'Keyboard shortcuts' },
     { id: 'mine', bare: 'G M', what: 'Go to My Woodshed', href: '/' },
@@ -31,6 +33,8 @@
   }
 
   const MAC_WORDS = { '⇧': 'Shift', '⌘': 'Ctrl', '⌥': 'Alt' };
+  // A key written as a symbol on a Mac and as its name elsewhere.
+  const KEY_WORDS = { '↵': 'Enter' };
   /**
    * @param {string} combo  as SHORTCUTS writes `mod`, e.g. '⇧⌘O'
    * @returns {string[]}  one key cap each: ['⇧', '⌘', 'O'] on a Mac, ['Ctrl', 'Shift', 'O'] elsewhere
@@ -42,7 +46,7 @@
     if (mac) return [...mods, key];
     // Ctrl first, as Windows and Linux write it.
     const order = ['⌘', '⇧', '⌥'].filter((m) => mods.includes(m));
-    return [...order.map((m) => MAC_WORDS[m]), key];
+    return [...order.map((m) => MAC_WORDS[m]), KEY_WORDS[key] || key];
   }
 
   /** @returns {string}  the combo as one line of text: '⇧⌘O', or 'Ctrl+Shift+O' */
@@ -77,6 +81,7 @@
       if (code === 'Comma') return 'settings';
       if (code === 'Period') return 'rail';
       if (code === 'KeyO' && e.shiftKey) return 'new';
+      if (e.key === 'Enter' && !e.shiftKey) return 'start';
       return null;
     }
     if (e.ctrlKey || e.altKey || where.inFrame || where.typing) return null;

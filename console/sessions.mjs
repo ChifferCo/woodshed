@@ -338,6 +338,7 @@ function planWindowFrom(w) {
 export function planUsageFrom(usage) {
   if (!usage || typeof usage !== 'object') return null;
   const out = { asOf: isoOrNull(usage.asOf), fiveHour: planWindowFrom(usage.fiveHour), sevenDay: planWindowFrom(usage.sevenDay) };
+  if (usage.agent === 'codex') out.agent = 'codex';
   return out.fiveHour || out.sevenDay ? out : null;
 }
 

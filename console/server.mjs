@@ -523,6 +523,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  openaiTeamKey = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -1070,10 +1071,25 @@ export function createHandler({
     return { projects: [{ name, repo }], defaultProject: name, saved: false };
   }
 
+  // Whether the console has the team's OpenAI key, as last read: Codex runs on it for someone with no sign-in of their own.
+  // A read that fails keeps the last answer, so a blip in the store does not take Codex away from New session.
+  let teamOpenAiKey = false;
+  async function readTeamOpenAiKey() {
+    if (!openaiTeamKey) return false;
+    try {
+      teamOpenAiKey = Boolean(await openaiTeamKey());
+    } catch (err) {
+      console.warn('console: team OpenAI key not read', { message: String(err?.message ?? err).split('\n')[0] });
+    }
+    return teamOpenAiKey;
+  }
+
   function myView(login) {
     const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: false, available: false };
     return {
-      login, ...view, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
+      login, ...view,
+      // The agents New session offers: each only with something to run it on.
+      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
@@ -1231,6 +1247,9 @@ export function createHandler({
         await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
+        if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
+          return reply(res, 409, { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' });
+        }
         // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
         const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
         if (codexRefusal) return reply(res, 400, { error: codexRefusal });
@@ -1774,7 +1793,7 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([databaseGate?.refusal(), first ? looking : null]);
+      await Promise.all([databaseGate?.refusal(), first ? looking : null, readTeamOpenAiKey()]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);

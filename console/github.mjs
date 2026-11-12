@@ -314,6 +314,16 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       }
       return null;
     },
+    /** @returns {Promise<string|null>}  who last added the label to the issue or pull request */
+    async labeledBy(number, label) {
+      let by = null;
+      for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+        const batch = (await ghApi([`repos/${currentRepo()}/issues/${number}/events?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
+        by = batch.filter((e) => e.event === 'labeled' && e.label?.name === label).at(-1)?.actor?.login ?? by;
+        if (batch.length < PAGE_SIZE) break;
+      }
+      return by;
+    },
     reviews(number) {
       return ghApi([`repos/${currentRepo()}/pulls/${number}/reviews?per_page=${PAGE_SIZE}`]);
     },

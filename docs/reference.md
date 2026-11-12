@@ -456,10 +456,15 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
   session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
   An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check
   failed`), and the comment still gets the report.
-- The session stops itself once it has sent its report, and is not kept: a new run is a new label. A label added while
-  a QA session runs on the pull request starts nothing.
+- With a `pullRequests.review`, QA tests only what the review approved, as QA in CI does: a label on a pull request
+  whose latest commit the review has not approved posts a neutral `Waiting for the review to approve this commit`
+  check, and the review's approval then starts QA, as whoever added the label. Each newly approved commit of a
+  labelled pull request runs QA again, once, including one approved while an earlier run was still going, which runs
+  when that one finishes. Without a review, the label starts QA straight away.
+- The session stops itself once it has sent its report, and is not kept. Adding the label again runs QA again. A label
+  added while a QA session runs on the pull request starts nothing.
 
-A label reaches the console through its webhooks only, not its poll.
+A label and a review reach the console through its webhooks only, not its poll.
 
 ## Databases
 

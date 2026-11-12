@@ -293,7 +293,11 @@
     const model = select('l-model', MODELS);
     const effort = select('l-effort', EFFORTS);
     const mode = select('l-mode', MODES);
-    const start = h('button', { type: 'submit', class: 'btn btn-open' }, 'Start');
+    // Start says its key (⌘↵, Ctrl+Enter elsewhere), which works from any field of the form; a phone has no keys.
+    const K = window.WoodshedKeys;
+    const startWords = h('span', null, 'Start');
+    const start = h('button', { type: 'submit', class: 'btn btn-open', 'data-keys': 'start' }, startWords,
+      h('span', { class: 'btn-keys', 'aria-hidden': 'true' }, K.caps(K.byId.start.mod, K.isMac(window.navigator)).map((k) => h('kbd', null, k))));
     const projects = createProjectPicker(() => { if (me) update(me); });
     const note = h('span', { class: 'sub' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
@@ -412,6 +416,12 @@
 
     let me = null;
     const full = () => Boolean(me && me.running >= me.limit);
+    form.addEventListener('keydown', (e) => {
+      // The `/` menu's Enter picks a skill first, and only that.
+      if (e.defaultPrevented || e.repeat || e.isComposing || K.match(e) !== 'start') return;
+      e.preventDefault();
+      if (!start.disabled) form.requestSubmit();
+    });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       dictation.finish();
@@ -441,7 +451,19 @@
 
     function update(next) {
       me = next;
-      const preferred = me?.codexAuth?.set && !me.claudeToken?.set ? 'codex' : 'claude';
+      // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, or a Codex sign-in or the team's
+      // OpenAI key. A console from before `agents` offers both.
+      const offered = AGENTS.filter(([value]) => !me?.agents || me.agents[value]);
+      const shown = offered.length ? offered : AGENTS.slice(0, 1);
+      if (shown.map(([v]) => v).join() !== [...agent.options].map((o) => o.value).join()) {
+        const was = agent.value;
+        fill(agent, shown);
+        if (shown.some(([v]) => v === was)) agent.value = was;
+        else agentPicked = false;
+        if (agent.value !== was) showAgent();
+      }
+      agent.disabled = shown.length < 2;
+      const preferred = me?.codexAuth?.set && !me.claudeToken?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();
@@ -457,7 +479,7 @@
       }
       form.hidden = !ready || Boolean(refused);
       start.disabled = attachments.sending();
-      start.textContent = full() ? 'Start when one frees up' : 'Start';
+      startWords.textContent = full() ? 'Start when one frees up' : 'Start';
       note.replaceChildren(...(full()
         ? [`${me.running} of ${me.limit} running: this one waits in line and starts by itself when one stops.`,
           ...(W.isAdmin() ? [' Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Console settings'), '.'] : [])]

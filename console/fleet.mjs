@@ -12,6 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
+import { reviewVerdict } from './pullGates.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
@@ -1365,18 +1366,54 @@ export function createFleet({
 
   /**
    * A label on a pull request that is not the console's own: when it is the project's QA label and its QA runs here
-   * (`pullRequests.qa.runner: woodshed`), a QA session starts on the pull request's branch. Any other label is
-   * dropped without a word, as the console's webhooks drop every label that is not theirs.
+   * (`pullRequests.qa.runner: woodshed`), a QA session starts on the pull request's branch, once the review has approved
+   * its latest commit (qaAfterReview starts it then). Any other label is dropped without a word, as the console's
+   * webhooks drop every label that is not theirs.
    * @param {{number: number, label: string, login: string, project?: string}} trigger
-   * @returns {Promise<{outcome: 'started'|'ignored', sessionId?: string, reason?: string}|{unrecorded: true}>}
+   * @returns {Promise<{outcome: 'started'|'ignored'|'waiting', sessionId?: string, reason?: string}|{unrecorded: true}>}
    */
   async function handleQaLabel({ number, label, login, project: projectName = null }) {
     const project = projectOfEvent(projectName);
-    const qa = project ? (await pullRequests(project.name))?.qa : null;
+    const gates = project ? await pullRequests(project.name) : null;
+    const qa = gates?.qa;
     if (!qa || qa.runner !== 'woodshed' || qa.label !== label) return { unrecorded: true };
+    return startQa({ project, gates, number, login, why: 'label' });
+  }
+
+  /**
+   * A review on a pull request: when the project's review approved its latest commit and the pull request carries the
+   * QA label, QA runs on that commit, as whoever added the label. Once for each commit, however many times it is approved.
+   * @param {{number: number, project?: string|null}} args
+   * @returns {Promise<{outcome: 'started'|'ignored'|'waiting', sessionId?: string, reason?: string}|{unrecorded: true}>}
+   */
+  async function qaAfterReview({ number, project: projectName = null }) {
+    const project = projectOfEvent(projectName);
+    const gates = project ? await pullRequests(project.name) : null;
+    const qa = gates?.qa;
+    if (!qa || qa.runner !== 'woodshed' || !gates.review) return { unrecorded: true };
+    const gh = githubOf(project);
+    const pull = await gh.pull(number);
+    if (!(pull.labels ?? []).some((l) => l.name === qa.label)) return { unrecorded: true };
+    const tested = state.sessions.some((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.sha === pull.head.sha);
+    if (tested) return { unrecorded: true };
+    // The label already posted the Waiting check: a review that does not approve the head adds nothing.
+    const verdict = reviewVerdict(await gh.reviews(number), gates.review);
+    if (verdict?.state !== 'APPROVED' || verdict.commit_id !== pull.head.sha) return { unrecorded: true };
+    const login = await gh.labeledBy(number, qa.label);
+    if (!login) {
+      console.log('fleet: QA after review skipped, no one added the label', { number, ...projectField(project) });
+      return { outcome: 'ignored', reason: 'could not tell who added the QA label' };
+    }
+    return startQa({ project, gates, number, login, why: 'review', pull });
+  }
+
+  // The checks a person starting QA passes, then the session. A project with a review waits for it to approve the
+  // head commit, as QA in the repo's CI does: the label posts a neutral `Waiting` check, which the brief reads as no result.
+  async function startQa({ project, gates, number, login, why, pull: known = null }) {
+    const { qa } = gates;
     const gh = githubOf(project);
     const ignored = (reason) => {
-      console.log('fleet: QA label ignored', { number, login, reason, ...projectField(project) });
+      console.log('fleet: QA not started', { number, login, why, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
     if (!(await gh.canWrite(login))) return ignored('no write access to the repo');
@@ -1384,10 +1421,21 @@ export function createFleet({
     if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
     const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
     if (route.action === 'ignore') return ignored(route.reason);
+    const pull = known ?? await gh.pull(number);
+    if (pull.state !== 'open') return ignored('the pull request is not open');
+    if (gates.review) {
+      const verdict = reviewVerdict(await gh.reviews(number), gates.review);
+      if (verdict?.state !== 'APPROVED' || verdict.commit_id !== pull.head.sha) {
+        await safely('QA waiting check', () => gh.createCheckRun({
+          sha: pull.head.sha, name: qa.check, conclusion: 'neutral', title: 'Waiting for the review to approve this commit',
+          summary: 'QA runs here once the review approves the pull request\'s latest commit.',
+        }));
+        console.log('fleet: QA waiting for the review', { number, login, verdict: verdict?.state ?? null, ...projectField(project) });
+        return { outcome: 'waiting', reason: 'the review has not approved the latest commit' };
+      }
+    }
     const refused = await databasesRefusal();
     if (refused) return ignored(refused);
-    const pull = await gh.pull(number);
-    if (pull.state !== 'open') return ignored('the pull request is not open');
     // One QA comment per pull request: a later run writes over the last one's.
     const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
     const session = await createSession({
@@ -1395,7 +1443,7 @@ export function createFleet({
       qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId },
     });
     await postQaComment(session, gh, runningComment({ heading: qa.heading, sessionUrl: await qaSessionUrl(session, project) }));
-    console.log('fleet: QA session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
+    console.log('fleet: QA session started', { id: session.id, number, login, why, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
   }
 
@@ -1439,7 +1487,10 @@ export function createFleet({
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
     console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
     // In the background: the session waits on this reply, and the stop saves its home through it first.
-    stop(session, `QA finished: ${verdict.title}`).catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }));
+    stop(session, `QA finished: ${verdict.title}`)
+      .catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }))
+      // A commit the review approved while this one ran was turned away as already running: it runs now.
+      .then(() => safely('QA of a commit approved meanwhile', () => qaAfterReview({ number: session.number, project: project.name })));
   }
 
   /**
@@ -1645,7 +1696,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

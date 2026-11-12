@@ -140,3 +140,15 @@ test('a client given a getter follows the repo it names, the default branch read
   await github.issue(7);
   assert.deepEqual(asked, ['repos/acme/api', 'repos/acme/web', 'repos/acme/web/issues/7']);
 });
+
+test('who added a label is read from every page of the issue\'s events, the last add winning', async () => {
+  const page = (n) => Array.from({ length: n }, (_, i) => ({ event: 'commented', id: i }));
+  const pages = [
+    [...page(99), { event: 'labeled', label: { name: 'qa' }, actor: { login: 'ann' } }],
+    [{ event: 'labeled', label: { name: 'qa' }, actor: { login: 'joel' } }, { event: 'labeled', label: { name: 'bug' }, actor: { login: 'bob' } }],
+  ];
+  const run = async (_cmd, args) => ({ stdout: JSON.stringify(pages[Number(/&page=(\d+)/.exec(args.at(-1))[1]) - 1] ?? []) });
+  const github = createGitHub({ repo: 'o/r', run });
+  assert.equal(await github.labeledBy(7, 'qa'), 'joel');
+  assert.equal(await github.labeledBy(7, 'missing'), null);
+});

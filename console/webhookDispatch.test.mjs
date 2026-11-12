@@ -38,6 +38,23 @@ test('another label on a pull request goes to the fleet\'s QA check, which alone
   assert.deepEqual(recorded, ['started'], 'a label that is nobody\'s stays out of the events log');
 });
 
+test('a submitted review asks the fleet whether QA waits on it, and a failure there still refreshes the pull request', async () => {
+  const asked = [];
+  const refreshed = [];
+  const fleet = {
+    async qaAfterReview({ number }) { asked.push(number); if (number === 8) throw new Error('GitHub is down'); return { outcome: 'started' }; },
+    webhooksAlive() {},
+  };
+  const pulls = { handle: async (b) => { refreshed.push(b.number); } };
+  const { dispatch } = createWebhookDispatch({ label: 'woodshed', fleet, pulls });
+  const pr = (number, what) => JSON.stringify({ source: 'github', type: 'pr', number, numbers: [number], what });
+  await dispatch({ text: pr(7, 'review submitted') });
+  await dispatch({ text: pr(8, 'review submitted') });
+  await dispatch({ text: pr(9, 'pull request synchronize') });
+  assert.deepEqual(asked, [7, 8], 'only a submitted review');
+  assert.deepEqual(refreshed, [7, 8, 9]);
+});
+
 test('a GitHub message reaches the fleet naming the project of its repo, and one from a repo that is no project is dropped', async () => {
   const config = {
     projects: [

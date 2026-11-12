@@ -376,15 +376,15 @@ And what the shed shows about each session:
 - **CPU and memory**: the container's, from statusd's `/status`, after the
   status word on the card and in the pane bar. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
-- **Plan**: on a private session's pane bar, how much of your Claude plan's
+- **Plan**: on a private session's pane bar, how much of your session agent's (Claude or Codex) plan's
   five-hour and weekly limits is used, as a short bar and a share for each,
   amber from 70% and `✗ out until` its reset at 100%. Click it for when each
   window resets, a tick for how much of it has gone by, and how old the reading
   is (on a phone, under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them
-  (`session/planUsage.mjs`). The plan is shared, so every private session of
-  yours shows the newest reading any of them has, a stopped one's last
+  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`). Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
+  shows the newest reading any of them has, a stopped one's last
   included, and a window whose reset has passed reads 0%. Claude Code reports
   the all-models week only, not claude.ai's per-model one, and leaves a window
   out at times; `/api/oauth/usage` refuses the setup token a session runs on.
@@ -563,7 +563,9 @@ you would any other, and save a new one. Saving a new token or removing it
 reaches running sessions only at their next start.
 
 New session opens on **Codex** for someone with a Codex sign-in saved and no Claude token, and on Claude otherwise,
-until they pick an agent. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+until they pick an agent. Its **Agent** menu lists only the agents set up to run (`agents` in `GET /api/my`): Claude with a
+Claude token saved, Codex with a Codex sign-in saved or the team's `openai-api-key`. With one, the menu is greyed out
+on it, and a Codex start with neither is refused (409). Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT
@@ -1515,7 +1517,10 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 1. The webhooks pass every label on a pull request to the fleet (`handleQaLabel`), which reads the project file from
    the default branch and drops any label that is not its QA label, without an entry in the events log.
 2. The person who added it needs write access and sessions from GitHub, as for the console's own label. A QA session
-   already running on the pull request, or a closed pull request, starts nothing.
+   already running on the pull request, or a closed pull request, starts nothing. With a review gate, a pull request
+   whose head the review has not approved gets a neutral `Waiting` QA check instead, and a submitted review
+   (`qaAfterReview`, from the webhooks' `review submitted`) starts QA on a labelled pull request once the review
+   approves its head, as whoever added the label (the issue events' last `labeled`), once for each commit.
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.

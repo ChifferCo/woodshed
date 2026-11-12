@@ -63,6 +63,9 @@ function planReading({ minutesAgo, fiveHour, sevenDay }) {
 const sessions = [
   session('aaaa1111', 26325, 'Speed up Claude sessions'),
   session('bbbb2222', 26326, 'A session with no pull request yet', { prUrl: null }),
+  // A finished QA session: it opened no pull request, and tested the one it was started on.
+  session('9a9a9a9a', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'QA finished: Pass: 6 test cases passed', qa: { conclusion: 'success' } }),
+  session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console' }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
   // Polling is off, so none has a state here and all three show.
   session('cafe7777', 26330, 'Split the billing page into steps', {
