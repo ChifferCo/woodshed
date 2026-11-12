@@ -423,6 +423,14 @@ secrets.
   statusd `statusd: app start finished` with the script's exit code. A page that
   loads but never comes to life means the app's dev server refused the name: it must allow `*.<domain>` (the
   installation's `.woodshed/install/README.md` says where).
+- **Open app on a port (`https://<name>:7701/`, a console with `WOODSHED_APP_PORTS`) does not load, or says no app is on
+  the port.** The console logs `appPorts: listening` at start (`appPorts: could not listen` with the port when
+  something else holds it), `appPorts: port lent` when a session's app gets one, and `appPorts: no port free for the
+  session's app` when all are held. `no session's app is on this port` is a port lent to nobody, or to a session that
+  stopped: open the app from the console again. A page that never loads from another device means the proxy does not
+  serve that port: `tailscale serve status` must list it (providers/local/README.md, "From your other devices, with
+  Tailscale"). A console that will not start, saying `WOODSHED_APP_PORTS is for one person's console`, has sign-in
+  required or a host past loopback beside it: app ports are for a console nobody signs in to.
 - **Open app answers with a certificate error on a local install, or on AWS with no `domain`.** With no wildcard certificate, Caddy gets one per
   app name on demand, after asking the console (providers/local/README.md, "Session apps without a wildcard
   certificate"). No `tls: ask listening` at start means `WOODSHED_TLS_ASK_PORT` is not set. `tls: certificate

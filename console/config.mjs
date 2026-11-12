@@ -7,6 +7,7 @@ import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { currentName, envValue } from '../shared/envNames.mjs';
 import { secretEnvName } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
+import { parseAppPorts } from './appPorts.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
 
@@ -273,6 +274,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     extraHosts: (envValue(env, 'HOSTS') || '').split(',').map((h) => h.trim()).filter(Boolean),
     // Session apps answer at `<id>.<appDomain>`; empty turns them off.
     appDomain: (envValue(env, 'APP_DOMAIN') || '').trim().toLowerCase(),
+    // Or, on one person's console with a single name (Tailscale's serve), each on a port of its own (appPorts.mjs).
+    appPorts: parseAppPorts(envValue(env, 'APP_PORTS')),
     // Where a reverse proxy asks before getting a certificate on demand (tlsAsk.mjs), on 127.0.0.1; none turns it off.
     tlsAskPort: tlsAskPort(env),
     // On a console the internet reaches, sign-in never goes optional: not before the client secret is set,

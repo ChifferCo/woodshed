@@ -22,7 +22,8 @@ and the other way round (`../console.mjs`).
 You need Docker with the compose plugin, Node 22, and the GitHub CLI (`gh`, https://cli.github.com) on the console's
 PATH, signed in. Every GitHub call the console makes goes through `gh`, with the App's token when it has one.
 
-On your own machine, a GitHub App is optional: without one the console and its sessions run on your own `gh` token, so
+On your own machine, used by you alone (on loopback, with no sign-in, even when your other devices reach it through
+Tailscale), a GitHub App is optional: without one the console and its sessions run on your own `gh` token, so
 sessions push and open pull requests as you, and the setup card offers the App without requiring it. That token
 reaches far more than one repo; an App pushes as a bot scoped to the repo, and is what lets teammates sign in, so a
 console others reach (on a server) needs one. The console can make it for you at `/setup/github` (below);
@@ -140,6 +141,42 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
   `stack.env` aside to have it written again), and run it with `WOODSHED_REBUILD=1` to build the image from the file.
 - **A shared service keeps nothing across restarts** unless its compose file gives it a volume. A fake S3's buckets
   can be made on every start by an init script it mounts, such as localstack's `/etc/localstack/init/ready.d/`.
+
+## From your other devices, with Tailscale
+
+The console listens on loopback alone. To use it from your phone or another computer, Tailscale's `serve` puts it at
+`https://<this machine>.<tailnet>.ts.net` with a real certificate, for the devices on your tailnet and nobody else.
+Never `tailscale funnel`, which opens it to the internet. Needs Tailscale signed in on this machine and the other
+devices, with MagicDNS and HTTPS certificates on in the tailnet's DNS settings. On a Mac the CLI is inside the app
+(`/Applications/Tailscale.app/Contents/MacOS/Tailscale`) unless you added it to the PATH.
+
+**Only you.** `WOODSHED_TAILSCALE=1 bash install.sh` (or `~/.woodshed`'s run again with it) does it all:
+
+- `WOODSHED_PUBLIC_URL=https://<name>` in `stack.env`, so the console's links name the address your devices open.
+- `WOODSHED_APP_PORTS=7701-7710` (or the range you set): Tailscale gives the machine one name, so each session's app
+  answers on a port of it, `https://<name>:7701/` and on, in place of a name of its own (console/README.md, "Session
+  apps on ports").
+- `tailscale serve --bg --https=443 http://127.0.0.1:7690`, and the same for each app port.
+
+The console stays with no sign-in and no GitHub App: the tailnet is the gate, so check with `tailscale status` that
+every device on it is yours. A tailnet shared with someone (a device shared in, an organization's tailnet) lets them in
+as you: take the next way instead. Restart the console after the change. `tailscale serve status` lists what is
+served; `tailscale serve reset` takes it all down. The app's dev server must accept the name (Vite's
+`server.allowedHosts`, Next's `allowedDevOrigins`), and anything that builds absolute URLs from its port sees the
+session's own port, not the app port.
+
+**Others on the tailnet too.** Then it needs sign-in, and sign-in needs the GitHub App:
+
+1. `WOODSHED_TAILSCALE=shared bash install.sh`: the same, with no app ports, since the apps' sign-in
+   cookies are kept apart only on names of their own. Until step 3 anyone on the tailnet who opens it is its admin, so
+   do steps 2 and 3 straight away.
+2. Make the App at `https://<name>/setup/github`, so its sign-in comes back to that name, and install it on the repo.
+3. Add `WOODSHED_REQUIRE_SIGN_IN=1` to `stack.env`, restart the console, and sign in first: you are its admin. Add the
+   others on People.
+
+Open app then needs a name per session: a domain of your own with a wildcard record pointed at this machine's
+Tailscale address and a wildcard certificate from a DNS challenge, as "Session apps without a wildcard certificate"
+below sets out for a domain, with `WOODSHED_APP_DOMAIN`. Without one the apps run, and have no link.
 
 ## On a server your team reaches
 

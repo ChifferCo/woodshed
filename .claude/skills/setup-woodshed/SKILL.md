@@ -14,17 +14,32 @@ copy; when this file and the runbook disagree, the runbook wins.
 The person should hear everything you need from them and everything you will do before anything changes, not find
 out one step at a time. Send it as one message, and change nothing on the machine until they answer.
 
+**Before anything, GitHub's CLI.** Every place runs on `gh`: run `command -v gh` and `gh auth status` first. When `gh` is
+missing, tell them how to install it (`brew install gh` on a Mac, https://cli.github.com otherwise) and wait; when it is
+not signed in, ask them to type `! gh auth login` at the prompt. Do not go on until `gh auth status` passes: on this
+machine the console and every session run on that login, and the repos they can pick are the ones it can push to.
+
 **First, ask where**, unless the request says: this machine (to try it), a server the team reaches, or AWS, with the
 effort column of the table at the top of `docs/self-host.md`. Also the repository as `owner/name` if not given, and
 where their checkout of it is, if they have one here (without one, clone it later with `gh repo clone` into a folder
-beside this one, never inside this checkout). Someone who only wants to see the console needs none of this:
+beside this one, never inside this checkout). For this machine, ask in the same message:
+
+- **Other devices?** Will they open it from their phone or another computer, through Tailscale? If so, run
+  `tailscale status` (on a Mac, `/Applications/Tailscale.app/Contents/MacOS/Tailscale status` when it is not on the
+  PATH): it must be up, with MagicDNS and HTTPS certificates on in the tailnet's DNS settings.
+- **Only them, or others too?** Only them: no sign-in and no GitHub App, the tailnet is the gate, and each session's
+  app opens on a port of the machine's name (`WOODSHED_TAILSCALE=1`). Check that `tailscale status` lists only their
+  own devices, and say which are not if any. Others too: the GitHub App and sign-in become required, and Open app needs
+  a domain of their own (`WOODSHED_TAILSCALE=shared`). `docs/self-host.md`, "From your other devices", has both.
+
+Someone who only wants to see the console needs none of this:
 `node console/bin/devConsole.mjs`, then `http://localhost:7690/s/aaaa1111`.
 
 **Then run the read-only checks** for that place, so the briefing says what is already in place:
 
 | Where | Checks |
 | --- | --- |
-| This machine | `docker info`, `docker compose version`, `node -v` (22 or later), `git --version`, `gh auth status`, `gh repo view owner/name --json viewerPermission` |
+| This machine | `docker info`, `docker compose version`, `node -v` (22 or later), `git --version`, `gh auth status`, `gh repo view owner/name --json viewerPermission`, and with Tailscale `tailscale status --json` (its `Self.DNSName`, and the other peers' owners) |
 | A server | The same, on the server over SSH once they gave you access; here, only `gh auth status` and the repository |
 | AWS | `aws sts get-caller-identity` (and that the account holds nothing but Woodshed), `terraform version`, `gh auth status`, `gh repo view owner/name --json viewerPermission` (ADMIN, for the environments and variables) |
 
@@ -40,8 +55,9 @@ the like) at the prompt, so its output lands here. Never ask for a token in the 
 2. **What the checks found**: what is ready, and what they must fix first.
 3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
    so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).
-4. **The order**, in one line each: the project file, the install, the GitHub App (not on this machine, where it is
-   optional), their Claude, the first session.
+4. **The order**, in one line each: the project file, the install (with Tailscale when they chose it), the GitHub App
+   (not on this machine for them alone, where it is optional; first thing on the console when others use it), their
+   Claude, the first session.
 
 Then ask them to say go.
 
@@ -50,6 +66,7 @@ Then ask them to say go.
 | Where | From them |
 | --- | --- |
 | Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. On a server or AWS, make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. On this machine it is optional: sessions push as them with their `gh` sign-in, so leave it out unless they ask for one. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. A dev value for each env file `secret` the project file names (never production) |
+| This machine, with Tailscale | Tailscale signed in on this machine and the devices they will use, MagicDNS and HTTPS certificates on. Only them: nothing more. Others too: making the GitHub App at `https://<name>/setup/github` the moment the console runs, then signing in first, so they are its admin, and adding the others on People |
 | A server, also | The machine (Ubuntu 24.04, about 4 GB a session) and SSH access to it for you. A firewall in their provider's panel. A name: a domain with an `A` and a wildcard record, or none with sslip.io. Their own IP, for the fence until sign-in. Signing in first, so they are the first admin |
 | AWS, also | An AWS account for Woodshed alone, with credentials in this shell. A domain to delegate, with NS records at its parent's DNS. An email for the budget alerts. The GitHub App made by hand (its permissions are in `providers/aws/README.md`, "Setting it up", step 2), its private key uploaded on the console later. Approving each Terraform apply after reading its plan |
 
@@ -104,7 +121,9 @@ These come from `CLAUDE.md`, "Rules"; read it if a step touches secrets.
   goes on the Secrets & webhooks page, never in `session-env.json`, which every session reads.
 - **Nothing open before sign-in.** On a server, the proxy answers only the person's IP until the GitHub App is made,
   `WOODSHED_REQUIRE_SIGN_IN=1` is set and they signed in as the first admin ("On a server", steps 7 and 9).
-  On this machine, the console listens on localhost with no sign-in: never expose port 7690.
+  On this machine, the console listens on localhost with no sign-in: never expose port 7690, except to their own
+  tailnet with `tailscale serve`, and never with `tailscale funnel`, which opens it to the internet. A tailnet with
+  anyone else's devices on it takes the "others too" way, with sign-in.
 - **Docker's published ports get past ufw.** On a server, check that nothing (the repo's own compose file included)
   publishes a port on anything but `127.0.0.1`.
 - **AWS: `name_prefix = "woodshed"` for a new installation.** It names every AWS resource and has no default. One set up

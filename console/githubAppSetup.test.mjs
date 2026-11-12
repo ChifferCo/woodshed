@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
-import { RESTART_EXIT_CODE, appManifest, applyStored, createGitHubAppSetup, isLoopbackUrl, manifestPostUrl, supervisorOf } from './githubAppSetup.mjs';
+import { RESTART_EXIT_CODE, appManifest, applyStored, createGitHubAppSetup, isOnePersonConsole, manifestPostUrl, supervisorOf } from './githubAppSetup.mjs';
 import { defaultProject } from './projects.mjs';
 
 const { privateKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -166,14 +166,15 @@ test('Restart is refused unsupervised, before the App is installed, or with an A
   assert.throws(() => restart({ state: installed(), supervisor: 'setting', cfg: { ...config, githubApp: { appId: '77' } } }), /already runs/);
 });
 
-test('the App is optional only on one person\'s own machine with a gh token: a loopback URL, and no App yet', () => {
-  const optional = (cfg) => setup(() => assert.fail('no call'), { cfg: { ...config, ...cfg } }).api.optional();
+test('the App is optional only on one person\'s console with a gh token: loopback, no sign-in, and no App yet', () => {
+  const optional = (cfg) => setup(() => assert.fail('no call'), { cfg: { ...config, host: '127.0.0.1', ...cfg } }).api.optional();
   assert.equal(optional({ publicUrl: 'http://localhost:7690', ghToken: 'gho_x' }), true);
-  assert.equal(optional({ publicUrl: 'http://127.0.0.1:7690', ghToken: 'gho_x' }), true);
+  assert.equal(optional({ publicUrl: 'https://mac.tail1234.ts.net', ghToken: 'gho_x' }), true, 'reached from their other devices through Tailscale');
   assert.equal(optional({ publicUrl: 'http://localhost:7690', ghToken: null }), false, 'with no gh token the App is how it reaches GitHub');
-  assert.equal(optional({ publicUrl: 'https://woodshed.example.com', ghToken: 'gho_x' }), false, 'a console others reach needs it for sign-in');
+  assert.equal(optional({ publicUrl: 'https://woodshed.example.com', ghToken: 'gho_x', requireSignIn: true }), false, 'a console others sign in to needs it');
+  assert.equal(optional({ publicUrl: 'https://woodshed.example.com', ghToken: 'gho_x', trustedIdentitySecret: 's' }), false, 'a hosting proxy says who is in');
+  assert.equal(optional({ host: '0.0.0.0', ghToken: 'gho_x' }), false, 'bound past loopback');
   assert.equal(optional({ publicUrl: 'http://localhost:7690', ghToken: 'gho_x', githubApp: { appId: '1' } }), false, 'one already in force');
-  assert.equal(isLoopbackUrl('http://[::1]:7690'), true);
-  assert.equal(isLoopbackUrl('http://localhost.example.com'), false);
-  assert.equal(isLoopbackUrl('not a url'), false);
+  assert.equal(isOnePersonConsole({ host: '::1' }), true);
+  assert.equal(isOnePersonConsole({ host: 'localhost', requireSignIn: true }), false);
 });

@@ -104,11 +104,18 @@ Needs Docker with compose, Node 22 or later, git, and `gh` signed in to an accou
 macOS and Windows, Docker Desktop must be running.
 
 1. **Agent.** Check the tools: `docker info`, `docker compose version`, `node -v` (22 or later), `gh auth status`.
+   **You**, before anything else: install what is missing, and sign `gh` in with `gh auth login` (an agent asks you to
+   type `! gh auth login` at its prompt). The console and every session run on that login: they clone, push and open
+   pull requests as you, and the repos you can pick are the ones it can push to.
+   **You**, and decide now: will you use it from your other devices, through Tailscale? If so, only you, or others on
+   the tailnet too? "From your other devices", below, says what each sets up.
 2. **Agent.** Run the installer without starting the console, since it would hold the terminal:
 
    ```bash
    WOODSHED_REPO=owner/name WOODSHED_NO_START=1 bash <woodshed>/install.sh
    ```
+
+   With Tailscale add `WOODSHED_TAILSCALE=1` for only you, or `WOODSHED_TAILSCALE=shared` for others on the tailnet too.
 
    From no checkout: `curl -fsSL https://woodshed.run/install | WOODSHED_REPO=owner/name WOODSHED_NO_START=1 bash`.
    It asks nothing when `WOODSHED_REPO` is set and `gh auth token` works (or `GH_TOKEN` is set); with neither it fails
@@ -146,14 +153,32 @@ macOS and Windows, Docker Desktop must be running.
 
 What to know on this machine:
 
-- Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690.
-- Session apps (**Open app**) need a name and HTTPS (`WOODSHED_APP_DOMAIN`), which the installer does not set:
-  on this machine the session runs and checks the app itself, but there is no link to open it from your browser.
+- Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690
+  other than through Tailscale's `serve`, below.
+- Session apps (**Open app**) need HTTPS and a name or port of their own, which the installer sets only with
+  `WOODSHED_TAILSCALE=1`: without it the session runs and checks the app itself, but there is no link to open it from
+  your browser.
+- More repos: **Console settings**, Repos, **Add a repo** lists every repo your `gh` login can push to. Each starts its
+  sessions in the first repo's session image, cloning its own repo at start, so its dependencies install then.
 - GitHub webhooks need a public address, so the console polls GitHub every 30 seconds: a `woodshed` label or a
   `/woodshed` comment takes up to that long. **New session** is immediate.
 - Everything is in `~/.woodshed`. `WOODSHED_REBUILD=1` with the installer builds the session image again, which it
   needs after the project file's installs change. Back up `~/.woodshed`'s secrets key apart: losing it loses every
   secret.
+
+### From your other devices
+
+Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net`, for your tailnet's devices alone.
+`providers/local/README.md`, "From your other devices, with Tailscale", has the detail.
+
+- **Only you**: `WOODSHED_TAILSCALE=1`. No sign-in and no GitHub App, as on localhost: the tailnet is the gate, so
+  every device on it must be yours (`tailscale status`). Each session's app opens on a port of that name,
+  `https://<name>:7701/` and on. **Done when** `tailscale serve status` lists 443 and the app ports, and
+  `https://<name>` opens the console on your phone.
+- **Others too**: `WOODSHED_TAILSCALE=shared`, then step 4 is not optional and comes first, at
+  `https://<name>/setup/github`; then set `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env`, restart the console
+  and sign in first. Open app needs a domain of your own for this. **Done when** the console's log has
+  `console: GitHub App from the setup page`, and opening it from another device asks to sign in with GitHub.
 
 ## On a server
 

@@ -15,7 +15,10 @@
 # session then read in its place; saved in stack.env), WOODSHED_REBUILD=1 (build the session image again),
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
 # empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
-# DOCKER_HOST set, on that docker host).
+# DOCKER_HOST set, on that docker host), WOODSHED_TAILSCALE=1 (also serve the console to your own Tailscale devices, at
+# https://<this machine>.<tailnet>.ts.net, with each session's app on a port of that name: providers/local/README.md,
+# "From your other devices, with Tailscale"), or WOODSHED_TAILSCALE=shared for a console others on the tailnet use,
+# which signs them in once its GitHub App is made: no app ports, since sign-in keeps apps apart only on names of their own.
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
@@ -306,6 +309,63 @@ warnStaleStackEnv() {
   say "$file was written for another project file: its env files, seed secrets or database engines are not the ones it names now. providers/local/README.md, \"Project files the installation supplies\", says what to change"
 }
 
+# A setting in stack.env, set to `value`, or taken out when it is empty. The rest of the file stays as it was.
+setStackSetting() {
+  local file=$1 name=$2 value=$3 kept
+  kept=$(grep -v "^WOODSHED_\(CLOUD_\)\{0,1\}$name=" "$file" || true)
+  (
+    umask 077
+    if [ -n "$value" ]; then printf '%s\nWOODSHED_%s=%s\n' "$kept" "$name" "$value" >"$file"; else printf '%s\n' "$kept" >"$file"; fi
+  )
+}
+
+APP_PORTS_DEFAULT=7701-7710
+
+# Where the tailscale CLI is: on the PATH, or inside the Mac app, which does not put it there.
+tailscaleCli() {
+  if command -v tailscale >/dev/null; then printf tailscale; return; fi
+  local app=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  [ -x "$app" ] && printf '%s' "$app" && return
+  fail 'WOODSHED_TAILSCALE=1, but tailscale is not installed: https://tailscale.com/download'
+}
+
+# This machine's name on the tailnet, as MagicDNS gives it, with no trailing dot.
+tailscaleName() {
+  local cli=$1 name
+  name=$("$cli" status --json 2>/dev/null | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{process.stdout.write(String(JSON.parse(s).Self?.DNSName??"").replace(/\.$/,""))}catch{}})')
+  [ -n "$name" ] || fail 'tailscale is not up, or has no MagicDNS name for this machine: run `tailscale up`, and turn on MagicDNS and HTTPS certificates in the admin console'
+  printf '%s' "$name"
+}
+
+# The ports of a range such as 7701-7710, one per line.
+portsOf() {
+  local from=${1%-*} to=${1#*-}
+  seq "$from" "$to"
+}
+
+# Serves the console, and on one person's console each app port, to this tailnet's devices with Tailscale's HTTPS
+# (`serve`, never `funnel`, which would put it on the internet). The console keeps listening on loopback alone.
+setUpTailscale() {
+  local file=$1 cli name shared=
+  if [ "${WOODSHED_TAILSCALE:-}" = shared ] || [ "$(savedConsoleSetting "$1" REQUIRE_SIGN_IN)" = 1 ]; then shared=1; fi
+  cli=$(tailscaleCli)
+  name=$(tailscaleName "$cli")
+  setStackSetting "$file" PUBLIC_URL "https://$name"
+  "$cli" serve --bg --https=443 "http://127.0.0.1:$CONSOLE_PORT" >/dev/null
+  if [ "$shared" = 1 ]; then
+    setStackSetting "$file" APP_PORTS ''
+    say "Serving the console to your tailnet at https://$name. Others use it: make the GitHub App first, then set WOODSHED_REQUIRE_SIGN_IN=1 (docs/self-host.md)"
+    return 0
+  fi
+  local ports=${WOODSHED_APP_PORTS:-$(savedConsoleSetting "$file" APP_PORTS)}
+  ports=${ports:-$APP_PORTS_DEFAULT}
+  [[ $ports =~ ^[0-9]+-[0-9]+$ ]] || fail "WOODSHED_APP_PORTS must be a range such as $APP_PORTS_DEFAULT for Tailscale, not $ports"
+  setStackSetting "$file" APP_PORTS "$ports"
+  local port
+  for port in $(portsOf "$ports"); do "$cli" serve --bg --https="$port" "http://127.0.0.1:$port" >/dev/null; done
+  say "Serving the console to your own Tailscale devices at https://$name, and session apps on its ports $ports"
+}
+
 # An install works on one repository: its stack.env, image and databases are that repository's.
 refuseOtherRepo() {
   local file=$1 repo=$2 saved
@@ -435,6 +495,11 @@ main() {
     printf %s "$WOODSHED_LOCAL_MONGO_ROOT_PASSWORD" | node "$secretCli" put db-root/mongo >/dev/null
   fi
 
+  case ${WOODSHED_TAILSCALE:-} in
+    '') ;;
+    1|shared) setUpTailscale "$stackEnv" ;;
+    *) fail "WOODSHED_TAILSCALE is 1 (only you) or shared (others on the tailnet too), not $WOODSHED_TAILSCALE" ;;
+  esac
   writeLauncher "$home/bin/woodshed" "$home" "$src"
   say "Set up in $home. Start the console again any time with $home/bin/woodshed"
   say "Back up $WOODSHED_LOCAL_SECRETS_KEY_FILE somewhere else: losing it loses every secret"

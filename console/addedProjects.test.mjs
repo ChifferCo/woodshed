@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAddedProjects, repoChecker, repoLister } from './addedProjects.mjs';
+import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
 import { liveConfig } from './consoleSettings.mjs';
 
 const base = {
@@ -184,10 +184,30 @@ test('the repo list is every installation\'s repos, sorted, with where to give t
     repos: [{ repo: 'acme/web', private: true }, { repo: 'bo/Blog', private: false }],
     grant: [{ account: 'acme', href: 'https://github.com/organizations/acme/settings/installations/1' }, { account: 'bo', href: 'https://github.com/settings/installations/2' }],
     install: 'https://github.com/apps/w/installations/new',
+    via: 'app',
   }, 'acme/app is the default project already');
   assert.equal(await createAddedProjects({ store, config: liveConfig(base, store), check: async () => ({}) }).choices(), null, 'no App, no list');
   const half = repoLister({ appApi: { ...appApi, installationRepos: async (id) => { if (id === '2') throw new Error('HTTP 403'); return appApi.installationRepos(id); } } });
   assert.deepEqual((await half()).repos.map((r) => r.repo), ['acme/app', 'acme/web'], 'one refused installation leaves out its repos alone');
   const down = repoLister({ appApi: { ...appApi, installationRepos: async () => { throw new Error('HTTP 502'); } } });
   await assert.rejects(down(), (err) => err.shown && /did not list the App's repos/.test(err.message));
+});
+
+test('with no App, the list is every repo the console\'s gh login can push to, sorted, with nothing to grant', async () => {
+  const calls = [];
+  const run = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    return { stdout: 'bo/Blog\tfalse\nacme/web\ttrue\nacme/app\ttrue\nnot a repo\tfalse\n' };
+  };
+  const store = { state: { sessions: [] }, save() {} };
+  const added = createAddedProjects({ store, config: liveConfig(base, store), check: async () => ({ installationId: null }), list: ghRepoLister({ run }) });
+  assert.deepEqual(await added.choices(), {
+    repos: [{ repo: 'acme/web', private: true }, { repo: 'bo/Blog', private: false }],
+    grant: [], install: null, via: 'gh',
+  }, 'acme/app is the default project already, and a line that is no repo is dropped');
+  assert.equal(calls[0][0], 'gh');
+  assert.ok(calls[0].includes('--paginate'), 'every page of the login\'s repos');
+  assert.match(calls[0].join(' '), /select\(\.permissions\.push\)/, 'only the repos it can push to');
+  const down = ghRepoLister({ run: async () => { throw new Error('HTTP 401'); } });
+  await assert.rejects(down(), (err) => err.shown && /gh did not list your repos/.test(err.message));
 });

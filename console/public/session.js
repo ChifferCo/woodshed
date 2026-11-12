@@ -815,7 +815,7 @@
       { group: 'Session', label: 'Open the agent', run: open('') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
       s.status === 'running' && s.hasShell && W.isPrivate(s) && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
-      s.status === 'running' && data.appDomain && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
+      s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
@@ -879,7 +879,7 @@
         note: 'Start the app in this session: one to three minutes', run: app('start'),
       },
       data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', run: app('stop') },
-      data.appDomain && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
+      data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
       data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', run: () => openEditor(s) },
       ...dataActions(s),
       !PAGE_TABS.has(tab) && {

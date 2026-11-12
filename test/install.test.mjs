@@ -307,3 +307,47 @@ test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecate
   assert.equal(defaultProject(config).repo, 'acme/app');
   assert.deepEqual(envFiles(moved), [{ secret: 'app-env', path: 'api/.env' }]);
 });
+
+// A stand-in tailscale on the PATH: it says this machine's MagicDNS name and records each `serve` it was asked for.
+function fakeTailscale() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-tailscale-'));
+  const log = path.join(dir, 'calls');
+  fs.writeFileSync(path.join(dir, 'tailscale'), `#!/usr/bin/env bash
+if [ "$1" = status ]; then echo '{"Self":{"DNSName":"mac.tail1234.ts.net."}}'; exit 0; fi
+echo "$*" >>"${log}"
+`, { mode: 0o755 });
+  return { dir, calls: () => fs.readFileSync(log, 'utf8').trim().split('\n') };
+}
+
+test('WOODSHED_TAILSCALE serves the console and each app port to the tailnet, and names the console by its MagicDNS name', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-'));
+  const file = path.join(home, 'stack.env');
+  fs.writeFileSync(file, 'WOODSHED_PORT=7690\nWOODSHED_PUBLIC_URL=http://localhost:7690\n', { mode: 0o600 });
+  const ts = fakeTailscale();
+  runInstallFunction(`setUpTailscale "${file}"`, { PATH: `${ts.dir}:${process.env.PATH}`, WOODSHED_APP_PORTS: '7701-7703' });
+  const env = readEnvFile(file);
+  assert.equal(env.WOODSHED_PUBLIC_URL, 'https://mac.tail1234.ts.net');
+  assert.equal(env.WOODSHED_APP_PORTS, '7701-7703');
+  assert.equal(env.WOODSHED_PORT, '7690', 'the rest of the file is kept');
+  assert.deepEqual(ts.calls(), [
+    'serve --bg --https=443 http://127.0.0.1:7690',
+    'serve --bg --https=7701 http://127.0.0.1:7701', 'serve --bg --https=7702 http://127.0.0.1:7702', 'serve --bg --https=7703 http://127.0.0.1:7703',
+  ], 'serve, never funnel');
+  const config = loadConfig(env);
+  assert.deepEqual(config.appPorts, [7701, 7702, 7703]);
+});
+
+test('WOODSHED_TAILSCALE=shared, for others on the tailnet, serves the console alone, with no app ports', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-'));
+  const file = path.join(home, 'stack.env');
+  fs.writeFileSync(file, 'WOODSHED_APP_PORTS=7701-7710\n', { mode: 0o600 });
+  const ts = fakeTailscale();
+  runInstallFunction(`setUpTailscale "${file}"`, { PATH: `${ts.dir}:${process.env.PATH}`, WOODSHED_TAILSCALE: 'shared' });
+  const env = readEnvFile(file);
+  assert.equal(env.WOODSHED_PUBLIC_URL, 'https://mac.tail1234.ts.net');
+  assert.equal(env.WOODSHED_APP_PORTS, undefined, 'taken out');
+  assert.deepEqual(ts.calls(), ['serve --bg --https=443 http://127.0.0.1:7690']);
+  fs.writeFileSync(file, 'WOODSHED_REQUIRE_SIGN_IN=1\nWOODSHED_APP_PORTS=7701-7710\n', { mode: 0o600 });
+  runInstallFunction(`setUpTailscale "${file}"`, { PATH: `${ts.dir}:${process.env.PATH}`, WOODSHED_TAILSCALE: '1' });
+  assert.equal(readEnvFile(file).WOODSHED_APP_PORTS, undefined, 'a console that already requires sign-in keeps none on a later run');
+});

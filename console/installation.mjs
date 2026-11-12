@@ -48,8 +48,9 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { createAddedProjects, repoChecker, repoLister } from './addedProjects.mjs';
+import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
 import { createProjectColors } from './projectColors.mjs';
+import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
@@ -291,7 +292,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     : undefined;
   const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
   const addedProjects = createAddedProjects({
-    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), list: appApi ? repoLister({ appApi, appSlug }) : null,
+    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), 
+    // With no App, a console on its own gh login lists what that login can push to; borrowed access lists nothing.
+    list: appApi ? repoLister({ appApi, appSlug }) : config.ghToken && !brokerRead ? ghRepoLister() : null,
   });
   const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
@@ -323,6 +326,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
     return reviewSources.get(key)(session);
   };
+  // Session apps on ports of the console's own name, where it has one name and nobody signs in (appPorts.mjs).
+  const appPorts = config.appPorts?.length ? createAppPorts({
+    store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
+  }) : null;
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
@@ -333,8 +340,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     githubFor,
     trusted,
     userMenu,
+    appPorts,
   });
-  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted });
+  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
@@ -392,6 +400,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     handle,
     upgrade,
     sessionApi,
+    appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => loops.stop(),
@@ -403,6 +412,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
+      appPorts: appPorts ? appPorts.ports.length : 0,
     }),
   };
 }

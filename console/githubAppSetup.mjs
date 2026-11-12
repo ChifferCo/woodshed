@@ -96,15 +96,17 @@ export function supervisorOf(env = process.env) {
   return env.INVOCATION_ID ? 'systemd' : null;
 }
 
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
 
-/** @returns {boolean}  the URL names this machine's loopback, so only someone at this machine opens it */
-export function isLoopbackUrl(url) {
-  try {
-    return LOOPBACK_HOSTS.has(new URL(url).hostname);
-  } catch {
-    return false;
-  }
+/**
+ * One person's console: it listens on this machine's loopback alone and asks nobody to sign in. Whatever reaches it
+ * from elsewhere is a proxy its owner put in front (Tailscale's `serve` to their own devices, say), which is theirs to
+ * fence. Sign-in required, or a hosting proxy's identity, says others use it.
+ * @param {{host?: string, requireSignIn?: boolean, trustedIdentitySecret?: string|null}} config
+ * @returns {boolean}
+ */
+export function isOnePersonConsole(config) {
+  return LOOPBACK_HOSTS.has(String(config.host ?? '127.0.0.1').toLowerCase()) && !config.requireSignIn && !config.trustedIdentitySecret;
 }
 
 /**
@@ -136,13 +138,13 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
   }
 
   /**
-   * On one person's own machine the App is a choice, not a step: the console runs on their own `gh` token, sessions
-   * push as them, and nobody else reaches the console to sign in. A console others reach (any public URL that is not
-   * loopback) still needs it, for sign-in.
+   * On one person's console the App is a choice, not a step: the console runs on their own `gh` token, sessions push
+   * as them, and nobody signs in. That holds on their other devices too, through a proxy of theirs such as Tailscale.
+   * A console that requires sign-in still needs it: sign-in is the App's.
    * @returns {boolean}
    */
   function optional() {
-    return available() && Boolean(config.ghToken) && isLoopbackUrl(config.publicUrl);
+    return available() && Boolean(config.ghToken) && isOnePersonConsole(config);
   }
 
   function requireAvailable() {

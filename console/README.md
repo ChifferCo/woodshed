@@ -613,8 +613,9 @@ in their env file, use it directly.
 
 A console with a secret store (AWS, or the local provider's secrets folder) and no GitHub App
 (`WOODSHED_GITHUB_APP_ID` unset) offers `/setup/github`, and My Woodshed's setup card lists **Connect a GitHub App**
-first. On one person's own machine, a public URL on loopback (`localhost`, `127.0.0.1`) with a `gh` token, the App is
-optional: the card lists **Connect a GitHub App (optional)**, which never holds New session back, since sessions push
+first. On one person's console with a `gh` token, the App is
+optional: one that listens on loopback and asks nobody to sign in (`isOnePersonConsole`), whatever name a proxy of
+theirs (Tailscale's `serve` to their own devices) reaches it by. There the card lists **Connect a GitHub App (optional)**, which never holds New session back, since sessions push
 and open pull requests as that person with their `gh` token and nobody else reaches the console to sign in
 (`githubAppSetup.mjs`, `optional`). An App still pushes as a bot scoped to the repo, and is what lets teammates sign in. It starts without `gh` too, but needs it for every GitHub call afterwards, the App's included: without it the
 console logs `console: gh not installed, GitHub calls will fail` at start. The page has three steps:
@@ -949,6 +950,26 @@ per name on demand instead. Before each, the proxy asks the console on a loopbac
 (`WOODSHED_TLS_ASK_PORT`, `console/tlsAsk.mjs`) whether the name is the console's own or a session's;
 `providers/local/README.md`, "Session apps without a wildcard certificate", has the Caddyfile.
 A session started before its image had **Start app** shows no app.
+
+### Session apps on ports
+
+A console with a single name and no wildcard, such as one person's console that Tailscale's `serve` puts at
+`https://<machine>.<tailnet>.ts.net` for their own devices (`providers/local/README.md`, "From your other devices, with
+Tailscale"), gives each app a port of that name instead: `WOODSHED_APP_PORTS=7701-7710`. The console listens on each
+port too, on its own host, and the proxy in front maps the same port of the name to it (`console/appPorts.mjs`). A
+port is lent to a session once its app is starting or up, and the session keeps it while it is active, so an open tab
+keeps working; a stopped session's port goes to the next one. The session list carries each running session's
+`appUrl` (null until a port is lent, when Open app and Editor ↗ go through `/auth/app`, which lends one). The console
+logs `appPorts: listening` at start, `appPorts: port lent` with the `id`, `port` and the session it was `from`, and
+`appPorts: no port free for the session's app` when every port is held: stop a session, or name more ports.
+
+An app port answers its session's app alone, never the console's own pages, which would then share the app's origin;
+a port lent to nobody answers 404. The console's writes and websockets need its own origin, and a port is part of an
+origin, so an app's page cannot drive the console. Cookies do not keep ports apart, though: the apps share their own
+cookies by name (two sessions' `session` cookies overwrite each other), and the console's app sign-in cookie could not
+keep one app's viewers from another's. So app ports are for a console nobody signs in to: the console refuses to start
+with them beside `WOODSHED_REQUIRE_SIGN_IN`, a hosting proxy, a host past loopback or `WOODSHED_APP_DOMAIN`, and
+**Share the app** is not offered.
 
 ### Sharing the app
 
@@ -1538,8 +1559,10 @@ The **Repos** card, first on the page, lists the repos sessions can start on (th
 `GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
 the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links each installation's settings on GitHub,
 where the repos it may reach are picked (Repository access), and the App's install page for another account; the list
-is read again on **List again** and when the tab comes back into view. On a console with no App (the local provider,
-or borrowed GitHub access), or when GitHub did not list them, the field takes `owner/name` typed in (a `github.com`
+is read again on **List again** and when the tab comes back into view. On a console with no App that runs on its `gh` login (one person's own machine),
+the list is every repo that login can push to (`gh api user/repos`, `ghRepoLister`), since sessions push with it, and the
+console logs `projects: repos listed` with `via: 'gh'`. With borrowed GitHub access, or when GitHub did not list them,
+the field takes `owner/name` typed in (a `github.com`
 link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
 Add repo, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be able to reach
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
@@ -1599,6 +1622,8 @@ Remove My Woodshed.
 | `WOODSHED_CONSOLE_NAME` | `Woodshed` | What the console calls itself: the pages' title, the sign-in page's heading, the installed app's name (the manifest and the Apple title) and the console's GitHub comments. 1 to 40 printable characters, trimmed, without `< > " '` or a backtick; any other value gives the default, with a warning once. Set on the base box from Terraform's `console_name`. An installed app keeps the name it was installed with until it is installed again |
 | `WOODSHED_PUBLIC_URL` | `http://localhost:<port>` | The base of the link posted on GitHub; its host is accepted |
 | `WOODSHED_HOSTS` | none | More names to accept, comma-separated |
+| `WOODSHED_APP_DOMAIN` | none | Session apps answer at `<id>.<this>` ("Session apps"); none turns them off, unless `WOODSHED_APP_PORTS` is set |
+| `WOODSHED_APP_PORTS` | none | On one person's console only (loopback, no sign-in): ports such as `7701-7710` the console also listens on, each lent to one session's app, which answers at `<public URL's name>:<port>` (`appPorts.mjs`, "Session apps on ports"). Not beside `WOODSHED_APP_DOMAIN`. The installer sets it with `WOODSHED_TAILSCALE=1` |
 | `WOODSHED_TLS_ASK_PORT` | none | A port on `127.0.0.1` where a reverse proxy asks before getting a certificate on demand: `GET /tls-ask?domain=<name>` answers 200 for the public URL's host, `WOODSHED_HOSTS` and a session's app name, 403 otherwise (`tlsAsk.mjs`). For a console with no wildcard certificate; `providers/local/README.md` has the Caddyfile |
 | `WOODSHED_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |

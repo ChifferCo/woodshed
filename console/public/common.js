@@ -475,6 +475,9 @@
    *   scheme and port (a local console's `http://<id>.localhost:7690/`)
    */
   function appUrl(s, appDomain) {
+    // With app ports (WOODSHED_APP_PORTS) the console says which port of its own name each running app is on.
+    // One with none yet goes through the console, which lends it one; what follows `next=/` (the editor's path) is kept.
+    if (s.appUrl !== undefined) return s.appUrl || `/auth/app?id=${encodeURIComponent(s.id)}&next=/`;
     return `${location.protocol}//${s.id}.${appDomain}${location.port ? `:${location.port}` : ''}/`;
   }
 
