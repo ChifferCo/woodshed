@@ -57,6 +57,13 @@ function planReading({ minutesAgo, fiveHour, sevenDay }) {
 const sessions = [
   session('aaaa1111', 26325, 'Speed up Claude sessions'),
   session('bbbb2222', 26326, 'A session with no pull request yet', { prUrl: null }),
+  // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
+  // Polling is off, so none has a state here and all three show.
+  session('cafe7777', 26330, 'Split the billing page into steps', {
+    kind: 'task', number: null, status: 'running', state: 'done', stoppedAt: null, stopReason: null,
+    prUrl: 'https://github.com/example-org/example-repo/pull/26333',
+    prUrls: [26331, 26332, 26333].map((n) => `https://github.com/example-org/example-repo/pull/${n}`),
+  }),
   session('cccc3333', 26327, 'A failed start', { status: 'failed', error: 'The container did not start.' }),
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
   session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true }),

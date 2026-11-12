@@ -51,3 +51,17 @@ test('the app buttons\' title names the project\'s own ports, and the servers al
   assert.equal(W.serversTitle({ appServers: { ...servers, frontendPort: null, backendPort: null } }), ' Backend down, frontend up.');
   assert.equal(W.serversTitle({ appServers: null }), '');
 });
+
+test('a merged or closed pull request shows only while no newer one came after it', () => {
+  const states = { 1: 'merged', 2: 'open', 3: 'closed', 4: 'draft', 5: 'merged' };
+  const shown = (numbers) => [...W.shownPrs({ prs: numbers.map((n) => ({ url: `${n}`, pr: states[n] ? { state: states[n] } : null })) }).map((p) => p.url)];
+  assert.deepEqual(shown([]), []);
+  assert.deepEqual(shown([1]), ['1'], 'the only one stays, merged');
+  assert.deepEqual(shown([1, 2]), ['2'], 'a newer one hides the merged one');
+  assert.deepEqual(shown([2, 1]), ['2', '1'], 'an older open one stays beside the newest');
+  assert.deepEqual(shown([1, 3, 5]), ['5'], 'all settled: only the newest');
+  assert.deepEqual(shown([2, 3, 4]), ['2', '4']);
+  assert.deepEqual(shown([9, 1, 2]), ['9', '2'], 'one not read yet counts as open');
+  assert.deepEqual([...W.shownPrs({ prUrl: PR, pr: { state: 'merged' } }).map((p) => p.url)], [PR], 'a console from before the list');
+  assert.equal(W.shownPrs({ prUrl: null }).length, 0);
+});

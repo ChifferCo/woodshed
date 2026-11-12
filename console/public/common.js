@@ -627,6 +627,22 @@
     level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
   }
 
+  /**
+   * The pull requests a session's card shows, oldest first: each one, but a merged or closed one only while no newer
+   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. A console
+   * from before the list sends only `prUrl` and `pr`.
+   * @returns {{url: string, pr: object|null}[]}
+   */
+  function shownPrs(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.filter(({ pr }, i) => i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'));
+  }
+
+  /** @returns {HTMLElement[]}  a chip for each pull request shownPrs gives */
+  function prChips(s, opts) {
+    return shownPrs(s).map(({ url, pr }) => prChip({ prUrl: url, pr, branch: s.branch }, opts));
+  }
+
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
   function fmtBytes(bytes) {
     if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
@@ -1033,6 +1049,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, clock, prChip, prChips, shownPrs, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

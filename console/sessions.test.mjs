@@ -173,6 +173,19 @@ test('statusUpdate keeps only a pull request link on this repo', () => {
   assert.equal(statusUpdate(s, { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrl, null);
 });
 
+test('statusUpdate keeps every pull request the session reported, oldest first, each once', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done' }, 'now').prUrls, []);
+  const before = session({ repo: 'o/r', prUrl: url(10) });
+  assert.deepEqual(statusUpdate(before, { state: 'done' }, 'now').prUrls, [url(10)], 'one from before the list is its prUrl');
+  const second = statusUpdate(before, { state: 'done', prUrl: url(11) }, 'now');
+  assert.deepEqual(second.prUrls, [url(10), url(11)]);
+  assert.equal(second.prUrl, url(11));
+  const again = statusUpdate(session({ repo: 'o/r', prUrl: url(11), prUrls: second.prUrls }), { state: 'done', prUrl: url(10) }, 'now');
+  assert.deepEqual(again.prUrls, [url(10), url(11)], 'one reported again keeps its place');
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: url(10) }), { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrls, [url(10)]);
+});
+
 test('publicSession drops the token and the endpoint', () => {
   const view = publicSession(session({ token: 'secret', terminalToken: 'term', endpoint: { host: 'h' }, pendingMessages: ['a', 'b'] }));
   assert.equal(view.token, undefined);
