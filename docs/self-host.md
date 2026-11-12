@@ -185,6 +185,13 @@ What to know on this machine:
 
 - Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690
   other than through Tailscale's `serve`, below.
+- Sessions use this machine's Docker, so a repo's compose services, Supabase local or Testcontainers run: the
+  containers Claude starts run on this machine beside the session, and their published ports are forwarded into it.
+  That is root on this machine for Claude in every session: it can do anything here that you can. That is part of
+  what "only you" means. `WOODSHED_SESSION_DOCKER=0` (in `~/.woodshed/stack.env`, or with the installer) turns it off.
+  Those containers outlive the session that started them: `docker ps` lists them, and `docker rm -f` removes them.
+  A browser-side address in the app's env (`SUPABASE_URL=http://127.0.0.1:54321` in an Expo web app) works in the
+  session's own Playwright browser, but not from your phone through Open app, which reaches only the app's own port.
 - Session apps (**Open app**) need HTTPS and a name or port of their own, which the installer sets only with
   `WOODSHED_TAILSCALE=1`: without it the session runs and checks the app itself, but there is no link to open it from
   your browser.
@@ -209,13 +216,19 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
   `https://<name>` opens the console on your phone.
 - **Others too**: `WOODSHED_TAILSCALE=shared`, then step 6 is not optional and comes first, before step 4, at
   `https://<name>/setup/github`; then set `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env`, restart the console
-  and sign in first. Open app needs a domain of your own for this. **Done when** the console's log has
+  and sign in first. Open app needs a domain of your own for this. Sessions still use this machine's Docker, so
+  everyone who can start one has this machine, as on a server (below). **Done when** the console's log has
   `console: GitHub App from the setup page`, and opening it from another device asks to sign in with GitHub.
 
 ## On a server
 
 There is no installer for a server. `providers/local/README.md`, "Setting it up" and "On a server your team reaches",
 has every step; this is the order, with the checks. Steps marked **Server** run on the machine.
+
+Sessions use the server's Docker unless `stack.env` says `WOODSHED_SESSION_DOCKER=0`. On a console others use, that
+means anyone who can start a session, from a GitHub label or comment too, gets root on the server: the secrets key, so
+every stored secret and Claude token, and every other session's containers and databases. Only people you would give
+root on the box should be able to start sessions there.
 
 1. **You.** Make the machine: Ubuntu 24.04, about 4 GB of memory a session (16 GB holds about four). On Hetzner Cloud,
    a CPX41 or CAX31.

@@ -306,6 +306,26 @@ secrets.
   means neither could see it, such as another user's process. The install's own console is never in the way: it is
   told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
   A Tailscale `serve` listener on the same port does not count.
+- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider sessions
+  use the machine's Docker unless `WOODSHED_SESSION_DOCKER=0` (providers/local/README.md, "Docker in a session"): the
+  console logs `local: sessions use this machine's Docker` with `on` at start, then `launcher: sessions get this
+  machine's Docker` with the socket's `group` at the first session, and `launcher: session given this machine's Docker`
+  for each. A start that fails with `its socket could not be given to the session` gives docker's reason. In the
+  session's Terminal, `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists
+  the socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found`
+  is an image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions
+  never get it.
+- **A tool in a session cannot reach a container it started on `127.0.0.1:<port>`, or a dev server fails with
+  `EADDRINUSE`.** `session/dockerPorts.mjs` forwards each port the machine's containers publish to the same port on the
+  session's 127.0.0.1: `/tmp/woodshed-docker-ports.log` has `dockerPorts: port forwarded` with the container, `port
+  not forwarded` with `why` (something in the session already listens on it, or it is one of the session's own), and
+  `forward ended` when the container went. A dev server refused its port because a container on the machine (often
+  another session's stack) publishes it and the forward holds it: stop that container or move one of them. Nothing
+  forwarded on Linux for a port published on `127.0.0.1` alone: the forward reaches the machine through the gateway,
+  so that port must be published on every address.
+- **Containers from an ended session are still running.** Containers a session starts with the machine's Docker
+  carry no label of Woodshed's and outlive it: `docker ps` lists them, and `docker rm -f` or `docker compose -p
+  <project> down` removes them. Claude names a stack after its session id, so the id in a name says whose it was.
 - **A session takes a minute and a half to start.** The image has lost its
   SOCI index, so Fargate pulls it in full: `describe-tasks` shows about 85
   seconds between `pullStartedAt` and `pullStoppedAt`, against under 10 with

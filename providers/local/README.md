@@ -158,6 +158,48 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
 - **A shared service keeps nothing across restarts** unless its compose file gives it a volume. A fake S3's buckets
   can be made on every start by an init script it mounts, such as localstack's `/etc/localstack/init/ready.d/`.
 
+## Docker in a session
+
+Sessions use this machine's Docker, so a repo whose dev setup is a compose file of services, Supabase local
+(`supabase start`) or Testcontainers runs in them. `WOODSHED_SESSION_DOCKER=0` in `stack.env` (or with `install.sh`,
+which saves it) turns it off; only the console's settings decide it, never a project file. A question from Slack never
+gets it, nor a db-admin run. On AWS it is always off: a Fargate task cannot be given a Docker socket, and
+`WOODSHED_SESSION_DOCKER=1` there only logs that it does nothing.
+
+**It is root on this machine for whoever can start a session.** On your own laptop that is you, through Claude. On a
+console others use (a server, or `WOODSHED_TAILSCALE=shared`), anyone who can start a session, from a GitHub label or
+comment too, gets root on the machine: the secrets key, so every stored secret and Claude token, and every other
+session's containers and databases. Only people you would give root on the box should be able to start sessions there.
+
+How it works:
+
+- The docker launcher (`dockerLauncher.mjs`, `hostDocker`) mounts `/var/run/docker.sock` into the session and adds
+  the group that owns it there to the session's `node` user (uid 1000): root's (0) on Docker Desktop and OrbStack, the
+  docker group's on Linux. It asks a container for that group once, with the session image and the socket mounted
+  (`docker run --rm --entrypoint stat …`), and logs `launcher: sessions get this machine's Docker` with it. It also
+  sets `DOCKER_HOST=unix:///var/run/docker.sock` and `WOODSHED_SESSION_DOCKER=1`, which the project file's scripts can
+  read. The console logs `local: sessions use this machine's Docker` with `on` at start.
+- The session image has the docker CLI and its compose plugin (`session/Dockerfile`). Its last stage adds them to a
+  published runtime from before they were in it.
+- Claude's rules say that the containers are the machine's and outlive the session, that a bind mount names a folder on
+  the machine, and to name a stack after the session with its own ports (`session/hostDocker.md`).
+- `session/dockerPorts.mjs` forwards each TCP port the machine's containers publish to the same port on the session's
+  127.0.0.1, where tools such as Supabase's CLI dial them, and stops when the container goes. A port something in the
+  session already listens on, or one of the session's own (6379, 7681 to 7688), is left alone. Its log is
+  `/tmp/woodshed-docker-ports.log` in the session.
+
+What to know:
+
+- **Containers Claude starts outlive the session.** They carry no label of Woodshed's, so removing the session does not
+  remove them: `docker ps` lists them, and `docker rm -f` (or `docker compose -p <project> down`) removes them.
+- **Two sessions' stacks share the machine's ports and names.** Claude is told to name a stack after its session and
+  to give a second one other ports, but a compose file with fixed ports and a fixed name collides with itself.
+- **An app's browser-side address does not reach your phone.** An env file line such as
+  `SUPABASE_URL=http://127.0.0.1:54321` in an Expo web app works in the session's own Playwright browser, through the
+  forward, but Open app reaches only the app's own port, so the page on your phone cannot reach Supabase.
+- **On Linux**, the forward reaches a port through `host.docker.internal`, the sessions' network gateway: a port a
+  container publishes on `127.0.0.1` alone is not reachable there, only one published on every address.
+
 ## From your other devices, with Tailscale
 
 The console listens on loopback alone. To use it from your phone or another computer, Tailscale's `serve` puts it at
@@ -212,6 +254,8 @@ and what tripped up the first install on a plain VM (Ubuntu 24.04, for a repo wi
   admin. Let the proxy answer only your IP until the App is in, then set `WOODSHED_REQUIRE_SIGN_IN=1` and open it.
 - **Docker skips the firewall, both ways.** A published port (`-p 5432:5432`, `ports:` in a compose file) is open to
   the internet whatever ufw says: publish on `127.0.0.1` or not at all, and check the repo's own compose file too.
+  Sessions use the machine's Docker ("Docker in a session", above), so what Claude starts publishes the same way:
+  keep the provider's firewall in front of the machine, and remember that whoever starts a session has root here.
   The other way, ufw's default deny drops the sessions' calls to the session API: allow the sessions' bridge in on
   7691 only (`ufw allow in on br-<network id> to <gateway> port 7691 proto tcp`).
 - **The repo's own services.** Without each session's own databases (the table above),
@@ -369,6 +413,9 @@ retry, which the GitHub poll then finds.
    docker ps -aq --filter label=woodshed-cloud.session | xargs -r docker rm -f
    docker ps -aq --filter label=woodshed.db-admin=1 | xargs -r docker rm -f
    ```
+
+   Containers that sessions started with this machine's Docker carry no label of ours: `docker ps` lists them, to
+   remove by name.
 
 3. Delete the folders the settings name: the state folder, the secrets folder and its key, the homes folder and the
    data folder. The secrets go with the key alone, but the data folder holds every session's databases in the clear.

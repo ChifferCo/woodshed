@@ -34,8 +34,11 @@ then, not an install setting. For this machine, ask in the same message:
   own devices, and say which are not if any. Owning every device is not enough: a server on the tailnet that other
   people have a shell on (a shared dev box, a CI runner, a teammate's VM) reaches a console with no sign-in as them.
   List the Linux and server peers from `tailscale status` and ask about each: who else logs in to it? Any with other
-  people on it means "others too", or taking that machine off the tailnet first. Others too: the GitHub App and sign-in become required, and Open app needs
-  a domain of their own (`WOODSHED_TAILSCALE=shared`). `docs/self-host.md`, "From your other devices", has both.
+  people on it means "others too", or taking that machine off the tailnet first. Only them also means this, said once
+  and plainly: sessions use this machine's Docker (for a repo's compose services, Supabase local or Testcontainers),
+  so Claude in a session can do anything on this machine. `WOODSHED_SESSION_DOCKER=0` turns that off. Others too: the GitHub App and sign-in become required, and Open app needs
+  a domain of their own (`WOODSHED_TAILSCALE=shared`), and anyone who can start a session has this machine through its
+  Docker, as on a server (step 1 of the briefing). `docs/self-host.md`, "From your other devices", has both.
 
 Someone who only wants to see the console needs none of this:
 `node console/bin/devConsole.mjs`, then `http://localhost:7690/s/aaaa1111`.
@@ -57,7 +60,12 @@ the like) at the prompt, so its output lands here. Never ask for a token in the 
    Caddy on a server; the Terraform in their AWS account and roughly what it costs idle, from `providers/aws/README.md`,
    "Costs"), what runs afterwards and on which address, what is open to the network and what is not, and how long the
    slow part takes (the session image's first build: a few minutes on this machine, where it holds no repository;
-   several on a server or AWS; longer with no published runtime).
+   several on a server or AWS; longer with no published runtime). On a server, and on this machine when others use it,
+   say this plainly, once, and ask nothing about it: sessions use the machine's Docker, so anyone who can start a
+   session (a GitHub label or comment included) gets root on the machine. That reaches the secrets key, so every stored
+   secret and Claude token, and every other session's containers and databases. Only people they would give root on
+   the box should be able to start sessions there, or `WOODSHED_SESSION_DOCKER=0` turns it off. AWS sessions never get
+   it.
 2. **What the checks found**: what is ready, and what they must fix first.
 3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
    so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).
