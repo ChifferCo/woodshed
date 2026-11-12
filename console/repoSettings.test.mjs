@@ -9,6 +9,10 @@ import {
   createRepoSettings, installationEnvName, installationInstructionsName, legacyFileRoute, personalEnvName, personalInstructionsName, repoSettingsRoute,
 } from './repoSettings.mjs';
 import { createUserSettings } from './userSettings.mjs';
+import { writeEnvFiles, writtenLines } from '../shared/project.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createHandler } from './server.mjs';
 import { parseProject } from '../shared/project.mjs';
 
@@ -178,7 +182,7 @@ test('the copy at start moves the legacy env files and own lines into the new na
   const envFiles = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }, { secret: 'empty-env', path: 'x/.env' }];
   const { store, repoSettings } = setup({ state, secrets, envFiles });
 
-  assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 1, kept: 1, none: 1, failed: 0 });
+  assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 1, kept: 1, none: 1, done: 0, failed: 0 });
   assert.equal(secrets.values.get('repos/app/env/api-env'), 'API_URL=http://legacy\n');
   assert.equal(secrets.values.get('repos/app/env/web-env'), 'NEXT_PUBLIC_A=2\n', 'the value already there stays');
   assert.equal(secrets.values.get('users/sam-ops/repos/app/env/api-env'), 'LOG_LEVEL=debug\n');
@@ -188,7 +192,7 @@ test('the copy at start moves the legacy env files and own lines into the new na
   assert.deepEqual(store.state.repoSettings.app.env['api-env'].by, 'terraform env_files');
 
   const before = { state: structuredClone(store.state), secrets: new Map(secrets.values) };
-  assert.deepEqual(await repoSettings.migrate(), { copied: 0, ownCopied: 0, kept: 3, none: 1, failed: 0 });
+  assert.deepEqual(await repoSettings.migrate(), { copied: 0, ownCopied: 0, kept: 2, none: 1, done: 1, failed: 0 });
   assert.deepEqual(store.state, before.state, 'a second start changes no record');
   assert.deepEqual(secrets.values, before.secrets, 'nor any value');
 });
@@ -201,9 +205,9 @@ test('a copy that fails is tried again at the next start, and the others go ahea
     return save(name, value);
   };
   const { repoSettings } = setup({ secrets, envFiles: [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env' }] });
-  assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 0, kept: 0, none: 0, failed: 1 });
+  assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 0, kept: 0, none: 0, done: 0, failed: 1 });
   secrets.save = save;
-  assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 0, kept: 1, none: 0, failed: 0 });
+  assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 0, kept: 0, none: 0, done: 1, failed: 0 });
 });
 
 test('forget deletes a removed repo\'s values, the installation\'s and everyone\'s, and leaves the other repos\'', async () => {
@@ -448,4 +452,52 @@ test('the old route names a Terraform env file only; tmux-conf and anything else
   assert.deepEqual(legacyFileRoute('/api/my/files/api-env', config), { scope: 'legacy', project: null, key: 'api-env', reset: false, instructions: false, remove: false });
   assert.equal(legacyFileRoute('/api/my/files/api-env/reset', config).reset, true);
   for (const path of ['/api/my/files/tmux-conf', '/api/my/files/web-env', '/api/my/files/api-env/x']) assert.equal(legacyFileRoute(path, config), null, path);
+});
+
+test('an installation value the start copied, once cleared, stays cleared after the next starts, and sessions read the Terraform secret again', async () => {
+  const secrets = memorySecrets({ 'api-env': 'API_URL=http://legacy\n' });
+  const envFiles = [{ secret: 'api-env', path: 'api/.env' }];
+  const { store, repoSettings } = setup({ secrets, envFiles });
+  await repoSettings.migrate();
+  assert.equal(secrets.values.get('repos/app/env/api-env'), 'API_URL=http://legacy\n');
+
+  const lines = await captureLog(() => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: '', by: 'mia-dev' }));
+  assert.ok(lines.some((l) => l.includes('repoSettings: legacy copy turned off for a cleared value')));
+  assert.deepEqual(Object.keys(store.state.repoSettingsMigration.cleared), ['api-env'], 'a date by name, no value');
+  assert.ok(!JSON.stringify(store.state).includes('legacy'), 'no value in state.json');
+  // Two more starts of the console.
+  assert.deepEqual(await repoSettings.migrate(), { copied: 0, ownCopied: 0, kept: 0, none: 0, done: 1, failed: 0 });
+  await repoSettings.migrate();
+  assert.equal(secrets.values.has('repos/app/env/api-env'), false, 'still cleared');
+  assert.equal(repoSettings.legacyState('api-env').saved, false, 'the Secrets page offers Replace again');
+
+  // A session: the console hands out no installation value, so the env file is the Terraform secret's, with the warning.
+  const settings = await repoSettings.forSession({ id: 's1', project: 'app', owner: null });
+  assert.equal(settings.envFiles['api-env'], undefined);
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleared-'));
+  const project = { envFiles: [{ path: 'api/.env', key: 'api-env', secret: 'api-env', defaults: [], lines: [] }] };
+  const written = writeEnvFiles({ project, repoDir, env: { API_ENV: 'API_URL=http://legacy\n' }, settings: { ...settings, envFiles: {} } });
+  assert.match(fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8'), /API_URL=http:\/\/legacy/);
+  assert.ok(writtenLines({ written, settings, project }).some((l) => /WARNING: api\/\.env from the legacy env file secret api-env/.test(l)));
+  fs.rmSync(repoDir, { recursive: true, force: true });
+});
+
+test('an installation value saved before the copy ran, then cleared, is not copied in either', async () => {
+  const secrets = memorySecrets({ 'api-env': 'A=1\n' });
+  const { repoSettings } = setup({ secrets, envFiles: [{ secret: 'api-env', path: 'api/.env' }] });
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'B=2\n', by: 'mia-dev' });
+  await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: '', by: 'mia-dev' });
+  await repoSettings.migrate();
+  assert.equal(secrets.values.has('repos/app/env/api-env'), false);
+});
+
+test('a person\'s own value cleared after the copy stays cleared after the next start', async () => {
+  const secrets = memorySecrets({ 'users/sam-ops/api-env': 'OLD=1\n' });
+  const state = { people: { 'sam-ops': { files: { 'api-env': 'x' } } } };
+  const { repoSettings } = setup({ state, secrets, envFiles: [{ secret: 'api-env', path: 'api/.env' }] });
+  await repoSettings.migrate();
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: '' });
+  await repoSettings.migrate();
+  assert.equal(secrets.values.has('users/sam-ops/repos/app/env/api-env'), false);
+  assert.equal((await repoSettings.forSession({ id: 's2', project: 'app', owner: 'sam-ops' })).envFiles['api-env'], undefined);
 });

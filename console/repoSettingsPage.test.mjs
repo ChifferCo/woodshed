@@ -340,3 +340,16 @@ test('a console with no secret store says nothing can be saved, and turns the ed
   assert.match(textOf(app), /This console has no secret store, so nothing can be saved here\./);
   assert.equal(editorOf(app, 'env-api-env').disabled, true);
 });
+
+test('a copied value, cleared, says sessions read the Terraform secret again, not that they read the copy', async () => {
+  const { app } = await loadPage({
+    before: async ({ secrets, repoSettings }) => {
+      secrets.values.set('api-env', 'A=1\n');
+      await repoSettings.migrate();
+      await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: '', by: 'mia-dev' });
+      await repoSettings.migrate();
+    },
+  });
+  assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
+  assert.doesNotMatch(textOf(app), /Sessions read this one now/);
+});

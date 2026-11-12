@@ -1678,12 +1678,15 @@ the keys each layer gave and whether each has instructions. The session writes t
 At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
 `repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
 `users/<login>/repos/<default project>/env/<secret>`, only where the new name has no value yet: a value already there
-is never replaced, so a second start copies nothing. Once a person saves or clears their own values for one of those
+is never replaced, so a second start copies nothing. Each installation name is copied once: one copied before, or
+cleared on its page since, is skipped at every later start (`repoSettingsMigration.files` and `.cleared` in
+`state.json`, dates by name; `repoSettings: legacy copy turned off for a cleared value`), so a Clear stays cleared
+and sessions read the Terraform secret again, with their warning. Once a person saves or clears their own values for one of those
 files, their old lines for it (`users/<login>/<secret>`) are deleted (`repoSettings: legacy own lines removed, repo
 settings hold them now`): a session would fall back to them whenever the new value is empty, and the next start would
 copy them back, so a Clear would not stay cleared. It logs `repoSettings: legacy env file copied` (`project`, `key`,
-`bytes`), `legacy own lines copied` (`login`, `key`) and `legacy copy checked` with how many were copied, kept, empty or
-failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. A session
+`bytes`), `legacy own lines copied` (`login`, `key`) and `legacy copy checked` with how many were copied, kept, empty,
+done before or failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. A session
 reads a Terraform secret only for a file that has no value in Repo settings, and logs a warning when it does.
 
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the

@@ -165,8 +165,8 @@
   function legacyNote(f) {
     if (!f.legacy) return null;
     const secret = h('code', null, f.legacy.secret);
-    if (f.legacy.copiedAt) return h('p', { class: 'cap-note' }, 'Copied from the Terraform secret ', secret, ` on ${W.when(f.legacy.copiedAt)}. Sessions read this one now.`);
     if (!f.installation) return h('p', { class: 'cap-note' }, 'No values yet: sessions still read the Terraform secret ', secret, '.');
+    if (f.legacy.copiedAt) return h('p', { class: 'cap-note' }, 'Copied from the Terraform secret ', secret, ` on ${W.when(f.legacy.copiedAt)}. Sessions read this one now.`);
     return h('p', { class: 'cap-note' }, 'Sessions read these values now, not the Terraform secret ', secret, '.');
   }
 

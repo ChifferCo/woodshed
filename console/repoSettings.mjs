@@ -154,9 +154,24 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     requireSecrets();
     await secrets.remove(nameOf({ login, project, key }));
     writeRecord({ login, project, key, record: null });
+    if (key && !login) noteCleared(project, key);
     if (!key) console.log('repoSettings: instructions cleared', { layer: login ? 'personal' : 'installation', project, by });
     else if (login) console.log('repoSettings: own values cleared', { project, key, login });
     else console.log('repoSettings: installation values cleared', { project, key, by });
+  }
+
+  // The start-time copy runs once per name: a Terraform env file cleared here stays cleared, so sessions read the
+  // Terraform secret again (the documented fallback) rather than get the copy back at the next start. Dates only.
+  function isLegacyName(project, key) {
+    return project === defaultProject(config).name && (config.envFiles ?? []).some((f) => f.secret === key);
+  }
+
+  function noteCleared(project, key) {
+    if (!isLegacyName(project, key)) return;
+    const before = store.state.repoSettingsMigration ?? { from: MIGRATED_FROM };
+    store.state.repoSettingsMigration = { ...before, cleared: { ...before.cleared, [key]: new Date(now()).toISOString() } };
+    store.save();
+    console.log('repoSettings: legacy copy turned off for a cleared value', { project, key });
   }
 
   // Saving nothing clears the layer.
@@ -405,11 +420,12 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   /**
    * At each start: the Terraform env file secrets (WOODSHED_ENV_FILES) and each person's own lines for them into the
-   * default project's new names. A name that has a value already is left as it is, so a second run copies nothing.
-   * @returns {Promise<{copied: number, ownCopied: number, kept: number, none: number, failed: number}>}
+   * default project's new names. A name that has a value already is left as it is, so a second run copies nothing;
+   * an installation name copied once, or cleared on the page, is never copied again (`done`), so a clear stays.
+   * @returns {Promise<{copied: number, ownCopied: number, kept: number, none: number, done: number, failed: number}>}
    */
   async function migrate() {
-    const counts = { copied: 0, ownCopied: 0, kept: 0, none: 0, failed: 0 };
+    const counts = { copied: 0, ownCopied: 0, kept: 0, none: 0, done: 0, failed: 0 };
     const legacy = config.envFiles ?? [];
     const main = defaultProject(config);
     if (!legacy.length || !main.repo) return counts;
@@ -429,8 +445,13 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
         return 'failed';
       }
     };
+    const record = store.state.repoSettingsMigration;
     for (const { secret } of legacy) {
       const to = { project: main.name, key: secret };
+      if (record?.files?.[secret] || record?.cleared?.[secret]) {
+        counts.done += 1;
+        continue;
+      }
       const result = await attempt({ project: main.name, key: secret }, { from: secret, to, record: { savedAt: at, by: MIGRATED_FROM } }, () => {
         console.log('repoSettings: legacy env file copied', { project: main.name, key: secret, bytes: recordOf(to).bytes });
       });
@@ -449,7 +470,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     }
     if (counts.copied || counts.ownCopied) {
       const before = store.state.repoSettingsMigration;
-      store.state.repoSettingsMigration = { copiedAt: at, from: MIGRATED_FROM, files: { ...before?.files, ...files } };
+      store.state.repoSettingsMigration = { ...before, copiedAt: at, from: MIGRATED_FROM, files: { ...before?.files, ...files } };
       store.save();
     }
     console.log('repoSettings: legacy copy checked', { project: main.name, ...counts });
