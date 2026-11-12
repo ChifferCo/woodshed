@@ -34,7 +34,8 @@
   }
 
   // Each file goes to the console as it is picked (attachments.mjs); Start names the ones still on the list.
-  function createAttachments(onChange) {
+  // `extra`: controls that sit after Attach files, before its hint.
+  function createAttachments(onChange, ...extra) {
     const chips = h('div', { class: 'attach-chips' });
     const hint = h('span', { class: 'hint' }, 'or paste / drag & drop');
     const input = h('input', { type: 'file', multiple: true, hidden: true });
@@ -89,7 +90,7 @@
 
     input.addEventListener('change', () => { add([...input.files]); input.value = ''; });
     return {
-      el: h('div', { class: 'attach-row' }, button, hint, input),
+      el: h('div', { class: 'attach-row' }, button, ...extra, hint, input),
       chips,
       add,
       ids: () => files.map((f) => f.id).filter(Boolean),
@@ -240,6 +241,49 @@
     };
   }
 
+  // Dictate beside Attach files: the browser's speech recognition writes into the prompt after what is typed
+  // (dictation.js), and the line under the prompt shows the words still settling. Hidden where the browser has none.
+  function createDictation(prompt) {
+    let listening = null;
+    const heard = h('span', { class: 'dictate-heard' });
+    const line = h('p', { class: 'dictate-line', hidden: true, 'aria-live': 'polite' }, 'Listening. Stop when you are done. ', heard);
+    const button = h('button', { type: 'button', class: 'btn btn-plain btn-sm', hidden: !W.dictation.available, 'aria-pressed': 'false',
+      title: 'Speak the prompt', onclick: () => (listening ? listening.stop() : listen()) }, 'Dictate');
+    function draw() {
+      button.textContent = listening ? 'Stop' : 'Dictate';
+      button.setAttribute('aria-pressed', String(Boolean(listening)));
+      line.hidden = !listening;
+    }
+    function listen() {
+      const mine = W.dictation.dictate(prompt, {
+        heard: (pending) => { heard.textContent = pending; },
+        ended: () => {
+          if (listening === mine) listening = null;
+          draw();
+        },
+      });
+      listening = mine;
+      draw();
+      prompt.focus();
+    }
+    return {
+      button,
+      line,
+      // The page moved away from New session: the mic goes off, and the words it heard stay in the prompt.
+      stop() {
+        listening?.stop();
+      },
+      // Start pressed while it listens: the words on screen are the words sent, the ones still settling too.
+      finish() {
+        if (!listening) return;
+        const words = listening.abort();
+        listening = null;
+        if (words) prompt.value = `${prompt.value.replace(/\s*$/, '')} ${words}`.trimStart();
+        draw();
+      },
+    };
+  }
+
   /** @returns {{el: HTMLElement, update: (me: object) => void}} */
   function createLauncher() {
     const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
@@ -253,8 +297,9 @@
     const projects = createProjectPicker(() => { if (me) update(me); });
     const note = h('span', { class: 'sub' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
-    const attachments = createAttachments(() => { start.disabled = attachments.sending(); });
-    const promptWrap = h('div', { class: 'prompt-wrap' }, prompt, createSkillMenu(prompt, () => projects.value()));
+    const dictation = createDictation(prompt);
+    const attachments = createAttachments(() => { start.disabled = attachments.sending(); }, dictation.button);
+    const promptWrap = h('div', { class: 'prompt-wrap' }, prompt, dictation.line, createSkillMenu(prompt, () => projects.value()));
     promptWrap.addEventListener('dragover', (e) => {
       if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
       e.preventDefault();
@@ -369,6 +414,7 @@
     const full = () => Boolean(me && me.running >= me.limit);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      dictation.finish();
       const reviewOnly = !prompt.value.trim() && workOn.value.trim();
       if (!prompt.value.trim() && !reviewOnly) return prompt.focus();
       start.disabled = true;
@@ -428,7 +474,7 @@
       void card.offsetWidth;
       card.classList.add('is-nudged');
     }
-    return { el, update, applyQuery, nudge };
+    return { el, update, applyQuery, nudge, stopDictating: dictation.stop };
   }
 
   W.createLauncher = createLauncher;

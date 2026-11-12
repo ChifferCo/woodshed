@@ -890,6 +890,9 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .prompt-wrap.is-dragover .field { border-color: var(--amber); background: var(--amber-tint); }
 .attach-row { display: flex; align-items: center; gap: 10px; }
 .attach-row .hint.is-error { color: var(--bad); }
+/* Dictate's line while it listens (launcher.js): a word, no motion; the words still settling in mono. */
+.dictate-line { margin: 6px 0 0; color: var(--sub); font-size: 12.5px; }
+.dictate-heard { color: var(--meta); font-family: var(--mono); font-size: 12px; }
 .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .attach-chips:empty { display: none; }
 .attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 4px 3px 3px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }

@@ -154,7 +154,7 @@ import { readMyPulls } from './myPulls.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -168,6 +168,7 @@ const STATIC_FILES = {
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
+  'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',

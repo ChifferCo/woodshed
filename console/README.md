@@ -286,6 +286,11 @@ asks for a prompt and, optionally:
   listing their paths under the prompt as the shed does. They go with the
   session's Remove.
 
+**Dictate**, beside Attach files, speaks the prompt with the browser's speech recognition (`public/dictation.js`,
+shared with the phone's message box): settled words go after what is typed, the line under the prompt shows the ones
+still settling, and **Stop**, or Start, keeps them. It is hidden where the browser has none (Firefox). Chrome and Edge
+send the audio to Google and Microsoft, Safari to Apple; the console sees only the text.
+
 `/` in the prompt lists the repo's skills (`.claude/skills/*/SKILL.md`) and
 commands (`.claude/commands/<folder>/<name>.md`, as `<folder>:<name>`) on its
 default branch, read by the console in one GraphQL call and kept for an hour.
