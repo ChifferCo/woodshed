@@ -35,8 +35,10 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
+  // The base is a branch the clone has never fetched, as for a stacked pull request.
   execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed && echo 'Sign in as demo.' > .woodshed/qa.md &&
-    git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git update-ref refs/remotes/origin/main HEAD`]);
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git init -q --bare "${dir}/origin.git" &&
+    git push -q "${dir}/origin.git" HEAD:refs/heads/stacked-base && git remote add origin "${dir}/origin.git"`]);
 
   const statusdCalls = [];
   const statusd = await listen((req, res) => {
@@ -55,7 +57,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   t.after(() => { statusd.close(); consoleServer.close(); });
 
   const env = {
-    ...process.env, PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'main',
+    ...process.env, PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
     STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}),
   };

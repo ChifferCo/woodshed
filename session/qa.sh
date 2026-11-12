@@ -91,6 +91,8 @@ main() {
     finish 'the project file names no app'
   fi
   appUrl="http://localhost:$port"
+  # A pr session fetches only the default branch, and a stacked pull request merges into another.
+  git fetch --quiet origin "+refs/heads/$QA_BASE:refs/remotes/origin/$QA_BASE" || say "Could not fetch $QA_BASE: the planner's diff will fail"
   if git show "origin/$QA_BASE:$NOTES" > "$DIR/notes.md" 2>/dev/null; then say "QA notes: $NOTES"; else rm -f "$DIR/notes.md"; say "No QA notes on $QA_BASE"; fi
   node "$QA" prompts "$DIR" --app-url "$appUrl" --base "$QA_BASE" --notes "$DIR/notes.md"
   gatherContext
