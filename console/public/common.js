@@ -109,7 +109,7 @@
       if (s.state === 'done' && s.shells > 0 && s.prUrl) return { key: 'job', word: 'waiting on a job' };
       if (s.state === 'done') return { key: 'done', word: 'done' };
       if (s.state === 'starting') return { key: 'starting', word: 'starting' };
-      return { key: 'idle', word: 'claude exited' };
+      return { key: 'idle', word: `${agentOf(s)} exited` };
     }
     if (!isLive(s) && s.kept && !s.owner) {
       if (s.prClosedAt) return { key: 'merged', word: s.prMerged ? 'merged' : 'closed' };
@@ -304,7 +304,7 @@
   // Resume on a stopped shared session: the same session again, on its branch and databases, with its conversation.
   function resumeSharedButton(s, { small = false, onDone, message = () => '' }) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again where it was: its branch, databases and claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: `Start it again where it was: its branch, databases and ${agentOf(s)}'s conversation`,
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -384,7 +384,7 @@
     ['branch', 'Checking out the branch', 'checkout'],
     ['databases', 'Getting its databases', 'databases'],
     ['env', 'Writing the env files and the prompt', 'env files'],
-    ['claude', 'Opening claude', 'opening claude'],
+    ['claude', 'Opening the agent', 'opening the agent'],
   ].filter(([, label]) => label);
 
   /** @returns {{steps: {key: string, label: string, short: string, state: 'done'|'now'|'next', seconds: number|null}[], current: object|null}} */
@@ -392,7 +392,10 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    const steps = START_STEPS.map(([key, label, short], i) => {
+    // The last step opens the session's own agent: claude, or codex.
+    const agent = agentOf(s);
+    const steps = START_STEPS.map(([key, l, sh], i) => {
+      const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
       const doneAt = at[key] ? Date.parse(at[key]) : null;
       const state = i <= last ? 'done' : i === last + 1 ? 'now' : 'next';
       const end = state === 'now' ? nowMs : doneAt;
@@ -413,6 +416,16 @@
   function ref(s) {
     if (!s.number) return '';
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
+  }
+
+  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  function agentOf(s) {
+    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+  }
+
+  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  function agentTitle(s) {
+    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
   }
 
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
@@ -570,8 +583,9 @@
     }, label);
   }
 
-  function setupAppToast(sent) {
-    return sent === 'queued' ? 'claude will be asked to set up the app when its turn ends' : 'Asked claude to set up the app';
+  function setupAppToast(sent, s) {
+    const agent = agentOf(s);
+    return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
   }
 
   /**
@@ -617,14 +631,14 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: 'This project\'s .woodshed/project.yaml has no app, so there is nothing to start. Asks claude to work out how the app runs and write it there.',
+        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
         onclick: async (e) => {
           e.preventDefault();
           e.stopPropagation();
           setup.disabled = true;
           try {
             const { sent } = await appAction(s, 'setup');
-            window.Woodshed.shell?.toast(setupAppToast(sent));
+            window.Woodshed.shell?.toast(setupAppToast(sent, s));
           } catch (err) {
             window.alert(`Could not set up the app: ${err.message}`);
           }
@@ -779,8 +793,8 @@
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
-    const agent = s.options?.agent === 'codex' ? 'codex' : 'claude';
-    const agentSessions = sessions.filter((o) => o.owner === s.owner && (o.options?.agent === 'codex' ? 'codex' : 'claude') === agent);
+    const agent = agentOf(s);
+    const agentSessions = sessions.filter((o) => o.owner === s.owner && agentOf(o) === agent);
     const newest = agentSessions.filter((o) => o.planUsage && (o.planUsage.agent ?? 'claude') === agent).map((o) => o.planUsage)
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
@@ -1145,7 +1159,7 @@
 
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
-    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
+    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
