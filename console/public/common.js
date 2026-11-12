@@ -638,9 +638,32 @@
     return all.filter(({ pr }, i) => i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'));
   }
 
-  /** @returns {HTMLElement[]}  a chip for each pull request shownPrs gives */
-  function prChips(s, opts) {
-    return shownPrs(s).map(({ url, pr }) => prChip({ prUrl: url, pr, branch: s.branch }, opts));
+  /**
+   * A chip for each pull request shownPrs gives, the newest `max` of them; the older ones fold into a `+N` chip whose
+   * tooltip names each with its state. Details on a stopped session lists them all.
+   * @returns {HTMLElement[]}
+   */
+  function prChips(s, { max = 2, ...opts } = {}) {
+    const shown = shownPrs(s);
+    const folded = shown.slice(0, Math.max(0, shown.length - max));
+    const chips = shown.slice(folded.length).map(({ url, pr }) => prChip({ prUrl: url, pr, branch: s.branch }, opts));
+    if (!folded.length) return chips;
+    const tip = folded.map(({ url, pr }) => [prNumber(url), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
+    return [h('span', {
+      class: 'prchip is-more', title: `${folded.length} more pull request${folded.length === 1 ? '' : 's'}:\n${tip}`,
+      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url)).join(', ')}`,
+    }, `+${folded.length}`), ...chips];
+  }
+
+  /**
+   * Every pull request the session opened, a merged or closed one its chips no longer show too, oldest first: a link
+   * each, with its state and title, one to a line.
+   */
+  function prLines(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.map(({ url, pr }, i) => [i ? h('br') : null,
+      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url)),
+      pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
   }
 
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
@@ -1049,6 +1072,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, clock, prChip, prChips, shownPrs, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

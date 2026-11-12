@@ -906,7 +906,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 
 /* ---- session info: the pull request's chip, the container's usage, the app log ---- */
 .prchip { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 5px; border: 1px solid #a8ddc0; border-radius: 4px; background: #e8f6ee; color: #1a7f4b; font: 600 10.5px/1.6 var(--mono); text-decoration: none; white-space: nowrap; }
-.prchip.is-draft { border-color: #d8d3ca; background: #f1f0ed; color: #6e7681; }
+.prchip.is-draft, .prchip.is-more { border-color: #d8d3ca; background: #f1f0ed; color: #6e7681; }
 .prchip.is-merged { border-color: #cdb8f0; background: #f2ecfd; color: #7a4fc0; }
 .prchip.is-closed { border-color: #f0bdb8; background: #fbeceb; color: #b3261e; }
 .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
@@ -918,7 +918,7 @@ a.prchip:hover { border-color: currentColor; }
 .pane-bar .prchip { border-color: var(--bar-well-line); background: var(--bar-well); color: var(--bar-green); }
 .pane-bar .prchip.is-merged { color: #b190f5; }
 .pane-bar .prchip.is-closed { color: #f08b81; }
-.pane-bar .prchip.is-draft { color: var(--bar-sub); }
+.pane-bar .prchip.is-draft, .pane-bar .prchip.is-more { color: var(--bar-sub); }
 .pane-bar .prchip.is-queued { color: #e6c04a; }
 .usage { font: 10.5px var(--mono); color: var(--meta); white-space: nowrap; }
 .usage.is-warn { color: var(--needs); }
@@ -956,13 +956,13 @@ a.prchip:hover { border-color: currentColor; }
 .prow.is-busy { opacity: 0.6; pointer-events: none; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .prchip { border-color: #1f4d36; background: #132a1f; color: #57c785; }
-  :root:not([data-theme="light"]) .prchip.is-draft { border-color: #3a4152; background: #21252e; color: #8a93a8; }
+  :root:not([data-theme="light"]) .prchip.is-draft, :root:not([data-theme="light"]) .prchip.is-more { border-color: #3a4152; background: #21252e; color: #8a93a8; }
   :root:not([data-theme="light"]) .prchip.is-merged { border-color: #4a3878; background: #241b3a; color: #b190f5; }
   :root:not([data-theme="light"]) .prchip.is-closed { border-color: #6b2b26; background: #2d1614; color: #f08b81; }
   :root:not([data-theme="light"]) .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
 }
 :root[data-theme="dark"] .prchip { border-color: #1f4d36; background: #132a1f; color: #57c785; }
-:root[data-theme="dark"] .prchip.is-draft { border-color: #3a4152; background: #21252e; color: #8a93a8; }
+:root[data-theme="dark"] .prchip.is-draft, :root[data-theme="dark"] .prchip.is-more { border-color: #3a4152; background: #21252e; color: #8a93a8; }
 :root[data-theme="dark"] .prchip.is-merged { border-color: #4a3878; background: #241b3a; color: #b190f5; }
 :root[data-theme="dark"] .prchip.is-closed { border-color: #6b2b26; background: #2d1614; color: #f08b81; }
 :root[data-theme="dark"] .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }

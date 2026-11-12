@@ -356,7 +356,9 @@ And what the shed shows about each session:
   counts on hover. A session that opens another pull request keeps each one
   it reported (`prUrls`, oldest first) and shows a chip for each, but a merged
   or closed one only while no newer one came after it, so the newest always
-  stays; Details on a stopped session lists them all. The console reads every session's pull request in one
+  stays. The card and pane bar show the newest two of those, a phone's bar
+  the newest one, and the older fold into a `+N` chip that names each on hover;
+  Details lists every one (the 20 newest are kept) with its state. The console reads every session's pull request in one
   GraphQL call a minute with its App token (`console/prChips.mjs`), a merged
   or closed one every 15 minutes.
 - **CPU and memory**: the container's, from statusd's `/status`, after the

@@ -923,6 +923,8 @@
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
+      // One pull request is its chip; more are listed here, since the chips show only the newest.
+      s.prs?.length > 1 && row('Pull requests', W.prLines(s)),
       row('Started by', `${W.personText(s.startedBy)}, ${trigger}`),
       row(W.isLive(s) ? 'Running for' : 'Ran for', s.startedAt && W.duration(s.startedAt, s.stoppedAt)),
       row('Runs on', claude),
@@ -1034,7 +1036,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChips(s, { asLink: true }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1299,9 +1301,8 @@
 
   // Every pull request the session opened, a merged or closed one its card no longer shows too, one to a line.
   function prFact(s, none) {
-    const urls = s.prs?.length ? s.prs.map((p) => p.url) : s.prUrl ? [s.prUrl] : [];
-    if (urls.length < 2) return ['Pull request', urls[0] || none];
-    return ['Pull requests', urls.map((url, i) => [i ? h('br') : null, url])];
+    if ((s.prs?.length ?? 0) < 2) return ['Pull request', s.prUrl || none];
+    return ['Pull requests', W.prLines(s)];
   }
 
   // A stopped shared session that keeps its conversation and databases: why it stopped, what is kept, and Resume.
