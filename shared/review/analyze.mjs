@@ -36,13 +36,17 @@ const MAX_CONTEXT_PER_FILE = 12;
 export const ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  // `architecture`, `diagram` and `decisions` are required, for the same
-  // reason `role` is: left optional, models simply omit them, and the
-  // sections that make the artifact worth reading before the diff never
-  // render. An empty decisions array, or a diagram with no nodes, is allowed
-  // (minItems is deliberately absent) — a small change may make no choice
-  // worth weighing and have no structure worth drawing — but the model has to
-  // decide that rather than skip the field.
+  // `architecture` and `decisions` are required, for the same reason `role`
+  // is: left optional, models simply omit them, and the sections that make
+  // the artifact worth reading before the diff never render. An empty
+  // decisions array is allowed (minItems is deliberately absent) — a small
+  // change may make no choice worth weighing — but the model has to decide
+  // that rather than skip the field.
+  //
+  // `diagram` is the one optional field, on purpose: most changes work inside
+  // pieces whose connections stay as they were, and a before and after that
+  // are the same drawing is noise. The prompt asks for it only when the change
+  // rewires something, and reconcileDiagram drops one that shows no change.
   //
   // Kept deliberately small. A problem statement, a what-to-check list, a
   // tests list and a glossary were each tried as sections and cut again: each
@@ -59,7 +63,7 @@ export const ANALYSIS_SCHEMA = {
   // `diagram` is one graph, not two: each piece and edge says whether the
   // change added, removed or kept it, and the page draws the before and the
   // after from it in the same places (diagram.mjs).
-  required: ['overview', 'decisions', 'architecture', 'diagram', 'groups'],
+  required: ['overview', 'decisions', 'architecture', 'groups'],
   properties: {
     overview: { type: 'string' },
     decisions: {
@@ -260,16 +264,21 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     '     you write this is the section most likely to read better as a short list, or as a',
     '     two-column table of piece and responsibility, than as a wall of prose. Describe the',
     '     design AS IT NOW STANDS on this branch, not the delta. Aim for 1200 characters.',
-    '   - diagram: the pieces the architecture names and how they connect, which the page draws',
-    '     as a before and an after. One list of nodes: each a module, service, store or other',
-    '     piece, with a short id, a label under 30 characters in plain text (no backticks), and',
-    '     what this change does to it: added, removed, changed or unchanged. Then the edges, each',
-    '     from the piece that calls, sends to or depends on another, the way calls or data flow,',
-    '     with a label of two or three words and whether the change added, removed or kept it.',
+    '   - diagram: include it whenever the change alters how the pieces connect. That is a',
+    '     module, service or store added, removed or replaced, or a change in which piece calls,',
+    '     reads or feeds which. A new module that an existing one now calls counts, and is the',
+    '     most common case. Leave the field out only when every edit stays inside pieces whose',
+    '     connections are as they were (a bug fix in one function, a rename, a tweak to logic),',
+    '     or the change is docs, config or tests alone: a before and an after that look alike',
+    '     add nothing. The page draws it as a before and an after. One list of nodes: each a',
+    '     module, service, store or other piece, with a short id, a label under 30 characters',
+    '     in plain text (no backticks), and what this change does to it: added, removed,',
+    '     changed or unchanged. Then the edges, each from the piece that calls, sends to or',
+    '     depends on another, the way calls or data flow, with a label of two or three words',
+    '     and whether the change added, removed or kept it.',
     '     The before is drawn from everything not added and the after from everything not',
     '     removed, in the same places, so include the unchanged pieces the changed ones connect',
-    '     to and leave out what the change does not touch. At most twelve nodes. Leave both',
-    '     lists empty when the change has no structure worth drawing, such as docs or config.',
+    '     to and leave out what the change does not touch. At most twelve nodes.',
     '',
     '1. ORDER the changed files into groups ("acts") that make a reading order. The first act',
     '   should be whatever a reader must understand before anything else makes sense — usually',
@@ -537,8 +546,9 @@ function reconcileDecisions(decisions, known) {
 // is not removed, so the marks have to agree with each other: an edge to a
 // piece that was added cannot have been there before, and one from a piece
 // that was removed cannot be there after. An edge whose end is not a node
-// would draw to nowhere, and goes. Labels are drawn as plain text, so code
-// marks are taken out rather than shown.
+// would draw to nowhere, and goes. A missing diagram, the usual case, is an
+// empty one. Labels are drawn as plain text, so code marks are taken out
+// rather than shown.
 function reconcileDiagram(diagram) {
   const nodes = [];
   const edges = [];
@@ -569,5 +579,10 @@ function reconcileDiagram(diagram) {
     edges.push({ from: e.from, to: e.to, label: plain(e.label, MAX_EDGE_LABEL), change });
     if (edges.length >= MAX_EDGES) break;
   }
+  // A drawing in which nothing was added, removed or changed is the same
+  // picture twice: the model was asked to leave it out, and it goes here if
+  // it did not.
+  const moved = nodes.some((n) => n.change !== 'unchanged') || edges.some((e) => e.change !== 'unchanged');
+  if (!moved) return { nodes: [], edges: [] };
   return { nodes, edges };
 }

@@ -66,10 +66,12 @@ test('the schema imposes no maxLength anywhere', () => {
 
 test('the schema requires the fields the page renders before the diff', () => {
   // Anything optional here is a field models simply omit — which is how the
-  // role chip went missing before it was made required. architecture, its
-  // diagram and the decisions are the sections that make the artifact worth
-  // reading ahead of the code, so an omission is a silently emptier page.
-  assert.deepEqual(ANALYSIS_SCHEMA.required, ['overview', 'decisions', 'architecture', 'diagram', 'groups']);
+  // role chip went missing before it was made required. architecture and the
+  // decisions are the sections that make the artifact worth reading ahead of
+  // the code, so an omission is a silently emptier page. The diagram is the
+  // deliberate exception: drawn only when the change rewires something.
+  assert.deepEqual(ANALYSIS_SCHEMA.required, ['overview', 'decisions', 'architecture', 'groups']);
+  assert.ok(ANALYSIS_SCHEMA.properties.diagram, 'the diagram is still offered');
   assert.equal('questions' in ANALYSIS_SCHEMA.properties, false, 'the questions are folded into the decisions');
 });
 
@@ -257,5 +259,17 @@ test('the diagram keeps a graph the page can draw, and its marks agree', () => {
   ]);
 
   const none = reconcileArtifact({ artifact: { groups: [] }, files: FILES });
-  assert.deepEqual(none.diagram, { nodes: [], edges: [] });
+  assert.deepEqual(none.diagram, { nodes: [], edges: [] }, 'left out, as most analyses will');
+
+  const still = reconcileArtifact({
+    artifact: {
+      diagram: {
+        nodes: [{ id: 'a', label: 'a', change: 'unchanged' }, { id: 'b', label: 'b', change: 'unchanged' }],
+        edges: [{ from: 'a', to: 'b', label: 'calls', change: 'unchanged' }],
+      },
+      groups: [],
+    },
+    files: FILES,
+  });
+  assert.deepEqual(still.diagram, { nodes: [], edges: [] }, 'nothing moved, so before and after would be one picture');
 });

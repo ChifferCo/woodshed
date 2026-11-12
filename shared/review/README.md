@@ -424,10 +424,12 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   `clamp()` after the fact, where overrunning is free. There is a regression
   test.
 
-- **`decisions`, `architecture` and `diagram` are required fields, and there
-  are deliberately no more.** Left optional, models simply omit them, exactly as
-  they omitted `role`. An empty decisions list, or a diagram with no nodes, is
-  legal; a missing one is not. The decisions are what a reviewer has to agree
+- **`decisions` and `architecture` are required fields, and there are
+  deliberately no more.** Left optional, models simply omit them, exactly as
+  they omitted `role`. An empty decisions list is legal; a missing one is not.
+  `diagram` is optional on purpose: the prompt asks for it only when the change
+  rewires how pieces connect, and `reconcileArtifact` drops one in which
+  nothing was added, removed or changed, so most reviews show no drawing. The decisions are what a reviewer has to agree
   with before approving, each with the changed files that carry it, under the
   overview; a path not in the diff is dropped by `reconcileArtifact`. They are
   written as statements: questions for the reviewer were a section of their own
