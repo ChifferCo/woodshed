@@ -45,3 +45,11 @@ pullRequests:
       jobs: test
   mergeRisk:
     check: Merge risk
+  # QA in a Woodshed session: the `qa` label on a pull request starts a QA session on its branch, which tests it against
+  # the dev console app above and reports in the console's `QA` check, quoted by the decision brief. No `author`: the
+  # report is that check, and sessions comment as the App, whose login must never be trusted as a QA comment author.
+  qa:
+    runner: woodshed
+    label: qa
+    check: QA
+    heading: '## QA'

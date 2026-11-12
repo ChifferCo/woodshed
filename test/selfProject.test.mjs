@@ -33,7 +33,7 @@ test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s t
       rerun: '[woodshed-review]', commentAuthor: 'github-actions[bot]',
     },
     suites: [{ name: 'Check', workflow: '.github/workflows/check.yml', jobs: 'test', rerun: null }],
-    qa: null,
+    qa: { check: 'QA', label: 'qa', heading: '## QA', author: null, runner: 'woodshed' },
     mergeRisk: { check: 'Merge risk' },
   });
 });
