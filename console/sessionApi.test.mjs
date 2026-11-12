@@ -570,3 +570,56 @@ test('a private session\'s GitHub access is logged when decided and when it chan
   await tokenOf();
   assert.deepEqual(logged, ['full', 'repo'], 'a changed decision is logged again, once');
 });
+
+test('/repo-settings answers for the calling session\'s own project, a private one with its owner\'s layer, an ask session nothing', async (t) => {
+  const { createRepoSettings } = await import('./repoSettings.mjs');
+  const values = new Map([
+    ['repos/app/env/api-env', 'API_URL=http://app\n'], ['repos/tools/env/api-env', 'API_URL=http://tools\n'],
+    ['users/sam-ops/repos/app/env/api-env', 'LOG_LEVEL=debug\n'], ['repos/app/instructions', 'Be brief.\n'],
+  ]);
+  const secrets = { read: async (name) => values.get(name) ?? null, save: async () => {}, remove: async () => {} };
+  const record = { savedAt: 'x', bytes: 1, keys: [] };
+  const store = {
+    state: {
+      repoSettings: { app: { env: { 'api-env': record }, instructions: record }, tools: { env: { 'api-env': record } } },
+      people: { 'sam-ops': { repos: { app: { env: { 'api-env': record } } } } },
+    },
+    save() {},
+  };
+  const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }] };
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf: () => null });
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'private', owner: 'sam-ops', project: 'app' },
+    { id: 'bbbbbbbb', status: 'running', token: 'shared', owner: null, project: 'app' },
+    { id: 'cccccccc', status: 'running', token: 'qa', owner: null, project: 'app', qa: { number: 7 } },
+    { id: 'dddddddd', status: 'running', token: 'ask', owner: null, kind: 'ask' },
+    { id: 'eeeeeeee', status: 'running', token: 'tools', owner: 'sam-ops', project: 'tools' },
+  ];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: null, repoSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  // The body is ignored: a session cannot name another project.
+  const ask = (token) => request(port, { path: '/repo-settings', authorization: `Bearer ${token}`, body: JSON.stringify({ project: 'tools' }) });
+
+  assert.deepEqual(await ask('private'), {
+    status: 200,
+    body: {
+      project: 'app', envFiles: { 'api-env': { installation: 'API_URL=http://app\n', personal: 'LOG_LEVEL=debug\n' } },
+      instructions: { installation: 'Be brief.\n', personal: null }, personalFor: 'sam-ops',
+    },
+  });
+  const shared = {
+    status: 200,
+    body: { project: 'app', envFiles: { 'api-env': { installation: 'API_URL=http://app\n', personal: null } }, instructions: { installation: 'Be brief.\n', personal: null }, personalFor: null },
+  };
+  assert.deepEqual(await ask('shared'), shared);
+  assert.deepEqual(await ask('qa'), shared);
+  assert.equal((await ask('ask')).status, 404);
+  assert.deepEqual((await ask('tools')).body.envFiles, { 'api-env': { installation: 'API_URL=http://tools\n', personal: null } });
+  assert.equal((await ask('nobody')).status, 401);
+
+  secrets.read = async () => { throw new Error('ThrottlingException'); };
+  assert.equal((await ask('private')).status, 503, 'the entrypoint tries again');
+});

@@ -25,6 +25,8 @@
 //   POST /api/my/files/<file>/reset                clears them: the console's file alone again
 //   GET  /api/my/own-files       your own whole files, {"files": {"<path>": "<text>"}}, which your sessions write into the checkout
 //   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it
+//   GET  /api/my/repos[/<project>[/env/<key>|/instructions]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
+//   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
 //   GET  /auth/connect           Connect GitHub: sign in once more and keep the token, so your sessions push as you
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
@@ -77,7 +79,9 @@
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
-//   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
+//   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
+//   GET  /api/console-settings/repos/<project>[/env/<key>|/instructions]   a repo's settings, the installation's values (repoSettings.mjs)
+//   POST /api/console-settings/repos/<project>/env/<key>[/remove]|/instructions   {"text": "..."}   the installation's; empty clears
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
@@ -155,6 +159,7 @@ import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
+import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -520,8 +525,9 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null,
-  openaiTeamKey = null,
+  openaiTeamKey = null, repoSettings = null,
 }) {
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -1132,6 +1138,8 @@ export function createHandler({
     if (dbRestore?.busy(login)) return reply(res, 409, { error: 'a dump is being restored or applied: wait for it to finish' });
     // Disconnect first, which also ends at GitHub the token a running session may still hold.
     if (githubUser) await githubUser.disconnect(login);
+    // Before the record that lists them goes with removeAll.
+    if (repoSettings) await repoSettings.forgetPerson(login);
     if (userSettings) await userSettings.removeAll(login);
     const { stopped, removed } = await fleet.removePrivate(login);
     if (databases) await databases.remove(login);
@@ -1506,6 +1514,8 @@ export function createHandler({
         else {
           addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
+          // Its env values and instructions, the installation's and everyone's own: a repo added again starts with none.
+          await repoSettings?.forget(body.name);
           // A repo added again later under the same name starts on the console's channel.
           slack?.setProjectChannel({ project: body.name, channel: '', by });
         }
@@ -1599,6 +1609,8 @@ export function createHandler({
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
+    const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
+    if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
@@ -1734,6 +1746,8 @@ export function createHandler({
     }
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
+    const repoRead = repoSettingsApi && repoSettingsRoute(pathname);
+    if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
     if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));

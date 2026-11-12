@@ -2,6 +2,11 @@
 // tasks alone), on the base box's private address:
 //
 //   POST /github-token   Authorization: Bearer <SESSION_TOKEN>  ->  {"token": "...", "expiresAt": "..."}
+//   POST /repo-settings  Authorization: Bearer <SESSION_TOKEN>  ->  {"project", "envFiles": {"<key>": {"installation":
+//                        "<text>"|null, "personal": "<text>"|null}}, "instructions": {"installation", "personal"},
+//                        "personalFor": "<login>"|null}: the session's own project's repo settings (repoSettings.mjs),
+//                        the owner's own in a private session alone; 404 for an ask session, 503 while the store does
+//                        not answer
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...},
 //                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
@@ -111,7 +116,8 @@ export function sessionForToken(given, sessions) {
  *          askTokens?: {token: () => Promise<{token: string, expiresAt: number}>}|null,
  *          tokensFor?: ((session: object) => {project: string, default: boolean, sessions: object, asks: object})|null,
  *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
- *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null}} opts
+ *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null,
+ *          repoSettings?: {forSession: (session: object) => Promise<object|null>}|null}} opts
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
@@ -119,7 +125,7 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -155,7 +161,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -163,6 +169,7 @@ export function createSessionApi({
       return reply(res, 401, { error: 'unauthorized' });
     }
     if (pathname === '/settings') return settingsReply(res, session, userSettings, databases);
+    if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
@@ -261,6 +268,21 @@ async function starterToken(session, userSettings) {
   });
   if (!token) console.warn('sessionApi: the starter\'s Claude token is gone, the session uses the team key', { sessionId: session.id, plan: session.plan });
   return token;
+}
+
+// The session's own project's repo settings, which it never names: a session cannot ask for another repo's.
+async function repoSettingsReply(req, res, session, repoSettings) {
+  req.resume();
+  if (!repoSettings || isAsk(session)) return reply(res, 404, { error: 'no repo settings for this session' });
+  let answer;
+  try {
+    answer = await repoSettings.forSession(session);
+  } catch (err) {
+    console.warn('sessionApi: repo settings not read, the store did not answer', { sessionId: session.id, message: String(err?.message ?? err).split('\n')[0] });
+    return reply(res, 503, { error: 'the secret store did not answer: try again' });
+  }
+  if (!answer) return reply(res, 404, { error: 'no repo settings for this session' });
+  return reply(res, 200, answer);
 }
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
