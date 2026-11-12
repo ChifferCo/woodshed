@@ -30,10 +30,11 @@ const RESTART_DELAY_MS = 300;
 // What the console and its sessions use (projectTokens.mjs's SESSION_PERMISSIONS is the narrower set sessions get). Projects is
 // an organization permission. GitHub refuses a manifest that asks for the account permission Email addresses ("Default
 // permission records resource is not included in the list"), so the Slack match's verified emails are added to the App
-// by hand; without them sign-in matches on the public email alone (auth.mjs, emailsOf).
+// by hand; without them sign-in matches on the public email alone (auth.mjs, emailsOf). Checks is write so the console
+// can post a QA session's QA check; sessions' tokens keep it read, so no session posts a check.
 const PERMISSIONS = {
   contents: 'write', pull_requests: 'write', issues: 'write', actions: 'write',
-  metadata: 'read', checks: 'read', statuses: 'read', organization_projects: 'write',
+  metadata: 'read', checks: 'write', statuses: 'read', organization_projects: 'write',
 };
 
 function firstLine(err) {

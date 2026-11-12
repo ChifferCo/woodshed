@@ -192,7 +192,7 @@ export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
-  consoleLinks = async () => true, newId = newSessionId,
+  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null,
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -201,7 +201,7 @@ export function createFleet({
   const announcer = createPrAnnouncer({
     store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
     events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
-    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs,
+    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
   });
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();

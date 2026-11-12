@@ -384,6 +384,21 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       const updated = await ghApi(['--method', 'PATCH', `repos/${currentRepo()}/issues/comments/${commentId}`, '-f', `body=${body}`]);
       return updated?.id ?? null;
     },
+    /**
+     * Posts a finished check run on a commit, as the console's App. An installation that has not accepted the App's
+     * Checks write permission answers 403, which throws.
+     * @param {{sha: string, name: string, conclusion: 'success'|'failure'|'neutral', title: string, summary: string,
+     *          detailsUrl?: string|null, externalId?: string|null}} check
+     * @returns {Promise<string|null>}  the check's page
+     */
+    async createCheckRun({ sha, name, conclusion, title, summary, detailsUrl = null, externalId = null }) {
+      const fields = ['-f', `name=${name}`, '-f', `head_sha=${sha}`, '-f', 'status=completed', '-f', `conclusion=${conclusion}`,
+        '-f', `output[title]=${title}`, '-f', `output[summary]=${summary.slice(0, 60_000)}`];
+      if (detailsUrl) fields.push('-f', `details_url=${detailsUrl}`);
+      if (externalId) fields.push('-f', `external_id=${externalId}`);
+      const created = await ghApi(['--method', 'POST', `repos/${repo}/check-runs`, ...fields]);
+      return created?.html_url ?? null;
+    },
     async comment(number, body) {
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
       return created?.id ?? null;

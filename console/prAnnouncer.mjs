@@ -30,6 +30,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
 
 /**
  * @param {{store: {state: object, save: () => void}, github: object, slack: {available: boolean, postPr: Function}|null,
+ *          ownApp?: () => {slug: string, login: string}|null,
  *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
  *                    feedback?: (item: object, text: string) => Promise<void>|void,
@@ -47,7 +48,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  */
 export function createPrAnnouncer({
   store, github, githubOf = null, defaultProjectName = () => null, slack, gates: gatesOf = async () => null, now = Date.now, giveUpMs = () => DEFAULT_RETENTION.slackGiveUpMs,
-  qaWaitMs = () => DEFAULT_RETENTION.qaWaitMs, events = {}, webhooksFlowing = () => false, fallbackMs = CHECK_EVERY_MS,
+  qaWaitMs = () => DEFAULT_RETENTION.qaWaitMs, events = {}, webhooksFlowing = () => false, fallbackMs = CHECK_EVERY_MS, ownApp = () => null,
 }) {
   const { state } = store;
   // When each waiting pull request was last read, by number. Not kept: after a restart each is read at once.
@@ -199,7 +200,7 @@ export function createPrAnnouncer({
   function qaFor(item, pull, runs, qa) {
     if (!qa) return { waiting: false, check: null, notRun: 'not configured' };
     const sha = pull.head.sha;
-    const { finished, check } = qaCheckFrom(runs, qa);
+    const { finished, check } = qaCheckFrom(runs, qa, ownApp());
     if (finished) return { waiting: false, check, notRun: null };
     if (!(pull.labels ?? []).some((l) => l.name === qa.label)) return { waiting: false, check: null, notRun: `no ${qa.label} label` };
     if (item.qaSha !== sha) {
@@ -241,7 +242,7 @@ export function createPrAnnouncer({
 
   async function announce(item, { pull, review, runs, suites, qa, gates }) {
     const [comments, reviewRuns] = await Promise.all([gh(item).issueComments(item.number), reviewRunsFor(item, runs, pull.head.sha, gates)]);
-    const args = { pull, review, runs, comments: comments ?? [], suites, qa, gates, reviewRuns };
+    const args = { pull, review, runs, comments: comments ?? [], suites, qa, gates, reviewRuns, ownApp: ownApp() };
     const written = await writeBriefComment(item, comments ?? [], buildBrief(args).comment);
     const brief = buildBrief({ ...args, commentUrl: written.id ? `${pull.html_url}#issuecomment-${written.id}` : null });
     console.log('slack: decision brief written on the pull request', { number: item.number, commentId: written.id, updated: written.updated, ...brief.facts });
