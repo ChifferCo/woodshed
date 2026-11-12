@@ -244,7 +244,8 @@
     const rows = setupSteps(me).map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
       h('span', { class: 'setup-check', 'aria-hidden': 'true' }, step.done ? '✓' : ''),
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
-      step.key === 'github' ? h('a', { class: 'btn btn-primary btn-sm', href: '/setup/github' }, 'Set up')
+      step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
+        : step.key === 'github' ? h('a', { class: 'btn btn-primary btn-sm', href: '/setup/github' }, 'Set up')
         // Two equal choices, each to its own box on My settings: neither agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),

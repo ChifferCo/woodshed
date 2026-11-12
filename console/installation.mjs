@@ -23,6 +23,7 @@ import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
+import { appOwnerCheck } from './appOwner.mjs';
 import { createAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
@@ -49,7 +50,7 @@ import { createProjectAccess } from './projectAccess.mjs';
 import { createAddedProjects, repoChecker } from './addedProjects.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
-import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -115,6 +116,7 @@ export function createLoops() {
  * secret on the Secrets page makes sign-in available without a restart; the first one to complete makes it required.
  */
 async function startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) {
+  const ownsApp = appOwnerCheck({ appApi, installationId: config.githubApp?.installationId ?? null });
   let clientSecret = await secrets.read(CLIENT_SECRET).catch((err) => {
     console.error('console: GitHub App client secret not readable', { message: String(err?.message ?? err).split('\n')[0] });
     return null;
@@ -137,7 +139,11 @@ async function startAuth({ config, store, secrets, appApi, github, userSettings,
       return clientId;
     },
     clientSecret: () => clientSecret,
-    canWrite: (login) => github.canWrite(login),
+    // With no repo yet, the App's owner signs in to add the first (appOwner.mjs); then write access to it, as before.
+    canWrite: (login) => (hasRepo(config) ? github.canWrite(login) : ownsApp(login)),
+    noAccess: (login) => (hasRepo(config)
+      ? `@${login} has no write access to the repository, so cannot sign in.`
+      : `The console has no repo yet, so only the owner of the account its GitHub App is installed on (an admin, for an organization) can sign in to add one. @${login} is not.`),
     onConnect: (args) => githubUser.connect(args),
     people,
     members,
@@ -207,12 +213,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const { secrets, homes, dbAdmin } = provider;
   const appKey = config.githubApp ? await loadAppKey(config, secrets) : null;
   const tokens = createProjectTokens({ config, privateKey: () => appKey.current() });
-  const github = createGitHub({ repo: defaultProject(config).repo, token: tokens && (async () => (await tokens.console.token()).token) });
+  // The default project's repo, read on each call: a console that started with none works on the first one added.
+  const github = createGitHub({ repo: () => defaultProject(config).repo, token: tokens && (async () => (await tokens.console.token()).token) });
   // Each project's repo, on that project's own token: the default project's is the console's own client.
-  const projectClients = new Map([[defaultProject(config).name, github]]);
+  const projectClients = new Map();
   const githubFor = (project) => {
+    if (project.name === defaultProject(config).name) return github;
     // A repo an admin removed and added again is a new client, since it may be on another installation.
-    const key = project.default ? project.name : `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
+    const key = `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
     if (!projectClients.has(key)) {
       const token = tokens && (async () => (await tokens.forSession({ project: project.name }).console.token()).token);
       projectClients.set(key, createGitHub({ repo: project.repo, token }));
@@ -232,13 +240,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
   // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
   const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
-  const projectReader = createProjectReader({ github, installationFile: installationFileOf(defaultProject(config).repo) });
+  const projectReader = createProjectReader({ github, installationFile: () => installationFileOf(defaultProject(config).repo)() });
   // Each project's file, from its own repo: the gates its pull requests wait for. The default project's is the one above.
-  const projectReaders = new Map([[defaultProject(config).name, projectReader]]);
+  const projectReaders = new Map();
   const readerOf = (name) => {
     const project = (name && projectNamed(config, name)) || defaultProject(config);
+    if (project.name === defaultProject(config).name) return projectReader;
     // Keyed by repo too: a repo removed and added again may be another repo under the same name.
-    const key = project.default ? project.name : `${project.name}\n${project.repo}`;
+    const key = `${project.name}\n${project.repo}`;
     if (!projectReaders.has(key)) {
       projectReaders.set(key, createProjectReader({ github: githubFor(project), installationFile: installationFileOf(project.repo) }));
     }

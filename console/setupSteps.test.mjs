@@ -39,3 +39,9 @@ test('a Codex sign-in alone finishes the token step, for someone who only uses C
   assert.equal(setupDone(m), true);
   assert.match(setupSteps(m)[0].hint, /Claude.*Codex/, 'the step names both agents');
 });
+
+test('a console with no repo puts adding one first, and is not done until it has', () => {
+  assert.deepEqual(rows({ ...me({ token: true }), repoNeeded: true }), ['repo:waiting', 'token:done']);
+  assert.equal(setupDone({ ...me({ token: true }), repoNeeded: true }), false);
+  assert.equal(setupDone({ ...me({ token: true }), repoNeeded: false }), true);
+});

@@ -236,9 +236,13 @@ export function requireClosedWhenReachable(config) {
   throw new Error(`WOODSHED_CLOUD_HOST is ${config.host}, which other machines reach, and sign-in is not required: set WOODSHED_CLOUD_REQUIRE_SIGN_IN=1 (with the GitHub App) or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET, or bind 127.0.0.1 behind a proxy`);
 }
 
-/** Nothing in Woodshed names a repo of its own: an installation says which ones it works on. */
+/**
+ * Nothing in Woodshed names a repo of its own: an installation says which ones it works on, or none, and an admin adds
+ * them on the Console settings page. A repo it does name must be GitHub's owner/name.
+ */
 export function requireRepo(config) {
-  if (!/^[\w.-]+\/[\w.-]+$/.test(defaultProject(config).repo)) throw new Error('WOODSHED_CLOUD_REPO (or WOODSHED_CLOUD_PROJECTS) must name the repo this installation works on, as owner/name');
+  const { repo } = defaultProject(config);
+  if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('WOODSHED_CLOUD_REPO (or WOODSHED_CLOUD_PROJECTS) must name a repo as owner/name, or be left unset for a console that starts with none');
 }
 
 /**
@@ -268,7 +272,7 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     requireSignIn: env.WOODSHED_CLOUD_REQUIRE_SIGN_IN === '1' || Boolean(identitySecret),
     trustedIdentitySecret: identitySecret,
     stateDir: env.WOODSHED_CLOUD_STATE_DIR || '/var/lib/woodshed-cloud',
-    // The repos this installation works on (projects.mjs). providers/console.mjs refuses to start without one.
+    // The repos this installation works on (projects.mjs), or none until an admin adds one on the Console settings page.
     projects: loadProjects(env),
     // A folder of `<owner>/<name>.yaml` project files, each for a repo with no .woodshed/project.yaml of its own
     // (shared/project.mjs, installationProjectFile). The local provider hands a session its repo's.

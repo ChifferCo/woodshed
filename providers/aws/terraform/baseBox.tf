@@ -50,34 +50,44 @@ data "aws_iam_policy_document" "base_box" {
     # and dbAdmin.mjs takes neither a host nor any code from them (ecs.tf).
   }
 
-  # Caddy's certificate for var.domain: the DNS challenge writes and removes one TXT record in that zone.
-  statement {
-    sid       = "AnswerTheCertificateChallenge"
-    actions   = ["route53:ChangeResourceRecordSets"]
-    resources = [aws_route53_zone.console.arn]
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "route53:ChangeResourceRecordSetsRecordTypes"
-      values   = ["TXT"]
-    }
-    condition {
-      test     = "ForAllValues:StringEquals"
-      variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
-      values   = ["_acme-challenge.${var.domain}"]
+  # Caddy's certificate for var.domain: the DNS challenge writes and removes one TXT record in that zone. With no domain
+  # there is no zone, and Caddy proves each name over HTTPS instead, so the box gets no Route 53 access at all.
+  dynamic "statement" {
+    for_each = aws_route53_zone.console
+    content {
+      sid       = "AnswerTheCertificateChallenge"
+      actions   = ["route53:ChangeResourceRecordSets"]
+      resources = [statement.value.arn]
+      condition {
+        test     = "ForAllValues:StringEquals"
+        variable = "route53:ChangeResourceRecordSetsRecordTypes"
+        values   = ["TXT"]
+      }
+      condition {
+        test     = "ForAllValues:StringEquals"
+        variable = "route53:ChangeResourceRecordSetsNormalizedRecordNames"
+        values   = ["_acme-challenge.${var.domain}"]
+      }
     }
   }
 
-  statement {
-    sid       = "ReadTheConsoleZone"
-    actions   = ["route53:ListResourceRecordSets"]
-    resources = [aws_route53_zone.console.arn]
+  dynamic "statement" {
+    for_each = aws_route53_zone.console
+    content {
+      sid       = "ReadTheConsoleZone"
+      actions   = ["route53:ListResourceRecordSets"]
+      resources = [statement.value.arn]
+    }
   }
 
   # Route 53 gives these no resource-level permissions. Caddy finds the zone by name and waits on its change.
-  statement {
-    sid       = "FindTheConsoleZone"
-    actions   = ["route53:ListHostedZonesByName", "route53:ListHostedZones", "route53:GetChange"]
-    resources = ["*"]
+  dynamic "statement" {
+    for_each = aws_route53_zone.console
+    content {
+      sid       = "FindTheConsoleZone"
+      actions   = ["route53:ListHostedZonesByName", "route53:ListHostedZones", "route53:GetChange"]
+      resources = ["*"]
+    }
   }
 
   # run-task's --propagate-tags copies the task definition's tags onto the task, which needs TagResource.
@@ -235,9 +245,21 @@ resource "aws_eip" "base_box" {
   tags = { Name = "woodshed-cloud-console" }
 }
 
+# The box's size from what it runs (baseBoxStack.sh.tftpl's mem_limits): the console's 512 MB and Caddy's 128 MB fit
+# 2 GB with the OS, Docker and Caddy's build on the box; Mongo's 1 GB or a shared service's 768 MB does not.
+locals {
+  base_box_needs_4gb      = local.mongo || length(var.shared_services) > 0
+  base_box_instance_type  = coalesce(var.base_box_instance_type, local.base_box_needs_4gb ? "t3.medium" : "t3.small")
+  base_box_min_memory_mib = local.base_box_needs_4gb ? 4096 : 2048
+}
+
+data "aws_ec2_instance_type" "base_box" {
+  instance_type = local.base_box_instance_type
+}
+
 resource "aws_instance" "base_box" {
   ami                    = data.aws_ssm_parameter.al2023.value
-  instance_type          = var.base_box_instance_type
+  instance_type          = local.base_box_instance_type
   subnet_id              = aws_subnet.public[0].id
   private_ip             = local.base_box_private_ip
   vpc_security_group_ids = [aws_security_group.base_box.id]
@@ -262,6 +284,15 @@ resource "aws_instance" "base_box" {
   # comes from the configure_base_box association below, which a change reaches without a replacement.
   lifecycle {
     ignore_changes = [ami, user_data]
+
+    precondition {
+      condition     = contains(data.aws_ec2_instance_type.base_box.supported_architectures, "x86_64")
+      error_message = "base_box_instance_type must be x86, like the console and session images (not Graviton)."
+    }
+    precondition {
+      condition     = data.aws_ec2_instance_type.base_box.memory_size >= local.base_box_min_memory_mib
+      error_message = "base_box_instance_type has too little memory for what the box runs: ${local.base_box_needs_4gb ? "Mongo or a shared service needs 4 GB (t3.medium)" : "the console and Caddy need 2 GB (t3.small)"}."
+    }
   }
 
   tags = { Name = "woodshed-cloud-base-box" }
@@ -279,13 +310,14 @@ locals {
   base_box_stack = templatefile("${path.module}/baseBoxStack.sh.tftpl", {
     region             = var.region
     public_ip          = aws_eip.base_box.public_ip
-    domain             = var.domain
+    domain             = local.console_domain
+    own_domain         = local.own_domain
     private_ip         = local.base_box_private_ip
     console_image      = "${aws_ecr_repository.images["console"].repository_url}:latest"
     registry           = split("/", aws_ecr_repository.images["console"].repository_url)[0]
     github_app_id      = var.github_app_id
     github_app_install = var.github_app_installation_id
-    repo               = var.github_repo
+    repo               = var.sessions_on_github_repo ? var.github_repo : ""
     projects           = local.projects_json
     services           = var.shared_services
     env_files          = join(",", [for name, path in var.env_files : "${name}=${path}"])

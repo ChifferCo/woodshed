@@ -59,9 +59,10 @@ test('a setting only the local provider serves stops a start on AWS, naming it',
   assert.throws(() => createProvider(loadConfig(files), files), /WOODSHED_CLOUD_PROJECT_FILES_DIR needs the local provider; this console runs on the aws provider/);
 });
 
-test('a console with no repo, or one that is not owner/name, will not start: no repo is the default', () => {
+test('a console may start with no repo, but one it names must be owner/name', () => {
   assert.deepEqual(loadConfig({ GH_TOKEN: 'x' }).projects, []);
-  assert.throws(() => requireRepo(loadConfig({ GH_TOKEN: 'x' })), /WOODSHED_CLOUD_REPO \(or WOODSHED_CLOUD_PROJECTS\) must name the repo this installation works on, as owner\/name/);
+  assert.doesNotThrow(() => requireRepo(loadConfig({ GH_TOKEN: 'x' })), 'no repo: an admin adds the first on the Console settings page');
+  assert.equal(defaultProject(loadConfig({ GH_TOKEN: 'x' })).repo, '');
   assert.throws(() => requireRepo(loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: 'just-a-name' })), /owner\/name/);
   assert.doesNotThrow(() => requireRepo(loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: ' acme/web.app ' })));
   assert.equal(defaultProject(loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: ' acme/web.app ' })).repo, 'acme/web.app');

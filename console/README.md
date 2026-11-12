@@ -258,9 +258,9 @@ My Woodshed sessions are unchanged: Active and Stopped, and their own Resume.
 ## My Woodshed
 
 **My Woodshed** (`/`) is for every member, whatever their switches on People, and has nothing to create or turn on. Until your
-Claude token is saved and your databases are ready, the top of the rail's Mine view has a **setup card** and **+ New session**
-opens the same card in the pane in place of the form. The card lists the token, with **Set up** taking you to My settings,
-and, once the token is saved, the databases (the console starts the copy then, so it is progress; if it failed or never
+Claude token or Codex sign-in is saved and your databases are ready, the top of the rail's Mine view has a **setup card** and **+ New session**
+opens the same card in the pane in place of the form. The card lists Choose your agent, whose **Claude** and **Codex** take you to
+that box on My settings, and, once either is saved, the databases (the console starts the copy then, so it is progress; if it failed or never
 started the row has an **Open My settings** button). It goes when both are done. Connect GitHub, which makes your sessions push and review as you, is on My settings and not a
 step: sessions work without it. My Woodshed is the shed's launcher, inside the console. The rail
 lists your own sessions, Active and Stopped, under **+ New session**. On a console
@@ -944,6 +944,13 @@ hours, and write access is checked again every hour, so leaving the repository
 signs you out. The GitHub user token is used once, to learn the login, and
 dropped.
 
+**A console with no repo yet** (neither `WOODSHED_CLOUD_REPO` nor `WOODSHED_CLOUD_PROJECTS`, and nothing added on the
+Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
+user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed
+to `members: read`, so the App needs Organization permissions, Members: read; without it the login page says so). The
+first to sign in is the first member and an admin, as on any new console. Once a repo is added, write access to it is
+what is asked again, at the next hourly check.
+
 Write access alone is not enough: a person must also be on the console's list,
 on the **People** page (`console/members.mjs`, `members` and `memberRequests`
 in `state.json`). An admin can invite a handle (it must have write
@@ -1474,7 +1481,11 @@ the console's own; a repo without it is refused with a link to the App's install
 (`https://github.com/apps/<slug>/installations/new`, the slug read from GitHub); on a console with no App (the local provider) `gh` must be able to read it. A repo already a
 project, or a name in use, is refused with its reason. The added repos are kept in `state.json` under `addedProjects`
 and appended to `WOODSHED_CLOUD_PROJECTS`'s list in the live config (`liveConfig`), so one applies at once, with no
-restart, and a project's New session **Project** field shows it to whoever can write to it. **Remove**
+restart, and a project's New session **Project** field shows it to whoever can write to it. On a console that started
+with no repo the card says so, and the first repo added is the default (`liveConfig`), until it is removed and the next
+one takes its place; until then New session's setup card lists **Add a repo** (`repoNeeded` in `/api/my`), and a start
+is refused with `Not started: the console has no repo yet` (`fleet: session refused, the console has no repo yet`).
+**Remove**
 (`POST /api/console-settings/projects/remove`) takes an added repo off, and is disabled while a session is running on it
 or listed to resume (a shared one kept, or any of a person's My Woodshed sessions still on their list), since that session would fall back to the default project's repo. The installation's own projects,
 the default among them, are read-only here: they change where `WOODSHED_CLOUD_PROJECTS` is set. Each row, theirs too, has a
@@ -1528,7 +1539,7 @@ Remove My Woodshed.
 | `WOODSHED_CLOUD_GITHUB_BROKER_URL`, `_GITHUB_BROKER_TOKEN_FILE` | none | Hosted mode: where the console asks its host for every installation token, and a file holding the bearer it asks with. Both or neither, and never with `WOODSHED_CLOUD_GITHUB_APP_ID`. See "Hosted mode" |
 | `WOODSHED_CLOUD_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
 | `WOODSHED_CLOUD_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
-| `WOODSHED_CLOUD_REPO`, `WOODSHED_CLOUD_LABEL` | none (required, `owner/name`), `woodshed` | The one repo this installation works on. The console refuses to start without it |
+| `WOODSHED_CLOUD_REPO`, `WOODSHED_CLOUD_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on. Unset, with no `WOODSHED_CLOUD_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer always sets one: it builds the session image from it |
 | `WOODSHED_CLOUD_PROJECTS` | one project, `WOODSHED_CLOUD_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_CLOUD_REPO`, named after its repo; set beside it, `WOODSHED_CLOUD_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack and the database check still run on the default project. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
 | `WOODSHED_CLOUD_ENV_FILES`, `WOODSHED_CLOUD_DB_ENV_SECRETS` | none | The repo's env files as `secret=path` pairs (`api-env=api/.env,web-env=web/.env.local`): each is a secret on the Secrets page and a tab on My settings. The second lists which of those secrets the databases' commands read (every `envFiles` of the project file's `databases`). Terraform sets both from `env_files` and `database_env_secrets`; the project file's own `envFiles` must name the same secrets |
 | `WOODSHED_CLOUD_INSTALL_SECRETS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) or an env file's stops the start. Terraform sets it from `install_secrets` |

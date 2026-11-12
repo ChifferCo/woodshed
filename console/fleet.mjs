@@ -366,10 +366,18 @@ export function createFleet({
    *   the `slack` thread; `owner` makes a session private to that login; `attach` moves the files attached to New
    *   session under it before it launches, and says how many; `background` answers without waiting for the launch
    */
+  // A console that started with no repo has nothing to check out until an admin adds one on the Console settings page.
+  function refuseWithoutRepo(project, { kind, trigger }) {
+    if (project?.repo) return;
+    console.warn('fleet: session refused, the console has no repo yet', { kind, trigger });
+    throw shown('Not started: the console has no repo yet. An admin adds one on the Console settings page, under Repos.');
+  }
+
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
     background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config),
   }) {
+    refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack gets no databases, so it needs none hosted.
     const refused = kind === 'ask' ? null : await databasesRefusal();
     if (refused) {
@@ -1070,6 +1078,7 @@ export function createFleet({
    *          permissionMode?: string, background?: boolean}} args  `workOn` is the form's optional issue, pull request or branch
    */
   async function startPrivate({ owner, prompt, name = '', workOn = '', attachmentIds = [], background = false, project = defaultProject(config), ...picked }) {
+    refuseWithoutRepo(project, { kind: 'task', trigger: 'my-woodshed' });
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
     const text = String(prompt ?? '').trim();
@@ -1369,9 +1378,14 @@ export function createFleet({
 
   // Each project's repo is polled on its own client: the default's cursors are `state.github`, as before projects, and
   // another's are `state.githubProjects` under its name. GitHub's comment ids are unique across repos, so the one seen
-  // list in `state.github` serves them all.
+  // list in `state.github` serves them all. The default's name the repo they were read on: on a console that started
+  // with no repo, removing the first one added makes the next the default, which must start from now, not from the old
+  // repo's last event and replay its own labels. Cursors kept from before they named one are the environment's repo's.
   function cursorsOf(project) {
-    if (project.default) return state.github;
+    if (project.default) {
+      const kept = state.github;
+      return kept && (!kept.repo || kept.repo.toLowerCase() === project.repo.toLowerCase()) ? kept : null;
+    }
     const kept = state.githubProjects?.[project.name];
     return kept && kept.repo.toLowerCase() === project.repo.toLowerCase() ? kept : null;
   }
@@ -1402,7 +1416,8 @@ export function createFleet({
   async function startCursors(project, gh) {
     const startedAt = nowIso();
     const cursors = { lastEventId: await gh.latestEventId(), commentsSince: startedAt, notBefore: startedAt };
-    if (project.default) state.github = { ...cursors, seenComments: [] };
+    // The comments already acted on stay seen: their ids are unique across repos.
+    if (project.default) state.github = { repo: project.repo, ...cursors, seenComments: state.github?.seenComments ?? [] };
     else state.githubProjects = { ...state.githubProjects, [project.name]: { repo: project.repo, ...cursors } };
     store.save();
     console.log('fleet: github cursors initialised', { lastEventId: cursors.lastEventId, ...projectField(project) });

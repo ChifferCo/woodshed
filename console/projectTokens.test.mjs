@@ -38,8 +38,7 @@ test('each project\'s tokens reach its repo alone, from its own installation', a
 
   const onApp = tokens.forSession({ repo: 'acme/app' });
   assert.equal(onApp.project, 'app', 'a record with no project is on the one with its repo');
-  assert.equal(onApp.sessions, tokens.sessions, 'the default project\'s sources are the ones the console already had');
-  await onApp.asks.token();
+  assert.equal(await onApp.asks.token(), await tokens.asks.token(), 'the default project\'s sources are the ones the console already had: one token, minted once');
   assert.deepEqual(github.asked[1], { installation: '7', repositories: ['app'], permissions: { contents: 'read', pull_requests: 'read', issues: 'read', metadata: 'read' } });
 
   await tokens.console.token();

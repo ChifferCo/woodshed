@@ -81,8 +81,11 @@
       head.replaceChildren(h('header', { class: 'page-head' },
         h('div', null,
           h('h1', { class: 'title' }, 'Shared sessions'),
-          h('p', { class: 'sub' }, `Sessions started from GitHub on ${data.repo}. Add the `, h('code', null, data.label),
-            ' label to an issue, or comment ', h('code', null, '/woodshed …'), ' on an issue or PR. Everyone signed in sees these.')),
+          data.repo
+            ? h('p', { class: 'sub' }, `Sessions started from GitHub on ${data.repo}. Add the `, h('code', null, data.label),
+              ' label to an issue, or comment ', h('code', null, '/woodshed …'), ' on an issue or PR. Everyone signed in sees these.')
+            : h('p', { class: 'sub' }, 'Sessions started from GitHub. The console has no repo yet: an admin adds one on Console settings, then a ',
+              h('code', null, data.label), ' label or a ', h('code', null, '/woodshed …'), ' comment on its issues starts one.')),
         h('div', { class: 'stats' },
           h('span', null, 'running ', h('b', null, `${data.running}/${data.maxRunning}`)),
           h('span', null, 'queued ', h('b', null, data.queued)))));

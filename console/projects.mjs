@@ -1,5 +1,7 @@
 // The repos an installation works on, each a project. Until the rest of the console takes a project, everything
 // runs on the default one, so a console with one project does what it did when it had only WOODSHED_CLOUD_REPO.
+// A console may start with none: it then waits for an admin to add the first on the Console settings page, which
+// becomes the default (consoleSettings.mjs, liveConfig).
 
 const REPO = /^[\w.-]+\/[\w.-]+$/;
 // A project's name goes into AWS and database names later, so it stays short and plain: ECR refuses a name that
@@ -67,7 +69,7 @@ export function projectsFrom(list, setting = 'WOODSHED_CLOUD_PROJECTS') {
 
 /**
  * The installation's projects, from `WOODSHED_CLOUD_PROJECTS` (a JSON list of `{ name, repo, default, installationId }`), or else
- * one project made from `WOODSHED_CLOUD_REPO`. None when neither is set, which providers/console.mjs refuses.
+ * one project made from `WOODSHED_CLOUD_REPO`. None when neither is set: the console starts with no repo.
  * @param {NodeJS.ProcessEnv} env
  */
 export function loadProjects(env) {
@@ -82,7 +84,7 @@ export function loadProjects(env) {
 
 /**
  * The project sessions run on unless they say otherwise. A config made by hand, as tests and askInImage.mjs make
- * them, may name only a `repo`.
+ * them, may name only a `repo`. On a console with no repo yet, its `repo` is '' (hasRepo).
  */
 export function defaultProject(config) {
   const found = config.projects?.find((p) => p.default);
@@ -107,9 +109,13 @@ export function installationIdFor(config, project) {
   return project.installationId ?? config.githubApp?.installationId ?? null;
 }
 
-/** Every project of the installation, the default first: a config made by hand has its one. */
+/** @returns {boolean}  whether the console has a repo to work on: none until an admin adds one, when it started with none */
+export const hasRepo = (config) => Boolean(defaultProject(config).repo);
+
+/** Every project of the installation, the default first: a config made by hand has its one, a console with no repo none. */
 export function allProjects(config) {
-  const projects = config.projects?.length ? config.projects : [defaultProject(config)];
+  if (!config.projects?.length) return config.repo ? [defaultProject(config)] : [];
+  const projects = config.projects;
   return [...projects].sort((a, b) => Number(b.default) - Number(a.default));
 }
 
