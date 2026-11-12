@@ -816,7 +816,7 @@ export function createFleet({
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null, endpoint: null,
       startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       pendingMessages: message ? [...session.pendingMessages, message] : session.pendingMessages,
-      lastActiveAt: null, checkedAt: null, app: null, appServers: null,
+      lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null,
       prClosedAt: null, prMerged: null, deletesAt: null, resumedAt: nowIso(), resumedBy: by,
     });
     prCheckedAt.delete(session.id);
@@ -1133,7 +1133,7 @@ export function createFleet({
     update(session, {
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
-      lastActiveAt: null, checkedAt: null, app: null, appServers: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
+      lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
     });
     console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background });
     await runStartQueued({ background });
@@ -1495,11 +1495,16 @@ export function createFleet({
   }
 
   // The session's statusd runs the project file's `app.start`; the next status check says when the app is up, or down.
-  async function startApp(session) {
+  // `app` picks one of several by name; without it statusd starts the default, as an image from before several apps
+  // starts its one app whatever it is sent.
+  async function startApp(session, { app = null } = {}) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
-    const result = await statusd(session, 'POST', '/app/start');
-    update(session, { app: APP_STATES.has(result?.app) ? result.app : 'starting' });
-    console.log('fleet: app start asked', { id: session.id, started: Boolean(result?.started), app: session.app });
+    if (app !== null && !session.apps?.some((a) => a.name === app)) {
+      throw Object.assign(new Error(session.apps ? `the project has no app named ${app}` : 'this session\'s image starts its one app only'), { refused: true });
+    }
+    const result = await statusd(session, 'POST', '/app/start', ...(app === null ? [] : [{ body: { app } }]));
+    update(session, { app: APP_STATES.has(result?.app) ? result.app : 'starting', ...(app !== null && { appName: app }) });
+    console.log('fleet: app start asked', { id: session.id, started: Boolean(result?.started), app: session.app, appName: session.appName ?? null });
     return session;
   }
 

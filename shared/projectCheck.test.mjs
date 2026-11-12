@@ -205,6 +205,22 @@ test('app: ports a session leaves free and an unprivileged user can listen on, i
   assertProblem(t, app({ logs: { api: '/var/log/api.log' } }), /^app\.logs\.api must be under the home/);
 });
 
+test('apps: every app\'s ports, commands, paths and logs are checked, each named by its place in the list', (t) => {
+  const web = { name: 'web', label: 'Web', ...PROJECT.app };
+  const admin = { name: 'admin', ...PROJECT.app, frontendPort: 3000, paths: ['web/'] };
+  const apps = (change) => ({ project: { app: null, apps: [web, { ...admin, ...change }] } });
+  assert.deepEqual(problems(t, apps({})), [], 'two apps that are right pass');
+  assertProblem(t, apps({ frontendPort: 7682 }), /^apps\[1\]\.frontendPort is 7682, which statusd listens on in every session$/);
+  assertProblem(t, apps({ backendPort: 443 }), /^apps\[1\]\.backendPort is 443: a session runs the app as an unprivileged user/);
+  assertProblem(t, apps({ start: 'bash scripts/admin.sh' }), /^apps\[1\]\.start runs scripts\/admin\.sh, which is not in the checkout$/);
+  assertProblem(t, apps({ stop: 'npm run stop' }), /^apps\[1\]\.stop runs `npm run stop`, and package\.json is not in the checkout$/);
+  assertProblem(t, apps({ paths: ['admin/'] }), /^apps\[1\]\.paths\[0\] is admin\/, and nothing in the checkout starts with it$/);
+  assertProblem(t, apps({ logs: { admin: '../admin.log' } }), /^apps\[1\]\.logs\.admin must be under the home/);
+  const run = cli(checkout(t, apps({})));
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^apps: 2 \(web: `PORT=9000 bash scripts\/app\.sh start`, frontend on 3001, the default; admin: `.+`, frontend on 3000\)$/m);
+});
+
 test('rules and setup name files in the checkout', (t) => {
   assertProblem(t, { project: { setup: '.woodshed/setup.md' } }, /^setup names \.woodshed\/setup\.md, which is not in the checkout/);
 });

@@ -2,7 +2,8 @@
 // browser without AWS, GitHub or Docker. Usage: node console/bin/devConsole.mjs [port] [tls ask port]
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
 // /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
-// analysis already written (devReviewSession.mjs).
+// analysis already written (devReviewSession.mjs). /s/abbaabba is running on a project with two apps, web and admin,
+// behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
@@ -15,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
+import { startDevAppsSession } from './devAppsSession.mjs';
 import { startDevReview } from './devReviewSession.mjs';
 
 const port = process.argv[2] || '7690';
@@ -36,6 +38,8 @@ const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'))
 const now = new Date().toISOString();
 const REVIEW_ID = 'beadfeed';
 const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}` });
+const APPS_ID = 'abbaabba';
+const twoApps = await startDevAppsSession({ id: APPS_ID, token: `t${APPS_ID}` });
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -110,6 +114,11 @@ const sessions = [
   session(REVIEW_ID, 26701, 'Retry webhook deliveries with backoff', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: review.port, termPort: review.port },
+  }),
+  // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
+  session(APPS_ID, 26702, 'A project with two apps', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
+    ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
   }),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
@@ -213,7 +222,7 @@ const consolePort = sessionApp ? await freePort() : port;
 const child = spawn(process.execPath, [server], {
   stdio: 'inherit',
   env: {
-    ...inherited, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+    ...inherited, PATH: `${twoApps.binDir}${path.delimiter}${process.env.PATH}`, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
     WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_APP_DOMAIN: 'apps.localhost',
     // Its own links name the port people open, not the one behind it.
     ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
@@ -226,6 +235,7 @@ const child = spawn(process.execPath, [server], {
 });
 child.on('exit', (code) => {
   review.close();
+  twoApps.close();
   fs.rmSync(stateDir, { recursive: true, force: true });
   process.exit(code ?? 0);
 });

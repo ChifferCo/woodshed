@@ -307,7 +307,7 @@
   const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null };
   const acting = new Set();
   document.body.append(cardMenu.el);
-  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.branch}:${s.assignee ?? ''}`;
+  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
   const menuAnchor = () => (cardMenu.key
     ? [...document.querySelectorAll(`[data-menu-for="${cardMenu.key}"]`)].find((b) => b.offsetParent) ?? null : null);
@@ -835,6 +835,9 @@
     ].filter(Boolean);
   }
 
+  // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
+  W.openMenu = openCardMenu;
+
   W.shell.register({
     sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden,
   });
@@ -849,11 +852,16 @@
     const up = s.app === 'running' || s.app === 'api-down';
     const busy = s.app === 'starting' || s.app === 'stopping';
     const none = s.app === 'none';
+    // Several apps: one Start item each, which also switches from the one running.
+    const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
+    const running = W.runningAppLabel(s);
     return [
       s.hasShell && W.isPrivate(s) && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
-      data.appDomain && up && { group: 'App', label: 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener') },
+      data.appDomain && up && {
+        group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener'),
+      },
       data.appDomain && none && s.kind !== 'ask' && {
         group: 'App', label: 'Set up app', note: 'The project file has no app: ask claude to write one',
         run: async () => {
@@ -865,7 +873,8 @@
           refresh();
         },
       },
-      data.appDomain && !up && !busy && !none && {
+      ...choices,
+      data.appDomain && !up && !busy && !none && !choices.length && {
         group: 'App', label: s.app === 'failed' || s.app === 'frontend-down' ? 'Start app again' : 'Start app',
         note: 'Start the app in this session: one to three minutes', run: app('start'),
       },

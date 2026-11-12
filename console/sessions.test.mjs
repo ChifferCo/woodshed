@@ -215,6 +215,21 @@ test('statusUpdate keeps which of the app\'s servers answer only as two booleans
   assert.equal(servers(undefined), null, 'a statusd from an older image says nothing');
 });
 
+test('statusUpdate keeps the apps Start app can pick and the one running, and none from an older statusd', () => {
+  const base = { status: 'running', repo: 'o/r', lastMessage: null };
+  const apps = (status) => {
+    const u = statusUpdate(base, { state: 'done', ...status }, 'now');
+    return [u.appName, u.apps];
+  };
+  const two = [{ name: 'web', label: 'Web app' }, { name: 'admin', label: 'Admin' }];
+  assert.deepEqual(apps({ appName: 'admin', apps: two }), ['admin', two]);
+  assert.deepEqual(apps({}), [null, null], 'a statusd from before several apps says nothing');
+  assert.deepEqual(apps({ appName: 'mobile', apps: two }), [null, two], 'a running app that is not one of them is none');
+  assert.deepEqual(apps({ appName: 'web', apps: [{ name: '<b>' }, { name: 'web', label: 3 }, { name: 'admin', label: `  ${'x'.repeat(80)} ` }] }),
+    ['web', [{ name: 'web', label: 'web' }, { name: 'admin', label: 'x'.repeat(60) }]], 'a bad name is dropped, a bad label is the name, a long one cut');
+  assert.deepEqual(apps({ appName: null, apps: 'web' }), [null, null]);
+});
+
 test('a private session is its owner\'s alone, and GitHub triggers never route to it', () => {
   const mine = { id: 'p', number: 42, status: 'running', owner: 'joel', branch: 'woodshed/42-p', kind: 'issue', createdAt: '2026-10-21T09:00:00Z' };
   assert.equal(canSee(mine, 'joel'), true);

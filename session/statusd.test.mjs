@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -266,8 +266,12 @@ async function statusdWithApp(t, { app = true, project = {}, env = {} } = {}) {
   });
   t.after(() => child.kill());
   await new Promise((resolve) => child.stdout.on('data', (chunk) => { if (String(chunk).includes('listening')) resolve(); }));
-  const call = (method, route, token = 'sess') => fetch(`http://127.0.0.1:${port}${route}`, { method, headers: { authorization: `Bearer ${token}` } })
-    .then(async (r) => ({ status: r.status, body: await r.json() }));
+  const call = (method, route, token = 'sess', body = undefined, headers = null) => fetch(`http://127.0.0.1:${port}${route}`, {
+    method, body, headers: headers ?? { authorization: `Bearer ${token}` },
+  }).then(async (r) => {
+    const text = await r.text();
+    return headers ? { status: r.status, text } : { status: r.status, body: JSON.parse(text) };
+  });
   return { repo, git, call, calls: async () => (await fs.readFile(calls, 'utf8').catch(() => '')).trim().split('\n').filter(Boolean) };
 }
 
@@ -306,6 +310,105 @@ test('statusd stops the app with the token only, a start still waiting on its he
   assert.deepEqual(await calls(), ['start', 'stop']);
   assert.equal((await call('POST', '/app/start')).body.started, true, 'a new start is allowed once the stop is done');
 });
+
+test('pickApp: the app a name picks, the default with none, and an error naming the apps for any other', () => {
+  const apps = [{ name: 'web' }, { name: 'admin' }];
+  assert.equal(pickApp(apps, undefined), apps[0]);
+  assert.equal(pickApp(apps, ''), apps[0]);
+  assert.equal(pickApp(apps, 'admin'), apps[1]);
+  assert.throws(() => pickApp(apps, 'mobile'), (err) => err.status === 400 && /no app named "mobile": the project's apps are web, admin/.test(err.message));
+  assert.throws(() => pickApp(apps, 3), (err) => err.status === 400);
+});
+
+// Two apps that each serve their own name on their own two ports, as a real app's servers would, and log that they did.
+const SERVE = `import fs from 'node:fs';
+import http from 'node:http';
+const [name, log, ...ports] = process.argv.slice(2);
+fs.writeFileSync(\`pids/\${name}.pid\`, String(process.pid));
+for (const port of ports) http.createServer((req, res) => res.end(\`\${name} on \${port}\`)).listen(Number(port), '127.0.0.1');
+fs.appendFileSync(log, \`\${name} listening\\n\`);
+process.on('SIGTERM', () => process.exit(0));
+`;
+
+test('with several apps, one runs at a time: starting another stops the first, and Open app and the logs follow it', async (t) => {
+  const [webPort, adminPort, apiPort] = [await freePort(), await freePort(), await freePort()];
+  const one = (name, frontendPort) => ({
+    name, label: name === 'web' ? 'Web app' : null, ...fixtureApp({
+      start: `echo start ${name} >> calls && exec node scripts/serve.mjs ${name} logs/${name}.log ${frontendPort} ${apiPort}`,
+      stop: `echo stop ${name} >> calls && kill $(cat pids/${name}.pid)`, frontendPort, backendPort: apiPort, logs: { [name]: `logs/${name}.log` },
+    }),
+  });
+  const project = { app: null, apps: [one('web', webPort), one('admin', adminPort)] };
+  const { repo, call } = await statusdWithApp(t, { project, env: { APP_PORT: '', APP_API_PORT: '' } });
+  await fs.writeFile(path.join(repo, 'scripts/serve.mjs'), SERVE);
+  await fs.mkdir(path.join(repo, 'pids'));
+  await fs.mkdir(path.join(repo, 'logs'));
+  t.after(async () => {
+    for (const name of ['web', 'admin']) {
+      const pid = Number(await fs.readFile(path.join(repo, `pids/${name}.pid`), 'utf8').catch(() => ''));
+      if (pid) try { process.kill(pid); } catch {}
+    }
+  });
+  const start = (app) => call('POST', '/app/start', 'sess', app === undefined ? undefined : JSON.stringify({ app }));
+  const until = async (want) => {
+    let body;
+    for (let i = 0; i < 100; i++) {
+      body = (await call('GET', '/status')).body;
+      if (want(body)) return body;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.fail(`never reached: ${JSON.stringify({ app: body.app, appName: body.appName })}`);
+  };
+  const opened = () => call('GET', '/', null, undefined, { 'x-woodshed-app': 'Bearer sess' });
+
+  // Before a start, the default is the one statusd would run, and the list is the project's.
+  const before = (await call('GET', '/status')).body;
+  assert.deepEqual([before.appName, before.apps, before.app], ['web', [{ name: 'web', label: 'Web app' }, { name: 'admin', label: 'admin' }], 'stopped']);
+  assert.deepEqual((await start('mobile')), { status: 400, body: { error: 'no app named "mobile": the project\'s apps are web, admin' } });
+
+  assert.equal((await start()).body.started, true, 'no name starts the default');
+  let now = await until((b) => b.app === 'running');
+  assert.deepEqual([now.appName, now.appServers.frontendPort], ['web', webPort]);
+  assert.equal((await opened()).text, `web on ${webPort}`);
+  assert.deepEqual((await call('GET', '/applog')).body.logs.map((l) => l.name), ['start', 'web']);
+
+  assert.equal((await start('admin')).body.started, true);
+  now = await until((b) => b.app === 'running' && b.appName === 'admin');
+  assert.equal(now.appServers.frontendPort, adminPort);
+  assert.equal((await opened()).text, `admin on ${adminPort}`, 'Open app goes to the app that runs now');
+  assert.equal(await listeningOn(webPort), false, 'the web app was stopped first');
+  const logs = (await call('GET', '/applog')).body.logs;
+  assert.deepEqual(logs.map((l) => l.name), ['start', 'admin'], 'the App log follows the running app');
+  assert.match(logs[0].text, /# Woodshed: starting web\n[\s\S]*# Woodshed: starting admin\n/);
+  assert.equal(logs[1].text, 'admin listening\n');
+  assert.deepEqual((await fs.readFile(path.join(repo, 'calls'), 'utf8')).trim().split('\n'), ['start web', 'stop web', 'start admin']);
+
+  assert.equal((await start('web')).body.started, true, 'and back');
+  now = await until((b) => b.app === 'running' && b.appName === 'web');
+  assert.equal((await opened()).text, `web on ${webPort}`);
+  assert.equal(await listeningOn(adminPort), false);
+});
+
+test('Stop app while a switch waits on the running app\'s stop keeps the next one from starting', async (t) => {
+  const slowStop = (name) => ({ name, ...fixtureApp({ start: `echo start ${name} >> calls`, stop: `echo stop ${name} >> calls; sleep 1` }) });
+  const project = { app: null, apps: [slowStop('web'), slowStop('admin')] };
+  const { repo, call } = await statusdWithApp(t, { project });
+  assert.equal((await call('POST', '/app/start')).body.started, true);
+  for (let i = 0; i < 50 && (await call('GET', '/status')).body.app === 'starting'; i++) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual((await call('POST', '/app/start', 'sess', JSON.stringify({ app: 'admin' }))).body, { started: true, app: 'stopping' });
+  assert.deepEqual((await call('POST', '/app/stop')).body, { stopping: false, app: 'stopping' });
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.deepEqual((await fs.readFile(path.join(repo, 'calls'), 'utf8')).trim().split('\n'), ['start web', 'stop web']);
+  assert.equal((await call('GET', '/status')).body.appName, 'admin', 'the pick is kept: Start app starts it');
+});
+
+function listeningOn(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect(port, '127.0.0.1');
+    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('error', () => resolve(false));
+  });
+}
 
 test('GET /diff answers the checkout against master with the token only, uncommitted work included', async (t) => {
   const { repo, git, call } = await statusdWithApp(t, { app: false, env: { DEFAULT_BRANCH: 'master' } });

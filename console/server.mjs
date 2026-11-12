@@ -91,7 +91,7 @@
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
 //   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs)
 //   GET  /api/me                 who is signed in, and whether sign-in is on
-//   POST /api/sessions/<id>/app/start  start the session's app
+//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
 //   POST /api/sessions/<id>/app/stop   stop it
 //   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
@@ -1584,7 +1584,13 @@ export function createHandler({
           const { session: after, sent } = await fleet.setupApp(session);
           return reply(res, 200, { ...publicSession(after), sent });
         }
-        return reply(res, 200, publicSession(await (action === 'start' ? fleet.startApp(session) : fleet.stopApp(session))));
+        if (action === 'start') {
+          // Which of several apps, by name; none is the default. A console page from before several apps sends no body.
+          const body = await readJson(req).catch(() => null);
+          if (!body || (body.app !== undefined && typeof body.app !== 'string')) return reply(res, 400, { error: 'app must be an app\'s name' });
+          return reply(res, 200, publicSession(await fleet.startApp(session, { app: body.app || null })));
+        }
+        return reply(res, 200, publicSession(await fleet.stopApp(session)));
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
         if (err.refused) return reply(res, 409, { error: err.message });
