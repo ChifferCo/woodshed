@@ -55,6 +55,21 @@ test('an installation with both databases gets the db-admin entryPoint and secre
   assert.ok(secrets.indexOf('PG_ROOT_PASSWORD') < secrets.indexOf('MONGO_ROOT_PASSWORD'));
 });
 
+// The seed's env files come from the default project's repo settings (session/dbAdmin.mjs, seedEnvFiles): the entryPoint
+// names the project, which a run cannot override, and the task role reads that project's values and no other repo's.
+test('the db-admin task seeds from the default project\'s repo settings, and may read only that project\'s', () => {
+  const ecs = fs.readFileSync(path.join(DIR, 'ecs.tf'), 'utf8');
+  const entryPoint = /entryPoint = concat\(([^]*?)\n {4}\)/.exec(ecs)[1];
+  assert.match(entryPoint, /"--repo", [^\n]+,\n {8}"--project", local\.seed_project,\n {8}"--",/);
+  const statement = /sid {5}= "TheSeedsEnvFiles"[^]*?resources = concat\(([^]*?)\n {4}\)/.exec(ecs)[1];
+  assert.match(statement, /"arn:aws:secretsmanager:\$\{var\.region\}:\$\{local\.account_id\}:secret:\$\{local\.p\}\/repos\/\$\{local\.seed_project\}\/env\/\*"/);
+  assert.doesNotMatch(statement, /repos\/\*/, 'never every repo\'s');
+  assert.doesNotMatch(statement, /users\//, 'never anyone\'s own values');
+  const database = fs.readFileSync(path.join(DIR, 'database.tf'), 'utf8');
+  assert.match(database, /seed_project = coalesce\(\n {4}one\(\[for p in var\.projects : p\.name if p\.default \|\| length\(var\.projects\) == 1\]\),/,
+    'the projects\' default first, as console/projects.mjs\'s defaultProject');
+});
+
 // A session's databases are its engines' (shared/databases/): the task definition gives each engine's server in the
 // names that engine reads, and names no app's variable.
 test('the session task definition gives each engine\'s server in its engine\'s names', () => {

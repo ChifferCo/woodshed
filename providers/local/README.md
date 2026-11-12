@@ -89,7 +89,9 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
    console"). Then, on its
    Secrets & webhooks page, set the session secrets. Then build the
    database template once: `docker run` the image as a db-admin run does, with `template`
-   (`dbAdminRunner.mjs` has the flags), or start a session, whose first copy waits for it.
+   (`dbAdminRunner.mjs` has the flags: `--project` names the default project, and the secrets folder holds its
+   `repos/<project>/env/<key>.json` for each env file the databases name), or start a session, whose first copy waits
+   for it.
 
 `node woodshed/providers/local/bin/secret.mjs list` shows which secrets have a value, never a value.
 

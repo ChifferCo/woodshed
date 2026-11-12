@@ -62,7 +62,8 @@ databases:
     # with a new template its seed, in this list's order, with every database's variables set.
     migrate: npm run migrate
     seed: npm run seed
-    # Default: []. Which envFiles' secrets the commands read: each must be an `envFiles` entry's `secret`.
+    # Default: []. Which env files the commands read, each an `envFiles` entry's key: its `secret`, or with none the
+    # key its path makes (web/.env.local is web-env-local). The seed gets the installation's values for them.
     envFiles: [api-env]
     # Default: []. What the template is built from: the deploy workflow's session job builds it again when any changed.
     paths: [api/db/]

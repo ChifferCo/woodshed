@@ -67,6 +67,16 @@ test('defaults are plain NAME=value lines: a placeholder is the session\'s, in l
   assert.throws(() => read({ defaults: [''] }), /envFiles\[0\]\.defaults\[0\] must be a non-empty string/);
 });
 
+test('a database names its env files by key: an entry\'s secret, or the key its path makes', () => {
+  const db = { engine: 'postgres', dir: '.', migrate: null, seed: null, paths: [], migrations: null, user: null, name: null };
+  const envFiles = [{ path: 'api/.env', secret: 'api-env', lines: [] }, { path: 'web/.env.local', lines: [] }];
+  const project = parseProject({ ...EMPTY_PROJECT, envFiles, databases: [{ ...db, envFiles: ['api-env', 'web-env-local'] }] });
+  assert.deepEqual(project.databases[0].envFiles, ['api-env', 'web-env-local']);
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, envFiles, databases: [{ ...db, envFiles: ['web/.env.local'] }] }), /databases\[0\]\.envFiles\[0\] must be lowercase/);
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, envFiles, databases: [{ ...db, envFiles: ['web-env'] }] }),
+    /databases\[0\]\.envFiles names web-env, which no envFiles entry has as its key \(its secret, or with none the key its path makes\)/);
+});
+
 test('a wrong project file names the field', () => {
   const full = (overrides) => parseProject({ ...EMPTY_PROJECT, ...overrides });
   const db = { engine: 'postgres', dir: '.', migrate: null, seed: null, envFiles: [], paths: [], migrations: null, user: null, name: null };

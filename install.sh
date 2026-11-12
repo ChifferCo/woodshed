@@ -137,9 +137,9 @@ fetchRepo() {
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 }
 
-# What the repository's project file decides here, one per line: its env files and the seed's secrets, as
-# WOODSHED_ENV_FILES and WOODSHED_DB_ENV_SECRETS want them (either may be empty), and the engines its
-# databases are on, space-separated, or `none`.
+# What the repository's project file decides here, one per line: its env files with a legacy secret, and the keys of
+# the seed's (each its secret, or the key its path makes), as WOODSHED_ENV_FILES and WOODSHED_DB_ENV_SECRETS want them
+# (either may be empty), and the engines its databases are on, space-separated, or `none`.
 projectSettings() {
   local src=$1 repoDir=$2 projectFilesDir=${3:-}
   # The paths go in the environment: as arguments, project.mjs would take argv[1] for itself and run as a command.
@@ -148,7 +148,7 @@ projectSettings() {
     const { loadProject } = await import(process.env.PROJECT_MJS);
     const project = loadProject(process.env.REPO_DIR_TO_READ);
     console.error(`woodshed install: project file from ${project.from}`);
-    console.log(project.envFiles.map((f) => `${f.secret}=${f.path}`).join(","));
+    console.log(project.envFiles.filter((f) => f.secret).map((f) => `${f.secret}=${f.path}`).join(","));
     console.log([...new Set(project.databases.flatMap((d) => d.envFiles))].join(","));
     console.log(project.databases.map((d) => d.engine).join(" ") || "none");
   '

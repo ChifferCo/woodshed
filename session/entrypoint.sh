@@ -33,6 +33,8 @@
 #   each env file's secret, by its name in capitals (`app-env` is APP_ENV)   legacy base env files, whole: one for each
 #                        of the project file's envFiles with a secret (woodshed/shared/project.mjs), read only where
 #                        the console's repo settings have no value for it, or the console offers none (fetchRepoSettings)
+#   WOODSHED_SEED_REPO_SETTINGS  seed and migrate only: the file of repo settings dbAdmin.mjs read for the databases'
+#                        env files (seedEnvFiles), in the session API's answer's shape; without it, the legacy secrets
 #   REPO_DIR             the checkout; the image sets it, and the working folder is used without it
 #   WOODSHED_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
 #                        .woodshed/project.yaml of its own (shared/project.mjs): the docker launcher mounts the files
@@ -973,6 +975,9 @@ runSession() {
 runTemplateCommands() {
   local mode=$1 engine dir command ran=0 list=/tmp/woodshed-template-commands
   requireDatabases
+  # The default project's repo settings for the databases' env files, in the session API's shape, which dbAdmin.mjs
+  # read for the seed (seedEnvFiles) and deletes after it. Without them, the legacy secrets alone.
+  REPO_SETTINGS_JSON=${WOODSHED_SEED_REPO_SETTINGS:-}
   writeEnvFiles
   startRedisIfUsed
   databases commands "$mode" > "$list" || die "the project file's database commands could not be read"
