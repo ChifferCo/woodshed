@@ -417,7 +417,8 @@
     let me = null;
     const full = () => Boolean(me && me.running >= me.limit);
     form.addEventListener('keydown', (e) => {
-      if (e.repeat || e.isComposing || K.match(e) !== 'start') return;
+      // The `/` menu's Enter picks a skill first, and only that.
+      if (e.defaultPrevented || e.repeat || e.isComposing || K.match(e) !== 'start') return;
       e.preventDefault();
       if (!start.disabled) form.requestSubmit();
     });
