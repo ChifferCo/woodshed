@@ -196,7 +196,7 @@ test('with the App, Add a repo is a list of the repos it may reach, and says whe
     [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web']]);
   const card = cardOf(app, 'projects');
   assert.match(textOf(card), /Not listed\? Give the App access to it on GitHub: acme ↗, akurilin ↗; or install it on another account ↗\. Then List again/);
-  assert.deepEqual(walk(card).filter((e) => e.tag === 'a').map((a) => [a.attrs.href, a.attrs.target]), [
+  assert.deepEqual(walk(card).filter((e) => e.tag === 'a' && textOf(e) !== 'Settings').map((a) => [a.attrs.href, a.attrs.target]), [
     ['https://github.com/organizations/acme/settings/installations/1', '_blank'], ['https://github.com/settings/installations/2', '_blank'], ['https://github.com/apps/w/installations/new', '_blank'],
   ]);
 
@@ -387,4 +387,13 @@ test('one failed read while the image builds is not taken for the restart once t
   assert.doesNotMatch(text, /Restarting/);
   assert.doesNotMatch(text, /has not answered/);
   assert.doesNotMatch(text, /reset --keep/);
+});
+
+test('each repo on the Repos card links to its own settings page, the installation\'s repos too', async () => {
+  const { app } = await loadPage(ANSWER);
+  const links = walk(app).filter((e) => e.tag === 'a' && textOf(e) === 'Settings');
+  assert.deepEqual(links.map((a) => [a.attrs.href, a.attrs['aria-label']]), [
+    ['/console-settings/repos/r', 'Settings of acme/app: env files and instructions'],
+    ['/console-settings/repos/api', 'Settings of acme/api: env files and instructions'],
+  ]);
 });
