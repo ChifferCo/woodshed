@@ -370,7 +370,8 @@
   }
 
   function stepNote(step) {
-    if (step.state === 'failed') return step.detail ?? '';
+    // What stopped it is said in full under the list, where it has room.
+    if (step.state === 'failed') return 'stopped';
     if (step.state === 'now') return step.key === 'image' ? 'takes a few minutes' : '';
     if (step.state === 'done') return [step.detail, took(step.seconds)].filter(Boolean).join(' · ');
     return '';
