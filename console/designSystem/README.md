@@ -65,6 +65,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A command a person runs on their own computer is a `value-box` in mono, one argument a line, with its own **Copy**
   (`btn-plain`) beside it and a `meta` line above saying when to use it. Two commands never share a box: copying one
   must never run the other.
+- Steps a person follows to get something to paste (My settings' Claude and Codex cards) are a numbered list
+  (`cmd-steps`, its numbers in `meta`, 600): each step a line of `ink` text, its command in its own box under it. What
+  the step does with the output ("Paste it below and press Save") is its own step, never folded into a sentence.
 - Commands a person needs again after the first time stay on the page under a fold (`<details>`, its summary in
   `slate`, 600): Restore a dump's **How to make a dump**. Open before first use, folded after.
 
