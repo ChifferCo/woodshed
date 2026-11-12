@@ -2,7 +2,7 @@
 // optional name and issue, PR or branch,
 // claude's model, effort and permission mode, files attached (the paperclip, a paste or a drop), and the repo's
 // skills on `/`. The session it starts is private to whoever is signed in and
-// runs on their own Claude token, so without one the form says where to save it instead. Built once and kept
+// runs on their own Claude token or Codex sign-in, so without either the form says where to save it instead. Built once and kept
 // across the page's refreshes, so nothing typed into it is lost.
 (function () {
   'use strict';
@@ -296,16 +296,17 @@
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
-    // Until setup is done (a Claude token, and databases ready where the console makes them), New session is the setup
+    // Until setup is done (a Claude token or a Codex sign-in, and databases ready where the console makes them), New session is the setup
     // card instead of the form: the server refuses a start until then.
     const noToken = h('div', { class: 'launch-setup', hidden: true });
-    const tokenHelp = h('p', { class: 'sub' }, 'Run ', h('code', null, 'claude setup-token'),
-      ' on your laptop and save the token on My settings: your sessions run on your own Claude plan.');
+    const tokenHelp = h('p', { class: 'sub' }, 'For Claude, run ', h('code', null, 'claude setup-token'),
+      ' on your laptop. For Codex, run ', h('code', null, 'codex login'), ' and copy ', h('code', null, '~/.codex/auth.json'),
+      ', or use an OpenAI API key. Save it on My settings: your sessions run on your own plan or sign-in.');
     const el = h('section', { class: 'launch' },
       // On a phone New session is a screen of its own (/?new=1), and this is the way back to the list.
       h('a', { class: 'launch-back', href: '/' }, '‹ My Woodshed'),
       h('div', null, h('h2', { class: 'launch-title' }, 'New session'),
-        h('p', { class: 'sub' }, 'Private to you: nobody else can see it or open it, and the console comments nothing on GitHub. Claude still pushes its branch and opens a PR, as every session does.')),
+        h('p', { class: 'sub' }, 'Private to you: nobody else can see it or open it, and the console comments nothing on GitHub. The agent still pushes its branch and opens a PR, as every session does.')),
       noToken, form);
 
     // A pull request from the rail arrives as /?on=PR%20%23123, on a page load or a move to / in place.
@@ -354,7 +355,7 @@
       if (refused) {
         noToken.replaceChildren(h('p', { class: 'form-error', role: 'alert' }, `No session can start: ${refused}. Whoever runs this console adds the engine, or the project file drops that database.`));
       } else if (!ready && me) {
-        noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set ? [] : [tokenHelp]));
+        noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set || me.codexAuth?.set ? [] : [tokenHelp]));
       }
       form.hidden = !ready || Boolean(refused);
       start.disabled = attachments.sending();

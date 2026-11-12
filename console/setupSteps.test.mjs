@@ -32,3 +32,10 @@ test('a console with no GitHub App puts connecting one first, and is not done un
   assert.deepEqual(rows(m), ['github:waiting', 'token:done', 'databases:done']);
   assert.equal(setupDone(m), false);
 });
+
+test('a Codex sign-in alone finishes the token step, for someone who only uses Codex', () => {
+  const m = { login: 'mia-dev', claudeToken: { set: false }, codexAuth: { set: true }, databases: { available: true, status: 'ready' } };
+  assert.deepEqual(rows(m), ['token:done', 'databases:done']);
+  assert.equal(setupDone(m), true);
+  assert.match(setupSteps(m)[0].label, /Codex/, 'the step names Codex, not only Claude');
+});

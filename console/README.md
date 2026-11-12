@@ -532,7 +532,8 @@ on Shared.
 it with `claude setup-token` on your laptop. The console keeps it in Secrets
 Manager at `woodshed-cloud/users/<login>/claude-token`, makes that secret itself,
 and never shows it again. `state.json` notes only when it was saved.
-New session is refused until a token is saved. Your private sessions get it
+The setup card, and New session, wait until a Claude token or a Codex sign-in is saved: either
+is enough, and a Claude session still needs the Claude token. Your private sessions get it
 at start, for claude alone: the entrypoint keeps it in
 `~/.config/woodshed/claude-token`, outside the Claude home it saves, and
 `session/bin/claude` hands it to claude as `CLAUDE_CODE_OAUTH_TOKEN`. claude
