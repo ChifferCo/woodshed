@@ -147,6 +147,38 @@ test('the Diff tab\'s read goes to the running session\'s statusd, with its toke
   assert.equal(asked.length, 1, 'nothing asked for a stopped or unknown session');
 });
 
+test('the transcript a phone scrolls is read from the running session\'s statusd, with only a number for its limit', async (t) => {
+  const asked = [];
+  const statusd = http.createServer((req, res) => {
+    asked.push({ method: req.method, url: req.url, authorization: req.headers.authorization });
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ agent: 'claude', entries: [{ role: 'user', text: 'hi', at: null }], partial: false, writtenAt: 1 }));
+  });
+  const statusPort = await listen(statusd);
+  t.after(() => statusd.close());
+  const running = { id: '0a1b2c3d', status: 'running', title: 't', token: 'tok', endpoint: { host: '127.0.0.1', termPort: 1, statusPort } };
+  const stopped = { id: '1b2c3d4e', status: 'stopped', title: 's', token: 'tok2' };
+  const fleet = { sessions: () => [running, stopped], find: (id) => [running, stopped].find((s) => s.id === id) ?? null, stop: async () => {} };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const server = http.createServer(createHandler({ config, fleet }));
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const res = await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?limit=50`);
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).entries[0].text, 'hi');
+  await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript?limit=50%26pane%3Dx`);
+  await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/transcript`);
+  assert.deepEqual(asked.map((a) => a.url), ['/transcript?limit=50', '/transcript', '/transcript']);
+  assert.ok(asked.every((a) => a.method === 'GET' && a.authorization === 'Bearer tok'));
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/1b2c3d4e/transcript`)).status, 409);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/ffffffff/transcript`)).status, 404);
+  assert.equal(asked.length, 3, 'nothing asked for a stopped or unknown session');
+});
+
 test('with sign-in on, everything but the sign-in pages needs a session', async (t) => {
   const session = { id: '0a1b2c3d', status: 'running', title: 't', endpoint: { host: '127.0.0.1', termPort: 1, statusPort: 2 } };
   const fleet = { sessions: () => [session], find: (id) => (id === session.id ? session : null), stop: async () => {} };
@@ -561,7 +593,7 @@ test('a teammate gets the unknown-id answer on every route of someone\'s private
     { method: 'POST', path: '/api/sessions/ID/pin' }, { method: 'POST', path: '/api/sessions/ID/rename' },
     { method: 'POST', path: '/api/sessions/ID/upload?name=a.png' }, { path: '/api/sessions/ID/image?path=shot.png' }, { method: 'POST', path: '/api/sessions/ID/scroll' },
     { method: 'POST', path: '/api/sessions/ID/send' },
-    { path: '/api/sessions/ID/applog' }, { path: '/api/sessions/ID/diff' }, { method: 'POST', path: '/api/sessions/ID/review/diff' }, { path: '/api/sessions/ID/review/analysis' },
+    { path: '/api/sessions/ID/applog' }, { path: '/api/sessions/ID/diff' }, { path: '/api/sessions/ID/transcript' }, { method: 'POST', path: '/api/sessions/ID/review/diff' }, { path: '/api/sessions/ID/review/analysis' },
     { method: 'POST', path: '/api/sessions/ID/review/chat' }, { path: '/api/sessions/ID/review/answer/0123456789abcdef' },
     { path: '/api/sessions/ID/github/draft' }, { method: 'POST', path: '/api/sessions/ID/github/merge' }, { method: 'POST', path: '/api/sessions/ID/github/comment' },
     { path: '/workflows', host: 'ID.console.example' }, { method: 'POST', path: '/api-proxy/x', host: 'ID.console.example' },

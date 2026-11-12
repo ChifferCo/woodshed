@@ -161,6 +161,7 @@ The console's only way into a running session besides the terminal:
 | `GET`/`POST`/`PATCH`/`DELETE /shed-review/...` | The shed's own review page and server (`session/reviewShed/`), reached through the console's `/review` and `/reviews/claude-<id>/...`. |
 | `GET /applog` | `{ logs: [{ name, text, bytes }] }`: the last 48 KB of `/tmp/woodshed-app.log` (`start`, where with several apps a `# Woodshed: starting <name>` line opens each start) and of each of the running app's `logs`. The App log tab |
 | `POST /scroll` | `{"steps": -3, "pane": "agent"}`, a phone's swipe: wheel bytes to a pane that asked for the mouse (claude), copy mode for one that did not (the shell), at most 40 steps |
+| `GET /transcript?limit=` | `{ agent, entries: [{ role: 'user'\|'assistant'\|'tool', text, tool?, at }], partial, writtenAt }`: the conversation so far from claude's transcript or codex's rollout, read from the last 4 MB, newest 300 entries at most (`sessionTranscript.mjs`). Thinking and tool output are left out. For a phone app to scroll on its own: tmux keeps no scrollback of claude's full-screen view |
 | `*` with `x-woodshed-app: Bearer <token>` | Any path, websockets too, forwarded without that header to the app's frontend, on the running app's `frontendPort` (`APP_PORT` overrides it). The token has its own header because the app's requests carry an `Authorization` of their own |
 
 `state` comes from Claude's own hooks: `session/claudeHooks.json`, passed with
