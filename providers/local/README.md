@@ -31,14 +31,30 @@ console others reach (on a server) needs one. The console can make it for you at
 
 ## Setting it up
 
-On a laptop, `install.sh` at Woodshed's root does steps 1 to 5 for one repository, with everything in `~/.woodshed`:
-`bash woodshed/install.sh`, or `curl -fsSL https://woodshed.run/install | bash` with no checkout. It reads your
-`gh` token to fetch the repository and builds the image as `woodshed-session:<owner>-<name>`, on the published
-runtime (`ghcr.io/chifferco/woodshed-session-runtime`, `session/README.md`) when it can pull it, so the machine builds
-only the checkout and its installs. When the repository's
-project file has `databases`, it starts the server of each engine they are on, Postgres on 15432 and Mongo on
-17017, so a laptop's own databases keep theirs, and each session gets its own copy; with none it starts neither, and
-sessions get none.
+On a laptop, `install.sh` at Woodshed's root does steps 1 to 5, with everything in `~/.woodshed`:
+`bash woodshed/install.sh`, or `curl -fsSL https://woodshed.run/install | bash` with no checkout. It asks for no
+repository. With none it builds `woodshed-session:generic`, an image with no checkout (`session/Dockerfile` with `REPO`
+empty), on the published runtime (`ghcr.io/chifferco/woodshed-session-runtime`, `session/README.md`) when it can pull
+it, so the machine builds only Woodshed's own layers; it starts no database, and the console starts with no repo.
+Repos are then added on its Console settings page, Repos (`console/README.md`), and each session clones its repo at
+start and runs its project file's installs there (`PROJECT_REPO`, `session/README.md`). That is work a repo's own image
+does ahead, so each start takes as long as the clone and the installs; adding a repo builds nothing.
+
+With `WOODSHED_REPO=owner/name` it makes that repository's install instead: it reads your `gh` token to fetch the
+repository and builds the image as `woodshed-session:<owner>-<name>`, holding its checkout and its installs. When the
+repository's project file has `databases`, it starts the server of each engine they are on, Postgres on 15432 and
+Mongo on 17017, so a laptop's own databases keep theirs, and each session gets its own copy; with none it starts
+neither, and sessions get none. An install made with no repository takes one this way later, keeping the rest of its
+`stack.env`, and that is the way to host the databases of a repo added on the console whose project file has some:
+until then its sessions are refused with `the project file's databases need postgres, which this installation does
+not host (it hosts none): run WOODSHED_REPO=owner/name bash install.sh again on this machine`. An env file's `secret`
+likewise gets its slot on Secrets & webhooks only from the install's repository (`WOODSHED_ENV_FILES`). Once an install
+has a repository it refuses another: a second one gets its own `WOODSHED_HOME`.
+
+Before it builds anything, it checks the ports the console will listen on (7690, the session API's 7691, and with
+`WOODSHED_TAILSCALE=1` the app ports) and stops with what holds one, from `lsof -nP -iTCP:<port> -sTCP:LISTEN`, or
+`ss` on Linux. Its own console (the one started from this `stack.env`) is not in the way: it is stopped and started
+again with the new settings at the end. `WOODSHED_NO_START=1` checks nothing.
 `WOODSHED_NETWORK` puts sessions on a docker network of the repository's own, such as its compose file's
 `<folder>_default`, to reach the services it runs there. `WOODSHED_PROJECT_FILES_DIR`, an absolute path, is a folder of
 project files the installation supplies, `<owner>/<name>.yaml`, for a repository with no `.woodshed/project.yaml` of its
@@ -160,7 +176,8 @@ devices, with MagicDNS and HTTPS certificates on in the tailnet's DNS settings. 
 
 The console stays with no sign-in and no GitHub App: the tailnet is the gate, so check with `tailscale status` that
 every device on it is yours. A tailnet shared with someone (a device shared in, an organization's tailnet) lets them in
-as you: take the next way instead. Restart the console after the change. `tailscale serve status` lists what is
+as you: take the next way instead. Owning every device is not enough either: a server on the tailnet that other people
+have a shell on, such as a shared dev box, reaches the console as you too, so check the Linux and server peers. Restart the console after the change. `tailscale serve status` lists what is
 served; `tailscale serve reset` takes it all down. The app's dev server must accept the name (Vite's
 `server.allowedHosts`, Next's `allowedDevOrigins`), and anything that builds absolute URLs from its port sees the
 session's own port, not the app port.

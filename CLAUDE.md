@@ -295,6 +295,17 @@ secrets.
   stop reason. An empty secret shows as `ResourceInitializationError`. A
   missing image shows as `CannotPullContainerError`. Otherwise read the
   session's log stream: the entrypoint logs each step (`[woodshed …]`).
+- **A session fails at once with `the session image has no checkout and the console named no repo`.** The image was
+  built with no repo (install.sh's `woodshed-session:generic`) and the session got no `PROJECT_REPO`, which the console sets for
+  every session on a repo an admin added (`fleet.mjs`, `clonedAtStart`): a console older than its image does not. Its log otherwise starts `Cloning the
+  project's repo (repo: <repo>, image: none)`, then `Project repo cloned` with its seconds; the installs run after
+  claude starts (`/tmp/woodshed-deps`).
+- **install.sh stops with `port 7690, which the console needs, is taken by …`.** Something else listens where the
+  console would: often a console left running from another install or `WOODSHED_HOME`. The message names the process
+  and its pid, from `lsof -nP -iTCP:<port> -sTCP:LISTEN` (`ss -ltnp` on Linux); `this machine will not say by what`
+  means neither could see it, such as another user's process. The install's own console is never in the way: it is
+  told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
+  A Tailscale `serve` listener on the same port does not count.
 - **A session takes a minute and a half to start.** The image has lost its
   SOCI index, so Fargate pulls it in full: `describe-tasks` shows about 85
   seconds between `pullStartedAt` and `pullStoppedAt`, against under 10 with
@@ -324,7 +335,9 @@ secrets.
   console reads the default branch's file and logs `console: project databases not hosted` with `needs` and `hosted`,
   then `fleet: session refused, its databases are not hosted` for each start it refused (`fleet: trigger refused` for a
   label or comment, which gets the reason on its issue). A session started from a branch whose own file differs stops
-  at start with the same words. The console logs `console: databases` at start with the `engines` it makes and the ones
+  at start with the same words. On a local install made with no repository, the refusal ends `run WOODSHED_REPO=<repo>
+  bash install.sh again on this machine`: that builds the repo's own image and starts its databases
+  (providers/local/README.md, "Setting it up"). The console logs `console: databases` at start with the `engines` it makes and the ones
   sessions are `hosted` on; a session in an installation with none logs `No databases to fetch`. A db-admin run logs
   `Started` with its `databases`, and refuses a project database whose engine it has no flags for.
 - **Every copy waits five minutes and fails with `there is no database template`, the log saying `Waiting for the
