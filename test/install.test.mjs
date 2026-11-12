@@ -364,12 +364,13 @@ test('WOODSHED_TAILSCALE=shared, for others on the tailnet, serves the console a
 });
 
 // main, run as a person runs it, with the slow or outside parts stood in for: docker answers yes to everything (the
-// image is there, so nothing is built), the session API's address is the Mac's, and each call to buildImage or
-// fetchRepo is said.
+// image is there, so nothing is built), the session API's address is the Mac's, the ports are free (a console of this
+// machine's own may hold 7690), and each call to buildImage or fetchRepo is said.
 function runMain(env, extra = []) {
   const docker = fakeDocker(0);
   return runInstallFunction([
     'checkTools() { :; }',
+    'checkPorts() { :; }',
     'sessionApiHost() { echo "127.0.0.1 host.docker.internal"; }',
     'buildImage() { echo "build repo=$2 image=$4"; }',
     ...extra,
@@ -539,6 +540,29 @@ test('a port something else holds stops install.sh before anything is built, nam
   } finally {
     other.stop();
   }
+});
+
+test('with WOODSHED_NO_START, as an agent runs it, a taken port still stops the run before the build, and this install\'s own console is said', async () => {
+  const other = listener();
+  await other.up;
+  try {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-nostart-taken-'));
+    assert.throws(() => runInstallFunction(['checkTools() { :; }', 'buildImage() { echo built; }', 'main'].join('; '),
+      { WOODSHED_HOME: home, WOODSHED_NO_START: '1', WOODSHED_PORT: String(other.port), WOODSHED_SESSION_API_PORT: String(other.port + 1) }), (err) => {
+      assert.equal(err.status, 1);
+      assert.doesNotMatch(err.stdout, /built/);
+      assert.match(err.stderr, new RegExp(`port ${other.port}, which the console needs, is taken`));
+      return true;
+    });
+  } finally {
+    other.stop();
+  }
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-nostart-own-'));
+  const out = runMain({ WOODSHED_HOME: home }, ['checkPorts() { echo 4242; }', 'stopOwnConsole() { echo "stopped $1"; }']);
+  assert.match(out, /This install's console is running \(pid 4242\): stop it \(kill 4242\) and start it again with .*\/bin\/woodshed to take these settings/);
+  assert.doesNotMatch(out, /stopped/, 'nothing is stopped by a run that starts nothing');
+  assert.equal(runInstallFunction(['checkTools() { :; }', 'checkPorts() { echo asked; }', 'buildImage() { :; }', 'main'].join('; '),
+    { WOODSHED_HOME: home, WOODSHED_BUILD_ONLY: '1' }).includes('asked'), false, 'a build alone checks nothing');
 });
 
 const hasPortTool = ['lsof', 'ss'].some((tool) => {

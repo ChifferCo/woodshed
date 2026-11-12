@@ -9,7 +9,7 @@
 # that repository instead, holding its checkout and installs, and starts Postgres and Mongo in Docker for each database
 # engine its project file names, so each session gets its own copy. Running it again keeps what it made and starts the
 # console, after stopping this install's own console if it runs; a port the console needs that something else holds
-# stops it before anything is built. The console's first page then asks for your Claude token; sessions push as you,
+# stops it before anything is built, with WOODSHED_NO_START too. The console's first page then asks for your Claude token; sessions push as you,
 # with your gh sign-in, so a GitHub App is optional on this machine. providers/local/README.md says what each piece is.
 #
 # Optional settings: WOODSHED_REPO (owner/name: a repository whose image and databases this install makes; a later run
@@ -616,10 +616,11 @@ main() {
   local projectFilesDir=${WOODSHED_PROJECT_FILES_DIR:-$(savedConsoleSetting "$stackEnv" PROJECT_FILES_DIR)}
   [ -z "$projectFilesDir" ] || [[ $projectFilesDir = /* ]] || fail "WOODSHED_PROJECT_FILES_DIR must be an absolute path: $projectFilesDir"
 
-  # Before anything slow, so a port the console cannot have stops the run now rather than after the build. Not for a
-  # run that starts no console.
+  # Before anything slow, so a port the console cannot have stops the run now rather than after the build. Also with
+  # WOODSHED_NO_START, which an agent's run always has (docs/self-host.md): the console it starts next would stop
+  # there. Not for a build alone, which may be for another docker host.
   local ownConsole=''
-  if [ -z "${WOODSHED_NO_START:-}${WOODSHED_BUILD_ONLY:-}" ]; then ownConsole=$(checkPorts "$home" "$stackEnv"); fi
+  if [ -z "${WOODSHED_BUILD_ONLY:-}" ]; then ownConsole=$(checkPorts "$home" "$stackEnv"); fi
 
   local token=''
   if [ -n "$repo" ]; then
@@ -708,7 +709,10 @@ main() {
   url=http://localhost:$(consoleSetting PORT)
   publicUrl=$(consoleSetting PUBLIC_URL)
   [ -n "$repo" ] || say "Repositories are added in the console: Console settings, Repos, at ${publicUrl:-$url}/console-settings#card-projects"
-  [ -z "${WOODSHED_NO_START:-}" ] || return 0
+  if [ -n "${WOODSHED_NO_START:-}" ]; then
+    [ -z "$ownConsole" ] || say "This install's console is running (pid $ownConsole): stop it (kill $ownConsole) and start it again with $home/bin/woodshed to take these settings"
+    return 0
+  fi
 
   [ -z "$ownConsole" ] || stopOwnConsole "$ownConsole" "$(consoleSetting PORT)"
   say "Starting the console at $url"
