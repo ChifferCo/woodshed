@@ -403,6 +403,56 @@ test('Stop app while a switch waits on the running app\'s stop keeps the next on
   assert.equal((await call('GET', '/status')).body.appName, 'admin', 'the pick is kept: Start app starts it');
 });
 
+// Two apps on their own frontend ports and one shared backend, with servers the test starts itself, as claude would from
+// a shell. The checkout's start command only records that it ran.
+async function statusdWithTwoApps(t, { apps = ['web', 'admin'], shareFrontend = false } = {}) {
+  const [webPort, adminPort, extraPort, apiPort] = [await freePort(), await freePort(), await freePort(), await freePort()];
+  const ports = { web: webPort, admin: shareFrontend ? webPort : adminPort, extra: extraPort };
+  const one = (name) => ({ name, ...fixtureApp({ start: `echo start ${name} >> calls; sleep 60`, stop: null, frontendPort: ports[name], backendPort: apiPort }) });
+  const { call, calls } = await statusdWithApp(t, { project: { app: null, apps: apps.map(one) }, env: { APP_PORT: '', APP_API_PORT: '' } });
+  const listen = async (port) => {
+    const server = net.createServer().listen(port, '127.0.0.1');
+    t.after(() => server.close());
+    await new Promise((resolve) => server.once('listening', resolve));
+  };
+  return { call, calls, ports, listen };
+}
+
+test('with the default app down and another app\'s frontend listening, statusd follows that app', async (t) => {
+  const { call, ports, listen } = await statusdWithTwoApps(t);
+  assert.equal((await call('GET', '/status')).body.appName, 'web', 'nothing listens: the default stays');
+  await listen(ports.admin);
+  const body = (await call('GET', '/status')).body;
+  assert.deepEqual([body.appName, body.appServers.frontendPort, body.appServers.frontend], ['admin', ports.admin, true]);
+  assert.equal((await call('GET', '/status')).body.appName, 'admin', 'and it is kept');
+});
+
+test('statusd keeps the app when several others listen, or when the port is shared with the current one', async (t) => {
+  const many = await statusdWithTwoApps(t, { apps: ['web', 'admin', 'extra'] });
+  await many.listen(many.ports.admin);
+  await many.listen(many.ports.extra);
+  assert.equal((await many.call('GET', '/status')).body.appName, 'web');
+
+  const shared = await statusdWithTwoApps(t, { shareFrontend: true });
+  await shared.listen(shared.ports.web);
+  assert.equal((await shared.call('GET', '/status')).body.appName, 'web');
+});
+
+test('statusd keeps the app while a Start app of its own is going', async (t) => {
+  const { call, ports, listen } = await statusdWithTwoApps(t);
+  await listen(ports.admin);
+  assert.equal((await call('POST', '/app/start')).body.started, true);
+  const body = (await call('GET', '/status')).body;
+  assert.deepEqual([body.appName, body.app], ['web', 'starting']);
+});
+
+test('with one app, statusd never looks elsewhere', async (t) => {
+  const { call, ports, listen } = await statusdWithTwoApps(t, { apps: ['web'] });
+  await listen(ports.admin);
+  const body = (await call('GET', '/status')).body;
+  assert.deepEqual([body.appName, body.appServers.frontend], ['web', false]);
+});
+
 function listeningOn(port) {
   return new Promise((resolve) => {
     const socket = net.connect(port, '127.0.0.1');

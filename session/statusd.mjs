@@ -436,9 +436,30 @@ export function appState(servers, start, stop = null, { hasApp = true } = {}) {
   return 'stopped';
 }
 
+// Claude may start an app of its own from the shell, other than the one statusd runs. When the current app's frontend
+// is down and exactly one other app's frontend answers (on a port the current app does not use), that is the app
+// running: follow it, so its ports, Open app and logs are the right ones. Never while a Start or Stop of ours is
+// going, and never when it is not clear which app runs.
+async function followRunningApp(servers) {
+  if (PROJECT_APPS.length < 2 || servers.frontend) return null;
+  if ((appStart && appStart.exitCode === null) || (appStop && appStop.exitCode === null) || appSwitch) return null;
+  const others = PROJECT_APPS.filter((app) => app !== CURRENT_APP && portsOf(app).frontendPort && portsOf(app).frontendPort !== servers.frontendPort);
+  const up = (await Promise.all(others.map(async (app) => ((await listening(portsOf(app).frontendPort)) ? app : null)))).filter(Boolean);
+  const ports = new Set(up.map((app) => portsOf(app).frontendPort));
+  if (up.length !== 1 || ports.size !== 1) return null;
+  // A Start or Stop may have begun while the probes ran.
+  if ((appStart && appStart.exitCode === null) || (appStop && appStop.exitCode === null) || appSwitch) return null;
+  console.log('statusd: app running is not the one picked, following it', { from: CURRENT_APP?.name, to: up[0].name });
+  useApp(up[0]);
+  appStart = null;
+  appStop = null;
+  return up[0];
+}
+
 async function appStatus() {
   refreshApp();
-  const servers = await appServers();
+  let servers = await appServers();
+  if (await followRunningApp(servers)) servers = await appServers();
   return { app: appState(servers, appStart, appStop, { hasApp: Boolean(CURRENT_APP) }), appServers: servers };
 }
 
