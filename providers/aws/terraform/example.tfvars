@@ -22,10 +22,6 @@ databases = ["postgres"]
 # With postgres: the database RDS starts with and its master user. Nothing else uses them, and a change replaces RDS.
 database_name = "yourapp"
 database_user = "yourapp_user"
-# The env files sessions write, as secret name = path in the repo (the project file's envFiles that have a `secret`),
-# and which of them the databases' commands read (each database's envFiles; [], the default, with no databases).
-env_files            = { "app-env" = "app/.env" }
-database_env_secrets = ["app-env"]
 # Optional: secrets the repo's dependency installs read, as secret name = the variable its tools read it from, such
 # as a private package registry's token. {} (the default) for none.
 # install_secrets = { "registry-token" = "REGISTRY_TOKEN" }

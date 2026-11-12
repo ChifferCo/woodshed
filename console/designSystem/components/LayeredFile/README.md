@@ -26,7 +26,8 @@ later layer wins.
 - On My settings the installation's values are read only: hidden behind **Show** (outline) once saved, then a mono
   `stopped` block like the repo's defaults, with "Set by your admins" under it. One read fills it and the person's own
   field, which is behind **Show and edit** once saved. Clear is **Clear mine**.
-- While a legacy secret may still be read, a `cap-note` says which one the sessions read.
+- A value an older console copied from a Terraform secret says `copied from Terraform` in its `meta` line, where the
+  others say who saved them.
 - Several env files are tabs above it (`file-tabs`), labelled by path, `•` on one with a saved value; `?file=<key>`
   opens one, so a link can point at it. On My settings the repos the person can write to are tabs above those, by
   `owner/name`, `•` on one where they keep something; `?repo=<project>` opens one.

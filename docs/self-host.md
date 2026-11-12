@@ -95,8 +95,9 @@ but no installs, no databases and no app to check its change in. Writing it is t
    `with: { ref: <commit> }` pins Woodshed's check to a commit, so a change to it reaches the repository only when the
    pin moves. **Done when** the pull request that adds it shows a passing `check / Project check`.
 
-Things the file cannot hold: secrets. An env file's secret values (API keys the app's dev setup needs, never
-production ones: `CLAUDE.md`, "Rules") are set on the console's Secrets & webhooks page after it starts.
+Things the file cannot hold: secrets. An env file's values (API keys the app's dev setup needs, never production
+ones: `CLAUDE.md`, "Rules") are set on the console's Repo settings after it starts: Console settings → Repos → the
+repo → Settings.
 
 ## On this machine
 
@@ -136,7 +137,8 @@ macOS and Windows, Docker Desktop must be running.
    piece: a token that lost a character to a wrapped line looks right and fails in the session. With an Anthropic API
    key instead: save it as `anthropic-api-key` on **Secrets & webhooks**. For Codex: run `codex login` and paste
    `~/.codex/auth.json`, or paste an OpenAI API key; then pick Codex as the agent in New session.
-6. **You**, if the project file has env files with a `secret`: set each on **Secrets & webhooks**.
+6. **You**, if the project file has env files: set each one's values on **Console settings → Repos → the repo →
+   Settings**.
 7. **You.** Press **New session** and say what to build.
 
    **Done when** the session reaches its terminal and claude is working. A session that fails at start shows why; the
@@ -215,8 +217,9 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 
    **Done when** the log has `console: GitHub App from the setup page` and `auth: signed in`, and opening the console
    from another browser asks to sign in with GitHub.
-10. **You.** My settings (a Claude token), Secrets & webhooks (env file secrets, `anthropic-api-key` for sessions not
-    on someone's plan, then **Set up webhook**), and **New session**, as on this machine. Invite teammates on
+10. **You.** My settings (a Claude token), the repo's env files on Console settings → Repos → Settings, Secrets &
+    webhooks (`anthropic-api-key` for sessions not on someone's plan, then **Set up webhook**), and **New session**, as
+    on this machine. Invite teammates on
     **People**. A team key goes on the Secrets page only, never in `session-env.json`, which every session reads.
 11. **Server.** Back up the Volume on a schedule; Hetzner's backups leave Volumes out. Copy the databases with
     `pg_dumpall` and `mongodump` rather than their live folders. Rebuild the session image when the project file's

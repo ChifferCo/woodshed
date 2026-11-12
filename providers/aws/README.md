@@ -116,7 +116,8 @@ Keep the account for Woodshed alone: "How it is built", below, says why.
    install Caddy's root certificate: it is not limited to this site, and its key
    lives on the base box.
 8. Sign in, then on the Secrets & webhooks tab set the four session secrets (a session will not start until all
-   have a value).
+   have a value). Each env file the project file names gets its values on Console settings → Repos → the repo →
+   Settings, which needs no Terraform.
 9. With a database in `databases`, build the database template once with the `db_template_command` output:
    step 6's session job tried, before the secrets were set. Every session's
    databases are copied from it, so a session started before it waits five
@@ -208,6 +209,17 @@ console gets `WOODSHED_CONSOLE_NAME` and restarts. The pages and the manifest fo
 installed from the browser keeps the old name until it is installed again, since the browser keeps the name it was
 installed with.
 
+Env files leaving Terraform: an installation set up before Repo settings has `env_files` and `database_env_secrets`
+in its tfvars, one Secrets Manager secret for each env file. Those are not read any more, and the plan stops with
+`env_files is no longer read` while either is set. Check each file on Console settings → Repos → the repo → Settings
+(a console of the release before copied them there at its start; one that skipped it has the values only in those
+secrets, read with `aws secretsmanager get-secret-value` into a file and pasted on the page), then delete both from
+the tfvars. The next plan destroys `aws_secretsmanager_secret.session["<key>"]` for each env file (its name with
+dashes as underscores) and changes the rest in place: a new session task definition without their variables, the
+session execution role's, the base box role's and the db-admin roles' policies, and the base box's stack document
+without `WOODSHED_ENV_FILES`. The deploy workflow stops at a plan that destroys anything: run it once with
+`allow_destroy`. The secrets are deleted at once (no recovery window), so check the page first.
+
 Terraform ignores changes to `baseBox.sh.tftpl` (first boot only), so an apply
 never replaces the box by surprise. `terraform apply -replace=aws_instance.base_box`
 does: the new box mounts the same data volume, so Mongo and the console's
@@ -247,7 +259,7 @@ that holds nothing else: the security below relies on that.
 | RDS | With `postgres` in `databases`: Postgres 16 `db.t4g.micro`, 20 GB, backups off. RDS keeps the master (root) password in its own Secrets Manager secret, which only the db-admin task reads |
 | Base box | EC2 `t3.small`, or `t3.medium` with Mongo or a shared service on it (`base_box_instance_type` picks another; one with less memory, or not x86 like the session image, is refused at plan), with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/<prefix>/compose.yml`, each service's `files` from `/opt/<prefix>/services/`. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
 | Data volume | A 20 GB EBS volume at `/var/lib/<prefix>` holding Mongo, the console's session list and Caddy's certificate, so they survive restarts, resizes (`base_box_instance_type`) and a replaced box. `terraform destroy` removes it with the rest. Localstack's S3 files are not kept: the free edition has no persistence |
-| Sessions | ECS cluster and one Fargate task definition for shared and private sessions, 2 vCPU / 8 GB / 50 GB disk. Secrets come from Secrets Manager through the task definition, all but the Anthropic key, which only the console's proxy holds; a run passes only the per-session values, and the databases come from the session API. No task role, so session code has no AWS credentials. A second, `<prefix>-db-admin`, is the db-admin task, with a database in `databases`: the root passwords of those it runs through its execution role, and a task role that reads the database users' passwords and the seed's env files: the default project's repo settings (`<prefix>/repos/<project>/env/*`, the project its entryPoint's `--project` names) and the legacy `database_env_secrets` |
+| Sessions | ECS cluster and one Fargate task definition for shared and private sessions, 2 vCPU / 8 GB / 50 GB disk. Secrets come from Secrets Manager through the task definition, all but the Anthropic key, which only the console's proxy holds; a run passes only the per-session values, and the databases come from the session API. No task role, so session code has no AWS credentials. A second, `<prefix>-db-admin`, is the db-admin task, with a database in `databases`: the root passwords of those it runs through its execution role, and a task role that reads the database users' passwords and the seed's env files: the default project's repo settings (`<prefix>/repos/<project>/env/*`, the project its entryPoint's `--project` names) and no other repo's |
 | Images | ECR `<prefix>-session` and `<prefix>-console`, built by the installation's deploy workflow ("The deploy workflow", above) through GitHub OIDC, from the default branch only. They build in separate jobs, and a console build restarts the console on the base box. The session image gets a SOCI index (`session/addSociIndex.sh`), so Fargate starts a session in seconds and fetches files as they are read instead of pulling the whole image first, and then the database template is built again from it |
 | Budget | $150 a month for the whole account, alerts at 80% and 100% |
 | DNS | Route 53 zone for `domain` (such as `woodshed.example.com`) with an A record for the Elastic IP. The parent domain's DNS, wherever it is, delegates the name with NS records holding the `dns_nameservers` output; until it does, nothing resolves it. A recreated zone (after a `destroy`, or a new `domain`) gets new nameservers, so those NS records must be changed to match. A CAA record lets only Let's Encrypt and ZeroSSL (Caddy's fallback) issue for the name |

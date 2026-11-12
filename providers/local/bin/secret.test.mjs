@@ -14,13 +14,14 @@ test('put saves a value from stdin, list shows set or unset and never a value', 
   assert.match(await runSecretCommand({ argv: ['new-key', keyFile], env: {}, stdin: Readable.from([]) }), /keep a copy apart/);
   assert.equal(fs.statSync(keyFile).mode & 0o777, 0o600);
   await assert.rejects(runSecretCommand({ argv: ['new-key', keyFile], env: {}, stdin: Readable.from([]) }), /there already/);
-  const env = { WOODSHED_LOCAL_SECRETS_DIR: dir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile, WOODSHED_ENV_FILES: 'api-env=api/.env', WOODSHED_INSTALL_SECRET_PAIRS: 'registry-token=REGISTRY_TOKEN' };
+  const env = { WOODSHED_LOCAL_SECRETS_DIR: dir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile, WOODSHED_INSTALL_SECRET_PAIRS: 'registry-token=REGISTRY_TOKEN' };
   assert.equal(await runSecretCommand({ argv: ['put', 'db-root/postgres'], env, stdin: Readable.from(['pg-root-pw\n']) }), 'db-root/postgres saved (10 bytes)');
   assert.ok(!fs.readFileSync(path.join(dir, 'db-root/postgres.json'), 'utf8').includes('pg-root-pw'), 'sealed');
   await runSecretCommand({ argv: ['put', 'registry-token'], env, stdin: Readable.from(['npm_x']) });
   const listed = await runSecretCommand({ argv: ['list'], env, stdin: Readable.from([]) });
   assert.match(listed, /^set +registry-token$/m);
-  assert.match(listed, /^unset api-env$/m);
+  assert.match(listed, /^unset anthropic-api-key$/m);
+  assert.doesNotMatch(listed, /api-env/, 'no env file is a secret of the page\'s');
   assert.ok(!listed.includes('npm_x'));
   await assert.rejects(runSecretCommand({ argv: ['put', 'x'], env, stdin: Readable.from(['']) }), /no value on stdin/);
   await assert.rejects(runSecretCommand({ argv: ['get', 'x'], env, stdin: Readable.from([]) }), /usage/);

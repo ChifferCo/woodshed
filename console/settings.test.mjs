@@ -9,20 +9,18 @@ import { createSecretStore } from '../providers/aws/secretStore.mjs';
 import { createWebhookUrl } from '../providers/aws/webhookUrl.mjs';
 import { createSettings } from './settings.mjs';
 
-const ENV_FILES = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }];
 const INSTALL_SECRETS = [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }];
-const SPECS = secretSpecs({ envFiles: ENV_FILES, installSecrets: INSTALL_SECRETS });
+const SPECS = secretSpecs({ installSecrets: INSTALL_SECRETS });
 const findSecret = (name) => SPECS.find((s) => s.name === name);
 
 const PEM = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' });
 const LAMBDA_URL = 'https://abc.lambda-url.us-east-1.on.aws/';
 
-test('checkValue trims one-line values, keeps .env files whole and refuses anything else', () => {
+test('checkValue trims one-line values, checks a PEM key and refuses anything else', () => {
   assert.equal(checkValue(findSecret('anthropic-api-key'), '  sk-ant-x\n'), 'sk-ant-x');
   assert.throws(() => checkValue(findSecret('anthropic-api-key'), 'two words'), /one line/);
   assert.throws(() => checkValue(findSecret('registry-token'), '   '), /empty/);
-  assert.equal(checkValue(findSecret('api-env'), 'A=1\r\nB=2\n'), 'A=1\nB=2\n');
-  assert.throws(() => checkValue(findSecret('api-env'), 'x'.repeat(70_000)), /64 KB/);
+  assert.throws(() => checkValue(findSecret('registry-token'), 'x'.repeat(70_000)), /64 KB/);
   assert.throws(() => checkValue(findSecret('github-app-key'), 'not a key'), /not a PEM private key/);
   assert.ok(checkValue(findSecret('github-app-key'), PEM).startsWith('-----BEGIN RSA PRIVATE KEY-----'));
 });
@@ -63,11 +61,11 @@ function fakeAws(values = {}) {
   return { aws, calls, values, written };
 }
 
-function setup({ values, keyRefused = false, githubFails = false, githubOff = false, repoSettings = null } = {}) {
+function setup({ values, keyRefused = false, githubFails = false, githubOff = false } = {}) {
   const store = fakeAws({
     'woodshed-cloud/anthropic-api-key': 'sk-ant-old',
+    // A Terraform env file secret from before Repo settings, still in the account: not one of the page's.
     'woodshed-cloud/api-env': 'A=1\n',
-    'woodshed-cloud/web-env': null,
     'woodshed-cloud/registry-token': 'npm_x',
     'woodshed-cloud/github-app-key': PEM,
     'woodshed-cloud/github-webhook-secret': null,
@@ -86,13 +84,12 @@ function setup({ values, keyRefused = false, githubFails = false, githubOff = fa
     },
   };
   const settings = createSettings({
-    config: { repo: 'o/r', envFiles: ENV_FILES, installSecrets: INSTALL_SECRETS, githubApp: { appId: '1', installationId: '2' } },
+    config: { repo: 'o/r', installSecrets: INSTALL_SECRETS, githubApp: { appId: '1', installationId: '2' } },
     secrets: createSecretStore({ prefix: 'woodshed-cloud/', aws: store.aws, specs: SPECS }),
     appKey: { current: () => key, set: (pem) => { key = pem; } },
     appApi,
     webhookUrl: createWebhookUrl({ functionName: 'woodshed-cloud-webhooks', aws: store.aws }),
     checkKey: async () => { if (keyRefused) throw new Error('GitHub refused an installation token: HTTP 401'); },
-    repoSettings,
   });
   return { settings, store, hookCalls, key: () => key };
 }
@@ -101,7 +98,7 @@ test('the view lists every secret without a value, and the webhook as GitHub and
   const { settings } = setup();
   const view = await settings.view();
   assert.deepEqual(view.secrets.map((s) => [s.name, s.set, s.readable]), [
-    ['anthropic-api-key', true, false], ['openai-api-key', false, false], ['api-env', true, true], ['web-env', false, true], ['registry-token', true, true],
+    ['anthropic-api-key', true, false], ['openai-api-key', false, false], ['registry-token', true, true],
     ['github-app-key', true, false], ['github-webhook-secret', false, true], ['github-app-client-secret', false, false],
     ['slack-bot-token', false, false], ['slack-signing-secret', false, false],
   ]);
@@ -121,7 +118,7 @@ test('GitHub\'s deliveries are read only once there is an App key', async () => 
   const { settings } = setup();
   assert.deepEqual(await settings.deliveries(), [{ guid: 'g-1', statusCode: 202 }]);
   const none = createSettings({
-    config: { repo: 'o/r', envFiles: ENV_FILES, installSecrets: INSTALL_SECRETS, githubApp: { appId: '1', installationId: '2' } },
+    config: { repo: 'o/r', installSecrets: INSTALL_SECRETS, githubApp: { appId: '1', installationId: '2' } },
     secrets: createSecretStore({ prefix: 'woodshed-cloud/', aws: async () => null, specs: SPECS }),
     appKey: { current: () => null, set() {} }, appApi: { deliveries: async () => assert.fail('no key, no call') }, webhookUrl: async () => null,
   });
@@ -148,7 +145,10 @@ test('a session secret can be shown; the Anthropic key and the App key cannot', 
   assert.equal(await settings.reveal('registry-token'), 'npm-x');
   await assert.rejects(settings.reveal('anthropic-api-key'), (err) => err.shown && /write-only/.test(err.message));
   await assert.rejects(settings.reveal('github-app-key'), (err) => err.shown && /write-only/.test(err.message));
-  await assert.rejects(settings.reveal('web-env'), /no value yet/);
+  await assert.rejects(settings.reveal('openai-api-key'), /write-only/);
+  await assert.rejects(settings.reveal('api-env'), /no secret called/, 'an env file\'s old Terraform secret is not the page\'s');
+  await assert.rejects(settings.replace('api-env', 'B=2\n'), /no secret called/);
+  assert.equal(store.values['woodshed-cloud/api-env'], 'A=1\n');
   await assert.rejects(settings.reveal('../other'), /no secret called/);
 });
 
@@ -237,30 +237,12 @@ test('a secret the console makes is named and tagged after the installation\'s p
   assert.equal(args[args.indexOf('--tags') + 1], 'Key=project,Value=woodshed');
 });
 
-test('the Secrets page lists one secret for each env file and each install secret the installation names, and none without', () => {
+test('the Secrets page lists one secret for each install secret the installation names, and no env file\'s', () => {
   const names = (opts) => secretSpecs(opts).map((s) => s.name);
-  assert.deepEqual(names({ envFiles: [{ secret: 'app-env' }], installSecrets: INSTALL_SECRETS }).slice(0, 4),
-    ['anthropic-api-key', 'openai-api-key', 'app-env', 'registry-token']);
-  assert.ok(!names({ envFiles: [] }).includes('api-env'));
-  assert.ok(!names({ envFiles: [] }).includes('registry-token'), 'no install secret the installation does not name');
-  const specs = secretSpecs({ envFiles: [{ secret: 'app-env' }], installSecrets: INSTALL_SECRETS });
-  assert.equal(specs.find((s) => s.name === 'app-env').kind, 'env');
-  assert.deepEqual(specs.find((s) => s.name === 'registry-token'), { name: 'registry-token', group: 'session', kind: 'line', readable: true });
-});
-
-test('an env file\'s secret is listed as moved to Repo settings, and Replace is refused once they hold it', async () => {
-  // repoSettings.mjs's legacyState: api-env was copied at start, web-env had nothing to copy.
-  const moved = {
-    'api-env': { secret: 'api-env', path: 'api/.env', project: 'app', repo: 'o/r', key: 'api-env', copiedAt: '2026-11-12T10:00:00.000Z', saved: true },
-    'web-env': { secret: 'web-env', path: 'web/.env.local', project: 'app', repo: 'o/r', key: 'web-env', copiedAt: null, saved: false },
-  };
-  const { settings, store } = setup({ repoSettings: { legacyState: (name) => moved[name] ?? null } });
-  const view = await settings.view();
-  assert.deepEqual(view.secrets.filter((s) => s.moved).map((s) => [s.name, s.moved.saved]), [['api-env', true], ['web-env', false]]);
-  assert.equal(view.secrets.find((s) => s.name === 'registry-token').moved, undefined, 'an install secret has not moved');
-
-  await assert.rejects(settings.replace('api-env', 'B=2\n'), (err) => err.shown && /api-env moved to Repo settings: edit it on Console settings → Repos → o\/r → Settings/.test(err.message));
-  assert.equal(store.values['woodshed-cloud/api-env'], 'A=1\n', 'the Terraform secret is not changed');
-  await settings.replace('web-env', 'C=3\n');
-  assert.equal(store.values['woodshed-cloud/web-env'], 'C=3\n', 'until Repo settings hold a value, the secret is what sessions read, and may be set');
+  assert.deepEqual(names({ installSecrets: INSTALL_SECRETS }).slice(0, 3), ['anthropic-api-key', 'openai-api-key', 'registry-token']);
+  assert.ok(!names().includes('registry-token'), 'no install secret the installation does not name');
+  // A repo's env files are its Repo settings: an old caller that still passes them gets none.
+  assert.ok(!names({ envFiles: [{ secret: 'app-env' }] }).includes('app-env'));
+  assert.ok(secretSpecs().every((spec) => spec.kind !== 'env'));
+  assert.deepEqual(secretSpecs({ installSecrets: INSTALL_SECRETS }).find((s) => s.name === 'registry-token'), { name: 'registry-token', group: 'session', kind: 'line', readable: true });
 });

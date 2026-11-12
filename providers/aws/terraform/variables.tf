@@ -144,9 +144,18 @@ variable "database_user" {
   }
 }
 
+# Env files are each repo's Repo settings now (console/README.md, "Repo settings"), which the console keeps and hands to
+# sessions itself. These two stay declared for one release so that a tfvars still setting them fails the plan with the
+# reason, rather than its secrets going with no word: delete them once the values are on the page.
 variable "env_files" {
-  description = "The repo's env files that sessions write, as secret name = path in the repo: the project file's envFiles that have a `secret` (.woodshed/project.yaml). Each becomes a Secrets Manager secret, set on the console's Secrets page, and a variable of the secret's name in capitals in the session task."
+  description = "Removed: env files are set on Console settings → Repos → the repo → Settings. Must be {} or left out."
   type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = length(var.env_files) == 0
+    error_message = "env_files is no longer read: env files are each repo's Repo settings. Check each file's values on Console settings → Repos → the repo → Settings (a console from before this release copied them there from these secrets at its start), then remove env_files and database_env_secrets from your tfvars. The plan then destroys the old secrets."
+  }
 }
 
 variable "install_secrets" {
@@ -157,26 +166,26 @@ variable "install_secrets" {
   validation {
     condition = alltrue([for name, env_name in var.install_secrets : can(regex("^[a-z0-9-]+$", name)) && !contains(
       ["anthropic-api-key", "openai-api-key", "github-app-key", "github-app-client-secret", "github-webhook-secret", "slack-bot-token", "slack-signing-secret"],
-    name) && !contains(keys(var.env_files), name)])
-    error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets or an env file's."
+    name)])
+    error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets."
   }
   validation {
     # Woodshed's own session variables: the same list as SESSION_VARIABLES in shared/reservedNames.mjs.
     condition = alltrue([for env_name in values(var.install_secrets) : can(regex("^[A-Z_][A-Z0-9_]*$", env_name)) && !startswith(env_name, "WOODSHED_") && !contains(
       ["SESSION_ID", "SESSION_TOKEN", "TERMINAL_TOKEN", "SESSION_URL", "SESSION_APP_DOMAIN", "SESSION_KIND", "SESSION_MODE", "STARTED_BY", "ISSUE", "PR", "BRANCH", "PROMPT", "ASKED_BY", "AGENT", "MODEL", "EFFORT", "PERMISSION_MODE", "RESUME_SESSION", "ATTACHMENTS", "REVIEW_ONLY", "REPO_DIR", "GH_TOKEN", "ANTHROPIC_API_KEY", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE", "PGSSLROOTCERT", "PG_URL", "MONGODB_URI", "HOME", "PATH"],
-    env_name) && !contains([for name in keys(var.env_files) : upper(replace(name, "-", "_"))], env_name)]) && length(distinct(values(var.install_secrets))) == length(var.install_secrets)
-    error_message = "Each install secret's variable is a different name of capitals, digits and underscores, and not one of Woodshed's own (WOODSHED_*, SESSION_ID, GH_TOKEN, PGHOST and the rest) or an env file's."
+    env_name)]) && length(distinct(values(var.install_secrets))) == length(var.install_secrets)
+    error_message = "Each install secret's variable is a different name of capitals, digits and underscores, and not one of Woodshed's own (WOODSHED_*, SESSION_ID, GH_TOKEN, PGHOST and the rest)."
   }
 }
 
 variable "database_env_secrets" {
-  description = "Which of env_files the project's database commands read: every envFiles of the project file's databases. The db-admin task may read these and no others. [] (the default) without databases."
+  description = "Removed: the db-admin task's seed reads the default project's Repo settings. Must be [] or left out."
   type        = list(string)
   default     = []
 
   validation {
-    condition     = length(var.databases) > 0 || length(var.database_env_secrets) == 0
-    error_message = "database_env_secrets is what the db-admin task's seed reads, and an installation with no databases has no db-admin task."
+    condition     = length(var.database_env_secrets) == 0
+    error_message = "database_env_secrets is no longer read: the seed reads the default project's env files from its Repo settings. Remove it, and env_files, from your tfvars."
   }
 }
 

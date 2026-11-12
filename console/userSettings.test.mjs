@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
 
-const ENV_FILES = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }];
+// The default project's env files, as installation.mjs reads them from its project file.
+const ENV_FILE_PATHS = async () => ['api/.env', 'web/.env.local'];
 
 function fakeSecrets() {
   const values = new Map();
@@ -18,7 +19,7 @@ function fakeSecrets() {
 test('each person\'s Claude token is kept under their own login, and state.json holds only when', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
-  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, now: () => Date.parse('2026-10-23T10:00:00Z') });
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-10-23T10:00:00Z') });
 
   await settings.setClaudeToken('Octocat', '  sk-ant-oat01-joel  ');
   assert.deepEqual([...secrets.values], [['users/octocat/claude-token', 'sk-ant-oat01-joel']]);
@@ -26,7 +27,7 @@ test('each person\'s Claude token is kept under their own login, and state.json 
   assert.equal(JSON.stringify(store.state).includes('sk-ant'), false, 'never the value');
   const view = settings.view('octocat');
   assert.deepEqual(view.claudeToken, { set: true, savedAt: '2026-10-23T10:00:00.000Z' });
-  assert.deepEqual([view.setUp, view.available, view.files['api-env'].custom], [true, true, false]);
+  assert.deepEqual([view.setUp, view.available, view.files['tmux-conf'].custom], [true, true, false]);
 
   assert.equal(await settings.claudeToken('octocat'), 'sk-ant-oat01-joel');
   assert.equal(await settings.claudeToken('mia-dev'), null, 'someone with nothing saved');
@@ -56,7 +57,7 @@ test('without Secrets Manager nothing can be saved, and the page says so', async
 test('removing everything deletes the person\'s secrets and their record, and leaves others alone', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
-  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES });
+  const settings = createUserSettings({ store, secrets });
   await settings.setClaudeToken('octocat', 'sk-ant-joel');
   await settings.setClaudeToken('mia-dev', 'sk-ant-mia');
   await settings.removeAll('octocat');
@@ -65,47 +66,49 @@ test('removing everything deletes the person\'s secrets and their record, and le
   assert.equal(settings.view('octocat').setUp, false);
 });
 
-test('env files and tmux are the console\'s shared file plus the person\'s own lines, kept apart by login', async () => {
+test('tmux is the image\'s file plus the person\'s own lines, kept apart by login; it is the only file', async () => {
   const secrets = fakeSecrets();
-  secrets.values.set('api-env', 'LOG_LEVEL=info\nOPENAI_API_KEY=x');
   const store = { state: {}, save() {} };
-  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, appendedFor: async (secret) => (secret === 'api-env' ? ['APP_DB', 'PORT'] : []), now: () => Date.parse('2026-10-23T10:00:00Z') });
+  const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-10-23T10:00:00Z') });
 
-  const fresh = await settings.file('octocat', 'api-env');
-  assert.deepEqual([fresh.text, fresh.custom, fresh.sharedText, fresh.editable, fresh.label],
-    ['', false, 'LOG_LEVEL=info\nOPENAI_API_KEY=x', true, 'api/.env']);
-  assert.ok(fresh.appended.includes('APP_DB'), 'it says which keys the entrypoint writes after it');
   const tmux = await settings.file('octocat', 'tmux-conf');
   assert.match(tmux.sharedText, /set -g mouse on/, 'tmux\'s shared file is the session image\'s own');
-  assert.equal(tmux.editable, false, 'and the console cannot change it');
+  assert.deepEqual([tmux.text, tmux.custom, tmux.editable, tmux.appended, tmux.label], ['', false, false, [], '~/.tmux.conf'], 'and the console cannot change it');
 
-  await settings.saveFile('octocat', 'api-env', 'LOG_LEVEL=debug\r\n');
-  assert.equal(secrets.values.get('users/octocat/api-env'), 'LOG_LEVEL=debug\n', 'only their own lines are kept');
-  assert.equal((await settings.file('octocat', 'api-env')).custom, true);
-  assert.equal(settings.view('octocat').files['api-env'].savedAt, '2026-10-23T10:00:00.000Z');
-  assert.deepEqual(await settings.ownFiles('octocat'), { 'api-env': 'LOG_LEVEL=debug\n', 'web-env': null, 'tmux-conf': null });
-  assert.deepEqual(await settings.ownFiles('mia-dev'), { 'api-env': null, 'web-env': null, 'tmux-conf': null }, 'a teammate has none');
-
-  secrets.values.set('api-env', 'LOG_LEVEL=info\nOPENAI_API_KEY=y');
-  assert.equal((await settings.file('octocat', 'api-env')).sharedText, 'LOG_LEVEL=info\nOPENAI_API_KEY=y', 'a change to the shared file reaches them');
-
-  await settings.saveFile('octocat', 'api-env', '  \n');
-  assert.equal(secrets.values.has('users/octocat/api-env'), false, 'saving nothing clears their lines');
-  await settings.saveFile('octocat', 'tmux-conf', 'set -g prefix C-a');
+  await settings.saveFile('octocat', 'tmux-conf', 'set -g prefix C-a\r\n');
+  assert.equal(secrets.values.get('users/octocat/tmux-conf'), 'set -g prefix C-a\n', 'only their own lines are kept');
+  assert.equal(settings.view('octocat').files['tmux-conf'].savedAt, '2026-10-23T10:00:00.000Z');
+  assert.deepEqual(await settings.ownFiles('octocat'), { 'tmux-conf': 'set -g prefix C-a\n' });
+  assert.deepEqual(await settings.ownFiles('mia-dev'), { 'tmux-conf': null }, 'a teammate has none');
   await settings.resetFile('octocat', 'tmux-conf');
   assert.equal((await settings.ownFiles('octocat'))['tmux-conf'], null);
 
-  await assert.rejects(settings.saveFile('octocat', 'web-env', 'x'.repeat(70_000)), /64 KB/);
-  await assert.rejects(settings.file('octocat', 'secrets'), /no file called/);
-  await settings.saveFile('octocat', 'web-env', 'MINE=1');
+  await assert.rejects(settings.saveFile('octocat', 'tmux-conf', 'x'.repeat(70_000)), /64 KB/);
+  for (const key of ['api-env', 'secrets']) {
+    await assert.rejects(settings.file('octocat', key), /no file called/, `${key}: a repo's env files are its Repo settings`);
+    await assert.rejects(settings.saveFile('octocat', key, 'X=1'), /no file called/);
+  }
+  assert.deepEqual(Object.keys(settings.view('octocat').files), ['tmux-conf']);
+});
+
+test('own lines an env file\'s secret kept before Repo settings are not read, and go with Remove My Woodshed', async () => {
+  const secrets = fakeSecrets();
+  secrets.values.set('api-env', 'LOG_LEVEL=info\n');
+  secrets.values.set('users/octocat/api-env', 'LOG_LEVEL=debug\n');
+  secrets.values.set('users/octocat/web-env', 'OLD=1\n');
+  // The records a console from before left: one value saved, one cleared since.
+  const store = { state: { people: { octocat: { files: { 'api-env': '2026-10-01T00:00:00.000Z', 'web-env': null, 'tmux-conf': null } } } }, save() {} };
+  const settings = createUserSettings({ store, secrets });
+  assert.deepEqual(Object.keys(settings.view('octocat').files), ['tmux-conf']);
+  assert.deepEqual(await settings.ownFiles('octocat'), { 'tmux-conf': null }, 'a session is handed none of them');
   await settings.removeAll('octocat');
-  assert.deepEqual([...secrets.values.keys()], ['api-env'], 'Remove deletes the files too');
+  assert.deepEqual([...secrets.values.keys()].sort(), ['api-env', 'users/octocat/web-env'], 'the saved one goes; the Terraform secret is not theirs');
 });
 
 test('the switch for shared sessions is on by default, needs a token, is in effect only while one is saved, and goes with Remove', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
-  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES });
+  const settings = createUserSettings({ store, secrets });
   assert.throws(() => settings.setOwnTokenForShared('joel', true), /save your Claude token first/);
   assert.equal(settings.usesOwnTokenForShared('joel'), false);
 
@@ -124,13 +127,6 @@ test('the switch for shared sessions is on by default, needs a token, is in effe
   settings.setOwnTokenForShared('joel', false);
   await settings.removeAll('joel');
   assert.equal(settings.view('joel').ownTokenForShared, true, 'back to the default');
-});
-
-test('the files follow the installation\'s env files: each tab is a secret, labelled with its path, then tmux', async () => {
-  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets(), envFiles: [{ secret: 'app-env', path: 'app/.env' }] });
-  const view = settings.view('mia');
-  assert.deepEqual(Object.entries(view.files).map(([key, f]) => [key, f.label]), [['app-env', 'app/.env'], ['tmux-conf', '~/.tmux.conf']]);
-  await assert.rejects(settings.file('mia', 'api-env'), /no file called api-env/);
 });
 
 test('a Codex sign-in is an API key or a codex auth.json, kept under the person\'s login', async () => {
@@ -234,7 +230,7 @@ test('a person\'s own whole files are one secret of theirs, kept by path, and an
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
   let clock = Date.parse('2026-11-11T10:00:00Z');
-  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, now: () => clock });
+  const settings = createUserSettings({ store, secrets, envFilePaths: ENV_FILE_PATHS, now: () => clock });
 
   assert.deepEqual(await settings.ownWholeFiles('octocat'), {}, 'none yet');
   assert.deepEqual(await settings.saveOwnFile('Octocat', ' app/.env.production ', 'NOTION_TOKEN=a\r\n'), { 'app/.env.production': 'NOTION_TOKEN=a\n' });

@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -352,7 +352,7 @@ test('paths fill in the home and the checkout\'s folder name', () => {
   assert.equal(expandPath('logs/a.log', { repoDir: '/work/x' }), '/work/x/logs/a.log');
 });
 
-test('the CLI writes the env files from their secrets\' variables, and prints the exports, fields and files', (t) => {
+test('the CLI writes the env files from the repo and the session alone without repo settings, and prints the exports, fields and files', (t) => {
   const dir = scratch(t);
   fs.mkdirSync(path.join(dir, '.woodshed'));
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
@@ -367,12 +367,13 @@ test('the CLI writes the env files from their secrets\' variables, and prints th
   assert.equal(cli(['get', 'app.start']), '');
   assert.equal(cli(['env'], { PORT: '1' }), "export PORT='8080'\nexport URL='http://localhost:1'\n",
     'a value is filled in from the variables as they were, before any of these is set');
-  assert.equal(cli(['secret-vars']), 'API_ENV\n');
+  assert.throws(() => cli(['secret-vars']), /unknown command: secret-vars/, 'an env file has no variable of its own now');
   assert.equal(cli(['file', 'rules']), '- Run `make check`.\n');
   assert.equal(cli(['file', 'setup']), '');
-  assert.equal(cli(['write-env-files'], { API_ENV: 'SECRET=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"MINE=1"}' }), 'api/.env (base: 8 bytes, own lines)\n');
-  assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'),
-    'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed overrides\nDB=app\n');
+  // An old Terraform secret's variable and old own lines in the environment are not read.
+  assert.equal(cli(['write-env-files'], { API_ENV: 'SECRET=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"MINE=1"}' }),
+    'api/.env (layers: session, installation: 0 bytes, replaced by the session: none)\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'), '\n\n# Woodshed overrides\nDB=app\n');
 });
 
 test('the CLI writes an env file\'s defaults first, and counts them in what it prints', (t) => {
@@ -382,7 +383,7 @@ test('the CLI writes an env file\'s defaults first, and counts them in what it p
     envFiles: [{ path: 'web/.env.local', defaults: ['SKIP_LOGIN=true'], lines: ['DB={{PGDATABASE}}'] }],
   }));
   const cli = (env) => execFileSync('node', [SCRIPT, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env } });
-  assert.equal(cli({ PGDATABASE: 'app' }), 'web/.env.local (base: 0 bytes, defaults: 1)\n');
+  assert.equal(cli({ PGDATABASE: 'app' }), 'web/.env.local (layers: repo session, defaults: 1, installation: 0 bytes, replaced by the session: none)\n');
   assert.equal(fs.readFileSync(path.join(dir, 'web/.env.local'), 'utf8'),
     '# From the repo (.woodshed/project.yaml)\nSKIP_LOGIN=true\n\n# Woodshed overrides\nDB=app\n');
 });
@@ -404,7 +405,7 @@ test('check prints what a session takes from the project file, and fails as a st
   const out = cli(['check']);
   assert.match(out, /^\.woodshed\/project\.yaml: read from the checkout\n/);
   assert.match(out, /^installs: 1 \(api\)$/m);
-  assert.match(out, /^env files: 1 \(api\/\.env from api-env\)$/m);
+  assert.match(out, /^env files: 1 \(api\/\.env \(key api-env\)\)$/m);
   assert.match(out, /^app: `.+`, frontend on \d+$/m);
   fs.rmSync(path.join(dir, '.woodshed/rules.md'));
   assert.throws(() => cli(['check']), (err) => /not in the checkout/.test(err.stderr), 'a rules file that is not there fails the check');

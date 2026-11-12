@@ -12,6 +12,7 @@
 
   function savedLine(record) {
     if (!record) return 'None yet.';
+    // A value an older console copied from its Terraform env file secret says so.
     const by = record.by === 'terraform env_files' ? 'copied from Terraform' : record.by ? `by @${record.by}` : '';
     return [`Saved ${W.when(record.savedAt)}`, by, `${record.bytes.toLocaleString()} bytes`, record.keys && plural(record.keys.length, 'key', 'keys')].filter(Boolean).join(' · ');
   }

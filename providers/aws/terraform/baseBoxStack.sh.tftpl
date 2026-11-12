@@ -158,8 +158,6 @@ services:
       # The repos sessions start on (the projects variable), quoted since JSON is not a plain YAML value, $ escaped for Compose.
       - ${jsonencode("${prefix}PROJECTS=${replace(projects, "$", "$$")}")}
 %{ endif ~}
-      - ${prefix}ENV_FILES=${env_files}
-      - ${prefix}DB_ENV_SECRETS=${db_env_secrets}
       - ${prefix == "WOODSHED_" ? "WOODSHED_INSTALL_SECRET_PAIRS" : "WOODSHED_CLOUD_INSTALL_SECRETS"}=${install_secrets}
       - ${prefix}MAX_SESSIONS=${max_sessions}
       # What the console calls itself (the console_name variable), quoted since a name may hold a colon or a #.

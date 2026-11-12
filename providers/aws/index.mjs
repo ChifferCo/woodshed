@@ -68,7 +68,7 @@ export function awsProvider(config) {
     },
     databases,
     launcher: ecsLauncher(ecs),
-    secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) }) : null,
+    secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ installSecrets: config.installSecrets }) }) : null,
     homes: config.homesBucket ? createHomeStore({ bucket: config.homesBucket, aws: awsCli }) : null,
     dbAdmin: ecs.dbAdminTaskDefinition ? createDbAdminRunner({ ecs, aws: awsCli }) : null,
     webhooks: config.webhookQueue ? createWebhookQueue({ queue: config.webhookQueue, aws: awsCli }) : null,

@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
-import { envFiles, loadConfig, requireRepo } from '../console/config.mjs';
+import { loadConfig, requireRepo } from '../console/config.mjs';
 import { defaultProject } from '../console/projects.mjs';
 import { createProvider, providerName } from '../providers/console.mjs';
 import { fixtureCheckout, fixtureProject, fixtureProjectFiles } from '../shared/projectFixture.mjs';
@@ -54,7 +54,7 @@ test('validRepo takes owner/name and refuses anything else', () => {
 test('the stack.env install.sh writes starts a console on the local provider, and is kept on a second run', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-'));
   const file = path.join(home, 'stack.env');
-  const write = `writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app app-env=api/.env app-env 'postgres mongo' woodshed`;
+  const write = `writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app 'postgres mongo' woodshed`;
   runInstallFunction(write);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const env = readEnvFile(file);
@@ -67,7 +67,7 @@ test('the stack.env install.sh writes starts a console on the local provider, an
   requireRepo(config);
   assert.equal(providerName(env), 'local');
   assert.equal(defaultProject(config).repo, 'acme/app');
-  assert.deepEqual(envFiles(env), [{ secret: 'app-env', path: 'api/.env' }]);
+  assert.ok(!('WOODSHED_ENV_FILES' in env) && !('WOODSHED_DB_ENV_SECRETS' in env), 'env files are each repo\'s Repo settings, not the console\'s settings');
   fs.mkdirSync(env.WOODSHED_LOCAL_SECRETS_DIR, { recursive: true });
   runInstallFunction(`node "${path.resolve(import.meta.dirname, '../providers/local/bin/secret.mjs')}" new-key "${env.WOODSHED_LOCAL_SECRETS_KEY_FILE}" >/dev/null`);
   assert.equal(createProvider(config, env).name, 'local');
@@ -79,7 +79,7 @@ test('the stack.env install.sh writes starts a console on the local provider, an
   assert.equal(fs.readFileSync(file, 'utf8'), before);
 });
 
-test('projectSettings reads the env files and the seed secrets from the repository\'s project file', () => {
+test('projectSettings reads the database engines from the repository\'s project file, and nothing of its env files', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-repo-'));
   fs.mkdirSync(path.join(repo, '.woodshed'));
   fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), [
@@ -103,8 +103,7 @@ test('projectSettings reads the env files and the seed secrets from the reposito
     '',
   ].join('\n'));
   const woodshed = path.resolve(import.meta.dirname, '..');
-  // tools/.env has no legacy secret, so no pair: the seed reads it from the repo settings alone, by its key.
-  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${repo}"`), 'api-env=api/.env,web-env=web/.env.local\napi-env,tools-env\npostgres mongo\n');
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${repo}"`), 'postgres mongo\n');
 
   // A shallow clone with no project file, as fetchRepo makes for a repository that has none.
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-origin-'));
@@ -115,7 +114,7 @@ test('projectSettings reads the env files and the seed secrets from the reposito
   git(['commit', '-q', '-m', 'a'], origin);
   const clone = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-clone-')), 'repo');
   git(['clone', '-q', '--depth', '1', `file://${origin}`, clone]);
-  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}"`), '\n\nnone\n');
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}"`), 'none\n');
 });
 
 test('a second run moves only the session API address in session-env.json, keeping a shared service added by hand', () => {
@@ -132,7 +131,7 @@ test('an install made for one repository refuses another, and takes its own or a
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-other-'));
   const file = path.join(home, 'stack.env');
   assert.equal(runInstallFunction(`refuseOtherRepo "${file}" acme/app && echo ok`), 'ok\n');
-  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app '' '' 'postgres mongo' woodshed`);
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app 'postgres mongo' woodshed`);
   assert.equal(runInstallFunction(`refuseOtherRepo "${file}" acme/app && echo ok`), 'ok\n');
   assert.throws(
     () => runInstallFunction(`refuseOtherRepo "${file}" other/repo`, {}),
@@ -145,7 +144,7 @@ test('an install made for one repository refuses another, and takes its own or a
 test('a repository with no database gets no database stack, and its sessions join the network it names', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-nodb-'));
   const file = path.join(home, 'stack.env');
-  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app '' '' none app_default`);
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app none app_default`);
   const env = readEnvFile(file);
   assert.deepEqual(Object.keys(env).filter((key) => /^WOODSHED_LOCAL_(DB_|PG_|MONGO_|DATA_DIR)/.test(key)), []);
   assert.equal(env.WOODSHED_LOCAL_DOCKER_NETWORK, 'app_default');
@@ -158,7 +157,7 @@ test('a repository with no database gets no database stack, and its sessions joi
   assert.equal(createProvider(config, env).dbAdmin, null, 'no db-admin, so the console makes no databases for sessions');
 
   const bare = path.join(home, 'bare.env');
-  runInstallFunction(`writeStackEnv "${bare}" "${home}" acme/app woodshed-session:acme-app '' '' none ''`);
+  runInstallFunction(`writeStackEnv "${bare}" "${home}" acme/app woodshed-session:acme-app none ''`);
   assert.equal(readEnvFile(bare).WOODSHED_LOCAL_DOCKER_NETWORK, undefined);
 });
 
@@ -227,13 +226,13 @@ test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read
     'acme/app': fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] }),
   });
   const env = { DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main' };
-  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>/dev/null`, env), 'api-env=api/.env\napi-env\npostgres\n');
-  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "" 2>/dev/null`, env), '\n\nnone\n', 'without the folder, an empty project');
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>/dev/null`, env), 'postgres\n');
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "" 2>/dev/null`, env), 'none\n', 'without the folder, an empty project');
   assert.match(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>&1 >/dev/null`, env), /project file from installation/);
 
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-home-'));
   const file = path.join(home, 'stack.env');
-  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env postgres woodshed && saveProjectFilesDir "${file}" "${files}"`);
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app postgres woodshed && saveProjectFilesDir "${file}" "${files}"`);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const written = readEnvFile(file);
   assert.equal(written.WOODSHED_PROJECT_FILES_DIR, files);
@@ -252,13 +251,15 @@ test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read
 test('a stack.env written for another project file is named, and one written for this one is not', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-stale-'));
   const file = path.join(home, 'stack.env');
-  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app '' '' none ''`);
-  const now = "$'api-env=api/.env\\napi-env\\npostgres'";
-  assert.match(runInstallFunction(`warnStaleStackEnv "${file}" ${now} postgres none`), /stack\.env was written for another project file/);
-  assert.equal(runInstallFunction(`warnStaleStackEnv "${file}" $'\\n\\nnone' none none`), '');
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app none ''`);
+  assert.match(runInstallFunction(`warnStaleStackEnv "${file}" postgres none`), /stack\.env was written for another project file: its database engines/);
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${file}" none none`), '');
   const current = path.join(home, 'current.env');
-  runInstallFunction(`writeStackEnv "${current}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env 'mongo postgres' woodshed`);
-  assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" $'api-env=api/.env\\napi-env\\nmongo postgres' 'mongo postgres' 'postgres mongo'`), '');
+  runInstallFunction(`writeStackEnv "${current}" "${home}" acme/app woodshed-session:acme-app 'mongo postgres' woodshed`);
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" 'mongo postgres' 'postgres mongo'`), '');
+  // One written before Repo settings still names the env files: they are not read, and are no reason to warn.
+  fs.appendFileSync(current, 'WOODSHED_ENV_FILES=api-env=api/.env\nWOODSHED_DB_ENV_SECRETS=api-env\n');
+  assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" 'mongo postgres' 'postgres mongo'`), '');
 });
 
 test('WOODSHED_BUILD_ONLY fetches the repository and builds its image where DOCKER_HOST points, and sets nothing else up', () => {
@@ -292,7 +293,7 @@ test('WOODSHED_IMAGE tags the session image as the console runs it, for the cons
 test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecated and still starts the console', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-old-names-'));
   const file = path.join(home, 'stack.env');
-  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app app-env=api/.env app-env postgres woodshed`);
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app postgres woodshed`);
   fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^WOODSHED_(?!LOCAL_|PROVIDER)/gm, 'WOODSHED_CLOUD_'), { mode: 0o600 });
   const old = readEnvFile(file);
   assert.ok(old.WOODSHED_CLOUD_REPO && !old.WOODSHED_REPO, 'the file has the old names only');
@@ -302,7 +303,7 @@ test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecate
   const said = runInstallFunction(`warnOldNames "${file}" 2>&1`);
   assert.match(said, /^woodshed install: deprecated variable, use WOODSHED_REPO \(.*stack\.env has WOODSHED_CLOUD_REPO\)$/m);
   assert.equal(said.match(/WOODSHED_CLOUD_REPO\)/g).length, 1, 'once a name');
-  assert.doesNotMatch(said, /acme\/app|app-env/, 'names only, never a value');
+  assert.doesNotMatch(said, /acme\/app/, 'names only, never a value');
   assert.equal(runInstallFunction(`set -a; . "${file}"; set +a; consoleSetting STATE_DIR`), `${home}/console`);
   runInstallFunction(`set -a; . "${file}"; set +a; writeSessionEnv "$(consoleSetting SESSION_ENV_FILE)" host.docker.internal postgres`);
   assert.ok(fs.existsSync(path.join(home, 'session-env.json')), 'the session env goes where the old name says');
@@ -319,5 +320,4 @@ test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecate
   assert.equal(config.stateDir, `${home}/console`);
   assert.equal(config.projectFilesDir, '/srv/other-files');
   assert.equal(defaultProject(config).repo, 'acme/app');
-  assert.deepEqual(envFiles(moved), [{ secret: 'app-env', path: 'api/.env' }]);
 });

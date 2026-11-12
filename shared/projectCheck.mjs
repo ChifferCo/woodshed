@@ -7,9 +7,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { databaseEnv, ENGINES } from './databases/index.mjs';
-import { PROJECT_FILE, SINGLE_APP_NAME, readRepoFile, secretEnvName } from './project.mjs';
+import { PROJECT_FILE, SINGLE_APP_NAME, readRepoFile } from './project.mjs';
 import { envKeys } from './repoSettings.mjs';
-import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
+import { isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
 
 const PLACEHOLDER = /^[A-Z_][A-Z0-9_]*\??$/;
@@ -118,10 +118,6 @@ function envFileProblems(project, repoDir) {
   for (const p of repeated(files.map((f) => f.path))) problems.push(`envFiles has ${p} more than once: one entry a file`);
   files.forEach((file, i) => {
     const at = `envFiles[${i}]`;
-    if (file.secret && CONSOLE_SECRETS.includes(file.secret)) problems.push(`${at}.secret is ${file.secret}, one of the console's own secrets, which no session is handed`);
-    if (file.secret && isSessionVariable(secretEnvName(file.secret))) {
-      problems.push(`${at}.secret ${file.secret} reaches the session as ${secretEnvName(file.secret)}, one of Woodshed's own session variables: name it otherwise`);
-    }
     if (file.path.split('/')[0] === '.git' || file.path === PROJECT_FILE) problems.push(`${at}.path is ${file.path}, which a session cannot write over`);
     else if (isDir(repoDir, file.path)) problems.push(`${at}.path is ${file.path}, which is a folder in the checkout`);
     else {
@@ -300,8 +296,8 @@ function appLine({ apps }) {
 
 // An env file as the summary names it: its path, its secret or the key made from its path, and its defaults.
 function envFileLine(file) {
-  const from = file.secret ? ` from ${file.secret}` : ` (key ${file.key})`;
-  return `${file.path}${from}${file.defaults.length ? `, ${file.defaults.length} default${file.defaults.length > 1 ? 's' : ''}` : ''}`;
+  // The key names its values in Repo settings, whether a `secret` gave it or the path made it.
+  return `${file.path} (key ${file.key})${file.defaults.length ? `, ${file.defaults.length} default${file.defaults.length > 1 ? 's' : ''}` : ''}`;
 }
 
 /**

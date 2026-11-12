@@ -5,7 +5,6 @@ import fs from 'node:fs';
 
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { currentName, envValue } from '../shared/envNames.mjs';
-import { secretEnvName } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
@@ -163,30 +162,26 @@ function pairsOf(value) {
 }
 
 /**
- * `WOODSHED_ENV_FILES`: the secrets that hold the repo's env files, as `secret=path` pairs, the project file's
- * `envFiles` (docs/reference.md, "The project file"): `api-env=api/.env,web-env=web/.env.local`.
- * @returns {{secret: string, path: string}[]}
+ * `WOODSHED_ENV_FILES` and `WOODSHED_DB_ENV_SECRETS` named the Terraform secrets that held the repo's env files. Those
+ * are Repo settings now (repoSettings.mjs): an installation that still sets them is told so, and they are not read.
+ * @returns {string[]}  the ones set
  */
-export function envFiles(env) {
-  return pairsOf(envValue(env, 'ENV_FILES')).map(({ pair, place }) => {
-    const [secret, ...rest] = pair.split('=');
-    const file = rest.join('=').trim();
-    if (!/^[a-z0-9-]+$/.test(secret.trim()) || !file) throw new Error(`WOODSHED_ENV_FILES wants secret=path pairs, as api-env=api/.env: pair ${place} is not`);
-    return { secret: secret.trim(), path: file };
-  });
+export function ignoredEnvFileSettings(env) {
+  const set = ['ENV_FILES', 'DB_ENV_SECRETS'].filter((name) => envValue(env, name));
+  if (set.length) console.warn('console: ignored: env files are Repo settings now', { settings: set.map(currentName) });
+  return set;
 }
 
 /**
  * `WOODSHED_INSTALL_SECRET_PAIRS`: the secrets the repo's dependency installs read, as `secret=VARIABLE` pairs, each
  * the variable a session gets it in (`registry-token=REGISTRY_TOKEN`). Terraform sets it from `install_secrets`.
  * @param {NodeJS.ProcessEnv} env
- * @param {{secret: string}[]} files  envFiles(env), whose secrets and variables an install secret cannot share
  * @returns {{secret: string, variable: string}[]}
  */
-export function installSecrets(env, files = envFiles(env)) {
-  const taken = new Set(files.flatMap(({ secret }) => [secret, secretEnvName(secret)]));
+export function installSecrets(env) {
+  const taken = new Set();
   // The console's own secrets, which a session never holds: Terraform's install_secrets refuses the same names.
-  const consoles = new Set(secretSpecs({ envFiles: [] }).map(({ name }) => name));
+  const consoles = new Set(secretSpecs().map(({ name }) => name));
   const pairs = pairsOf(envValue(env, 'INSTALL_SECRETS')).map(({ pair, place }) => {
     const parts = pair.split('=').map((part) => part.trim());
     const [secret, variable = ''] = parts;
@@ -198,7 +193,7 @@ export function installSecrets(env, files = envFiles(env)) {
     if (isSessionVariable(variable)) {
       throw new Error(`WOODSHED_INSTALL_SECRET_PAIRS: pair ${place}'s variable is one of Woodshed's own session variables`);
     }
-    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_INSTALL_SECRET_PAIRS: pair ${place} is an env file's, or named twice`);
+    if (taken.has(secret) || taken.has(variable)) throw new Error(`WOODSHED_INSTALL_SECRET_PAIRS: pair ${place} is named twice`);
     taken.add(secret).add(variable);
     return { secret, variable };
   });
@@ -264,6 +259,7 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const broker = githubBroker(env);
   const identitySecret = trustedIdentitySecret(env);
   const databases = envValue(env, 'DATABASES');
+  ignoredEnvFileSettings(env);
   return {
     // What the pages, the installed app and the console's GitHub comments call this console.
     consoleName: consoleName(env),
@@ -290,10 +286,6 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     // The Woodshed clone the Console settings page's Update follows (woodshedUpdate.mjs): the console's own, unless set.
     checkout: envValue(env, 'CHECKOUT') || null,
     label: envValue(env, 'LABEL') || 'woodshed',
-    // The secrets holding the repo's env files, which the Secrets page and My settings show. None when it has none.
-    envFiles: envFiles(env),
-    // The ones of those the databases' commands read: their `envFiles` in the project file, which the db-admin run is given.
-    dbEnvSecrets: (envValue(env, 'DB_ENV_SECRETS') || '').split(',').map((s) => s.trim()).filter(Boolean),
     // The secrets the repo's installs read, each with the variable a session gets it in. None when it has none.
     installSecrets: installSecrets(env),
     pollGitHub: envValue(env, 'POLL_GITHUB') !== '0',

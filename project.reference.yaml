@@ -27,14 +27,14 @@ env:
   NODE_ENV: development
   PORT: '9000'
 
-# Default: []. The env files a session writes, in layers, later ones winning: `defaults`, the installation's text (its
-# secret), the owner's own lines, then `lines`.
+# Default: []. The env files a session writes, in layers, later ones winning: `defaults`, the installation's values
+# and the owner's own (each repo's Repo settings, on the console), then `lines`.
 envFiles:
   - # Required. Where the file goes, in the repo.
     path: api/.env
     # Default: null, and the file's key is made from its path (web/.env.local is web-env-local). The file's key, one a
-    # file: the installation's secret holding its base text, which reaches the session as its name in capitals (api-env
-    # is API_ENV), and on My settings each person adds their own lines to it.
+    # file, which names its values in Repo settings: the installation's on Console settings, each person's own on My
+    # settings. Before Repo settings it was a Terraform secret's name; it is only the key now.
     secret: api-env
     # Default: []. The repo's own values, written first, so the installation's and each person's replace them. Plain
     # NAME=value lines, no {{…}}, and never a secret: this file is in git.

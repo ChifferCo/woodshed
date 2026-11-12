@@ -94,8 +94,8 @@ locals {
   # No Anthropic key: a session reaches Anthropic through the console's proxy, which adds it (console/anthropicProxy.mjs).
   # A task secret is in the environment of the container's PID 1 for the whole session, where its terminal reads it.
   session_secrets = merge(
-    { for name, key in local.env_file_keys : upper(key) => aws_secretsmanager_secret.session[key].arn },
-    # Each under the variable the installation names for it: the entrypoint renames nothing.
+    # Each install secret under the variable the installation names for it: the entrypoint renames nothing. A repo's
+    # env files are not task secrets: the session asks the console for them (its repo settings).
     { for env_name, key in local.install_secret_keys : env_name => aws_secretsmanager_secret.session[key].arn },
   )
   # A session holds no database user or password from here: its entrypoint asks the console's session API for the
@@ -185,8 +185,6 @@ data "aws_iam_policy_document" "db_admin_execution" {
     resources = concat(
       [for db in aws_db_instance.postgres : db.master_user_secret[0].secret_arn],
       [for s in aws_secretsmanager_secret.mongo_root : s.arn],
-      # Seeding writes the env files the seed reads (database_env_secrets), as a session does.
-      [for name in var.database_env_secrets : aws_secretsmanager_secret.session[local.env_file_keys[name]].arn],
     )
   }
 }
@@ -199,7 +197,7 @@ resource "aws_iam_role_policy" "db_admin_execution" {
   policy = data.aws_iam_policy_document.db_admin_execution[0].json
 }
 
-# What the task's own code may do: read each database user's password, and the base env files for the seed.
+# What the task's own code may do: read each database user's password, and the default project's repo settings for the seed.
 resource "aws_iam_role" "db_admin_task" {
   count = local.db_admin ? 1 : 0
 
@@ -221,14 +219,11 @@ data "aws_iam_policy_document" "db_admin_task" {
 
   # Read here, not given as a task secret: a run's overrides could replace a variable, but not this. The default
   # project's repo settings alone, since only its databases are seeded and the seed is that repo's code: one repo's seed
-  # must not read another's values. Then the legacy secrets, read only while a file has no repo settings value.
+  # must not read another's values.
   statement {
-    sid     = "TheSeedsEnvFiles"
-    actions = ["secretsmanager:GetSecretValue"]
-    resources = concat(
-      ["arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/repos/${local.seed_project}/env/*"],
-      [for name in var.database_env_secrets : aws_secretsmanager_secret.session[local.env_file_keys[name]].arn],
-    )
+    sid       = "TheSeedsEnvFiles"
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = ["arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/repos/${local.seed_project}/env/*"]
   }
 }
 

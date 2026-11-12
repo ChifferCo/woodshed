@@ -20,7 +20,7 @@ const AWS_CONSOLE = {
   HOST: '127.0.0.1', PUBLIC_URL: 'https://woodshed.example', APP_DOMAIN: 'woodshed.example', HOSTS: '203.0.113.9',
   REQUIRE_SIGN_IN: '1', STATE_DIR: '/var/lib/woodshed-cloud', REPO: 'acme/app',
   PROJECTS: '[{"name":"app","repo":"acme/app","default":true},{"name":"web","repo":"acme/web"}]',
-  ENV_FILES: 'app-env=app/.env', DB_ENV_SECRETS: 'app-env', INSTALL_SECRETS: 'registry-token=REGISTRY_TOKEN', MAX_SESSIONS: '7',
+  INSTALL_SECRETS: 'registry-token=REGISTRY_TOKEN', MAX_SESSIONS: '7',
   CONSOLE_NAME: 'Acme Woodshed', ACTIONS_WORKFLOWS: 'Deploy=deploy.yml', HOMES_BUCKET: 'homes', GITHUB_APP_ID: '12',
   GITHUB_APP_INSTALLATION_ID: '34', SESSION_API_HOST: '10.0.0.5', LAUNCHER: 'ecs', ECS_CLUSTER: 'c', ECS_TASK_DEFINITION: 't',
   ECS_SUBNETS: 'a,b', ECS_SECURITY_GROUP: 'sg', ECS_LOG_GROUP: 'lg', DATABASES: 'postgres,mongo',

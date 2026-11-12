@@ -24,7 +24,6 @@ import { createFleet } from '../../../console/fleet.mjs';
 import { createSessionApi } from '../../../console/sessionApi.mjs';
 import { installSecrets } from '../../../console/config.mjs';
 import { envValue } from '../../../shared/envNames.mjs';
-import { loadProject } from '../../../shared/project.mjs';
 import { leakPattern, taskDefinitionEnv } from './askInImageEnv.mjs';
 
 const IMAGE = process.argv[2];
@@ -36,13 +35,10 @@ const QUESTION = process.argv[3] || 'What happens when someone adds the woodshed
 const PORT = 7697;
 const CONTAINER = 'woodshed-ask-in-image';
 const ANSWER_WAIT_MS = 10 * 60_000;
-const REPO = path.resolve(import.meta.dirname, '../../../..');
 
-// As in AWS: the task definition's own variables, its secrets those of the env files the repo's project file lists and
-// the installation's install secrets.
-const PROJECT = loadProject(REPO);
-const INSTALL_SECRETS = installSecrets(process.env, PROJECT.envFiles.filter((file) => file.secret));
-const TASK_DEFINITION_ENV = taskDefinitionEnv({ project: PROJECT, installSecrets: INSTALL_SECRETS, port: PORT });
+// As in AWS: the task definition's own variables, its secrets the installation's install secrets.
+const INSTALL_SECRETS = installSecrets(process.env);
+const TASK_DEFINITION_ENV = taskDefinitionEnv({ installSecrets: INSTALL_SECRETS, port: PORT });
 
 function teamKey() {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
@@ -113,7 +109,7 @@ try {
   // A start that died leaves nothing to look inside.
   const running = docker('inspect', '-f', '{{.State.Running}}', CONTAINER).trim() === 'true';
   const leaked = running
-    ? docker('exec', CONTAINER, 'bash', '-c', `tmux show-environment -g 2>/dev/null | grep -c -E '${leakPattern({ project: PROJECT, installSecrets: INSTALL_SECRETS })}' || true`).trim()
+    ? docker('exec', CONTAINER, 'bash', '-c', `tmux show-environment -g 2>/dev/null | grep -c -E '${leakPattern({ installSecrets: INSTALL_SECRETS })}' || true`).trim()
     : 'unknown, the container exited';
   console.log(`--- secrets left in claude's environment: ${leaked}`);
   console.log(answer ? `--- answer posted (${answer.length} chars)\n${answer}`

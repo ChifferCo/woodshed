@@ -258,7 +258,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     return projectReaders.get(key);
   };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
-  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
+  // An unread project file refuses nothing: the session writes the env file over an own file of the same path anyway.
+  const envFilePaths = () => projectReader.repoLayer().then((layer) => layer.envFiles.map((f) => f.path), () => []);
+  const userSettings = createUserSettings({ store, secrets, envFilePaths });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
@@ -307,7 +309,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   }
   // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
   const settings = secrets && (appKey || config.githubBroker)
-    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value), repoSettings })
+    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
   const githubUser = auth?.githubUser ?? null;
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
@@ -379,8 +381,6 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
-    // The Terraform env file secrets into Repo settings' names, never over a value already there: safe at every start.
-    repoSettings.migrate().catch((err) => console.error('repoSettings: legacy copy failed', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.

@@ -157,6 +157,22 @@ export function createSecretStore({ dir, key, specs, now = Date.now }) {
     });
   }
 
+  /**
+   * The names of the secrets in one folder of names, not below it: `repos/app/env` lists `repos/app/env/api-env`.
+   * @returns {Promise<string[]>}  sorted; none for a folder that is not there
+   */
+  async function names(folder) {
+    const dir = fileOf(folder).replace(/\.json$/, '');
+    let entries;
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch (err) {
+      if (isNotFound(err)) return [];
+      throw err;
+    }
+    return entries.filter((e) => e.isFile() && e.name.endsWith('.json')).map((e) => `${folder}/${e.name.slice(0, -'.json'.length)}`).sort();
+  }
+
   /** Deletes a secret at once; one that is already gone is not an error. */
   async function remove(name) {
     await oneAtATime(name, async () => {
@@ -169,5 +185,5 @@ export function createSecretStore({ dir, key, specs, now = Date.now }) {
     });
   }
 
-  return { list, read, write, save, remove, sealPlainFiles };
+  return { list, read, write, save, remove, names, sealPlainFiles };
 }

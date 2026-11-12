@@ -11,7 +11,7 @@ import { createSecretStore } from './secretStore.mjs';
 import { PROJECT_FILES_MOUNT } from './projectFileMounts.mjs';
 import { fixtureProject, fixtureProjectFiles } from '../../shared/projectFixture.mjs';
 
-function setup({ roots = true, mongoHost = 'mongo:27017', projectFilesDir = null, seedProject = null, seedSecrets = ['api-env'] } = {}) {
+function setup({ roots = true, mongoHost = 'mongo:27017', projectFilesDir = null, seedProject = null } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'local-db-admin-'));
   const secretsDir = path.join(base, 'secrets');
   const secrets = createSecretStore({ dir: secretsDir, key: crypto.randomBytes(32) });
@@ -46,7 +46,7 @@ function setup({ roots = true, mongoHost = 'mongo:27017', projectFilesDir = null
     return '';
   }
   const runner = createDbAdminRunner({
-    image: 'woodshed-session', repoDir: '/work/app', seedSecrets, seedProject, secrets, postgresHost: 'postgres', postgresRootUser: 'postgres', mongoHost,
+    image: 'woodshed-session', repoDir: '/work/app', seedProject, secrets, postgresHost: 'postgres', postgresRootUser: 'postgres', mongoHost,
     network: 'woodshed', sessionEnv: { WOODSHED_SERVICES: 'S3_ENDPOINT', S3_ENDPOINT: 'http://s3:4566', OTHER: 'x' },
     runsDir: path.join(base, 'runs'), docker, projectFilesDir, repo: 'acme/app',
   });
@@ -82,7 +82,7 @@ test('an installation with no Mongo gives a run no Mongo host and no Mongo root 
   assert.deepEqual(Object.keys(env).sort(), ['PG_ROOT_PASSWORD', 'S3_ENDPOINT', 'WOODSHED_SERVICES']);
 });
 
-test('a run sees only the secrets the AWS task role reads: its own database password and api-env', async () => {
+test('a run sees only the secrets the AWS task role reads: its own database password, and no env file\'s old secret', async () => {
   const f = setup();
   await f.ready;
   await f.secrets.save('users/mia/database', 'mia-pw', 'Mia’s');
@@ -90,14 +90,14 @@ test('a run sees only the secrets the AWS task role reads: its own database pass
   const reset = await f.runner.start(['reset', 'Mia']);
   const clone = await f.runner.start(['clone', '0a1b2c3d']);
   const drop = await f.runner.start(['drop', 'mia']);
-  assert.deepEqual(f.mounted[reset], ['api-env.json', 'users', 'users/mia', 'users/mia/database.json']);
-  assert.deepEqual(f.mounted[clone], ['api-env.json', 'sessions', 'sessions/0a1b2c3d', 'sessions/0a1b2c3d/database.json']);
-  assert.deepEqual(f.mounted[drop], ['api-env.json']);
+  assert.deepEqual(f.mounted[reset], ['users', 'users/mia', 'users/mia/database.json']);
+  assert.deepEqual(f.mounted[clone], ['sessions', 'sessions/0a1b2c3d', 'sessions/0a1b2c3d/database.json']);
+  assert.deepEqual(f.mounted[drop], []);
   assert.deepEqual(secretsFor(['template']), []);
 });
 
 test('with the default project, a run also sees its repo settings for the seed\'s env files, and the entryPoint names it', async () => {
-  const f = setup({ seedProject: 'app', seedSecrets: ['api-env', 'web-env-local'] });
+  const f = setup({ seedProject: 'app' });
   await f.ready;
   await f.secrets.write('repos/app/env/api-env', 'A=2');
   await f.secrets.write('repos/app/env/web-env-local', 'W=1');
@@ -107,9 +107,11 @@ test('with the default project, a run also sees its repo settings for the seed\'
   const id = await f.runner.start(['template']);
   const { args } = f.calls.find((c) => c.args[0] === 'run');
   assert.deepEqual(args.slice(args.indexOf('--secret-prefix')), ['--secret-prefix', '', '--repo', '/work/app', '--project', 'app', '--', 'template']);
-  assert.deepEqual(f.mounted[id], ['api-env.json', 'repos', 'repos/app', 'repos/app/env', 'repos/app/env/api-env.json', 'repos/app/env/web-env-local.json']);
+  assert.deepEqual(f.mounted[id], ['repos', 'repos/app', 'repos/app/env', 'repos/app/env/api-env.json', 'repos/app/env/web-env-local.json'],
+    'every value the project\'s repo settings hold, and no env file\'s old secret');
   assert.equal(f.contents[id]['repos/app/env/api-env.json'].value, 'A=2');
-  assert.deepEqual(seedSecretNames({ project: null, keys: ['api-env'] }), ['api-env'], 'no project: the legacy secrets alone, as before');
+  assert.deepEqual(await seedSecretNames({ project: null, secrets: f.secrets }), [], 'no project: none');
+  assert.deepEqual(await seedSecretNames({ project: 'app', secrets: { read: async () => null } }), [], 'a store that cannot list names: none');
 });
 
 test('without the root passwords no run starts, and no folder is left behind', async () => {
@@ -163,7 +165,7 @@ test('a run\'s folder is readable by the container\'s own user, inside one only 
   await f.ready;
   await f.secrets.save('users/mia/database', 'mia-pw', 'Mia’s');
   const id = await f.runner.start(['reset', 'mia']);
-  assert.deepEqual(f.modes[id], { runs: 0o700, folder: 0o755, files: [0o644, 0o644] });
+  assert.deepEqual(f.modes[id], { runs: 0o700, folder: 0o755, files: [0o644] });
 });
 
 test('a failed run is kept until the next run for the same owner, whatever its action, which removes it first', async () => {
@@ -185,7 +187,7 @@ test('a run gets the plain value it needs, not the sealed file, and never the ke
   await f.ready;
   await f.secrets.save('users/mia/database', 'mia-pw', 'Mia’s');
   const id = await f.runner.start(['reset', 'mia']);
-  assert.deepEqual(f.contents[id], { 'api-env.json': { value: 'A=1' }, 'users/mia/database.json': { value: 'mia-pw' } });
+  assert.deepEqual(f.contents[id], { 'users/mia/database.json': { value: 'mia-pw' } });
   const run = f.calls.find((c) => c.args[0] === 'run');
   assert.deepEqual(Object.keys(run.env).sort(), ['MONGO_ROOT_PASSWORD', 'PG_ROOT_PASSWORD', 'S3_ENDPOINT', 'WOODSHED_SERVICES'],
     'the services the session env lists, and nothing else of it');
