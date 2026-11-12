@@ -1377,7 +1377,7 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `QA: ${pull.title}`, startedBy: login, trigger: 'qa', branch: pull.head.ref, project,
-      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, commentId },
+      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId },
     });
     await postQaComment(session, gh, runningComment({ heading: qa.heading, sessionUrl: await qaSessionUrl(session, project) }));
     console.log('fleet: QA session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
@@ -1410,10 +1410,16 @@ export function createFleet({
    */
   async function qaFinished(session, { verdict, report, sha, costUsd }) {
     const project = projectFor(config, session);
-    const body = finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl: await qaSessionUrl(session, project) });
-    await postQaComment(session, githubOf(project), body);
+    const gh = githubOf(project);
+    const sessionUrl = await qaSessionUrl(session, project);
+    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl }));
+    // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
+    const checkUrl = await safely('QA check', () => gh.createCheckRun({
+      sha, name: session.qa.check ?? 'QA', conclusion: verdict.conclusion, title: verdict.title,
+      summary: `${verdict.status}\n\n${report}`.trim(), detailsUrl: sessionUrl, externalId: session.id,
+    }));
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
-    console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd });
+    console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
     // In the background: the session waits on this reply, and the stop saves its home through it first.
     stop(session, `QA finished: ${verdict.title}`).catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }));
   }

@@ -451,8 +451,11 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
   its terminal in place of claude: it plans with the same prompts as the actions (`shared/qa/`), starts the app with
   the project file's `app.start` when there is something to test, and runs the plan in the image's browser.
 - The console posts the QA comment as its GitHub App when the session starts (`Running`, linking the session) and writes
-  the report into it when the session ends. Each later run writes over that comment. `pullRequests.qa.author` is then
-  the App's bot login.
+  the report into it when the session ends. Each later run writes over that comment. It also posts the
+  `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
+  session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
+  An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check
+  failed`), and the comment still gets the report.
 - The session stops itself once it has sent its report, and is not kept: a new run is a new label. A label added while
   a QA session runs on the pull request starts nothing.
 

@@ -192,6 +192,19 @@ test('a QA check is trusted from the console\'s own App, but its comments never 
   assert.match(brief({ ownApp: own }).comment, /Covered:/);
 });
 
+test('a QA session\'s report is read from the console\'s check, not from any comment', () => {
+  const own = { slug: 'my-woodshed', login: 'my-woodshed[bot]' };
+  const check = { ...qaCheck('Pass: 1 test cases passed', 'success'), app: { slug: 'my-woodshed' },
+    output: { title: 'Pass: 1 test cases passed', summary: '✅ **Pass**: all 1 test cases passed\n\n## TC-1: Saves the draft ✅' } };
+  const forged = { ...QA_COMMENT, user: { login: 'my-woodshed[bot]' }, body: '## 🤖 QA Review\n\n## TC-1: Everything works ✅' };
+  const { comment } = brief({ runs: [...shards, mergeRisk('Low: x'), check], comments: [RISKY, QA_COMMENT, forged], ownApp: own });
+  assert.match(comment, /Covered:\n.*Saves the draft/);
+  assert.doesNotMatch(comment, /Everything works|empty state shows the new text/);
+  const appAsAuthor = { ...GATES, qa: { ...GATES.qa, author: 'my-woodshed[bot]' } };
+  assert.doesNotMatch(brief({ comments: [RISKY, forged], gates: appAsAuthor, ownApp: own }).comment, /Everything works/,
+    'naming the App as the author does not make its comments trusted');
+});
+
 test('with nothing configured, the brief says so instead of waiting for or quoting a gate', () => {
   const b = brief({ runs: [...shards, mergeRisk('Low: x'), qaCheck('Pass: 2 test cases passed', 'success')], gates: null, qa: null });
   assert.doesNotMatch(b.slack, /Self-assessed risk|Merge risk/, 'no merge risk gate, no merge risk line, and no check name made up');

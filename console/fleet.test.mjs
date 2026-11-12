@@ -16,7 +16,7 @@ const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ nam
 
 function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
-  const calls = { started: [], stopped: [], statusd: [], comments: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
+  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
@@ -68,6 +68,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     async issueComments() { return []; },
     async workflowRun() { return { path: '.github/workflows/review.yml', head_sha: 'abc' }; },
     async updateComment(id, body) { calls.comments.push({ id, body }); return id; },
+    async createCheckRun(check) { calls.checks.push(check); return 'https://github.com/o/r/runs/1'; },
     async removeLabel(number, label) { calls.unlabeled.push({ number, label }); return true; },
     async reactToIssue(number) { calls.reactions.push({ issue: number }); },
     async reactToComment(id) { calls.reactions.push({ comment: id }); },
@@ -2066,6 +2067,17 @@ test('a QA label is dropped unless the project runs QA here, and starts nothing 
   assert.equal(fleet.sessions().length, 1);
 });
 
+test('a QA check GitHub refuses still leaves the report in the comment and stops the session', async () => {
+  const { fleet, calls, github } = qaSetup();
+  github.createCheckRun = async () => { throw new Error('HTTP 403: Resource not accessible by integration'); };
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.match(calls.comments.at(-1).body, /✅ \*\*Pass\*\*/);
+  assert.equal(session.status, 'stopped');
+});
+
 test('a QA session is not where a /woodshed comment on its pull request goes', async () => {
   const { fleet } = qaSetup();
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
@@ -2090,6 +2102,9 @@ test('a QA report is written over the running comment, the session stops and is 
   assert.match(session.stopReason, /^QA finished: Pass/);
   assert.equal(session.kept, undefined, 'its databases go: a QA run is never resumed');
   assert.deepEqual([session.qa.conclusion, session.qa.costUsd], ['success', 1.5]);
+  const [check] = calls.checks;
+  assert.deepEqual([check.sha, check.name, check.conclusion, check.title, check.externalId], ['a'.repeat(40), 'QA', 'success', 'Pass: 2 test cases passed', session.id]);
+  assert.match(check.summary, /^✅ \*\*Pass\*\*: all 2 test cases passed\n\n## TC-1: a ✅/, 'the report rides in the check, which no session can write');
 
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
   assert.equal(fleet.sessions()[1].qa.commentId, 9001);

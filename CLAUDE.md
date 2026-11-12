@@ -574,6 +574,8 @@ secrets.
   with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
   the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
   lifetime) never sent one: label the pull request again.
+- **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
+  `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
 - **A question got 👀 and no answer.** Open the session from the link in the
   thread. The session's log says `mode: ask`; the console logs `asks: answer
   posted` with `posted: false` when Slack refused the reply (`slack: call

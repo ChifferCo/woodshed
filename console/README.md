@@ -1498,8 +1498,10 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 4. `session/qa.sh` runs in the session's terminal, and statusd reports the session working until it is done. It sends
    the verdict, the report, the commit it tested and the cost to the session API's `POST /qa-report`
    (`qaSessions.mjs` checks it), once.
-5. The fleet writes the report into the QA comment and stops the session with `QA finished: <verdict>`. It pushes
-   nothing and is not kept, so its databases go at the next sweep.
+5. The fleet writes the report into the QA comment, posts the QA check on the commit tested with the verdict and the
+   report (the decision brief reads the report from there, since sessions can comment as the App but not post a
+   check), and stops the session with `QA finished: <verdict>`. It pushes nothing and is not kept, so its databases go
+   at the next sweep.
 
 ## Console settings
 
