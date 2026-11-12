@@ -15,6 +15,39 @@ To run real sessions, pick one:
 | A server your team reaches (Hetzner, OVH, any VM) | Docker on that machine | An afternoon: HTTPS, a service, a firewall | [On a server](#on-a-server) |
 | AWS | Fargate | Terraform in an account of its own | [On AWS](#on-aws) |
 
+**You** pick. An agent shows "What each one sets up", below, before asking, so nothing it makes later is a surprise,
+and says that a computer you already have works as well as a rented one.
+
+### What each one sets up
+
+Claude's own use is apart from all of these: each person's Claude plan, or the team's API key.
+
+**This machine.** Nothing is rented and nothing is billed. Docker containers on it: the console (on localhost only,
+with no sign-in), Postgres and Mongo when the project file has `databases`, the project's shared services, and one
+container a session, about 4 GB of memory each. Sessions stop when the machine sleeps, and only you reach it.
+
+**A server.** The same containers, on a machine your team reaches, with Caddy in front for HTTPS. It can be a VM you
+rent (on Hetzner Cloud a CPX41 or CAX31, 16 GB for about four sessions at once) or a computer you already have that
+stays on, such as a desktop in the office: then the only cost is its power. You keep its firewall, updates and
+backups.
+
+**AWS.** Terraform makes, in an AWS account that holds nothing else:
+
+| What | Monthly, us-east-1 |
+| --- | --- |
+| The base box, an EC2 that runs the console and Caddy around the clock. `t3.small`; `t3.medium` when Mongo or a shared service runs on it too | about $15; $30 |
+| Its two disks, 50 GB | about $4 |
+| Its public IP address | about $3.65 |
+| A Route 53 zone for the console's name | $0.50 |
+| Secrets Manager, about seven secrets | about $3 |
+| With `postgres` in `databases`: RDS Postgres, `db.t4g.micro`, 20 GB | about $14 |
+| ECR images, the webhooks Lambda and its queue, the session logs | cents |
+| **Before any session runs** | **about $26** without databases, $40 with Postgres, $42 with Mongo, $56 with both |
+| Each session on Fargate (2 vCPU, 8 GB), only while it runs | about $0.13 an hour: about $6 a month at 2 hours a workday, $22 at 8 |
+
+It also sets an AWS budget, $150 a month by default, which emails at 80% and 100% and stops nothing.
+`providers/aws/README.md`, "How it is built", lists every piece.
+
 Everything here is described in more depth in `providers/local/README.md` and `providers/aws/README.md`; this page
 only orders it. `<woodshed>` below is where Woodshed is checked out. Older docs write its paths as `woodshed/…`, from
 when it sat in a folder of another repo: from Woodshed's own checkout, drop that prefix. `CLAUDE.md` is for changing Woodshed and running an installation, not for setting one up: an agent can

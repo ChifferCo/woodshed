@@ -235,9 +235,21 @@ resource "aws_eip" "base_box" {
   tags = { Name = "woodshed-cloud-console" }
 }
 
+# The box's size from what it runs (baseBoxStack.sh.tftpl's mem_limits): the console's 512 MB and Caddy's 128 MB fit
+# 2 GB with the OS, Docker and Caddy's build on the box; Mongo's 1 GB or a shared service's 768 MB does not.
+locals {
+  base_box_needs_4gb      = local.mongo || length(var.shared_services) > 0
+  base_box_instance_type  = coalesce(var.base_box_instance_type, local.base_box_needs_4gb ? "t3.medium" : "t3.small")
+  base_box_min_memory_mib = local.base_box_needs_4gb ? 4096 : 2048
+}
+
+data "aws_ec2_instance_type" "base_box" {
+  instance_type = local.base_box_instance_type
+}
+
 resource "aws_instance" "base_box" {
   ami                    = data.aws_ssm_parameter.al2023.value
-  instance_type          = var.base_box_instance_type
+  instance_type          = local.base_box_instance_type
   subnet_id              = aws_subnet.public[0].id
   private_ip             = local.base_box_private_ip
   vpc_security_group_ids = [aws_security_group.base_box.id]
@@ -262,6 +274,15 @@ resource "aws_instance" "base_box" {
   # comes from the configure_base_box association below, which a change reaches without a replacement.
   lifecycle {
     ignore_changes = [ami, user_data]
+
+    precondition {
+      condition     = contains(data.aws_ec2_instance_type.base_box.supported_architectures, "x86_64")
+      error_message = "base_box_instance_type must be x86, like the console and session images (not Graviton)."
+    }
+    precondition {
+      condition     = data.aws_ec2_instance_type.base_box.memory_size >= local.base_box_min_memory_mib
+      error_message = "base_box_instance_type has too little memory for what the box runs: ${local.base_box_needs_4gb ? "Mongo or a shared service needs 4 GB (t3.medium)" : "the console and Caddy need 2 GB (t3.small)"}."
+    }
   }
 
   tags = { Name = "woodshed-cloud-base-box" }
