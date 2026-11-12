@@ -83,8 +83,8 @@ async function consoleWithAppPorts(t) {
       res.writeHead(401);
       return res.end();
     }
-    res.writeHead(200, { 'content-type': 'text/html' });
-    res.end(`<p>the app at ${req.url}</p>`);
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.end(`the app at ${req.url}`);
   });
   statusd.on('upgrade', (req, socket) => {
     socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n');
@@ -125,9 +125,9 @@ test('a running session gets an app URL on a port of the console\'s name, and th
   assert.equal(body.sessions[0].appUrl, `https://mac.tail1.ts.net:${appPortList[0]}/`);
 
   const app = await request(appPortList[0], '/page?x=1', { headers: { host: `mac.tail1.ts.net:${appPortList[0]}` } });
-  assert.deepEqual([app.status, app.body], [200, '<p>the app at /page?x=1</p>']);
+  assert.deepEqual([app.status, app.body], [200, 'the app at /page?x=1']);
   const consoleOnAppPort = await request(appPortList[0], '/api/sessions', { headers: { host: `mac.tail1.ts.net:${appPortList[0]}` } });
-  assert.equal(consoleOnAppPort.body, '<p>the app at /api/sessions</p>', 'the console\'s own API is never served on an app port');
+  assert.equal(consoleOnAppPort.body, 'the app at /api/sessions', 'the console\'s own API is never served on an app port');
   const unlent = await request(appPortList[1], '/', { headers: { host: `mac.tail1.ts.net:${appPortList[1]}` } });
   assert.equal(unlent.status, 404, 'a port lent to nobody answers nothing');
 });
