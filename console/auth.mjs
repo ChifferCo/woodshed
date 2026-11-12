@@ -91,7 +91,8 @@ export function signInFailure(err) {
 /**
  * @param {{publicUrl: string, store: {state: object, save: () => void},
  *          clientId: () => Promise<string>, clientSecret: () => string|null,
- *          canWrite: (login: string) => Promise<boolean>, fetchImpl?: typeof fetch, now?: () => number,
+ *          canWrite: (login: string) => Promise<boolean>, noAccess?: (login: string) => string,
+ *          fetchImpl?: typeof fetch, now?: () => number,
  *          githubWeb?: string, githubApi?: string, required?: boolean,
  *          onConnect?: (args: {login: string, answer: object}) => Promise<void>,
  *          people?: {remember: (account: {login: string, id: number, name?: string|null}) => boolean},
@@ -101,11 +102,13 @@ export function signInFailure(err) {
  *   `githubWeb` and `githubApi` point at GitHub; tests and the local preview pass a fake
  *   `onConnect` keeps a Connect GitHub sign-in's tokens (githubUser.mjs)
  *   `people` keeps each handle's account id and display name, and refuses a handle now on another account
+ *   `noAccess` says why `canWrite` refused someone, for the login page
  *   `members` is who may sign in (members.mjs): a writer who is not one still gets a session, but only as a
  *   visitor, which opens nothing but the page that asks to join
  */
 export function createAuth({
   publicUrl, store, clientId, clientSecret, canWrite, fetchImpl = fetch, now = Date.now,
+  noAccess = (login) => `@${login} has no write access to the repository, so cannot sign in.`,
   githubWeb = 'https://github.com', githubApi = 'https://api.github.com', required = false, onConnect = null, people = null, members = null, slackPeople = null,
 }) {
   const secure = publicUrl.startsWith('https:');
@@ -239,7 +242,7 @@ export function createAuth({
       step = 'write access';
       if (!(await canWrite(login))) {
         console.log('auth: sign-in refused, no write access', { login });
-        throw refusal(`@${login} has no write access to the repository, so cannot sign in.`);
+        throw refusal(noAccess(login));
       }
       if (people && !people.remember({ login, id: signedIn.id, name: signedIn.name })) {
         console.warn('auth: sign-in refused, the handle was another account\'s', { login });

@@ -146,7 +146,7 @@ import { startTlsAsk } from './tlsAsk.mjs';
 import { providerMetaContent } from './providerWords.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
-import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -1019,6 +1019,7 @@ export function createHandler({
   async function projectsView(login) {
     if (projectAccess) return projectAccess.view(login);
     const { name, repo } = defaultProject(config);
+    if (!repo) return { projects: [], defaultProject: null, saved: false };
     return { projects: [{ name, repo }], defaultProject: name, saved: false };
   }
 
@@ -1027,6 +1028,8 @@ export function createHandler({
     return {
       login, ...view, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
+      // A console that started with no repo: the setup card sends an admin to add one on Console settings.
+      repoNeeded: !hasRepo(config),
       // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
       githubSetupNeeded: Boolean(githubSetup?.available()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.

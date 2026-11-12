@@ -50,7 +50,8 @@ export function createTokenSource({ appId, installationId, privateKey, repo, per
   let pending = null;
 
   async function mint() {
-    const body = { repositories: [repo.split('/').pop()] };
+    // Scoped to its repo; with none (a key checked on a console that has no repo yet) to the installation's.
+    const body = repo ? { repositories: [repo.split('/').pop()] } : {};
     if (permissions) body.permissions = permissions;
     const res = await fetchImpl(`${GITHUB_API}/app/installations/${installationId}/access_tokens`, {
       method: 'POST',
@@ -124,6 +125,27 @@ export function createAppApi({ appId, privateKey, fetchImpl = fetch, now = Date.
         if (err.status === 404) return null;
         throw err;
       }
+    },
+    /** @returns {Promise<{login: string, type: 'User'|'Organization'}>}  the account the installation is on */
+    async installationAccount(installationId) {
+      const answer = await call('GET', `/app/installations/${encodeURIComponent(installationId)}`);
+      return { login: answer.account?.login ?? '', type: answer.account?.type ?? '' };
+    },
+    /**
+     * Asked with a token of the installation narrowed to reading the org's members, which the App must be granted
+     * (Organization permissions, Members: read).
+     * @returns {Promise<{role: string, state: string}|null>}  `login`'s membership of `org`, null when not a member
+     * @throws {Error}  with `status` 403 when the App may not read the org's members
+     */
+    async orgMembership(installationId, org, login) {
+      const { token } = await call('POST', `/app/installations/${encodeURIComponent(installationId)}/access_tokens`, { permissions: { members: 'read' } });
+      const res = await fetchImpl(`${GITHUB_API}/orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`, {
+        headers: { authorization: `Bearer ${token}`, ...GITHUB_HEADERS },
+      });
+      if (res.status === 404) return null;
+      const answer = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(`GitHub refused the org membership read: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`), { status: res.status });
+      return { role: answer.role ?? '', state: answer.state ?? '' };
     },
     /**
      * @returns {Promise<{active: boolean, url: string, contentType: string, insecureSsl: string}>}

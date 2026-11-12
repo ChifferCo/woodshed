@@ -12,7 +12,7 @@ const read = (file) => fs.readFileSync(path.join(DIR, file), 'utf8');
 
 test('the console gets WOODSHED_CLOUD_PROJECTS only when projects is set, quoted for YAML', () => {
   const stack = read('baseBoxStack.sh.tftpl');
-  assert.match(stack, / {6}- WOODSHED_CLOUD_REPO=\$\{repo\}\n%\{ if projects != "" ~\}\n {6}#[^\n]*\n {6}- \$\{jsonencode\("WOODSHED_CLOUD_PROJECTS=\$\{replace\(projects, "\$", "\$\$"\)\}"\)\}\n%\{ endif ~\}\n/);
+  assert.match(stack, / {6}- WOODSHED_CLOUD_REPO=\$\{repo\}\n%\{ endif ~\}\n%\{ if projects != "" ~\}\n {6}#[^\n]*\n {6}- \$\{jsonencode\("WOODSHED_CLOUD_PROJECTS=\$\{replace\(projects, "\$", "\$\$"\)\}"\)\}\n%\{ endif ~\}\n/);
   const box = read('baseBox.tf');
   assert.match(box, /projects_json = length\(var\.projects\) == 0 \? "" :/, 'no projects, no line');
   assert.match(box, / {4}projects {11}= local\.projects_json\n/);
@@ -38,4 +38,14 @@ test('Terraform refuses the names the console refuses', () => {
   assert.ok(tf, 'the projects name validation');
   const console = /const NAME = \/(.*)\/;\nconst NAME_MAX = (\d+);/.exec(fs.readFileSync(path.join(import.meta.dirname, '../../console/projects.mjs'), 'utf8'));
   assert.deepEqual([tf[1], tf[2]], [console[1], console[2]]);
+});
+
+test('without sessions_on_github_repo the console gets no WOODSHED_CLOUD_REPO, and may default to any project', () => {
+  const vars = read('variables.tf');
+  assert.match(vars, /variable "sessions_on_github_repo" \{[^}]*type {8}= bool\n {2}default {5}= true\n\}/, 'on by default: an installation that sets nothing keeps its repo');
+  assert.match(vars, /condition {5}= length\(var\.projects\) == 0 \|\| !var\.sessions_on_github_repo \|\| anytrue/);
+  assert.match(read('baseBox.tf'), / {4}repo {15}= var\.sessions_on_github_repo \? var\.github_repo : ""\n/);
+  assert.match(read('baseBoxStack.sh.tftpl'), /%\{ if repo != "" ~\}\n {6}- WOODSHED_CLOUD_REPO=\$\{repo\}\n%\{ endif ~\}\n/);
+  // The deploy workflow's roles and the image still come from github_repo.
+  assert.match(read('github.tf'), /repo:\$\{var\.github_repo\}:environment:woodshed-cloud-images/);
 });

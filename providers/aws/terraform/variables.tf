@@ -5,9 +5,16 @@ variable "region" {
 
 # No default for the values that name one installation: an apply without its -var-file fails on them, naming them,
 # rather than using another installation's.
+# Empty, the default, needs no DNS of your own: the console is woodshed.<the base box's IP, dashed>.sslip.io (dns.tf).
 variable "domain" {
-  description = "The console's name, given its own Route 53 zone (dns.tf)."
+  description = "The console's name, given its own Route 53 zone (dns.tf), whose parent must delegate it. Empty (the default) names the console woodshed.<the base box's IP, with dashes>.sslip.io, with no zone and no DNS to set up: Caddy then gets a certificate for each name the first time it is opened, after asking the console (on-demand TLS)."
   type        = string
+  default     = ""
+
+  validation {
+    condition     = var.domain == "" || can(regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$", var.domain))
+    error_message = "domain is a lowercase DNS name, such as woodshed.example.com, or empty for a name on sslip.io."
+  }
 }
 
 variable "budget_email" {
@@ -21,13 +28,21 @@ variable "monthly_budget_usd" {
 }
 
 variable "github_repo" {
-  description = "The repository sessions work on, owner/name; the GitHub roles trust its workflows (github.tf)."
+  description = "The repository that deploys this installation, owner/name: the GitHub roles trust its workflows (github.tf), and the session image is built from it. Sessions work on it too, unless sessions_on_github_repo is false."
   type        = string
 }
 
-# Empty, the default, leaves the console on github_repo alone, as before projects (console/projects.mjs).
+# False starts the console with no repo: an admin adds the ones sessions work on, on its Console settings page.
+variable "sessions_on_github_repo" {
+  description = "Whether github_repo is also a repo sessions work on, the console's default. False for a repo kept only to deploy the installation: the console then starts with no repo (or with projects alone), and the first repo an admin adds on the Console settings page becomes the default."
+  type        = bool
+  default     = true
+}
+
+# Empty, the default, leaves the console on github_repo alone, as before projects (console/projects.mjs), or on none
+# without sessions_on_github_repo.
 variable "projects" {
-  description = "The repos the console starts sessions on, handed to it as WOODSHED_CLOUD_PROJECTS: each with a name (lowercase words joined by single dashes, at most 32 long), its repo (owner/name), whether it is the default, and, when the App is installed on its repo's account under another installation, that installation's ID. [] (the default) for github_repo alone. Every project uses this installation's session image, task definition and databases for now."
+  description = "The repos the console starts sessions on, handed to it as WOODSHED_CLOUD_PROJECTS: each with a name (lowercase words joined by single dashes, at most 32 long), its repo (owner/name), whether it is the default, and, when the App is installed on its repo's account under another installation, that installation's ID. [] (the default) for github_repo alone, or for none when sessions_on_github_repo is false. Every project uses this installation's session image, task definition and databases for now."
   type = list(object({
     name            = string
     repo            = string
@@ -57,10 +72,11 @@ variable "projects" {
     condition     = length(var.projects) <= 1 || length([for p in var.projects : p if p.default]) == 1
     error_message = "With more than one project, exactly one is the default."
   }
-  # WOODSHED_CLOUD_REPO stays github_repo, and the console refuses a list whose default is another repo.
+  # WOODSHED_CLOUD_REPO stays github_repo, and the console refuses a list whose default is another repo. Without
+  # sessions_on_github_repo the console gets no WOODSHED_CLOUD_REPO, so any repo may be the default.
   validation {
-    condition     = length(var.projects) == 0 || anytrue([for p in var.projects : lower(p.repo) == lower(var.github_repo) && (p.default || length(var.projects) == 1)])
-    error_message = "The default project's repo is github_repo."
+    condition     = length(var.projects) == 0 || !var.sessions_on_github_repo || anytrue([for p in var.projects : lower(p.repo) == lower(var.github_repo) && (p.default || length(var.projects) == 1)])
+    error_message = "The default project's repo is github_repo, unless sessions_on_github_repo is false."
   }
 }
 

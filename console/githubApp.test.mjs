@@ -116,3 +116,11 @@ test('installationOf asks for the App\'s installation on a repo, and says null w
   const broken = createAppApi({ appId: '1', privateKey: PEM, fetchImpl: async () => new Response('{}', { status: 502 }) });
   await assert.rejects(broken.installationOf('acme/yes'), /HTTP 502/);
 });
+
+test('a token source with no repo asks for the installation\'s token, as a key check does on a console with no repo yet', async () => {
+  const clock = { now: Date.parse('2026-10-22T10:00:00Z') };
+  const github = fakeGitHub({ clock });
+  const source = createTokenSource({ appId: '1', installationId: '99', privateKey: PEM, repo: '', label: 'new key check', fetchImpl: github.fetchImpl, now: () => clock.now });
+  await source.token();
+  assert.deepEqual(github.calls[0].body, {}, 'no repositories: an empty name would be refused');
+});

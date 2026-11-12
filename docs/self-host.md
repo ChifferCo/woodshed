@@ -200,9 +200,15 @@ Found by running this runbook with an agent. Each is a problem in Woodshed, not 
 
 `providers/aws/README.md`, "Setting it up", is already a numbered runbook: follow it. Its **you** steps are the AWS
 account (one for Woodshed alone), the GitHub App (made by hand on AWS, before Terraform), reading `terraform plan`
-before `apply`, the GitHub environments, the DNS delegation, and the secrets on the console's Secrets & webhooks page.
-An agent with AWS credentials in that account can run the rest, and must stop and show the plan when it changes or
-destroys anything.
+before `apply`, the App's Callback URL, client secret and private key right after the apply (uploaded from a shell,
+before the console first starts: without them nobody can sign in to set anything), the GitHub environments, the DNS
+delegation when there is a `domain`, and the session secrets on the console's Secrets & webhooks page. An agent with AWS credentials in that account can run the rest, and must stop and show the plan
+when it changes or destroys anything.
+
+Two choices are optional, and an agent should not ask for them as if they were required: a console domain (left out,
+the console is named on sslip.io and needs no DNS), and which repos sessions work on. `github_repo` is required, since
+the deploy workflow runs there and the session image is built from it, but with `sessions_on_github_repo = false` it is
+only that: the console starts with no repo, and its first admin adds them on the Console settings page.
 
 ## When a step fails
 
