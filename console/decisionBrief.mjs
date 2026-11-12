@@ -100,14 +100,14 @@ export function qaReportFrom(body) {
 }
 
 /**
+ * Only the QA workflow's author is trusted, never the console's own App: sessions comment as that App too, so a
+ * session could post a QA report of its own. A QA session's report reaches the brief through the console's check.
  * @param {object[]} comments
  * @param {{author: string, heading: string}} qa  the project file's `pullRequests.qa`
- * @param {{login: string}|null} [ownApp]  the console's own App, which posts a QA session's comment
  * @returns {object|null}  the latest QA comment
  */
-export function qaCommentIn(comments, qa, ownApp = null) {
-  const byQa = (login) => login === qa.author || (Boolean(ownApp?.login) && login === ownApp.login);
-  return (comments ?? []).filter((c) => byQa(c.user?.login) && (c.body ?? '').startsWith(qa.heading)).at(-1) ?? null;
+export function qaCommentIn(comments, qa) {
+  return (comments ?? []).filter((c) => c.user?.login === qa.author && (c.body ?? '').startsWith(qa.heading)).at(-1) ?? null;
 }
 
 /**
@@ -260,7 +260,7 @@ function gateWords(gates) {
 export function buildBrief({ pull, review, runs, comments, suites, qa, gates, reviewRuns = new Set(), commentUrl = null, ownApp = null }) {
   const words = gateWords(gates);
   const mergeRisk = mergeRiskFrom(runs, { sha: pull.head?.sha, reviewRuns, check: gates?.mergeRisk?.check ?? null });
-  const qaComment = qa.check && gates?.qa ? qaCommentIn(comments, gates.qa, ownApp) : null;
+  const qaComment = qa.check && gates?.qa ? qaCommentIn(comments, gates.qa) : null;
   const report = qaComment ? qaReportFrom(qaComment.body) : null;
   const risk = riskAreasFrom({ comments, review, gate: gates?.review ?? null });
   const decisions = decisionsFrom(pull.body);
