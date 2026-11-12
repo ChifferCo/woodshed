@@ -531,6 +531,12 @@
         awaitingRestart = true;
         restartSince ??= Date.now();
       }
+      // A console that answers with its update still running (or failed) was not restarting: a read lost on the way
+      // is not a restart, and the two minutes start again at the next one.
+      if (answered && updates?.job && updates.job.state !== 'restarting') {
+        awaitingRestart = false;
+        restartSince = null;
+      }
       if (updates?.job?.state === 'failed') following = false;
       if (!(document.activeElement?.closest?.('.settings-card') && document.activeElement.matches('input'))) render();
       scheduleUpdates();

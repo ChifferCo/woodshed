@@ -356,3 +356,35 @@ test('an update that restarts between two reads, onto a console that never answe
   assert.match(text, /The console has not answered for 2 minutes since the update restarted it\. Its log says why/);
   assert.match(text, /git -C \/home\/me\/\.woodshed\/src reset --keep 0ca189f/);
 });
+
+test('one failed read while the image builds is not taken for the restart once the console answers again', async () => {
+  const clock = { now: Date.parse('2026-11-12T01:00:00.000Z') };
+  const timers = [];
+  let down = false;
+  const building = {
+    ...UPDATES,
+    job: { state: 'running', from: '0ca189f', to: 'bbbbbbb', logTail: ['#4 building'], steps: [{ key: 'pull', state: 'done' }, { key: 'starts', state: 'done' }, { key: 'image', state: 'now' }, { key: 'restart', state: 'next' }] },
+  };
+  let current = UPDATES;
+  const { app, posted } = await loadPage(ANSWER, { clock, timers, updates: () => { if (down) throw new Error('fetch failed'); return current; } });
+  await tick();
+  current = building;
+  posted.reply = () => building;
+  button(app, 'Update to latest').listeners.click();
+  await tick();
+  const next = async () => { await timers.at(-1)(); await tick(); };
+  // A read lost on the way, then the console answers, still building the image, for minutes.
+  down = true;
+  clock.now += 2_000;
+  await next();
+  down = false;
+  for (let i = 0; i < 4; i++) {
+    clock.now += 60_000;
+    await next();
+  }
+  const text = textOf(app);
+  assert.match(text, /Updating/);
+  assert.doesNotMatch(text, /Restarting/);
+  assert.doesNotMatch(text, /has not answered/);
+  assert.doesNotMatch(text, /reset --keep/);
+});
