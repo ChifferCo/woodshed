@@ -91,17 +91,20 @@ test('projectSettings reads the env files and the seed secrets from the reposito
     '  - path: web/.env.local',
     '    secret: web-env',
     '    lines: []',
+    '  - path: tools/.env',
+    '    lines: []',
     'databases:',
     '  - engine: postgres',
     '    dir: api',
     '    envFiles: [api-env]',
     '  - engine: mongo',
     '    dir: api',
-    '    envFiles: [api-env]',
+    '    envFiles: [api-env, tools-env]',
     '',
   ].join('\n'));
   const woodshed = path.resolve(import.meta.dirname, '..');
-  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${repo}"`), 'api-env=api/.env,web-env=web/.env.local\napi-env\npostgres mongo\n');
+  // tools/.env has no legacy secret, so no pair: the seed reads it from the repo settings alone, by its key.
+  assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${repo}"`), 'api-env=api/.env,web-env=web/.env.local\napi-env,tools-env\npostgres mongo\n');
 
   // A shallow clone with no project file, as fetchRepo makes for a repository that has none.
   const origin = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-origin-'));

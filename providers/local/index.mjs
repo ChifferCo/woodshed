@@ -78,7 +78,7 @@ function dbAdmin(config, secrets) {
   // The root passwords and each database's own are secrets: there is nowhere else to keep them.
   if (!secrets) throw new Error('WOODSHED_LOCAL_DB_* needs WOODSHED_LOCAL_SECRETS_DIR, where the database passwords are kept');
   return createDbAdminRunner({
-    image: config.launcher.image, repoDir: checkoutDir(defaultProject(config).repo), seedSecrets: config.dbEnvSecrets, secrets, sessionEnv: config.sessionEnv,
+    image: config.launcher.image, repoDir: checkoutDir(defaultProject(config).repo), seedSecrets: config.dbEnvSecrets, seedProject: defaultProject(config).name, secrets, sessionEnv: config.sessionEnv,
     runsDir: path.join(config.stateDir, 'db-admin-runs'), ...config.localDatabases,
     projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo,
   });

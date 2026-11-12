@@ -8,6 +8,14 @@ locals {
   mongo    = contains(var.databases, "mongo")
   # The db-admin task makes, copies and drops the databases, so it exists only when one does.
   db_admin = length(var.databases) > 0
+  # The default project, as the console names it (console/projects.mjs, defaultProject and projectNameOf): the
+  # projects' default, else github_repo's name made plain. Its repo settings are what the seed's env files are written
+  # from (session/dbAdmin.mjs, --project), and the only ones the db-admin task may read.
+  seed_project = coalesce(
+    one([for p in var.projects : p.name if p.default || length(var.projects) == 1]),
+    trim(substr(replace(lower(split("/", var.github_repo)[1]), "/[^a-z0-9]+/", "-"), 0, 32), "-"),
+    "default",
+  )
 }
 
 resource "aws_db_subnet_group" "main" {

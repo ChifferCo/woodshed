@@ -233,13 +233,14 @@ function dump(value, field, engine) {
 
 // One database a session gets its own copy of, on the engine it names (shared/databases/): what its template is built
 // with, and from.
-function database(value, field, secrets) {
+// Its `envFiles` are keys (envFileKey): an entry's secret, as before keys, or the key its path makes when it has none.
+function database(value, field, keys) {
   const db = fields(value, field, PROJECT_FIELDS.databases,
     { migrate: null, seed: null, envFiles: [], paths: [], migrations: null, migrationsTable: null, dump: null, user: null, name: null });
   if (!ENGINE_NAMES.includes(db.engine)) fail(`${field}.engine must be one of ${ENGINE_NAMES.join(', ')} (it is ${JSON.stringify(db.engine)})`);
   const envFiles = list(db.envFiles, `${field}.envFiles`, secretName);
-  const unknown = envFiles.filter((secret) => !secrets.includes(secret));
-  if (unknown.length) fail(`${field}.envFiles names ${unknown.join(', ')}, which no envFiles entry has as its secret`);
+  const unknown = envFiles.filter((key) => !keys.includes(key));
+  if (unknown.length) fail(`${field}.envFiles names ${unknown.join(', ')}, which no envFiles entry has as its key (its secret, or with none the key its path makes)`);
   return {
     engine: db.engine, dir: repoPath(db.dir, `${field}.dir`),
     migrate: nullable(db.migrate, `${field}.migrate`, string), seed: nullable(db.seed, `${field}.seed`, string), envFiles,
@@ -251,8 +252,8 @@ function database(value, field, secrets) {
 }
 
 // One an engine: a person's copy is `woodshed_<login>` on each engine's server, so two of one engine would be one.
-function databases(value, secrets) {
-  const all = list(value, 'databases', (d, where) => database(d, where, secrets));
+function databases(value, keys) {
+  const all = list(value, 'databases', (d, where) => database(d, where, keys));
   const engines = all.map((d) => d.engine);
   const repeated = engines.filter((e, i) => engines.indexOf(e) !== i);
   if (repeated.length) fail(`databases has ${[...new Set(repeated)].join(', ')} more than once: one database an engine`);
@@ -436,7 +437,7 @@ export function parseProject(raw) {
     dependencies: dependencies(project.dependencies),
     env: stringMap(project.env, 'env'),
     envFiles,
-    databases: databases(project.databases, envFiles.map((f) => f.secret).filter(Boolean)),
+    databases: databases(project.databases, envFiles.map((f) => f.key)),
     ...projectApps(project),
     editor: boolean(project.editor, 'editor'),
     consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),

@@ -129,7 +129,9 @@ session's statusd every 2 seconds, rather than every 10, so the terminal
 opens as soon as claude does.
 
 `entrypoint.sh seed` migrates and seeds the next database template, as its own
-user. Only the db-admin task runs it (`session/dbAdmin.mjs`), after emptying it.
+user. Only the db-admin task runs it (`session/dbAdmin.mjs`), after emptying it. It writes the env files as a shared
+session does, from the repo settings db-admin read for the databases' env files (`WOODSHED_SEED_REPO_SETTINGS`), each
+falling back to its legacy secret with the same `WARNING`.
 
 ## Environment
 
@@ -152,6 +154,7 @@ user. Only the db-admin task runs it (`session/dbAdmin.mjs`), after emptying it.
 | `PGUSER`, `PGPASSWORD`, `PGDATABASE`; `MONGODB_URI` | both | Optional for a session: a database to use as it is (the docker launcher), `MONGODB_URI` whole. The ECS task definition has none, so the entrypoint asks the session API (`POST /settings`) for the databases the console made: a shared session's own, waiting while the console answers 503, or a private session's owner's, one user, password and name on every engine. Each engine then exports its own variables (`PGHOST` to `PGDATABASE`, `PGSSLMODE`, `PG_URL`; `MONGODB_URI`), which the project file maps to the app's names. That user may create more databases beside its own, such as its tests' |
 | `WOODSHED_SERVICES`, and each variable it lists | both | The installation's shared services: the list of their variables, each set to its URL. An env file line needing one that is not set is a warning in the log, not a stop. db-admin passes them to the seed, and refuses a name not ending in `_URL` or `_ENDPOINT`, or a value that is not a plain http(s) URL |
 | Each env file's secret, by its name in capitals (`app-env` is `APP_ENV`) | both | The legacy installation text of each of the project file's `envFiles` with a `secret`: a session uses it only where the console's repo settings have no value for the file, with a warning, or where the console offers no repo settings. The overrides above are appended to it |
+| `WOODSHED_SEED_REPO_SETTINGS` | seed | The file of repo settings, in the session API's answer's shape, that `dbAdmin.mjs` read for the databases' env files (the default project's installation values, its entryPoint's `--project`) and deletes after the seed. Unset without `--project`: the legacy secrets alone |
 | `ISSUE`, `PR` or `PROMPT` | session | What to work on. `PROMPT` can be combined with the other two |
 | `STARTED_BY`, `BRANCH` | session | The GitHub login credited in the PR body, and an explicit branch name |
 | `SESSION_URL` | session | The session's page on the console (`WOODSHED_PUBLIC_URL`, or localhost for a local console), linked from the PR body. A console from before it sends none, and the line names Woodshed unlinked; `writeRules` drops it too when the project file says `consoleLinks: false` |
