@@ -1654,6 +1654,7 @@
     slots.shell.classList.toggle('is-railless', railHidden);
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
+    else launcher.stopDictating();
     if (onShared && !sharedHome) {
       sharedHome = W.createSharedHome({ onChange: () => refresh() });
       slots.home.append(sharedHome.el);

@@ -269,6 +269,10 @@
     return {
       button,
       line,
+      // The page moved away from New session: the mic goes off, and the words it heard stay in the prompt.
+      stop() {
+        listening?.stop();
+      },
       // Start pressed while it listens: the words on screen are the words sent, the ones still settling too.
       finish() {
         if (!listening) return;
@@ -470,7 +474,7 @@
       void card.offsetWidth;
       card.classList.add('is-nudged');
     }
-    return { el, update, applyQuery, nudge };
+    return { el, update, applyQuery, nudge, stopDictating: dictation.stop };
   }
 
   W.createLauncher = createLauncher;
