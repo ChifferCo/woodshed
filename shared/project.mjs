@@ -6,9 +6,14 @@
 //   node project.mjs get <field>         a field, dotted (`app.start`); an array prints one item a line (a mapping as
 //                                        JSON), a missing field prints nothing
 //   node project.mjs env                 the project's `env`, as `export` lines for the entrypoint to eval
-//   node project.mjs write-env-files     each of `envFiles`: its defaults, its secret's text, the owner's own lines,
-//                                        then its lines;
-//                                        prints each file, with the variables its lines need that are unset
+//   node project.mjs write-env-files     each of `envFiles`: its defaults, the installation's text, the owner's own
+//                                        lines, then its lines; from the console's repo settings when
+//                                        REPO_SETTINGS_FILE names them, else from the legacy secrets as before;
+//                                        prints each file, with the variables its lines need that are unset, then a
+//                                        line for each warning (writeEnvFiles)
+//   node project.mjs repo-settings       what REPO_SETTINGS_FILE holds, as keys and sizes, never a value
+//   node project.mjs add-instructions <file>  the rules file <file>, with the installation's and the owner's
+//                                        instructions from REPO_SETTINGS_FILE after it (instructionsText)
 //   node project.mjs file <rules|setup>  the text of the file that field names, empty without one
 //   node project.mjs secret-vars         the variables the env files' secrets arrive in, one a line
 //   node project.mjs installs            `dependencies.installs` as the manifest session/deps.sh reads: one `install`
@@ -32,7 +37,7 @@ import { defaultBranchOf } from './defaultBranch.mjs';
 import { envValue } from './envNames.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
-import { layeredEnvText } from './repoSettings.mjs';
+import { envKeyTable, instructionsText, layeredEnvText, sessionWiring } from './repoSettings.mjs';
 
 export const PROJECT_FILE = '.woodshed/project.yaml';
 // While Woodshed is in beta the format changes in place, with every project file in the same change (README.md,
@@ -597,25 +602,146 @@ export function envFileText({ defaults = [], base, own, lines, env }) {
   return layeredEnvText({ defaults, installation: base, personal: own, session });
 }
 
+// Not the project file's fault, so not fail's prefix.
+function badSettings(message) {
+  throw new Error(message);
+}
+
 /**
- * @param {{project: ReturnType<typeof parseProject>, repoDir: string, env: NodeJS.ProcessEnv}} args
- *   `env.OWN_FILES` is the owner's own lines, as the console's `/settings` answer has them: `{<secret>: text}`
- * @returns {{path: string, baseBytes: number, own: boolean, defaults?: number, unset?: string[]}[]}
+ * A session's repo settings, as the console's `POST /repo-settings` answered them (the entrypoint keeps the answer in the
+ * file REPO_SETTINGS_FILE names), each layer's text a string, or null for none: a key the answer leaves out, an empty
+ * text and null are all none. A personal value counts only with `personalFor`, the private session's owner: a shared
+ * session's answer has none, and one that did is dropped. No file is null: an older console, or none at all.
+ * @param {string|null|undefined} file
+ * @returns {{project: string, envFiles: Record<string, {installation: string|null, personal: string|null}>,
+ *   instructions: {installation: string|null, personal: string|null}, personalFor: string|null}|null}
  */
-export function writeEnvFiles({ project, repoDir, env }) {
+export function readRepoSettings(file) {
+  if (!file) return null;
+  let raw;
+  try {
+    raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    // Never the parser's message: it quotes the text, which holds the values.
+    badSettings(`the console's repo settings could not be read (${err.code ?? 'not JSON'})`);
+  }
+  const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  if (!isObject(raw) || typeof raw.project !== 'string' || !isObject(raw.envFiles ?? {}) || !isObject(raw.instructions ?? {})) {
+    badSettings("the console's repo settings are not the session API's answer");
+  }
+  const personalFor = typeof raw.personalFor === 'string' && raw.personalFor ? raw.personalFor : null;
+  const text = (value, where) => {
+    if (value === null || value === undefined) return null;
+    if (typeof value !== 'string') badSettings(`the console's repo settings have ${where} that is not text`);
+    return value.trim() ? value : null;
+  };
+  const layers = (value, where) => {
+    const given = isObject(value) ? value : {};
+    return { installation: text(given.installation, `${where}.installation`), personal: personalFor ? text(given.personal, `${where}.personal`) : null };
+  };
+  return {
+    project: raw.project,
+    envFiles: Object.fromEntries(Object.entries(raw.envFiles ?? {}).map(([key, value]) => [key, layers(value, `envFiles.${key}`)])),
+    instructions: layers(raw.instructions, 'instructions'),
+    personalFor,
+  };
+}
+
+const bytesOf = (value) => Buffer.byteLength(value ?? '');
+
+/** What a repo settings answer holds, for the session's log: each layer's keys and sizes, never a value. */
+export function repoSettingsSummary(settings) {
+  const sized = (entries) => entries.filter(([, value]) => value).map(([name, value]) => `${name} (${bytesOf(value)} bytes)`).join(' ') || 'none';
+  const files = Object.entries(settings.envFiles);
+  return [
+    `project: ${settings.project}`,
+    `installation: ${sized(files.map(([key, layers]) => [key, layers.installation]))}`,
+    `personal: ${sized(files.map(([key, layers]) => [key, layers.personal]))}`,
+    `instructions: ${sized(Object.entries(settings.instructions))}`,
+    `personal for: ${settings.personalFor ? `@${settings.personalFor}` : 'none'}`,
+  ].join(', ');
+}
+
+// One env file's installation and personal text. With repo settings, each is the console's value; one with none falls
+// back to the legacy text (the Terraform secret's variable, the /settings answer's own lines) while an installation
+// still has it, which `legacy` names for the log's warning. Without repo settings, the legacy text as before.
+function envFileLayers({ file, settings, env, own }) {
+  const legacyInstallation = file.secret ? env[secretEnvName(file.secret)] ?? '' : '';
+  const legacyPersonal = file.secret ? own[file.secret] ?? '' : '';
+  if (!settings) return { installation: legacyInstallation, personal: legacyPersonal, legacy: [] };
+  const given = settings.envFiles[file.key] ?? { installation: null, personal: null };
+  const legacy = [];
+  let installation = given.installation ?? '';
+  if (!installation && legacyInstallation.trim()) {
+    installation = legacyInstallation;
+    legacy.push('installation');
+  }
+  let personal = given.personal ?? '';
+  if (!personal && legacyPersonal.trim()) {
+    personal = legacyPersonal;
+    legacy.push('personal');
+  }
+  return { installation, personal, legacy };
+}
+
+// The keys a layer before the session's sets that the session's wiring replaces, for the log.
+function sessionReplaced({ defaults, installation, personal, session, project, env }) {
+  const services = (env.WOODSHED_SERVICES ?? '').split(/\s+/).filter(Boolean);
+  const wiring = sessionWiring({ lines: session, env: project.env, services });
+  const layers = { repo: defaults.join('\n'), installation, personal, session: session.join('\n') };
+  return envKeyTable({ layers, wiring }).filter((row) => row.wins === 'session' && row.setBy.some((layer) => layer !== 'session')).map((row) => row.key);
+}
+
+/**
+ * @param {{project: ReturnType<typeof parseProject>, repoDir: string, env: NodeJS.ProcessEnv,
+ *   settings?: ReturnType<typeof readRepoSettings>}} args
+ *   `env.OWN_FILES` is the owner's own lines, as the console's `/settings` answer has them: `{<secret>: text}`;
+ *   `settings` the console's repo settings, null to write the files from the legacy secrets alone, as before them
+ * @returns {{path: string, key: string, baseBytes: number, own: boolean, personalBytes: number, defaults?: number,
+ *   unset?: string[], layers: string[], legacy: string[], replaced: string[]}[]}
+ */
+export function writeEnvFiles({ project, repoDir, env, settings = null }) {
   const own = env.OWN_FILES ? JSON.parse(env.OWN_FILES) : {};
   return project.envFiles.map((file) => {
-    const base = file.secret ? env[secretEnvName(file.secret)] ?? '' : '';
-    const ownLines = file.secret ? own[file.secret] ?? '' : '';
+    const { installation, personal, legacy } = envFileLayers({ file, settings, env, own });
+    const session = file.lines.map((line) => renderLine(line, env)).filter((line) => line !== null);
     const target = path.join(repoDir, file.path);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, envFileText({ defaults: file.defaults, base, own: ownLines, lines: file.lines, env }));
+    fs.writeFileSync(target, layeredEnvText({ defaults: file.defaults, installation, personal, session }));
     const unset = unsetPlaceholders(file.lines, env);
+    const layers = [file.defaults.length && 'repo', installation && 'installation', personal && 'personal', session.length && 'session'].filter(Boolean);
     return {
-      path: file.path, baseBytes: Buffer.byteLength(base), own: Boolean(ownLines), ...(file.defaults.length && { defaults: file.defaults.length }),
-      ...(unset.length && { unset }),
+      path: file.path, key: file.key, baseBytes: Buffer.byteLength(installation), own: Boolean(personal), personalBytes: Buffer.byteLength(personal),
+      ...(file.defaults.length && { defaults: file.defaults.length }), ...(unset.length && { unset }), layers, legacy,
+      replaced: sessionReplaced({ defaults: file.defaults, installation, personal, session, project, env }),
     };
   });
+}
+
+/**
+ * What `write-env-files` prints: one line naming each file, then a line for each warning. Without repo settings, the
+ * line Woodshed printed before them, byte for byte. With them, each file's layers and sizes, and the keys the session
+ * replaced; each value taken from a legacy secret, and each key the answer holds that this checkout's project file
+ * has no env file for, has a line of its own. Keys and sizes only, never a value.
+ * @param {{written: ReturnType<typeof writeEnvFiles>, settings: ReturnType<typeof readRepoSettings>, project: ReturnType<typeof parseProject>}} args
+ * @returns {string[]}
+ */
+export function writtenLines({ written, settings, project }) {
+  const unset = (w) => (w.unset ? `, unset: ${w.unset.join(' ')}` : '');
+  const defaults = (w) => (w.defaults ? `, defaults: ${w.defaults}` : '');
+  if (!settings) return [written.map((w) => `${w.path} (base: ${w.baseBytes} bytes${defaults(w)}${w.own ? ', own lines' : ''}${unset(w)})`).join(', ') || 'none'];
+  const legacy = (w, layer) => (w.legacy.includes(layer) ? ' from the legacy secret' : '');
+  const summary = written.map((w) => `${w.path} (layers: ${w.layers.join(' ') || 'none'}${defaults(w)}, installation: ${w.baseBytes} bytes${legacy(w, 'installation')}`
+    + `${w.own ? `, personal: ${w.personalBytes} bytes${legacy(w, 'personal')}` : ''}, replaced by the session: ${w.replaced.join(' ') || 'none'}${unset(w)})`).join(', ') || 'none';
+  const secretOf = (w) => project.envFiles.find((f) => f.key === w.key)?.secret;
+  const warnings = written.flatMap((w) => [
+    w.legacy.includes('installation') && `WARNING: ${w.path} from the legacy env file secret ${secretOf(w)}: set it on Console settings → Repos`,
+    w.legacy.includes('personal') && `WARNING: ${w.path}'s own lines from the legacy env file lines (${secretOf(w)}) of My settings: save them on its Repo settings`,
+  ]).filter(Boolean);
+  const known = new Set(project.envFiles.map((f) => f.key));
+  const unused = Object.entries(settings.envFiles).filter(([key, layers]) => !known.has(key) && (layers.installation || layers.personal)).map(([key]) => key);
+  if (unused.length) warnings.push(`Repo settings unused: this checkout's project file has no env file with the key (keys: ${unused.join(' ')})`);
+  return [summary, ...warnings];
 }
 
 /** The variables lines need (`{{NAME}}`, not `{{NAME?}}`) that `env` leaves empty, such as a service the installation does not run. */
@@ -674,6 +800,12 @@ export function field(project, dotted) {
 }
 
 async function main([command, arg]) {
+  // Before the project file is read: the session fetches its repo settings before its branch is checked out.
+  if (command === 'repo-settings') {
+    const settings = readRepoSettings(process.env.REPO_SETTINGS_FILE) ?? badSettings('repo-settings reads the file REPO_SETTINGS_FILE names');
+    process.stdout.write(`${repoSettingsSummary(settings)}\n`);
+    return;
+  }
   const repoDir = process.env.REPO_DIR || process.cwd();
   const project = loadProject(repoDir);
   if (command === 'check') {
@@ -689,10 +821,20 @@ async function main([command, arg]) {
     const lines = exportLines({ project, env: process.env });
     if (lines.length) process.stdout.write(`${lines.join('\n')}\n`);
   } else if (command === 'write-env-files') {
-    const written = writeEnvFiles({ project, repoDir, env: process.env });
-    const unset = (w) => (w.unset ? `, unset: ${w.unset.join(' ')}` : '');
-    const defaults = (w) => (w.defaults ? `, defaults: ${w.defaults}` : '');
-    process.stdout.write(`${written.map((w) => `${w.path} (base: ${w.baseBytes} bytes${defaults(w)}${w.own ? ', own lines' : ''}${unset(w)})`).join(', ') || 'none'}\n`);
+    const settings = readRepoSettings(process.env.REPO_SETTINGS_FILE);
+    const written = writeEnvFiles({ project, repoDir, env: process.env, settings });
+    process.stdout.write(`${writtenLines({ written, settings, project }).join('\n')}\n`);
+  } else if (command === 'add-instructions') {
+    if (!arg) fail('add-instructions takes the rules file');
+    const settings = readRepoSettings(process.env.REPO_SETTINGS_FILE);
+    if (!settings) return;
+    const rules = fs.readFileSync(arg, 'utf8');
+    const { installation, personal } = settings.instructions;
+    const text = instructionsText({ rules, repoRules: Boolean(project.rules), installation, personal, login: settings.personalFor, repo: repoOf(repoDir) ?? settings.project });
+    if (text === rules) return;
+    fs.writeFileSync(arg, text);
+    const sized = (value) => (value ? `${bytesOf(value)} bytes` : 'none');
+    process.stdout.write(`installation: ${sized(installation)}, personal: ${sized(personal)}, added: ${bytesOf(text) - bytesOf(rules)} bytes\n`);
   } else if (command === 'file') {
     if (arg !== 'rules' && arg !== 'setup') fail('file takes rules or setup');
     const name = project[arg];
@@ -710,7 +852,7 @@ async function main([command, arg]) {
     const text = appsRules(project);
     if (text) process.stdout.write(`${text}\n`);
   } else {
-    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, file, uses, secret-vars, installs or apps-rules)`);
+    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, repo-settings, add-instructions, file, uses, secret-vars, installs or apps-rules)`);
   }
 }
 

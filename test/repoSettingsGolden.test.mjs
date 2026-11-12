@@ -55,14 +55,19 @@ const SCENARIOS = {
 const roots = [];
 after(() => roots.forEach((dir) => fs.rmSync(dir, { recursive: true, force: true })));
 
-/** Runs `project.mjs write-env-files` on a checkout holding `text`, and returns what it printed and every file it wrote. */
-function writeEnvFilesFor(text, env) {
+/**
+ * Runs `project.mjs write-env-files` on a checkout holding `text`, and returns what it printed and every file it wrote.
+ * With `settings`, the console's repo settings answer, as the session hands it over in REPO_SETTINGS_FILE.
+ */
+function writeEnvFilesFor(text, env, settings = null) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-golden-'));
   roots.push(dir);
   fs.mkdirSync(path.join(dir, '.woodshed'));
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), text);
-  const printed = execFileSync('node', [PROJECT_MJS, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env } });
-  const files = printed.trim().split(/, (?=[^ ]+ \(base)/).map((entry) => entry.split(' (')[0]);
+  const file = path.join(dir, 'repo-settings.json');
+  if (settings) fs.writeFileSync(file, JSON.stringify(settings));
+  const printed = execFileSync('node', [PROJECT_MJS, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env, ...(settings && { REPO_SETTINGS_FILE: file }) } });
+  const files = printed.split('\n')[0].split(/, (?=[^ ]+ \((?:base|layers))/).map((entry) => entry.split(' (')[0]);
   return [`printed: ${printed}`, ...files.map((file) => `==> ${file} <==\n${fs.readFileSync(path.join(dir, file), 'utf8')}`)].join('');
 }
 
@@ -73,6 +78,33 @@ for (const [name, text] of Object.entries(PROJECTS)) {
       const written = writeEnvFilesFor(text, env);
       if (UPDATE) fs.writeFileSync(golden, written);
       assert.equal(written, fs.readFileSync(golden, 'utf8'));
+    });
+  }
+}
+
+// A session asking a console that keeps no repo settings for the project (every key absent), or one that copied the
+// legacy values into them (what the console's start does), writes the same files, byte for byte.
+const filesOf = (written) => written.slice(written.indexOf('==> '));
+const ANSWER_NONE = { project: 'app', envFiles: {}, instructions: { installation: null, personal: null }, personalFor: null };
+function copiedAnswer(scenario) {
+  const env = SCENARIOS[scenario];
+  const own = scenario === 'private' ? OWN : {};
+  const keys = [...new Set([...Object.keys(LEGACY).map((v) => v.toLowerCase().replace(/_/g, '-')), ...Object.keys(own)])];
+  return {
+    ...ANSWER_NONE, personalFor: scenario === 'private' ? 'octocat' : null,
+    envFiles: Object.fromEntries(keys.map((key) => [key, { installation: env[key.toUpperCase().replace(/-/g, '_')] ?? null, personal: own[key] ?? null }])),
+  };
+}
+for (const [name, text] of Object.entries(PROJECTS)) {
+  for (const scenario of Object.keys(SCENARIOS)) {
+    test(`${name}'s env files, ${scenario}, are the same from repo settings with nothing in them, or the legacy values copied into them`, () => {
+      const golden = filesOf(fs.readFileSync(path.join(FIXTURES, `${name}.${scenario}.env.txt`), 'utf8'));
+      const none = writeEnvFilesFor(text, SCENARIOS[scenario], { ...ANSWER_NONE, personalFor: scenario === 'private' ? 'octocat' : null });
+      assert.equal(filesOf(none), golden, 'nothing in repo settings: the legacy secrets, as before');
+      assert.equal(/WARNING: .* legacy env file/.test(none), scenario !== 'bare', 'and each one read says so');
+      const copied = writeEnvFilesFor(text, { ...SESSION_ENV, ...(scenario === 'shared' && { S3_ENDPOINT: SCENARIOS.shared.S3_ENDPOINT }) }, copiedAnswer(scenario));
+      assert.equal(filesOf(copied), golden, 'the copies, with no legacy variable left in the environment');
+      assert.doesNotMatch(copied, /WARNING/);
     });
   }
 }
