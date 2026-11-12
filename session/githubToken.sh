@@ -28,11 +28,19 @@ if [ -f "$CACHE" ]; then
   fi
 fi
 
-# The session token goes to curl on stdin, not in its arguments, where `ps` would show it. A refusal's reason, such
-# as an owner who must connect GitHub again, goes to stderr, where git and gh show it.
-if ! answer=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-  | curl -sS --fail-with-body --max-time 15 -X POST -K - "$WOODSHED_CONSOLE_URL/github-token"); then
-  echo "could not get a GitHub token: $(jq -r '.error // empty' <<< "$answer" 2>/dev/null || true)" >&2
+# The session token goes to curl on stdin, not in its arguments, where `ps` would show it. Minting a token is safe to
+# repeat, so a push made while the console restarts (each redeploy) waits for it, as the entrypoint's consoleCall does:
+# up to about 40 s on any failure but a 4xx, the answer in a file curl empties before each try. A refusal's reason,
+# such as an owner who must connect GitHub again, goes to stderr at once, where git and gh show it.
+umask 077
+answerFile=$(mktemp /tmp/woodshed-github-token-answer.XXXXXX)
+trap 'rm -f "$answerFile"' EXIT
+code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+  | curl -sS -X POST -K - -o "$answerFile" -w '%{http_code}' --max-time 15 \
+    --retry 8 --retry-delay 5 --retry-max-time 60 --retry-all-errors "$WOODSHED_CONSOLE_URL/github-token") || code=000
+answer=$(cat "$answerFile")
+if [ "$code" != 200 ]; then
+  echo "could not get a GitHub token (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null || true)" >&2
   exit 1
 fi
 token=$(jq -er .token <<< "$answer")
@@ -41,7 +49,6 @@ now=$(date +%s)
 useUntil=$((expires - MIN_LEFT_SECONDS))
 [ "$useUntil" -le $((now + MAX_CACHE_SECONDS)) ] || useUntil=$((now + MAX_CACHE_SECONDS))
 
-umask 077
 tmp=$(mktemp "$CACHE.XXXXXX")
 printf '%s %s\n' "$useUntil" "$token" > "$tmp"
 mv "$tmp" "$CACHE"

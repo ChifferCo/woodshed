@@ -209,6 +209,13 @@ begins "Getting a machine from AWS", "Waiting for AWS to start it" and "Pulling
 the session image" on AWS, and "Starting a container" and "Booting the
 container" on the local provider, which has no wait for a pull of its own.
 
+A console that restarts (each redeploy, a crash, the box rebooting) is away for a few seconds, and sessions wait for
+it: their calls to the session API that are safe to repeat (`/settings`, `/home/restore`, `/attachments`,
+`/progress`, `/github-token`, and the settings pull at start) try again for about 40 s on anything but a 4xx. `/answer`
+is not repeated, since it posts to Slack. On SIGTERM, which Docker sends before a redeploy's restart, the console
+(`shutdown.mjs`) stops its loops and takes no new connection, lets the requests in flight answer, and exits within 7 s,
+inside Docker's 10: it logs `console: stopping`, then `console: stopped`. Terminals and tunnels are cut and reconnect.
+
 ## Session states
 
 The rail and the Shared page group shared sessions by state, and the Shared

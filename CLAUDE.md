@@ -232,6 +232,19 @@ secrets.
   `AccessDeniedException` on `create-secret` means the base box role lacks the
   `PeoplesOwnSecrets` statement (an apply is due). A teammate's private session
   is invisible by design: nobody else can see it in the console.
+- **A session fails at start with `could not get the owner's settings` (or the
+  session's databases) and `status 000`, after `Empty reply from server` or
+  `Couldn't connect to server`.** The console was away for longer than the
+  session waits: its calls to the console (`consoleCall` in `session/entrypoint.sh`,
+  and `githubToken.sh`) try again for about 40 s on anything but a 4xx. A
+  redeploy stops the console for a few seconds: it logs `console: stopping` with
+  the signal, then `console: stopped` with its seconds, and `requests still open
+  at the stop, cut off` when some had not answered in 7 s. Check the
+  `woodshed-cloud-redeploy-console` SSM commands (`aws ssm list-command-invocations
+  --details --instance-id <base_box_instance_id>`) and the deploy workflow's runs
+  at that time. No `console: stopping` before the new console's `console: listening`
+  means it was killed, not stopped: a crash, an out-of-memory kill or the box
+  rebooting. A status other than 000 is the console's own answer, given after it.
 - **A private session starts without its MCP logins, or Resume opens a blank
   claude.** The session's log says `Claude home restored`, `No Claude home
   saved yet` or `WARNING: Claude home not restored` with the status. Every 5

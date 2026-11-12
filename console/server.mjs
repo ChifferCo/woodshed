@@ -151,6 +151,7 @@ import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
+import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -1911,11 +1912,19 @@ export async function startConsole({ provider, config: given = null }) {
   // A dump of a gigabyte or two takes longer to send than Node's 5-minute default for a whole request. Caddy is in front.
   server.requestTimeout = 60 * 60_000;
   server.on('upgrade', installation.upgrade);
+  const servers = [{ server, open: countRequests(server) }];
   server.listen(config.port, config.host, () => {
     console.log('console: listening', { host: config.host, port: config.port, ...installation.summary() });
   });
-  if (installation.sessionApi) listenSessionApi({ config, handle: installation.sessionApi });
-  await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (installation.sessionApi) {
+    const api = listenSessionApi({ config, handle: installation.sessionApi });
+    servers.push({ server: api, open: countRequests(api) });
+  }
+  const tlsAsk = await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (tlsAsk) servers.push({ server: tlsAsk, open: countRequests(tlsAsk) });
+  // Docker's stop on every redeploy (shutdown.mjs): sessions retry their calls to the console while it is away.
+  const shutdown = createShutdown({ servers, stop: () => installation.stop() });
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => shutdown(signal));
   installation.start({ webhooks: provider.webhooks ?? null });
 }
 
