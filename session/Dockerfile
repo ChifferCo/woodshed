@@ -159,11 +159,15 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 # Before the token leaves the URL: the partial clone fetches that commit's files from GitHub.
 ARG BUILD_SHA=
 # The repo this image is for, owner/name, and where its checkout goes, /work/<name> (checkoutDir in shared/project.mjs).
+# With REPO empty the image holds no checkout, only an empty REPO_DIR (install.sh's /work/.no-checkout), and needs no
+# gh_token: every session clones its project's repo at start instead (PROJECT_REPO, useProjectRepo in entrypoint.sh)
+# and runs that repo's installs there. install.sh builds it for a local install that names no repository.
 ARG REPO
 ARG REPO_DIR
-RUN test -n "$REPO" && test -n "$REPO_DIR" || { echo "build with --build-arg REPO=<owner>/<name> --build-arg REPO_DIR=/work/<name>" >&2; exit 1; }
+RUN test -n "$REPO_DIR" || { echo "build with --build-arg REPO=<owner>/<name> --build-arg REPO_DIR=/work/<name>, or REPO= for no checkout" >&2; exit 1; }
 RUN --mount=type=secret,id=gh_token,uid=1000 \
-  git clone --filter=blob:none "https://x-access-token:$(cat /run/secrets/gh_token)@github.com/${REPO}.git" "$REPO_DIR" \
+  if [ -z "$REPO" ]; then mkdir -p "$REPO_DIR"; echo "no checkout: each session clones its project's repo at start"; exit 0; fi \
+  && git clone --filter=blob:none "https://x-access-token:$(cat /run/secrets/gh_token)@github.com/${REPO}.git" "$REPO_DIR" \
   && if [ -n "$BUILD_SHA" ]; then git -C "$REPO_DIR" reset --quiet --hard "$BUILD_SHA"; fi \
   && git -C "$REPO_DIR" remote set-url origin "https://github.com/${REPO}.git" \
   # A repo with submodules (such as a repo that pins Woodshed itself as one) gets them at the built commit's pins. Public

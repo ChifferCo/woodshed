@@ -38,7 +38,8 @@
 #                        there read-only
 #   PROJECT_REPO         owner/name: a session on a project other than the installation's default. Every project runs
 #                        in the default project's image for now, so its repo is cloned at start, next to the image's
-#                        checkout, and used as REPO_DIR (useProjectRepo)
+#                        checkout, and used as REPO_DIR (useProjectRepo). An image built with no repo has no checkout,
+#                        so the console names the repo for every session, the default project's too
 #   ISSUE | PR | PROMPT, STARTED_BY, BRANCH                         what to work on
 #   REVIEW_ONLY          1: claude opens with no prompt, for a session started only to read a PR or branch's review
 #   ATTACHMENTS          how many files were attached to New session: fetched from the console into /tmp/uploads
@@ -140,15 +141,21 @@ configureGitCredentials() {
 # A session on another project than the image's repo works in a clone of that project's repo, made at start next to
 # the image's checkout. The image's installs are its own repo's: the project's run on their own, as any install whose
 # record is missing (refreshDeps). The clone authenticates through the credential helper, so no token is in its URL.
+# An image built with no repo (session/Dockerfile, REPO empty) has no checkout at all: every session clones its own,
+# and keeps the secrets the console handed it, since there is no image repo they could belong to instead.
 useProjectRepo() {
-  [ -n "${PROJECT_REPO:-}" ] || return 0
   local origin dir start=$SECONDS
-  origin=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#^https://([^/@]*@)?github\.com/##; s#\.git$##' || true)
-  if [ "${origin,,}" = "${PROJECT_REPO,,}" ]; then
-    log "Project repo is the image's checkout" "(repo: $PROJECT_REPO)"
-    return 0
+  if [ ! -e "$REPO_DIR/.git" ]; then
+    [ -n "${PROJECT_REPO:-}" ] || die "the session image has no checkout and the console named no repo (PROJECT_REPO): a console older than its image?"
+  else
+    [ -n "${PROJECT_REPO:-}" ] || return 0
+    origin=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#^https://([^/@]*@)?github\.com/##; s#\.git$##' || true)
+    if [ "${origin,,}" = "${PROJECT_REPO,,}" ]; then
+      log "Project repo is the image's checkout" "(repo: $PROJECT_REPO)"
+      return 0
+    fi
+    withholdInstallationSecrets
   fi
-  withholdInstallationSecrets
   dir="$(dirname "$REPO_DIR")/${PROJECT_REPO##*/}"
   local base=$dir n=1
   [ ! -e "$dir" ] || dir="$base-project"
@@ -819,6 +826,8 @@ writeAskPrompt() {
 # reads only (sessionApi.mjs). The start steps are all reported, so the page's checklist reads as for any session.
 runAsk() {
   requireEnv SESSION_ID SESSION_TOKEN WOODSHED_CONSOLE_URL PROMPT
+  # On an image with no checkout, the question's repo is cloned first, as for any session.
+  useProjectRepo
   log "Container started" "(session: $SESSION_ID, mode: ask)"
   progress container
   configureGitCredentials
