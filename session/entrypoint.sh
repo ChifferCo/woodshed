@@ -48,6 +48,9 @@
 #                        the project file says `consoleLinks: false`)
 #   SESSION_APP_DOMAIN   the domain session apps are served under, so this session's app is <SESSION_ID>.<it>;
 #                        unset when the console has session apps off (Woodshed's own app reads it, devConsole.mjs)
+#   WOODSHED_SESSION_DOCKER=1  the machine's Docker socket is mounted and DOCKER_HOST names it (the docker launcher's
+#                        hostDocker): claude's rules say so (hostDocker.md), and dockerPorts.mjs forwards what its
+#                        containers publish to 127.0.0.1 here
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -445,8 +448,23 @@ writeRules() {
   # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
   apps=$(project apps-rules) || die "the project's apps could not be read"
   [ -z "$apps" ] || rules+=$'\n'"$apps"
+  # This machine's Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file.
+  if [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ]; then
+    local docker
+    docker=$(cat "$SESSION_DIR/hostDocker.md")
+    docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"}
+    rules+=$'\n'"$docker"
+  fi
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, host docker: ${WOODSHED_SESSION_DOCKER:-0}, apps: $(project get apps | grep -c . || true))"
+}
+
+# With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where
+# tools such as Supabase's CLI dial them (dockerPorts.mjs). After Redis, so a container publishing 6379 never takes it.
+startDockerPorts() {
+  [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ] || return 0
+  node "$SESSION_DIR/dockerPorts.mjs" >/tmp/woodshed-docker-ports.log 2>&1 &
+  log "Forwarding the ports this machine's containers publish" "(log: /tmp/woodshed-docker-ports.log)"
 }
 
 # Each container has its own throwaway Redis, for whatever of the app connects to it. A shared Redis would let one
@@ -770,6 +788,7 @@ startClaude() {
   if [ "${SESSION_MODE:-}" != ask ]; then
     startRedisIfUsed viewer
     startDbViewers
+    startDockerPorts
   fi
   tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
   tmux set-option -t claude remain-on-exit on

@@ -33,7 +33,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -53,7 +53,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}) },
     });
     return {
       out,
@@ -213,6 +213,28 @@ test('claude gets the rules as a system prompt on a fresh start and on a resume,
   const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
+});
+
+test('a session given this machine\'s Docker is told so, with its own id to name stacks by, and one without is told nothing', () => {
+  const on = writePrompt({ attachments: false, hostDocker: '1' });
+  assert.match(on.rules, /`docker` here is the Docker of the machine Woodshed runs on, not this container's own/);
+  assert.match(on.rules, /keep running after this session ends unless you stop them/);
+  assert.match(on.rules, /use named volumes/);
+  assert.match(on.rules, /forwarded to the same port on 127\.0\.0\.1 here/);
+  assert.match(on.rules, /this session's id, `0a1b2c3d`/);
+  assert.match(on.rules, /other ports too/);
+  assert.doesNotMatch(on.rules, /\{\{/);
+  assert.match(on.out, /host docker: 1/);
+  for (const off of [writePrompt({ attachments: false }), writePrompt({ attachments: false, hostDocker: '0' })]) {
+    assert.doesNotMatch(off.rules, /`docker` here/);
+  }
+});
+
+test('the forwarder of the machine\'s ports starts only with the machine\'s Docker, after the session\'s Redis', () => {
+  assert.match(fn('startDockerPorts'), /\[ "\$\{WOODSHED_SESSION_DOCKER:-\}" = 1 \] \|\| return 0\n\s+node "\$SESSION_DIR\/dockerPorts\.mjs" >\/tmp\/woodshed-docker-ports\.log 2>&1 &/);
+  const start = fn('startClaude');
+  assert.ok(start.indexOf('startRedisIfUsed viewer') < start.indexOf('startDockerPorts'), 'Redis has 6379 first');
+  assert.ok(start.indexOf('startDockerPorts') < start.indexOf('tmux new-session -d -s claude'), 'before claude can start a container');
 });
 
 test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
