@@ -1033,8 +1033,8 @@ export function createHandler({
       repoNeeded: !hasRepo(config),
       // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github. On
       // one person's own machine with a gh token it is optional, and does not hold New session back.
-      githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional(),
-      githubSetupOptional: Boolean(githubSetup?.optional()),
+      githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional?.(),
+      githubSetupOptional: Boolean(githubSetup?.optional?.()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
