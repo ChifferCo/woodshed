@@ -77,7 +77,9 @@ change to the stage by the workflow's run, about the time the build takes.
 2. Fetches this repository's app settings saved in This Woodshed through `appConfig.mjs pull`, after checkout.
    The cache is `/tmp/woodshed-app-config.json`, named by `WOODSHED_APP_CONFIG_FILE`. `loadProject` uses its app only
    when the project defines none. `appConfig.mjs check <app.json>` validates an app object; `save <app.json>` saves it
-   through the console and refreshes the cache, without writing to the repository.
+   through the console and refreshes the cache, without writing to the repository. Transient network failures,
+   server errors and truncated responses are retried for up to a minute; authentication and validation refusals
+   fail immediately, while a 404 from an older console leaves saved apps unavailable.
    Writes the project file's env files from the base files it is given,
    with the shared services' addresses appended (see "The project file" in `../README.md`).
 3. Starts its own Redis on 127.0.0.1, with redis-commander for Data ▾, when the

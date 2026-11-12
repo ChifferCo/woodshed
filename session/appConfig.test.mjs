@@ -88,3 +88,33 @@ test('a saved app survives a console restart, reaches a fresh session, and leave
   assert.equal(loadProject(f.repo, { savedAppFile: env.WOODSHED_APP_CONFIG_FILE }).app, null, 'a cache from another repo is ignored');
   await assert.rejects(appConfig('pull', null, { env: { ...env, SESSION_TOKEN: 'other-token' } }), /another repository/);
 });
+
+test('pull retries a disconnect, a proxy error and a truncated response; permanent refusals are not retried', async (t) => {
+  const f = await setup(t);
+  let calls = 0;
+  let refuse = false;
+  let unavailable = false;
+  const server = http.createServer((req, res) => {
+    calls++;
+    if (refuse) { res.writeHead(403); res.end('{"error":"refused"}'); }
+    else if (unavailable) { res.writeHead(503); res.end('unavailable'); }
+    else if (calls === 1) req.socket.destroy();
+    else if (calls === 2) { res.writeHead(502); res.end('<html>restarting</html>'); }
+    else if (calls === 3) res.end('{"repo":');
+    else res.end(JSON.stringify({ repo: 'acme/app', app: fixtureApp() }));
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const env = { ...f.env, WOODSHED_CONSOLE_URL: `http://127.0.0.1:${server.address().port}` };
+  const retry = { retryDelayMs: 1, maxAttempts: 4 };
+  await appConfig('pull', null, { env, retry });
+  assert.equal(calls, 4);
+  assert.deepEqual(loadProject(f.repo, { savedAppFile: env.WOODSHED_APP_CONFIG_FILE }).app, fixtureApp());
+  refuse = true;
+  await assert.rejects(appConfig('pull', null, { env, retry }), /refused/);
+  assert.equal(calls, 5, '4xx fails immediately, without retries');
+  refuse = false;
+  unavailable = true;
+  await assert.rejects(appConfig('pull', null, { env, retry: { ...retry, maxAttempts: 2 } }), /503/);
+  assert.equal(calls, 7, 'a persistent outage stops at the retry limit');
+});
