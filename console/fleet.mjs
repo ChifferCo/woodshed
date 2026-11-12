@@ -11,11 +11,12 @@ import { labelTriggers, commandTriggers, rememberSeen } from './github.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
+import { finishedComment, runningComment } from './qaSessions.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
-  ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, keptIds, newSessionId, newSessionToken, sessionLink,
-  parseWorkOn, pullNumber, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitsForRetry,
+  ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, keptIds, newSessionId, newSessionToken, sessionLink,
+  parseWorkOn, pullNumber, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitsForRetry,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
@@ -267,6 +268,12 @@ export function createFleet({
       delete env.GH_TOKEN;
       env.SESSION_MODE = 'ask';
       if (session.slack?.name) env.ASKED_BY = session.slack.name;
+    } else if (isQa(session)) {
+      // QA reads the pull request and changes nothing on it: the console posts its report (qaSessions.mjs).
+      delete env.GH_TOKEN;
+      env.SESSION_MODE = 'qa';
+      env.PR = String(session.number);
+      env.QA_BASE = session.qa.base;
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
       if (session.kind === 'issue') env.ISSUE = String(session.number);
@@ -358,10 +365,12 @@ export function createFleet({
 
   /**
    * @param {{kind: 'issue'|'pr'|'task'|'ask', number: number|null, title: string, startedBy: string,
-   *          trigger: 'label'|'comment'|'console'|'my-woodshed'|'slack', prompt?: string, branch?: string|null,
+   *          trigger: 'label'|'comment'|'console'|'my-woodshed'|'slack'|'qa', prompt?: string, branch?: string|null,
    *          owner?: string|null, options?: {model: string, effort: string, permissionMode: string}|null,
    *          attach?: ((id: string) => Promise<number>)|null, background?: boolean, reviewOnly?: boolean,
    *          slack?: {channel: string, threadTs: string, user: string, name: string|null}|null}} args
+   *   `qa` ({base, sha, heading, commentId}) makes a 'pr' session a QA session (qaSessions.mjs), which tests the pull
+   *   request against `base` and changes nothing on it.
    *   `kind` 'task' is a private session on no issue or PR, 'ask' a question from Slack on no branch, answered in
    *   the `slack` thread; `owner` makes a session private to that login; `attach` moves the files attached to New
    *   session under it before it launches, and says how many; `background` answers without waiting for the launch
@@ -375,7 +384,7 @@ export function createFleet({
 
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
-    background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config),
+    background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack gets no databases, so it needs none hosted.
@@ -396,12 +405,13 @@ export function createFleet({
       token: newSessionToken(), terminalToken: newSessionToken(), ref: null, endpoint: null, pendingMessages: [],
       ...(attached ? { attachments: attached } : {}),
       ...(reviewOnly ? { reviewOnly: true } : {}),
+      ...(qa ? { qa } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
     };
     state.sessions.push(session);
     store.save();
     console.log('fleet: session created', {
-      id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null,
+      id, kind, number, trigger, startedBy, private: Boolean(owner), resumed: Boolean(branch), background, assignee: session.assignee ?? null, qa: Boolean(qa),
       ...(project.default ? {} : { project: project.name, repo: project.repo }),
     });
     await runStartQueued({ background });
@@ -484,7 +494,7 @@ export function createFleet({
 
   // A shared session that ran keeps its conversation and databases once stopped, however it stopped.
   function keptFields(session) {
-    return session.owner ? {} : { kept: true };
+    return session.owner || isQa(session) ? {} : { kept: true };
   }
 
   async function finishInterruptedStop(session) {
@@ -1339,6 +1349,85 @@ export function createFleet({
   }
 
   /**
+   * A label on a pull request that is not the console's own: when it is the project's QA label and its QA runs here
+   * (`pullRequests.qa.runner: woodshed`), a QA session starts on the pull request's branch. Any other label is
+   * dropped without a word, as the console's webhooks drop every label that is not theirs.
+   * @param {{number: number, label: string, login: string, project?: string}} trigger
+   * @returns {Promise<{outcome: 'started'|'ignored', sessionId?: string, reason?: string}|{unrecorded: true}>}
+   */
+  async function handleQaLabel({ number, label, login, project: projectName = null }) {
+    const project = projectOfEvent(projectName);
+    const qa = project ? (await pullRequests(project.name))?.qa : null;
+    if (!qa || qa.runner !== 'woodshed' || qa.label !== label) return { unrecorded: true };
+    const gh = githubOf(project);
+    const ignored = (reason) => {
+      console.log('fleet: QA label ignored', { number, login, reason, ...projectField(project) });
+      return { outcome: 'ignored', reason };
+    };
+    if (!(await gh.canWrite(login))) return ignored('no write access to the repo');
+    if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
+    if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
+    const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
+    if (route.action === 'ignore') return ignored(route.reason);
+    const refused = await databasesRefusal();
+    if (refused) return ignored(refused);
+    const pull = await gh.pull(number);
+    if (pull.state !== 'open') return ignored('the pull request is not open');
+    // One QA comment per pull request: a later run writes over the last one's.
+    const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
+    const session = await createSession({
+      kind: 'pr', number, title: `QA: ${pull.title}`, startedBy: login, trigger: 'qa', branch: pull.head.ref, project,
+      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId },
+    });
+    await postQaComment(session, gh, runningComment({ heading: qa.heading, sessionUrl: await qaSessionUrl(session, project) }));
+    console.log('fleet: QA session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
+    return { outcome: 'started', sessionId: session.id };
+  }
+
+  async function qaSessionUrl(session, project) {
+    const publicUrl = await consoleUrlOf(project);
+    return publicUrl ? sessionLink(publicUrl, session.id, config.linkQuery) : null;
+  }
+
+  async function postQaComment(session, gh, body) {
+    const { commentId } = session.qa;
+    if (commentId) {
+      const updated = await safely('QA comment', async () => { await gh.updateComment(commentId, body); return true; });
+      if (updated) return;
+    }
+    const posted = await safely('QA comment', () => gh.comment(session.number, body));
+    if (!posted) return;
+    update(session, { qa: { ...session.qa, commentId: posted } });
+    if (state.github) state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
+    store.save();
+  }
+
+  /**
+   * A QA session's report (POST /qa-report): written into the pull request's QA comment, then the session stops.
+   * @param {object} session
+   * @param {{verdict: {conclusion: string, title: string, status: string, total: number}, report: string, sha: string,
+   *   costUsd: number|null}} result  from parseQaReport
+   */
+  async function qaFinished(session, { verdict, report, sha, costUsd }) {
+    const project = projectFor(config, session);
+    const gh = githubOf(project);
+    const sessionUrl = await qaSessionUrl(session, project);
+    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl }));
+    // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
+    // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
+    const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
+    if (!ours) console.warn('fleet: QA check skipped, not the pull request\'s commit', { id: session.id, number: session.number, reported: sha, started: session.qa.sha });
+    const checkUrl = ours ? await safely('QA check', () => gh.createCheckRun({
+      sha, name: session.qa.check ?? 'QA', conclusion: verdict.conclusion, title: verdict.title,
+      summary: `${verdict.status}\n\n${report}`.trim(), detailsUrl: sessionUrl, externalId: session.id,
+    })) : null;
+    update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
+    console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
+    // In the background: the session waits on this reply, and the stop saves its home through it first.
+    stop(session, `QA finished: ${verdict.title}`).catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }));
+  }
+
+  /**
    * A session asked for a person in a `Needs a human:` comment on its issue or pull request (the webhooks Lambda queues
    * only the App's own). Its assignee is told in Slack, once for each comment. The console's own such comment, for a
    * pull request that gave up, already sent them a message.
@@ -1349,7 +1438,7 @@ export function createFleet({
     if (String(body).includes(GAVE_UP_TEXT)) return { outcome: 'ignored', reason: 'the console\'s own comment, already messaged' };
     const project = projectOfEvent(projectName);
     const session = project && state.sessions
-      .filter((s) => !s.owner && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
+      .filter((s) => !s.owner && !isQa(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
     if (!session) {
       console.log('fleet: a Needs a human comment with no shared session on it', { number, ...(projectName ? { project: projectName } : {}) });
       return { outcome: 'ignored', reason: 'no shared session works on this issue or pull request' };
@@ -1541,7 +1630,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

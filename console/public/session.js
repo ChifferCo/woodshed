@@ -927,7 +927,8 @@
   // who can see it.
   function sessionDetails(s) {
     const trigger = s.trigger === 'label' ? `with the ${data.label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
-      : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack' : 'from the console';
+      : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
+        : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
     const claude = W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },

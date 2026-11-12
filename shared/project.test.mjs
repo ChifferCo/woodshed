@@ -186,7 +186,7 @@ const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/wor
 const PULL_REQUESTS = {
   review: REVIEW,
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
-  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]' },
+  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions' },
   mergeRisk: { check: 'Merge risk' },
 };
 
@@ -209,6 +209,10 @@ test('a wrong pullRequests section names the field', () => {
   assert.throws(() => full({ ...PULL_REQUESTS, suites: [{ name: 'x' }] }), /pullRequests\.suites\[0\] is missing workflow, jobs$/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...PULL_REQUESTS.qa, label: '' } }), /pullRequests\.qa\.label must be a non-empty string/);
   assert.throws(() => full({ ...PULL_REQUESTS, review: null }), /pullRequests\.mergeRisk needs pullRequests\.review/);
+  const { runner, ...noRunner } = PULL_REQUESTS.qa;
+  assert.equal(full({ ...PULL_REQUESTS, qa: noRunner }).pullRequests.qa.runner, 'actions', 'left out, QA runs in the repo\'s CI');
+  assert.equal(full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed' } }).pullRequests.qa.runner, 'woodshed');
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'jenkins' } }), /pullRequests\.qa\.runner must be one of actions, woodshed/);
 });
 
 test('editor is true or false, and off when left out, so a branch from before it still starts', () => {

@@ -441,6 +441,26 @@ The prompts, the rubric and the verdict are `shared/qa/`'s, the same a QA sessio
 
 When to run it (a label, an approved review, which files changed) is the calling workflow's to decide.
 
+### QA in a Woodshed session
+
+A repo with a Woodshed console can run the same QA there instead of in its CI. The project file says so with
+`pullRequests.qa.runner: woodshed` (the default is `actions`), and then the QA label (`pullRequests.qa.label`) on a
+pull request starts a QA session on its branch. It needs nothing in the repo's CI and no API key there:
+
+- The session gets its own databases, as any session does, and a GitHub token that only reads. `session/qa.sh` runs in
+  its terminal in place of claude: it plans with the same prompts as the actions (`shared/qa/`), starts the app with
+  the project file's `app.start` when there is something to test, and runs the plan in the image's browser.
+- The console posts the QA comment as its GitHub App when the session starts (`Running`, linking the session) and writes
+  the report into it when the session ends. Each later run writes over that comment. It also posts the
+  `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
+  session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
+  An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check
+  failed`), and the comment still gets the report.
+- The session stops itself once it has sent its report, and is not kept: a new run is a new label. A label added while
+  a QA session runs on the pull request starts nothing.
+
+A label reaches the console through its webhooks only, not its poll.
+
 ## Databases
 
 Each of the project file's `databases` is on an engine, a module in `shared/databases/` (`postgres.mjs`, `mongo.mjs`,

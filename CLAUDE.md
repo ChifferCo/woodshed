@@ -566,12 +566,24 @@ secrets.
   `woodshed/task-…` branch.** Its log has no `mode: ask`: the container never
   got `SESSION_MODE=ask` and ran a coding session's start. A variable the fleet
   sets is missing from `PER_SESSION_ENV` (see Rules).
+- **The QA label on a pull request started no QA session.** Only a project whose file says
+  `pullRequests.qa.runner: woodshed` starts one, and a label that is not its QA label is dropped with no log line.
+  `fleet: QA label ignored` gives the `reason` (no write access, QA already running, not open). A started one logs
+  `fleet: QA session started` with its `base`.
+- **A QA comment stays at Running.** The session's terminal shows the run (`[qa …]` lines). `fleet: QA finished`
+  with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
+  the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
+  lifetime) never sent one: label the pull request again.
+- **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
+  `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
+  `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the
+  session started on nor the pull request's head: the pull request's code can send the report, so it gets no check.
 - **A question got 👀 and no answer.** Open the session from the link in the
   thread. The session's log says `mode: ask`; the console logs `asks: answer
   posted` with `posted: false` when Slack refused the reply (`slack: call
   refused` says why), and `asks: question left unanswered` when it stopped or
-  failed first, which the thread is told. `sessionApi: no read-only token for an
-  ask session` means the console has no GitHub App.
+  failed first, which the thread is told. `sessionApi: no read-only token for the
+  session` means the console has no GitHub App.
 - **The Review tab says GitHub has no branch yet, or did not answer.** The
   first is the session not having pushed: it pushes when it commits and when it
   stops. The second logs `console: review not readable` with gh's error; a 401
@@ -760,6 +772,8 @@ The console's real session API and Anthropic proxy answer the container from the
 environment, and the answer, and exits 1 without an answer. To try a start change before the image is built, build the
 image from the worktree and pass its tag. For another kind of session, copy it: change the `createSession` call and what
 the stand-in session API serves.
+`providers/aws/bin/qaInImage.mjs <image> <pull request number>` is that copy for a QA session: it keeps the report
+instead of writing the pull request's comment and check.
 
 ## Checking a console page change in a browser
 

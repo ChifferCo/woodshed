@@ -396,7 +396,7 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
         '-f', `output[title]=${title}`, '-f', `output[summary]=${summary.slice(0, 60_000)}`];
       if (detailsUrl) fields.push('-f', `details_url=${detailsUrl}`);
       if (externalId) fields.push('-f', `external_id=${externalId}`);
-      const created = await ghApi(['--method', 'POST', `repos/${repo}/check-runs`, ...fields]);
+      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/check-runs`, ...fields]);
       return created?.html_url ?? null;
     },
     async comment(number, body) {

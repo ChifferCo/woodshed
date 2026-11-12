@@ -14,9 +14,9 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '' } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
-  const calls = { started: [], stopped: [], statusd: [], comments: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
+  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
@@ -68,6 +68,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     async issueComments() { return []; },
     async workflowRun() { return { path: '.github/workflows/review.yml', head_sha: 'abc' }; },
     async updateComment(id, body) { calls.comments.push({ id, body }); return id; },
+    async createCheckRun(check) { calls.checks.push(check); return 'https://github.com/o/r/runs/1'; },
     async removeLabel(number, label) { calls.unlabeled.push({ number, label }); return true; },
     async reactToIssue(number) { calls.reactions.push({ issue: number }); },
     async reactToComment(id) { calls.reactions.push({ comment: id }); },
@@ -95,7 +96,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => PULL_GATES, databasesRefusal, githubFor, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2028,6 +2029,105 @@ test('with no console channel, a pull request on a project without its own is no
   slack.setChannel({ channel: 'C0CONSOLE01', by: 'mia-dev' });
   await fleet.tick();
   assert.deepEqual(store.state.slackPending.map((p) => p.number), [7]);
+});
+
+const QA_GATES = { ...PULL_GATES, qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'console[bot]', runner: 'woodshed' } };
+const QA_PULL = { state: 'open', title: 'Add GTM', head: { ref: 'joel/gtm', sha: 'a'.repeat(40) }, base: { ref: 'main' } };
+const QA_VERDICT = { conclusion: 'success', title: 'Pass: 2 test cases passed', status: '✅ **Pass**: all 2 test cases passed', total: 2 };
+
+function qaSetup(options = {}) {
+  const t = setup({ gates: QA_GATES, ...options });
+  t.github.pull = async () => QA_PULL;
+  return t;
+}
+
+test('the QA label on a pull request starts a QA session on its branch, read only, and says so in the QA comment', async () => {
+  const { fleet, calls } = qaSetup();
+  const outcome = await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+
+  const [session] = fleet.sessions();
+  assert.deepEqual(outcome, { outcome: 'started', sessionId: session.id });
+  assert.deepEqual([session.kind, session.branch, session.trigger], ['pr', 'joel/gtm', 'qa']);
+  const { env } = calls.started[0];
+  assert.deepEqual([env.SESSION_MODE, env.PR, env.QA_BASE, env.GH_TOKEN], ['qa', '7', 'main', undefined]);
+  assert.equal(calls.comments.length, 1);
+  assert.match(calls.comments[0].body, /^## QA\n\n⏳ \*\*Running\*\*/);
+  assert.match(calls.comments[0].body, new RegExp(`https://console.test/s/${session.id}`));
+  assert.equal(session.qa.commentId, 9001);
+});
+
+test('a QA label is dropped unless the project runs QA here, and starts nothing while QA already runs', async () => {
+  const inActions = qaSetup({ gates: { ...QA_GATES, qa: { ...QA_GATES.qa, runner: 'actions' } } });
+  assert.deepEqual(await inActions.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' }), { unrecorded: true });
+  const { fleet } = qaSetup();
+  assert.deepEqual(await fleet.handleQaLabel({ number: 7, label: 'bug', login: 'joel' }), { unrecorded: true });
+  assert.equal((await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'stranger' })).reason, 'no write access to the repo');
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  assert.deepEqual(await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' }), { outcome: 'ignored', reason: 'QA is already running on it' });
+  assert.equal(fleet.sessions().length, 1);
+});
+
+test('a QA check GitHub refuses still leaves the report in the comment and stops the session', async () => {
+  const { fleet, calls, github } = qaSetup();
+  github.createCheckRun = async () => { throw new Error('HTTP 403: Resource not accessible by integration'); };
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.match(calls.comments.at(-1).body, /✅ \*\*Pass\*\*/);
+  assert.equal(session.status, 'stopped');
+});
+
+test('a QA report naming another commit posts no check, though its comment is still written', async () => {
+  const { fleet, calls } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'b'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.equal(calls.checks.length, 0, 'the pull request\'s code could name another pull request\'s head');
+  assert.match(calls.comments.at(-1).body, /✅ \*\*Pass\*\*/);
+});
+
+test('a QA report on a commit pushed since the session started is checked on it', async () => {
+  const { fleet, calls, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  github.pull = async () => ({ ...QA_PULL, head: { ...QA_PULL.head, sha: 'c'.repeat(40) } });
+  await fleet.qaFinished(fleet.sessions()[0], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'c'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.equal(calls.checks[0].sha, 'c'.repeat(40));
+});
+
+test('a QA session is not where a /woodshed comment on its pull request goes', async () => {
+  const { fleet } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  await fleet.handleTrigger({ number: 7, login: 'joel', trigger: 'comment', text: 'fix the test', commentId: 55 });
+  assert.equal(fleet.sessions().length, 2, 'a coding session of its own');
+  assert.equal(fleet.sessions().filter((s) => s.qa).length, 1);
+});
+
+test('a QA report is written over the running comment, the session stops and is not kept, and the next run reuses the comment', async () => {
+  const { fleet, calls, statuses } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅\n## TC-2: b ✅', sha: 'a'.repeat(40), costUsd: 1.5 });
+  await settle();
+  const written = calls.comments.at(-1);
+  assert.equal(written.id, 9001, 'the comment the start posted');
+  assert.match(written.body, /^## QA\n\n✅ \*\*Pass\*\*: all 2 test cases passed\n\n## TC-1: a ✅/);
+  assert.equal(session.status, 'stopped');
+  assert.match(session.stopReason, /^QA finished: Pass/);
+  assert.equal(session.kept, undefined, 'its databases go: a QA run is never resumed');
+  assert.deepEqual([session.qa.conclusion, session.qa.costUsd], ['success', 1.5]);
+  const [check] = calls.checks;
+  assert.deepEqual([check.sha, check.name, check.conclusion, check.title, check.externalId], ['a'.repeat(40), 'QA', 'success', 'Pass: 2 test cases passed', session.id]);
+  assert.match(check.summary, /^✅ \*\*Pass\*\*: all 2 test cases passed\n\n## TC-1: a ✅/, 'the report rides in the check, which no session can write');
+
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  assert.equal(fleet.sessions()[1].qa.commentId, 9001);
+  assert.equal(calls.comments.at(-1).id, 9001, 'the second run updates the same comment');
 });
 
 test('a console with no repo yet starts nothing, and says an admin adds one on Console settings', async () => {

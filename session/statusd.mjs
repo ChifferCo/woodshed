@@ -15,7 +15,8 @@
 //
 // A private session also keeps its owner's shared Claude settings in step with their other sessions, every
 // SYNC_EVERY_MS (settingsSync.mjs).
-//                     An ask session (SESSION_MODE=ask) only saves its home: it is on the default branch and pushes nothing
+//                     An ask session (SESSION_MODE=ask) only saves its home: it is on the default branch and pushes nothing;
+//                     nor does a QA session (SESSION_MODE=qa), which tests a pull request's branch and changes nothing
 //   ANY  /redis/<id>/* forwarded to redis-commander, which listens on loopback only
 //   ANY  /pg/<id>/*    forwarded to pgweb, and /mongo/<id>/* to mongo-express: a private session's own databases,
 //                      also on loopback only (startDbViewers in entrypoint.sh)
@@ -161,6 +162,10 @@ const STARTED_AT = Date.now();
 const WAITING_ON_REPLY = new Set(['UserPromptSubmit', 'PostToolUse']);
 const CONSOLE_URL = process.env.WOODSHED_CONSOLE_URL || '';
 const ASK = process.env.SESSION_MODE === 'ask';
+// A QA session (session/qa.sh) tests a pull request's branch and changes nothing on it: it pushes nothing, and the
+// pull request it tests is not one it opened. Its run is working while QA_RUNNING is there, and done after.
+const QA = process.env.SESSION_MODE === 'qa';
+const QA_RUNNING = '/tmp/qa-running';
 // The entrypoint starts Redis and its viewer only for a project whose env mentions REDIS_URL (startRedisIfUsed), so
 // Data ▾ offers Redis only then.
 const REDIS = !ASK && PROJECT !== null && usesVariable(PROJECT, 'REDIS_URL');
@@ -246,7 +251,7 @@ async function git(...args) {
 let prCache = { at: 0, url: null };
 
 async function prUrl() {
-  if (ASK) return null;
+  if (ASK || QA) return null;
   if (Date.now() - prCache.at < PR_CACHE_MS) return prCache.url;
   let url = null;
   try {
@@ -613,7 +618,7 @@ async function status() {
     return null;
   });
   const hook = CODEX ? null : await hookState();
-  const { state, source } = CODEX ? codexState(pane) : claudeState({
+  const { state, source } = QA ? { state: existsSync(QA_RUNNING) ? 'working' : 'done', source: 'qa' } : CODEX ? codexState(pane) : claudeState({
     paneText: pane,
     hook,
     interruptedAt: tail ? lastInterruptAt(tail.text) : null,
@@ -881,8 +886,8 @@ async function checkpoint() {
   await lastSettingsRound();
   // Before the push, which can fail: the home is worth keeping either way.
   const home = CONSOLE_URL ? await saveHomeInTurn('stop') : { saved: false };
-  if (ASK) {
-    console.log('statusd: an ask session pushes nothing');
+  if (ASK || QA) {
+    console.log('statusd: a session that changes no branch pushes nothing', { mode: process.env.SESSION_MODE });
     return { committed: false, head: await git('rev-parse', '--short', 'HEAD'), homeSaved: home.saved };
   }
   await git('add', '-A');

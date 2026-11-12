@@ -295,8 +295,12 @@ function gateWords(gates) {
 export function buildBrief({ pull, review, runs, comments, suites, qa, gates, reviewRuns = new Set(), commentUrl = null, ownApp = null }) {
   const words = gateWords(gates);
   const mergeRisk = mergeRiskFrom(runs, { sha: pull.head?.sha, reviewRuns, check: gates?.mergeRisk?.check ?? null });
-  const qaComment = qa.check && gates?.qa ? qaCommentIn(comments, gates.qa) : null;
-  const report = qaComment ? qaReportFrom(qaComment.body) : null;
+  // A QA session's check is the console's, and carries its report: the brief reads no comment for it.
+  const fromConsole = Boolean(ownApp?.slug) && qa.check?.app?.slug === ownApp.slug;
+  // Sessions comment as the App, so a project file naming the App as QA's author would trust them.
+  const authorIsApp = Boolean(ownApp?.login) && gates?.qa?.author === ownApp.login;
+  const qaComment = qa.check && gates?.qa && !fromConsole && !authorIsApp ? qaCommentIn(comments, gates.qa) : null;
+  const report = fromConsole ? qaReportFrom(qa.check.output?.summary) : qaComment ? qaReportFrom(qaComment.body) : null;
   const risk = riskAreasFrom({ comments, review, gate: gates?.review ?? null });
   const decisions = decisionsFrom(pull.body);
   const ranked = [...decisions.filter((d) => touches(d, risk.items)), ...decisions.filter((d) => !touches(d, risk.items))];

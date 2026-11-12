@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseCommand, publicSession, sharedRunningCount, routeTrigger, sessionsToStart, statusUpdate, stopReason, canSee, activePrivateCount, parseWorkOn, sessionOptions,
+  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
 } from './sessions.mjs';
 
@@ -332,4 +332,13 @@ test('stopReason stops a question by its own limits, and by the defaults when no
 test('sessionLink carries the console\'s link query, and is the plain page without one', () => {
   assert.equal(sessionLink('https://console.example', 'aaaa1111'), 'https://console.example/s/aaaa1111');
   assert.equal(sessionLink('https://console.example', 'aaaa1111', { place: 'a b', empty: '' }), 'https://console.example/s/aaaa1111?place=a+b');
+});
+
+test('routeQa starts QA on a pull request unless a QA session is testing it, and routeTrigger never picks a QA session', () => {
+  const qa = { id: 'q', kind: 'pr', number: 7, qa: { base: 'main' }, status: 'running', createdAt: '2026-10-21T10:00:00Z' };
+  assert.deepEqual(routeQa({ sessions: [], number: 7 }), { action: 'start' });
+  assert.deepEqual(routeQa({ sessions: [qa], number: 7 }), { action: 'ignore', reason: 'QA is already running on it' });
+  assert.deepEqual(routeQa({ sessions: [{ ...qa, status: 'stopped' }], number: 7 }), { action: 'start' });
+  assert.deepEqual(routeQa({ sessions: [{ ...qa, qa: undefined }], number: 7 }), { action: 'start' }, 'a coding session on it is no QA');
+  assert.deepEqual(routeTrigger({ sessions: [qa], number: 7, trigger: 'comment', kind: 'pr', text: 'go' }), { action: 'start', resumeBranch: null });
 });

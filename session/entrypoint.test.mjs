@@ -210,9 +210,17 @@ test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (
 
 test('claude gets the rules as a system prompt on a fresh start and on a resume, which rewrites them', () => {
   assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' \/tmp\/woodshed-rules\.md/);
-  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf('\n  if [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
+  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
+});
+
+test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
+  assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
+  const start = fn('startClaude');
+  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
+  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
+  assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
 
 // installDefaultPlugins with a stand-in claude that records each install, in a home of the test's own.
