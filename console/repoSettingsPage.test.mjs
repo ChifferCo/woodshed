@@ -9,6 +9,7 @@ import vm from 'node:vm';
 import { createRepoSettings, createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { parseProject } from '../shared/project.mjs';
 
+const layersSource = fs.readFileSync(new URL('./public/repoLayers.js', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('./public/repoSettings.js', import.meta.url), 'utf8');
 const SECRET_MARK = 'zq9-page-value';
 
@@ -121,6 +122,7 @@ async function loadPage({ project = 'app', search = '', file = APP_FILE, envFile
     window: { Woodshed: W, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
     document: { getElementById: () => app, activeElement: null },
   });
+  vm.runInContext(layersSource, context);
   vm.runInContext(source, context);
   await settle();
   return { app, calls, confirms, asked, history, store, secrets, repoSettings };
@@ -337,4 +339,17 @@ test('a console with no secret store says nothing can be saved, and turns the ed
   const { app } = await loadPage({ before: ({ secrets }) => { secrets.configured = () => false; } });
   assert.match(textOf(app), /This console has no secret store, so nothing can be saved here\./);
   assert.equal(editorOf(app, 'env-api-env').disabled, true);
+});
+
+test('a copied value, cleared, says sessions read the Terraform secret again, not that they read the copy', async () => {
+  const { app } = await loadPage({
+    before: async ({ secrets, repoSettings }) => {
+      secrets.values.set('api-env', 'A=1\n');
+      await repoSettings.migrate();
+      await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: '', by: 'mia-dev' });
+      await repoSettings.migrate();
+    },
+  });
+  assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
+  assert.doesNotMatch(textOf(app), /Sessions read this one now/);
 });

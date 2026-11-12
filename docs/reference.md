@@ -320,7 +320,15 @@ An installation works on one repo, and nothing in this folder names one. To set 
 - **The env files:** `env_files` in Terraform (`WOODSHED_ENV_FILES` for the console) is each `envFiles` entry's `secret` with its `path`,
   and `database_env_secrets` is every `envFiles` of the project file's `databases` that is a `secret`. Each secret is made by Terraform, set on the Secrets page and
   reaches a session as its name in capitals. Each is legacy: a session and the seed read it only for a file with no
-  value in Repo settings (console/README.md, "Repo settings"). The db-admin task reads the default project's values,
+  value in Repo settings (console/README.md, "Repo settings"), where each repo's env files are set now, the
+  installation's on Console settings and each person's own on My settings. The console copies each secret, and each
+  person's own lines for it, into the default project's Repo settings at start; the Secrets page lists the secrets
+  under "Moved to Repo settings" and refuses a Replace once Repo settings hold the file, and My settings' old route for
+  own lines writes the new names. With this, the fallback release is complete: every edit reaches sessions through Repo
+  settings, and the Terraform secrets are read only for a file nobody has set there. The fallback (these secrets,
+  `database_env_secrets`, the session's `WARNING: … from the legacy env file secret` and the old route) stays at least
+  two weeks after this is deployed with no such warning in any installation's log, then goes, and `env_files` with it.
+  The db-admin task reads the default project's values,
   `<prefix>/repos/<project>/env/*`, which its entryPoint names (`--project`), and Terraform names the default project
   as the console does: the `projects` entry that is the default, else `github_repo`'s name made plain. A test checks this installation's tfvars against its project file.
 - **The databases:** `databases` in Terraform names the engines the installation hosts, each on its own:

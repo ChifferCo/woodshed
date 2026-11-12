@@ -21,9 +21,10 @@
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
-//   GET  /api/my/files/<file>    the console's shared file for one of the repo's env files or tmux-conf, and your own lines added after it
+//   GET  /api/my/files/<file>    the console's shared file for tmux-conf or one of the Terraform env files, and your own lines added after it
 //   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
-//   POST /api/my/files/<file>/reset                clears them: the console's file alone again
+//   POST /api/my/files/<file>/reset                clears them: the console's file alone again. For an env file these
+//                                                  three are the default project's repo settings (repoSettings.mjs, legacyFileRoute)
 //   GET  /api/my/own-files       your own whole files, {"files": {"<path>": "<text>"}}, which your sessions write into the checkout
 //   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it
 //   GET  /api/my/repos[/<project>[/env/<key>|/instructions]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
@@ -160,7 +161,7 @@ import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
-import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
+import { createRepoSettingsApi, legacyFileRoute, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -194,6 +195,8 @@ const STATIC_FILES = {
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
   'repoSettings.js': 'text/javascript; charset=utf-8',
+  'repoLayers.js': 'text/javascript; charset=utf-8',
+  'myRepoSettings.js': 'text/javascript; charset=utf-8',
   'people.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
@@ -1613,7 +1616,7 @@ export function createHandler({
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
-    const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
+    const repoRoute = repoSettingsApi && (repoSettingsRoute(pathname) ?? legacyFileRoute(pathname, config));
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
@@ -1750,18 +1753,18 @@ export function createHandler({
     }
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
-    const repoRead = repoSettingsApi && repoSettingsRoute(pathname);
+    const repoRead = repoSettingsApi && (repoSettingsRoute(pathname) ?? legacyFileRoute(pathname, config));
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
     if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
-    if (REPO_SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: 'repoSettings.js', provider }));
+    if (REPO_SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: ['repoLayers.js', 'repoSettings.js'], provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);

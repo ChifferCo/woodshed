@@ -635,6 +635,11 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
+  // My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
+  const settingsScripts = [...(await getBody(port, '/settings', as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
+  assert.deepEqual(settingsScripts.slice(-3), ['repoLayers.js', 'myRepoSettings.js', 'mySettings.js']);
+  assert.match(await getBody(port, '/static/repoLayers.js', as('octocat')), /WoodshedRepoLayers = /);
+  assert.match(await getBody(port, '/static/myRepoSettings.js', as('octocat')), /WoodshedMyRepoSettings = /);
 
   // The version a page names is kept by the browser; any other is asked for again, so a deploy is never stale.
   const named = /href="(\/static\/style\.css\?v=[0-9a-f]{12})"/.exec(await getBody(port, '/', as('octocat')))[1];

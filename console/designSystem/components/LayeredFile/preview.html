@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=620 subtitle="An env file's layers on a repo's settings, and which one wins each key" -->
+<!-- @dsCard group="Cards" height=1040 subtitle="An env file's layers on a repo's settings, and which one wins each key" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:14px/1.5 "Red Hat Display",system-ui,sans-serif}
@@ -42,5 +42,22 @@ API_TOKEN=…</textarea>
    <tr><td class="mono">LOG_LEVEL</td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
    <tr><td class="mono">PORT</td><td class="m"></td><td class="m">✓</td><td class="m">✓</td><td><span class="tag wins">Session</span></td></tr>
    <tr><td class="mono">ANTHROPIC_API_KEY</td><td class="m"></td><td class="m"></td><td class="m">✓ if set</td><td><span class="tag wins">Session, if set</span></td></tr>
+  </tbody></table></div></div>
+</div>
+<p class="sub" style="margin:20px 0 8px">On My settings: the person's own layer, and a Yours column.</p>
+<div class="box">
+ <div class="head"><b>api/.env</b><span class="meta">key api-env</span></div>
+ <div class="layer"><div class="lh"><span class="tag">Installation</span><b>This installation's values</b></div>
+  <p class="meta">Saved Nov 12, 10:04 · by @mia-dev · 47 bytes · 3 keys</p>
+  <pre>LOG_LEVEL=warn
+API_URL=http://localhost:4000</pre><p class="sub">Set by your admins, for every session on this repo.</p></div>
+ <div class="layer"><div class="lh"><span class="tag">Person</span><b>Your values</b></div>
+  <p class="meta">Saved Nov 12, 10:20 · 16 bytes · 1 key</p>
+  <textarea>LOG_LEVEL=debug</textarea>
+  <div class="foot"><button class="btn open">Save</button><button class="btn quiet">Clear mine</button><button class="btn quiet">Hide</button></div></div>
+ <div class="layer"><b>What your sessions get</b>
+  <div class="tb"><table><thead><tr><th>Key</th><th>Repo</th><th>Installation</th><th>Yours</th><th>Session</th><th>Wins</th></tr></thead><tbody>
+   <tr><td class="mono">LOG_LEVEL</td><td class="m">✓</td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Yours</span></td></tr>
+   <tr><td class="mono">API_URL</td><td class="m"></td><td class="m">✓</td><td class="m"></td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
   </tbody></table></div></div>
 </div>

@@ -307,7 +307,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   }
   // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
   const settings = secrets && (appKey || config.githubBroker)
-    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
+    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value), repoSettings })
     : null;
   const githubUser = auth?.githubUser ?? null;
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.

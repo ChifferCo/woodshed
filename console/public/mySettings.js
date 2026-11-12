@@ -7,9 +7,9 @@
 
   let me = null;
   let loadError = null;
-  // Your own env files and tmux config: one editor, a tab per file. Each file is read when its tab first opens.
-  // The keys are the repo's env files' secrets and tmux-conf, as /api/my answers them; the first is open at first.
-  const fileKeys = () => Object.keys(me?.files ?? {});
+  // Your own tmux config. /api/my still lists the Terraform env files' own lines beside it, for pages from before
+  // Repo settings, which hold those now (myRepoSettings.js).
+  const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => key === 'tmux-conf');
   const files = {};
   let fileKey = null;
   const editor = h('textarea', { id: 'file-text', class: 'field mono file-text', rows: '14', spellcheck: 'false' });
@@ -17,8 +17,8 @@
   editor.addEventListener('input', () => {
     if (files[fileKey]) files[fileKey].draft = editor.value;
     renderFilePill();
-    renderReplaced();
   });
+  const repoSettings = window.WoodshedMyRepoSettings.create({ render });
   const tokenInput = h('input', { id: 'claude-token', type: 'password', class: 'field mono', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-ant-oat01-…' });
   const status = h('p', { class: 'form-note', role: 'status' });
 
@@ -356,11 +356,6 @@
       homeStatus);
   }
 
-  // An env file's keys, so the page can say which shared ones your lines replace.
-  function keysOf(text) {
-    return new Set(text.split('\n').map((l) => /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/.exec(l)?.[1]).filter(Boolean));
-  }
-
   async function openFile(key) {
     fileKey = key;
     fileStatus.textContent = '';
@@ -398,25 +393,12 @@
     filePill.textContent = changed ? 'Unsaved changes' : f.custom ? `Shared + yours, saved ${W.when(saved)}` : 'Shared only';
   }
 
-  const replaced = h('p', { class: 'sub', hidden: true });
-  function renderReplaced() {
-    const f = files[fileKey];
-    if (!f || fileKey === 'tmux-conf') return void (replaced.hidden = true);
-    const shared = keysOf(f.sharedText);
-    const mine = [...keysOf(f.draft ?? f.text)].filter((k) => shared.has(k));
-    replaced.hidden = !mine.length;
-    replaced.replaceChildren('Yours replace the shared ', h('code', null, mine.join(', ')), '.');
-  }
-
   function sharedFileBlock(f, name) {
     const lines = f.sharedText ? f.sharedText.replace(/\n+$/, '').split('\n').length : 0;
     return h('details', { class: 'shared-file' },
       h('summary', null, h('span', null, `Shared ${name}`), h('span', { class: 'sub' }, lines ? ` · ${lines} line${lines === 1 ? '' : 's'}` : ' · empty')),
       h('pre', { class: 'mono shared-text' }, f.sharedText || 'Nothing yet.'),
-      h('p', { class: 'sub' }, f.editable
-        ? (W.isAdmin() ? ['Everyone\'s sessions use it. Change it for everyone on ', h('a', { href: '/secrets#group-session' }, 'Secrets & webhooks'), '.']
-          : 'Everyone\'s sessions use it. An admin can change it for everyone.')
-        : 'It comes with the session image (session/tmux.conf in the repo).'));
+      h('p', { class: 'sub' }, 'It comes with the session image (session/tmux.conf in the repo).'));
   }
 
   function filesCard() {
@@ -429,24 +411,17 @@
     // Read-only, not disabled, while it saves: the text stays selectable, and what is typed then can't be lost to the
     // answer, which has no draft and would not show it as unsaved.
     editor.readOnly = busy.has('files');
-    editor.placeholder = fileKey === 'tmux-conf' ? 'set -g prefix C-a' : 'LOG_LEVEL=debug';
+    editor.placeholder = 'set -g prefix C-a';
     renderFilePill();
-    renderReplaced();
     const label = (key) => me.files?.[key]?.label ?? key;
+    if (!fileKey) return null;
     return h('section', { class: 'set-card is-wide' },
-      h('div', { class: 'set-head' }, h('h2', null, 'Env files and tmux'), filePill),
-      h('p', { class: 'sub' }, 'Your sessions use the shared files everyone has, and add your own lines after them, so a key set in both uses yours. A change to a shared file reaches you too. Your next My Woodshed session picks up what you save; running ones keep theirs.'),
-      h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'File' }, fileKeys().map((key) => h('button', {
-        type: 'button', 'aria-pressed': String(key === fileKey), disabled: busy.has('files'), onclick: () => openFile(key),
-      }, label(key), me.files?.[key]?.custom ? ' •' : ''))),
+      h('div', { class: 'set-head' }, h('h2', null, 'tmux'), filePill),
+      h('p', { class: 'sub' }, 'Your sessions use the image\'s tmux config, and add your own lines after it, so a setting in both uses yours. Your next My Woodshed session picks up what you save; running ones keep theirs. Your own values for a repo\'s env files are under Repo settings.'),
       f && sharedFileBlock(f, label(fileKey)),
       h('label', { class: 'field-label', for: 'file-text' }, h('span', null, `Your own lines for ${label(fileKey)}`)),
       editor,
-      replaced,
-      f?.appended?.length
-        ? h('p', { class: 'sub' }, 'Woodshed always adds these last, so your databases, ports and URLs are right whatever the files say: ',
-          h('code', null, f.appended.join(', ')), '.')
-        : fileKey === 'tmux-conf' && h('p', { class: 'sub' }, 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.'),
+      h('p', { class: 'sub' }, 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.'),
       h('div', { class: 'set-actions' },
         h('button', {
           type: 'button', class: 'btn btn-open', disabled: !f || !me.available || busy.has('files'),
@@ -627,7 +602,7 @@
     const live = me.running;
     return h('section', { class: 'set-card is-danger' },
       h('div', { class: 'set-head' }, h('h2', null, 'Remove My Woodshed'), !me.setUp && !live && h('span', { class: 'pill' }, 'Nothing to remove')),
-      h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'}, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, GitHub connection, your own databases, your own env and tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.`),
+      h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'}, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, GitHub connection, your own databases, your repo settings, tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.`),
       h('div', { class: 'set-actions' }, h('button', {
         type: 'button', class: 'btn btn-danger',
         onclick: () => W.confirmChange({
@@ -644,6 +619,7 @@
             ownFiles = null;
             ownLoad = null;
             ownLoadFailed = false;
+            repoSettings.reload();
             editor.dataset.key = '';
             openFile(fileKey);
             status.textContent = `My Woodshed removed: ${answer.stopped} stopped, ${answer.removed} taken off the list.`;
@@ -673,12 +649,14 @@
       databasesCard(),
       githubCard(),
       homeCard(),
+      repoSettings.card(),
       filesCard(),
       ownFilesCard(),
       removeCard()));
     if (focused?.id && focused !== document.activeElement && focused.isConnected) focused.focus({ preventScroll: true });
     watchDatabases();
     showAsked();
+    repoSettings.afterRender();
   }
 
   // The setup card's Claude and Codex go to #claude and #codex: once the cards are there, that one is scrolled to and
