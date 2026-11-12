@@ -91,9 +91,11 @@ function openConsole() {
 openConsole();
 
 function app(text) {
-  const code = `import http from "node:http";for(const port of [3001,9000])http.createServer((req,res)=>res.end(${JSON.stringify(text)})).listen(port,"127.0.0.1",()=>console.log("fixture listening on "+port));`;
+  const code = 'import http from "node:http";const text=Buffer.from(process.argv[1],"base64").toString();for(const port of [3001,9000])http.createServer((req,res)=>res.end(text)).listen(port,"127.0.0.1",()=>console.log("fixture listening on "+port));';
+  // Keep response text out of JavaScript and shell source; base64 is one shell-safe argument.
+  const response = Buffer.from(text).toString('base64');
   return {
-    start: `nohup node --input-type=module -e '${code}' >/tmp/fixture-app.log 2>&1 & echo $! >/tmp/fixture-app.pid; for i in 1 2 3 4 5; do curl -fsS http://127.0.0.1:3001/ >/dev/null && curl -fsS http://127.0.0.1:9000/ >/dev/null && exit 0; sleep 1; done; exit 1`,
+    start: `nohup node --input-type=module -e '${code}' '${response}' >/tmp/fixture-app.log 2>&1 & echo $! >/tmp/fixture-app.pid; for i in 1 2 3 4 5; do curl -fsS http://127.0.0.1:3001/ >/dev/null && curl -fsS http://127.0.0.1:9000/ >/dev/null && exit 0; sleep 1; done; exit 1`,
     stop: 'kill "$(cat /tmp/fixture-app.pid)"; for i in 1 2 3 4 5; do if ! curl -fsS http://127.0.0.1:3001/ >/dev/null 2>&1 && ! curl -fsS http://127.0.0.1:9000/ >/dev/null 2>&1; then exit 0; fi; sleep 1; done; exit 1',
     frontendPort: 3001, backendPort: 9000, logs: { app: '/tmp/fixture-app.log' }, howToProve: 'Both ports answer with the fixture text.',
   };
