@@ -495,6 +495,7 @@ dialog.wizard:focus { outline: none; }
   .pphone-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 14px; font-weight: 600; color: var(--bar-strong); }
   .pphone-meta { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 11px; color: var(--bar-sub); }
   .pphone-meta > * { flex: none; }
+  .pphone-meta .papp { display: inline-flex; align-items: center; gap: 5px; }
   .pane-bar .pmore { display: grid; place-items: center; order: 2; flex: none; width: 38px; height: 34px; margin: 0; padding: 0; font: inherit; font-size: 17px; letter-spacing: 1px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 6px; cursor: pointer; }
   .pane-bar .pmore[aria-expanded="true"] { background: var(--bar-on); }
   .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
@@ -772,14 +773,20 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
 /* A card's ⋯ and the menu it opens, after the shed's: each action with a line on what it does. */
 .rmenu { display: inline-grid; place-items: center; width: 22px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font-size: 14px; line-height: 1; cursor: pointer; }
 .rmenu:hover, .rmenu[aria-expanded="true"] { background: var(--line-soft); color: var(--ink); }
-.card-menu { position: fixed; z-index: 40; width: 320px; max-width: calc(100vw - 16px); padding: 6px; display: flex; flex-direction: column; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); }
+.card-menu { position: fixed; z-index: 40; width: 320px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; display: flex; flex-direction: column; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); }
 .card-menu[hidden] { display: none; }
+/* Its rows keep their height when it is held to the screen's: it scrolls instead. */
+.card-menu > * { flex: none; }
 .card-menu:focus { outline: none; }
-.card-menu-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.card-menu-item { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .card-menu-item b { font-size: 13.5px; font-weight: 600; }
 .card-menu-item span { font-size: 12px; color: var(--sub); line-height: 1.4; }
 .card-menu-item:hover, .card-menu-item:focus-visible { background: var(--stopped); }
 .card-menu-item.is-danger b { color: var(--bad); }
+/* Pressed and waiting on the console: the row says what it is doing (Starting…), held on the hover ground. */
+.card-menu-item[aria-busy="true"] { background: var(--stopped); cursor: progress; }
+.card-menu-item b .spin { margin-right: 6px; vertical-align: -1px; }
+.btn[aria-busy="true"] { cursor: progress; }
 .card-menu-sep { height: 1px; margin: 4px 6px; background: var(--line-soft); }
 .card-menu-group { padding: 6px 10px 2px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--meta); }
 .card-menu-dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; padding: 6px 10px; font-size: 12.5px; }
@@ -817,9 +824,12 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   /* An app is started at a desk; a running app keeps its button. */
   .rsub .app-ctl[data-idle="true"] { display: none; }
 
-  /* The ⋯ menu as a sheet from the bottom, its rows tall enough to tap, over a shade of the page. */
+  /* The ⋯ menu as a sheet from the bottom, its rows tall enough to tap, over a shade of the page. It scrolls inside itself
+     when it holds more than the screen: taller, its top rows sat above the screen, out of reach of a finger, since a
+     fixed sheet does not scroll with the page. */
   .card-menu {
     top: auto !important; left: 0 !important; right: 0; bottom: 0; width: auto; max-width: none;
+    max-height: calc(100vh - 40px); max-height: calc(100dvh - 40px); -webkit-overflow-scrolling: touch;
     padding: 8px 10px calc(14px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; border-bottom: 0;
     box-shadow: 0 0 0 100vmax rgba(10, 12, 17, 0.5);
   }

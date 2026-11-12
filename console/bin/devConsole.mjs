@@ -110,6 +110,17 @@ const sessions = [
   session('c0dec0de', null, 'Session names on Codex', {
     kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
   }),
+  // A private session whose app's frontend is down, owned by `local`: the phone's ⋯ sheet offers Start app again, as
+  // the top bar does. With no container behind it the start goes nowhere; a browser test stubs the call.
+  session('f00dd00d', null, 'Phone start app again', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
+    app: 'frontend-down', appServers: { frontend: false, backend: true, frontendPort: 5173, backendPort: 8080 },
+  }),
+  // The same with its app up, for the sheet's Open app ↗. The app's name goes nowhere here.
+  session('f00dd00e', null, 'Phone open app', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
+    app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
+  }),
   session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
