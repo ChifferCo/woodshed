@@ -154,6 +154,8 @@ data "aws_iam_policy_document" "base_box" {
   # My settings: each person's own secrets, which the console makes, reads and deletes itself
   # (console/userSettings.mjs). Only a private session of the same person is ever handed one. And each shared
   # session's database password (console/databases.mjs), handed to that session alone and deleted with its databases.
+  # And each repo's settings, the installation's env file values and instructions (console/repoSettings.mjs), handed to
+  # the sessions on that repo and deleted with it; a person's own for a repo are under users/.
   statement {
     sid = "PeoplesAndSessionsOwnSecrets"
     actions = [
@@ -163,6 +165,7 @@ data "aws_iam_policy_document" "base_box" {
     resources = [
       "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/users/*",
       "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/sessions/*",
+      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/repos/*",
     ]
   }
 

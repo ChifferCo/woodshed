@@ -153,3 +153,12 @@ test('with no repo yet the reader asks GitHub nothing, and reads the default rep
   assert.deepEqual(await reader.appendedFor('app-env'), ['DATABASE_HOST', 'PORT'], 'the same clock: the cache follows the repo, not only the time');
   assert.equal(github.asked, 1);
 });
+
+test('Repo settings reads each env file with its key and defaults, none with no project file, and an unreadable file throws', async () => {
+  const reader = createProjectReader({ github: { projectFile: async () => PROJECT } });
+  const layer = await reader.repoLayer();
+  assert.deepEqual(layer.envFiles.map((f) => [f.key, f.path, f.defaults]), [['app-env', 'app/.env', []], ['app-env-local', 'app/.env.local', []]]);
+  assert.deepEqual([layer.env, layer.rules, layer.setup], [{}, null, null]);
+  assert.deepEqual(await createProjectReader({ github: { projectFile: async () => null } }).repoLayer(), { envFiles: [], env: {}, rules: null, setup: null });
+  await assert.rejects(createProjectReader({ github: { projectFile: async () => { throw new Error('HTTP 502'); } } }).repoLayer(), /could not be read: HTTP 502/);
+});

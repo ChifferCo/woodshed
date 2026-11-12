@@ -39,6 +39,7 @@ import { APP_KEY_SECRET, createSettings } from './settings.mjs';
 import { createGitHubUser } from './githubUser.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
 import { createProjectReader } from './projectFile.mjs';
+import { createRepoSettings } from './repoSettings.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createViewPrefs } from './viewPrefs.mjs';
 import { createGitHubPeople } from './githubPeople.mjs';
@@ -258,6 +259,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
   const members = trusted ? null : createMembers({ store });
@@ -334,7 +336,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects, projectColors,
+    databaseGate, addedProjects, projectColors, repoSettings,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
@@ -345,7 +347,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
-    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
+    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity });
@@ -377,6 +379,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
+    // The Terraform env file secrets into Repo settings' names, never over a value already there: safe at every start.
+    repoSettings.migrate().catch((err) => console.error('repoSettings: legacy copy failed', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.

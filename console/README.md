@@ -1595,6 +1595,69 @@ and the console logs `projects: colour set` with the project, the colours and wh
 pick (`projects: colour forgotten`), so a repo added again under that name takes a free colour, not one another repo has
 had since.
 
+### Repo settings
+
+Each repo has its own env file values and instructions, in layers (`shared/repoSettings.mjs` says how a session's files
+and prompt are made of them): the repo's own (`.woodshed/project.yaml`: each env file's `defaults`, and `rules`), the
+installation's (layer 2, set by admins), each person's own (layer 3, in their private sessions only) and the session's
+wiring (each env file's `lines`, the project's `env`, Woodshed's own variables), which no layer before it changes.
+`console/repoSettings.mjs` keeps layers 2 and 3 in the console's secret store, one value each:
+
+| Name | Holds |
+| --- | --- |
+| `repos/<project>/env/<key>` | the installation's lines for one env file of the repo |
+| `repos/<project>/instructions` | the installation's instructions for the repo, at most 16 KB |
+| `users/<login>/repos/<project>/env/<key>` | one person's own lines for that env file |
+| `users/<login>/repos/<project>/instructions` | one person's own instructions for the repo |
+
+`<key>` is the env file's key in the project file: its `secret`, or one made from its path (`web/.env.local` is
+`web-env-local`). A value is at most 64 KB, and is kept only for an env file the repo's project file names (on its
+default branch). Instructions that look like a credential (an Anthropic, OpenAI, GitHub, Slack or AWS key, a private
+key) are refused: they go into the session's prompt. `state.json` keeps, under `repoSettings.<project>` and
+`people.<login>.repos.<project>`, when each was saved, by whom, its size and the names of the keys it sets, never a
+value; a record whose secret is gone reads as none and is dropped (`repoSettings: record dropped, its secret is gone`).
+On AWS the base box's role makes, reads and deletes `<prefix>/repos/*` itself (`PeoplesAndSessionsOwnSecrets` in
+`providers/aws/terraform/baseBox.tf`), so a new env file needs no Terraform.
+
+The JSON API (the pages come later):
+
+| Route | Who | Answers |
+| --- | --- | --- |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files (key, path, defaults, wiring: `lines`, `optional`, `env`), each layer's records, `table` (each key, the layers that set it and the one that `wins`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
+| `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
+| `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
+| `GET /api/my/repos` | everyone | the repos you can write to, each with the keys and instructions you keep for it |
+| `GET /api/my/repos/<project>` | writers | the admin view, plus your own records (`personal`) |
+| `GET`, `POST /api/my/repos/<project>/env/<key>` | writers | `{"text": yours, "installation": the installation's or null}`; a POST saves yours |
+| `GET`, `POST /api/my/repos/<project>/instructions` | writers | the same, for the instructions |
+
+Every `/api/my/repos/<project>` route answers 403 to someone who cannot start sessions on the repo (New session's check,
+`projectAccess.mjs`), logged `repoSettings: refused, cannot write to the repo`: they keep nothing for it and read
+nothing of it. Nobody reads another person's layer, admins included. A write needs the console's origin and
+`x-woodshed: 1`, as every write does. The console logs `repoSettings: installation values saved` (`project`, `key`,
+`by`, `bytes`, `keys`), `own values saved` (`project`, `key`, `login`, `bytes`), `instructions saved` (`layer`,
+`project`, `by`, `bytes`), their `cleared` lines, and `installation values shown` with who read them and where: key
+names, sizes and logins, never a value.
+
+A session is handed its own project's values by the session API's `POST /repo-settings`, chosen by its token and never
+by what it asks for: `{"project", "envFiles": {"<key>": {"installation", "personal"}}, "instructions": {"installation",
+"personal"}, "personalFor"}`, every key the console keeps for the project (null where a layer has none). `personal` is
+filled only in a private session, from its owner's names; a shared or QA session gets the installation's alone, an ask session
+404, and 503 while the store does not answer. The console logs `repoSettings: handed out` with the session, the project,
+the keys each layer gave and whether each has instructions. Nothing in a session reads it yet.
+
+At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
+`repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
+`users/<login>/repos/<default project>/env/<secret>`, only where the new name has no value yet: a value already there
+is never replaced, so a second start copies nothing. It logs `repoSettings: legacy env file copied` (`project`, `key`,
+`bytes`), `legacy own lines copied` (`login`, `key`) and `legacy copy checked` with how many were copied, kept, empty or
+failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. Sessions
+still read the Terraform secrets until they read Repo settings.
+
+**Remove** on the Repos card deletes the repo's installation values and every person's own for it
+(`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
+
 Below the cards, **Sessions holding data** lists, checked again every minute:
 - **Stalled**, each with why and its fix behind a typed confirm: a shared
   session stuck starting or stopping for 20 minutes (**Stop it**, **Finish the

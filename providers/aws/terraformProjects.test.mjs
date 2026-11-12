@@ -49,3 +49,12 @@ test('without sessions_on_github_repo the console gets no WOODSHED_REPO, and may
   // The deploy workflow's roles and the image still come from github_repo.
   assert.match(read('github.tf'), /repo:\$\{var\.github_repo\}:environment:\$\{local\.p\}-images/);
 });
+
+test('the console\'s role makes, reads and deletes every repo\'s settings, beside people\'s and sessions\' own secrets', () => {
+  const box = read('baseBox.tf');
+  const statement = /sid = "PeoplesAndSessionsOwnSecrets"[\s\S]*?resources = \[([\s\S]*?)\]/.exec(box);
+  assert.ok(statement, 'the statement is there');
+  const resources = statement[1].match(/secret:\$\{local\.p\}\/[^"]+/g);
+  assert.deepEqual(resources, ['secret:${local.p}/users/*', 'secret:${local.p}/sessions/*', 'secret:${local.p}/repos/*']);
+  assert.match(box, /sid = "PeoplesAndSessionsOwnSecrets"\n {4}actions = \[\n {6}"secretsmanager:CreateSecret", "secretsmanager:PutSecretValue", "secretsmanager:GetSecretValue",\n {6}"secretsmanager:DescribeSecret", "secretsmanager:DeleteSecret", "secretsmanager:TagResource",/);
+});
