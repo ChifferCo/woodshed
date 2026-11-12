@@ -5,6 +5,7 @@
 //   GET  /s/<id>                 one session: the rail and its terminal
 //   GET  /events                 the webhook events page
 //   GET  /secrets                the secrets and webhook settings page
+//   GET  /console-settings/repos/<project>   a repo's settings page (public/repoSettings.js), for admins: its API says so
 //   GET  /                       My Woodshed: your private sessions, and New session
 //   GET  /settings               My settings: your Claude token
 //   GET  /api/sessions           every shared session and your own private ones, without their tokens
@@ -192,6 +193,7 @@ const STATIC_FILES = {
   'dbRestore.js': 'text/javascript; charset=utf-8',
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
+  'repoSettings.js': 'text/javascript; charset=utf-8',
   'people.js': 'text/javascript; charset=utf-8',
   // Run on people's own computers, so it is served before sign-in; it holds nothing secret.
   'woodshed-db.mjs': 'text/javascript; charset=utf-8',
@@ -201,6 +203,8 @@ const MAX_BODY_BYTES = 16 * 1024;
 const MAX_SECRET_BODY_BYTES = 160 * 1024;
 const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignable|github-sessions|admin)$/;
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
+// A repo's settings page: its project's name, as Console settings' Repos card links it.
+const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
@@ -1757,6 +1761,7 @@ export function createHandler({
     if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
     if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
+    if (REPO_SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: 'repoSettings.js', provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);

@@ -761,6 +761,34 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
 @media (max-width: 560px) { .update-commits li { grid-template-columns: auto minmax(0, 1fr); } .update-commits .when { grid-column: 2; } .update-commits .what { white-space: normal; } }
 @media (max-width: 560px) { .data-row { grid-template-columns: 1fr; } .data-actions { justify-content: flex-start; } }
 
+/* A repo's settings (components/LayeredFile): one env file or the instructions as its layers, top to bottom in the
+   order a session writes them, each with its word as a grey tag; then which layer wins each key. */
+.crumb { margin: 0 0 4px; font-size: 13px; }
+.crumb a { text-decoration: none; font-weight: 600; }
+.layered { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 7px; }
+.layered-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+.layered-head h3 { margin: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+.layered-head .data-meta { margin: 0; }
+.layer, .layer-gets { display: flex; flex-direction: column; gap: 8px; padding: 12px; min-width: 0; }
+.layer + .layer, .layer + .layer-gets { border-top: 1px solid var(--line-soft); }
+.layer .sub, .layer-gets .sub { margin: 0; font-size: 12.5px; }
+.layer-head { display: flex; align-items: center; gap: 8px; }
+.layer-head h3, .layer-gets h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+.layer-tag { flex: none; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 6px; border-radius: 4px; background: var(--stopped); color: var(--sub); }
+.layer-tag.is-wins { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px var(--line); white-space: nowrap; }
+.layer-text { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+.layer-text.is-none, .layer-meta { color: var(--meta); }
+.layer-meta { margin: 0; font-family: var(--mono); font-size: 11px; }
+.layer-pre { margin: 0; padding: 8px 10px; border-radius: 4px; background: var(--stopped); font: 12px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.layer-count { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--meta); }
+.layer-count.is-over { color: var(--bad); }
+.layer .value-row { margin: 0; }
+table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; font-size: 13px; }
+.layer-table th { text-align: left; padding: 7px 12px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
+.layer-table td { padding: 7px 12px; border-top: 1px solid var(--line-soft); vertical-align: middle; }
+.layer-table td.mono { white-space: nowrap; }
+.layer-table td.mark { color: var(--sub); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+
 /* ---- rail: pin and the hints at its foot ---- */
 .rmarks { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
 .favstar { display: inline-grid; place-items: center; width: 20px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--idle-dot); cursor: pointer; line-height: 0; }

@@ -211,16 +211,18 @@
           h('span', null, live),
           data.slack && h('span', null, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the Slack card\'s channel')),
         data.palette && colorPicker(p)),
-      h('div', { class: 'data-actions' }, data.slack && channelField(p), p.removable && h('button', {
-        type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
-        onclick: () => rowAction(p, async () => {
-          data = { ...data, ...(await W.postJson('/api/console-settings/projects/remove', { name: p.name })) };
-          loadRepoChoices();
-          repoForm.error = null;
-          repoForm.notice = `${p.repo} removed: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched. Add it again to undo.`;
-          return null;
-        }),
-      }, 'Remove')),
+      h('div', { class: 'data-actions' }, data.slack && channelField(p),
+        h('a', { class: 'btn btn-quiet btn-sm', href: `/console-settings/repos/${encodeURIComponent(p.name)}`, 'aria-label': `Settings of ${p.repo}: env files and instructions` }, 'Settings'),
+        p.removable && h('button', {
+          type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
+          onclick: () => rowAction(p, async () => {
+            data = { ...data, ...(await W.postJson('/api/console-settings/projects/remove', { name: p.name })) };
+            loadRepoChoices();
+            repoForm.error = null;
+            repoForm.notice = `${p.repo} removed: new sessions can no longer start on it. Its pull requests and branches on GitHub are not touched. Add it again to undo.`;
+            return null;
+          }),
+        }, 'Remove')),
       rowNotes.get(p.name) && h('p', { class: rowNotes.get(p.name).bad ? 'form-error' : 'sub', role: rowNotes.get(p.name).bad ? 'alert' : 'status', style: 'grid-column: 1 / -1; margin: 0' }, rowNotes.get(p.name).text));
   }
 
@@ -317,7 +319,7 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be given access to a repo before it is added here. An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be given access to a repo before it is added here. An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel. Settings has a repo\'s env file values and instructions.'),
       data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
         : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },

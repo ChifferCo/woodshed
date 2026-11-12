@@ -96,6 +96,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   A thin `line` rule sets the feature columns apart from Admin. A switch that needs another is a disabled checkbox at
   45% with a title saying what it needs. Checkboxes take `slate` as their accent. The table scrolls sideways on a phone.
 
+## Repo settings
+
+- A repo's settings are their own page, `/console-settings/repos/<project>`, reached by a quiet **Settings** link on its
+  row of the Repos card. The heading is the repo (`title`), with a `‹ Console settings · Repos` link above it.
+- Two cards: **Env files** (a tab per env file, by path) and **Instructions**. Each is a layered file
+  (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
+  env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
+  own layer's field, behind **Show and edit** once saved.
+- Save is the card's one `btn-open`; Clear and Hide are quiet. A refusal is a `form-error` under the buttons, in the
+  console's words, and the typed text stays.
+- A non-admin gets the page's frame with one `cap-note` saying it is an admin's: no field, no value.
+
 ## Ownership tags
 
 - **Assigned**: outlined, `slate` text and border. A shared session someone has. On Everyone it shows the person's name, in sentence case, instead of the word.

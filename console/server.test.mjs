@@ -407,10 +407,13 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   const sam = { cookie: 'woodshed_session=sam-ops' };
   const mia = { cookie: 'woodshed_session=mia-dev' };
 
-  for (const page of ['/people', '/secrets', '/events', '/console-settings', '/settings']) {
+  for (const page of ['/people', '/secrets', '/events', '/console-settings', '/console-settings/repos/app', '/settings']) {
     assert.equal((await getWith(port, page, { ...sam, accept: 'text/html' })).status, 200, `${page} loads, and says what its calls answer`);
   }
-  const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings', '/api/console-settings/updates'];
+  const repoPage = await fetch(`http://127.0.0.1:${port}/console-settings/repos/app`, { headers: mia });
+  assert.match(await repoPage.text(), /<script src="\/static\/repoSettings\.js\?v=[0-9a-f]+"><\/script>/, 'a repo\'s settings page, by its own URL');
+  assert.equal((await getWith(port, '/console-settings/repos/Not_A_Name', { ...mia, accept: 'text/html' })).status, 404, 'only a project\'s name');
+  const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings', '/api/console-settings/updates', '/api/console-settings/repos/app'];
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
     '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/people/invite',
