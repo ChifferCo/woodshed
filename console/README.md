@@ -101,7 +101,8 @@ What the page does, from the shed's own review code:
 - **Analyze the change** runs `claude -p` in the session, on its own Claude
   (the owner's plan for My Woodshed, the session's for a shared one), with only
   Read, Grep and Glob and none of the repo's settings or MCP servers. It writes
-  an overview, how the code is shaped now, the decisions it makes, and a
+  an overview, the decisions it makes, how the code is shaped now with a
+  before-and-after drawing of it, and a
   reading order of the files with a note on each, shown on each file too. It
   is kept under `/tmp/woodshed-review` for the session's life, and says when
   the checkout has moved since.

@@ -29,6 +29,7 @@
 
 import { tokenizeLine } from './highlight.mjs';
 import { createAskState } from './askState.mjs';
+import { layoutDiagram } from './diagram.mjs';
 
 // The dark palette, written once here and interpolated into both blocks that
 // need it — the device query and the explicit [data-theme="dark"] stamp. Two
@@ -775,6 +776,33 @@ ${DARK_PALETTE}
     .s-dec { --sec: var(--c-dec); }
     .arch { font-size: 14px; line-height: 1.65; color: var(--ink); margin-bottom: 1.4rem; max-width: var(--prose-measure); }
     .arch p { margin-bottom: 0.8rem; }
+    /* --- the architecture before and after: one layout, two drawings --- */
+    .archdiagram { margin: 0.2rem 0 1.2rem; max-width: var(--prose-measure); }
+    .archpanes { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; }
+    .archpanes.stacked { grid-template-columns: 1fr; }
+    @media (max-width: 900px) { .archpanes { grid-template-columns: 1fr; } }
+    .archpane { border: 1px solid var(--rule); border-radius: 6px; background: var(--panel); padding: 0.6rem 0.7rem 0.4rem; min-width: 0; }
+    .archpane h4 { font: 600 12px/1.4 "Red Hat Display", -apple-system, system-ui, sans-serif; color: var(--muted); letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 0.3rem; }
+    .archpane svg { display: block; width: 100%; height: auto; margin: 0 auto; }
+    .archpane .archnone { font-size: 13px; color: var(--muted); padding: 1.2rem 0; }
+    .archpane .node rect { fill: var(--sunk); stroke: var(--rule-strong); stroke-width: 1; }
+    .archpane .node text { fill: var(--ink); font: 500 13px/1 ui-monospace, monospace; }
+    .archpane .node.added rect { fill: var(--add-bg); stroke: var(--add); stroke-width: 1.5; }
+    .archpane .node.changed rect { stroke: var(--warn); stroke-width: 1.5; }
+    .archpane .node.removed rect { fill: var(--del-bg); stroke: var(--del); stroke-width: 1.5; stroke-dasharray: 4 3; }
+    .archpane .edge path { fill: none; stroke: var(--faint); stroke-width: 1.2; }
+    .archpane .edge.added path { stroke: var(--add); stroke-width: 1.6; }
+    .archpane .edge.removed path { stroke: var(--del); stroke-width: 1.6; stroke-dasharray: 4 3; }
+    .archpane .edge text { fill: var(--muted); font: 500 12px/1 "Red Hat Display", -apple-system, system-ui, sans-serif; paint-order: stroke; stroke: var(--panel); stroke-width: 4px; stroke-linejoin: round; }
+    .archpane marker path { fill: var(--faint); }
+    .archpane marker.added path { fill: var(--add); }
+    .archpane marker.removed path { fill: var(--del); }
+    .archlegend { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 0.45rem; font-size: 12px; color: var(--muted); }
+    .archlegend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .archlegend i { width: 14px; height: 10px; border-radius: 2px; border: 1.5px solid var(--rule-strong); background: var(--sunk); }
+    .archlegend i.added { border-color: var(--add); background: var(--add-bg); }
+    .archlegend i.changed { border-color: var(--warn); }
+    .archlegend i.removed { border-color: var(--del); border-style: dashed; background: var(--del-bg); }
     /* --- decisions: what was chosen, and why --- */
     .decisions { margin: 0 0 1.4rem; padding: 0; list-style: none; counter-reset: decision; max-width: var(--prose-measure); }
     .decisions li {
@@ -793,23 +821,7 @@ ${DARK_PALETTE}
     }
     .decisions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
     .decisions .why { color: var(--muted); }
-    /* --- questions: what a reviewer has to answer, above the decisions --- */
-    .subhead {
-      font: 600 13px/1.5 "Red Hat Display", -apple-system, system-ui, sans-serif;
-      color: var(--ink); margin: 0.2rem 0 0.25rem;
-    }
-    .questions { margin: 0 0 1.1rem; padding: 0; list-style: none; counter-reset: question; max-width: var(--prose-measure); }
-    .questions li { position: relative; padding: 0.5rem 0 0.55rem 2.5rem; font-size: 13.5px; line-height: 1.55; }
-    /* Outlined where a decision's number is filled: the same family, and a
-       question is the open one of the two. */
-    .questions li::before {
-      counter-increment: question; content: 'Q' counter(question);
-      position: absolute; left: 0; top: 0.62rem;
-      font: 600 10px/1.6 ui-monospace, monospace; color: var(--c-dec);
-      border: 1px solid var(--c-dec); border-radius: 3px; padding: 0 0.3rem; min-width: 1.2rem; text-align: center;
-    }
-    .questions b { display: block; color: var(--ink); margin-bottom: 0.1rem; }
-    .questions .why { color: var(--muted); }
+    .decisions .qacts { margin-top: 0.4rem; }
     .qacts { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin-top: 0.4rem; }
     .qfile, .qask {
       display: inline-flex; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem;
@@ -1533,6 +1545,10 @@ ${DARK_PALETTE}
     // Inlined from review/askState.mjs, same contract, same reason: it is unit
     // tested there, and this page is the only thing that runs it.
     ${createAskState.toString()}
+
+    // Inlined from review/diagram.mjs, same contract: where the architecture's
+    // before and after draw each piece, tested there.
+    ${layoutDiagram.toString()}
 
     // The launcher owns the theme for both pages. It is the same origin, so
     // its choice is readable here directly rather than passed through the
@@ -2396,8 +2412,8 @@ ${DARK_PALETTE}
 
     // What the model made of the change: what it does, what a reviewer has to
     // make up their mind about, how it fits. Order is deliberate: the
-    // questions and decisions come straight after the overview because they
-    // are what a reviewer is here for, and the architecture is reference.
+    // decisions come straight after the overview because they are what a
+    // reviewer is here for, and the architecture is reference.
     // It ends on the way into the diff, which is the next thing to do.
     function renderAnalysis(content) {
       var described = renderDescription(content);
@@ -2657,9 +2673,118 @@ ${DARK_PALETTE}
       var text = state.review && state.review.architecture;
       if (!text) return;
       content.appendChild(el('div', 'secthead s-arch', 'Architecture'));
+      var drawing = renderArchDiagram(state.review.diagram);
+      if (drawing) content.appendChild(drawing);
       var box = el('div', 'arch prose');
       renderMarkdown(box, text);
       content.appendChild(box);
+    }
+
+    // The before and the after, side by side, from one layout of the whole
+    // graph so each piece sits in the same place in both. Nothing to draw (an
+    // analysis from before the diagram, or a change with no structure) draws
+    // nothing.
+    var ARCH_WORDS = { added: 'Added', changed: 'Changed', removed: 'Removed', unchanged: 'Unchanged' };
+    function renderArchDiagram(diagram) {
+      if (!diagram || !diagram.nodes || !diagram.nodes.length) return null;
+      var layout = layoutDiagram(diagram);
+      var wrap = el('div', 'archdiagram');
+      // Side by side while each drawing still reads at half the column;
+      // a wider graph puts the after under the before instead.
+      var panes = el('div', 'archpanes' + (layout.width > 600 ? ' stacked' : ''));
+      panes.appendChild(archPane(layout, 'before'));
+      panes.appendChild(archPane(layout, 'after'));
+      wrap.appendChild(panes);
+      var legend = el('div', 'archlegend');
+      var used = {};
+      for (var i = 0; i < layout.nodes.length; i++) used[layout.nodes[i].change] = true;
+      for (var j = 0; j < layout.edges.length; j++) used[layout.edges[j].change] = true;
+      ['added', 'changed', 'removed'].forEach(function key(change) {
+        if (!used[change]) return;
+        var item = el('span');
+        item.appendChild(el('i', change));
+        item.appendChild(document.createTextNode(ARCH_WORDS[change]));
+        legend.appendChild(item);
+      });
+      if (legend.childNodes.length) wrap.appendChild(legend);
+      return wrap;
+    }
+
+    var archMarkers = 0;
+    function archPane(layout, side) {
+      var pane = el('div', 'archpane');
+      pane.appendChild(el('h4', null, side === 'before' ? 'Before' : 'After'));
+      var gone = side === 'before' ? 'added' : 'removed';
+      var shown = {};
+      var count = 0;
+      for (var i = 0; i < layout.nodes.length; i++) {
+        if (layout.nodes[i].change === gone) continue;
+        shown[layout.nodes[i].id] = true;
+        count += 1;
+      }
+      if (!count) {
+        pane.appendChild(el('div', 'archnone', side === 'before' ? 'None of this was there before.' : 'None of this is left after.'));
+        return pane;
+      }
+      var svg = document.createElementNS(SVG_NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 ' + layout.width + ' ' + layout.height);
+      svg.setAttribute('role', 'img');
+      // Never drawn larger than its own size: a three-piece graph blown up
+      // to the pane's width reads as a poster.
+      svg.style.maxWidth = layout.width + 'px';
+      svg.setAttribute('aria-label', (side === 'before' ? 'Before' : 'After') + ' the change: ' + count + (count === 1 ? ' piece' : ' pieces'));
+      // Marker ids are document-wide, and the page rebuilds itself, so each
+      // drawing names its own.
+      var prefix = 'arch' + (archMarkers++) + '-';
+      var defs = svgEl('defs');
+      ['plain', 'added', 'removed'].forEach(function marker(kind) {
+        var m = svgEl('marker', { id: prefix + kind, viewBox: '0 0 10 10', refX: '9', refY: '5', markerWidth: '7', markerHeight: '7', orient: 'auto-start-reverse' });
+        if (kind !== 'plain') m.setAttribute('class', kind);
+        m.appendChild(svgEl('path', { d: 'M0,0 L10,5 L0,10 z' }));
+        defs.appendChild(m);
+      });
+      svg.appendChild(defs);
+      for (var e = 0; e < layout.edges.length; e++) {
+        var edge = layout.edges[e];
+        if (edge.change === gone || !shown[edge.from] || !shown[edge.to]) continue;
+        // Unchanged reads as unchanged on both sides; what the change did to
+        // an edge is shown on the side where it is.
+        var kind = edge.change === 'unchanged' ? '' : edge.change;
+        var g = svgEl('g', { 'class': 'edge' + (kind ? ' ' + kind : '') });
+        g.appendChild(svgEl('path', { d: edge.d, 'marker-end': 'url(#' + prefix + (kind || 'plain') + ')' }));
+        if (edge.label) {
+          var t = svgEl('text', { x: String(edge.labelX), y: String(edge.labelY + 3.5), 'text-anchor': 'middle' });
+          t.textContent = edge.label;
+          g.appendChild(t);
+        }
+        var title = svgEl('title');
+        title.textContent = edge.from + ' → ' + edge.to + (edge.label ? ': ' + edge.label : '') + ' (' + ARCH_WORDS[edge.change].toLowerCase() + ')';
+        g.appendChild(title);
+        svg.appendChild(g);
+      }
+      for (var n = 0; n < layout.nodes.length; n++) {
+        var node = layout.nodes[n];
+        if (!shown[node.id]) continue;
+        var ng = svgEl('g', { 'class': 'node ' + node.change });
+        ng.appendChild(svgEl('rect', { x: String(node.x), y: String(node.y), width: String(node.w), height: String(node.h), rx: '5' }));
+        for (var l = 0; l < node.lines.length; l++) {
+          var text = svgEl('text', { x: String(node.x + node.w / 2), y: String(node.y + 9 + 16 * l + 12), 'text-anchor': 'middle' });
+          text.textContent = node.lines[l];
+          ng.appendChild(text);
+        }
+        var nt = svgEl('title');
+        nt.textContent = node.label + ' (' + ARCH_WORDS[node.change].toLowerCase() + ')';
+        ng.appendChild(nt);
+        svg.appendChild(ng);
+      }
+      pane.appendChild(svg);
+      return pane;
+    }
+
+    function svgEl(tag, attrs) {
+      var n = document.createElementNS(SVG_NS, tag);
+      for (var k in attrs || {}) n.setAttribute(k, attrs[k]);
+      return n;
     }
 
     // Shared by the failed strip's Retry and by the offer a Re-review makes
@@ -2679,53 +2804,26 @@ ${DARK_PALETTE}
         });
     }
 
-    // The questions a reviewer has to answer before approving, then the
-    // choices the change made: one section, because the two are the same
-    // job. Each question links to the files that answer it and can be taken
-    // to the conversation; an analysis from before questions has decisions
-    // alone.
+    // The choices a reviewer has to agree with before approving, each linked
+    // to the files that carry it and able to be taken to the conversation.
+    // An analysis from before questions were folded into the decisions still
+    // has its questions: they are listed after the decisions, the same way.
     function renderWhatMatters(content) {
-      var questions = (state.review && state.review.questions) || [];
-      var decisions = (state.review && state.review.decisions) || [];
-      if (!questions.length && !decisions.length) return;
-      content.appendChild(el('div', 'secthead s-dec', 'The questions and decisions that matter most'));
-      if (questions.length) {
-        content.appendChild(el('div', 'subhead', 'Questions to answer before approving'));
-        var qlist = el('ol', 'questions');
-        for (var i = 0; i < questions.length; i++) qlist.appendChild(renderQuestion(questions[i]));
-        content.appendChild(qlist);
-      }
-      if (decisions.length) {
-        if (questions.length) content.appendChild(el('div', 'subhead', 'Decisions this change made'));
-        renderDecisions(content, decisions);
-      }
+      var items = ((state.review && state.review.decisions) || []).slice();
+      var legacy = (state.review && state.review.questions) || [];
+      for (var i = 0; i < legacy.length; i++) items.push({ title: legacy[i].question, why: legacy[i].why, files: legacy[i].files });
+      if (!items.length) return;
+      content.appendChild(el('div', 'secthead s-dec', 'Decisions'));
+      renderDecisions(content, items);
     }
 
-    function renderQuestion(q) {
-      var li = document.createElement('li');
-      var b = document.createElement('b');
-      inline(b, q.question);
-      li.appendChild(b);
-      if (q.why) {
-        var why = el('span', 'why prose');
-        inline(why, q.why);
-        li.appendChild(why);
-      }
-      var acts = el('div', 'qacts');
-      var files = q.files || [];
-      var byPath = fileByPath();
-      for (var f = 0; f < files.length; f++) {
-        if (!byPath[files[f]]) continue;
-        acts.appendChild(fileLink(files[f]));
-      }
+    function askButton(title) {
       var askIt = el('button', 'qask');
       askIt.type = 'button';
       askIt.appendChild(svgIcon(BOT_D));
       askIt.appendChild(el('span', null, 'Ask in the conversation'));
-      askIt.addEventListener('click', function onAsk() { askInChat(q.question); });
-      acts.appendChild(askIt);
-      li.appendChild(acts);
-      return li;
+      askIt.addEventListener('click', function onAsk() { askInChat('Talk me through this decision: ' + title); });
+      return askIt;
     }
 
     // A changed file named in the analysis, as a way to its diff.
@@ -2744,9 +2842,11 @@ ${DARK_PALETTE}
       return link;
     }
 
-    // A numbered list of a bold title and a sentence of why.
+    // A numbered list of a bold title, a sentence of why, and the way to its
+    // files and to the conversation.
     function renderDecisions(content, items) {
       var list = el('ol', 'decisions');
+      var byPath = fileByPath();
       for (var i = 0; i < items.length; i++) {
         var li = document.createElement('li');
         var b = document.createElement('b');
@@ -2755,6 +2855,13 @@ ${DARK_PALETTE}
         var why = el('span', 'why prose');
         inline(why, items[i].why || '');
         li.appendChild(why);
+        var acts = el('div', 'qacts');
+        var files = items[i].files || [];
+        for (var f = 0; f < files.length; f++) {
+          if (byPath[files[f]]) acts.appendChild(fileLink(files[f]));
+        }
+        acts.appendChild(askButton(items[i].title));
+        li.appendChild(acts);
         list.appendChild(li);
       }
       content.appendChild(list);
@@ -4485,8 +4592,8 @@ ${DARK_PALETTE}
       els.log.scrollTop = els.log.scrollHeight;
     }
 
-    // The analysis's own questions first, since they are about this change,
-    // then general ones to fill out to five.
+    // Questions from an analysis written before they were folded into the
+    // decisions first, then general ones to fill out to five.
     var GENERAL_STARTERS = [
       'What should I look at first?',
       'What could this break, and for whom?',

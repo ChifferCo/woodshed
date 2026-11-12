@@ -1,6 +1,6 @@
 // The analysis pass: one `claude -p` run, in the review session's worktree,
-// that returns an architecture note, decisions, a reading order and a
-// preamble per file.
+// that returns an architecture note and a before-and-after diagram of it,
+// decisions, a reading order and a preamble per file.
 //
 // It is given the title and body, the --stat, and the file list with each
 // file's @@ hunk-context headers — but NOT the diff body. Feeding the diff
@@ -36,50 +36,80 @@ const MAX_CONTEXT_PER_FILE = 12;
 export const ANALYSIS_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  // `architecture` and `decisions` are required, for the same reason `role`
-  // is: left optional, models simply omit them, and the sections that make
-  // the artifact worth reading before the diff never render. An empty
-  // decisions array is allowed (minItems is deliberately absent) — a small
-  // change may make no choice worth questioning — but the model has to decide
-  // that rather than skip the field.
+  // `architecture`, `diagram` and `decisions` are required, for the same
+  // reason `role` is: left optional, models simply omit them, and the
+  // sections that make the artifact worth reading before the diff never
+  // render. An empty decisions array, or a diagram with no nodes, is allowed
+  // (minItems is deliberately absent) — a small change may make no choice
+  // worth weighing and have no structure worth drawing — but the model has to
+  // decide that rather than skip the field.
   //
   // Kept deliberately small. A problem statement, a what-to-check list, a
   // tests list and a glossary were each tried as sections and cut again: each
   // read well alone, and together they made the page longer than the diff.
+  // Questions for the reviewer were a section of their own too, and were
+  // folded into the decisions: a question and the choice it was about said the
+  // same thing twice, and the page asked its reader things the analysis could
+  // state.
   //
-  // `questions` is the one section a reviewer reads before anything else: what
-  // they have to make up their mind about before approving, most important
-  // first, each pointing at the files that answer it. Required for the same
-  // reason as the rest; an empty array is allowed for a change with nothing
-  // open to question.
-  required: ['overview', 'questions', 'architecture', 'decisions', 'groups'],
+  // `decisions` is what a reviewer reads before anything else: the choices
+  // they have to agree with before approving, most consequential first, each
+  // pointing at the files that carry it.
+  //
+  // `diagram` is one graph, not two: each piece and edge says whether the
+  // change added, removed or kept it, and the page draws the before and the
+  // after from it in the same places (diagram.mjs).
+  required: ['overview', 'decisions', 'architecture', 'diagram', 'groups'],
   properties: {
     overview: { type: 'string' },
-    questions: {
-      type: 'array',
-      maxItems: 5,
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['question', 'why', 'files'],
-        properties: {
-          question: { type: 'string' },
-          why: { type: 'string' },
-          files: { type: 'array', items: { type: 'string' } },
-        },
-      },
-    },
-    architecture: { type: 'string' },
     decisions: {
       type: 'array',
       maxItems: 6,
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'why'],
+        required: ['title', 'why', 'files'],
         properties: {
           title: { type: 'string' },
           why: { type: 'string' },
+          files: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+    architecture: { type: 'string' },
+    diagram: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['nodes', 'edges'],
+      properties: {
+        nodes: {
+          type: 'array',
+          maxItems: 14,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'label', 'change'],
+            properties: {
+              id: { type: 'string' },
+              label: { type: 'string' },
+              change: { type: 'string', enum: ['added', 'removed', 'changed', 'unchanged'] },
+            },
+          },
+        },
+        edges: {
+          type: 'array',
+          maxItems: 24,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['from', 'to', 'label', 'change'],
+            properties: {
+              from: { type: 'string' },
+              to: { type: 'string' },
+              label: { type: 'string' },
+              change: { type: 'string', enum: ['added', 'removed', 'unchanged'] },
+            },
+          },
         },
       },
     },
@@ -216,23 +246,30 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     'Your job has four parts:',
     '',
     '0. WRITE the pieces a reader needs BEFORE they look at any code:',
-    '   - questions: the most important questions a reviewer has to answer for themselves before',
-    '     approving this change, most important first, at most five. Each is a real question',
-    '     about THIS change, not a generic checklist item: what could break, what behaviour',
-    '     changes for whom, what is assumed and not checked, what is missing. For each, one or',
-    '     two sentences on why it matters and what to look at to answer it, and the paths of the',
-    '     changed files that answer it (from the list below, exactly as given; empty when none',
-    '     does). Ask nothing whose answer is plain from the description.',
-    '   - decisions: two to five choices this change makes that a reader might question — what',
-    '     was deliberately done, deliberately not done, or left for a later change — each as a',
-    '     short title and one or two sentences of why, the most consequential first. These are',
-    '     the things a reviewer would otherwise have to ask about.',
+    '   - decisions: the choices this change makes that a reviewer has to agree with before',
+    '     approving, most consequential first, at most six. Each is a real choice in THIS change,',
+    '     not a generic checklist item: what was deliberately done, deliberately not done, or left',
+    '     for a later change, and what that changes for whom. For each, a short title stating',
+    '     the choice; one or two sentences on why it was made, what it costs or risks, and what',
+    '     to look at to agree with it; and the paths of the changed files that carry it (from the',
+    '     list below, exactly as given; empty when none does). Write every one as a statement,',
+    '     never as a question, and leave out what is plain from the description.',
     '   - architecture: how the changed code is SHAPED and how the pieces relate — what the',
     '     modules are, what each is responsible for, what talks to what, and where the seams',
     '     are. Open with a sentence or two of narrative and then name the pieces: of everything',
     '     you write this is the section most likely to read better as a short list, or as a',
     '     two-column table of piece and responsibility, than as a wall of prose. Describe the',
     '     design AS IT NOW STANDS on this branch, not the delta. Aim for 1200 characters.',
+    '   - diagram: the pieces the architecture names and how they connect, which the page draws',
+    '     as a before and an after. One list of nodes: each a module, service, store or other',
+    '     piece, with a short id, a label under 30 characters in plain text (no backticks), and',
+    '     what this change does to it: added, removed, changed or unchanged. Then the edges, each',
+    '     from the piece that calls, sends to or depends on another, the way calls or data flow,',
+    '     with a label of two or three words and whether the change added, removed or kept it.',
+    '     The before is drawn from everything not added and the after from everything not',
+    '     removed, in the same places, so include the unchanged pieces the changed ones connect',
+    '     to and leave out what the change does not touch. At most twelve nodes. Leave both',
+    '     lists empty when the change has no structure worth drawing, such as docs or config.',
     '',
     '1. ORDER the changed files into groups ("acts") that make a reading order. The first act',
     '   should be whatever a reader must understand before anything else makes sense — usually',
@@ -254,8 +291,8 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     'Every changed file listed below must appear exactly once across your groups. Use the paths',
     'exactly as given.',
     '',
-    'All of the prose — overview, architecture, each group\'s "why", each question\'s "why", each',
-    'decision and each preamble — is rendered as markdown, and the page draws more than paragraphs. What it',
+    'All of the prose — overview, architecture, each group\'s "why", each decision and each',
+    'preamble — is rendered as markdown, and the page draws more than paragraphs. What it',
     'supports, and what each is for:',
     '',
     '  - backticks around every identifier, file name and path;',
@@ -404,10 +441,13 @@ const MAX_ARCHITECTURE = 4_000;
 const MAX_DECISION_TITLE = 90;
 const MAX_DECISION_WHY = 500;
 const MAX_DECISIONS = 6;
-const MAX_QUESTION = 200;
-const MAX_QUESTION_WHY = 500;
-const MAX_QUESTIONS = 5;
-const MAX_QUESTION_FILES = 6;
+const MAX_DECISION_FILES = 6;
+const MAX_NODES = 14;
+const MAX_EDGES = 24;
+const MAX_NODE_LABEL = 40;
+const MAX_EDGE_LABEL = 30;
+const NODE_CHANGES = ['added', 'removed', 'changed', 'unchanged'];
+const EDGE_CHANGES = ['added', 'removed', 'unchanged'];
 
 export function clamp(text, max) {
   const s = String(text ?? '').trim();
@@ -462,9 +502,9 @@ export function reconcileArtifact({ artifact, files, log }) {
 
   return {
     overview: clamp(artifact.overview, MAX_OVERVIEW),
-    questions: reconcileQuestions(artifact.questions, known),
+    decisions: reconcileDecisions(artifact.decisions, known),
     architecture: clamp(artifact.architecture, MAX_ARCHITECTURE),
-    decisions: reconcileDecisions(artifact.decisions),
+    diagram: reconcileDiagram(artifact.diagram),
     groups,
     // How many files the model actually placed, as opposed to the ones swept
     // into the synthetic trailing group. Zero means the run produced nothing
@@ -473,36 +513,61 @@ export function reconcileArtifact({ artifact, files, log }) {
   };
 }
 
-function reconcileDecisions(decisions) {
+// A path the diff does not have would draw as a link to nothing, so it is
+// dropped here, the way reconcileArtifact drops one from a group.
+function reconcileDecisions(decisions, known) {
   if (!Array.isArray(decisions)) return [];
   const out = [];
   for (const d of decisions) {
     if (!d || typeof d !== 'object') continue;
     const title = clamp(d.title, MAX_DECISION_TITLE);
-    const why = clamp(d.why, MAX_DECISION_WHY);
     if (!title) continue;
-    out.push({ title, why });
+    const files = [];
+    for (const f of Array.isArray(d.files) ? d.files : []) {
+      if (typeof f === 'string' && known.has(f) && !files.includes(f)) files.push(f);
+      if (files.length >= MAX_DECISION_FILES) break;
+    }
+    out.push({ title, why: clamp(d.why, MAX_DECISION_WHY), files });
     if (out.length >= MAX_DECISIONS) break;
   }
   return out;
 }
 
-// A path the diff does not have would draw as a link to nothing, so it is
-// dropped here, the way reconcileArtifact drops one from a group.
-function reconcileQuestions(questions, known) {
-  if (!Array.isArray(questions)) return [];
-  const out = [];
-  for (const q of questions) {
-    if (!q || typeof q !== 'object') continue;
-    const question = clamp(q.question, MAX_QUESTION);
-    if (!question) continue;
-    const files = [];
-    for (const f of Array.isArray(q.files) ? q.files : []) {
-      if (typeof f === 'string' && known.has(f) && !files.includes(f)) files.push(f);
-      if (files.length >= MAX_QUESTION_FILES) break;
-    }
-    out.push({ question, why: clamp(q.why, MAX_QUESTION_WHY), files });
-    if (out.length >= MAX_QUESTIONS) break;
+// The page draws the before from what is not added and the after from what
+// is not removed, so the marks have to agree with each other: an edge to a
+// piece that was added cannot have been there before, and one from a piece
+// that was removed cannot be there after. An edge whose end is not a node
+// would draw to nowhere, and goes. Labels are drawn as plain text, so code
+// marks are taken out rather than shown.
+function reconcileDiagram(diagram) {
+  const nodes = [];
+  const edges = [];
+  const byId = new Map();
+  const plain = (text, max) => clamp(String(text ?? '').replace(/`/g, ''), max);
+  for (const n of Array.isArray(diagram?.nodes) ? diagram.nodes : []) {
+    if (!n || typeof n.id !== 'string' || !n.id.trim() || byId.has(n.id)) continue;
+    const node = {
+      id: n.id,
+      label: plain(n.label || n.id, MAX_NODE_LABEL),
+      change: NODE_CHANGES.includes(n.change) ? n.change : 'unchanged',
+    };
+    byId.set(n.id, node);
+    nodes.push(node);
+    if (nodes.length >= MAX_NODES) break;
   }
-  return out;
+  const seen = new Set();
+  for (const e of Array.isArray(diagram?.edges) ? diagram.edges : []) {
+    if (!e || !byId.has(e.from) || !byId.has(e.to) || e.from === e.to) continue;
+    const key = `${e.from}\0${e.to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const ends = [byId.get(e.from).change, byId.get(e.to).change];
+    let change = EDGE_CHANGES.includes(e.change) ? e.change : 'unchanged';
+    if (ends.includes('added') && ends.includes('removed')) continue;
+    if (ends.includes('added')) change = 'added';
+    else if (ends.includes('removed')) change = 'removed';
+    edges.push({ from: e.from, to: e.to, label: plain(e.label, MAX_EDGE_LABEL), change });
+    if (edges.length >= MAX_EDGES) break;
+  }
+  return { nodes, edges };
 }
