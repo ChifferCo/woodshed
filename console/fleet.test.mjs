@@ -2065,6 +2065,19 @@ test('the review approving a labelled pull request starts QA as whoever added th
   assert.equal(fleet.sessions().length, 1);
 });
 
+test('a commit the review approved while QA ran on an older one is tested once that run finishes', async () => {
+  const { fleet, github } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const newer = { ...QA_PULL, head: { ...QA_PULL.head, sha: 'c'.repeat(40) } };
+  github.pull = async () => newer;
+  github.reviews = async () => reviewOn(newer.head.sha);
+  assert.equal((await fleet.qaAfterReview({ number: 7 })).reason, 'QA is already running on it');
+  await fleet.qaFinished(fleet.sessions()[0], { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  const later = fleet.sessions()[1];
+  assert.deepEqual([later?.qa.sha, later?.startedBy], ['c'.repeat(40), 'joel']);
+});
+
 test('a review starts no QA without the label, without approval, or for a project with no review gate', async () => {
   const unlabelled = qaSetup();
   unlabelled.github.pull = async () => ({ ...QA_PULL, labels: [] });

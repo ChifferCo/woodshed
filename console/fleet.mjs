@@ -1472,7 +1472,10 @@ export function createFleet({
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
     console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
     // In the background: the session waits on this reply, and the stop saves its home through it first.
-    stop(session, `QA finished: ${verdict.title}`).catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }));
+    stop(session, `QA finished: ${verdict.title}`)
+      .catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }))
+      // A commit the review approved while this one ran was turned away as already running: it runs now.
+      .then(() => safely('QA of a commit approved meanwhile', () => qaAfterReview({ number: session.number, project: project.name })));
   }
 
   /**
