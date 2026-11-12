@@ -397,16 +397,21 @@ test('the installation\'s file needs the repo, told from the checkout\'s origin 
   assert.equal(repoOf(scratch(t)), null, 'not a checkout');
 });
 
-test('the CLI reads the installation\'s file from WOODSHED_CLOUD_PROJECT_FILES_DIR, and says so in `from`', (t) => {
+test('the CLI reads the installation\'s file from WOODSHED_PROJECT_FILES_DIR, and says so in `from`', (t) => {
   const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
   const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject({ dependencies: { installs: [API_INSTALL] } }) });
   const cli = (args, env = {}) => execFileSync('node', [SCRIPT, ...args], {
     encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: checkout, DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main', ...env },
   });
-  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'installation\n');
-  assert.equal(cli(['installs'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
+  assert.equal(cli(['get', 'from'], { WOODSHED_PROJECT_FILES_DIR: dir }), 'installation\n');
+  assert.equal(cli(['installs'], { WOODSHED_PROJECT_FILES_DIR: dir }), 'install\tapi\tdeps.lock\tvendor ~/.cache/tool\tmake deps\n');
   assert.equal(cli(['get', 'from']), 'none\n');
-  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: '' }), 'none\n');
+  assert.equal(cli(['get', 'from'], { WOODSHED_PROJECT_FILES_DIR: '' }), 'none\n');
+  // A session the console gives both names, while older images read only the old one, and an older console's.
+  const both = { WOODSHED_PROJECT_FILES_DIR: dir, WOODSHED_CLOUD_PROJECT_FILES_DIR: dir };
+  assert.equal(cli(['get', 'from'], both), 'installation\n', 'both names, as the docker launcher passes them');
+  assert.equal(cli(['get', 'from'], { WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'installation\n', 'the old name alone');
+  assert.equal(cli(['get', 'from'], { WOODSHED_PROJECT_FILES_DIR: '', WOODSHED_CLOUD_PROJECT_FILES_DIR: dir }), 'none\n', 'the new name wins, empty too');
 });
 
 // The image runs as uid 1000, which need not own the installation's files.

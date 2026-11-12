@@ -118,11 +118,11 @@ test('startTlsAsk listens on loopback only, and not at all without a port', asyn
   assert.equal(await status(server.address().port, 'ffff0000.woodshed.203-0-113-10.sslip.io'), 403);
 });
 
-test('WOODSHED_CLOUD_TLS_ASK_PORT is off unless set, and must be a port', () => {
+test('WOODSHED_TLS_ASK_PORT is off unless set, and must be a port', () => {
   const base = { GH_TOKEN: 'x' };
   assert.equal(loadConfig(base).tlsAskPort, null);
-  assert.equal(loadConfig({ ...base, WOODSHED_CLOUD_TLS_ASK_PORT: '7692' }).tlsAskPort, 7692);
-  assert.throws(() => loadConfig({ ...base, WOODSHED_CLOUD_TLS_ASK_PORT: 'nope' }), /not a port/);
+  assert.equal(loadConfig({ ...base, WOODSHED_TLS_ASK_PORT: '7692' }).tlsAskPort, 7692);
+  assert.throws(() => loadConfig({ ...base, WOODSHED_TLS_ASK_PORT: 'nope' }), /not a port/);
 });
 
 // Caddy reaches the console's own port from loopback, so a public request for /tls-ask must find nothing there, even

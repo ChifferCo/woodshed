@@ -60,9 +60,9 @@ test('the stack.env install.sh writes starts a console on the local provider, an
   const env = readEnvFile(file);
   assert.match(env.WOODSHED_LOCAL_PG_ROOT_PASSWORD, /^[0-9a-f]{48}$/);
   assert.notEqual(env.WOODSHED_LOCAL_PG_ROOT_PASSWORD, env.WOODSHED_LOCAL_MONGO_ROOT_PASSWORD);
-  assert.equal(env.WOODSHED_CLOUD_SUPERVISED, '1');
+  assert.equal(env.WOODSHED_SUPERVISED, '1');
 
-  runInstallFunction(`writeSessionEnv "${env.WOODSHED_CLOUD_SESSION_ENV_FILE}" host.docker.internal 'postgres mongo'`);
+  runInstallFunction(`writeSessionEnv "${env.WOODSHED_SESSION_ENV_FILE}" host.docker.internal 'postgres mongo'`);
   const config = loadConfig(env);
   requireRepo(config);
   assert.equal(providerName(env), 'local');
@@ -146,8 +146,8 @@ test('a repository with no database gets no database stack, and its sessions joi
   const env = readEnvFile(file);
   assert.deepEqual(Object.keys(env).filter((key) => /^WOODSHED_LOCAL_(DB_|PG_|MONGO_|DATA_DIR)/.test(key)), []);
   assert.equal(env.WOODSHED_LOCAL_DOCKER_NETWORK, 'app_default');
-  runInstallFunction(`writeSessionEnv "${env.WOODSHED_CLOUD_SESSION_ENV_FILE}" host.docker.internal ''`);
-  assert.deepEqual(JSON.parse(fs.readFileSync(env.WOODSHED_CLOUD_SESSION_ENV_FILE, 'utf8')), { WOODSHED_CONSOLE_URL: 'http://host.docker.internal:7691' });
+  runInstallFunction(`writeSessionEnv "${env.WOODSHED_SESSION_ENV_FILE}" host.docker.internal ''`);
+  assert.deepEqual(JSON.parse(fs.readFileSync(env.WOODSHED_SESSION_ENV_FILE, 'utf8')), { WOODSHED_CONSOLE_URL: 'http://host.docker.internal:7691' });
 
   const config = loadConfig(env);
   fs.mkdirSync(env.WOODSHED_LOCAL_SECRETS_DIR, { recursive: true });
@@ -233,16 +233,16 @@ test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read
   runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app api-env=api/.env api-env postgres woodshed && saveProjectFilesDir "${file}" "${files}"`);
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
   const written = readEnvFile(file);
-  assert.equal(written.WOODSHED_CLOUD_PROJECT_FILES_DIR, files);
-  runInstallFunction(`writeSessionEnv "${written.WOODSHED_CLOUD_SESSION_ENV_FILE}" host.docker.internal postgres`);
+  assert.equal(written.WOODSHED_PROJECT_FILES_DIR, files);
+  runInstallFunction(`writeSessionEnv "${written.WOODSHED_SESSION_ENV_FILE}" host.docker.internal postgres`);
   assert.equal(loadConfig(written).projectFilesDir, files);
-  assert.equal(written.WOODSHED_CLOUD_REPO, 'acme/app', 'the rest of the file is kept');
+  assert.equal(written.WOODSHED_REPO, 'acme/app', 'the rest of the file is kept');
 
   runInstallFunction(`saveProjectFilesDir "${file}" /srv/project-files && saveProjectFilesDir "${file}" /srv/project-files && saveProjectFilesDir "${file}" ""`);
   const moved = fs.readFileSync(file, 'utf8');
-  assert.equal(moved.match(/^WOODSHED_CLOUD_PROJECT_FILES_DIR=/gm).length, 1);
-  assert.deepEqual({ ...readEnvFile(file) }, { ...written, WOODSHED_CLOUD_PROJECT_FILES_DIR: '/srv/project-files' });
-  assert.equal(runInstallFunction(`savedSetting "${file}" WOODSHED_CLOUD_PROJECT_FILES_DIR`), '/srv/project-files\n', 'a second run reads it back');
+  assert.equal(moved.match(/^WOODSHED_PROJECT_FILES_DIR=/gm).length, 1);
+  assert.deepEqual({ ...readEnvFile(file) }, { ...written, WOODSHED_PROJECT_FILES_DIR: '/srv/project-files' });
+  assert.equal(runInstallFunction(`savedSetting "${file}" WOODSHED_PROJECT_FILES_DIR`), '/srv/project-files\n', 'a second run reads it back');
 });
 
 // An install made before the installation had the repo's file keeps settings of no project file: install.sh says so.
@@ -271,4 +271,39 @@ test('WOODSHED_BUILD_ONLY fetches the repository and builds its image where DOCK
   assert.match(out, /build acme\/app woodshed-session:acme-app on ssh:\/\/woodshed@10\.8\.0\.12\n/);
   assert.doesNotMatch(out, /stack\.env written/);
   assert.equal(fs.existsSync(path.join(home, 'stack.env')), false);
+});
+
+// A stack.env written before the rename keeps working: install.sh reads its old names, says each once, and moves only
+// the line it rewrites.
+test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecated and still starts the console', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-old-names-'));
+  const file = path.join(home, 'stack.env');
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app app-env=api/.env app-env postgres woodshed`);
+  fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace(/^WOODSHED_(?!LOCAL_|PROVIDER)/gm, 'WOODSHED_CLOUD_'), { mode: 0o600 });
+  const old = readEnvFile(file);
+  assert.ok(old.WOODSHED_CLOUD_REPO && !old.WOODSHED_REPO, 'the file has the old names only');
+
+  assert.equal(runInstallFunction(`savedConsoleSetting "${file}" REPO`), 'acme/app\n');
+  assert.equal(runInstallFunction(`refuseOtherRepo "${file}" acme/app && echo same`), 'same\n');
+  const said = runInstallFunction(`warnOldNames "${file}" 2>&1`);
+  assert.match(said, /^woodshed install: deprecated variable, use WOODSHED_REPO \(.*stack\.env has WOODSHED_CLOUD_REPO\)$/m);
+  assert.equal(said.match(/WOODSHED_CLOUD_REPO\)/g).length, 1, 'once a name');
+  assert.doesNotMatch(said, /acme\/app|app-env/, 'names only, never a value');
+  assert.equal(runInstallFunction(`set -a; . "${file}"; set +a; consoleSetting STATE_DIR`), `${home}/console`);
+  runInstallFunction(`set -a; . "${file}"; set +a; writeSessionEnv "$(consoleSetting SESSION_ENV_FILE)" host.docker.internal postgres`);
+  assert.ok(fs.existsSync(path.join(home, 'session-env.json')), 'the session env goes where the old name says');
+
+  runInstallFunction(`saveProjectFilesDir "${file}" /srv/project-files`);
+  runInstallFunction(`saveProjectFilesDir "${file}" /srv/other-files`);
+  const moved = readEnvFile(file);
+  assert.equal(moved.WOODSHED_PROJECT_FILES_DIR, '/srv/other-files', 'written under the new name');
+  assert.ok(!('WOODSHED_CLOUD_PROJECT_FILES_DIR' in moved));
+  assert.equal(moved.WOODSHED_CLOUD_REPO, 'acme/app', 'the rest of the file is kept as it was');
+
+  const config = loadConfig(moved, { readGhToken: false });
+  assert.equal(config.port, 7690);
+  assert.equal(config.stateDir, `${home}/console`);
+  assert.equal(config.projectFilesDir, '/srv/other-files');
+  assert.equal(defaultProject(config).repo, 'acme/app');
+  assert.deepEqual(envFiles(moved), [{ secret: 'app-env', path: 'api/.env' }]);
 });

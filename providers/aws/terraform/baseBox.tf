@@ -301,7 +301,7 @@ resource "aws_instance" "base_box" {
 # What the installation does not run (var.databases) reaches the stack script as "" or false, and the script leaves
 # its service and settings out.
 locals {
-  # The console's WOODSHED_CLOUD_PROJECTS (console/projects.mjs), with installationId only where a project names one,
+  # The console's WOODSHED_PROJECTS (console/projects.mjs), with installationId only where a project names one,
   # since the console refuses a null. "" with no projects leaves the variable out of compose.yml.
   projects_json = length(var.projects) == 0 ? "" : "[${join(",", [for p in var.projects : p.installation_id == null
     ? jsonencode({ name = p.name, repo = p.repo, default = p.default })

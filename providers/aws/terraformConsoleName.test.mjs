@@ -9,18 +9,18 @@ import { consoleName } from '../../console/config.mjs';
 const DIR = path.join(import.meta.dirname, 'terraform');
 const read = (file) => fs.readFileSync(path.join(DIR, file), 'utf8');
 
-test('the console gets console_name as WOODSHED_CLOUD_CONSOLE_NAME, quoted for YAML, defaulting to Woodshed', () => {
+test('the console gets console_name as WOODSHED_CONSOLE_NAME, quoted for YAML, defaulting to Woodshed', () => {
   assert.match(read('variables.tf'), /variable "console_name" \{[^}]*default {5}= "Woodshed"/);
   assert.match(read('baseBox.tf'), / {4}console_name {7}= var\.console_name\n/);
-  assert.match(read('baseBoxStack.sh.tftpl'), / {6}- \$\{jsonencode\("WOODSHED_CLOUD_CONSOLE_NAME=\$\{replace\(console_name, "\$", "\$\$"\)\}"\)\}\n/);
+  assert.match(read('baseBoxStack.sh.tftpl'), / {6}- \$\{jsonencode\("\$\{prefix\}CONSOLE_NAME=\$\{replace\(console_name, "\$", "\$\$"\)\}"\)\}\n/);
 });
 
 test('the line the template writes is a YAML string the console reads back as the same name', () => {
   const name = 'Acme: the shed #2 $HOME';
-  const item = JSON.stringify(`WOODSHED_CLOUD_CONSOLE_NAME=${name.replaceAll('$', '$$')}`);
+  const item = JSON.stringify(`WOODSHED_CONSOLE_NAME=${name.replaceAll('$', '$$')}`);
   // Compose reads the item as YAML, a JSON string being one, and turns $$ back into $.
   const [key, value] = JSON.parse(item).replaceAll('$$', '$').split(/=(.*)/s);
-  assert.equal(key, 'WOODSHED_CLOUD_CONSOLE_NAME');
+  assert.equal(key, 'WOODSHED_CONSOLE_NAME');
   assert.equal(consoleName({ [key]: value }), name);
 });
 

@@ -145,7 +145,7 @@ macOS and Windows, Docker Desktop must be running.
 What to know on this machine:
 
 - Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690.
-- Session apps (**Open app**) need a name and HTTPS (`WOODSHED_CLOUD_APP_DOMAIN`), which the installer does not set:
+- Session apps (**Open app**) need a name and HTTPS (`WOODSHED_APP_DOMAIN`), which the installer does not set:
   on this machine the session runs and checks the app itself, but there is no link to open it from your browser.
 - GitHub webhooks need a public address, so the console polls GitHub every 30 seconds: a `woodshed` label or a
   `/woodshed` comment takes up to that long. **New session** is immediate.
@@ -170,12 +170,12 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 5. **Server.** Steps 1 to 4 of `providers/local/README.md`, "Setting it up": build the session image, fill in
    `stack.env` and `session-env.json` (outside the checkout, mode 600), start the databases, make the secrets key and
    store the root passwords. Keep the key off the Volume: `WOODSHED_LOCAL_SECRETS_KEY_FILE=/etc/woodshed/secrets.key`.
-   For a server also set `WOODSHED_CLOUD_PUBLIC_URL` and `WOODSHED_CLOUD_APP_DOMAIN` to the name from step 3, and
-   `WOODSHED_CLOUD_TLS_ASK_PORT=7692` without a wildcard certificate.
+   For a server also set `WOODSHED_PUBLIC_URL` and `WOODSHED_APP_DOMAIN` to the name from step 3, and
+   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate.
 
    **Done when** `docker compose … ps` shows the databases healthy and `node <woodshed>/providers/local/bin/secret.mjs
    list` lists `db-root/postgres` (and `db-root/mongo`).
-6. **Server.** Run the console as a systemd service. Leave `WOODSHED_CLOUD_REQUIRE_SIGN_IN` unset for now.
+6. **Server.** Run the console as a systemd service. Leave `WOODSHED_REQUIRE_SIGN_IN` unset for now.
 
    ```ini
    [Unit]
@@ -210,7 +210,7 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 8. **Server.** Let sessions reach the session API: `ufw allow in on br-<network id> to <gateway> port 7691 proto tcp`,
    with the `woodshed` network's id and gateway from `docker network inspect woodshed`.
 9. **You.** On `https://<name>/setup/github`: create the App, install it, and press **Restart the console**.
-   **Server.** Set `WOODSHED_CLOUD_REQUIRE_SIGN_IN=1` and restart the service. **You.** Sign in, so you are the first
+   **Server.** Set `WOODSHED_REQUIRE_SIGN_IN=1` and restart the service. **You.** Sign in, so you are the first
    admin. **Server.** Only then take the IP fence out of the Caddyfile and reload Caddy.
 
    **Done when** the log has `console: GitHub App from the setup page` and `auth: signed in`, and opening the console

@@ -135,52 +135,57 @@ services:
     network_mode: host
     environment:
       - AWS_REGION=${region}
-      - WOODSHED_CLOUD_HOST=127.0.0.1
-      - WOODSHED_CLOUD_PUBLIC_URL=https://${domain}
-      - WOODSHED_CLOUD_APP_DOMAIN=${domain}
+      # Each setting twice, by its name and by the WOODSHED_CLOUD_ one it had (shared/envNames.mjs): the base box can
+      # take this config before the console image that reads the new names reaches it, and an older console reads only
+      # the old ones. A console that reads both takes the new name and says nothing. The old names go in a later release.
+%{ for prefix in ["WOODSHED_", "WOODSHED_CLOUD_"] ~}
+      - ${prefix}HOST=127.0.0.1
+      - ${prefix}PUBLIC_URL=https://${domain}
+      - ${prefix}APP_DOMAIN=${domain}
 %{ if !own_domain ~}
       # Where Caddy asks whether a name is the console's before it gets a certificate for it, on loopback only.
-      - WOODSHED_CLOUD_TLS_ASK_PORT=7692
+      - ${prefix}TLS_ASK_PORT=7692
 %{ endif ~}
-      - WOODSHED_CLOUD_HOSTS=${public_ip}
-      - WOODSHED_CLOUD_REQUIRE_SIGN_IN=1
-      - WOODSHED_CLOUD_STATE_DIR=/var/lib/woodshed-cloud
+      - ${prefix}HOSTS=${public_ip}
+      - ${prefix}REQUIRE_SIGN_IN=1
+      - ${prefix}STATE_DIR=/var/lib/woodshed-cloud
 %{ if repo != "" ~}
-      - WOODSHED_CLOUD_REPO=${repo}
+      - ${prefix}REPO=${repo}
 %{ endif ~}
 %{ if projects != "" ~}
       # The repos sessions start on (the projects variable), quoted since JSON is not a plain YAML value, $ escaped for Compose.
-      - ${jsonencode("WOODSHED_CLOUD_PROJECTS=${replace(projects, "$", "$$")}")}
+      - ${jsonencode("${prefix}PROJECTS=${replace(projects, "$", "$$")}")}
 %{ endif ~}
-      - WOODSHED_CLOUD_ENV_FILES=${env_files}
-      - WOODSHED_CLOUD_DB_ENV_SECRETS=${db_env_secrets}
-      - WOODSHED_CLOUD_INSTALL_SECRETS=${install_secrets}
-      - WOODSHED_CLOUD_MAX_SESSIONS=${max_sessions}
+      - ${prefix}ENV_FILES=${env_files}
+      - ${prefix}DB_ENV_SECRETS=${db_env_secrets}
+      - ${prefix == "WOODSHED_" ? "WOODSHED_INSTALL_SECRET_PAIRS" : "WOODSHED_CLOUD_INSTALL_SECRETS"}=${install_secrets}
+      - ${prefix}MAX_SESSIONS=${max_sessions}
       # What the console calls itself (the console_name variable), quoted since a name may hold a colon or a #.
-      - ${jsonencode("WOODSHED_CLOUD_CONSOLE_NAME=${replace(console_name, "$", "$$")}")}
-      - WOODSHED_CLOUD_ACTIONS_WORKFLOWS=${workflow_links}
-      - WOODSHED_CLOUD_HOMES_BUCKET=${homes_bucket}
-      - WOODSHED_CLOUD_GITHUB_APP_ID=${github_app_id}
-      - WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID=${github_app_install}
-      - WOODSHED_CLOUD_SESSION_API_HOST=${private_ip}
-      - WOODSHED_CLOUD_LAUNCHER=ecs
-      - WOODSHED_CLOUD_ECS_CLUSTER=${cluster}
-      - WOODSHED_CLOUD_ECS_TASK_DEFINITION=${task_definition}
-      - WOODSHED_CLOUD_ECS_SUBNETS=${subnets}
-      - WOODSHED_CLOUD_ECS_SECURITY_GROUP=${session_sg}
-      - WOODSHED_CLOUD_ECS_LOG_GROUP=${log_group}
+      - ${jsonencode("${prefix}CONSOLE_NAME=${replace(console_name, "$", "$$")}")}
+      - ${prefix}ACTIONS_WORKFLOWS=${workflow_links}
+      - ${prefix}HOMES_BUCKET=${homes_bucket}
+      - ${prefix}GITHUB_APP_ID=${github_app_id}
+      - ${prefix}GITHUB_APP_INSTALLATION_ID=${github_app_install}
+      - ${prefix}SESSION_API_HOST=${private_ip}
+      - ${prefix}LAUNCHER=ecs
+      - ${prefix}ECS_CLUSTER=${cluster}
+      - ${prefix}ECS_TASK_DEFINITION=${task_definition}
+      - ${prefix}ECS_SUBNETS=${subnets}
+      - ${prefix}ECS_SECURITY_GROUP=${session_sg}
+      - ${prefix}ECS_LOG_GROUP=${log_group}
       # The databases the installation runs (the databases variable), which the db-admin task makes for each session.
-      - WOODSHED_CLOUD_DATABASES=${databases}
+      - ${prefix}DATABASES=${databases}
 %{ if db_admin_task != "" ~}
-      - WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION=${db_admin_task}
+      - ${prefix}ECS_DB_ADMIN_TASK_DEFINITION=${db_admin_task}
 %{ endif ~}
       # woodshed-db.mjs's tunnel (console/dbTunnel.mjs): Postgres is RDS, Mongo the box's own, on its private address.
 %{ if db_host != "" ~}
-      - WOODSHED_CLOUD_TUNNEL_POSTGRES=${db_host}:5432
+      - ${prefix}TUNNEL_POSTGRES=${db_host}:5432
 %{ endif ~}
 %{ if mongo ~}
-      - WOODSHED_CLOUD_TUNNEL_MONGO=${private_ip}:27017
+      - ${prefix}TUNNEL_MONGO=${private_ip}:27017
 %{ endif ~}
+%{ endfor ~}
     volumes:
       - /var/lib/woodshed-cloud/console:/var/lib/woodshed-cloud
 

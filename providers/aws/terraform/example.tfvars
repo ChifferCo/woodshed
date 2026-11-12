@@ -41,7 +41,7 @@ shared_services = {}
 github_app_id              = "0000000"
 github_app_installation_id = "00000000"
 
-# Optional: more repos sessions start on, each a project (console/README.md, WOODSHED_CLOUD_PROJECTS). The default
+# Optional: more repos sessions start on, each a project (console/README.md, WOODSHED_PROJECTS). The default
 # project's repo is github_repo. installation_id only when the App is installed on that repo's account under another
 # installation. Every project uses this installation's session image and databases for now. [] (the default) for
 # github_repo alone.

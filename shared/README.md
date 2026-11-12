@@ -14,6 +14,7 @@ Woodshed can embed them too.
   `workflowFile.mjs` what it and the console read from a GitHub Actions workflow. `__fixtures__/yamlLite/` holds the
   YAML reader's cases, each beside the JSON js-yaml reads it as.
 - `reservedNames.mjs`: the variables, secrets and ports Woodshed keeps for itself in a session.
+- `envNames.mjs`: the console's settings, each read by its `WOODSHED_` name and then by its old `WOODSHED_CLOUD_` one.
 
 Rules:
 

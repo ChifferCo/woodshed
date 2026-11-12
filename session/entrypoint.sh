@@ -33,7 +33,7 @@
 #   each env file's secret, by its name in capitals (`app-env` is APP_ENV)   base env files, whole: one for each of
 #                        the project file's envFiles with a secret (woodshed/shared/project.mjs)
 #   REPO_DIR             the checkout; the image sets it, and the working folder is used without it
-#   WOODSHED_CLOUD_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
+#   WOODSHED_PROJECT_FILES_DIR  the installation's folder of project files, for a repo with no
 #                        .woodshed/project.yaml of its own (shared/project.mjs): the docker launcher mounts the files
 #                        there read-only
 #   PROJECT_REPO         owner/name: a session on a project other than the installation's default. Every project runs
@@ -62,7 +62,7 @@
 #   each install secret, by the variable the installation names for it   what the repo's installs read, such as a
 #                        package registry's token; claude's terminal has them too
 #   WOODSHED_INSTALL_SECRETS  those variables' names, space-separated (the install_secrets Terraform variable, or the
-#                        local provider's WOODSHED_CLOUD_INSTALL_SECRETS): an ask session unsets each
+#                        local provider's WOODSHED_INSTALL_SECRET_PAIRS): an ask session unsets each
 #   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
 set -euo pipefail

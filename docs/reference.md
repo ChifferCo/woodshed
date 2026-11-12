@@ -48,7 +48,7 @@ A provider gives the console up to six things. Each one it lacks, the console ru
 | Databases | Those `databases` in Terraform names: RDS Postgres, and the base box's Mongo, copied by a db-admin Fargate task (`aws/dbAdminRunner.mjs`) | The Postgres, and the Mongo, `WOODSHED_LOCAL_DB_*` names, copied by a db-admin container (`local/dbAdminRunner.mjs`); without them, the ones the session's environment names |
 | The machine | The base box and the rest of `aws/terraform/` | Your own |
 
-`WOODSHED_PROVIDER` (`aws` or `local`) picks one. Without it, `WOODSHED_CLOUD_LAUNCHER=ecs` means `aws`, and the
+`WOODSHED_PROVIDER` (`aws` or `local`) picks one. Without it, `WOODSHED_LAUNCHER=ecs` means `aws`, and the
 default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local provider runs as it is
 (`providers/local/README.md`, "On a server your team reaches").
 
@@ -67,11 +67,11 @@ default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local
 A service that hosts a console for an organization, with the organization's GitHub already connected and its own
 sign-in in front, hands both to the console with two settings, each off unless set:
 
-- `WOODSHED_CLOUD_GITHUB_BROKER_URL` and `WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE`: the console has no GitHub App of
+- `WOODSHED_GITHUB_BROKER_URL` and `WOODSHED_GITHUB_BROKER_TOKEN_FILE`: the console has no GitHub App of
   its own and asks the host's broker for every installation token, its own and its sessions', each narrowed as an
   App's would be. No `/setup/github`, no
-  Connect GitHub, no webhooks (it polls). It refuses to start with `WOODSHED_CLOUD_GITHUB_APP_ID` set too.
-- `WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
+  Connect GitHub, no webhooks (it polls). It refuses to start with `WOODSHED_GITHUB_APP_ID` set too.
+- `WOODSHED_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
   (an HMAC-SHA256 over the person's login, role and expiry), which is then the only sign-in, and required. The host
   says who is in, so there is no People list; its `owner`s are the console's admins.
 
@@ -161,7 +161,7 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **The console:** `https://woodshed.example.com`, with a Let's Encrypt
   certificate, open to the internet behind a GitHub sign-in. The bare IP
   answers too, with Caddy's own certificate, and moves to the name.
-- **Its name:** the console calls itself Woodshed unless the installation names it: `WOODSHED_CLOUD_CONSOLE_NAME`
+- **Its name:** the console calls itself Woodshed unless the installation names it: `WOODSHED_CONSOLE_NAME`
   (`console_name` in Terraform, a line in the local provider's `stack.env`), such as `Acme Woodshed`. The name is the
   pages' title, the sign-in page's heading, the installed app's name and what the console's GitHub comments call it.
   1 to 40 printable characters without `< > " '` or a backtick; the console uses Woodshed in place of any other value,
@@ -208,7 +208,7 @@ checkout's copy, so a branch can change it, and the default branch's when a bran
 an empty project: no dependency installs, env files, databases or app, and Woodshed's own rules alone.
 
 **A project file the installation supplies.** To try Woodshed on a repo without committing a project file, the
-installation can keep one for it: `WOODSHED_CLOUD_PROJECT_FILES_DIR` names a folder of them, one a repo, at
+installation can keep one for it: `WOODSHED_PROJECT_FILES_DIR` names a folder of them, one a repo, at
 `<owner>/<name>.yaml` as GitHub names the repo (matched in any case). It is read only when the repo has no
 `.woodshed/project.yaml` of its own, on the checkout or the default branch: once one is committed, it wins. Its `from`
 is `installation`, beside `checkout`, `default branch` and `none`, in each log line that prints it (the entrypoint's
@@ -296,7 +296,7 @@ quote a number (`PORT: '9000'`).
 
 An installation works on one repo, and nothing in this folder names one. To set one up for your own repo:
 
-- **The repo:** `WOODSHED_CLOUD_REPO=owner/name` for the console (it refuses to start without it), `github_repo` for
+- **The repo:** `WOODSHED_REPO=owner/name` for the console (it refuses to start without it), `github_repo` for
   Terraform, and the deploy workflow's session job builds the repo it runs in.
 - **The session image:** `session/Dockerfile` takes `REPO` and `REPO_DIR` (`/work/<name>`, `checkoutDir` in
   `shared/project.mjs`) as build arguments. The deploy workflow's session job passes them and stages the files of the project file's
@@ -304,14 +304,14 @@ An installation works on one repo, and nothing in this folder names one. To set 
   The optional build secret `install_env` is `NAME=value` lines, the install secrets below under their variables, which
   `deps.sh` exports before the installs; the deploy workflow's session job writes it from repo secrets of the installation's choosing.
 - **Install secrets:** what the installs read that is secret, such as a private registry's token. `install_secrets` in
-  Terraform (`WOODSHED_CLOUD_INSTALL_SECRETS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
+  Terraform (`WOODSHED_INSTALL_SECRET_PAIRS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
   variable the repo's tools read it from (`{ "registry-token" = "REGISTRY_TOKEN" }`, the one its `.npmrc` names, say).
   Each is made by Terraform, set on the Secrets page, and reaches a session in that variable as it is, for a reinstall
   and claude's terminal alike; Woodshed names no variable and renames nothing. Sessions also get
   `WOODSHED_INSTALL_SECRETS`, the list of those variables, which an ask session unsets. A variable cannot be one of
   Woodshed's own (`WOODSHED_*`, `SESSION_ID`, `GH_TOKEN`, `PGHOST` and the rest, `SESSION_VARIABLES` in
   `shared/reservedNames.mjs`) or an env file's.
-- **The env files:** `env_files` in Terraform (`WOODSHED_CLOUD_ENV_FILES` for the console) is each `envFiles` entry's `secret` with its `path`,
+- **The env files:** `env_files` in Terraform (`WOODSHED_ENV_FILES` for the console) is each `envFiles` entry's `secret` with its `path`,
   and `database_env_secrets` is every `envFiles` of the project file's `databases`. Each secret is made by Terraform, set on the Secrets page and
   reaches a session as its name in capitals. A test checks this installation's tfvars against its project file.
 - **The databases:** `databases` in Terraform names the engines the installation hosts, each on its own:
@@ -464,11 +464,27 @@ database's seed may read another's: each database's `paths` decide keep, migrate
 every one's, and the commands run in the list's order, each database's `migrate` then its `seed`, with every database's
 variables set. A copy waits until each engine's template is ready.
 
-The installation says which engines it hosts: `databases` in Terraform (`WOODSHED_CLOUD_DATABASES` for the console), or
+The installation says which engines it hosts: `databases` in Terraform (`WOODSHED_DATABASES` for the console), or
 the local provider's `WOODSHED_LOCAL_DB_*`. A project file whose `databases` need an engine it does not host starts no
 session: the console reads the default branch's file (`console/databaseGate.mjs`), says why on New session and My
 settings, refuses the API's starts with the reason, and answers a label or `/woodshed` comment with it. A session started
 from a branch whose own file differs stops at start with the same reason (`requireDatabases` in the entrypoint).
+
+## Renamed variables
+
+The console's settings, and `WOODSHED_PROJECT_FILES_DIR` in a session, were named `WOODSHED_CLOUD_<NAME>` before the
+project was called Woodshed. Each is now `WOODSHED_<NAME>`, except two whose plain rename a session already has with
+another meaning: `WOODSHED_CLOUD_INSTALL_SECRETS` is `WOODSHED_INSTALL_SECRET_PAIRS`, and `WOODSHED_CLOUD_CONSOLE_URL`
+(`console/bin/start-session.mjs`) is `WOODSHED_CONSOLE_WEB_URL`. `shared/envNames.mjs` lists them all.
+
+The old names still work. Each is read when its new name is unset, and the console logs
+`config: deprecated variable, use WOODSHED_<NAME>` once for each, with the old name and never the value; `install.sh`
+says the same once a run for each old name its `stack.env` still has. Where both are set, the new one is read. Until a
+later release, Terraform writes both names into the base box's compose file, since it can reach the box before the
+console image that reads the new ones, and the local provider hands a session both `WOODSHED_PROJECT_FILES_DIR` names,
+since an older session image reads only the old one. The deploy workflow's repository variables
+(`WOODSHED_CLOUD_AWS_ROLE_ARN` and the rest, `providers/aws/README.md`) are the installation's GitHub settings and keep
+their names for now.
 
 ## License
 

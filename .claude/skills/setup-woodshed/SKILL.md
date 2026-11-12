@@ -102,7 +102,7 @@ These come from `CLAUDE.md`, "Rules"; read it if a step touches secrets.
 - **No production credentials in a session.** An env file's secrets are the dev setup's keys only. A team-wide key
   goes on the Secrets & webhooks page, never in `session-env.json`, which every session reads.
 - **Nothing open before sign-in.** On a server, the proxy answers only the person's IP until the GitHub App is made,
-  `WOODSHED_CLOUD_REQUIRE_SIGN_IN=1` is set and they signed in as the first admin ("On a server", steps 7 and 9).
+  `WOODSHED_REQUIRE_SIGN_IN=1` is set and they signed in as the first admin ("On a server", steps 7 and 9).
   On this machine, the console listens on localhost with no sign-in: never expose port 7690.
 - **Docker's published ports get past ufw.** On a server, check that nothing (the repo's own compose file included)
   publishes a port on anything but `127.0.0.1`.

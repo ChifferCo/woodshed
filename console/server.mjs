@@ -108,7 +108,7 @@
 //        Editor ↗, for whoever can open the session itself (editorProxy.mjs)
 //
 // In AWS it sits behind Caddy, open to the internet, and every page, API call and terminal needs a GitHub
-// sign-in with write access (auth.mjs, always required there by WOODSHED_CLOUD_REQUIRE_SIGN_IN). Locally it
+// sign-in with write access (auth.mjs, always required there by WOODSHED_REQUIRE_SIGN_IN). Locally it
 // listens on loopback and has no sign-in. Hosted, a trusted proxy in front of it signs people in instead, with a
 // header on every request (trustedIdentity.mjs), and there is no GitHub sign-in at all. Every request must name a
 // host the console answers to, which stops DNS rebinding, and writes and terminal websockets must
