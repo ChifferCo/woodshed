@@ -1282,7 +1282,10 @@
         ? [h('p', null, 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
           h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
-          : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
+          : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
+            ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`
+            : `This QA session stopped before it sent a report, so ${W.ref(s)} has no QA result from it. Add the QA label to the pull request again to run QA again.`)
+            : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
       h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
   }
 
@@ -1311,6 +1314,8 @@
 
   // Every pull request the session opened, a merged or closed one its card no longer shows too, one to a line.
   function prFact(s, none) {
+    // A QA session opens no pull request: it tests the one it was started on.
+    if (s.trigger === 'qa' && s.number) return ['Pull request', h('a', { href: W.issueUrl(s.repo ?? data.repo, s), target: '_blank', rel: 'noopener' }, W.ref(s))];
     if ((s.prs?.length ?? 0) < 2) return ['Pull request', s.prUrl || none];
     return ['Pull requests', W.prLines(s)];
   }
