@@ -7,7 +7,7 @@ export const OLD_PREFIX = 'WOODSHED_CLOUD_';
 // Every setting renamed, without its prefix. The deploy workflow's own repository variables (WOODSHED_CLOUD_AWS_ROLE_ARN
 // and the rest) are an installation's GitHub settings, not Woodshed's, and keep their names for now.
 export const SETTINGS = Object.freeze([
-  'ACTIONS_WORKFLOWS', 'APP_DOMAIN', 'CONSOLE_NAME', 'CONSOLE_URL', 'DATABASES', 'DB_ENV_SECRETS', 'ECS_CLUSTER',
+  'ACTIONS_WORKFLOWS', 'APP_DOMAIN', 'CHECKOUT', 'CONSOLE_NAME', 'CONSOLE_URL', 'DATABASES', 'DB_ENV_SECRETS', 'ECS_CLUSTER',
   'ECS_DB_ADMIN_TASK_DEFINITION', 'ECS_LOG_GROUP', 'ECS_SECURITY_GROUP', 'ECS_SUBNETS', 'ECS_TASK_DEFINITION',
   'ENV_FILES', 'FALLBACK_POLL_SECONDS', 'GITHUB_APP_ID', 'GITHUB_APP_INSTALLATION_ID', 'GITHUB_APP_KEY_FILE',
   'GITHUB_BROKER_TOKEN_FILE', 'GITHUB_BROKER_URL', 'HOMES_BUCKET', 'HOST', 'HOSTS', 'IDLE_HOURS', 'IMAGE',

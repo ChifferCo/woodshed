@@ -273,6 +273,17 @@ test('WOODSHED_BUILD_ONLY fetches the repository and builds its image where DOCK
   assert.equal(fs.existsSync(path.join(home, 'stack.env')), false);
 });
 
+test('WOODSHED_IMAGE tags the session image as the console runs it, for the console\'s Update', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-build-image-'));
+  const out = runInstallFunction([
+    'checkTools() { :; }',
+    'fetchRepo() { :; }',
+    'buildImage() { echo "build $4"; }',
+    'main',
+  ].join('; '), { WOODSHED_HOME: home, WOODSHED_REPO: 'acme/app', GH_TOKEN: 't', WOODSHED_BUILD_ONLY: '1', WOODSHED_IMAGE: 'woodshed-session' });
+  assert.match(out, /build woodshed-session\n/);
+});
+
 // A stack.env written before the rename keeps working: install.sh reads its old names, says each once, and moves only
 // the line it rewrites.
 test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecated and still starts the console', () => {

@@ -1529,7 +1529,30 @@ They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
-The **Repos** card, first on the page, lists the repos sessions can start on (the projects above) and adds more.
+The **Woodshed** card, first on the page, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
+`WOODSHED_CHECKOUT` names another): at start and every hour, and on **Check now** (`POST
+/api/console-settings/updates/check`), it runs `git fetch` on the remote of the branch the clone tracks, and lists the
+commits `HEAD` lacks, newest first (30, then how many more), with the count beside Console settings in the avatar menu
+and a dot on the avatar, for admins only (`updates` in `/api/me`). **Update to latest** (`POST
+/api/console-settings/updates/update`, no typed confirm) is refused while the last check's fetch failed, or while the
+clone has commits the branch lacks, and otherwise runs as a checklist on the card: **Pull the new commits**
+(`git merge --ff-only`, stopped when tracked files are edited), **Check the new code starts** (the new
+`providers/console.mjs` with `WOODSHED_START_CHECK=1`, which loads every module, reads the console's settings and
+makes its provider, then exits without listening; 60 seconds at most), **Build the
+session image** (only when `session/` or `shared/` changed and sessions run in docker: the new clone's `install.sh` with
+`WOODSHED_BUILD_ONLY=1`, `WOODSHED_IMAGE` set to the console's own, `WOODSHED_REPO` the default project's and the
+App's token as `GH_TOKEN`; its output goes to `woodshed-update.log` in the state folder and its last lines to the page),
+then **Restart the console**, which exits with code 75 for its supervisor (`supervisorOf`, as the GitHub App setup's
+Restart). A failed step puts the clone back on the commit it was on (`git reset --keep`), so the console runs as it
+did. New code that passes the start check and still fails after the restart leaves nothing answering: after two
+minutes the page says so, with the `git -C <clone> reset --keep <from>` that goes back. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image),
+`/api/console-settings/updates` answers 404 and there is no card. `state.json` keeps the last update under
+`woodshedUpdate` (from, to, who, when, and whether the image was built), which the card says after the restart. The
+console logs `woodshedUpdate: following` with the clone, its branch and remote at start, `woodshedUpdate: checked` with
+`behindBy` and `aheadBy`, `check failed`, `update started`, `updated, restarting`, and `update failed` with the step
+(`pull`, `starts`, `image`) and whether it went back; the start check logs `console: start check passed`.
+
+The **Repos** card, next, lists the repos sessions can start on (the projects above) and adds more.
 **Add a repo** is a list of the repos the GitHub App may reach and that are not projects yet
 (`GET /api/console-settings/projects/repos`: each of the App's installations, `GET /app/installations`, then its repos,
 `GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
@@ -1610,6 +1633,7 @@ Remove My Woodshed.
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |
 | `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |
 | `WOODSHED_FALLBACK_POLL_SECONDS` | `300` | How often the poll runs while webhooks arrive, and how often a pull request is read on its own while pull request webhooks arrive |
+| `WOODSHED_CHECKOUT` | the console's own folder | The Woodshed git clone the Console settings page's Woodshed card follows and Update pulls. The dev console points it at a made-up one |
 | `WOODSHED_ACTIONS_WORKFLOWS` | none | The avatar menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the repo's workflows that build the images and apply the infrastructure. None leaves the group out. Set on the base box from Terraform's `console_workflow_links` |
 | `WOODSHED_MAX_SESSIONS` | `5` | Shared sessions at once, until the Console settings page says otherwise. Set on the base box from Terraform's `max_sessions` |
 | `WOODSHED_IDLE_HOURS`, `WOODSHED_LIFETIME_HOURS` | `1`, `8` | The same, for the pause and stop times |

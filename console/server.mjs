@@ -81,6 +81,10 @@
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
+//   GET  /api/console-settings/updates         the Woodshed commit this console runs, the newer ones on the branch its
+//                                git clone follows, and an update's steps (woodshedUpdate.mjs)
+//   POST /api/console-settings/updates/check   fetch that branch again, now
+//   POST /api/console-settings/updates/update  pull the new commits, build the session image if it changed, restart
 //   GET  /api/webhook/deliveries GitHub's last 10 deliveries to the App's webhook, with their status codes
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
 //   POST /api/webhook/apply      {"confirm": "webhook"}   the Lambda's URL and the stored secret, set on the App
@@ -195,6 +199,9 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
+const UPDATES_PATH = '/api/console-settings/updates';
+const UPDATES_CHECK_PATH = `${UPDATES_PATH}/check`;
+const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
@@ -512,7 +519,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, codexModels = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -580,6 +587,7 @@ export function createHandler({
       reply(res, 200, {
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
+        ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
         repo: user ? defaultProject(config).repo : null, workflows: user ? (config.actionsWorkflows ?? []) : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
@@ -595,6 +603,8 @@ export function createHandler({
         // Without sign-in turned on the server lets everyone through (signedIn gives no login), so the menu says the same.
         admin: !auth?.enabled() || Boolean(user && isAdmin(user)),
         asking: user && members && isAdmin(user) ? members.view().requests.length : 0,
+        // Admins see how many Woodshed commits the console lacks, on the menu's Console settings.
+        ...(woodshedUpdate && { updates: !auth?.enabled() || (user && isAdmin(user)) ? woodshedUpdate.behindBy() : 0 }),
         names: namesFor([user?.login ?? visitor?.login]),
         // The menu's workflow links. A signed-out browser is not told which repo this is: it may be private.
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
@@ -1504,6 +1514,28 @@ export function createHandler({
     return consoleSettingsReply(res);
   }
 
+  async function woodshedUpdateReply(res, status = 200) {
+    const view = woodshedUpdate ? await woodshedUpdate.view() : null;
+    if (!view) return reply(res, 404, { error: 'this console does not run from a git clone, so it follows no Woodshed updates' });
+    return reply(res, status, view);
+  }
+
+  // Check now, or Update: an update answers at once, and the page follows its steps.
+  async function woodshedUpdateWrite(res, pathname, login) {
+    if (!woodshedUpdate) return woodshedUpdateReply(res);
+    try {
+      if (pathname === UPDATES_CHECK_PATH) await woodshedUpdate.check();
+      else {
+        await woodshedUpdate.update({ by: login ?? 'console' });
+        return woodshedUpdateReply(res, 202);
+      }
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      throw err;
+    }
+    return woodshedUpdateReply(res);
+  }
+
   // Who else may open a My Woodshed session's app is its owner's to say, and nobody else's: a teammate gets the
   // unknown-id answer, as for the session's other routes.
   async function appShareAction(req, res, [, id, kind, linkId, revoke], login) {
@@ -1550,6 +1582,7 @@ export function createHandler({
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname) || pathname === MY_OWN_FILES_PATH
@@ -1692,6 +1725,7 @@ export function createHandler({
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
     if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
+    if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/people') return html(res, pageShell({ title: consoleName, script: 'people.js', provider }));
     if (pathname === '/api/people') return peopleReply(res);

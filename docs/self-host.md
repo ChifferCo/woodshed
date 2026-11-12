@@ -221,6 +221,9 @@ has every step; this is the order, with the checks. Steps marked **Server** run 
 11. **Server.** Back up the Volume on a schedule; Hetzner's backups leave Volumes out. Copy the databases with
     `pg_dumpall` and `mongodump` rather than their live folders. Rebuild the session image when the project file's
     installs change.
+12. **You.** Keep it current: the Console settings page's **Woodshed** card says when Woodshed's `main` has commits the
+    server lacks, and **Update to latest** pulls them, builds the session image when it changed and restarts the
+    console (`providers/local/README.md`, "Staying up to date"). It needs the systemd unit's `Restart=on-failure`.
 
 ## Known gaps
 
