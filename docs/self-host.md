@@ -96,9 +96,11 @@ macOS and Windows, Docker Desktop must be running.
    starts it again by itself.
 
    **Done when** the console's log has `console: GitHub App from the setup page`.
-5. **You.** Give sessions a Claude. On a Claude plan: run `claude setup-token` in a terminal, and save the token on
-   **My settings**. Copy it in one piece: a token that lost a character to a wrapped line looks right and fails in the
-   session. With an Anthropic API key instead: save it as `anthropic-api-key` on **Secrets & webhooks**.
+5. **You.** Choose your agent: the setup card's **Claude** or **Codex** opens that box on **My settings**, and either one
+   is enough. For Claude on a Claude plan: run `claude setup-token` in a terminal, and save the token. Copy it in one
+   piece: a token that lost a character to a wrapped line looks right and fails in the session. With an Anthropic API
+   key instead: save it as `anthropic-api-key` on **Secrets & webhooks**. For Codex: run `codex login` and paste
+   `~/.codex/auth.json`, or paste an OpenAI API key; then pick Codex as the agent in New session.
 6. **You**, if the project file has env files with a `secret`: set each on **Secrets & webhooks**.
 7. **You.** Press **New session** and say what to build.
 

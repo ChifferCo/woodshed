@@ -26,7 +26,7 @@
     const showDb = db?.available && dbHint[db.status] && (db.status !== 'none' || tokenSet);
     return [
       ...(me.githubSetupNeeded ? [{ key: 'github', label: 'Connect a GitHub App', hint: 'Sessions push, open pull requests and sign people in through it', done: false }] : []),
-      { key: 'token', label: 'Save a Claude token or a Codex sign-in', hint: 'Your sessions run on your own Claude plan or Codex sign-in: either one is enough', done: tokenSet },
+      { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token or a Codex sign-in: either one is enough', done: tokenSet },
       ...(showDb ? [{ key: 'databases', label: 'Your databases', hint: dbHint[db.status], done: db.status === 'ready', todo: db.status === 'failed' || db.status === 'none' }] : []),
     ];
   }

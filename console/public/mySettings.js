@@ -77,7 +77,7 @@
     const pill = set
       ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(me.codexAuth.savedAt)}`)
       : h('span', { class: 'pill' }, 'Not set');
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'codex' },
       h('div', { class: 'set-head' }, h('h2', null, 'Codex'), pill),
       h('p', { class: 'sub' }, 'Choose Codex as the agent in New session. It runs on your own sign-in when you save one: an OpenAI API key, or the ',
         h('code', null, '~/.codex/auth.json'), ' that ', h('code', null, 'codex login'), ' made on your laptop. With none, it runs on the team\u2019s OpenAI key, if the console has one. ',
@@ -99,7 +99,7 @@
     const pill = set
       ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(me.claudeToken.savedAt)}`)
       : h('span', { class: 'pill is-warn' }, 'Not set');
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'claude' },
       h('div', { class: 'set-head' }, h('h2', null, 'Claude'), pill),
       h('p', { class: 'sub' }, 'Your My Woodshed sessions run on your own Claude plan, not the team key. Make a token on your laptop with ',
         h('code', null, 'claude setup-token'), ' and paste it here. Sessions that are already running keep the one they started with. For Remote Control, which that token cannot do, type ',
@@ -641,6 +641,8 @@
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
       return;
     }
+    // The page is rebuilt on each answer (the projects, a save): a box being typed in keeps its focus.
+    const focused = document.activeElement;
     app.replaceChildren(h('div', { class: 'page settings-page' },
       W.nav('/settings'),
       h('header', { class: 'page-head' }, h('div', null,
@@ -656,7 +658,20 @@
       filesCard(),
       ownFilesCard(),
       removeCard()));
+    if (focused?.id && focused !== document.activeElement && focused.isConnected) focused.focus({ preventScroll: true });
     watchDatabases();
+    showAsked();
+  }
+
+  // The setup card's Claude and Codex go to #claude and #codex: once the cards are there, that one is scrolled to and
+  // its box focused, so whichever agent was picked is the one in front of the person. Once per page load.
+  let asked = ({ '#claude': 'claude-token', '#codex': 'codex-auth' })[window.location.hash] ?? null;
+  function showAsked() {
+    const input = asked && document.getElementById(asked);
+    if (!input) return;
+    asked = null;
+    input.closest('.set-card')?.scrollIntoView({ block: 'start' });
+    input.focus({ preventScroll: true });
   }
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));

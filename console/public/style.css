@@ -1003,6 +1003,7 @@ a.prchip:hover { border-color: currentColor; }
 .setup-label { flex: 1; min-width: 0; font-weight: 600; }
 .setup-label small { display: block; font-weight: 400; font-size: 11.5px; color: var(--sub); }
 .setup-card.is-compact .setup-label small { display: none; }
+.setup-choices { flex: none; display: flex; gap: 6px; }
 .setup-card.is-nudged { animation: setup-nudge 0.9s ease-out; }
 @keyframes setup-nudge { 0%, 60% { box-shadow: 0 0 0 3px var(--amber); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .setup-card.is-nudged { animation: none; } }

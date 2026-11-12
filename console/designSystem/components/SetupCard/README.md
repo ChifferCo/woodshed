@@ -1,6 +1,6 @@
 The first-run card for My Woodshed. It lists only what a person can do or is waiting on, so it is short.
 
-- **Save a Claude token or a Codex sign-in**: the one row with an action, done when either is saved, since a person may use only one agent. **Set up** is the primary button and goes to My settings.
+- **Choose your agent**: done when a Claude token or a Codex sign-in is saved, since a person may use only one agent. It has two outline buttons side by side, **Claude** and **Codex**, each going to that box on My settings (`/settings#claude`, `/settings#codex`), which scrolls to it and focuses it. Neither is orange: they are equal choices, not one primary action.
 - **Your databases**: shown once a Claude token or a Codex sign-in is saved, as `Copying the template: about a minute`, `Ready`, `The copy failed` or `Not started`. It is progress while it copies. When it failed or never started it has an outline **Open My settings** button, so the card never sits with nothing to do.
 - No "signed in" row (already true), no step for something the console does by itself, and no Connect GitHub (sessions work without it; it lives on My settings).
 - Fill `amber-tint`, border `amber`, a `green` check when a row is done. The compact form (in the rail) drops the hint lines.
