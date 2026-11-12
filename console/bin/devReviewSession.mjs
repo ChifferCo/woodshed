@@ -132,34 +132,56 @@ Every attempt carries the same \`x-event-id\`, so a subscriber can drop one it a
 // What an analysis run writes (shared/review/analyze.mjs), for the files above.
 const ARTIFACT = {
   overview: 'Webhook deliveries that fail with a timeout, a 429 or a 5xx are now tried again up to five times, with exponential backoff and full jitter, honouring `Retry-After` when the subscriber sends one.\n\nThe retry policy lives in its own module, `retry.mjs`, so `deliver.mjs` only loops; every attempt carries the same `x-event-id` so subscribers can drop repeats.',
-  questions: [
+  decisions: [
     {
-      question: 'Can a slow subscriber now hold a worker for minutes?',
-      why: 'Five retries at up to 30 s each, plus a 10 s timeout per attempt, is over three minutes inside one `deliver` call. Check whether the caller runs deliveries in parallel or one after another.',
+      title: 'A delivery can now hold its worker for over three minutes',
+      why: 'Five retries at up to 30 s each, plus a 10 s timeout per attempt, all inside one `deliver` call. That is fine while deliveries run in parallel; check the caller does not run them one after another.',
       files: ['src/webhooks/deliver.mjs', 'config/webhooks.json'],
     },
     {
-      question: 'Is a huge `Retry-After` capped?',
-      why: 'A subscriber answering `Retry-After: 86400` would otherwise park the delivery for a day. `deliver.mjs` takes the smaller of it and `maxDelayMs`; confirm that is what was meant.',
+      title: '`Retry-After` is honoured, capped at `maxDelayMs`',
+      why: 'A subscriber answering `Retry-After: 86400` waits 30 s, not a day: `deliver.mjs` takes the smaller of the two.',
       files: ['src/webhooks/deliver.mjs', 'src/webhooks/retry.mjs'],
     },
     {
-      question: 'Do subscribers really de-duplicate on `x-event-id`?',
-      why: 'A retry after a timeout can deliver an event the subscriber already processed. The docs now say to drop repeats, but nothing on this side enforces it.',
+      title: 'Full jitter rather than fixed backoff',
+      why: 'Spreads retries from many deliveries that failed at once, so a recovering subscriber is not hit by all of them on the same second.',
+      files: ['src/webhooks/retry.mjs'],
+    },
+    {
+      title: 'Only 408, 425, 429 and 5xx are retried',
+      why: 'Any other 4xx means the request itself is wrong, and sending it again cannot help.',
+      files: ['src/webhooks/retry.mjs'],
+    },
+    {
+      title: 'De-duplication is left to subscribers',
+      why: 'A retry after a timeout can deliver an event twice. Every attempt carries the same `x-event-id` and the docs ask subscribers to drop repeats; nothing on this side enforces it.',
       files: ['docs/webhooks.md'],
     },
     {
-      question: 'Is the retry loop itself tested?',
-      why: 'The tests cover `retry.mjs`’s pure functions only; nothing drives `deliver` through a 503 then a 200, or checks that a 400 stops at once.',
+      title: 'The retry loop has no test of its own, and no dead-letter queue yet',
+      why: 'The tests cover `retry.mjs`’s pure functions only, and an event that fails every attempt is still dropped; both are left for another change.',
       files: ['src/webhooks/retry.test.mjs', 'src/webhooks/deliver.mjs'],
     },
   ],
   architecture: 'The delivery path is now a loop around one `fetch`, with every decision about waiting moved out of it.\n\n| Piece | Responsibility |\n|---|---|\n| `src/webhooks/deliver.mjs` | Sends an event, loops on failure, sleeps between attempts |\n| `src/webhooks/retry.mjs` | Which statuses are retried, the backoff, `Retry-After` parsing |\n| `config/webhooks.json` | Timeout, retry count and delay bounds |',
-  decisions: [
-    { title: 'Full jitter rather than fixed backoff', why: 'Spreads retries from many deliveries that failed at once, so a recovering subscriber is not hit by all of them on the same second.' },
-    { title: 'Only 408, 425, 429 and 5xx are retried', why: 'Any other 4xx means the request itself is wrong, and sending it again cannot help.' },
-    { title: 'No dead-letter queue yet', why: 'An event that fails every attempt is still dropped after the last error; keeping it for a later replay is left for another change.' },
-  ],
+  diagram: {
+    nodes: [
+      { id: 'caller', label: 'event source', change: 'unchanged' },
+      { id: 'deliver', label: 'deliver.mjs', change: 'changed' },
+      { id: 'retry', label: 'retry.mjs', change: 'added' },
+      { id: 'config', label: 'config/webhooks.json', change: 'changed' },
+      { id: 'subscriber', label: 'subscriber URL', change: 'unchanged' },
+      { id: 'thrown', label: 'error to the caller', change: 'removed' },
+    ],
+    edges: [
+      { from: 'caller', to: 'deliver', label: 'each event', change: 'unchanged' },
+      { from: 'deliver', to: 'retry', label: 'retry? how long?', change: 'added' },
+      { from: 'deliver', to: 'config', label: 'reads bounds', change: 'added' },
+      { from: 'deliver', to: 'subscriber', label: 'POST', change: 'unchanged' },
+      { from: 'deliver', to: 'thrown', label: 'on any non-2xx', change: 'removed' },
+    ],
+  },
   groups: [
     { title: 'The retry policy', why: 'Read the rules first: everything in `deliver.mjs` follows from them.', files: [
       { path: 'src/webhooks/retry.mjs', preamble: 'Three pure functions: `shouldRetry` decides from the status, `backoffMs` picks a wait with full jitter under a doubling ceiling, and `retryAfterMs` reads the header in either of its two forms.', role: 'core' },

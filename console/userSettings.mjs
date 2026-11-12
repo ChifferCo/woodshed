@@ -101,7 +101,8 @@ export function checkCodexAuth(value) {
   if (/^sk-[^\s]+$/.test(text)) return text;
   let auth;
   try {
-    auth = JSON.parse(text);
+    // zsh ends output with no final newline in a `%`, which a copy of `cat ~/.codex/auth.json` takes along.
+    auth = JSON.parse(text.replace(/\}\s*%$/, '}'));
   } catch {
     throw Object.assign(new Error('paste an OpenAI API key (sk-…) or the contents of ~/.codex/auth.json'), { shown: true });
   }

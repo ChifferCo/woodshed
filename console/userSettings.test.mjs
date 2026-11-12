@@ -154,6 +154,8 @@ test('a Codex sign-in is an API key or a codex auth.json, kept under the person\
 test('a Codex sign-in is checked, and the error never repeats it', () => {
   assert.equal(checkCodexAuth(' sk-proj-abc '), 'sk-proj-abc');
   assert.equal(checkCodexAuth('{"OPENAI_API_KEY":"sk-x"}'), '{"OPENAI_API_KEY":"sk-x"}');
+  assert.equal(checkCodexAuth('{"OPENAI_API_KEY":"sk-x"}%'), '{"OPENAI_API_KEY":"sk-x"}', 'zsh\'s no-newline mark, copied with the file');
+  assert.equal(checkCodexAuth('{\n  "tokens": {"refresh_token": "r"}\n}%\n'), '{"tokens":{"refresh_token":"r"}}');
   for (const bad of ['', 'hunter2 hunter3', '{"nothing":1}', '[1]', 'sk-a b']) {
     assert.throws(() => checkCodexAuth(bad), (err) => err.shown && !err.message.includes('hunter'), bad);
   }
