@@ -164,3 +164,20 @@ test('a running session whose app is not up gets no port: the page opens it thro
   assert.equal(open.status, 302);
   assert.equal(open.headers.location, `https://mac.tail1.ts.net:${appPortList[0]}/__woodshed/code/`);
 });
+
+test('an app port refuses a name that is not the console\'s, for requests and websockets: a rebinding page cannot reach the app', async (t) => {
+  const { consolePort, appPortList } = await consoleWithAppPorts(t);
+  await request(consolePort, '/api/sessions', { headers: { host: 'mac.tail1.ts.net' } });
+  const rebound = await request(appPortList[0], '/', { headers: { host: `evil.example:${appPortList[0]}` } });
+  assert.equal(rebound.status, 421);
+  const socketStatus = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port: appPortList[0], path: '/__woodshed/code/', headers: { host: 'evil.example', connection: 'Upgrade', upgrade: 'websocket' } });
+    req.on('upgrade', (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+    req.on('response', (res) => { res.resume(); resolve(res.statusCode); });
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(socketStatus, 421);
+  const own = await request(appPortList[0], '/', { headers: { host: `mac.tail1.ts.net:${appPortList[0]}` } });
+  assert.equal(own.status, 200, 'its own name still opens the app');
+});

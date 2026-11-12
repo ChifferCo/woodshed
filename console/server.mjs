@@ -819,6 +819,11 @@ export function createHandler({
 
   // A request on one of WOODSHED_APP_PORTS: the app of the session the port is lent to (appPorts.mjs).
   function appPortRequest(req, res, port) {
+    // The name is the console's, so the same check as its own pages: a rebinding page's name is refused (sameOrigin.mjs).
+    if (!isKnownHost(req.headers.host, hosts)) {
+      console.warn('appPorts: unknown host refused', { port, host: String(req.headers.host).slice(0, 100) });
+      return reply(res, 421, { error: 'unknown host' });
+    }
     // A cookie is the name's, whatever the port, so with sign-in on these apps could not keep theirs apart.
     if (signInOn()) return reply(res, 403, { error: 'app ports are for a console nobody signs in to: use WOODSHED_APP_DOMAIN' });
     const id = appPorts.idFor(port);
@@ -1923,6 +1928,10 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
     socket.on('error', () => socket.destroy());
     // An app port's websockets are its app's alone, as its requests are (appPortRequest).
     if (appPorts?.owns(socket.localPort)) {
+      if (!isKnownHost(req.headers.host, hosts)) {
+        console.warn('appPorts: unknown host refused', { port: socket.localPort, host: String(req.headers.host).slice(0, 100) });
+        return socket.end('HTTP/1.1 421 Misdirected Request\r\n\r\n');
+      }
       const portId = !auth?.enabled() && !trusted ? appPorts.idFor(socket.localPort) : null;
       if (!portId) return socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
       return appUpgrade(req, socket, head, portId);
