@@ -480,7 +480,7 @@ EOF
 
 serviceStartCommand() {
   if [ "$1" = Darwin ]; then printf 'launchctl bootstrap gui/%s %s' "$(id -u)" "$2"
-  else printf 'systemctl --user daemon-reload && systemctl --user enable --now woodshed.service'
+  else printf 'systemctl --user daemon-reload && systemctl --user enable woodshed.service && systemctl --user restart woodshed.service'
   fi
 }
 
@@ -492,7 +492,9 @@ startService() {
     launchctl bootstrap "gui/$(id -u)" "$file"
   else
     systemctl --user daemon-reload
-    systemctl --user enable --now woodshed.service
+    systemctl --user enable woodshed.service
+    # Not --now: that leaves a console already running with the stack.env and code it started with.
+    systemctl --user restart woodshed.service
     say 'To keep it running when you are logged out too: sudo loginctl enable-linger "$USER"'
   fi
 }

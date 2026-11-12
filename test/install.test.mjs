@@ -428,5 +428,14 @@ test('the console service starts it at login and again after an error, as a laun
   assert.match(unit, /^ExecStart="[^"]*\/bin\/woodshed"$/m);
   assert.match(unit, /^Restart=on-failure$/m);
   assert.match(unit, /^WantedBy=default.target$/m);
-  assert.match(runInstallFunction(`serviceStartCommand Linux x`), /systemctl --user daemon-reload && systemctl --user enable --now woodshed.service/);
+  assert.match(runInstallFunction(`serviceStartCommand Linux x`), /systemctl --user daemon-reload && systemctl --user enable woodshed.service && systemctl --user restart woodshed.service/);
+});
+
+test('a second run restarts a console service that is already running, so it reads the new stack.env', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-systemctl-'));
+  fs.mkdirSync(path.join(dir, 'bin'));
+  fs.writeFileSync(path.join(dir, 'bin/systemctl'), `#!/usr/bin/env bash\necho "$*" >>"${dir}/calls"\n`, { mode: 0o755 });
+  runInstallFunction('startService Linux x', { PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, HOME: dir });
+  const calls = fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n');
+  assert.deepEqual(calls, ['--user daemon-reload', '--user enable woodshed.service', '--user restart woodshed.service']);
 });
