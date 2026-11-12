@@ -30,3 +30,14 @@ test('Claude plan readings and running count exclude Codex sessions', () => {
   assert.equal(planUsageOf(legacy, [legacy, codex]), null);
   assert.equal(planUsageOf({ owner: null }, sessions), null);
 });
+
+test('Codex shows only tagged Codex readings and counts only Codex sessions', () => {
+  const codex = { owner: 'octocat', status: 'running', options: { agent: 'codex' } };
+  const oldCodex = { ...codex, status: 'stopped', planUsage: { ...reading(28, '2026-11-12T10:00:00Z'), agent: 'codex' } };
+  const claude = { owner: 'octocat', status: 'running', planUsage: reading(99, '2026-11-12T12:00:00Z') };
+  const usage = planUsageOf(codex, [codex, oldCodex, claude]);
+  assert.equal(usage.agent, 'codex');
+  assert.equal(usage.windows[0].usedPercent, 28);
+  assert.equal(usage.running, 1);
+  assert.equal(planUsageOf(claude, [codex, oldCodex]), null);
+});

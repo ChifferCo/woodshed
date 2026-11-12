@@ -1019,7 +1019,7 @@
     const face = W.planUsageFace(plan);
     return barMenuButton(s, {
       key: 'plan', label: face.nodes, className: `pplan${face.level ? ` is-${face.level}` : ''}`,
-      title: 'How much of your Claude plan is used, and when it resets',
+      title: `How much of your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan is used, and when it resets`,
       open: () => ({ body: W.planUsageDetails(W.planUsageOf(s, data.sessions) ?? plan), items: [] }),
     });
   }

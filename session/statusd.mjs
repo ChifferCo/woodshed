@@ -54,6 +54,7 @@ import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeSta
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
 import { readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
+import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
@@ -664,7 +665,7 @@ async function status() {
     head: await git('rev-parse', '--short', 'HEAD'),
     prUrl: await prUrl(),
     usage: await usage(),
-    planUsage: await readPlanUsage().catch(planUsageFailed),
+    planUsage: await (CODEX ? readCodexPlanUsage() : readPlanUsage()).catch(planUsageFailed),
     ...(await appStatus()),
     ...appsStatus(),
   };

@@ -376,15 +376,15 @@ And what the shed shows about each session:
 - **CPU and memory**: the container's, from statusd's `/status`, after the
   status word on the card and in the pane bar. Amber past 70% of its memory or
   75% of its cores, red past 90% or 95%, the one over the line first.
-- **Plan**: on a private session's pane bar, how much of your Claude plan's
+- **Plan**: on a private session's pane bar, how much of your session agent's (Claude or Codex) plan's
   five-hour and weekly limits is used, as a short bar and a share for each,
   amber from 70% and `✗ out until` its reset at 100%. Click it for when each
   window resets, a tick for how much of it has gone by, and how old the reading
   is (on a phone, under ⋯). Claude Code hands the limits only to its status
   line, after each answer: `session/statusline.sh` saves them to
   `~/.claude/woodshed-usage/claude.json` and statusd's `/status` returns them
-  (`session/planUsage.mjs`). The plan is shared, so every private session of
-  yours shows the newest reading any of them has, a stopped one's last
+  (`session/planUsage.mjs`; Codex uses local rollout limits from `session/codexPlanUsage.mjs`). Readings and running counts are shared only between private sessions using the same agent. Every private session on the same agent
+  shows the newest reading any of them has, a stopped one's last
   included, and a window whose reset has passed reads 0%. Claude Code reports
   the all-models week only, not claude.ai's per-model one, and leaves a window
   out at times; `/api/oauth/usage` refuses the setup token a session runs on.
