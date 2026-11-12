@@ -216,8 +216,9 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
   `https://<name>` opens the console on your phone.
 - **Others too**: `WOODSHED_TAILSCALE=shared`, then step 6 is not optional and comes first, before step 4, at
   `https://<name>/setup/github`; then set `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env`, restart the console
-  and sign in first. Open app needs a domain of your own for this. Sessions still use this machine's Docker, so
-  everyone who can start one has this machine, as on a server (below). **Done when** the console's log has
+  and sign in first. Open app needs a domain of your own for this. Sessions get no Docker here unless you add
+  `WOODSHED_SESSION_DOCKER=1` to `stack.env`, and with it everyone who can start one has this machine, as on a
+  server (below). **Done when** the console's log has
   `console: GitHub App from the setup page`, and opening it from another device asks to sign in with GitHub.
 
 ## On a server
@@ -225,10 +226,11 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
 There is no installer for a server. `providers/local/README.md`, "Setting it up" and "On a server your team reaches",
 has every step; this is the order, with the checks. Steps marked **Server** run on the machine.
 
-Sessions use the server's Docker unless `stack.env` says `WOODSHED_SESSION_DOCKER=0`. On a console others use, that
-means anyone who can start a session, from a GitHub label or comment too, gets root on the server: the secrets key, so
-every stored secret and Claude token, and every other session's containers and databases. Only people you would give
-root on the box should be able to start sessions there.
+Sessions get the server's Docker (for a repo's compose services, Supabase local or Testcontainers) when `stack.env`
+says `WOODSHED_SESSION_DOCKER=1`, which step 5 sets: a console others sign in to never has it by default, nor gains it
+from an Update. With it, anyone who can start a session, from a GitHub label or comment too, gets root on the server:
+the secrets key, so every stored secret and Claude token, and every other session's containers and databases. Only
+people you would give root on the box should be able to start sessions there; leave it out otherwise.
 
 1. **You.** Make the machine: Ubuntu 24.04, about 4 GB of memory a session (16 GB holds about four). On Hetzner Cloud,
    a CPX41 or CAX31.
@@ -243,7 +245,8 @@ root on the box should be able to start sessions there.
    `stack.env` and `session-env.json` (outside the checkout, mode 600), start the databases, make the secrets key and
    store the root passwords. Keep the key off the Volume: `WOODSHED_LOCAL_SECRETS_KEY_FILE=/etc/woodshed/secrets.key`.
    For a server also set `WOODSHED_PUBLIC_URL` and `WOODSHED_APP_DOMAIN` to the name from step 3, and
-   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate.
+   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate. Add `WOODSHED_SESSION_DOCKER=1` for sessions to use
+   the server's Docker, knowing what it gives (above).
 
    **Done when** `docker compose … ps` shows the databases healthy and `node <woodshed>/providers/local/bin/secret.mjs
    list` lists `db-root/postgres` (and `db-root/mongo`).

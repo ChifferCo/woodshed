@@ -151,14 +151,18 @@ function tlsAskPort(env) {
   return port;
 }
 
-// Whether sessions get this machine's Docker (providers/local/dockerLauncher.mjs, `hostDocker`): on by default on the
-// local provider, where sessions are containers on this machine, and off with WOODSHED_SESSION_DOCKER=0. It is root on
-// the machine for whoever can start a session (providers/local/README.md, "Docker in a session"). Only the console's
-// own settings decide it, never a project file. A Fargate task cannot be given a Docker socket, so it is off on AWS.
+// Whether sessions get this machine's Docker (providers/local/dockerLauncher.mjs, `hostDocker`). It is root on the
+// machine for whoever can start a session (providers/local/README.md, "Docker in a session"), so it is on by default
+// only on one person's console: the local provider, on loopback, with no sign-in and no hosting proxy (the rule of
+// githubAppSetup.mjs's isOnePersonConsole, which imports this file). There the only person who starts sessions already
+// owns the machine. A console others sign in to has it only with WOODSHED_SESSION_DOCKER=1 in its own settings, never
+// by default: a shared session, started by anyone's label or comment, would otherwise reach the console's secrets, and
+// an existing team console taking Update would start handing that out unasked. Only the console's own settings decide
+// it, never a project file. A Fargate task cannot be given a Docker socket, so it is off on AWS.
 let warnedSessionDockerOnEcs = false;
-export function sessionDocker(env) {
+export function sessionDocker(env, { onePerson = true } = {}) {
   const value = String(env.WOODSHED_SESSION_DOCKER ?? '').trim();
-  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 1 (sessions use this machine\'s Docker, the default on the local provider) or 0 (they do not)');
+  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 1 (sessions use this machine\'s Docker; the default on one person\'s local console) or 0 (they do not)');
   if (value === '0') return false;
   if ((envValue(env, 'LAUNCHER') || 'docker') !== 'docker') {
     if (value === '1' && !warnedSessionDockerOnEcs) {
@@ -167,8 +171,10 @@ export function sessionDocker(env) {
     }
     return false;
   }
-  return true;
+  return value === '1' || onePerson;
 }
+
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i;
 
 function localLogin(env) {
   const login = (envValue(env, 'LOCAL_LOGIN') || 'local').trim();
@@ -336,7 +342,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
       memory: envValue(env, 'SESSION_MEMORY') || '6g',
       cpus: envValue(env, 'SESSION_CPUS') || '2',
       // Sessions use this machine's Docker (sessionDocker above).
-      hostDocker: sessionDocker(env),
+      hostDocker: sessionDocker(env, {
+        onePerson: LOOPBACK_HOST.test(envValue(env, 'HOST') || '127.0.0.1') && envValue(env, 'REQUIRE_SIGN_IN') !== '1' && !identitySecret,
+      }),
       ecs: {
         cluster: envValue(env, 'ECS_CLUSTER'),
         taskDefinition: envValue(env, 'ECS_TASK_DEFINITION'),

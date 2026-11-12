@@ -37,7 +37,7 @@ then, not an install setting. For this machine, ask in the same message:
   people on it means "others too", or taking that machine off the tailnet first. Only them also means this, said once
   and plainly: sessions use this machine's Docker (for a repo's compose services, Supabase local or Testcontainers),
   so Claude in a session can do anything on this machine. `WOODSHED_SESSION_DOCKER=0` turns that off. Others too: the GitHub App and sign-in become required, and Open app needs
-  a domain of their own (`WOODSHED_TAILSCALE=shared`), and anyone who can start a session has this machine through its
+  a domain of their own (`WOODSHED_TAILSCALE=shared`), and sessions get no Docker unless they add `WOODSHED_SESSION_DOCKER=1`, with which anyone who can start a session has this machine through its
   Docker, as on a server (step 1 of the briefing). `docs/self-host.md`, "From your other devices", has both.
 
 Someone who only wants to see the console needs none of this:
@@ -61,11 +61,12 @@ the like) at the prompt, so its output lands here. Never ask for a token in the 
    "Costs"), what runs afterwards and on which address, what is open to the network and what is not, and how long the
    slow part takes (the session image's first build: a few minutes on this machine, where it holds no repository;
    several on a server or AWS; longer with no published runtime). On a server, and on this machine when others use it,
-   say this plainly, once, and ask nothing about it: sessions use the machine's Docker, so anyone who can start a
+   say this plainly, once: sessions get the machine's Docker (a repo's compose services, Supabase local) only with
+   `WOODSHED_SESSION_DOCKER=1` in `stack.env`, which you set when they want it, and with it anyone who can start a
    session (a GitHub label or comment included) gets root on the machine. That reaches the secrets key, so every stored
-   secret and Claude token, and every other session's containers and databases. Only people they would give root on
-   the box should be able to start sessions there, or `WOODSHED_SESSION_DOCKER=0` turns it off. AWS sessions never get
-   it.
+   secret and Claude token, and every other session's containers and databases. Set it when they want sessions to use
+   Docker and everyone who can start one is someone they would give root on the box; leave it out otherwise. AWS
+   sessions never get it.
 2. **What the checks found**: what is ready, and what they must fix first.
 3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
    so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).

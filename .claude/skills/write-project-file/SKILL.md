@@ -31,7 +31,8 @@ Look for, and note the file each answer came from:
   fields, each with a `name` and an optional `label`, the first the default. Give each app its own log file.
 - **Services in Docker**: a `supabase/` folder (Supabase local), or a compose file of services the app needs (a queue,
   a search engine, a Postgres the Woodshed databases do not stand in for). On the local provider, sessions use the
-  machine's Docker unless `WOODSHED_SESSION_DOCKER=0`, so the app's `start` can bring them up there: `supabase start`,
+  machine's Docker on one person's console (and on a shared one with `WOODSHED_SESSION_DOCKER=1`), so the app's
+  `start` can bring them up there: `supabase start`,
   or `docker compose -p <name> up -d --wait`. Name them after the session (`$SESSION_ID`, in a compose project name or
   Supabase's `project_id`), since every session shares that Docker, and have `stop` take them down. `start` can check
   `WOODSHED_SESSION_DOCKER=1` and, without it, fail with what is missing (`this session has no Docker: supabase start

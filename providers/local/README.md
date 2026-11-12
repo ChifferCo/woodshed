@@ -161,13 +161,16 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
 ## Docker in a session
 
 Sessions use this machine's Docker, so a repo whose dev setup is a compose file of services, Supabase local
-(`supabase start`) or Testcontainers runs in them. `WOODSHED_SESSION_DOCKER=0` in `stack.env` (or with `install.sh`,
-which saves it) turns it off; only the console's settings decide it, never a project file. A question from Slack never
+(`supabase start`) or Testcontainers runs in them. It is on by default only on one person's console: on loopback,
+with no sign-in and no hosting proxy, where the person starting sessions already owns the machine.
+`WOODSHED_SESSION_DOCKER=0` in `stack.env` (or with `install.sh`, which saves it) turns it off there. A console others
+sign in to (a server, or `WOODSHED_TAILSCALE=shared`) has it only with `WOODSHED_SESSION_DOCKER=1`, so an existing team
+console never gains it from an Update. Only the console's settings decide it, never a project file. A question from Slack never
 gets it, nor a db-admin run. On AWS it is always off: a Fargate task cannot be given a Docker socket, and
 `WOODSHED_SESSION_DOCKER=1` there only logs that it does nothing.
 
 **It is root on this machine for whoever can start a session.** On your own laptop that is you, through Claude. On a
-console others use (a server, or `WOODSHED_TAILSCALE=shared`), anyone who can start a session, from a GitHub label or
+console others use with `WOODSHED_SESSION_DOCKER=1`, anyone who can start a session, from a GitHub label or
 comment too, gets root on the machine: the secrets key, so every stored secret and Claude token, and every other
 session's containers and databases. Only people you would give root on the box should be able to start sessions there.
 

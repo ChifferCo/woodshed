@@ -90,24 +90,30 @@ test('a secrets folder needs its key, from a file only its owner reads and kept 
   assert.equal(typeof provider.secrets.read, 'function');
 });
 
-test('sessions use this machine\'s Docker on the local provider unless WOODSHED_SESSION_DOCKER=0, on a console others sign in to too', async (t) => {
+test('sessions use this machine\'s Docker by default only on one person\'s console; a console others sign in to needs WOODSHED_SESSION_DOCKER=1', async (t) => {
   const { loadConfig } = await import('../../console/config.mjs');
   const { localProvider } = await import('./index.mjs');
   const logs = [];
   t.mock.method(console, 'log', (...line) => logs.push(line));
   const hostDocker = (env) => loadConfig({ GH_TOKEN: 'x', ...env }).launcher.hostDocker;
   assert.equal(hostDocker({}), true, 'one person\'s laptop');
+  assert.equal(hostDocker({ WOODSHED_HOST: 'localhost' }), true);
   assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: '1' }), true);
   assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: '0' }), false);
   assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: ' 0 ' }), false);
-  // A server others sign in to keeps it: the docs say plainly that whoever can start a session has the machine.
-  assert.equal(hostDocker({ WOODSHED_HOST: '0.0.0.0', WOODSHED_REQUIRE_SIGN_IN: '1' }), true);
+  // Root on the machine for whoever starts a session: on a console others use, never by default, nor after an Update.
+  const shared = { WOODSHED_HOST: '0.0.0.0', WOODSHED_REQUIRE_SIGN_IN: '1' };
+  assert.equal(hostDocker(shared), false, 'a server others sign in to');
+  assert.equal(hostDocker({ WOODSHED_REQUIRE_SIGN_IN: '1' }), false, 'sign-in on loopback, as behind Tailscale shared');
+  assert.equal(hostDocker({ WOODSHED_HOST: '0.0.0.0' }), false, 'a host past loopback');
+  assert.equal(hostDocker({ ...shared, WOODSHED_SESSION_DOCKER: '1' }), true, 'said in its own settings');
   assert.throws(() => hostDocker({ WOODSHED_SESSION_DOCKER: 'yes' }), /WOODSHED_SESSION_DOCKER is 1 .* or 0/);
 
+  const line = () => logs.filter(([m]) => m === 'local: sessions use this machine\'s Docker').at(-1);
   localProvider(loadConfig({ GH_TOKEN: 'x' }));
-  assert.deepEqual(logs.find(([m]) => m === 'local: sessions use this machine\'s Docker'), ['local: sessions use this machine\'s Docker', { on: true, off: 'WOODSHED_SESSION_DOCKER=0' }]);
+  assert.deepEqual(line(), ['local: sessions use this machine\'s Docker', { on: true, off: 'WOODSHED_SESSION_DOCKER=0' }]);
   localProvider(loadConfig({ GH_TOKEN: 'x', WOODSHED_SESSION_DOCKER: '0' }));
-  assert.deepEqual(logs.filter(([m]) => m === 'local: sessions use this machine\'s Docker').at(-1), ['local: sessions use this machine\'s Docker', { on: false }]);
+  assert.deepEqual(line(), ['local: sessions use this machine\'s Docker', { on: false, onWith: 'WOODSHED_SESSION_DOCKER=1' }]);
 });
 
 test('on AWS sessions never get a Docker socket, and WOODSHED_SESSION_DOCKER=1 there is said once, not refused', async (t) => {

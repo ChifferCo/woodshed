@@ -307,8 +307,9 @@ secrets.
   told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
   A Tailscale `serve` listener on the same port does not count.
 - **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider sessions
-  use the machine's Docker unless `WOODSHED_SESSION_DOCKER=0` (providers/local/README.md, "Docker in a session"): the
-  console logs `local: sessions use this machine's Docker` with `on` at start, then `launcher: sessions get this
+  use the machine's Docker on one person's console unless `WOODSHED_SESSION_DOCKER=0`, and on a console others sign in
+  to only with `WOODSHED_SESSION_DOCKER=1` (providers/local/README.md, "Docker in a session"): the console logs `local:
+  sessions use this machine's Docker` with `on` at start (`onWith` when it is off by default), then `launcher: sessions get this
   machine's Docker` with the socket's `group` at the first session, and `launcher: session given this machine's Docker`
   for each. A start that fails with `its socket could not be given to the session` gives docker's reason. In the
   session's Terminal, `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists
