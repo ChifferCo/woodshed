@@ -598,6 +598,10 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .lgrid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lgrid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .launch-actions, .set-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.btn-keys { display: inline-flex; margin-left: 8px; }
+.btn-keys kbd { border-color: currentColor; background: transparent; color: inherit; opacity: 0.75; }
+.btn-keys kbd:last-child { margin-right: 0; }
+@media (hover: none) { .btn-keys { display: none; } }
 .launch-card, .set-card { border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
 .launch-card h3 { margin: 0; font-size: 15px; }
 .set-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
@@ -859,6 +863,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .sheet-body { padding: 10px 16px 14px; overflow-y: auto; }
 .krow { display: grid; grid-template-columns: 11rem 1fr; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
 .kkeys { text-align: right; }
+.kwhere { color: var(--sub); }
 .sheet-note { margin: 10px 0 0; color: var(--sub); font-size: 11.5px; }
 .kor { margin: 0 6px 0 2px; color: var(--meta); font-size: 11px; }
 .menu-kbd { margin: 0 0 0 auto; color: var(--sub); }
