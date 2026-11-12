@@ -30,6 +30,8 @@
 //                     pane's prompt with no Enter (terminalFiles.mjs)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
 //   POST /scroll      {"steps": -3, "pane": "agent"}   a phone's swipe, as tmux's wheel would take it
+//   GET  /transcript?limit=<n>   the conversation so far from the agent's own record of it, for a phone to scroll
+//                     through by itself: what was asked, said and run (sessionTranscript.mjs)
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
 //        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own
@@ -59,6 +61,7 @@ import { classifyCodexPane } from './codexState.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
+import { readSessionTranscript } from './sessionTranscript.mjs';
 import { ENGINE_NAMES, viewersOf } from '../shared/databases/index.mjs';
 import { expandPath, loadProject, usesVariable } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
@@ -1110,6 +1113,19 @@ async function handle(req, res) {
   if (route === 'GET /diff') {
     const diff = await readSessionDiff({ repoDir: REPO_DIR });
     return diff.ok ? reply(res, 200, diff) : reply(res, diff.status, { error: diff.error });
+  }
+  if (route === 'GET /transcript') {
+    const limit = new URL(req.url, 'http://statusd').searchParams.get('limit');
+    const read = await readSessionTranscript({
+      agent: CODEX ? 'codex' : 'claude',
+      claudeDir: transcriptDir(),
+      codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
+      ...(limit ? { limit: Number(limit) } : {}),
+    }).catch((err) => {
+      console.warn('statusd: transcript not read', { message: err?.message });
+      return null;
+    });
+    return read ? reply(res, 200, read) : reply(res, 500, { error: 'the transcript could not be read' });
   }
   if (pathname.startsWith('/shed-review/')) return (await reviewHost.handle(req, res)) || reply(res, 404, { error: 'not found' });
   if (route === 'GET /image') return imageReply(req, res);

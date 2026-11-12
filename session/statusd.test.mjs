@@ -478,6 +478,23 @@ test('GET /diff answers the checkout against master with the token only, uncommi
   assert.equal((await git('status', '--porcelain')).stdout.includes('A '), false, 'nothing was staged');
 });
 
+test('GET /transcript answers the newest entries of claude\'s transcript for the repo, with the token only', async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const { repo, call } = await statusdWithApp(t, { app: false, env: { HOME: home } });
+  const dir = path.join(home, '.claude', 'projects', repo.replace(/[/.]/g, '-'));
+  await fs.mkdir(dir, { recursive: true });
+  const turn = (type, text) => JSON.stringify({ type, message: { role: type, content: [{ type: 'text', text }] } });
+  await fs.writeFile(path.join(dir, 'abc.jsonl'), [turn('user', 'Fix it'), turn('assistant', 'Fixed.')].join('\n'));
+
+  assert.equal((await call('GET', '/transcript', 'wrong')).status, 401);
+  const { status, body } = await call('GET', '/transcript?limit=1');
+  assert.equal(status, 200);
+  assert.equal(body.agent, 'claude');
+  assert.deepEqual(body.entries, [{ role: 'assistant', text: 'Fixed.', at: null }]);
+  assert.equal(body.partial, true);
+});
+
 test('a project with no app says none, and never runs a start or a stop', async (t) => {
   const { call, calls } = await statusdWithApp(t, { app: false });
   assert.equal((await call('GET', '/status')).body.app, 'none');

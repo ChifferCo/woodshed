@@ -359,6 +359,10 @@ Agent and Terminal tabs):
   and its path is typed at that terminal's prompt with no Enter. claude starts
   with `--add-dir /tmp/uploads`, so it reads them without asking.
 - **Swipe** on a phone scrolls the pane, through statusd's `POST /scroll`.
+- **The conversation so far**, for an app to scroll by itself, without a round trip for each swipe:
+  `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
+  tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
+  session may read it, while it runs.
 
 And what the shed shows about each session:
 - **The pull request's chip**, on the card and the pane bar: open, draft,

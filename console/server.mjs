@@ -50,6 +50,8 @@
 //   GET  /api/skills             the repo's skills and commands, for New session's / list
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
+//   GET  /api/sessions/<id>/transcript?limit=<n>  the conversation so far (what was asked, said and run), for a phone
+//                                   to scroll through by itself (session/sessionTranscript.mjs)
 //   GET  /review?session=claude-<id>, /reviews/claude-<id>/...   the Review tab: the shed's own review page and its calls,
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
@@ -220,7 +222,7 @@ const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
-const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|applog|diff)$/;
+const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
@@ -1810,10 +1812,12 @@ export function createHandler({
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
-    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff') {
+    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript') {
       const session = runningFor(imageMatch[1], user.login);
       if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
-      return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}` });
+      const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;
+      const query = limit && /^\d{1,4}$/.test(limit) ? `?${new URLSearchParams({ limit })}` : '';
+      return toStatusd(req, res, session, { method: 'GET', path: `/${imageMatch[2]}${query}` });
     }
     if (imageMatch?.[2] === 'image') {
       const session = runningFor(imageMatch[1], user.login);
