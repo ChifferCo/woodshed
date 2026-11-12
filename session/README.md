@@ -55,6 +55,15 @@ daily runtime would run them again every day. `install.sh` builds on the publish
 and builds the stage itself otherwise; without the build arg the stage is built here, as before. `:latest` trails a
 change to the stage by the workflow's run, about the time the build takes.
 
+## Checking saved-app setup in the image
+
+`.github/workflows/sessionApp.yml` builds this Dockerfile for the public `octocat/Hello-World` sample and runs
+`node scripts/appInImage.mjs <image>` on a Docker runner. It starts the complete entrypoint through the Docker
+launcher with the fleet's environment filtered through the ECS allowlist. The model and personal settings are
+fixtures; the console API, filesystem, tmux, statusd and app servers are real. Private sessions exercise setup and
+reuse after reopening the console state; shared sessions exercise repository precedence and a console listener
+restart during startup. The job retains the container logs as `session-app-image-proof`.
+
 ## What a container does
 
 `entrypoint.sh session` (the default):

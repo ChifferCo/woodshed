@@ -1,0 +1,82 @@
+name: Session app image
+
+on:
+  pull_request:
+    paths:
+      - session/**
+      - shared/**
+      - console/fleet.mjs
+      - console/savedApps.mjs
+      - console/sessionApi.mjs
+      - providers/local/dockerLauncher.mjs
+      - scripts/appInImage.mjs
+      - .github/workflows/sessionApp.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: session-app-image-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: App setup in the session image
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.16.0
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Prepare the public sample repository's build context
+        id: fixture
+        run: |
+          set -euo pipefail
+          context="$RUNNER_TEMP/session-app-context"
+          mkdir -p "$context/woodshed" "$context/woodshed-deps"
+          cp -R session shared "$context/woodshed/"
+          # Hello-World has no dependencies or editor. The Dockerfile checks the install manifest against its clone.
+          : > "$context/woodshed-deps.installs"
+          printf 'false\n' > "$context/woodshed-deps.editor"
+          sha=$(git ls-remote https://github.com/octocat/Hello-World.git HEAD | cut -f1)
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "context=$context" >> "$GITHUB_OUTPUT"
+
+      - name: Build the actual session Dockerfile
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.fixture.outputs.context }}
+          file: ${{ steps.fixture.outputs.context }}/woodshed/session/Dockerfile
+          load: true
+          tags: woodshed-app-smoke:local
+          build-args: |
+            RUNTIME=ghcr.io/chifferco/woodshed-session-runtime:latest
+            REPO=octocat/Hello-World
+            REPO_DIR=/work/Hello-World
+            BUILD_SHA=${{ steps.fixture.outputs.sha }}
+          secrets: |
+            gh_token=${{ github.token }}
+          cache-from: type=gha,scope=session-app-smoke
+          cache-to: type=gha,scope=session-app-smoke,mode=max
+
+      - name: Exercise setup and session startup
+        run: |
+          set -euo pipefail
+          node scripts/appInImage.mjs woodshed-app-smoke:local 2>&1 | tee "$RUNNER_TEMP/session-app-image.log"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: session-app-image-proof
+          path: ${{ runner.temp }}/session-app-image.log
+          if-no-files-found: ignore
+          retention-days: 14
