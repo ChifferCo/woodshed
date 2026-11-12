@@ -585,6 +585,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 /* The Project select, with Make my default beside it when the pick is not the person's default. */
 .project-pick { display: flex; gap: 8px; align-items: center; }
 .project-pick select { flex: 1; min-width: 0; }
+.project-only { padding: 6px 0; overflow-wrap: anywhere; }
 .lgrid2, .lgrid3, .lgrid4 { display: grid; gap: 12px; }
 .loptions > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; cursor: pointer; list-style: none; }
 .loptions > summary::-webkit-details-marker { display: none; }
