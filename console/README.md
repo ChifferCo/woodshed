@@ -1477,19 +1477,23 @@ The **Woodshed** card, first on the page, follows the git clone the console runs
 /api/console-settings/updates/check`), it runs `git fetch` on the remote of the branch the clone tracks, and lists the
 commits `HEAD` lacks, newest first (30, then how many more), with the count beside Console settings in the avatar menu
 and a dot on the avatar, for admins only (`updates` in `/api/me`). **Update to latest** (`POST
-/api/console-settings/updates/update`, no typed confirm) runs as a checklist on the card: **Pull the new commits**
-(`git merge --ff-only`, refused when tracked files are edited, or the clone has commits the branch lacks), **Build the
+/api/console-settings/updates/update`, no typed confirm) is refused while the last check's fetch failed, or while the
+clone has commits the branch lacks, and otherwise runs as a checklist on the card: **Pull the new commits**
+(`git merge --ff-only`, stopped when tracked files are edited), **Check the new code starts** (the new
+`providers/console.mjs` with `WOODSHED_CLOUD_START_CHECK=1`, which loads every module, reads the console's settings and
+makes its provider, then exits without listening; 60 seconds at most), **Build the
 session image** (only when `session/` or `shared/` changed and sessions run in docker: the new clone's `install.sh` with
 `WOODSHED_BUILD_ONLY=1`, `WOODSHED_IMAGE` set to `WOODSHED_CLOUD_IMAGE`, `WOODSHED_REPO` the default project's and the
 App's token as `GH_TOKEN`; its output goes to `woodshed-update.log` in the state folder and its last lines to the page),
 then **Restart the console**, which exits with code 75 for its supervisor (`supervisorOf`, as the GitHub App setup's
 Restart). A failed step puts the clone back on the commit it was on (`git reset --keep`), so the console runs as it
-did. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image),
+did. New code that passes the start check and still fails after the restart leaves nothing answering: after two
+minutes the page says so, with the `git -C <clone> reset --keep <from>` that goes back. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image),
 `/api/console-settings/updates` answers 404 and there is no card. `state.json` keeps the last update under
 `woodshedUpdate` (from, to, who, when, and whether the image was built), which the card says after the restart. The
 console logs `woodshedUpdate: following` with the clone, its branch and remote at start, `woodshedUpdate: checked` with
-`behindBy` and `aheadBy`, `check failed`, `update started`, `updated, restarting`, and `update failed` with the step and
-whether it went back.
+`behindBy` and `aheadBy`, `check failed`, `update started`, `updated, restarting`, and `update failed` with the step
+(`pull`, `starts`, `image`) and whether it went back; the start check logs `console: start check passed`.
 
 The **Repos** card, next, lists the repos sessions can start on (the projects above) and adds more.
 **Add a repo** is a list of the repos the GitHub App may reach and that are not projects yet

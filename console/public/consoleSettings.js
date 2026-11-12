@@ -351,9 +351,14 @@
   let updates = null;
   let updatesError = null;
   const updateForm = { busy: null, error: null };
-  // Set once an update is restarting the console: the page reloads when the new one answers.
+  // Set once an update is restarting the console: the page reloads when the new one answers. `restartSince` is when
+  // the page first saw it restarting, so one that never comes back is said, with the way back, after RESTART_GIVE_UP_MS.
   let awaitingRestart = false;
-  const STEP_WORDS = { pull: 'Pull the new commits', image: 'Build the session image', restart: 'Restart the console' };
+  let restartSince = null;
+  const RESTART_GIVE_UP_MS = 2 * 60_000;
+  const STEP_WORDS = {
+    pull: 'Pull the new commits', starts: 'Check the new code starts', image: 'Build the session image', restart: 'Restart the console',
+  };
 
   // How long ago, with "just now" for the first minute, which W.ago rounds up to one.
   function since(iso) {
@@ -434,8 +439,20 @@
       updateSteps(job),
       job.state === 'failed' && h('p', { class: 'form-error', role: 'alert' }, `${job.error}. ${job.to ? `The clone was put back on ${job.from}, so ` : ''}the console runs as it did.`),
       job.logTail?.length > 0 && job.state !== 'restarting' && h('pre', { class: 'update-cmd' }, job.logTail.join('\n')),
-      (job.state === 'restarting' || awaitingRestart) && h('p', { class: 'sub', role: 'status' }, 'The console is restarting on the new code. Running sessions carry on; this page reloads once it answers.'),
+      (job.state === 'restarting' || awaitingRestart) && restartNote(job),
     ];
+  }
+
+  // The new code passed its start check, so it loads; one that fails after that (a port, a database, its state) leaves
+  // nothing answering, and whatever started it (bin/woodshed, a systemd unit) has stopped. Its log says why.
+  function restartNote(job) {
+    if (!restartSince || Date.now() - restartSince < RESTART_GIVE_UP_MS) {
+      return h('p', { class: 'sub', role: 'status' }, 'The console is restarting on the new code. Running sessions carry on; this page reloads once it answers.');
+    }
+    return h('div', { class: 'cap-note', role: 'alert' },
+      h('p', { class: 'form-error', style: 'margin: 0 0 6px' }, `The console has not answered for ${Math.floor((Date.now() - restartSince) / 60_000)} minutes since it restarted on ${job.to ?? 'the new code'}. Its log says why: bin/woodshed's output, or journalctl for its systemd unit. To go back to the code that ran, on its machine:`),
+      h('pre', { class: 'update-cmd' }, `git -C ${updates?.clone ?? '<clone>'} reset --keep ${job.from}\n# then start the console again: ~/.woodshed/bin/woodshed, or systemctl restart <its unit>`),
+      h('p', { class: 'sub', style: 'margin: 6px 0 0' }, 'This page still reloads if it comes back.'));
   }
 
   async function updateAction(kind) {
@@ -498,7 +515,10 @@
     clearTimeout(updatesTimer);
     const job = updates?.job;
     if (job && ['running', 'restarting'].includes(job.state)) following = true;
-    if (job?.state === 'restarting') awaitingRestart = true;
+    if (job?.state === 'restarting') {
+      awaitingRestart = true;
+      restartSince ??= Date.now();
+    }
     updatesTimer = setTimeout(async () => {
       const answered = await loadUpdates();
       if (following && answered && updates && !updates.job) {

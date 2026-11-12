@@ -38,22 +38,28 @@ function repos(t, newer = [['console/a.mjs', 'feat: one'], ['session/b.sh', 'fix
   return { dir, upstream, work, clone, commit };
 }
 
-/** A stand-in for spawning install.sh: prints `lines`, then exits with `code`. */
-function fakeSpawn(calls, { code = 0, lines = ['==> Built the session image'] } = {}) {
+/**
+ * A stand-in for spawning install.sh, which prints `lines` and exits with `code`, and the new code's start check
+ * (node), which prints `startLines` and exits with `startCode`. Each call is kept in `calls`, the start checks' in
+ * `calls.starts`.
+ */
+function fakeSpawn(calls, { code = 0, lines = ['==> Built the session image'], startCode = 0, startLines = ['console: start check passed'] } = {}) {
+  calls.starts = [];
   return (cmd, args, opts) => {
-    calls.push({ cmd, args, env: opts.env });
+    const starting = cmd === process.execPath;
+    (starting ? calls.starts : calls).push({ cmd, args, env: opts.env });
     const child = new EventEmitter();
     child.stdout = new EventEmitter();
     child.stderr = new EventEmitter();
     setImmediate(() => {
-      for (const line of lines) child.stdout.emit('data', Buffer.from(`${line}\n`));
-      child.emit('close', code);
+      for (const line of starting ? startLines : lines) child.stdout.emit('data', Buffer.from(`${line}\n`));
+      child.emit('close', starting ? startCode : code);
     });
     return child;
   };
 }
 
-function setup(t, { clone, supervisor = 'systemd', code, lines, kind = 'docker' }) {
+function setup(t, { clone, supervisor = 'systemd', code, lines, startCode, startLines, kind = 'docker' }) {
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-update-state-'));
   t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
   const store = { state: {}, save() {} };
@@ -61,7 +67,7 @@ function setup(t, { clone, supervisor = 'systemd', code, lines, kind = 'docker' 
   const exits = [];
   const updates = createWoodshedUpdate({
     config: { checkout: clone, stateDir, launcher: { kind, image: 'woodshed-session:acme-app' } }, store, supervisor,
-    repo: () => 'acme/app', token: async () => 'app-token', spawnImpl: fakeSpawn(spawned, { code, lines }), exit: (c) => exits.push(c),
+    repo: () => 'acme/app', token: async () => 'app-token', spawnImpl: fakeSpawn(spawned, { code, lines, startCode, startLines }), exit: (c) => exits.push(c),
   });
   return { updates, store, spawned, exits };
 }
@@ -101,7 +107,11 @@ test('Update pulls, builds the session image when session/ changed, and restarts
   await updates.update({ by: 'mia-dev' });
   const job = await settle(updates);
   assert.equal(job.state, 'restarting');
-  assert.deepEqual(job.steps.map((s) => s.state), ['done', 'done', 'now']);
+  assert.deepEqual(job.steps.map((s) => s.key), ['pull', 'starts', 'image', 'restart']);
+  assert.deepEqual(job.steps.map((s) => s.state), ['done', 'done', 'done', 'now']);
+  assert.equal(spawned.starts.length, 1, 'the new code was started as far as its start check');
+  assert.deepEqual(spawned.starts[0].args, [path.join(clone, 'providers', 'console.mjs')]);
+  assert.equal(spawned.starts[0].env.WOODSHED_CLOUD_START_CHECK, '1');
   assert.equal(git(clone, 'rev-list', '--count', 'HEAD..@{upstream}'), '0', 'the clone has the new commits');
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0].args[0], path.join(clone, 'install.sh'));
@@ -120,7 +130,7 @@ test('a change outside session/ and shared/ restarts the console without buildin
   await updates.update({ by: 'mia-dev' });
   const job = await settle(updates);
   assert.equal(job.state, 'restarting');
-  assert.equal(job.steps[1].detail, 'unchanged');
+  assert.equal(job.steps[2].detail, 'unchanged');
   assert.equal(spawned.length, 0);
 });
 
@@ -131,9 +141,9 @@ test('a failed build puts the clone back where it was, and the console keeps run
   await updates.update({ by: 'mia-dev' });
   const job = await settle(updates);
   assert.equal(job.state, 'failed');
-  assert.deepEqual(job.steps.map((s) => s.state), ['done', 'failed', 'next']);
+  assert.deepEqual(job.steps.map((s) => s.state), ['done', 'done', 'failed', 'next']);
   assert.match(job.error, /install\.sh stopped with code 1: ERROR: failed to solve: no space left on device/);
-  assert.deepEqual(job.logTail, ['ERROR: failed to solve: no space left on device']);
+  assert.equal(job.logTail.at(-1), 'ERROR: failed to solve: no space left on device');
   assert.equal(git(clone, 'rev-parse', 'HEAD'), before, 'back on the commit that worked');
   assert.equal(store.state.woodshedUpdate, undefined);
   await new Promise((r) => setTimeout(r, 1_100));
@@ -152,20 +162,89 @@ test('a clone with changes of its own is refused before anything moves', async (
   assert.equal(git(clone, 'rev-parse', 'HEAD'), before);
 });
 
-test('a clone with commits upstream lacks is counted, and Update cannot move it forward', async (t) => {
+test('a clone with commits upstream lacks is counted, and Update is refused saying so, before anything moves', async (t) => {
   const { clone } = repos(t);
   fs.writeFileSync(path.join(clone, 'local.txt'), 'mine\n');
   git(clone, 'add', '-A');
   git(clone, 'commit', '--quiet', '-m', 'local');
-  const { updates } = setup(t, { clone });
+  const { updates, spawned } = setup(t, { clone });
   await updates.check();
   const view = await updates.view();
   assert.equal(view.aheadBy, 1);
   assert.equal(view.behindBy, 2);
+  const before = git(clone, 'rev-parse', 'HEAD');
+  await assert.rejects(updates.update({ by: 'mia-dev' }),
+    (err) => err.shown && err.message === 'The clone has 1 commit of its own that origin/main does not, so it cannot simply move forward: merge it by hand.');
+  assert.equal((await updates.view()).job, null);
+  assert.equal(git(clone, 'rev-parse', 'HEAD'), before);
+  assert.equal(spawned.starts.length, 0);
+  await updates.update({ by: 'mia-dev' }).catch(() => {});
+  await assert.rejects(updates.update({ by: 'mia-dev' }), /of its own/, 'the refusal frees Update for a later try');
+});
+
+test('a fetch that fails refuses Update, rather than pulling what an earlier check fetched', async (t) => {
+  const { clone, upstream, dir } = repos(t);
+  const { updates } = setup(t, { clone });
+  await updates.check();
+  assert.equal((await updates.view()).behindBy, 2);
+  fs.renameSync(upstream, path.join(dir, 'moved'));
+  const before = git(clone, 'rev-parse', 'HEAD');
+  await assert.rejects(updates.update({ by: 'mia-dev' }), (err) => err.shown && /^Could not fetch origin\/main from file:\/\/.*: fatal: /.test(err.message));
+  assert.equal(git(clone, 'rev-parse', 'HEAD'), before, 'the commits fetched before were not pulled');
+  assert.equal((await updates.view()).job, null);
+});
+
+test('new code that cannot start fails the update before the build or the restart, and the clone goes back', async (t) => {
+  const { clone } = repos(t);
+  const { updates, spawned, exits, store } = setup(t, {
+    clone, startCode: 1,
+    startLines: ['file:///w/providers/console.mjs:1', 'throw new Error("boom");', '^', '', 'Error: boom', '    at file:///w/providers/console.mjs:1:7', '', 'Node.js v22.16.0'],
+  });
+  const before = git(clone, 'rev-parse', 'HEAD');
   await updates.update({ by: 'mia-dev' });
   const job = await settle(updates);
   assert.equal(job.state, 'failed');
-  assert.match(job.steps[0].detail, /forward|fast-forward/i);
+  assert.deepEqual(job.steps.map((s) => [s.key, s.state]), [['pull', 'done'], ['starts', 'failed'], ['image', 'next'], ['restart', 'next']]);
+  assert.equal(job.error, 'the new code cannot start (code 1): Error: boom');
+  assert.equal(git(clone, 'rev-parse', 'HEAD'), before, 'back on the commit that worked');
+  assert.equal(spawned.length, 0, 'no image built from code that cannot start');
+  assert.equal(store.state.woodshedUpdate, undefined);
+  await new Promise((r) => setTimeout(r, 1_100));
+  assert.deepEqual(exits, []);
+});
+
+test('a console that says why it could not start is quoted by that line', async (t) => {
+  const { clone } = repos(t);
+  const { updates } = setup(t, { clone, startCode: 1, startLines: ["console: could not start { message: 'WOODSHED_CLOUD_NEW_THING is not set' }"] });
+  await updates.update({ by: 'mia-dev' });
+  assert.match((await settle(updates)).error, /cannot start \(code 1\): console: could not start \{ message: 'WOODSHED_CLOUD_NEW_THING is not set' \}$/);
+});
+
+test('a clone reached through a symlink still tells a session/ change from any other', async (t) => {
+  const { clone, dir } = repos(t, [['console/a.mjs', 'feat: only the console']]);
+  const link = path.join(dir, 'linked');
+  fs.symlinkSync(clone, link);
+  const { updates, spawned } = setup(t, { clone: link });
+  await updates.update({ by: 'mia-dev' });
+  const job = await settle(updates);
+  assert.equal(job.state, 'restarting');
+  assert.equal(job.steps[2].detail, 'unchanged');
+  assert.equal(spawned.length, 0);
+
+  const other = repos(t);
+  const otherLink = path.join(other.dir, 'linked');
+  fs.symlinkSync(other.clone, otherLink);
+  const built = setup(t, { clone: otherLink });
+  await built.updates.update({ by: 'mia-dev' });
+  assert.equal((await settle(built.updates)).state, 'restarting');
+  assert.equal(built.spawned.length, 1, 'session/ changed, so the image is built');
+});
+
+test('the page gets install.sh\'s lines without their terminal colours', async (t) => {
+  const { clone } = repos(t);
+  const { updates } = setup(t, { clone, lines: ['\x1b[1m==>\x1b[0m Built the session image woodshed-session:acme-app'] });
+  await updates.update({ by: 'mia-dev' });
+  assert.deepEqual((await settle(updates)).logTail.at(-1), '==> Built the session image woodshed-session:acme-app');
 });
 
 test('Update is refused with nothing to start the console again, while one runs, or when up to date', async (t) => {

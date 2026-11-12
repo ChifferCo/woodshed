@@ -366,8 +366,12 @@ secrets.
   remote, then `woodshedUpdate: checked` every hour, or `check failed` with git's error (a remote that wants a password
   fails rather than asks). No Update button means nothing restarts the console: `bin/woodshed` sets
   `WOODSHED_CLOUD_SUPERVISED=1`, and systemd `INVOCATION_ID`. A failed update logs `woodshedUpdate: update failed` with
-  the `step` and `wentBack`; the image build's whole output is `woodshed-update.log` in the state folder. A console that
-  stays down after `updated, restarting` has a supervisor that did not start it again: start it by hand.
+  the `step` and `wentBack`: `starts` is the new code failing its start check (`the new code cannot start`, with its
+  error line), `image` the build, whose whole output is `woodshed-update.log` in the state folder. Update refused with
+  `Could not fetch` or `commits of its own` is the last check's fetch failing, or a clone with commits the branch
+  lacks. A console that stays down after `updated, restarting` either has a supervisor that did not start it again, or
+  new code that failed after its start check (its output says which): `git -C <clone> reset --keep <from>` goes back,
+  then start it by hand.
 - **A setting on the Console settings page did not take.** The console logs
   `settings: changed` with the key, the old and new value and who changed it,
   and `slack: channel changed` for the channel; a value out of range is

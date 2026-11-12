@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import { loadConfig, requireClosedWhenReachable, requireRepo } from '../console/config.mjs';
 import { defaultProject } from '../console/projects.mjs';
@@ -132,4 +134,16 @@ test('the console\'s own secrets are the ones Terraform refuses for an install s
   const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
   const listed = /!contains\(\s*\[("anthropic-api-key"[^\]]*)\]/.exec(block)?.[1] ?? '';
   assert.deepEqual([...listed.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]).sort(), [...CONSOLE_SECRETS].sort());
+});
+
+test('WOODSHED_CLOUD_START_CHECK=1 loads the console and its settings, then exits without listening; a bad setting fails it', () => {
+  const file = fileURLToPath(new URL('./console.mjs', import.meta.url));
+  const run = (env) => spawnSync(process.execPath, [file], { env: { PATH: process.env.PATH, HOME: process.env.HOME, GH_TOKEN: 'x', WOODSHED_CLOUD_START_CHECK: '1', ...env }, encoding: 'utf8', timeout: 30_000 });
+  const ok = run({});
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.match(ok.stdout, /console: start check passed/);
+  assert.doesNotMatch(ok.stdout, /console: listening/);
+  const bad = run({ WOODSHED_PROVIDER: 'nowhere' });
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /console: could not start.*unknown WOODSHED_PROVIDER "nowhere"/s);
 });

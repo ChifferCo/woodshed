@@ -30,7 +30,9 @@ function walk(el, out = []) {
 
 const tick = () => new Promise((r) => setImmediate(r));
 
-async function loadPage(answer, { repos, updates = null } = {}) {
+// `updates` may be a function, called on each read (throwing as a console that does not answer); `clock.now` stands in
+// for Date.now, and `timers` collects what the page schedules, so a test can run them.
+async function loadPage(answer, { repos, updates = null, clock = null, timers = null } = {}) {
   const app = element('div');
   const posted = [];
   const confirms = [];
@@ -55,7 +57,7 @@ async function loadPage(answer, { repos, updates = null } = {}) {
       // The Woodshed card's own read: a console that runs from no git clone answers 404.
       if (path === '/api/console-settings/updates') {
         if (!updates) throw Object.assign(new Error('this console does not run from a git clone'), { status: 404 });
-        return structuredClone(updates);
+        return structuredClone(typeof updates === 'function' ? updates() : updates);
       }
       return structuredClone(answer);
     },
@@ -70,7 +72,8 @@ async function loadPage(answer, { repos, updates = null } = {}) {
     errorParts: (err) => [err.message, ...(err.link ? [' ', h('a', { href: err.link.href, target: '_blank' }, `${err.link.text} ↗`)] : [])],
   };
   const context = vm.createContext({
-    window: { Woodshed: W }, console, setInterval: () => 0, setTimeout: () => 0, clearTimeout: () => {}, Date,
+    window: { Woodshed: W }, console, setInterval: () => 0, setTimeout: (fn) => { timers?.push(fn); return 0; }, clearTimeout: () => {},
+    Date: clock ? Object.assign(class extends Date {}, { now: () => clock.now }) : Date,
     document: { getElementById: () => app, activeElement: null },
   });
   vm.runInContext(source, context);
@@ -247,7 +250,10 @@ test('the Woodshed card lists the newer commits, and Update shows the update\'s 
   assert.match(textOf(app), /bbbbbbbnewer.*aaaaaaaolder/, 'newest first');
   posted.reply = () => ({
     ...UPDATES,
-    job: { state: 'running', from: '0ca189f', to: null, logTail: [], steps: [{ key: 'pull', state: 'done', detail: '0ca189f → bbbbbbb', seconds: 0 }, { key: 'image', state: 'now' }, { key: 'restart', state: 'next' }] },
+    job: {
+      state: 'running', from: '0ca189f', to: null, logTail: [],
+      steps: [{ key: 'pull', state: 'done', detail: '0ca189f → bbbbbbb', seconds: 0 }, { key: 'starts', state: 'done', seconds: 1 }, { key: 'image', state: 'now' }, { key: 'restart', state: 'next' }],
+    },
   });
   button(app, 'Update to latest').listeners.click();
   await tick();
@@ -255,6 +261,7 @@ test('the Woodshed card lists the newer commits, and Update shows the update\'s 
   const steps = walk(app).filter((e) => e.tag === 'li' && /^is-/.test(e.className));
   assert.deepEqual(steps.map((e) => [e.className, textOf(e)]), [
     ['is-done', '✓Pull the new commits0ca189f → bbbbbbb · 0 s'],
+    ['is-done', '✓Check the new code starts1 s'],
     ['is-now', 'Build the session imagetakes a few minutes'],
     ['is-next', 'Restart the console'],
   ]);
@@ -293,4 +300,33 @@ test('the Woodshed card: up to date, a clone of its own, nothing to restart it, 
   const none = await loadPage(ANSWER);
   await tick();
   assert.ok(!/Woodshed this console runs/.test(textOf(none.app)));
+});
+
+test('a console that has not come back two minutes after an update\'s restart says so, with the way back', async () => {
+  const clock = { now: Date.parse('2026-11-12T01:00:00.000Z') };
+  const timers = [];
+  let down = false;
+  const restarting = {
+    ...UPDATES,
+    job: {
+      state: 'restarting', from: '0ca189f', to: 'bbbbbbb', error: null, logTail: [],
+      steps: [{ key: 'pull', state: 'done' }, { key: 'starts', state: 'done' }, { key: 'image', state: 'done' }, { key: 'restart', state: 'now' }],
+    },
+  };
+  const { app } = await loadPage(ANSWER, {
+    clock, timers, updates: () => { if (down) throw new Error('fetch failed'); return restarting; },
+  });
+  await tick();
+  assert.match(textOf(app), /The console is restarting on the new code/);
+  const next = async () => { await timers.at(-1)(); await tick(); };
+  down = true;
+  clock.now += 60_000;
+  await next();
+  assert.match(textOf(app), /The console is restarting on the new code/, 'a minute is an ordinary restart');
+  clock.now += 2 * 60_000;
+  await next();
+  const text = textOf(app);
+  assert.match(text, /The console has not answered for 3 minutes since it restarted on bbbbbbb/);
+  assert.match(text, /git -C \/home\/me\/\.woodshed\/src reset --keep 0ca189f/);
+  assert.match(text, /This page still reloads if it comes back/);
 });

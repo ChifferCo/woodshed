@@ -273,11 +273,18 @@ follows the branch that clone tracks, `main` for a fresh one. Every hour it runs
 commits it lacks: the **Woodshed** card, first on Console settings, lists them, and admins see the count beside
 Console settings in the avatar menu, with a dot on the avatar. **Update to latest** then:
 
-1. pulls them (`git merge --ff-only`): a clone with edits of its own, or commits `main` lacks, is refused with why;
-2. builds the session image again, with this tag (`WOODSHED_CLOUD_IMAGE`), when `session/` or `shared/` changed, by
+1. pulls them (`git merge --ff-only`): a clone with edits of its own, or commits `main` lacks, or a fetch that just
+   failed, is refused with why;
+2. checks the new code starts: its `providers/console.mjs` loads every module and reads this console's settings, then
+   exits (`WOODSHED_CLOUD_START_CHECK=1`). Code that cannot start, such as a setting it needs and `stack.env` lacks,
+   fails here, and the clone goes back where it was;
+3. builds the session image again, with this tag (`WOODSHED_CLOUD_IMAGE`), when `session/` or `shared/` changed, by
    running the new `install.sh` with `WOODSHED_BUILD_ONLY=1`; a failed build puts the clone back where it was;
-3. restarts the console on the new code, with exit code 75, which `~/.woodshed/bin/woodshed` and a systemd unit with
+4. restarts the console on the new code, with exit code 75, which `~/.woodshed/bin/woodshed` and a systemd unit with
    `Restart=on-failure` start again. A console started some other way gets no button: the card shows the commands.
+
+If the console does not come back after the restart, its output says why. `git -C ~/.woodshed/src reset --keep
+<the commit it ran>` (the card shows it) puts the old code back; then start the console again.
 
 Running sessions carry on, on the image they started with. Update does not touch the databases or shared services:
 when `compose.yml` or an engine's file changed, `pull` and `up -d` them as the table above says.

@@ -1,7 +1,8 @@
 // The dev console's stand-in for the Woodshed clone a real console runs from, for the Console settings page's Woodshed
 // card (woodshedUpdate.mjs): a made-up upstream with four commits the clone lacks, one of them in session/, so Update
-// pulls, "builds" the session image with the clone's install.sh (a stand-in that prints a few lines and waits) and
-// restarts the console, which devConsole.mjs starts again. Nothing here touches the checkout the dev console runs from.
+// pulls, runs the clone's providers/console.mjs as its start check (a stand-in that says it passed), "builds" the
+// session image with the clone's install.sh (a stand-in that prints a few lines and waits) and restarts the console,
+// which devConsole.mjs starts again. Nothing here touches the checkout the dev console runs from.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -13,6 +14,13 @@ const NEWER = [
   ['fix(session): keep the terminal connected through a console restart', 'Hu Bot', 'session/statusd.mjs', 21],
   ['feat(console): show how far behind its upstream the console is', 'Octo Cat', 'console/woodshedUpdate.mjs', 5],
 ];
+
+// The start check runs the clone's providers/console.mjs with WOODSHED_CLOUD_START_CHECK=1; the real one is the dev
+// console's own checkout, which the made-up clone is not.
+const FAKE_CONSOLE = `// The dev console's stand-in for providers/console.mjs: Update's start check runs it.
+await new Promise((r) => setTimeout(r, 1000));
+console.log('console: start check passed (made up)');
+`;
 
 const FAKE_INSTALL = `#!/usr/bin/env bash
 # The dev console's stand-in for install.sh: Update runs it to build the session image.
@@ -50,6 +58,7 @@ export function makeDevClone(dir) {
   execFileSync('git', ['init', '--quiet', '--bare', '--initial-branch=main', upstream]);
   git(work, ['init', '--quiet', '--initial-branch=main']);
   write('install.sh', FAKE_INSTALL);
+  write('providers/console.mjs', FAKE_CONSOLE);
   write('session/statusd.mjs', '// made up\n');
   write('README.md', '# Woodshed (made up)\n');
   git(work, ['add', '-A']);

@@ -3,7 +3,10 @@
 // branch its clone follows and counts the commits it lacks; the Console settings page's Woodshed card lists them, and
 // the avatar menu counts them for admins. Update pulls them, builds the session image again when the code it is made
 // from changed (install.sh, WOODSHED_BUILD_ONLY), and exits with RESTART_EXIT_CODE, so whatever runs the console
-// (install.sh's bin/woodshed, a systemd unit with Restart=on-failure) starts it again on the new code.
+// (install.sh's bin/woodshed, a systemd unit with Restart=on-failure) starts it again on the new code. Before the
+// build and the restart, the new code is started as far as loading its modules and settings (WOODSHED_CLOUD_START_CHECK,
+// providers/console.mjs): one that cannot start fails the update while the clone can still go back, rather than after
+// the restart, when nothing would start the old code again.
 //
 // A console with no clone, such as the AWS console image, has no card. One that nothing would start again has no Update
 // button: the card says the commands instead.
@@ -24,11 +27,20 @@ const RESTART_DELAY_MS = 1_000;
 // The folders the session image is built from (session/Dockerfile copies them): a change in one means a new image.
 const IMAGE_PATHS = ['session', 'shared'];
 const LOG_LINES_KEPT = 200;
+// How long the new code may take to load its modules and settings before the start check gives up on it.
+const START_CHECK_MS = 60_000;
 // The console's own code: its clone is this folder's, unless WOODSHED_CLOUD_CHECKOUT names another.
 const OWN_DIR = path.resolve(import.meta.dirname, '..');
 
 const firstLine = (text) => String(text ?? '').trim().split('\n')[0].trim();
-const errorText = (err) => firstLine(err?.stderr) || firstLine(err?.message) || String(err);
+// git's reason is its `fatal:` or `error:` line; the `hint:` lines it prints first say what to do, not what went wrong.
+function gitReason(text) {
+  const lines = String(text ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => /^(fatal|error):/i.test(l)) ?? lines.find((l) => !/^hint:/i.test(l)) ?? '';
+}
+const errorText = (err) => gitReason(err?.stderr) || firstLine(err?.message) || String(err);
+// install.sh's `==>` is bold on a terminal: its escape codes would show as text on the page.
+const plainText = (text) => String(text).replace(/\x1b\[[0-9;]*[A-Za-z]/g, '');
 const short = (sha) => String(sha ?? '').slice(0, 7);
 
 /** @returns {string}  a remote's URL as the page shows it: no user name or token in it */
@@ -69,6 +81,9 @@ export function createWoodshedUpdate({
   // Never a password prompt: a remote that asks for one fails instead.
   const gitEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
   let top = null;
+  // Where the Woodshed folder is inside the clone ('' at its top), as git names paths: from git itself, so a folder
+  // reached through a symlink (macOS's /var is /private/var) names the same files.
+  let prefix = '';
   let upstream = null;
   let remoteUrl = null;
   let found = null;
@@ -87,6 +102,7 @@ export function createWoodshedUpdate({
     found ??= (async () => {
       try {
         top = await git(['rev-parse', '--show-toplevel']);
+        prefix = (await run('git', ['-C', sourceDir, 'rev-parse', '--show-prefix'], { env: gitEnv })).stdout.trim();
       } catch {
         console.log('woodshedUpdate: not a git clone, no updates to follow', { dir: sourceDir });
         return false;
@@ -144,7 +160,34 @@ export function createWoodshedUpdate({
   }
 
   function appendLog(text) {
-    job.log = `${job.log}${text}`.split('\n').slice(-LOG_LINES_KEPT).join('\n');
+    job.log = `${job.log}${plainText(text)}`.split('\n').slice(-LOG_LINES_KEPT).join('\n');
+  }
+
+  // The new code's providers/console.mjs, with WOODSHED_CLOUD_START_CHECK=1: it loads every module, reads the settings
+  // this console runs with and makes its provider, then exits without listening. A throw, a setting the new code
+  // refuses, or a Node too old for it fails here.
+  async function startCheck() {
+    await new Promise((resolve, reject) => {
+      const child = spawnImpl(process.execPath, [path.join(sourceDir, 'providers', 'console.mjs')], {
+        env: { ...gitEnv, WOODSHED_CLOUD_START_CHECK: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let out = '';
+      const take = (chunk) => { out += chunk; appendLog(String(chunk)); };
+      const timer = setTimeout(() => {
+        child.kill?.('SIGKILL');
+        reject(new Error(`the new code did not finish its start check in ${START_CHECK_MS / 1000} s`));
+      }, START_CHECK_MS);
+      child.stdout.on('data', take);
+      child.stderr.on('data', take);
+      child.on('error', (err) => { clearTimeout(timer); reject(err); });
+      child.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === 0) return resolve();
+        const lines = plainText(out).split('\n').map((l) => l.trim()).filter(Boolean);
+        const why = lines.find((l) => /could not start|^\w*Error\b/.test(l)) ?? lines.at(-1) ?? 'no output';
+        reject(new Error(`the new code cannot start (code ${code}): ${why}`));
+      });
+    });
   }
 
   // install.sh from the new code builds the session image, tagged as the console runs it. Its output goes to the log
@@ -186,10 +229,14 @@ export function createWoodshedUpdate({
       const to = await git(['rev-parse', 'HEAD']);
       job.to = short(to);
       finish('pull', `${short(from)} → ${short(to)}`);
-      const imagePaths = IMAGE_PATHS.map((p) => path.relative(top, path.join(sourceDir, p)) || '.');
-      const imageChanged = await git(['diff', '--quiet', from, to, '--', ...imagePaths]).then(() => false, () => true);
+      begin('starts');
+      await startCheck();
+      finish('starts');
+      begin('image');
+      // git diff --quiet: 1 is a difference, anything else a failure, which stops the update rather than guessing.
+      const imageChanged = await git(['diff', '--quiet', from, to, '--', ...IMAGE_PATHS.map((p) => `${prefix}${p}`)])
+        .then(() => false, (err) => { if (err.code === 1) return true; throw err; });
       if (imageChanged && config.launcher.kind === 'docker') {
-        begin('image');
         await buildImage();
         finish('image', config.launcher.image);
       } else {
@@ -228,7 +275,10 @@ export function createWoodshedUpdate({
       if (!upstream) refuse('The clone follows no branch: check one out that tracks the remote, such as main.');
       if (!supervisor) refuse('Nothing would start this console again after the update: run it with install.sh\'s bin/woodshed or a systemd unit, or update it by hand.');
       await check();
-      if (!compared?.behindBy) refuse(checkError ?? 'Already up to date.');
+      // A failed fetch leaves the last check's numbers: the update would pull what was fetched before, unseen.
+      if (checkError) refuse(checkError);
+      if (!compared?.behindBy) refuse('Already up to date.');
+      if (compared.aheadBy) refuse(`The clone has ${compared.aheadBy === 1 ? '1 commit' : `${compared.aheadBy} commits`} of its own that ${upstream} does not, so it cannot simply move forward: merge it by hand.`);
     } catch (err) {
       claimed = false;
       throw err;
@@ -237,6 +287,7 @@ export function createWoodshedUpdate({
       state: 'running', by, startedAt: new Date(now()).toISOString(), from: compared.head, to: null, error: null, log: '',
       steps: [
         { key: 'pull', state: 'next' },
+        { key: 'starts', state: 'next' },
         { key: 'image', state: 'next' },
         { key: 'restart', state: 'next' },
       ],
