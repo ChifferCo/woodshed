@@ -369,8 +369,8 @@ wantTailscale() {
   local home=$1 saved=""
   [ -f "$home/tailscale" ] && saved=$(cat "$home/tailscale")
   case ${WOODSHED_TAILSCALE:-$saved} in
-    1) return 0 ;;
-    0) return 1 ;;
+    1) printf '1\n' >"$home/tailscale"; return 0 ;;
+    0) printf '0\n' >"$home/tailscale"; return 1 ;;
     '') ;;
     *) fail "WOODSHED_TAILSCALE is 1 or 0, not ${WOODSHED_TAILSCALE:-$saved}" ;;
   esac
@@ -383,7 +383,11 @@ wantTailscale() {
   fi
   local answer
   answer=$(ask 'Reach Woodshed from your other devices over Tailscale? [y/N] ')
-  case $answer in [yY]*) return 0 ;; *) return 1 ;; esac
+  # Only an answer the person gave is kept: no terminal, or Tailscale installed later, asks again.
+  case $answer in
+    [yY]*) printf '1\n' >"$home/tailscale"; return 0 ;;
+    *) printf '0\n' >"$home/tailscale"; return 1 ;;
+  esac
 }
 
 # Serves the console to the tailnet, over https, and prints the name it answers to. Where the tailnet has Serve off the
@@ -559,9 +563,8 @@ main() {
   if wantTailscale "$home"; then
     tailscale=1
     publicUrl=https://$(tailscaleServe "$CONSOLE_PORT" "$home/tailscale-serve.log")
-    say "Tailscale serves the console at $publicUrl, to your tailnet only"
+    say "Tailscale serves the console at $publicUrl, to your tailnet only. It has no sign-in until the GitHub App is made and the first sign-in completes: set WOODSHED_REQUIRE_SIGN_IN=1 in $stackEnv once the App is in"
   fi
-  printf '%s\n' "$tailscale" >"$home/tailscale"
 
   local settings engines network
   settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir")

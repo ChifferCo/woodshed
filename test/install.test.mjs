@@ -439,3 +439,11 @@ test('a second run restarts a console service that is already running, so it rea
   const calls = fs.readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n');
   assert.deepEqual(calls, ['--user daemon-reload', '--user enable woodshed.service', '--user restart woodshed.service']);
 });
+
+test('only an answer the person gave is remembered: no terminal and nothing set leaves nothing to reuse', () => {
+  const { dir, env } = tailscaleEnv();
+  runInstallFunction(`wantTailscale "${dir}" || true`, env);
+  assert.equal(fs.existsSync(path.join(dir, 'tailscale')), false);
+  runInstallFunction(`wantTailscale "${dir}" || true`, { ...env, WOODSHED_TAILSCALE: '0' });
+  assert.equal(fs.readFileSync(path.join(dir, 'tailscale'), 'utf8'), '0\n');
+});
