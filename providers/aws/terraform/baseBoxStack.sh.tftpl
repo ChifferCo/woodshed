@@ -56,6 +56,7 @@ cat > "$STACK/Caddyfile" <<'EOF'
 }
 
 (console) {
+	encode zstd gzip
 	reverse_proxy 127.0.0.1:7690
 }
 
@@ -83,6 +84,7 @@ https://*.${domain} {
 		on_demand
 %{ endif ~}
 	}
+	encode zstd gzip
 	reverse_proxy 127.0.0.1:7690
 }
 

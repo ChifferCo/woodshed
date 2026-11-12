@@ -236,6 +236,7 @@ List, so Let's Encrypt counts every certificate for any `*.sslip.io` name, every
    }
 
    woodshed.203-0-113-10.sslip.io {
+   	encode zstd gzip
    	reverse_proxy 127.0.0.1:7690
    }
 
@@ -243,9 +244,13 @@ List, so Let's Encrypt counts every certificate for any `*.sslip.io` name, every
    	tls {
    		on_demand
    	}
+   	encode zstd gzip
    	reverse_proxy 127.0.0.1:7690
    }
    ```
+
+   `encode zstd gzip` compresses what the console and the apps send (a dev server's modules are text, and cross the
+   internet otherwise as they are); Caddy leaves websocket upgrades alone and streams `text/event-stream` as written.
 
    The console's own name gets an ordinary certificate at start. The wildcard site never gets a wildcard certificate:
    with `on_demand` Caddy gets one for the exact name in each handshake, after the ask answers 2xx. Caddy's `ask` is
