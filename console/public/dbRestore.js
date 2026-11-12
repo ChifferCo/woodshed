@@ -76,9 +76,11 @@
     return h('button', {
       type: 'button', class: 'btn btn-plain',
       onclick: async (e) => {
+        // Read before the await: once the click's dispatch ends, the event's currentTarget is null.
+        const button = e.currentTarget;
         try {
           await navigator.clipboard.writeText(text);
-          e.currentTarget.textContent = 'Copied';
+          button.textContent = 'Copied';
         } catch {
           window.alert('The browser would not copy. Select the text and copy it by hand.');
         }
