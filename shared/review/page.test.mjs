@@ -42,11 +42,11 @@ test('no bare backtick inside the page literal', () => {
   assert.deepEqual(offenders, [], `backtick inside REVIEW_HTML:\n${offenders.join('\n')}`);
 });
 
-// The three shapes the file means (DARK_PALETTE appears twice). Everything else in it is literal text, so a fifth
+// The four shapes the file means (DARK_PALETTE appears twice). Everything else in it is literal text, so a fifth
 // is a mistake rather than a feature: a `${...}` written by accident inside
 // what looks like plain CSS or JavaScript runs at module load and disappears
 // into the page.
-const MEANT = ['${DARK_PALETTE}', '${tokenizeLine.toString()}', '${createAskState.toString()}'];
+const MEANT = ['${DARK_PALETTE}', '${tokenizeLine.toString()}', '${createAskState.toString()}', '${layoutDiagram.toString()}'];
 
 test('the only interpolations are the ones the file means', () => {
   const body = literalBody();

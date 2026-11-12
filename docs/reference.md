@@ -143,8 +143,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **Watch:** the console lists every session; click one for its live terminal.
 - **Review:** the session page's **Review** tab shows what its checkout
   changes against the default branch, uncommitted work included. Its **Overview** has Claude's analysis: what
-  the change does, the questions to answer before approving and the decisions it made (each question links to the
-  files that answer it), and how the code is shaped. **Files changed** has every file's diff, open, in the
+  the change does, the decisions it made that a reviewer has to agree with (each links to the files that carry it),
+  and how the code is shaped, with a drawing of it before and after when the change rewires how pieces connect. **Files changed** has every file's diff, open, in the
   analysis's reading order. Answers about any line or file, and a chat that offers starter questions. A stopped
   session's tab shows what it pushed, as GitHub has it.
 - **Try its app:** **Start app** on the session's rail card (in the pane bar
