@@ -13,7 +13,8 @@
 // what a console being redeployed gives) and the start must wait it out.
 //
 // It is not the real image check. What it does not prove is printed first and last (LIMITS), and goes in the pull
-// request with the log.
+// request with the log. Exits 0 when it passed, 1 when it failed, 2 when it could not run, and 3 when it passed but the
+// branch changes something it cannot try (NOT COVERED): the real image run is still due then.
 
 import fs from 'node:fs';
 import http from 'node:http';
@@ -32,13 +33,13 @@ import { loadProject, usesVariable } from '../../../shared/project.mjs';
 const REPO = path.resolve(import.meta.dirname, '../../..');
 // Where the image keeps its own copies (session/Dockerfile).
 export const IMAGE_SESSION_DIR = '/opt/woodshed/session';
-// The files the image copies from session/ to somewhere else than /opt/woodshed, and which this run therefore uses as
-// the image has them, not as the branch has them.
+// What the branch changes that this run cannot put in place: the image is built from it. The image's other copies from
+// session/ outside /opt/woodshed are the branch's in the run: gh.sh goes first on the PATH and tmux.conf in the home
+// (IMAGE_PLACED, which a test keeps in step with the Dockerfile).
 export const IMAGE_ONLY = [
   { file: 'Dockerfile', what: 'the image itself (session/Dockerfile)' },
-  { file: 'gh.sh', what: '/usr/local/bin/gh (session/gh.sh)' },
-  { file: 'tmux.conf', what: '~/.tmux.conf (session/tmux.conf)' },
 ];
+export const IMAGE_PLACED = { 'gh.sh': '/usr/local/bin/gh', 'tmux.conf': '/home/node/.tmux.conf' };
 const PORT_OFFSET = 100;
 // The made-up owner's Claude token: claude opens on it and cannot call Anthropic, so the run spends nothing.
 const DUMMY_CLAUDE_TOKEN = 'sk-ant-oat01-start-in-session-not-a-token';
@@ -284,9 +285,11 @@ async function main() {
   if (!fs.existsSync(claudeBin)) throw new Error(`no ${claudeBin}: run this inside a Woodshed session, which installs claude there`);
   fs.mkdirSync(path.join(dirs.home, '.local/bin'), { recursive: true });
   fs.symlinkSync(fs.realpathSync(claudeBin), path.join(dirs.home, '.local/bin/claude'));
-  // The branch's gh wrapper, ahead of the image's /usr/local/bin/gh, which would ask the image's githubToken.sh.
+  // The branch's gh wrapper, ahead of the image's /usr/local/bin/gh, which would ask the image's githubToken.sh, and its
+  // tmux.conf where the image puts it (IMAGE_PLACED).
   fs.copyFileSync(path.join(checkout, 'session/gh.sh'), path.join(dirs.bin, 'gh'));
   fs.chmodSync(path.join(dirs.bin, 'gh'), 0o755);
+  fs.copyFileSync(path.join(checkout, 'session/tmux.conf'), path.join(dirs.home, '.tmux.conf'));
 
   const ghToken = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim();
   const gitIdentity = { name: git(['config', 'user.name']) || 'Start In Session', email: git(['config', 'user.email']) || 'start-in-session@example.com' };
@@ -368,10 +371,13 @@ async function main() {
   for (const [ok, what] of checks) realLog(`${ok === 'skip' ? 'skip' : ok ? 'ok  ' : 'FAIL'} ${what}`);
   banner(LIMITS, 'What this run does not prove (put these in the pull request with the log)');
   const passed = checks.every(([ok]) => ok === true);
-  realLog(passed ? `startInSession: PASSED, within the limits above. Log: ${logFile}` : `startInSession: FAILED. Log: ${logFile}; the run's files are kept in ${scratch}`);
+  const gaps = IMAGE_ONLY.filter((f) => imageOnlyChanged.includes(f.file)).map((f) => f.what);
+  if (!passed) realLog(`startInSession: FAILED. Log: ${logFile}; the run's files are kept in ${scratch}`);
+  else if (gaps.length) realLog(`startInSession: PASSED what it can try, but NOT COVERED: ${gaps.join(', ')}. The real image run is still due, and the pull request must say so. Log: ${logFile}`);
+  else realLog(`startInSession: PASSED, within the limits above. Log: ${logFile}`);
   if (args.keep) realLog(`startInSession: left running (--keep): statusd on ${7682 + PORT_OFFSET}, its tmux with TMUX_TMPDIR=${dirs.tmux}. To stop it: TMUX_TMPDIR=${dirs.tmux} tmux kill-server; kill ${runProcesses(dirs.tmp).join(' ')}`);
   else if (passed) fs.rmSync(scratch, { recursive: true, force: true });
-  process.exit(passed ? 0 : 1);
+  process.exit(!passed ? 1 : gaps.length ? 3 : 0);
 }
 
 if (isMain(import.meta.url)) {

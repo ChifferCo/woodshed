@@ -799,16 +799,18 @@ a private session, beside the live one, with the image's own bash, curl, jq, nod
 **What it does not prove.** It prints this list first and last; put it in the PR's Proof with the log:
 
 - **The image is the one the session runs in, as last deployed.** A change to `session/Dockerfile`, a system package
-  or claude's version is not tried. Neither is a change to a file the image copies outside `/opt/woodshed`
-  (`session/gh.sh`, `session/tmux.conf`): when the branch changes one, the run says `NOT COVERED`. Then the image run
-  above is still due.
+  or claude's version is not tried. When the branch changes the Dockerfile, the run says `NOT COVERED` and exits 3
+  even though its checks passed: the image run above is still due. The files the image copies from `session/` outside
+  `/opt/woodshed` (`gh.sh`, `tmux.conf`) are the branch's in the run, and a test keeps that list in step with the
+  Dockerfile.
 - **It is not the container's first process.** How the session takes a signal and how the container exits are not
   tried.
 - **No ECS, Fargate or task definition:** no IAM, network or secret injection.
 - **The console is a stand-in:** no own env lines, no saved Claude home, no databases.
 - **A project with databases or Redis is refused.** They would need ports and data of their own.
 
-A failed run keeps its folder, under `/tmp/start-in-session-*`, and names it. `--keep` leaves the start running, on
+It exits 0 when it passed, 1 when it failed, 2 when it could not run, and 3 when it passed but something was
+`NOT COVERED`. A failed run keeps its folder, under `/tmp/start-in-session-*`, and names it. `--keep` leaves the start running, on
 statusd port 7782.
 
 ## Checking a console page change in a browser

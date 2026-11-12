@@ -64,7 +64,7 @@ sendReport() {
     --arg cost "$(awk -v p="$(cost_of "$DIR/logs/plan.jsonl")" -v t="$(cost_of "$DIR/logs/test.jsonl")" 'BEGIN { printf "%.2f", p + t }')" \
     '{verdict: $verdict, report: $report, sha: $sha, costUsd: ($cost | tonumber)}' > "$body"
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 60 -o /tmp/qa-report-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: application/json' \
+    | curl -sS --max-time 60 -o "${WOODSHED_TMP:-/tmp}/qa-report-reply.json" -w '%{http_code}' -X POST -K - -H 'content-type: application/json' \
       --data "@$body" "$WOODSHED_CONSOLE_URL/qa-report") || code=000
   rm -f "$body"
   say "Report sent to the console (status: $code)"

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { fixtureProject } from '../../../shared/projectFixture.mjs';
 import { loadProject } from '../../../shared/project.mjs';
-import { IMAGE_ONLY, imageOnlyChanges, limits, liveFilesTouched, refusal, runProcesses } from './startInSession.mjs';
+import { IMAGE_ONLY, IMAGE_PLACED, imageOnlyChanges, limits, liveFilesTouched, refusal, runProcesses } from './startInSession.mjs';
 
 const SESSION_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../session');
 
@@ -36,8 +36,8 @@ test('imageOnlyChanges names each file the image copies outside /opt/woodshed th
     for (const { file } of IMAGE_ONLY) fs.writeFileSync(path.join(dir, side, file), `${file} as built\n`);
   }
   assert.deepEqual(imageOnlyChanges(path.join(dir, 'branch'), path.join(dir, 'image')), []);
-  fs.appendFileSync(path.join(dir, 'branch', 'gh.sh'), 'changed\n');
-  assert.deepEqual(imageOnlyChanges(path.join(dir, 'branch'), path.join(dir, 'image')), ['gh.sh']);
+  fs.appendFileSync(path.join(dir, 'branch', 'Dockerfile'), 'RUN true\n');
+  assert.deepEqual(imageOnlyChanges(path.join(dir, 'branch'), path.join(dir, 'image')), ['Dockerfile']);
 });
 
 test('a project with databases or Redis is refused: they would need ports and data of their own', (t) => {
@@ -92,4 +92,15 @@ test('the start names no /tmp path and no fixed port outside the overridable def
     const fixed = code(file).filter(({ line }) => /(^|[^-])(\/tmp\/|\/opt\/woodshed\/session\/)/.test(line) && !/:-\/(tmp|opt)/.test(line));
     assert.deepEqual(fixed.map((l) => l.at), [], `${file} has no fixed path the run cannot move`);
   }
+});
+
+// The run puts each of these where the image does, from the branch: a new COPY of a session/ file elsewhere than
+// /opt/woodshed would be the image's in the run, without a word, until it is added there.
+test('every file the Dockerfile copies from session/ outside /opt/woodshed is one the run places itself', () => {
+  const dockerfile = fs.readFileSync(path.join(SESSION_DIR, 'Dockerfile'), 'utf8');
+  const copies = [...dockerfile.matchAll(/^COPY\b.*?\bwoodshed\/session\/(\S*)\s+(\S+)\s*$/gm)]
+    .filter(([, , to]) => !to.startsWith('/opt/woodshed/'))
+    .map(([, from, to]) => [from, to]);
+  assert.ok(copies.length >= 2, `the Dockerfile's copies were read: ${JSON.stringify(copies)}`);
+  assert.deepEqual(Object.fromEntries(copies), IMAGE_PLACED);
 });

@@ -792,7 +792,7 @@ startClaude() {
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch "$WOODSHED_TMP/qa-running"
-    tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
+    tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
   elif [ "${AGENT:-claude}" = codex ]; then
     # A Codex conversation is not kept between runs, so a resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
