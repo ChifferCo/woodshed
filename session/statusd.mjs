@@ -524,13 +524,14 @@ function runStart(app) {
 // The stop command stops what the start started, as the project's commands decide: servers claude ran some other way
 // may keep running.
 async function stopApp() {
-  if (!CURRENT_APP?.stop) {
-    console.log('statusd: app stop skipped, the project has no stop command');
-    return { stopping: false, app: (await appStatus()).app };
-  }
+  // First: during a switch the app named is already the next one, whose own stop has nothing to do with this.
   if (appStop && appStop.exitCode === null) {
     if (appSwitch) appSwitch.cancelled = true;
     return { stopping: false, app: 'stopping' };
+  }
+  if (!CURRENT_APP?.stop) {
+    console.log('statusd: app stop skipped, the project has no stop command');
+    return { stopping: false, app: (await appStatus()).app };
   }
   interruptStart();
   runStop(CURRENT_APP);

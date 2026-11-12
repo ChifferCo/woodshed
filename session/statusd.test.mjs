@@ -391,7 +391,8 @@ test('with several apps, one runs at a time: starting another stops the first, a
 
 test('Stop app while a switch waits on the running app\'s stop keeps the next one from starting', async (t) => {
   const slowStop = (name) => ({ name, ...fixtureApp({ start: `echo start ${name} >> calls`, stop: `echo stop ${name} >> calls; sleep 1` }) });
-  const project = { app: null, apps: [slowStop('web'), slowStop('admin')] };
+  // The next app has no stop of its own: Stop app still cancels the switch.
+  const project = { app: null, apps: [slowStop('web'), { ...slowStop('admin'), stop: null }] };
   const { repo, call } = await statusdWithApp(t, { project });
   assert.equal((await call('POST', '/app/start')).body.started, true);
   for (let i = 0; i < 50 && (await call('GET', '/status')).body.app === 'starting'; i++) await new Promise((resolve) => setTimeout(resolve, 50));
