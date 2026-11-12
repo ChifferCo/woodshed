@@ -462,7 +462,7 @@
   async function fetchSessions() {
     const res = await fetch('/api/sessions', { cache: 'no-store' });
     if (!res.ok) throw new Error(`GET /api/sessions answered ${res.status}`);
-    return learnNames(await res.json());
+    return withPendingApps(learnNames(await res.json()));
   }
 
   async function stopSession(id) {
@@ -518,22 +518,126 @@
     return ` Backend${port(servers.backendPort)} ${word(servers.backend)}, frontend${port(servers.frontendPort)} ${word(servers.frontend)}.`;
   }
 
-  function actionButton(s, { action, label, ariaLabel = null, title, size, onDone, cls = 'btn-plain' }) {
+  // A sentence for the person: the page's toast, or an alert on a page without the shell. `ms` keeps the toast up longer.
+  function notify(text, { ms } = {}) {
+    const toast = window.Woodshed?.shell?.toast;
+    if (toast) toast(text, ms ? { ms } : undefined);
+    else window.alert(text);
+  }
+
+  // What Start app and Stop app show the moment they are pressed, whichever button, row or menu item was: the word on
+  // the control, the app's state until the console answers, and the toast.
+  const APP_PRESS = {
+    start: { doing: 'Starting…', state: 'starting', verb: 'starting', toast: (name) => `Starting ${name}: one to three minutes` },
+    stop: { doing: 'Stopping…', state: 'stopping', verb: 'stopping', toast: (name) => `Stopping ${name}` },
+  };
+  // One app action at a time for each session, by id: its state shown until the console answers, so a refresh landing
+  // meanwhile still says Starting.
+  const pendingApps = new Map();
+
+  /** @returns {object}  the sessions answer, with each session whose app action is in flight in its pressed state */
+  function withPendingApps(body) {
+    for (const s of body?.sessions ?? []) {
+      const pending = pendingApps.get(s.id);
+      if (pending) s.app = pending.state;
+    }
+    return body;
+  }
+
+  /**
+   * Start app or Stop app, as every control runs it: shown at once (the control's own word, the app's state, a toast),
+   * then asked of the console. A second press while one waits is told so, never dropped without a word.
+   * @param {object} s  the session, whose `app` is set to the pressed state, then to the console's answer
+   * @param {'start'|'stop'} action
+   * @param {{app?: string|null, label?: string|null, control?: HTMLElement|null, onChange?: () => void, onDone?: () => void}} opts
+   *   `app` and `label` pick one of several apps; `control` is the button or row pressed, which says what it is doing;
+   *   `onChange` redraws the page with the pressed state; `onDone` runs once the console answered.
+   * @returns {Promise<boolean>}  whether the console took it
+   */
+  async function runAppAction(s, action, { app = null, label = null, control = null, onChange = null, onDone = null } = {}) {
+    const press = APP_PRESS[action];
+    const name = label ?? 'the app';
+    const pending = pendingApps.get(s.id);
+    if (pending) {
+      notify(`Still ${pending.verb} ${pending.name}: wait for the console to answer`);
+      return false;
+    }
+    const before = s.app;
+    pendingApps.set(s.id, { state: press.state, verb: press.verb, name });
+    if (control) {
+      control.disabled = true;
+      control.setAttribute('aria-busy', 'true');
+      const words = control.querySelector('b') ?? control;
+      words.replaceChildren(h('span', { class: 'spin', 'aria-hidden': 'true' }), press.doing);
+    }
+    s.app = press.state;
+    notify(press.toast(name));
+    onChange?.();
+    let ok = false;
+    try {
+      s.app = (await appAction(s, action, { app })).app || press.state;
+      ok = true;
+    } catch (err) {
+      s.app = before;
+      notify(`Could not ${action} ${name}: ${err.message}`, { ms: 6000 });
+    } finally {
+      pendingApps.delete(s.id);
+    }
+    onDone?.();
+    return ok;
+  }
+
+  // The actions a menu row runs, by session id, with the label of the one that runs: one at a time for each session.
+  const menuActing = new Map();
+
+  /**
+   * One row of the page's ⋯ menu (session.js's card menu, the phone's sheet). With `href` it is a link to a new tab,
+   * which a phone opens on a tap as it does any link, where a window.open after the tap is only as good as the browser's
+   * reading of the gesture. Otherwise a button that runs `run(row)`: with `working` the menu stays open on the row, which
+   * says what it is doing, until `run` is done; without, the menu closes first. A tap while another row's action for the
+   * same session runs is told so in a toast, and runs nothing.
+   * @param {object} s  the session
+   * @param {{label: string, note: string, href?: string, working?: boolean, danger?: boolean, run?: (row: HTMLElement) => any}} a
+   * @param {{close: () => void, hold: () => void, done: () => void}} menu  `hold` keeps the menu open, `done` ends that
+   * @returns {HTMLElement}
+   */
+  function menuItem(s, a, { close, hold, done }) {
+    const words = [h('b', null, a.label), h('span', null, a.note)];
+    if (a.href) {
+      return h('a', { role: 'menuitem', class: 'card-menu-item', href: a.href, target: '_blank', rel: 'noopener', onclick: () => close() }, words);
+    }
+    return h('button', {
+      type: 'button', role: 'menuitem', class: `card-menu-item${a.danger ? ' is-danger' : ''}`,
+      onclick: async (e) => {
+        const row = e.currentTarget;
+        if (menuActing.has(s.id)) {
+          close();
+          notify(`Still busy with ${menuActing.get(s.id)} for this session: wait for it to finish`);
+          return;
+        }
+        if (a.working) hold();
+        else close();
+        menuActing.set(s.id, a.label);
+        try {
+          await a.run(row);
+        } finally {
+          menuActing.delete(s.id);
+          if (a.working) done();
+        }
+      },
+    }, words);
+  }
+
+  function actionButton(s, { action, label, ariaLabel = null, title, size, onDone, onChange = null, cls = 'btn-plain' }) {
     const button = h('button', {
       type: 'button',
       class: `btn ${cls}${size}`,
       title,
       'aria-label': ariaLabel,
-      onclick: async (e) => {
+      onclick: (e) => {
         e.preventDefault();
         e.stopPropagation();
-        button.disabled = true;
-        try {
-          s.app = (await appAction(s, action)).app || s.app;
-        } catch (err) {
-          window.alert(`Could not ${action} the app: ${err.message}`);
-        }
-        onDone();
+        runAppAction(s, action, { control: button, onChange, onDone });
       },
     }, label);
     return button;
@@ -556,33 +660,26 @@
     return up ? `Stops ${runningAppLabel(s) ?? 'the running app'} first, then starts this one` : 'Start it in this session';
   }
 
-  /** The apps as menu items: each starts that app, after the one running stops. */
-  function appChoiceItems(s, onDone) {
+  /** The apps as menu items: each starts that app, after the one running stops. Its row says Starting… until the console answers. */
+  function appChoiceItems(s, onDone, onChange = null) {
     return (appChoices(s) ?? []).map((app) => ({
-      group: 'Start app', label: app.label, note: appChoiceNote(s, app),
-      run: async () => {
-        try {
-          s.app = (await appAction(s, 'start', { app: app.name })).app || s.app;
-        } catch (err) {
-          window.alert(`Could not start ${app.label}: ${err.message}`);
-        }
-        onDone();
-      },
+      group: 'Start app', label: app.label, note: appChoiceNote(s, app), working: true,
+      run: (row) => runAppAction(s, 'start', { app: app.name, label: app.label, control: row, onChange, onDone }),
     }));
   }
 
   // Start app with several apps: a button that opens the page's one menu (session.js's Woodshed.openMenu) with each app's
   // label. A page without that menu starts the default, as one app would.
-  function appPickButton(s, { label, ariaLabel = null, title, size, onDone }) {
+  function appPickButton(s, { label, ariaLabel = null, title, size, onDone, onChange = null }) {
     const openMenu = window.Woodshed?.openMenu;
-    if (!openMenu) return actionButton(s, { action: 'start', label: label.replace(/ ▾$/, ''), ariaLabel, title, size, onDone });
+    if (!openMenu) return actionButton(s, { action: 'start', label: label.replace(/ ▾$/, ''), ariaLabel, title, size, onDone, onChange });
     const key = `${s.id}:apps`;
     return h('button', {
       type: 'button', class: `btn btn-plain btn-app-pick${size}`, title, 'aria-label': ariaLabel, 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-menu-for': key,
       onclick: (e) => {
         e.preventDefault();
         e.stopPropagation();
-        openMenu(e.currentTarget, s, { items: appChoiceItems(s, onDone) });
+        openMenu(e.currentTarget, s, { items: appChoiceItems(s, onDone, onChange) });
       },
     }, label);
   }
@@ -597,21 +694,22 @@
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
    * is in the tooltip and the dot rather than a word, which the card's status line has no room for.
    * @param {object} s  the session
-   * @param {{appDomain: string|null, onDone: () => void, small?: boolean}} opts
+   * @param {{appDomain: string|null, onDone: () => void, onChange?: () => void, small?: boolean}} opts  `onChange` redraws
+   *   the page the moment Start app or Stop app is pressed, before the console answers
    * @returns {HTMLElement|null}
    */
-  function appButton(s, { appDomain, onDone, small = false }) {
+  function appButton(s, { appDomain, onDone, onChange = null, small = false }) {
     if (!appDomain || s.status !== 'running') return null;
     const size = small ? ' btn-sm' : '';
     const stop = actionButton(s, {
-      action: 'stop', label: small ? '■' : 'Stop app', ariaLabel: small ? 'Stop app' : null, size, onDone, cls: 'btn-plain btn-app-stop',
+      action: 'stop', label: small ? '■' : 'Stop app', ariaLabel: small ? 'Stop app' : null, size, onDone, onChange, cls: 'btn-plain btn-app-stop',
       title: `Stop the app's backend and frontend.${serversTitle(s)}`,
     });
     const group = (...children) => h('span', { class: 'app-ctl' }, ...children);
     // With several apps, the one that runs is named on the button that picks another.
     const running = runningAppLabel(s);
     const switcher = () => running && window.Woodshed?.openMenu && appPickButton(s, {
-      label: `${running} ▾`, ariaLabel: `${running} runs: start another app`, size, onDone,
+      label: `${running} ▾`, ariaLabel: `${running} runs: start another app`, size, onDone, onChange,
       title: `${running} is the app running. Pick another to start: ${running} stops first.`,
     });
     if (s.app === 'running' || s.app === 'api-down') {
@@ -642,9 +740,9 @@
           setup.disabled = true;
           try {
             const { sent } = await appAction(s, 'setup');
-            window.Woodshed.shell?.toast(setupAppToast(sent, s));
+            notify(setupAppToast(sent, s));
           } catch (err) {
-            window.alert(`Could not set up the app: ${err.message}`);
+            notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
           }
           onDone();
         },
@@ -659,8 +757,8 @@
     const startTitle = halfUp ? `The backend is up and the frontend is not: Start app starts the frontend.${serversTitle(s)}`
       : again ? 'The last start failed: /tmp/woodshed-app.log in the terminal says why' : 'Start the app in this session';
     const start = appChoices(s)
-      ? appPickButton(s, { label: `${startLabel} ▾`, size, onDone, title: `Pick which app to start: ${appChoices(s).map((a) => a.label).join(', ')}.${halfUp || again ? ` ${startTitle}` : ''}` })
-      : actionButton(s, { action: 'start', size, onDone, label: startLabel, title: startTitle });
+      ? appPickButton(s, { label: `${startLabel} ▾`, size, onDone, onChange, title: `Pick which app to start: ${appChoices(s).map((a) => a.label).join(', ')}.${halfUp || again ? ` ${startTitle}` : ''}` })
+      : actionButton(s, { action: 'start', size, onDone, onChange, label: startLabel, title: startTitle });
     const ctl = group(start, halfUp && !small ? h('span', { class: 'app-tag' }, 'frontend down') : null, halfUp ? stop : null);
     // Nothing of the app up: the phone's rail hides it, as the shed's does, since starting one is a desk job.
     if (!halfUp) ctl.dataset.idle = 'true';
@@ -1164,7 +1262,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

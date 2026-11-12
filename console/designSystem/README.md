@@ -18,7 +18,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
 - **Contrast.** Text meets 4.5:1 on the grounds named in its token note, in both themes. White on `action` is 4.8:1 in light; use `action-ink` in dark.
 - **Dark.** Dark follows the device unless the console's settings sheet picked light. Both themes use the same token names.
-- **Motion.** None beyond the spinning ring on a PR chip while checks run. A checklist's marks stay still: it is drawn again every second.
+- **Motion.** None beyond the spinning ring on a PR chip while checks run, and the same ring on a control waiting on the console (Starting…). A checklist's marks stay still: it is drawn again every second.
 
 ## The rail
 
@@ -34,6 +34,21 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A pull request row has two lines, as a card does: its title and its checks' dot, then (`meta`) the project's name and the number, the checks in their colour and how long since it moved, with Open, Resume or Start and a `slate` ↗ to GitHub at the right end. With more than one project it has its project's 3px edge, and the name is always on line two.
 - Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions assigned to you whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups.
 - A shared session someone has carries the Assigned tag: on Mine the word Assigned, on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch: the rail head reads My sessions. **People** on Everyone filters by assignee. A resume keeps the assignee.
+
+## Menus and presses
+
+- A ⋯ menu is a `ground` panel with the `menu` shadow beside its button on a desktop, and a sheet from the bottom of the
+  screen on a phone. Neither is ever taller than the screen: the menu stops 8px from its edges and the sheet 40px from
+  its top, and either scrolls inside itself. A sheet taller than the screen put its top rows (the app's) out of reach of
+  a finger.
+- A row is a bold label over a `sub` note. A row that opens a new tab ends its label with ↗ and is a link, never a
+  button that opens a window: a phone opens a link on the first tap.
+- A press that waits on the console shows it at once, before the answer: the control is disabled and says what it is
+  doing, `Starting…` or `Stopping…` with the spinning ring (a menu row on the `stopped` ground, staying open until the
+  answer), the app's state moves to starting, and a toast says what happens (`Starting the app: one to three minutes`).
+  A phone's bar has no app button, so its state line says `app starting` beside the status word, with the ring.
+- A press that does nothing, because something else for the same session still runs, says so in a toast (`Still busy
+  with …`). An error is a toast that stays 6 seconds and says what went wrong; an alert only on a page with no toast.
 
 ## Menu groups
 

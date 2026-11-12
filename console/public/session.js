@@ -18,6 +18,8 @@
   const REFRESH_MS = 5000;
   // While the open session starts, so its checklist and clock move and the terminal opens as soon as claude does.
   const STARTING_REFRESH_MS = 1000;
+  // A phone's width, where the rail and the pane are pages of their own and a menu is a sheet from the bottom.
+  const narrow = window.matchMedia('(max-width: 720px)');
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
@@ -263,7 +265,7 @@
         run: async () => { await W.sharedAction(s, 'resume', { message: '' }).catch((err) => window.alert(`Could not resume: ${err.message}`)); refresh(); },
       },
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
-      s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', run: () => window.open(s.prUrl, '_blank', 'noopener') },
+      s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', href: s.prUrl },
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
@@ -307,10 +309,10 @@
 
   // One menu for every card, on the page itself: the rail is rebuilt on each refresh, and the menu stays open through
   // it, following its session by id. A session whose state changed underneath it closes it, since its items would be
-  // stale. An action already running for a session is not started again. The top bar's Details and Data open it too,
-  // each under its own key, so one closes as the other opens.
-  const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null };
-  const acting = new Set();
+  // stale. Each row is common.js's menuItem: a link, or a button that is not run again while an action for its session
+  // still runs. The top bar's Details and Data open it too, each under its own key, so one closes as the other opens.
+  // `busy` is set while a row says what it is doing (Starting…), which keeps the menu as it is until the row is done.
+  const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false };
   document.body.append(cardMenu.el);
   const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
@@ -321,6 +323,7 @@
     cardMenu.el.hidden = true;
     cardMenu.id = null;
     cardMenu.key = null;
+    cardMenu.busy = false;
   }
   function placeCardMenu(button) {
     const box = button.getBoundingClientRect();
@@ -346,19 +349,11 @@
     cardMenu.el.replaceChildren(head, ...[body].flat().filter(Boolean), ...list.map((a, i) => [
       needsSep(a, i) && h('div', { class: 'card-menu-sep', role: 'separator' }),
       grouped && a.group && a.group !== list[i - 1]?.group && h('div', { class: 'card-menu-group' }, a.group),
-      h('button', {
-        type: 'button', role: 'menuitem', class: `card-menu-item${a.danger ? ' is-danger' : ''}`,
-        onclick: async () => {
-          closeCardMenu();
-          if (acting.has(s.id)) return;
-          acting.add(s.id);
-          try {
-            await a.run();
-          } finally {
-            acting.delete(s.id);
-          }
-        },
-      }, h('b', null, a.label), h('span', null, a.note)),
+      W.menuItem(s, a, {
+        close: closeCardMenu,
+        hold: () => { cardMenu.busy = true; },
+        done: () => { if (cardMenu.key === key) closeCardMenu(); },
+      }),
     ]).flat().filter(Boolean));
     cardMenu.el.hidden = false;
     placeCardMenu(button);
@@ -366,12 +361,15 @@
     cardMenu.key = key;
     cardMenu.state = menuState(s);
     button.setAttribute('aria-expanded', 'true');
-    // Details with no branch has no item, so the menu itself takes the focus.
-    (cardMenu.el.querySelector('button') ?? cardMenu.el).focus();
+    // Details with no branch has no item, so the menu itself takes the focus. The menu is one element, so a sheet
+    // scrolled the last time it was open opens at its top again, and the focus does not scroll it.
+    cardMenu.el.scrollTop = 0;
+    (cardMenu.el.querySelector('.card-menu-item') ?? cardMenu.el).focus({ preventScroll: true });
   }
   // After each refresh: the open menu sits on its session's new ⋯, or closes if that session is gone or changed.
   function syncCardMenu() {
-    if (!cardMenu.id) return;
+    // A row still saying Starting… keeps the menu as it is: its own end closes it.
+    if (!cardMenu.id || cardMenu.busy) return;
     const s = data.sessions.find((x) => x.id === cardMenu.id);
     const button = menuAnchor();
     if (!s || !button || menuState(s) !== cardMenu.state) return closeCardMenu();
@@ -392,7 +390,11 @@
     if (!e.target.closest('[data-menu-for]')) closeCardMenu();
   }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !cardMenu.el.hidden) closeCardMenu(); });
-  window.addEventListener('resize', closeCardMenu);
+  // A resize moves a desktop menu's button out from under it. A phone's sheet sits on the bottom of the screen whatever its
+  // button does, and iOS resizes the window as its toolbar shows and hides: it stays, unless the screen stops being a
+  // phone's (a turn to a wide landscape), where the sheet would become a menu under a button it was not placed by.
+  window.addEventListener('resize', () => { if (!narrow.matches) closeCardMenu(); });
+  narrow.addEventListener('change', closeCardMenu);
   // A scroll that moves the card too, the rail's or the page's, which would leave the menu behind. Not the App log's
   // own scroll to its end every 3 s, which moves nothing the menu is anchored to.
   document.addEventListener('scroll', (e) => {
@@ -850,30 +852,30 @@
   // What a phone's top bar puts in its ⋯ ahead of the card's: the app, the databases, and the key bar's switch.
   function paneActions(s) {
     if (s.status !== 'running') return [];
-    const app = (action) => async () => {
-      await W.appAction(s, action).catch((err) => window.alert(`Could not ${action} the app: ${err.message}`));
-      refresh();
-    };
+    // The session as the page has it now: a refresh since the menu opened drew a new one, which the pressed state must
+    // be on for the bar to show it.
+    const current = () => data.sessions.find((x) => x.id === s.id) ?? s;
+    const app = (action) => (row) => W.runAppAction(current(), action, { control: row, onChange: render, onDone: refresh });
     const up = s.app === 'running' || s.app === 'api-down';
     const busy = s.app === 'starting' || s.app === 'stopping';
     const none = s.app === 'none';
     // Several apps: one Start item each, which also switches from the one running.
-    const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
+    const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
       s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
       data.appDomain && up && {
-        group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener'),
+        group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', href: W.appUrl(s, data.appDomain),
       },
       data.appDomain && none && s.kind !== 'ask' && {
         group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
         run: async () => {
           try {
-            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
+            W.notify(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
           } catch (err) {
-            window.alert(`Could not set up the app: ${err.message}`);
+            W.notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
           }
           refresh();
         },
@@ -881,11 +883,11 @@
       ...choices,
       data.appDomain && !up && !busy && !none && !choices.length && {
         group: 'App', label: s.app === 'failed' || s.app === 'frontend-down' ? 'Start app again' : 'Start app',
-        note: 'Start the app in this session: one to three minutes', run: app('start'),
+        note: 'Start the app in this session: one to three minutes', working: true, run: app('start'),
       },
-      data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', run: app('stop') },
+      data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', working: true, run: app('stop') },
       data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
-      data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', run: () => openEditor(s) },
+      data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', href: editorUrl(s) },
       ...dataActions(s),
       !PAGE_TABS.has(tab) && {
         label: keyBarShown ? 'Hide the key bar' : 'Show the key bar', note: 'esc, the arrows, tab and ^C above the terminal', run: toggleKeyBar,
@@ -911,20 +913,16 @@
     return `${W.appUrl(s, data.appDomain)}__woodshed/code/`;
   }
 
-  function openEditor(s) {
-    window.open(editorUrl(s), '_blank', 'noopener');
-  }
-
   // The session's databases and Redis, each in its viewer: a shared session's own, a private session's owner's. Only
   // the viewers of the databases the installation hosts (data.viewers, each engine's), and Redis only when the project
   // uses it (statusd's `redis`).
   function dataActions(s) {
     if (s.status !== 'running') return [];
     const whose = W.isPrivate(s) ? 'Your own' : 'This session\'s own';
-    const open = (path) => () => window.open(`/${path}/${s.id}/`, '_blank', 'noopener');
+    const href = (path) => `/${path}/${s.id}/`;
     return [
-      ...(data.viewers ?? []).map((v) => ({ group: 'Data', label: `${v.name} ↗`, note: `${whose} ${v.name} database, in ${v.program}`, run: open(v.route) })),
-      s.redis !== false && { group: 'Data', label: 'Redis ↗', note: `${whose} Redis, in redis-commander`, run: open('redis') },
+      ...(data.viewers ?? []).map((v) => ({ group: 'Data', label: `${v.name} ↗`, note: `${whose} ${v.name} database, in ${v.program}`, href: href(v.route) })),
+      s.redis !== false && { group: 'Data', label: 'Redis ↗', note: `${whose} Redis, in redis-commander`, href: href('redis') },
     ].filter(Boolean);
   }
 
@@ -1029,6 +1027,14 @@
     });
   }
 
+  // A phone's bar has no app button (its app is in the ⋯ sheet), so an app starting or stopping says so on the state line,
+  // as the desktop's Starting… button does: from the tap, before the console answers.
+  function phoneAppState(s) {
+    if (s.status !== 'running' || !data.appDomain || (s.app !== 'starting' && s.app !== 'stopping')) return null;
+    return h('span', { class: 'papp', title: s.app === 'starting' ? 'Usually one to three minutes' : null },
+      h('span', { class: 'spin', 'aria-hidden': 'true' }), s.app === 'starting' ? 'app starting' : 'app stopping');
+  }
+
   // After the shed's pane bar: the tabs, the name and how it is doing, what it is on, then the session's buttons. The
   // rest is under Details, and the app's button shows only when the rail card holding it does not.
   function paneBar(s) {
@@ -1051,7 +1057,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1085,7 +1091,7 @@
         W.isPrivate(s) && s.kind !== 'ask' && s.branch && inviteButton(s),
         plan && planButton(s, plan),
         W.usageBadge(s),
-        s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, small: true }),
+        s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
         tools && data.appDomain && s.editor && h('a', { class: 'pbtn', href: editorUrl(s), target: '_blank', rel: 'noopener', title: 'Open its checkout in VS Code, in a new tab' }, 'Editor ↗'),
         tools && dataActions(s).length > 0 && barMenuButton(s, {
           key: 'data', label: 'Data ▾', title: 'Open its databases or Redis in a viewer', open: () => ({ items: dataActions(s) }),
@@ -1628,7 +1634,6 @@
   // iOS lays its keyboard over the page without shrinking the layout viewport, so the prompt the keyboard was
   // raised for sits under it. The visual viewport does shrink: while it is short, the shell takes its height and
   // the terminal refits to the rows that show. A pinch zoom shrinks it too, at a scale above 1, and is left alone.
-  const narrow = window.matchMedia('(max-width: 720px)');
   function fitToKeyboard() {
     const visual = window.visualViewport;
     if (!slots.shell) return;
