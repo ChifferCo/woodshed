@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAddedProjects, repoChecker } from './addedProjects.mjs';
+import { createAddedProjects, repoChecker, repoLister } from './addedProjects.mjs';
 import { liveConfig } from './consoleSettings.mjs';
 
 const base = {
@@ -93,7 +93,7 @@ test('with the App, the repo must have it installed; without, gh must read the r
   await assert.rejects(repoChecker({ appApi })('acme/no'), (err) => err.shown && /App is not installed on acme\/no/.test(err.message));
   await assert.rejects(repoChecker({ appApi })('acme/no'), (err) => !err.link, 'no link while the App\'s slug is unknown');
   await assert.rejects(repoChecker({ appApi, appSlug: async () => 'woodshed-acme' })('acme/no'),
-    (err) => err.shown && /App is not installed on acme\/no/.test(err.message)
+    (err) => err.shown && /App is not installed on acme, or acme\/no does not exist/.test(err.message)
       && err.link.href === 'https://github.com/apps/woodshed-acme/installations/new' && err.link.text === 'Install woodshed-acme on GitHub');
   await assert.rejects(repoChecker({ appApi, appSlug: async () => { throw new Error('down'); } })('acme/no'), (err) => err.shown && !err.link);
   const down = { installationOf: async () => { throw new Error('HTTP 502'); } };
@@ -150,4 +150,44 @@ test('on a console that started with no repo, the first one added is the default
   added.remove({ name: 'api', by: 'octocat' });
   assert.deepEqual(config.projects.map((p) => [p.name, p.default]), [['web', true]]);
   assert.deepEqual(liveConfig(empty, store).projects.map((p) => [p.name, p.default]), [['web', true]], 'a restart reads it back the same');
+});
+
+test('a repo on an account the App is on, but not given, links to that installation\'s settings, not the install page', async () => {
+  const appApi = {
+    installationOf: async () => null,
+    installations: async () => [{ id: '7', account: 'Akurilin', settingsUrl: 'https://github.com/settings/installations/7' }],
+  };
+  await assert.rejects(repoChecker({ appApi, appSlug: async () => 'woodshed-ak' })('akurilin/social'),
+    (err) => err.shown && /woodshed-ak is installed on Akurilin, but may not reach akurilin\/social/.test(err.message)
+      && err.link.href === 'https://github.com/settings/installations/7' && err.link.text === 'Give woodshed-ak access to akurilin/social on GitHub');
+  await assert.rejects(repoChecker({ appApi, appSlug: async () => 'woodshed-ak' })('other/x'),
+    (err) => err.link.href === 'https://github.com/apps/woodshed-ak/installations/new', 'another account still gets the install page');
+  const blind = { ...appApi, installations: async () => { throw new Error('HTTP 500'); } };
+  await assert.rejects(repoChecker({ appApi: blind, appSlug: async () => 'w' })('akurilin/social'),
+    (err) => err.link.href === 'https://github.com/apps/w/installations/new', 'with no installations read, the install page');
+});
+
+test('the repo list is every installation\'s repos, sorted, with where to give the App more; projects already added are left out', async () => {
+  const appApi = {
+    installations: async () => [
+      { id: '1', account: 'acme', settingsUrl: 'https://github.com/organizations/acme/settings/installations/1' },
+      { id: '2', account: 'bo', settingsUrl: 'https://github.com/settings/installations/2' },
+    ],
+    installationRepos: async (id) => (id === '1'
+      ? [{ repo: 'acme/web', private: true }, { repo: 'acme/app', private: true }]
+      : [{ repo: 'bo/Blog', private: false }]),
+  };
+  const list = repoLister({ appApi, appSlug: async () => 'w' });
+  const store = { state: { sessions: [] }, save() {} };
+  const added = createAddedProjects({ store, config: liveConfig(base, store), check: async () => ({ installationId: '1' }), list });
+  assert.deepEqual(await added.choices(), {
+    repos: [{ repo: 'acme/web', private: true }, { repo: 'bo/Blog', private: false }],
+    grant: [{ account: 'acme', href: 'https://github.com/organizations/acme/settings/installations/1' }, { account: 'bo', href: 'https://github.com/settings/installations/2' }],
+    install: 'https://github.com/apps/w/installations/new',
+  }, 'acme/app is the default project already');
+  assert.equal(await createAddedProjects({ store, config: liveConfig(base, store), check: async () => ({}) }).choices(), null, 'no App, no list');
+  const half = repoLister({ appApi: { ...appApi, installationRepos: async (id) => { if (id === '2') throw new Error('HTTP 403'); return appApi.installationRepos(id); } } });
+  assert.deepEqual((await half()).repos.map((r) => r.repo), ['acme/app', 'acme/web'], 'one refused installation leaves out its repos alone');
+  const down = repoLister({ appApi: { ...appApi, installationRepos: async () => { throw new Error('HTTP 502'); } } });
+  await assert.rejects(down(), (err) => err.shown && /did not list the App's repos/.test(err.message));
 });

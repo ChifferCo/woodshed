@@ -1089,6 +1089,35 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
 });
 
+test('Console settings: Add a repo\'s list is the App\'s repos less the projects, null with no App, and a 502 when GitHub did not answer', async (t) => {
+  const store = { state: { sessions: [] }, save() {} };
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store);
+  let fail = false;
+  const list = async () => {
+    if (fail) throw Object.assign(new Error('GitHub did not list the App\'s repos.'), { shown: true });
+    return { repos: [{ repo: 'o/R', private: true }, { repo: 'o/web', private: false }], grant: [{ account: 'o', href: 'https://github.com/settings/installations/1' }], install: null };
+  };
+  const serve = (addedProjects) => {
+    const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    t.after(() => server.close());
+    return listen(server);
+  };
+  const port = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }), list }));
+  const ask = async (p) => {
+    const res = await fetch(`http://127.0.0.1:${p}/api/console-settings/projects/repos`);
+    return { status: res.status, body: await res.json() };
+  };
+  assert.deepEqual(await ask(port), { status: 200, body: { repos: [{ repo: 'o/web', private: false }], grant: [{ account: 'o', href: 'https://github.com/settings/installations/1' }], install: null } });
+  fail = true;
+  assert.deepEqual(await ask(port), { status: 502, body: { error: 'GitHub did not list the App\'s repos.' } });
+  const noApp = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }) }));
+  assert.deepEqual(await ask(noApp), { status: 200, body: { repos: null, grant: [], install: null } });
+});
+
 test('Console settings: a repo\'s colour is picked from the palette, never one another repo has, and the rail gets it', async (t) => {
   const store = { state: { sessions: [], addedProjects: [{ name: 'web', repo: 'o/web', default: false }] }, save() {} };
   const config = liveConfig({

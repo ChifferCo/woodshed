@@ -1473,11 +1473,19 @@ time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
 
 The **Repos** card, first on the page, lists the repos sessions can start on (the projects above) and adds more.
-**Add repo** takes `owner/name` (a `github.com` link works too) and an optional name (`POST /api/console-settings/projects`).
-It, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be installed on
+**Add a repo** is a list of the repos the GitHub App may reach and that are not projects yet
+(`GET /api/console-settings/projects/repos`: each of the App's installations, `GET /app/installations`, then its repos,
+`GET /installation/repositories` with a token narrowed to reading metadata), with an optional name; **Add repo** sends
+the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links each installation's settings on GitHub,
+where the repos it may reach are picked (Repository access), and the App's install page for another account; the list
+is read again on **List again** and when the tab comes back into view. On a console with no App (the local provider,
+or borrowed GitHub access), or when GitHub did not list them, the field takes `owner/name` typed in (a `github.com`
+link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
+Add repo, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be able to reach
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
-the console's own; a repo without it is refused with a link to the App's install page
-(`https://github.com/apps/<slug>/installations/new`, the slug read from GitHub); on a console with no App (the local provider) `gh` must be able to read it. A repo already a
+the console's own. A repo on an account the App is installed on, but not given, is refused with a link to that
+installation's settings, to give the App access to it; a repo on an account without the App, with a link to the App's
+install page (`https://github.com/apps/<slug>/installations/new`, the slug read from GitHub); on a console with no App (the local provider) `gh` must be able to read it. A repo already a
 project, or a name in use, is refused with its reason. The added repos are kept in `state.json` under `addedProjects`
 and appended to `WOODSHED_CLOUD_PROJECTS`'s list in the live config (`liveConfig`), so one applies at once, with no
 restart, and a project's New session **Project** field shows it to whoever can write to it. On a console that started

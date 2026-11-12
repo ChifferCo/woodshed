@@ -47,7 +47,7 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { createAddedProjects, repoChecker } from './addedProjects.mjs';
+import { createAddedProjects, repoChecker, repoLister } from './addedProjects.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
@@ -286,7 +286,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
     : undefined;
   const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
-  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }) });
+  const addedProjects = createAddedProjects({
+    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), list: appApi ? repoLister({ appApi, appSlug }) : null,
+  });
   const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
   const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;

@@ -17,8 +17,21 @@ const shown = (message, link = null) => Object.assign(new Error(message), { show
  *   can work on a repo, and which App installation it is on (null where the console has no App, and uses `gh`); it
  *   throws an error with `shown` for a reason the page can say.
  */
-export function createAddedProjects({ store, config, check, now = Date.now }) {
+export function createAddedProjects({ store, config, check, list = null, now = Date.now }) {
   const everyProject = () => allProjects(config);
+
+  /**
+   * What Add a repo offers: the repos the App may reach that are not projects yet, and where on GitHub to give it more.
+   * @returns {Promise<{repos: {repo: string, private: boolean}[], grant: {account: string, href: string}[], install: string|null}|null>}
+   *   null where the console has no App to ask (the page then takes owner/name typed in)
+   * @throws {Error}  with `shown`, when GitHub did not answer
+   */
+  async function choices() {
+    if (!list) return null;
+    const found = await list();
+    const taken = new Set(everyProject().map((p) => p.repo.toLowerCase()));
+    return { ...found, repos: found.repos.filter((r) => !taken.has(r.repo.toLowerCase())) };
+  }
 
   function view() {
     const added = new Set(addedProjectsOf(store).map((p) => p.name));
@@ -74,15 +87,18 @@ export function createAddedProjects({ store, config, check, now = Date.now }) {
     console.log('projects: repo removed', { project: name, repo: found.repo, by });
   }
 
-  return { view, add, remove };
+  return { view, add, remove, choices };
 }
 
 /**
  * What `check` is in the console: with the GitHub App, the repo must have it installed, and its installation is kept
  * when it differs from the console's own; without one (the local provider, on `gh`), the repo must be readable.
- * A repo without the App is refused with a link to the App's install page on GitHub, when the App's slug can be read.
- * @param {{appApi: {installationOf: (repo: string) => Promise<string|null>}|null, read?: (repo: string) => Promise<unknown>,
- *          appSlug?: () => Promise<string|null>}} deps
+ * A repo on an account the App is installed on, but not given access to, is refused with a link to that installation's
+ * settings on GitHub, where its repos are picked; a repo on an account without the App, with one to the App's install
+ * page, when the App's slug can be read.
+ * @param {{appApi: {installationOf: (repo: string) => Promise<string|null>,
+ *                   installations?: () => Promise<{id: string, account: string, settingsUrl: string}[]>}|null,
+ *          read?: (repo: string) => Promise<unknown>, appSlug?: () => Promise<string|null>}} deps
  */
 export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).defaultBranch(), appSlug = async () => null }) {
   return async (repo) => {
@@ -91,15 +107,28 @@ export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).de
       try {
         installationId = await appApi.installationOf(repo);
       } catch (err) {
-        console.warn('projects: installation not read', { repo, message: String(err?.message ?? err).split('\n')[0] });
+        console.warn('projects: installation not read', { repo, message: firstLine(err) });
         throw shown('GitHub did not answer about that repo. Try again; the console log says why.');
       }
       if (!installationId) {
-        const slug = await appSlug().catch(() => null);
+        const owner = repo.split('/')[0].toLowerCase();
+        const [slug, installations] = await Promise.all([
+          appSlug().catch(() => null),
+          (appApi.installations?.() ?? Promise.resolve([])).catch((err) => {
+            console.warn('projects: installations not read', { message: firstLine(err) });
+            return [];
+          }),
+        ]);
+        const app = slug ?? 'the GitHub App';
+        const on = installations.find((i) => i.account.toLowerCase() === owner && i.settingsUrl);
+        if (on) {
+          throw shown(`${slug ?? 'The GitHub App'} is installed on ${on.account}, but may not reach ${repo}, or the repo does not exist. Give it access to the repo on GitHub (Repository access), then add it again.`,
+            { href: on.settingsUrl, text: `Give ${app} access to ${repo} on GitHub` });
+        }
         if (!slug) throw shown(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it (GitHub, the App's Install page), then add it again.`);
-        // GitHub's page lists the accounts the App can go on; one it is on already opens its repo picker from there.
-        throw shown(`The GitHub App is not installed on ${repo}, or it does not exist. Install the App on it, then add it again.`,
-          { href: `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`, text: `Install ${slug} on GitHub` });
+        // GitHub's page lists the accounts the App can go on.
+        throw shown(`The GitHub App is not installed on ${repo.split('/')[0]}, or ${repo} does not exist. Install the App on it, then add it again.`,
+          { href: installUrl(slug), text: `Install ${slug} on GitHub` });
       }
       return { installationId };
     }
@@ -109,5 +138,40 @@ export function repoChecker({ appApi, read = (repo) => createGitHub({ repo }).de
       throw shown(`The console cannot read ${repo}: check the name, and that its GitHub login can see it.`);
     }
     return { installationId: null };
+  };
+}
+
+const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
+const installUrl = (slug) => `https://github.com/apps/${encodeURIComponent(slug)}/installations/new`;
+
+/**
+ * What `list` is in the console with the GitHub App: every repo each of its installations may reach, each account's
+ * installation settings (where more repos are given to it), and its install page for another account.
+ * @param {{appApi: {installations: Function, installationRepos: Function}, appSlug?: () => Promise<string|null>}} deps
+ */
+export function repoLister({ appApi, appSlug = async () => null }) {
+  return async () => {
+    let installations;
+    let lists;
+    try {
+      installations = await appApi.installations();
+      // One installation GitHub refuses (suspended, or its token denied) leaves out its repos alone.
+      lists = await Promise.all(installations.map((i) => appApi.installationRepos(i.id).catch((err) => {
+        console.warn('projects: an installation\'s repos not listed', { account: i.account, message: firstLine(err) });
+        return null;
+      })));
+      if (installations.length && lists.every((l) => l === null)) throw new Error('no installation\'s repos could be read');
+    } catch (err) {
+      console.warn('projects: repos not listed', { message: firstLine(err) });
+      throw shown('GitHub did not list the App\'s repos. Type the repo instead, or try again; the console log says why.');
+    }
+    const slug = await appSlug().catch(() => null);
+    const repos = lists.filter(Boolean).flat().sort((a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' }));
+    console.log('projects: repos listed', { installations: installations.length, repos: repos.length });
+    return {
+      repos,
+      grant: installations.filter((i) => i.settingsUrl).map((i) => ({ account: i.account, href: i.settingsUrl })),
+      install: slug ? installUrl(slug) : null,
+    };
   };
 }
