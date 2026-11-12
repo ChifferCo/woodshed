@@ -205,8 +205,15 @@ sessions survive, and the association sets up its stack.
 
 ## Costs
 
-- **Idle:** about $55 a month. The base box is about $30, RDS about $14, the
-  disks about $4, the Elastic IP $3.60, the secrets $2 and the DNS zone $0.50.
+- **Idle:** about $26 a month with no databases, up to $56 with both. The base
+  box is about $15 (`t3.small`), or $30 (`t3.medium`) with Mongo or a shared
+  service on it; RDS about $14 with Postgres; the disks about $4, the Elastic IP
+  $3.65, the secrets about $3 and the DNS zone $0.50.
+  An installation from before `t3.small` was the default, with no
+  `base_box_instance_type` set and neither Mongo nor a shared service, sees its
+  box go from `t3.medium` to `t3.small` in its next plan: an update in place
+  that stops and starts the box, so the console is down for a minute or two.
+  Set `base_box_instance_type = "t3.medium"` to keep it.
 - **Per session:** about $0.13 an hour on Fargate, plus the Anthropic usage,
   which its own workspace caps.
 - **Budget:** `monthly_budget_usd` ($150), with emails at 80% and 100%.
@@ -228,7 +235,7 @@ that holds nothing else: the security below relies on that.
 | --- | --- |
 | Network | Its own VPC, two public subnets, no NAT. Security groups: 443 to the base box from anywhere, and 80, which only redirects to HTTPS; Mongo (with `mongo` in `databases`) and each of `shared_services` from sessions only; ttyd and statusd on sessions from the base box only; Postgres from both (with `postgres`) |
 | RDS | With `postgres` in `databases`: Postgres 16 `db.t4g.micro`, 20 GB, backups off. RDS keeps the master (root) password in its own Secrets Manager secret, which only the db-admin task reads |
-| Base box | EC2 `t3.medium` (x86, like the session image) with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/woodshed-cloud/compose.yml`, each service's `files` from `/opt/woodshed-cloud/services/`. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
+| Base box | EC2 `t3.small`, or `t3.medium` with Mongo or a shared service on it (`base_box_instance_type` picks another; one with less memory, or not x86 like the session image, is refused at plan), with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/woodshed-cloud/compose.yml`, each service's `files` from `/opt/woodshed-cloud/services/`. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
 | Data volume | A 20 GB EBS volume at `/var/lib/woodshed-cloud` holding Mongo, the console's session list and Caddy's certificate, so they survive restarts, resizes (`base_box_instance_type`) and a replaced box. `terraform destroy` removes it with the rest. Localstack's S3 files are not kept: the free edition has no persistence |
 | Sessions | ECS cluster and one Fargate task definition for shared and private sessions, 2 vCPU / 8 GB / 50 GB disk. Secrets come from Secrets Manager through the task definition, all but the Anthropic key, which only the console's proxy holds; a run passes only the per-session values, and the databases come from the session API. No task role, so session code has no AWS credentials. A second, `woodshed-cloud-db-admin`, is the db-admin task, with a database in `databases`: the root passwords of those it runs through its execution role, and a task role that reads the database users' passwords |
 | Images | ECR `woodshed-cloud-session` and `woodshed-cloud-console`, built by the installation's deploy workflow ("The deploy workflow", above) through GitHub OIDC, from the default branch only. They build in separate jobs, and a console build restarts the console on the base box. The session image gets a SOCI index (`session/addSociIndex.sh`), so Fargate starts a session in seconds and fetches files as they are read instead of pulling the whole image first, and then the database template is built again from it |

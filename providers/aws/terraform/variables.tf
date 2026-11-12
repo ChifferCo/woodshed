@@ -233,7 +233,7 @@ variable "github_app_installation_id" {
 }
 
 variable "base_box_instance_type" {
-  description = "x86, like the session image, so one build serves both."
+  description = "The base box's EC2 type, x86 like the session image so one build serves both. null picks by what the box runs: t3.small (2 GB) for the console and Caddy alone, t3.medium (4 GB) with mongo in databases or any shared_services. A type smaller than that is refused at plan."
   type        = string
-  default     = "t3.medium"
+  default     = null
 }

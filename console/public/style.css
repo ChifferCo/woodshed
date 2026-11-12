@@ -674,6 +674,11 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .restore-done { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--stopped); }
 .restore-done .start-mark { width: 20px; height: 20px; background: var(--green); color: var(--ground); font-size: 12px; }
 .restore-done .sub { margin: 4px 0 0; }
+.cmd-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; color: var(--ink); font-size: 14px; }
+.cmd-steps li::marker { color: var(--meta); font-weight: 600; }
+.cmd-steps p { margin: 0; }
+.cmd-steps .value-box, .cmd-aside .value-box { flex: 0 1 auto; white-space: pre; overflow-x: auto; }
+.cmd-aside { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .restore-cmd { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .restore-cmd-title { margin: 0; font-size: 12.5px; color: var(--meta); }
 .restore-cmd .value-box { white-space: pre; overflow-x: auto; }
