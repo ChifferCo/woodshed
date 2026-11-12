@@ -21,6 +21,7 @@ const CONTAINER = 'session';
 const IP_WAIT_MS = 90_000;
 const IP_POLL_MS = 3_000;
 const STARTED_BY_PREFIX = 'started-by:';
+const ESSENTIAL_EXITED = 'Essential container in task exited';
 const endpointOf = (taskArn, host) => ({ ref: taskArn, host, termPort: 7681, statusPort: 7682, shellPort: 7684 });
 // ECS caps a run's overrides at 8192 characters; the prompt, a comment's text, is the only part that can grow.
 const MAX_PROMPT_CHARS = 6000;
@@ -207,7 +208,10 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
       ]).catch(() => null);
       const text = (events?.events ?? []).map((e) => e.message.trimEnd()).join('\n');
       // A task that never ran has no logs; its stop reason (a pull or secrets error) is the line that explains it.
-      return [text, task?.stoppedReason].filter(Boolean).join('\n');
+      // "Essential container in task exited" only says the session's process ended, so after its log it would hide
+      // the line that says why.
+      const reason = task?.stoppedReason === ESSENTIAL_EXITED && text ? null : task?.stoppedReason;
+      return [text, reason].filter(Boolean).join('\n');
     },
 
     async stop(ref) {
