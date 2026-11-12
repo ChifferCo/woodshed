@@ -2,7 +2,9 @@
 
 A runbook for setting Woodshed up for one repository, written to be followed by a person or by their coding agent.
 Each step says who does it, the command, and how to tell it worked. **You** marks a step only the person can do: it
-needs a browser, an account or a decision. An agent stops there, says what to do, and waits.
+needs a browser, an account or a decision. An agent stops there, says what to do, and waits. Claude Code, run in this
+checkout, follows it through the `setup-woodshed` skill (`.claude/skills/`), with `write-project-file` for the project
+file and `debug-woodshed` when a check fails.
 
 To only look at the console, with made-up sessions and nothing else (no Docker, GitHub or Claude):
 `node <woodshed>/console/bin/devConsole.mjs`, then `http://localhost:7690/s/aaaa1111`.
