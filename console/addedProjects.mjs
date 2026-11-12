@@ -155,13 +155,18 @@ export function repoLister({ appApi, appSlug = async () => null }) {
     let lists;
     try {
       installations = await appApi.installations();
-      lists = await Promise.all(installations.map((i) => appApi.installationRepos(i.id)));
+      // One installation GitHub refuses (suspended, or its token denied) leaves out its repos alone.
+      lists = await Promise.all(installations.map((i) => appApi.installationRepos(i.id).catch((err) => {
+        console.warn('projects: an installation\'s repos not listed', { account: i.account, message: firstLine(err) });
+        return null;
+      })));
+      if (installations.length && lists.every((l) => l === null)) throw new Error('no installation\'s repos could be read');
     } catch (err) {
       console.warn('projects: repos not listed', { message: firstLine(err) });
       throw shown('GitHub did not list the App\'s repos. Type the repo instead, or try again; the console log says why.');
     }
     const slug = await appSlug().catch(() => null);
-    const repos = lists.flat().sort((a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' }));
+    const repos = lists.filter(Boolean).flat().sort((a, b) => a.repo.localeCompare(b.repo, undefined, { sensitivity: 'base' }));
     console.log('projects: repos listed', { installations: installations.length, repos: repos.length });
     return {
       repos,

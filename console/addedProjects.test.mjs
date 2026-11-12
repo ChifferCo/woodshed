@@ -186,6 +186,8 @@ test('the repo list is every installation\'s repos, sorted, with where to give t
     install: 'https://github.com/apps/w/installations/new',
   }, 'acme/app is the default project already');
   assert.equal(await createAddedProjects({ store, config: liveConfig(base, store), check: async () => ({}) }).choices(), null, 'no App, no list');
+  const half = repoLister({ appApi: { ...appApi, installationRepos: async (id) => { if (id === '2') throw new Error('HTTP 403'); return appApi.installationRepos(id); } } });
+  assert.deepEqual((await half()).repos.map((r) => r.repo), ['acme/app', 'acme/web'], 'one refused installation leaves out its repos alone');
   const down = repoLister({ appApi: { ...appApi, installationRepos: async () => { throw new Error('HTTP 502'); } } });
   await assert.rejects(down(), (err) => err.shown && /did not list the App's repos/.test(err.message));
 });

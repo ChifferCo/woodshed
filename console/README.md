@@ -1480,7 +1480,7 @@ the pick (`POST /api/console-settings/projects`). Under it, *Not listed?* links 
 where the repos it may reach are picked (Repository access), and the App's install page for another account; the list
 is read again on **List again** and when the tab comes back into view. On a console with no App (the local provider,
 or borrowed GitHub access), or when GitHub did not list them, the field takes `owner/name` typed in (a `github.com`
-link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error.
+link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
 Add repo, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be able to reach
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
 the console's own. A repo on an account the App is installed on, but not given, is refused with a link to that
