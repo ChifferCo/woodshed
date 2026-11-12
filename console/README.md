@@ -1493,7 +1493,10 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 1. The webhooks pass every label on a pull request to the fleet (`handleQaLabel`), which reads the project file from
    the default branch and drops any label that is not its QA label, without an entry in the events log.
 2. The person who added it needs write access and sessions from GitHub, as for the console's own label. A QA session
-   already running on the pull request, or a closed pull request, starts nothing.
+   already running on the pull request, or a closed pull request, starts nothing. With a review gate, a pull request
+   whose head the review has not approved gets a neutral `Waiting` QA check instead, and a submitted review
+   (`qaAfterReview`, from the webhooks' `review submitted`) starts QA on a labelled pull request once the review
+   approves its head, as whoever added the label (the issue events' last `labeled`), once for each commit.
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.

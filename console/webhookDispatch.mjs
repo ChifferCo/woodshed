@@ -102,6 +102,8 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return settle(body, () => fleet.handleNeedsHuman(body), body.number ?? null, attempt);
     }
     if (body?.source === 'github' && body.type === 'pr') {
+      // A review may have approved a pull request that waits on it for QA (fleet.qaAfterReview).
+      if (body.what === 'review submitted' && fleet.qaAfterReview) await qaAfterReview(body);
       if (!pulls) return true;
       return settle(body, () => pulls.handle(body), body.number ?? null, attempt);
     }
@@ -114,6 +116,17 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     if (trigger.trigger === 'qa') return settle(body, () => fleet.handleQaLabel(trigger), trigger.number, attempt);
     console.log('webhooks: message received', { type: body.type, number: trigger.number, delivery: body.deliveryId ?? null });
     return settle(body, () => fleet.handleWebhookTrigger(trigger), trigger.number, attempt);
+  }
+
+  // QA is the fleet's to start; the pull request's refresh goes on whatever it answered.
+  async function qaAfterReview(body) {
+    for (const number of (Array.isArray(body.numbers) ? body.numbers : [body.number]).filter(Number.isInteger)) {
+      try {
+        await fleet.qaAfterReview({ number, project: body.project ?? null });
+      } catch (err) {
+        console.warn('webhooks: QA after a review failed', { number, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
   }
 
   function dispatchSlack(body, attempt) {

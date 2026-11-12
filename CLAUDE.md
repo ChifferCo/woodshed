@@ -580,8 +580,10 @@ secrets.
   sets is missing from `PER_SESSION_ENV` (see Rules).
 - **The QA label on a pull request started no QA session.** Only a project whose file says
   `pullRequests.qa.runner: woodshed` starts one, and a label that is not its QA label is dropped with no log line.
-  `fleet: QA label ignored` gives the `reason` (no write access, QA already running, not open). A started one logs
-  `fleet: QA session started` with its `base`.
+  `fleet: QA not started` gives the `reason` (no write access, QA already running, not open) and `why` (`label` or
+  `review`). `fleet: QA waiting for the review` means the review has not approved the head: the review's approval
+  starts it, and `webhooks: QA after a review failed` says why one did not. A started one logs `fleet: QA session
+  started` with its `base` and `why`.
 - **A QA comment stays at Running.** The session's terminal shows the run (`[qa …]` lines). `fleet: QA finished`
   with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
   the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
