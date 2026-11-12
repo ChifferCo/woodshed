@@ -182,23 +182,33 @@
 
   /**
    * The Project field: which repo the session works on, among those the person may start on (GET /api/my/projects),
-   * with their default marked and Make my default beside any other. Hidden with one project, so the form is as it was.
+   * with their default marked and Make my default beside any other. With one project it names it as text; hidden with none.
    * @param {() => void} changed  called when the pick or the projects change
    */
   function createProjectPicker(changed) {
     const picker = h('select', { id: 'l-project', class: 'field' });
     const status = h('span', { class: 'sub', role: 'status' });
     const makeDefault = h('button', { type: 'button', class: 'btn btn-plain', title: 'New session opens on this project for you' }, 'Make my default');
-    const el = h('div', { class: 'lfield', hidden: true },
-      h('label', { for: 'l-project', class: 'field-label' }, h('span', null, 'Project'), h('span', { class: 'hint' }, 'the repo it works on')),
+    // With one project there is nothing to pick, but the form still says which repo the session works on.
+    const only = h('div', { class: 'project-only mono', id: 'l-project-only' });
+    const label = h('label', { for: 'l-project', class: 'field-label' }, h('span', null, 'Project'), h('span', { class: 'hint' }, 'the repo it works on'));
+    const el = h('div', { class: 'lfield', hidden: true }, label,
       h('div', { class: 'project-pick' }, picker, makeDefault),
+      only,
       status);
+    const pick = el.querySelector('.project-pick');
     let view = null;
     // A ?project= link picks for this visit only; it waits for the list when the page opens on it.
     let asked = null;
     function render() {
       const projects = view?.projects ?? [];
-      el.hidden = projects.length < 2;
+      el.hidden = projects.length === 0;
+      const one = projects.length === 1;
+      pick.hidden = one;
+      only.hidden = !one;
+      // With one project the select is hidden, so the label points at nothing.
+      if (one) label.removeAttribute('for'); else label.setAttribute('for', 'l-project');
+      only.textContent = one ? `${projects[0].name} \u00b7 ${projects[0].repo}` : '';
       const picked = picker.value || asked || view?.defaultProject;
       picker.replaceChildren(...projects.map((p) => h('option', { value: p.name },
         `${p.name} \u00b7 ${p.repo}${p.name === view.defaultProject ? ' \u2014 your default' : ''}`)));
@@ -222,9 +232,9 @@
     return {
       el,
       /** @returns {string}  the picked project, empty with one project: the server starts on the default */
-      value: () => (el.hidden ? '' : picker.value),
-      /** @returns {string}  the picked project's repo, empty with one project */
-      repo: () => (el.hidden ? '' : view?.projects.find((p) => p.name === picker.value)?.repo ?? ''),
+      value: () => ((view?.projects.length ?? 0) < 2 ? '' : picker.value),
+      /** @returns {string}  the picked project's repo, the only one's with one project */
+      repo: () => view?.projects.find((p) => p.name === picker.value)?.repo ?? '',
       ask(name) {
         asked = name;
         if (view) { picker.value = ''; render(); }

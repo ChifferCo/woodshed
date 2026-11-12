@@ -263,13 +263,12 @@ opens the same card in the pane in place of the form. The card lists Choose your
 that box on My settings, and, once either is saved, the databases (the console starts the copy then, so it is progress; if it failed or never
 started the row has an **Open My settings** button). It goes when both are done. Connect GitHub, which makes your sessions push and review as you, is on My settings and not a
 step: sessions work without it. My Woodshed is the shed's launcher, inside the console. The rail
-lists your own sessions, Active and Stopped, under **+ New session**. On a console
-with more than one project, the form starts with **Project**: the projects whose repo you
+lists your own sessions, Active and Stopped, under **+ New session**. The form starts
+with **Project**, the repo the session works on. With one project it only names it; with more, it lists the projects whose repo you
 can write to (`console/projectAccess.mjs`; GitHub is asked once every 10 minutes per person
 and project, so a person just given write access waits up to 10 minutes for it to show), opening on your default, marked **— your default**. **Make my default** beside
 another one saves it (`POST /api/my/projects/default`, kept per person in `viewPrefs`), as does
-the **Default project** card on My settings; `?project=<name>` picks one for that visit. With
-one project the field is hidden. Resume asks again, so a session on a project whose repo you can no longer write
+the **Default project** card on My settings; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
 asks for a prompt and, optionally:
 - a name. Left empty, the session starts named after the prompt's first line,
