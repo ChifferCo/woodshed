@@ -312,7 +312,8 @@
   // stale. Each row is common.js's menuItem: a link, or a button that is not run again while an action for its session
   // still runs. The top bar's Details and Data open it too, each under its own key, so one closes as the other opens.
   // `busy` is set while a row says what it is doing (Starting…), which keeps the menu as it is until the row is done.
-  const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false };
+  // `opened` counts each opening, so a row that ends after its menu was closed and opened again leaves the new one be.
+  const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false, opened: 0 };
   document.body.append(cardMenu.el);
   const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
@@ -339,6 +340,7 @@
     const key = button.dataset.menuFor;
     if (cardMenu.key === key) return closeCardMenu();
     closeCardMenu();
+    const opening = ++cardMenu.opened;
     const list = items ?? [...extra, ...cardActions(s)];
     const grouped = new Set(list.map((a) => a.group)).size > 1;
     // A line above the ending actions, between groups, and between the body and the first item.
@@ -352,7 +354,7 @@
       W.menuItem(s, a, {
         close: closeCardMenu,
         hold: () => { cardMenu.busy = true; },
-        done: () => { if (cardMenu.key === key) closeCardMenu(); },
+        done: () => { if (cardMenu.opened === opening && !cardMenu.el.hidden) closeCardMenu(); },
       }),
     ]).flat().filter(Boolean));
     cardMenu.el.hidden = false;
