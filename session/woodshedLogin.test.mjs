@@ -76,7 +76,7 @@ function setUp(t) {
     try {
       pane = tmux('capture-pane', '-p', '-t', 'claude');
     } catch {}
-    assert.fail(`${what} within 10 s; log: ${fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : 'none'}; claude's pane: ${pane.trimEnd()}`);
+    assert.fail(`${what} within 10 s; log: ${fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : 'none'}; claude's pane: ${pane.trimEnd()}; state: ${fs.existsSync(path.join(runDir, 'woodshed-claude-state.json')) ? fs.readFileSync(path.join(runDir, 'woodshed-claude-state.json'), 'utf8') : 'none'}; now: ${Date.now()}`);
   };
   const hook = (fields) => fs.writeFileSync(path.join(runDir, 'woodshed-claude-state.json'), JSON.stringify({ at: Date.now(), ...fields }));
   return { bin, runDir, home, env, tmux, login, until, hook };
