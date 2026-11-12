@@ -145,11 +145,15 @@ test('on a console that started with no repo, the first one added is the default
   await added.add({ repo: 'acme/api', by: 'octocat' });
   await added.add({ repo: 'acme/web', by: 'octocat' });
   assert.deepEqual(config.projects.map((p) => [p.name, p.default]), [['api', true], ['web', false]]);
+  assert.deepEqual(config.projects.map((p) => p.clonedAtStart ?? false), [true, false], 'no image holds the added default\'s checkout: its sessions clone it');
   assert.equal(store.state.addedProjects[0].default, false, 'the default is the live list\'s, not saved: a removal hands it on');
+  assert.equal(store.state.addedProjects[0].clonedAtStart, undefined, 'nor is that');
   assert.deepEqual(added.view().map((p) => [p.name, p.default, p.removable]), [['api', true, true], ['web', false, true]], 'an added default can be removed like any added repo');
   added.remove({ name: 'api', by: 'octocat' });
   assert.deepEqual(config.projects.map((p) => [p.name, p.default]), [['web', true]]);
-  assert.deepEqual(liveConfig(empty, store).projects.map((p) => [p.name, p.default]), [['web', true]], 'a restart reads it back the same');
+  assert.deepEqual(liveConfig(empty, store).projects.map((p) => [p.name, p.default, p.clonedAtStart]), [['web', true, true]], 'a restart reads it back the same');
+  const named = liveConfig({ ...empty, projects: [{ name: 'app', repo: 'acme/app', default: true }] }, store);
+  assert.deepEqual(named.projects.map((p) => [p.name, p.default, p.clonedAtStart]), [['app', true, undefined], ['web', false, undefined]], 'the environment\'s default is the image\'s');
 });
 
 test('a repo on an account the App is on, but not given, links to that installation\'s settings, not the install page', async () => {

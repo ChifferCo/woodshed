@@ -257,7 +257,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
     }
     return projectReaders.get(key);
   };
-  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
+  // A local install that named no repo hosts no database: install.sh, given the repo, builds its image and starts them.
+  const databasesFix = () => {
+    const project = defaultProject(config);
+    return provider.name === 'local' && project.clonedAtStart
+      ? `run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases`
+      : null;
+  };
+  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
@@ -332,9 +339,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const appPorts = config.appPorts?.length ? createAppPorts({
     store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
   }) : null;
-  // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one.
+  // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one. The image
+  // is built for the environment's repo, not one an admin added, so a console that started with none builds it with no
+  // checkout again, as install.sh did.
   const woodshedUpdate = createWoodshedUpdate({
-    config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(config).repo,
+    config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(loaded).repo || null,
     token: tokens ? async () => (await tokens.console.token()).token : null,
   });
   const handle = createHandler({

@@ -264,8 +264,9 @@ export function createFleet({
     // The session's app answers at `<id>.<appDomain>`; Woodshed's own app (console/bin/devConsole.mjs) lets in that name alone.
     if (config.appDomain) env.SESSION_APP_DOMAIN = config.appDomain;
     // Every project runs in the default project's image for now, so a session on another one clones its repo at start.
+    // So does one on a default project an admin added to a console that started with no repo, which no image holds.
     const project = projectFor(config, session);
-    if (!project.default) env.PROJECT_REPO = project.repo;
+    if (!project.default || project.clonedAtStart) env.PROJECT_REPO = project.repo;
     if (session.options?.agent === 'codex') env.AGENT = 'codex';
     if (session.options?.model) env.MODEL = session.options.model;
     if (session.options?.effort) env.EFFORT = session.options.effort;
