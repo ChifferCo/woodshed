@@ -77,6 +77,8 @@ export function createWoodshedUpdate({
   let checkedAt = null;
   let checking = null;
   let job = null;
+  // Whether an update holds the clone, from its first check until it fails or the console restarts.
+  let claimed = false;
 
   const git = async (args) => (await run('git', ['-C', top ?? sourceDir, ...args], { env: gitEnv, maxBuffer: 8 * 1024 * 1024 })).stdout.trim();
 
@@ -119,7 +121,7 @@ export function createWoodshedUpdate({
 
   /** Fetches the branch the clone follows, and counts what it lacks; one at a time. */
   async function check() {
-    if (!(await find()) || !upstream || job?.state === 'running') return;
+    if (!(await find()) || !upstream || job?.state === 'running' || job?.state === 'restarting') return;
     checking ??= compare().finally(() => { checking = null; });
     await checking;
   }
@@ -218,12 +220,19 @@ export function createWoodshedUpdate({
    */
   async function update({ by }) {
     const refuse = (message) => { throw Object.assign(new Error(message), { shown: true }); };
-    if (!(await find())) refuse('This console does not run from a git clone, so it cannot update itself.');
-    if (!upstream) refuse('The clone follows no branch: check one out that tracks the remote, such as main.');
-    if (!supervisor) refuse('Nothing would start this console again after the update: run it with install.sh\'s bin/woodshed or a systemd unit, or update it by hand.');
-    if (job?.state === 'running' || job?.state === 'restarting') refuse('An update is already running.');
-    await check();
-    if (!compared?.behindBy) refuse(checkError ?? 'Already up to date.');
+    // Claimed before the first await, so a second click during the fetch below is refused rather than run beside it.
+    if (claimed) refuse('An update is already running.');
+    claimed = true;
+    try {
+      if (!(await find())) refuse('This console does not run from a git clone, so it cannot update itself.');
+      if (!upstream) refuse('The clone follows no branch: check one out that tracks the remote, such as main.');
+      if (!supervisor) refuse('Nothing would start this console again after the update: run it with install.sh\'s bin/woodshed or a systemd unit, or update it by hand.');
+      await check();
+      if (!compared?.behindBy) refuse(checkError ?? 'Already up to date.');
+    } catch (err) {
+      claimed = false;
+      throw err;
+    }
     job = {
       state: 'running', by, startedAt: new Date(now()).toISOString(), from: compared.head, to: null, error: null, log: '',
       steps: [
@@ -233,7 +242,8 @@ export function createWoodshedUpdate({
       ],
     };
     console.log('woodshedUpdate: update started', { by, from: compared.head, behindBy: compared.behindBy, upstream });
-    runUpdate(by);
+    // A failed update frees the slot for another try; one that restarts keeps it until the process ends.
+    runUpdate(by).finally(() => { if (job.state === 'failed') claimed = false; });
     return view();
   }
 

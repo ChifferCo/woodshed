@@ -196,3 +196,22 @@ test('a console that runs from no clone, or from one on no branch, has no card a
   assert.equal((await detached.updates.view()).upstream, null);
   await assert.rejects(detached.updates.update({ by: 'mia-dev' }), /follows no branch/);
 });
+
+test('two Updates at once start one, and the other is refused before it fetches', async (t) => {
+  const { clone } = repos(t);
+  const { updates, spawned } = setup(t, { clone });
+  const results = await Promise.allSettled([updates.update({ by: 'mia-dev' }), updates.update({ by: 'sam-ops' })]);
+  assert.deepEqual(results.map((r) => r.status), ['fulfilled', 'rejected']);
+  assert.match(results[1].reason.message, /already running/);
+  await settle(updates);
+  assert.equal(spawned.length, 1, 'one build');
+});
+
+test('a failed update frees Update for another try', async (t) => {
+  const { clone } = repos(t);
+  const { updates } = setup(t, { clone, code: 1 });
+  await updates.update({ by: 'mia-dev' });
+  assert.equal((await settle(updates)).state, 'failed');
+  await updates.update({ by: 'mia-dev' });
+  assert.equal((await settle(updates)).state, 'failed', 'it ran again');
+});
