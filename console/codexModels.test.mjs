@@ -117,3 +117,15 @@ test('a start is checked against the list it was offered', async () => {
   assert.match(await codexModels.allows('ana', 'gpt-5.5', ''), /the model must be one of gpt-7-sol, gpt-7-nova/);
   assert.match(await codexModels.allows('ana', 'gpt-7-nova', 'ultra'), /the effort must be one of low, high for gpt-7-nova/);
 });
+
+test('a changed sign-in is read again at once', async () => {
+  let own = null;
+  const fetch = fakeFetch([{ status: 200, body: CATALOG }]);
+  const codexModels = createCodexModels({ userSettings: { codexAuth: async () => own }, teamCredential: async () => 'sk-team', fetch });
+  assert.equal((await codexModels.list('ana')).source, 'team');
+  own = 'sk-own';
+  assert.equal((await codexModels.list('ana')).source, 'team', 'kept until told');
+  codexModels.forget('ana');
+  assert.equal((await codexModels.list('ana')).source, 'own');
+  assert.equal(fetch.calls.at(-1).headers.authorization, 'Bearer sk-own');
+});

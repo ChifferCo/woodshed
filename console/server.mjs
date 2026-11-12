@@ -1237,6 +1237,8 @@ export function createHandler({
           await userSettings.setCodexAuth(login, body.value);
           await firstDatabases(login);
         }
+        // The models list was read on the sign-in that is gone: the next look reads it on the new one.
+        codexModels?.forget(login);
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {

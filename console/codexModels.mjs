@@ -105,7 +105,8 @@ function jwtExpiry(token) {
  * @param {{userSettings?: {codexAuth: (login: string) => Promise<string|null>}|null,
  *          teamCredential?: (() => Promise<string|null>)|null,  the OpenAI proxy's: the team key
  *          fetch?: typeof fetch, upstream?: string, now?: () => number}} opts
- * @returns {{list: (login: string) => Promise<CodexCatalog>, allows: (login: string, model: string, effort: string) => Promise<string|null>}}
+ * @returns {{list: (login: string) => Promise<CodexCatalog>, allows: (login: string, model: string, effort: string) => Promise<string|null>,
+ *            forget: (login: string) => void}}
  *
  * @typedef {{models: ReturnType<typeof modelsFrom>, source: 'own'|'team'|'built-in', note: string|null}} CodexCatalog
  *   `source` says whose sign-in read it; `note` says why the list is not a fresh one, for the page
@@ -201,5 +202,10 @@ export function createCodexModels({ userSettings = null, teamCredential = null, 
     return null;
   }
 
-  return { list, allows };
+  /** Drops the person's kept list, after their Codex sign-in changed. */
+  function forget(login) {
+    kept.delete(login);
+  }
+
+  return { list, allows, forget };
 }
