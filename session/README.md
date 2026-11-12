@@ -55,6 +55,15 @@ daily runtime would run them again every day. `install.sh` builds on the publish
 and builds the stage itself otherwise; without the build arg the stage is built here, as before. `:latest` trails a
 change to the stage by the workflow's run, about the time the build takes.
 
+## Checking saved-app setup in the image
+
+`.github/workflows/sessionApp.yml` builds this Dockerfile for the public `octocat/Hello-World` sample and runs
+`node scripts/appInImage.mjs <image>` on a Docker runner. It starts the complete entrypoint through the Docker
+launcher with the fleet's environment filtered through the ECS allowlist. The model and personal settings are
+fixtures; the console API, filesystem, tmux, statusd and app servers are real. Private sessions exercise setup and
+reuse after reopening the console state; shared sessions exercise repository precedence and a console listener
+restart during startup. The job retains the container logs as `session-app-image-proof`.
+
 ## What a container does
 
 `entrypoint.sh session` (the default):
@@ -74,7 +83,13 @@ change to the stage by the workflow's run, about the time the build takes.
    Each is offered once (`~/.claude/woodshed-default-plugins.json` in the saved
    home), so one its owner uninstalls stays uninstalled.
    A shared session never gets them: it holds no integration token.
-2. Writes the project file's env files from the base files it is given,
+2. Fetches this repository's app settings saved in This Woodshed through `appConfig.mjs pull`, after checkout.
+   The cache is `/tmp/woodshed-app-config.json`, named by `WOODSHED_APP_CONFIG_FILE`. `loadProject` uses its app only
+   when the project defines none. `appConfig.mjs check <app.json>` validates an app object; `save <app.json>` saves it
+   through the console and refreshes the cache, without writing to the repository. Transient network failures,
+   server errors and truncated responses are retried for up to a minute; authentication and validation refusals
+   fail immediately, while a 404 from an older console leaves saved apps unavailable.
+   Writes the project file's env files from the base files it is given,
    with the shared services' addresses appended (see "The project file" in `../README.md`).
 3. Starts its own Redis on 127.0.0.1, with redis-commander for Data ▾, when the
    project file's `env` or `envFiles` mention `REDIS_URL` (`startRedisIfUsed`), and

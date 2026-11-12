@@ -2,6 +2,8 @@
 // tasks alone), on the base box's private address:
 //
 //   POST /github-token   Authorization: Bearer <SESSION_TOKEN>  ->  {"token": "...", "expiresAt": "..."}
+//   POST /app-config     -> {repo, app}: this session's repository's app saved in This Woodshed
+//   POST /app-config/save {app} -> {repo, app}: only after the page chose This Woodshed for this session
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...},
 //                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
@@ -119,7 +121,7 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, savedApps = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -155,12 +157,28 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
+    const routes = ['/app-config', '/app-config/save', '/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
+    }
+    if (pathname === '/app-config' || pathname === '/app-config/save') {
+      if (!savedApps) return reply(res, 404, { error: 'saved apps are not available' });
+      try {
+        if (pathname === '/app-config') return reply(res, 200, savedApps.read(session));
+        let text = '';
+        for await (const chunk of req) {
+          text += chunk;
+          if (Buffer.byteLength(text) > 64 * 1024) return reply(res, 413, { error: 'app settings are too large' });
+        }
+        const body = JSON.parse(text);
+        if (!body || Object.keys(body).some((k) => k !== 'app')) throw new Error('send only app settings');
+        return reply(res, 200, savedApps.save(session, body.app));
+      } catch (err) {
+        return reply(res, err.status || 400, { error: err.message });
+      }
     }
     if (pathname === '/settings') return settingsReply(res, session, userSettings, databases);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);

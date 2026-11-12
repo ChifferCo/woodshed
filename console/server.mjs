@@ -1634,7 +1634,9 @@ export function createHandler({
       if (!session) return reply(res, 404, { error: 'no such session' });
       try {
         if (action === 'setup') {
-          const { session: after, sent } = await fleet.setupApp(session);
+          const body = await readJson(req).catch(() => null);
+          if (!body || (body.destination !== undefined && !['woodshed', 'repository'].includes(body.destination))) return reply(res, 400, { error: 'choose This Woodshed or Repository' });
+          const { session: after, sent } = await fleet.setupApp(session, { destination: body.destination ?? 'woodshed' });
           return reply(res, 200, { ...publicSession(after), sent });
         }
         if (action === 'start') {

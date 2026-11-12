@@ -71,6 +71,7 @@
 set -euo pipefail
 
 export REPO_DIR=${REPO_DIR:-$PWD}
+export WOODSHED_APP_CONFIG_FILE=/tmp/woodshed-app-config.json
 SESSION_DIR=/opt/woodshed/session
 # What the shed and Woodshed's sessions share (woodshed/shared/ in the repo): the project file's reader among it.
 SHARED_DIR=/opt/woodshed/shared
@@ -889,6 +890,7 @@ runSession() {
   configureGitIdentity
   wait "$fetching" || die "could not fetch the branch from GitHub"
   checkoutBranch
+  node "$SESSION_DIR/appConfig.mjs" pull || die "could not read saved app settings from the console"
   progress branch
   # After the checkout, so the copy has had that long.
   fetchSessionDatabases

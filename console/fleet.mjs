@@ -47,13 +47,17 @@ const GITHUB_TRIGGERS = new Set(['label', 'comment']);
 
 // What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
 // the session image, so they are named here.
-export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
-  + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
-  + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
-  + 'same port twice for one server), `logs` (a name for each server\'s log file) and `howToProve` (how to check a '
-  + 'change in the running app); `start`, both ports and `howToProve` are required. Write .woodshed/project.yaml '
-  + 'with `version: 1` if there is none, and check it with `node /opt/woodshed/shared/project.mjs get app`. Run the '
-  + 'start command yourself and check both ports answer, run the stop, then commit the file on this branch. Start app reads the file again, so tell me when to press it.';
+const APP_SETUP_TASK = 'Work out from this repo how its app runs in development. Configure `start` (start the backend and frontend in the background and return once both answer), `stop`, `frontendPort` and `backendPort` (the same port for one server), `logs` (a name for each server log), and `howToProve` (how to check a change in the running app). '
+  + 'Run the start command, check both ports answer, then run stop and check both ports close. Fix any failures before saving. ';
+export const SETUP_APP_PROMPT = APP_SETUP_TASK
+  + 'Save for This Woodshed: write only the app object as JSON to /tmp/woodshed-app-setup.json, using self-contained commands or scripts that already exist in the repo. Do not create helper scripts in the repo for this setup. '
+  + 'Validate with `node /opt/woodshed/session/appConfig.mjs check /tmp/woodshed-app-setup.json`, then save with `node /opt/woodshed/session/appConfig.mjs save /tmp/woodshed-app-setup.json`. '
+  + 'This saves the app for this repository in this Woodshed and makes it available to future sessions. Do not write .woodshed/project.yaml or commit for this setup. '
+  + 'An existing project app takes precedence; if there is one, explain that instead of overwriting it. Start app reads the saved settings, so tell me when to press it.';
+export const REPO_APP_SETUP_PROMPT = APP_SETUP_TASK
+  + 'Save to repository: add the app section to .woodshed/project.yaml, preserving other settings, with version: 1 if the file is new. '
+  + 'Validate with `node /opt/woodshed/shared/project.mjs get app`. Leave the changes uncommitted; do not commit or push for this setup unless I explicitly ask. '
+  + 'These repository app settings take precedence over settings saved in This Woodshed. Start app reads the file again, so tell me when to press it.';
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
@@ -1662,13 +1666,18 @@ export function createFleet({
     return session;
   }
 
-  // A project file with no app leaves Start app nothing to run: Set up app asks the session's claude to write one, which
-  // its statusd reads at the next Start app.
-  async function setupApp(session) {
+  // With no app to start, ask the agent to discover and verify one, then save it in the chosen location.
+  // The page's choice grants this session permission to save its repository's app in the console.
+  async function setupApp(session, { destination = 'woodshed' } = {}) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
-    if (isAsk(session)) throw Object.assign(new Error('a question from Slack has no app'), { refused: true });
+    if (isAsk(session) || isQa(session)) throw Object.assign(new Error('app setup needs a coding session'), { refused: true });
     if (session.app !== 'none') throw Object.assign(new Error('the project already has an app: Start app runs it'), { refused: true });
-    const sent = await send(session, SETUP_APP_PROMPT);
+    if (!['woodshed', 'repository'].includes(destination)) throw Object.assign(new Error('choose This Woodshed or Repository'), { refused: true });
+    if (destination === 'woodshed' && !session.appSetupSupported) {
+      throw Object.assign(new Error('start a new session after updating its image to save in This Woodshed, or choose Repository'), { refused: true });
+    }
+    update(session, { appSetupDestination: destination });
+    const sent = await send(session, destination === 'woodshed' ? SETUP_APP_PROMPT : REPO_APP_SETUP_PROMPT);
     console.log('fleet: app setup asked', { id: session.id, sent });
     return { session, sent };
   }
