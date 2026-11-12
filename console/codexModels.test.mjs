@@ -129,3 +129,26 @@ test('a changed sign-in is read again at once', async () => {
   assert.equal((await codexModels.list('ana')).source, 'own');
   assert.equal(fetch.calls.at(-1).headers.authorization, 'Bearer sk-own');
 });
+
+test('a read the sign-in changed under keeps nothing', async () => {
+  let own = 'sk-old';
+  let release;
+  const slow = new Promise((resolve) => { release = resolve; });
+  const calls = [];
+  const fetch = async (url, init) => {
+    calls.push(init.headers.authorization);
+    const first = calls.length === 1;
+    if (first) await slow;
+    return { ok: true, status: 200, text: async () => JSON.stringify(first ? { models: [model('gpt-old')] } : CATALOG) };
+  };
+  const codexModels = createCodexModels({ userSettings: { codexAuth: async () => own }, fetch });
+  const old = codexModels.list('ana');
+  await new Promise((resolve) => setImmediate(resolve));
+  own = 'sk-new';
+  codexModels.forget('ana');
+  await codexModels.list('ana');
+  release();
+  await old;
+  assert.deepEqual((await codexModels.list('ana')).models.map((m) => m.slug), ['gpt-7-sol', 'gpt-7-nova'], 'the new sign-in\'s list, not the old read\'s');
+  assert.deepEqual(calls, ['Bearer sk-old', 'Bearer sk-new']);
+});

@@ -172,12 +172,15 @@ export function createCodexModels({ userSettings = null, teamCredential = null, 
     const due = !last || (stale && (!last.failedAt || at - last.failedAt >= RETRY_MS));
     if (due) {
       if (!reading.has(login)) {
-        reading.set(login, read(login).then((got) => {
+        const run = read(login).then((got) => {
+          // A read the person's sign-in changed under (forget) keeps nothing: it was made on the old one.
+          if (reading.get(login) !== run) return;
           const prev = kept.get(login);
           kept.set(login, got.models
             ? { models: got.models, source: got.source, at: now() }
             : { ...(prev?.models ? prev : {}), failedAt: now(), why: got.failed });
-        }).finally(() => reading.delete(login)));
+        }).finally(() => { if (reading.get(login) === run) reading.delete(login); });
+        reading.set(login, run);
       }
       await reading.get(login);
     }
@@ -205,6 +208,7 @@ export function createCodexModels({ userSettings = null, teamCredential = null, 
   /** Drops the person's kept list, after their Codex sign-in changed. */
   function forget(login) {
     kept.delete(login);
+    reading.delete(login);
   }
 
   return { list, allows, forget };
