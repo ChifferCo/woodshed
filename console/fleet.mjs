@@ -1108,11 +1108,12 @@ export function createFleet({
     const on = parseWorkOn(workOn, { defaultBranch: await githubOf(project).defaultBranch?.() ?? null });
     const reviewOnly = !String(prompt ?? '').trim() && on.kind !== 'task';
     const text = String(prompt ?? '').trim();
-    if (!text && !reviewOnly) throw shown('say what Claude should do');
+    const agentName = picked.agent === 'codex' ? 'Codex' : 'Claude';
+    if (!text && !reviewOnly) throw shown(`say what ${agentName} should do`);
     const options = sessionOptions(picked);
     logIfInLine(owner);
     const target = await targetFor(on, project);
-    if (reviewOnly && target.kind === 'issue') throw shown('say what Claude should do');
+    if (reviewOnly && target.kind === 'issue') throw shown(`say what ${agentName} should do`);
     if (reviewOnly) console.log('fleet: private session starts as a review, no prompt given', { owner, on: on.kind });
     // With no prompt there is nothing for Haiku to name from, so a branch is named for itself.
     const given = String(name ?? '').trim().slice(0, TITLE_CHARS) || target.title || (reviewOnly ? `Review ${target.branch}` : '');

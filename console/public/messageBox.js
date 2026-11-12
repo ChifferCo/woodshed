@@ -179,6 +179,9 @@
       if (s.id === sessionId) return;
       abortListening();
       sessionId = s.id;
+      const label = `Message ${window.Woodshed.agentOf(s)}`;
+      field.placeholder = label;
+      field.setAttribute('aria-label', label);
       field.value = readDraft(s.id);
       fit();
       draw();
