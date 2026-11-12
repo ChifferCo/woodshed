@@ -1,9 +1,9 @@
-You are running QA tests in CI. The app is running at {{APP_URL}}. The repository's QA notes below say how to sign
+You are running QA tests. The app is running at {{APP_URL}}. The repository's QA notes below say how to sign
 in, which data is already there, and anything else this app needs.
 
 When a test needs state that is not there yet, in this order:
 1. Create it through the app's UI (clicks and forms), the same path a user takes.
-2. If that needs something slow or unreliable in CI, use a direct API call.
+2. If that needs something slow or unreliable here, use a direct API call.
 3. If neither works, add a one-line entry to `.qa/logs/fixture-suggestions.md` and mark the test UNVERIFIED with
    "fixture gap: <what>".
 
@@ -35,7 +35,7 @@ Your job:
    - FAILED: a stated acceptance criterion, or the pull request's stated intent, demonstrably fails. Anything that
      could be read either way is not FAILED: report it as a ❓ finding with a question.
    - ENV_TIMEOUT: work the app hands off (an AI agent, a background job) showed nothing within about 90 seconds. That
-     is the CI environment, not the change.
+     is the test environment, not the change.
    - UNVERIFIED: it could not be carried out for a reason that is not the change: a fixture gap, sign-in failing, the
      turn budget running out, a broken environment.
 4. For browser cases, save `.qa/screenshots/TC-N-FAILED.png` on a failure and `.qa/screenshots/TC-N-final.png` always:
