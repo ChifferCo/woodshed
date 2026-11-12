@@ -182,7 +182,7 @@
 
   /**
    * The Project field: which repo the session works on, among those the person may start on (GET /api/my/projects),
-   * with their default marked and Make my default beside any other. Hidden with one project, so the form is as it was.
+   * with their default marked and Make my default beside any other. With one project it names it as text; hidden with none.
    * @param {() => void} changed  called when the pick or the projects change
    */
   function createProjectPicker(changed) {
@@ -191,8 +191,8 @@
     const makeDefault = h('button', { type: 'button', class: 'btn btn-plain', title: 'New session opens on this project for you' }, 'Make my default');
     // With one project there is nothing to pick, but the form still says which repo the session works on.
     const only = h('div', { class: 'project-only mono', id: 'l-project-only' });
-    const el = h('div', { class: 'lfield', hidden: true },
-      h('label', { for: 'l-project', class: 'field-label' }, h('span', null, 'Project'), h('span', { class: 'hint' }, 'the repo it works on')),
+    const label = h('label', { for: 'l-project', class: 'field-label' }, h('span', null, 'Project'), h('span', { class: 'hint' }, 'the repo it works on'));
+    const el = h('div', { class: 'lfield', hidden: true }, label,
       h('div', { class: 'project-pick' }, picker, makeDefault),
       only,
       status);
@@ -206,6 +206,8 @@
       const one = projects.length === 1;
       pick.hidden = one;
       only.hidden = !one;
+      // With one project the select is hidden, so the label points at nothing.
+      if (one) label.removeAttribute('for'); else label.setAttribute('for', 'l-project');
       only.textContent = one ? `${projects[0].name} \u00b7 ${projects[0].repo}` : '';
       const picked = picker.value || asked || view?.defaultProject;
       picker.replaceChildren(...projects.map((p) => h('option', { value: p.name },
