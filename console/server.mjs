@@ -1050,7 +1050,7 @@ export function createHandler({
       // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
       githubSetupNeeded: Boolean(githubSetup?.available()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
-      githubConnect: Boolean(githubUser),
+      githubConnect: Boolean(githubUser) && Boolean(auth?.enabled()),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
       app: appIdentity?.known() ?? null,
     };
@@ -1796,12 +1796,12 @@ export function createHandler({
 
 /**
  * A local console with no sign-in has one person at the keyboard, who gets a login of their own so My Woodshed works:
- * their Claude token, private sessions and settings are kept under it. Elsewhere, with a GitHub App or behind a hosting
- * proxy, nobody has one until they sign in.
+ * their Claude token, private sessions and settings are kept under it, also once the GitHub App exists and until a first
+ * sign-in arms the console's sign-in. Elsewhere, behind a hosting proxy, nobody has one until they sign in.
  * @returns {string|null}
  */
 export function soloLoginOf(config) {
-  return config.launcher?.kind === 'docker' && !config.githubApp && !config.trustedIdentitySecret ? config.localLogin ?? null : null;
+  return config.launcher?.kind === 'docker' && !config.trustedIdentitySecret ? config.localLogin ?? null : null;
 }
 
 /**
