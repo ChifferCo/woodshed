@@ -16,7 +16,10 @@
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
 # empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
 # DOCKER_HOST set, on that docker host), WOODSHED_IMAGE (the session image's tag, woodshed-session:<owner>-<name>
-# otherwise; the console's Update passes its own WOODSHED_IMAGE).
+# otherwise; the console's Update passes its own WOODSHED_IMAGE), WOODSHED_TAILSCALE (1 reaches the console from your
+# other devices over Tailscale, 0 does not; asked in a terminal when `tailscale status` works, read from here where there
+# is none, and remembered in ~/.woodshed/tailscale), WOODSHED_TAILSCALE_WAIT (seconds to wait for Serve to be turned on
+# in the tailnet's admin page, 300).
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
@@ -187,7 +190,7 @@ randomSecret() { node -p 'require("node:crypto").randomBytes(24).toString("hex")
 # console makes no databases for sessions: the db-admin run refuses a project file with no databases, and every shared
 # session would wait on it.
 writeStackEnv() {
-  local file=$1 home=$2 repo=$3 image=$4 envFiles=$5 dbEnvSecrets=$6 engines=$7 network=$8
+  local file=$1 home=$2 repo=$3 image=$4 envFiles=$5 dbEnvSecrets=$6 engines=$7 network=$8 publicUrl=${9:-http://localhost:$CONSOLE_PORT}
   [ -f "$file" ] && return 0
   (
     umask 077
@@ -216,7 +219,7 @@ WOODSHED_REPO=$repo
 WOODSHED_ENV_FILES=$envFiles
 WOODSHED_DB_ENV_SECRETS=$dbEnvSecrets
 WOODSHED_PORT=$CONSOLE_PORT
-WOODSHED_PUBLIC_URL=http://localhost:$CONSOLE_PORT
+WOODSHED_PUBLIC_URL=$publicUrl
 WOODSHED_STATE_DIR=$home/console
 WOODSHED_IMAGE=$image
 WOODSHED_SESSION_ENV_FILE=$home/session-env.json
@@ -333,6 +336,167 @@ EOF
   chmod 755 "$file"
 }
 
+# --- Tailscale: the console reached from the person's other devices ---------------------------------------------------
+
+# The tailscale CLI: on PATH, or inside the macOS app, which does not put it there.
+tailscaleCli() {
+  if command -v tailscale >/dev/null; then command -v tailscale; return; fi
+  local app=/Applications/Tailscale.app/Contents/MacOS/Tailscale
+  if [ -x "$app" ]; then printf '%s' "$app"; return; fi
+  return 1
+}
+
+# This machine's name on the tailnet (`<machine>.<tailnet>.ts.net`), when Tailscale is up and has MagicDNS.
+tailscaleName() {
+  local cli
+  cli=$(tailscaleCli) || return 1
+  "$cli" status --json 2>/dev/null | node -e '
+    let text = "";
+    process.stdin.on("data", (d) => { text += d; });
+    process.stdin.on("end", () => {
+      try {
+        const name = String(JSON.parse(text).Self?.DNSName ?? "").replace(/\.$/, "");
+        if (/^[a-z0-9.-]+\.ts\.net$/i.test(name)) process.stdout.write(name);
+      } catch { /* not JSON: tailscale is not running */ }
+    });
+  '
+}
+
+# Whether to reach the console over Tailscale: WOODSHED_TAILSCALE=1 or 0, else what an earlier run was told, else, where
+# `tailscale status` works, a question in a terminal. Where there is no terminal (a coding agent's shell, CI) nothing is
+# asked: it is no, and says how to say yes.
+wantTailscale() {
+  local home=$1 saved=""
+  [ -f "$home/tailscale" ] && saved=$(cat "$home/tailscale")
+  case ${WOODSHED_TAILSCALE:-$saved} in
+    1) return 0 ;;
+    0) return 1 ;;
+    '') ;;
+    *) fail "WOODSHED_TAILSCALE is 1 or 0, not ${WOODSHED_TAILSCALE:-$saved}" ;;
+  esac
+  local cli
+  cli=$(tailscaleCli) || return 1
+  "$cli" status >/dev/null 2>&1 || return 1
+  if ! { : </dev/tty; } 2>/dev/null; then
+    say 'Tailscale is running here, so Woodshed could be reached from your other devices: WOODSHED_TAILSCALE=1 does it, 0 does not' >&2
+    return 1
+  fi
+  local answer
+  answer=$(ask 'Reach Woodshed from your other devices over Tailscale? [y/N] ')
+  case $answer in [yY]*) return 0 ;; *) return 1 ;; esac
+}
+
+# Serves the console to the tailnet, over https, and prints the name it answers to. Where the tailnet has Serve off the
+# command prints a link to turn it on and then waits, so its output is shown as it comes and the wait is bounded.
+tailscaleServe() {
+  local port=$1 log=$2 cli pid waited=0 limit=${WOODSHED_TAILSCALE_WAIT:-300} shown=0 name
+  cli=$(tailscaleCli) || fail 'tailscale is not installed'
+  name=$(tailscaleName)
+  [ -n "$name" ] || fail 'Tailscale has no https name for this machine: turn on MagicDNS and HTTPS certificates at https://login.tailscale.com/admin/dns'
+  : >"$log"
+  "$cli" serve --bg "$port" >"$log" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$shown" = 0 ] && grep -q 'login.tailscale.com' "$log"; then
+      shown=1
+      say 'Tailscale Serve is off for this tailnet. Open this link and turn it on; this goes on by itself after:' >&2
+      cat "$log" >&2
+    fi
+    if [ "$waited" -ge "$limit" ]; then
+      kill "$pid" 2>/dev/null || true
+      fail "Serve was not turned on within ${limit}s: turn it on at the link above, then run this again"
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  if ! wait "$pid"; then
+    cat "$log" >&2
+    fail "tailscale serve --bg $port failed"
+  fi
+  printf '%s' "$name"
+}
+
+# stack.env is written once, so the public URL a later run learns (Tailscale's name, or another after the tailnet
+# changed) replaces the line in place, and the rest of the file stays as it is.
+savePublicUrl() {
+  local file=$1 url=$2 kept
+  [ "$(savedConsoleSetting "$file" PUBLIC_URL)" != "$url" ] || return 0
+  kept=$(grep -v '^WOODSHED_\(CLOUD_\)\{0,1\}PUBLIC_URL=' "$file" || true)
+  (
+    umask 077
+    printf '%s\nWOODSHED_PUBLIC_URL=%s\n' "$kept" "$url" >"$file"
+  )
+}
+
+xmlEscape() { sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' <<<"$1"; }
+
+# Where the console's service is written: a launchd agent on macOS, a user systemd unit on Linux. Both start it at
+# login and again when it stops with an error, and neither needs a terminal.
+serviceFile() {
+  case $1 in
+    Darwin) printf '%s/Library/LaunchAgents/run.woodshed.console.plist' "$HOME" ;;
+    *) printf '%s/systemd/user/woodshed.service' "${XDG_CONFIG_HOME:-$HOME/.config}" ;;
+  esac
+}
+
+writeService() {
+  local os=$1 launcher=$2 home=$3 file
+  file=$(serviceFile "$os")
+  mkdir -p "$(dirname "$file")"
+  if [ "$os" = Darwin ]; then
+    cat >"$file" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>run.woodshed.console</string>
+  <key>ProgramArguments</key><array><string>$(xmlEscape "$launcher")</string></array>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>$(xmlEscape "$PATH")</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>$(xmlEscape "$home/console.log")</string>
+  <key>StandardErrorPath</key><string>$(xmlEscape "$home/console.log")</string>
+</dict>
+</plist>
+EOF
+  else
+    cat >"$file" <<EOF
+[Unit]
+Description=Woodshed console
+
+[Service]
+ExecStart="$launcher"
+Environment="PATH=$PATH"
+Restart=on-failure
+StandardOutput=append:$home/console.log
+StandardError=append:$home/console.log
+
+[Install]
+WantedBy=default.target
+EOF
+  fi
+  printf '%s' "$file"
+}
+
+serviceStartCommand() {
+  if [ "$1" = Darwin ]; then printf 'launchctl bootstrap gui/%s %s' "$(id -u)" "$2"
+  else printf 'systemctl --user daemon-reload && systemctl --user enable --now woodshed.service'
+  fi
+}
+
+# Starts the service now and at each login.
+startService() {
+  local os=$1 file=$2
+  if [ "$os" = Darwin ]; then
+    launchctl bootout "gui/$(id -u)" "$file" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$file"
+  else
+    systemctl --user daemon-reload
+    systemctl --user enable --now woodshed.service
+    say 'To keep it running when you are logged out too: sudo loginctl enable-linger "$USER"'
+  fi
+}
+
 openWhenReady() {
   local url=$1 opener=""
   command -v open >/dev/null && opener=open
@@ -388,12 +552,22 @@ main() {
     say "Using the session image $image (WOODSHED_REBUILD=1 builds it again)"
   fi
 
+  # Before the stack.env and so before the GitHub App: the App's callback URL is made from the public URL.
+  local publicUrl=http://localhost:$CONSOLE_PORT tailscale=0
+  if wantTailscale "$home"; then
+    tailscale=1
+    publicUrl=https://$(tailscaleServe "$CONSOLE_PORT" "$home/tailscale-serve.log")
+    say "Tailscale serves the console at $publicUrl, to your tailnet only"
+  fi
+  printf '%s\n' "$tailscale" >"$home/tailscale"
+
   local settings engines network
   settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir")
   engines=$(sed -n 3p <<<"$settings")
   network=${WOODSHED_NETWORK:-}
   [ -n "$network" ] || ! anyEngine "$engines" || network=woodshed
-  writeStackEnv "$stackEnv" "$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network"
+  writeStackEnv "$stackEnv" "$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network" "$publicUrl"
+  [ "$tailscale" = 0 ] || savePublicUrl "$stackEnv" "$publicUrl"
   saveProjectFilesDir "$stackEnv" "$projectFilesDir"
   set -a
   # shellcheck source=/dev/null
@@ -439,11 +613,26 @@ main() {
   writeLauncher "$home/bin/woodshed" "$home" "$src"
   say "Set up in $home. Start the console again any time with $home/bin/woodshed"
   say "Back up $WOODSHED_LOCAL_SECRETS_KEY_FILE somewhere else: losing it loses every secret"
-  [ -z "${WOODSHED_NO_START:-}" ] || return 0
 
-  local url=http://localhost:$CONSOLE_PORT
+  local os service=""
+  os=$(uname -s)
+  if [ "$tailscale" = 1 ]; then
+    service=$(writeService "$os" "$home/bin/woodshed" "$home")
+    say "The console is a service now ($service): it starts at login, and again if it stops with an error. Its log is $home/console.log"
+  fi
+  if [ -n "${WOODSHED_NO_START:-}" ]; then
+    [ -z "$service" ] || say "Start it with: $(serviceStartCommand "$os" "$service")"
+    return 0
+  fi
+
+  local url=$publicUrl
   say "Starting the console at $url"
   openWhenReady "$url"
+  if [ -n "$service" ]; then
+    startService "$os" "$service"
+    say 'It runs in the background: this terminal can be closed'
+    return 0
+  fi
   exec "$home/bin/woodshed"
 }
 

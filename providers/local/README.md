@@ -40,7 +40,9 @@ sessions get none.
 project files the installation supplies, `<owner>/<name>.yaml`, for a repository with no `.woodshed/project.yaml` of its
 own: `install.sh` reads the repository's from it, for the databases it starts and the image it builds, and saves it in
 `stack.env` as `WOODSHED_PROJECT_FILES_DIR` ("Project files the installation supplies", below). It starts the console with `~/.woodshed/bin/woodshed`, which
-starts it again when the GitHub App setup page asks. By hand, on any machine:
+starts it again when the GitHub App setup page asks. When `tailscale status` works it asks whether to reach the console
+over Tailscale (`WOODSHED_TAILSCALE=1` or `0` where there is no terminal; remembered in `~/.woodshed/tailscale`) and on
+yes does the following ("Reaching a local install over Tailscale", below). By hand, on any machine:
 
 1. Build the session image from the repo root, as `session/Dockerfile` says, and tag it `woodshed-session`.
 2. Copy `stack.env.example` and `session-env.example.json` outside the repo, fill them in, and make both readable
@@ -92,6 +94,27 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
    (`dbAdminRunner.mjs` has the flags), or start a session, whose first copy waits for it.
 
 `node woodshed/providers/local/bin/secret.mjs list` shows which secrets have a value, never a value.
+
+## Reaching a local install over Tailscale
+
+`install.sh` on yes runs `tailscale serve --bg 7690`, which gives `https://<machine>.<tailnet>.ts.net` to the tailnet
+(never the internet), sets `WOODSHED_PUBLIC_URL` in `stack.env` to it before the GitHub App is made (the console
+refuses a name that is not loopback, the machine's hostname or the host of `WOODSHED_PUBLIC_URL` with a 421 `unknown
+host`, and the App's callback URL is `WOODSHED_PUBLIC_URL` plus `/auth/callback`), and writes a service that keeps the
+console running after the terminal closes and at login: `~/Library/LaunchAgents/run.woodshed.console.plist` on macOS,
+`~/.config/systemd/user/woodshed.service` on Linux (`sudo loginctl enable-linger $USER` there to run it logged out
+too). Its log is `~/.woodshed/console.log`. Stop it with `launchctl bootout gui/$(id -u)
+~/Library/LaunchAgents/run.woodshed.console.plist` or `systemctl --user disable --now woodshed`, and
+`tailscale serve reset` to stop serving.
+
+- A tailnet where Serve was never turned on makes `tailscale serve` print a link and wait: the installer shows it and
+  waits `WOODSHED_TAILSCALE_WAIT` seconds (300).
+- The name changes with the tailnet. Run the installer again with `WOODSHED_TAILSCALE=1`: it serves the new name and
+  replaces `WOODSHED_PUBLIC_URL`, and the GitHub App's callback URLs then need `https://<new name>/auth/callback`.
+- Sign-in stays what it is on any console: absent until the App is made and the first sign-in completes, then required.
+  A work tailnet lets colleagues reach the address, so set `WOODSHED_REQUIRE_SIGN_IN=1` in `stack.env` once the App is
+  in. A work plan may also refuse a new device: use a personal tailnet.
+- Open app is not served: apps are at `<id>.<app domain>`, which a Tailscale certificate does not cover.
 
 ## What to know
 

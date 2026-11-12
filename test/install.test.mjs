@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -317,4 +317,116 @@ test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecate
   assert.equal(config.projectFilesDir, '/srv/other-files');
   assert.equal(defaultProject(config).repo, 'acme/app');
   assert.deepEqual(envFiles(moved), [{ secret: 'app-env', path: 'api/.env' }]);
+});
+
+// A stand-in `tailscale` on the PATH: `status` works and names the machine, and `serve` either answers at once or, with
+// SERVE_OFF, prints the enable link and then waits for the file SERVE_ON to exist, as the real one does.
+function fakeTailscale(dir) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'tailscale'), [
+    '#!/usr/bin/env bash',
+    'case $1 in',
+    '  status) if [ "${1:-}" = status ] && [ "${2:-}" = --json ]; then echo \'{"Self":{"DNSName":"mac.tail1234.ts.net."}}\'; fi ;;',
+    '  serve)',
+    '    echo "$*" >>"$FAKE_TAILSCALE_LOG"',
+    '    if [ -n "${SERVE_OFF:-}" ]; then',
+    '      echo "Serve is not enabled on your tailnet."; echo "To enable, visit: https://login.tailscale.com/f/serve?node=abc"',
+    '      until [ -e "$SERVE_ON" ]; do sleep 0.1; done',
+    '    fi',
+    '    echo "Available within your tailnet: https://mac.tail1234.ts.net/" ;;',
+    'esac',
+    '',
+  ].join('\n'), { mode: 0o755 });
+}
+
+function tailscaleEnv(extra = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-ts-'));
+  fakeTailscale(path.join(dir, 'bin'));
+  return { dir, env: { PATH: `${path.join(dir, 'bin')}:${process.env.PATH}`, FAKE_TAILSCALE_LOG: path.join(dir, 'serve.log'), HOME: dir, ...extra } };
+}
+
+test('tailscaleName reads this machine\'s ts.net name, and nothing when Tailscale is not running', () => {
+  const { env } = tailscaleEnv();
+  assert.equal(runInstallFunction('tailscaleName', env), 'mac.tail1234.ts.net');
+  assert.equal(runInstallFunction('tailscaleName || echo none', { PATH: '/usr/bin:/bin', HOME: os.tmpdir() }).trim(), 'none');
+});
+
+test('WOODSHED_TAILSCALE answers whether to use Tailscale, and a terminal-less run with it unset asks nothing and says no', () => {
+  const { dir, env } = tailscaleEnv();
+  const run = (e) => runInstallFunction(`wantTailscale "${dir}" && echo yes || echo no`, { ...env, ...e }).trim();
+  assert.equal(run({ WOODSHED_TAILSCALE: '1' }), 'yes');
+  assert.equal(run({ WOODSHED_TAILSCALE: '0' }), 'no');
+  assert.throws(() => run({ WOODSHED_TAILSCALE: 'maybe' }), /WOODSHED_TAILSCALE is 1 or 0/);
+  // What an earlier run was told is kept, and the variable still wins.
+  fs.writeFileSync(path.join(dir, 'tailscale'), '1\n');
+  assert.equal(run({}), 'yes');
+  assert.equal(run({ WOODSHED_TAILSCALE: '0' }), 'no');
+  fs.rmSync(path.join(dir, 'tailscale'));
+  // No terminal (setsid drops it): unset is no, with how to say yes.
+  if (fs.existsSync('/usr/bin/setsid')) {
+    const out = execFileSync('setsid', ['-w', 'bash', '-c', `. "${SCRIPT}"; wantTailscale "${dir}" && echo yes || echo no`], {
+      env: { ...env, WOODSHED_INSTALL_LIB: '1' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.equal(out.trim(), 'no');
+  }
+  const noTailscale = runInstallFunction(`wantTailscale "${dir}" && echo yes || echo no`, { PATH: '/usr/bin:/bin', HOME: dir }).trim();
+  assert.equal(noTailscale, 'no', 'with no tailscale at all it asks nothing');
+});
+
+test('tailscaleServe serves the console port to the tailnet and prints the https name', () => {
+  const { dir, env } = tailscaleEnv();
+  assert.equal(runInstallFunction(`tailscaleServe 7690 "${dir}/out.log"`, env), 'mac.tail1234.ts.net');
+  assert.equal(fs.readFileSync(env.FAKE_TAILSCALE_LOG, 'utf8'), 'serve --bg 7690\n');
+});
+
+test('with Serve off in the tailnet, the enable link is shown and the install goes on once it is turned on', () => {
+  const { dir, env } = tailscaleEnv({ SERVE_OFF: '1' });
+  env.SERVE_ON = path.join(dir, 'on');
+  const result = spawnSync('bash', ['-c', `set -euo pipefail; . "${SCRIPT}"; ( sleep 2; touch "${env.SERVE_ON}" ) & tailscaleServe 7690 "${dir}/out.log"`], {
+    env: { ...env, WOODSHED_INSTALL_LIB: '1' }, encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'mac.tail1234.ts.net');
+  assert.match(result.stderr, /Serve is off for this tailnet[^]*https:\/\/login\.tailscale\.com\/f\/serve\?node=abc/);
+});
+
+test('a Serve that is never turned on fails with what to do, after the wait', () => {
+  const { dir, env } = tailscaleEnv({ SERVE_OFF: '1', WOODSHED_TAILSCALE_WAIT: '2' });
+  env.SERVE_ON = path.join(dir, 'never');
+  assert.throws(() => execFileSync('bash', ['-c', `set -euo pipefail; . "${SCRIPT}"; tailscaleServe 7690 "${dir}/out.log"`], {
+    env: { ...env, WOODSHED_INSTALL_LIB: '1' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  }), (err) => err.status === 1 && /Serve was not turned on within 2s/.test(err.stderr));
+});
+
+test('the Tailscale name becomes the public URL, so the GitHub App\'s callback URL is made from it, and a later name replaces it', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-ts-env-'));
+  const file = path.join(home, 'stack.env');
+  runInstallFunction(`writeStackEnv "${file}" "${home}" acme/app woodshed-session:acme-app app-env=api/.env app-env none '' https://mac.tail1234.ts.net`);
+  assert.equal(readEnvFile(file).WOODSHED_PUBLIC_URL, 'https://mac.tail1234.ts.net');
+  runInstallFunction(`writeSessionEnv "${readEnvFile(file).WOODSHED_SESSION_ENV_FILE}" host.docker.internal none`);
+  assert.equal(loadConfig(readEnvFile(file), { readGhToken: false }).publicUrl, 'https://mac.tail1234.ts.net');
+  runInstallFunction(`savePublicUrl "${file}" https://mac.tail9999.ts.net`);
+  const text = fs.readFileSync(file, 'utf8');
+  assert.equal(text.match(/^WOODSHED_PUBLIC_URL=/gm).length, 1);
+  assert.equal(readEnvFile(file).WOODSHED_PUBLIC_URL, 'https://mac.tail9999.ts.net');
+  assert.equal(readEnvFile(file).WOODSHED_REPO, 'acme/app');
+  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+});
+
+test('the console service starts it at login and again after an error, as a launchd agent or a user systemd unit', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-svc-'));
+  const mac = runInstallFunction(`writeService Darwin "${home}/bin/woodshed" "${home}"`, { HOME: home, PATH: '/usr/bin:/bin:/opt/a&b' });
+  assert.equal(mac, path.join(home, 'Library/LaunchAgents/run.woodshed.console.plist'));
+  const plist = fs.readFileSync(mac, 'utf8');
+  assert.match(plist, /<key>RunAtLoad<\/key><true\/>/);
+  assert.match(plist, /<key>SuccessfulExit<\/key><false\/>/);
+  assert.match(plist, new RegExp(`<string>${home}/bin/woodshed</string>`));
+  assert.match(plist, /\/opt\/a&amp;b/);
+  const linux = runInstallFunction(`writeService Linux "${home}/bin/woodshed" "${home}"`, { HOME: home, XDG_CONFIG_HOME: path.join(home, 'cfg') });
+  assert.equal(linux, path.join(home, 'cfg/systemd/user/woodshed.service'));
+  const unit = fs.readFileSync(linux, 'utf8');
+  assert.match(unit, /^ExecStart="[^"]*\/bin\/woodshed"$/m);
+  assert.match(unit, /^Restart=on-failure$/m);
+  assert.match(unit, /^WantedBy=default.target$/m);
+  assert.match(runInstallFunction(`serviceStartCommand Linux x`), /systemctl --user daemon-reload && systemctl --user enable --now woodshed.service/);
 });
