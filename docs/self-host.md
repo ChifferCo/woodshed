@@ -115,6 +115,15 @@ macOS and Windows, Docker Desktop must be running.
    with what to set rather than waiting. The first run builds the session image: several minutes on the published
    runtime, much longer when it cannot pull that and builds the runtime too (its log says which).
 
+   **Ask the person first** whether they want to reach Woodshed from their other devices (a phone, a laptop) over
+   Tailscale, when `tailscale status` works here, and pass the answer: `WOODSHED_TAILSCALE=1` or `0`. Run without a
+   terminal the installer asks nothing and treats an unset value as no. On yes it runs `tailscale serve --bg 7690`,
+   sets `WOODSHED_PUBLIC_URL` to `https://<machine>.<tailnet>.ts.net` before the GitHub App is made, so the App's
+   callback URL is right from the start, and writes a service (below). A new tailnet has Serve off: the installer
+   prints a link and waits up to 5 minutes (`WOODSHED_TAILSCALE_WAIT`), so show that link to the person and tell them
+   to open it. Suggest a personal tailnet over a work one: a work plan may refuse a new device, and colleagues on a
+   work tailnet can reach the address.
+
    **Done when** it exits 0 having printed `Set up in ~/.woodshed`. Before that it printed `Starting <engines>, for a
    copy of the databases in each session`, or `The project file has no databases: sessions get none of their own`.
    With databases, read "Known gaps", below, before the first session.
@@ -125,6 +134,10 @@ macOS and Windows, Docker Desktop must be running.
    ```
 
    **Done when** `curl -fsS -o /dev/null http://localhost:7690/` succeeds.
+
+   With Tailscale the installer wrote a service instead (a launchd agent on macOS, a user systemd unit on Linux) that
+   starts the console at login and again after an error, and printed the command to start it: run that, not the line
+   above. The log is `~/.woodshed/console.log` either way.
 4. **You.** Open `http://localhost:7690`. The setup card's **Connect a GitHub App** leads to `/setup/github`: create the
    App on GitHub (one confirmation there, under the repository's organization or your own account; an organization
    may need an owner to approve it), install it on the repository, then press **Restart the console**. The launcher
@@ -145,6 +158,15 @@ macOS and Windows, Docker Desktop must be running.
 What to know on this machine:
 
 - Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690.
+- **Over Tailscale** the console is also at `https://<machine>.<tailnet>.ts.net`, to the tailnet only (Serve, not
+  Funnel), so the person's own machine works as a remote dev environment from their other devices. It listens on
+  localhost still: Tailscale forwards to it. Until the GitHub App is made and the first sign-in completes there is no
+  sign-in, so anyone on the tailnet who opens the address is its admin; after that sign-in is required, and
+  `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env` makes it required from the start. A work tailnet lets
+  colleagues reach the address, which is why sign-in matters. The name changes with the tailnet: run the installer
+  again with `WOODSHED_TAILSCALE=1` to serve the new one (it replaces `WOODSHED_PUBLIC_URL`), and put
+  `https://<new name>/auth/callback` on the GitHub App's callback URLs. **Open app** still does not work: apps use
+  `<id>.<app domain>`, which Tailscale's certificates do not cover. Sessions still check their app themselves.
 - Session apps (**Open app**) need a name and HTTPS (`WOODSHED_APP_DOMAIN`), which the installer does not set:
   on this machine the session runs and checks the app itself, but there is no link to open it from your browser.
 - GitHub webhooks need a public address, so the console polls GitHub every 30 seconds: a `woodshed` label or a
