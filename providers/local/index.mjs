@@ -31,7 +31,7 @@ export function sessionSecrets({ envFiles, installSecrets = [] }) {
 
 /**
  * The launcher, with each session's secrets read from the store as it starts, so a value the Secrets page replaced
- * reaches the next session. One the console's own settings already set (WOODSHED_CLOUD_SESSION_ENV_FILE) stays. With
+ * reaches the next session. One the console's own settings already set (WOODSHED_SESSION_ENV_FILE) stays. With
  * install secrets, WOODSHED_INSTALL_SECRETS lists their variables, as the task definition does on AWS.
  * @param {{launcher: object, secrets: {read: (name: string) => Promise<string|null>}, envFiles: {secret: string}[],
  *          installSecrets?: {secret: string, variable: string}[]}} opts

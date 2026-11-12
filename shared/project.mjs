@@ -12,10 +12,12 @@
 //   node project.mjs secret-vars         the variables the env files' secrets arrive in, one a line
 //   node project.mjs installs            `dependencies.installs` as the manifest session/deps.sh reads: one `install`
 //                                        line each (installsManifest)
+//   node project.mjs apps-rules          with several apps, the lines of a session's rules that name each and how to
+//                                        prove a change in it (appsRules); nothing for one app or none
 //
 // The repo is REPO_DIR. The checkout's own file is read first, so a branch can change it; a branch from before the file
 // existed gets the default branch's. A repo with neither gets the installation's file for it, when
-// WOODSHED_CLOUD_PROJECT_FILES_DIR names a folder holding one (installationProjectFile), and otherwise EMPTY_PROJECT: no
+// WOODSHED_PROJECT_FILES_DIR names a folder holding one (installationProjectFile), and otherwise EMPTY_PROJECT: no
 // dependencies, env files, databases or app.
 // Only `version` must be written; a field that can be none and is left out is none. A misspelt field is refused.
 
@@ -26,6 +28,7 @@ import path from 'node:path';
 
 import { ENGINE_NAMES } from './databases/engines.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
+import { envValue } from './envNames.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
 
@@ -47,7 +50,7 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'lines'],
@@ -55,10 +58,11 @@ export const PROJECT_FIELDS = Object.freeze({
   'databases.migrationsTable': ['table', 'column'],
   'databases.dump': ['skip', 'extensions'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
+  apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
-  'pullRequests.qa': ['check', 'label', 'heading', 'author'],
+  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
   'pullRequests.mergeRisk': ['check'],
 });
 
@@ -259,14 +263,67 @@ export function installsManifest({ installs }) {
   return installs.map((i) => `${['install', i.dir, i.files.join(' '), i.output.join(' '), i.command].join('\t')}\n`).join('');
 }
 
-function app(value) {
-  const a = fields(value, 'app', PROJECT_FIELDS.app,
-    { stop: null, logs: {}, paths: [] });
+function app(value, where = 'app', names = PROJECT_FIELDS.app) {
+  const a = fields(value, where, names, { stop: null, logs: {}, paths: [], label: null });
   return {
-    start: string(a.start, 'app.start'), stop: nullable(a.stop, 'app.stop', string),
-    frontendPort: port(a.frontendPort, 'app.frontendPort'), backendPort: port(a.backendPort, 'app.backendPort'),
-    logs: stringMap(a.logs, 'app.logs'), paths: list(a.paths, 'app.paths', repoPath), howToProve: string(a.howToProve, 'app.howToProve'),
+    start: string(a.start, `${where}.start`), stop: nullable(a.stop, `${where}.stop`, string),
+    frontendPort: port(a.frontendPort, `${where}.frontendPort`), backendPort: port(a.backendPort, `${where}.backendPort`),
+    logs: stringMap(a.logs, `${where}.logs`), paths: list(a.paths, `${where}.paths`, repoPath), howToProve: string(a.howToProve, `${where}.howToProve`),
   };
+}
+
+// Where QA runs: `actions` in the repo's own CI, which posts the check (.github/actions/qa), `woodshed` in a QA session
+// the console starts when the label goes on (console/qaSessions.mjs).
+export const QA_RUNNERS = Object.freeze(['actions', 'woodshed']);
+
+// What the console's Start app sends and statusd and the console show: short, and safe in a URL, a menu and a log line.
+const APP_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+// The one app a project file's `app` gives, in the shape `apps` gives: a project with one app is a project of one.
+export const SINGLE_APP_NAME = 'app';
+
+function appName(value, field) {
+  if (typeof value !== 'string' || !APP_NAME.test(value)) fail(`${field} must be lowercase letters, digits and dashes, at most 32`);
+  return value;
+}
+
+// `apps`: several apps, one running at a time, the first the default. Each is an `app` with a name and a label.
+function apps(value) {
+  if (!Array.isArray(value)) fail('apps must be a list of apps, each with a name (write app for one)');
+  const all = value.map((entry, i) => {
+    const where = `apps[${i}]`;
+    const read = app(entry, where, PROJECT_FIELDS.apps);
+    const name = appName(entry.name, `${where}.name`);
+    return { name, label: nullable(entry.label ?? null, `${where}.label`, string) ?? name, ...read };
+  });
+  const names = all.map((a) => a.name);
+  const repeated = names.filter((n, i) => names.indexOf(n) !== i);
+  if (repeated.length) fail(`apps has ${[...new Set(repeated)].join(', ')} more than once: each app needs a name of its own`);
+  return all;
+}
+
+// `app` and `apps` are two ways to write one thing: `apps` is what statusd, readyGate and the check read, and `app` is
+// its first, the default, which every reader of one app keeps reading.
+function projectApps(project) {
+  const single = project.app !== null;
+  const several = project.apps !== null && !(Array.isArray(project.apps) && project.apps.length === 0);
+  if (single && several) fail('has both app and apps: write app for one app, or apps for several');
+  if (several) {
+    const all = apps(project.apps);
+    return { app: all[0], apps: all };
+  }
+  const one = nullable(project.app, 'app', (v) => app(v));
+  return { app: one, apps: one ? [{ name: SINGLE_APP_NAME, label: SINGLE_APP_NAME, ...one }] : [] };
+}
+
+/**
+ * The app a name picks: the default (the first) when it is missing.
+ * @param {{apps: object[]}} project  parsed
+ * @param {string|null|undefined} name
+ * @returns {object|null}  null for a name that is not one of them, or a project with no app
+ */
+export function appNamed(project, name) {
+  if (name === undefined || name === null || name === '') return project.apps[0] ?? null;
+  return project.apps.find((a) => a.name === name) ?? null;
 }
 
 // What a pull request a session opens must pass before the console posts it to Slack, in the repo's own CI's words:
@@ -290,10 +347,14 @@ function pullRequests(value) {
     };
   });
   const qa = nullable(p.qa, 'pullRequests.qa', (q) => {
-    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa']);
+    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null });
+    if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.qa.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
+    // A QA session's report is the console's check, so `woodshed` has no comment author to trust (sessions comment as the App).
+    if (f.runner !== 'woodshed' && !Object.hasOwn(q, 'author')) fail('pullRequests.qa is missing author');
+    const author = f.runner === 'woodshed' && !Object.hasOwn(q, 'author') ? null : string(f.author, 'pullRequests.qa.author');
     return {
       check: string(f.check, 'pullRequests.qa.check'), label: string(f.label, 'pullRequests.qa.label'),
-      heading: string(f.heading, 'pullRequests.qa.heading'), author: string(f.author, 'pullRequests.qa.author'),
+      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner,
     };
   });
   const mergeRisk = nullable(p.mergeRisk, 'pullRequests.mergeRisk', (m) => {
@@ -307,8 +368,8 @@ function pullRequests(value) {
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true, githubAccess: 'full', rules: null,
-  setup: null, pullRequests: null,
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: null, editor: false, consoleLinks: true, githubAccess: 'full',
+  rules: null, setup: null, pullRequests: null,
 };
 
 /**
@@ -316,6 +377,7 @@ const TOP_DEFAULTS = {
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, lines: string[]}[], databases: object[], app: object|null,
+ *   apps: {name: string, label: string}[],
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
  */
@@ -332,7 +394,7 @@ export function parseProject(raw) {
     env: stringMap(project.env, 'env'),
     envFiles,
     databases: databases(project.databases, envFiles.map((f) => f.secret).filter(Boolean)),
-    app: nullable(project.app, 'app', app),
+    ...projectApps(project),
     editor: boolean(project.editor, 'editor'),
     consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
     githubAccess: githubAccess(project.githubAccess),
@@ -344,7 +406,7 @@ export function parseProject(raw) {
 
 /** What a repo with no project file gets: Woodshed's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
-  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, editor: false, consoleLinks: true,
+  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: [], editor: false, consoleLinks: true,
   githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 
@@ -426,7 +488,7 @@ export function installationProjectFile({ dir, repo }) {
   }
 }
 
-// The repo's own file, or else the installation's. A folder is named only by WOODSHED_CLOUD_PROJECT_FILES_DIR, so
+// The repo's own file, or else the installation's. A folder is named only by WOODSHED_PROJECT_FILES_DIR, so
 // the repo is told from the checkout only then; one that cannot be told is an error, not a repo with no file.
 function projectFileOf(repoDir, { projectFilesDir, repo }) {
   const file = readRepoFile(repoDir, PROJECT_FILE);
@@ -440,11 +502,11 @@ function projectFileOf(repoDir, { projectFilesDir, repo }) {
 /**
  * @param {string} repoDir
  * @param {{projectFilesDir?: string|null, repo?: string}} [opts]  `projectFilesDir` is the installation's folder of
- *   project files (WOODSHED_CLOUD_PROJECT_FILES_DIR by default); `repo` is owner/name, told from the checkout's origin
+ *   project files (WOODSHED_PROJECT_FILES_DIR by default); `repo` is owner/name, told from the checkout's origin
  *   without it
  * @returns {ReturnType<typeof parseProject> & {from: 'checkout'|'default branch'|'installation'|'none'}}
  */
-export function loadProject(repoDir, { projectFilesDir = process.env.WOODSHED_CLOUD_PROJECT_FILES_DIR || null, repo } = {}) {
+export function loadProject(repoDir, { projectFilesDir = envValue(process.env, 'PROJECT_FILES_DIR') || null, repo } = {}) {
   const file = projectFileOf(repoDir, { projectFilesDir, repo });
   if (!file) return { ...EMPTY_PROJECT, from: 'none' };
   try {
@@ -549,6 +611,22 @@ export function neededDatabases(project) {
   return project.databases.map((d) => d.engine);
 }
 
+/**
+ * What a session's rules say of a project with several apps: each one, how it starts and how to prove a change in it.
+ * One app or none says nothing, so its rules read as they always did.
+ * @returns {string}  markdown list lines, or ''
+ */
+export function appsRules({ apps }) {
+  if (apps.length < 2) return '';
+  const line = (a, i) => `  - \`${a.name}\`${a.label !== a.name ? ` (${a.label})` : ''}${i === 0 ? ', the default' : ''}: \`${a.start}\`, its frontend on port ${a.frontendPort}`
+    + `${a.paths.length ? `, for changes under ${a.paths.map((p) => `\`${p}\``).join(', ')}` : ''}. To prove a change in it: ${a.howToProve}`;
+  return [
+    '- This project has several apps, and one runs at a time: starting another stops the one running first, with its `stop`. '
+      + 'The console\'s Start app picks one, and Open app opens whichever runs. Prove each change in the app it is in, which you start yourself:',
+    ...apps.map(line),
+  ].join('\n');
+}
+
 export function field(project, dotted) {
   return dotted.split('.').reduce((value, key) => (value && typeof value === 'object' ? value[key] : undefined), project);
 }
@@ -585,8 +663,11 @@ async function main([command, arg]) {
     if (names.length) process.stdout.write(`${names.join('\n')}\n`);
   } else if (command === 'installs') {
     process.stdout.write(installsManifest(project.dependencies));
+  } else if (command === 'apps-rules') {
+    const text = appsRules(project);
+    if (text) process.stdout.write(`${text}\n`);
   } else {
-    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, file, uses, secret-vars or installs)`);
+    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, file, uses, secret-vars, installs or apps-rules)`);
   }
 }
 

@@ -3,7 +3,7 @@
 # the console's role alone reaches it, and sessions only ever see their own owner's, through the console.
 
 resource "aws_s3_bucket" "homes" {
-  bucket        = "woodshed-cloud-homes-${local.account_id}"
+  bucket        = "${local.p}-homes-${local.account_id}"
   force_destroy = true
 }
 

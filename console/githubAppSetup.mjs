@@ -8,6 +8,7 @@
 
 import crypto from 'node:crypto';
 
+import { envValue } from '../shared/envNames.mjs';
 import { DEFAULT_CONSOLE_NAME } from './config.mjs';
 import { appJwt, createAppApi, createTokenSource } from './githubApp.mjs';
 import { APP_KEY_SECRET } from './settings.mjs';
@@ -29,10 +30,11 @@ const RESTART_DELAY_MS = 300;
 // What the console and its sessions use (projectTokens.mjs's SESSION_PERMISSIONS is the narrower set sessions get). Projects is
 // an organization permission. GitHub refuses a manifest that asks for the account permission Email addresses ("Default
 // permission records resource is not included in the list"), so the Slack match's verified emails are added to the App
-// by hand; without them sign-in matches on the public email alone (auth.mjs, emailsOf).
+// by hand; without them sign-in matches on the public email alone (auth.mjs, emailsOf). Checks is write so the console
+// can post a QA session's QA check; sessions' tokens keep it read, so no session posts a check.
 const PERMISSIONS = {
   contents: 'write', pull_requests: 'write', issues: 'write', actions: 'write',
-  metadata: 'read', checks: 'read', statuses: 'read', organization_projects: 'write',
+  metadata: 'read', checks: 'write', statuses: 'read', organization_projects: 'write',
 };
 
 function firstLine(err) {
@@ -83,14 +85,14 @@ export function manifestPostUrl({ repo, state, ownerType }) {
 
 /**
  * What starts this console again when it exits, so the setup page can restart it. Docker does not tell a container
- * its restart policy, so a container says it with WOODSHED_CLOUD_SUPERVISED=1; systemd sets INVOCATION_ID in every
- * unit it runs, which must then have Restart=on-failure or always. WOODSHED_CLOUD_SUPERVISED=0 says nothing will.
+ * its restart policy, so a container says it with WOODSHED_SUPERVISED=1; systemd sets INVOCATION_ID in every
+ * unit it runs, which must then have Restart=on-failure or always. WOODSHED_SUPERVISED=0 says nothing will.
  * @param {NodeJS.ProcessEnv} env
  * @returns {'setting'|'systemd'|null}  null when nothing is known to start it again: a plain `node` in a shell
  */
 export function supervisorOf(env = process.env) {
-  if (env.WOODSHED_CLOUD_SUPERVISED === '0') return null;
-  if (env.WOODSHED_CLOUD_SUPERVISED === '1') return 'setting';
+  if (envValue(env, 'SUPERVISED') === '0') return null;
+  if (envValue(env, 'SUPERVISED') === '1') return 'setting';
   return env.INVOCATION_ID ? 'systemd' : null;
 }
 
@@ -294,7 +296,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     if (!stored()?.installationId) throw refusal('make the App and install it first (steps 1 and 2)');
     if (!supervisor) {
       console.warn('githubSetup: restart refused, nothing would start the console again', { by });
-      throw refusal('nothing would start this console again: restart it from its shell, or set WOODSHED_CLOUD_SUPERVISED=1 where a supervisor restarts it');
+      throw refusal('nothing would start this console again: restart it from its shell, or set WOODSHED_SUPERVISED=1 where a supervisor restarts it');
     }
     if (!restarting) {
       restarting = true;

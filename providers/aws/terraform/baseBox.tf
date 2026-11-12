@@ -18,7 +18,7 @@ data "aws_iam_policy_document" "ec2_assume" {
 }
 
 resource "aws_iam_role" "base_box" {
-  name               = "woodshed-cloud-base-box"
+  name               = "${local.p}-base-box"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
 }
 
@@ -161,8 +161,8 @@ data "aws_iam_policy_document" "base_box" {
       "secretsmanager:DescribeSecret", "secretsmanager:DeleteSecret", "secretsmanager:TagResource",
     ]
     resources = [
-      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/users/*",
-      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/sessions/*",
+      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/users/*",
+      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/sessions/*",
     ]
   }
 
@@ -190,7 +190,7 @@ data "aws_iam_policy_document" "base_box" {
     resources = ["*"]
   }
 
-  # Mongo's root user is made on the box, once (woodshed-cloud-mongo-root); its password is written here, never read.
+  # Mongo's root user is made on the box, once (<name_prefix>-mongo-root); its password is written here, never read.
   dynamic "statement" {
     for_each = aws_secretsmanager_secret.mongo_root
     content {
@@ -228,13 +228,13 @@ data "aws_iam_policy_document" "base_box" {
 }
 
 resource "aws_iam_role_policy" "base_box" {
-  name   = "woodshed-cloud-console"
+  name   = "${local.p}-console"
   role   = aws_iam_role.base_box.id
   policy = data.aws_iam_policy_document.base_box.json
 }
 
 resource "aws_iam_instance_profile" "base_box" {
-  name = "woodshed-cloud-base-box"
+  name = "${local.p}-base-box"
   role = aws_iam_role.base_box.name
 }
 
@@ -242,7 +242,7 @@ resource "aws_iam_instance_profile" "base_box" {
 resource "aws_eip" "base_box" {
   domain = "vpc"
 
-  tags = { Name = "woodshed-cloud-console" }
+  tags = { Name = "${local.p}-console" }
 }
 
 # The box's size from what it runs (baseBoxStack.sh.tftpl's mem_limits): the console's 512 MB and Caddy's 128 MB fit
@@ -278,7 +278,7 @@ resource "aws_instance" "base_box" {
     http_put_response_hop_limit = 1
   }
 
-  user_data = templatefile("${path.module}/baseBox.sh.tftpl", { data_volume_id = aws_ebs_volume.data.id })
+  user_data = templatefile("${path.module}/baseBox.sh.tftpl", { data_volume_id = aws_ebs_volume.data.id, name_prefix = local.p })
 
   # A new AMI or a changed first boot must not replace the box on the next apply. What runs on the box
   # comes from the configure_base_box association below, which a change reaches without a replacement.
@@ -295,19 +295,20 @@ resource "aws_instance" "base_box" {
     }
   }
 
-  tags = { Name = "woodshed-cloud-base-box" }
+  tags = { Name = "${local.p}-base-box" }
 }
 
 # What the installation does not run (var.databases) reaches the stack script as "" or false, and the script leaves
 # its service and settings out.
 locals {
-  # The console's WOODSHED_CLOUD_PROJECTS (console/projects.mjs), with installationId only where a project names one,
+  # The console's WOODSHED_PROJECTS (console/projects.mjs), with installationId only where a project names one,
   # since the console refuses a null. "" with no projects leaves the variable out of compose.yml.
   projects_json = length(var.projects) == 0 ? "" : "[${join(",", [for p in var.projects : p.installation_id == null
     ? jsonencode({ name = p.name, repo = p.repo, default = p.default })
   : jsonencode({ name = p.name, repo = p.repo, default = p.default, installationId = p.installation_id })])}]"
 
   base_box_stack = templatefile("${path.module}/baseBoxStack.sh.tftpl", {
+    name_prefix        = local.p
     region             = var.region
     public_ip          = aws_eip.base_box.public_ip
     domain             = local.console_domain
@@ -337,13 +338,15 @@ locals {
     subnets            = join(",", aws_subnet.public[*].id)
     session_sg         = aws_security_group.sessions.id
     log_group          = aws_cloudwatch_log_group.sessions.name
+    webhook_queue      = aws_sqs_queue.webhooks.name
+    webhook_function   = aws_lambda_function.webhooks.function_name
   })
 }
 
 # The base box's stack as an SSM document. The script travels base64-encoded, so none of its quoting
 # meets SSM's parameter handling.
 resource "aws_ssm_document" "configure_base_box" {
-  name            = "woodshed-cloud-configure-base-box"
+  name            = "${local.p}-configure-base-box"
   document_type   = "Command"
   document_format = "JSON"
   content = jsonencode({
@@ -356,8 +359,8 @@ resource "aws_ssm_document" "configure_base_box" {
         timeoutSeconds = "1800"
         runCommand = [
           "set -euo pipefail",
-          "echo ${base64encode(local.base_box_stack)} | base64 -d > /root/woodshed-cloud-stack.sh",
-          "bash /root/woodshed-cloud-stack.sh",
+          "echo ${base64encode(local.base_box_stack)} | base64 -d > /root/${local.p}-stack.sh",
+          "bash /root/${local.p}-stack.sh",
         ]
       }
     }]
@@ -368,7 +371,7 @@ resource "aws_ssm_document" "configure_base_box" {
 # the version makes a new one an update to the association, which SSM applies at once.
 resource "aws_ssm_association" "configure_base_box" {
   name             = aws_ssm_document.configure_base_box.name
-  association_name = "woodshed-cloud-configure-base-box"
+  association_name = "${local.p}-configure-base-box"
   document_version = aws_ssm_document.configure_base_box.latest_version
 
   targets {
@@ -395,7 +398,7 @@ resource "aws_ebs_volume" "data" {
   type              = "gp3"
   encrypted         = true
 
-  tags = { Name = "woodshed-cloud-data" }
+  tags = { Name = "${local.p}-data" }
 }
 
 resource "aws_volume_attachment" "data" {

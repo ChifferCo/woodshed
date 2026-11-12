@@ -6,7 +6,7 @@
 //     payload  base64url(JSON {"login": "<github login, lowercase>", "role": "owner"|"member", "exp": <ms since epoch>})
 //     sig      base64url(HMAC-SHA256(secret, payload))
 //
-// With WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET set, that header is the only sign-in, and it is required. The host says
+// With WOODSHED_TRUSTED_IDENTITY_SECRET set, that header is the only sign-in, and it is required. The host says
 // who is in, so neither the People list nor write access to the repo is asked about these people; `owner` is an admin
 // (Secrets & webhooks, Webhook events, Console settings), `member` is not. Nothing the console proxies to a session ever
 // gets the header (appProxy.mjs, editorProxy.mjs and terminalProxy.mjs drop it): within its minute it would let the

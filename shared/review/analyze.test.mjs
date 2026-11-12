@@ -66,10 +66,13 @@ test('the schema imposes no maxLength anywhere', () => {
 
 test('the schema requires the fields the page renders before the diff', () => {
   // Anything optional here is a field models simply omit — which is how the
-  // role chip went missing before it was made required. architecture and
+  // role chip went missing before it was made required. architecture and the
   // decisions are the sections that make the artifact worth reading ahead of
-  // the code, so an omission is a silently emptier page.
-  assert.deepEqual(ANALYSIS_SCHEMA.required, ['overview', 'questions', 'architecture', 'decisions', 'groups']);
+  // the code, so an omission is a silently emptier page. The diagram is the
+  // deliberate exception: drawn only when the change rewires something.
+  assert.deepEqual(ANALYSIS_SCHEMA.required, ['overview', 'decisions', 'architecture', 'groups']);
+  assert.ok(ANALYSIS_SCHEMA.properties.diagram, 'the diagram is still offered');
+  assert.equal('questions' in ANALYSIS_SCHEMA.properties, false, 'the questions are folded into the decisions');
 });
 
 test('the argv carries the flags that contain and cost-bound the run', () => {
@@ -194,28 +197,79 @@ test('the decisions are length-bounded and never make the page throw', () => {
 });
 
 
-test('the questions keep only files the diff has, and are bounded', () => {
-  // A question's files draw as links to diffs on the page, so a path the diff
+test('the decisions keep only files the diff has, and are bounded', () => {
+  // A decision's files draw as links to diffs on the page, so a path the diff
   // does not have would be a link to nothing.
   const out = reconcileArtifact({
     artifact: {
       overview: 'o',
-      questions: [
-        { question: 'Does the proxy still refuse a stopped session?', why: 'w'.repeat(2_000),
+      decisions: [
+        { title: 'The proxy refuses a stopped session', why: 'w'.repeat(2_000),
           files: [FILES[1].path, 'not/in/the/diff.mjs', FILES[1].path, 7] },
-        { question: '', why: 'no question', files: [] },
-        { question: 'No files key' },
-        ...Array.from({ length: 8 }, (_, i) => ({ question: `q${i}`, why: '', files: [] })),
+        { title: 'No files key', why: '' },
+        ...Array.from({ length: 8 }, (_, i) => ({ title: `d${i}`, why: '', files: [] })),
       ],
       groups: [{ title: 'g', why: 'w', files: [{ path: FILES[0].path, preamble: 'p', role: 'docs' }] }],
     },
     files: FILES,
   });
-  assert.equal(out.questions.length, 5);
-  assert.deepEqual(out.questions[0].files, [FILES[1].path]);
-  assert.ok(out.questions[0].why.length < 600);
-  assert.deepEqual(out.questions[1], { question: 'No files key', why: '', files: [] });
+  assert.equal(out.decisions.length, 6);
+  assert.deepEqual(out.decisions[0].files, [FILES[1].path]);
+  assert.ok(out.decisions[0].why.length < 600);
+  assert.deepEqual(out.decisions[1], { title: 'No files key', why: '', files: [] });
+  assert.equal('questions' in out, false);
+});
+
+test('the diagram keeps a graph the page can draw, and its marks agree', () => {
+  const out = reconcileArtifact({
+    artifact: {
+      diagram: {
+        nodes: [
+          { id: 'api', label: '`api.mjs` server', change: 'changed' },
+          { id: 'queue', label: 'queue', change: 'added' },
+          { id: 'cron', label: 'cron', change: 'removed' },
+          { id: 'db', label: 'db', change: 'sideways' },
+          { id: 'api', label: 'a second api', change: 'added' },
+          { id: '', label: 'no id', change: 'added' },
+        ],
+        edges: [
+          { from: 'api', to: 'queue', label: 'enqueues', change: 'unchanged' },
+          { from: 'cron', to: 'db', label: 'writes', change: 'added' },
+          { from: 'api', to: 'db', label: 'reads', change: 'unchanged' },
+          { from: 'api', to: 'db', label: 'again', change: 'unchanged' },
+          { from: 'queue', to: 'cron', label: 'new to gone', change: 'unchanged' },
+          { from: 'api', to: 'nowhere', label: 'x', change: 'added' },
+          { from: 'db', to: 'db', label: 'self', change: 'unchanged' },
+        ],
+      },
+      groups: [{ title: 'g', why: 'w', files: [{ path: FILES[0].path, preamble: 'p', role: 'docs' }] }],
+    },
+    files: FILES,
+  });
+  assert.deepEqual(out.diagram.nodes, [
+    { id: 'api', label: 'api.mjs server', change: 'changed' },
+    { id: 'queue', label: 'queue', change: 'added' },
+    { id: 'cron', label: 'cron', change: 'removed' },
+    { id: 'db', label: 'db', change: 'unchanged' },
+  ]);
+  assert.deepEqual(out.diagram.edges.map((e) => [e.from, e.to, e.change]), [
+    ['api', 'queue', 'added'],
+    ['cron', 'db', 'removed'],
+    ['api', 'db', 'unchanged'],
+  ]);
 
   const none = reconcileArtifact({ artifact: { groups: [] }, files: FILES });
-  assert.deepEqual(none.questions, []);
+  assert.deepEqual(none.diagram, { nodes: [], edges: [] }, 'left out, as most analyses will');
+
+  const still = reconcileArtifact({
+    artifact: {
+      diagram: {
+        nodes: [{ id: 'a', label: 'a', change: 'unchanged' }, { id: 'b', label: 'b', change: 'unchanged' }],
+        edges: [{ from: 'a', to: 'b', label: 'calls', change: 'unchanged' }],
+      },
+      groups: [],
+    },
+    files: FILES,
+  });
+  assert.deepEqual(still.diagram, { nodes: [], edges: [] }, 'nothing moved, so before and after would be one picture');
 });

@@ -33,7 +33,7 @@ function shown(message) {
 
 /**
  * The tunnel's addresses for the databases the installation runs alone: an address for any other is dropped.
- * @param {{pg: string|null, mongo: string|null}} targets  WOODSHED_CLOUD_TUNNEL_*
+ * @param {{pg: string|null, mongo: string|null}} targets  WOODSHED_TUNNEL_*
  * @param {string[]} kinds  `postgres`, `mongo`
  * @returns {{pg: string|null, mongo: string|null}}
  */

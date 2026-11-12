@@ -4,7 +4,7 @@
 # Beside it, not inside it (the image copies the folder into the checkout whole): `<folder>.installs`, the manifest
 # session/deps.sh runs the installs from, and `<folder>.editor`, the project file's `editor` (true or false), which the
 # Dockerfile reads to add VS Code or leave it out. Run from the repo's root. The project file is the repo's, or the
-# installation's for a repo with none when WOODSHED_CLOUD_PROJECT_FILES_DIR names its folder (shared/project.mjs).
+# installation's for a repo with none when WOODSHED_PROJECT_FILES_DIR names its folder (shared/project.mjs).
 set -euo pipefail
 
 dest=${1:?usage: stageDeps.sh <folder>}

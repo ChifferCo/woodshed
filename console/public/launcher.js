@@ -14,10 +14,8 @@
     ['haiku', 'haiku', 'Smallest and quickest'], ['fable', 'fable', 'Newest generation']];
   const EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max']];
   const AGENTS = [['claude', 'Claude', 'Claude Code, on your Claude plan'], ['codex', 'Codex', 'OpenAI Codex, on your Codex sign-in or the team key']];
-  // The same three lists for Codex (CODEX_MODELS, CODEX_EFFORTS and CODEX_PERMISSION_MODES in sessions.mjs).
-  const CODEX_MODELS = [['', 'default', 'Codex\u2019s own default'], ['gpt-5.5', 'gpt-5.5', 'Previous generation'], ['gpt-5.4-mini', 'gpt-5.4-mini', 'Smaller, fast'],
-    ['gpt-5.3-codex-spark', 'gpt-5.3-codex-spark', 'Fast coding']];
-  const CODEX_EFFORTS = [['', 'default'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh']];
+  // Codex's models and efforts are OpenAI's catalog's, as the console reads it for you (GET /api/my/codex-models,
+  // codexModels.mjs); its permission modes are CODEX_PERMISSION_MODES in sessions.mjs.
   const CODEX_MODES = [['auto', 'auto', 'Works unattended; asks when the model decides to'], ['plan', 'plan', 'Read-only, changes nothing'],
     ['default', 'default', 'Codex\u2019s own approval policy']];
   const MODES = [['auto', 'auto', 'Works unattended; refuses what looks risky'], ['acceptEdits', 'acceptEdits', 'Edits freely, asks before commands'],
@@ -36,7 +34,8 @@
   }
 
   // Each file goes to the console as it is picked (attachments.mjs); Start names the ones still on the list.
-  function createAttachments(onChange) {
+  // `extra`: controls that sit after Attach files, before its hint.
+  function createAttachments(onChange, ...extra) {
     const chips = h('div', { class: 'attach-chips' });
     const hint = h('span', { class: 'hint' }, 'or paste / drag & drop');
     const input = h('input', { type: 'file', multiple: true, hidden: true });
@@ -91,7 +90,7 @@
 
     input.addEventListener('change', () => { add([...input.files]); input.value = ''; });
     return {
-      el: h('div', { class: 'attach-row' }, button, hint, input),
+      el: h('div', { class: 'attach-row' }, button, ...extra, hint, input),
       chips,
       add,
       ids: () => files.map((f) => f.id).filter(Boolean),
@@ -242,6 +241,49 @@
     };
   }
 
+  // Dictate beside Attach files: the browser's speech recognition writes into the prompt after what is typed
+  // (dictation.js), and the line under the prompt shows the words still settling. Hidden where the browser has none.
+  function createDictation(prompt) {
+    let listening = null;
+    const heard = h('span', { class: 'dictate-heard' });
+    const line = h('p', { class: 'dictate-line', hidden: true, 'aria-live': 'polite' }, 'Listening. Stop when you are done. ', heard);
+    const button = h('button', { type: 'button', class: 'btn btn-plain btn-sm', hidden: !W.dictation.available, 'aria-pressed': 'false',
+      title: 'Speak the prompt', onclick: () => (listening ? listening.stop() : listen()) }, 'Dictate');
+    function draw() {
+      button.textContent = listening ? 'Stop' : 'Dictate';
+      button.setAttribute('aria-pressed', String(Boolean(listening)));
+      line.hidden = !listening;
+    }
+    function listen() {
+      const mine = W.dictation.dictate(prompt, {
+        heard: (pending) => { heard.textContent = pending; },
+        ended: () => {
+          if (listening === mine) listening = null;
+          draw();
+        },
+      });
+      listening = mine;
+      draw();
+      prompt.focus();
+    }
+    return {
+      button,
+      line,
+      // The page moved away from New session: the mic goes off, and the words it heard stay in the prompt.
+      stop() {
+        listening?.stop();
+      },
+      // Start pressed while it listens: the words on screen are the words sent, the ones still settling too.
+      finish() {
+        if (!listening) return;
+        const words = listening.abort();
+        listening = null;
+        if (words) prompt.value = `${prompt.value.replace(/\s*$/, '')} ${words}`.trimStart();
+        draw();
+      },
+    };
+  }
+
   /** @returns {{el: HTMLElement, update: (me: object) => void}} */
   function createLauncher() {
     const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
@@ -255,8 +297,9 @@
     const projects = createProjectPicker(() => { if (me) update(me); });
     const note = h('span', { class: 'sub' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
-    const attachments = createAttachments(() => { start.disabled = attachments.sending(); });
-    const promptWrap = h('div', { class: 'prompt-wrap' }, prompt, createSkillMenu(prompt, () => projects.value()));
+    const dictation = createDictation(prompt);
+    const attachments = createAttachments(() => { start.disabled = attachments.sending(); }, dictation.button);
+    const promptWrap = h('div', { class: 'prompt-wrap' }, prompt, dictation.line, createSkillMenu(prompt, () => projects.value()));
     promptWrap.addEventListener('dragover', (e) => {
       if (![...(e.dataTransfer?.types || [])].includes('Files')) return;
       e.preventDefault();
@@ -282,20 +325,59 @@
     function fill(select, options) {
       select.replaceChildren(...options.map(([value, label, title]) => h('option', { value, title }, label)));
     }
-    agent.addEventListener('change', () => {
+    // The Codex catalog, asked for the first time Codex is picked and again on each pick after, since OpenAI changes it.
+    let codexCatalog = null;
+    const codexNote = h('p', { class: 'sub lcatalog-note', hidden: true });
+    function codexModelOptions() {
+      return [['', 'default', 'Codex\u2019s own default'], ...(codexCatalog?.models ?? []).map((m) => [m.slug, m.slug, m.description || m.name])];
+    }
+    // The efforts the picked model takes; with Codex's default model, any a listed model takes.
+    function codexEffortOptions() {
+      const picked = codexCatalog?.models.find((m) => m.slug === model.value);
+      const efforts = picked ? picked.efforts : [...new Set((codexCatalog?.models ?? []).flatMap((m) => m.efforts))];
+      return [['', picked?.defaultEffort ? `default (${picked.defaultEffort})` : 'default'], ...efforts.map((e) => [e, e])];
+    }
+    function keepPick(select, options) {
+      const was = select.value;
+      fill(select, options);
+      if (options.some(([value]) => value === was)) select.value = was;
+    }
+    function showCodexCatalog() {
+      keepPick(model, codexModelOptions());
+      keepPick(effort, codexEffortOptions());
+      codexNote.textContent = codexCatalog?.note ? `Codex models: ${codexCatalog.note}.` : '';
+      codexNote.hidden = !codexCatalog?.note;
+      showPicked();
+    }
+    function loadCodexCatalog() {
+      W.getJson('/api/my/codex-models').then((answer) => {
+        codexCatalog = answer;
+        if (agent.value === 'codex') showCodexCatalog();
+      }, () => {});
+    }
+    model.addEventListener('change', () => { if (agent.value === 'codex') keepPick(effort, codexEffortOptions()); });
+    function showAgent() {
       const codex = agent.value === 'codex';
-      fill(model, codex ? CODEX_MODELS : MODELS);
-      fill(effort, codex ? CODEX_EFFORTS : EFFORTS);
+      fill(model, codex ? codexModelOptions() : MODELS);
+      fill(effort, codex ? codexEffortOptions() : EFFORTS);
       fill(mode, codex ? CODEX_MODES : MODES);
+      if (codex) loadCodexCatalog();
+      codexNote.hidden = !codex || !codexCatalog?.note;
       prompt.placeholder = `What should ${codex ? 'Codex' : 'Claude'} do? Type / for the repo\u2019s skills.`;
       showPicked();
+    }
+    // Until the person picks one, the agent follows their sign-ins: Codex for someone with only a Codex sign-in saved.
+    let agentPicked = false;
+    agent.addEventListener('change', () => {
+      agentPicked = true;
+      showAgent();
       if (me) update(me);
     });
     for (const s of [model, effort, mode]) s.addEventListener('change', showPicked);
     showPicked();
     const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
       h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
-      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)));
+      h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)), codexNote);
     const form = h('form', { class: 'launch-form' },
       projects.el,
       field('l-prompt', 'Prompt', promptWrap, 'optional with a PR or branch below: opens its review'),
@@ -332,6 +414,7 @@
     const full = () => Boolean(me && me.running >= me.limit);
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      dictation.finish();
       const reviewOnly = !prompt.value.trim() && workOn.value.trim();
       if (!prompt.value.trim() && !reviewOnly) return prompt.focus();
       start.disabled = true;
@@ -358,6 +441,11 @@
 
     function update(next) {
       me = next;
+      const preferred = me?.codexAuth?.set && !me.claudeToken?.set ? 'codex' : 'claude';
+      if (me && !agentPicked && agent.value !== preferred) {
+        agent.value = preferred;
+        showAgent();
+      }
       // The server refuses a start until the databases are ready too, so the form waits for the same things the card does.
       const ready = Boolean(me) && W.setupDone(me);
       const refused = me?.databasesRefusal ?? null;
@@ -386,7 +474,7 @@
       void card.offsetWidth;
       card.classList.add('is-nudged');
     }
-    return { el, update, applyQuery, nudge };
+    return { el, update, applyQuery, nudge, stopDictating: dictation.stop };
   }
 
   W.createLauncher = createLauncher;

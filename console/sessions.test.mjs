@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  parseCommand, publicSession, sharedRunningCount, routeTrigger, sessionsToStart, statusUpdate, stopReason, canSee, activePrivateCount, parseWorkOn, sessionOptions,
+  parseCommand, publicSession, sharedRunningCount, routeQa, routeTrigger, sessionsToStart, statusUpdate, stopReason, canSee, activePrivateCount, parseWorkOn, sessionOptions,
   keptIds, pullNumber, planUsageFrom, sessionLink,
 } from './sessions.mjs';
 
@@ -173,6 +173,19 @@ test('statusUpdate keeps only a pull request link on this repo', () => {
   assert.equal(statusUpdate(s, { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrl, null);
 });
 
+test('statusUpdate keeps every pull request the session reported, oldest first, each once', () => {
+  const url = (n) => `https://github.com/o/r/pull/${n}`;
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: null }), { state: 'done' }, 'now').prUrls, []);
+  const before = session({ repo: 'o/r', prUrl: url(10) });
+  assert.deepEqual(statusUpdate(before, { state: 'done' }, 'now').prUrls, [url(10)], 'one from before the list is its prUrl');
+  const second = statusUpdate(before, { state: 'done', prUrl: url(11) }, 'now');
+  assert.deepEqual(second.prUrls, [url(10), url(11)]);
+  assert.equal(second.prUrl, url(11));
+  const again = statusUpdate(session({ repo: 'o/r', prUrl: url(11), prUrls: second.prUrls }), { state: 'done', prUrl: url(10) }, 'now');
+  assert.deepEqual(again.prUrls, [url(10), url(11)], 'one reported again keeps its place');
+  assert.deepEqual(statusUpdate(session({ repo: 'o/r', prUrl: url(10) }), { state: 'done', prUrl: 'https://github.com/evil/r/pull/1' }, 'now').prUrls, [url(10)]);
+});
+
 test('publicSession drops the token and the endpoint', () => {
   const view = publicSession(session({ token: 'secret', terminalToken: 'term', endpoint: { host: 'h' }, pendingMessages: ['a', 'b'] }));
   assert.equal(view.token, undefined);
@@ -202,6 +215,21 @@ test('statusUpdate keeps which of the app\'s servers answer only as two booleans
   assert.equal(servers(undefined), null, 'a statusd from an older image says nothing');
 });
 
+test('statusUpdate keeps the apps Start app can pick and the one running, and none from an older statusd', () => {
+  const base = { status: 'running', repo: 'o/r', lastMessage: null };
+  const apps = (status) => {
+    const u = statusUpdate(base, { state: 'done', ...status }, 'now');
+    return [u.appName, u.apps];
+  };
+  const two = [{ name: 'web', label: 'Web app' }, { name: 'admin', label: 'Admin' }];
+  assert.deepEqual(apps({ appName: 'admin', apps: two }), ['admin', two]);
+  assert.deepEqual(apps({}), [null, null], 'a statusd from before several apps says nothing');
+  assert.deepEqual(apps({ appName: 'mobile', apps: two }), [null, two], 'a running app that is not one of them is none');
+  assert.deepEqual(apps({ appName: 'web', apps: [{ name: '<b>' }, { name: 'web', label: 3 }, { name: 'admin', label: `  ${'x'.repeat(80)} ` }] }),
+    ['web', [{ name: 'web', label: 'web' }, { name: 'admin', label: 'x'.repeat(60) }]], 'a bad name is dropped, a bad label is the name, a long one cut');
+  assert.deepEqual(apps({ appName: null, apps: 'web' }), [null, null]);
+});
+
 test('a private session is its owner\'s alone, and GitHub triggers never route to it', () => {
   const mine = { id: 'p', number: 42, status: 'running', owner: 'joel', branch: 'woodshed/42-p', kind: 'issue', createdAt: '2026-10-21T09:00:00Z' };
   assert.equal(canSee(mine, 'joel'), true);
@@ -224,8 +252,11 @@ test('the New session form\'s Work on names an issue or PR by number, or a branc
   assert.deepEqual(parseWorkOn('master', { defaultBranch: 'main' }), { kind: 'branch', branch: 'master' }, 'only the repo\'s own default branch is refused');
   for (const bad of ['a b', '../x', 'x..y', 'x/', '-x', 'x.lock', 'a;rm']) assert.throws(() => parseWorkOn(bad), /not a branch name/, bad);
   assert.deepEqual(sessionOptions({}), { agent: 'claude', model: '', effort: '', permissionMode: 'auto' });
-  assert.deepEqual(sessionOptions({ agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan' }), { agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'plan' });
-  assert.throws(() => sessionOptions({ agent: 'codex', model: 'opus' }), /the model must be one of/);
+  assert.deepEqual(sessionOptions({ agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'plan' }), { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'plan' });
+  // Which Codex models and efforts exist is OpenAI's catalog's to say (codexModels.mjs): here only their shape.
+  assert.deepEqual(sessionOptions({ agent: 'codex', model: 'gpt-7-nova', effort: 'ultra' }).model, 'gpt-7-nova', 'a model the console has never heard of');
+  for (const bad of ['gpt 6', '-x', 'gpt;rm', 'a'.repeat(65), 'GPT-6']) assert.throws(() => sessionOptions({ agent: 'codex', model: bad }), /not a Codex model name/, bad);
+  for (const bad of ['x"y', 'HIGH', 'a'.repeat(17)]) assert.throws(() => sessionOptions({ agent: 'codex', effort: bad }), /not a Codex effort name/, bad);
   assert.throws(() => sessionOptions({ agent: 'codex', permissionMode: 'acceptEdits' }), /permission mode/);
   assert.throws(() => sessionOptions({ agent: 'gemini' }), /the agent must be one of/);
   assert.throws(() => sessionOptions({ model: 'gpt' }), /the model must be one of/);
@@ -301,4 +332,13 @@ test('stopReason stops a question by its own limits, and by the defaults when no
 test('sessionLink carries the console\'s link query, and is the plain page without one', () => {
   assert.equal(sessionLink('https://console.example', 'aaaa1111'), 'https://console.example/s/aaaa1111');
   assert.equal(sessionLink('https://console.example', 'aaaa1111', { place: 'a b', empty: '' }), 'https://console.example/s/aaaa1111?place=a+b');
+});
+
+test('routeQa starts QA on a pull request unless a QA session is testing it, and routeTrigger never picks a QA session', () => {
+  const qa = { id: 'q', kind: 'pr', number: 7, qa: { base: 'main' }, status: 'running', createdAt: '2026-10-21T10:00:00Z' };
+  assert.deepEqual(routeQa({ sessions: [], number: 7 }), { action: 'start' });
+  assert.deepEqual(routeQa({ sessions: [qa], number: 7 }), { action: 'ignore', reason: 'QA is already running on it' });
+  assert.deepEqual(routeQa({ sessions: [{ ...qa, status: 'stopped' }], number: 7 }), { action: 'start' });
+  assert.deepEqual(routeQa({ sessions: [{ ...qa, qa: undefined }], number: 7 }), { action: 'start' }, 'a coding session on it is no QA');
+  assert.deepEqual(routeTrigger({ sessions: [qa], number: 7, trigger: 'comment', kind: 'pr', text: 'go' }), { action: 'start', resumeBranch: null });
 });

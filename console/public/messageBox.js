@@ -10,12 +10,10 @@
   const MAX_FILE_MB = 25;
   // Five lines of the 16px type, after which the box scrolls. 16px, since iOS zooms in on a smaller field it focuses.
   const MAX_FIELD_PX = 5 * 22 + 16;
-  const DRAFT_KEY = (id) => `woodshed-cloud-draft:${id}`;
-  // Safari's, Chrome's and Edge's. Safari sends the audio to Apple to turn it into text, as its keyboard's mic does.
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  const DRAFT_KEY = (id) => `woodshed-draft:${id}`;
   const ICONS = {
     attach: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>',
-    mic: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+    mic: W.dictation.MIC_ICON,
   };
 
   function iconButton(icon, opts) {
@@ -46,8 +44,8 @@
     const files = new Map();
     let sessionId = null;
     let sending = false;
+    // The dictation listening (dictation.js), for the session it started on.
     let recognition = null;
-    let spokenBase = '';
 
     const field = h('textarea', {
       class: 'mb-field', rows: '1', placeholder: 'Message claude', 'aria-label': 'Message claude', enterkeyhint: 'enter',
@@ -78,7 +76,7 @@
       chips.hidden = !mine().length;
       const something = Boolean(field.value.trim()) || mine().some((f) => f.path);
       // The mic while there is nothing to send, or while it listens; Send once there is.
-      const mic = Boolean(Recognition) && (Boolean(recognition) || !something);
+      const mic = W.dictation.available && (Boolean(recognition) || !something);
       micButton.hidden = !mic;
       micButton.classList.toggle('is-live', Boolean(recognition));
       sendButton.hidden = mic;
@@ -116,62 +114,26 @@
     }
 
     // Cut off at once, for a move to another session or a Send: stop() would still deliver its last words, into
-    // whichever box shows by then.
+    // whichever box shows by then. Returns the words still settling.
     function abortListening() {
       const was = recognition;
       recognition = null;
-      heard.textContent = '';
-      was?.abort();
-      // Its onend is skipped on purpose, so the box leaves Listening here.
+      const words = was?.abort() ?? '';
       draw();
+      return words;
     }
 
     function listen() {
-      spokenBase = field.value ? `${field.value.replace(/\s*$/, '')} ` : '';
-      // Its events count only while it is still the one listening, for the session it started on.
-      const mine = new Recognition();
       const id = sessionId;
-      const current = () => recognition === mine && sessionId === id;
+      const mine = W.dictation.dictate(field, {
+        heard: (pending) => { heard.textContent = pending; },
+        changed: () => { keepDraft(id, field.value); fit(); },
+        ended: () => {
+          if (recognition === mine) recognition = null;
+          draw();
+        },
+      });
       recognition = mine;
-      recognition.lang = navigator.language || 'en-US';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.onresult = (e) => {
-        if (!current()) return;
-        let settled = '';
-        let pending = '';
-        for (const result of e.results) {
-          if (result.isFinal) settled += result[0].transcript;
-          else pending += result[0].transcript;
-        }
-        field.value = spokenBase + settled.trimStart();
-        heard.textContent = pending;
-        keepDraft(sessionId, field.value);
-        fit();
-      };
-      recognition.onerror = (e) => {
-        if (!current()) return;
-        if (e.error === 'not-allowed' || e.error === 'service-not-allowed') W.shell.toast('The microphone is not allowed for this site: allow it in the browser\'s settings');
-        else if (e.error !== 'no-speech' && e.error !== 'aborted') W.shell.toast(`Dictation stopped: ${e.error}`);
-      };
-      // Words still settling when it stops are kept: a recogniser need not settle them before it ends.
-      recognition.onend = () => {
-        if (!current()) return;
-        recognition = null;
-        if (heard.textContent.trim()) {
-          field.value = `${field.value.replace(/\s*$/, '')} ${heard.textContent.trim()}`.trimStart();
-          keepDraft(sessionId, field.value);
-          fit();
-        }
-        heard.textContent = '';
-        draw();
-      };
-      try {
-        recognition.start();
-      } catch (err) {
-        recognition = null;
-        W.shell.toast(`Dictation did not start: ${err.message}`);
-      }
       draw();
     }
 
@@ -180,8 +142,7 @@
       if (sending) return;
       // The words on screen are the words sent, the ones still settling too.
       if (recognition) {
-        const words = heard.textContent.trim();
-        abortListening();
+        const words = abortListening();
         if (words) field.value = `${field.value.replace(/\s*$/, '')} ${words}`.trimStart();
       }
       const paths = mine().filter((f) => f.path).map((f) => f.path);

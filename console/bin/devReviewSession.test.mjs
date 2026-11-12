@@ -14,14 +14,14 @@ test('the dev console\'s review session opens with its analysis, every file of i
   const { body: status } = await get('/reviews/claude-beadfeed');
   assert.equal(status.ok, true);
   assert.equal(status.status, 'ready', 'the analysis written beforehand is read as finished');
-  assert.ok(status.review.questions.length > 0);
   assert.ok(status.review.decisions.length > 0);
+  assert.ok(status.review.diagram.nodes.length > 0);
 
   const { body: diff } = await get('/reviews/claude-beadfeed/diff');
   const changed = diff.files.map((f) => f.path).sort();
   const placed = status.review.groups.flatMap((g) => g.files.map((f) => f.path)).sort();
   assert.deepEqual(placed, changed, 'the analysis places exactly the files the change has');
-  for (const q of status.review.questions) for (const f of q.files) assert.ok(changed.includes(f), f);
+  for (const d of status.review.decisions) for (const f of d.files) assert.ok(changed.includes(f), f);
 
   const other = await fetch(`http://127.0.0.1:${review.port}/status`);
   assert.equal(other.status, 404);

@@ -27,6 +27,8 @@ Look for, and note the file each answer came from:
   and the rest, `project.reference.yaml`'s `databases` comment).
 - **The app**: how it starts in dev (one command that returns once it is up, or a script that backgrounds it), how it
   stops, its frontend and backend ports, its log files, and the folders whose change is an app change.
+  A repo with more than one app (a second frontend, an admin site) writes `apps` instead of `app`: a list of the same
+  fields, each with a `name` and an optional `label`, the first the default. Give each app its own log file.
 - **CI**: the workflow that runs the tests on pull requests, and its job names, for `pullRequests.suites`.
 
 If something cannot be told from the repository (which env values are secret, whether a seed needs a service it does

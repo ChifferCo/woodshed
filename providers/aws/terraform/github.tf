@@ -26,13 +26,13 @@ data "aws_iam_policy_document" "github_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:environment:woodshed-cloud-images"]
+      values   = ["repo:${var.github_repo}:environment:${local.p}-images"]
     }
   }
 }
 
 resource "aws_iam_role" "github_images" {
-  name               = "woodshed-cloud-github-images"
+  name               = "${local.p}-github-images"
   assume_role_policy = data.aws_iam_policy_document.github_assume.json
 }
 
@@ -73,7 +73,7 @@ data "aws_iam_policy_document" "github_images" {
 # Pulls the newest console image and recreates only the console container.
 # Sessions keep running; the console picks them back up from its state on start.
 resource "aws_ssm_document" "redeploy_console" {
-  name            = "woodshed-cloud-redeploy-console"
+  name            = "${local.p}-redeploy-console"
   document_type   = "Command"
   document_format = "JSON"
   content = jsonencode({
@@ -87,9 +87,9 @@ resource "aws_ssm_document" "redeploy_console" {
         runCommand = [
           "set -euo pipefail",
           "# The stack has never started (its first boot ran before the console image existed): start all of it.",
-          "if [ -z \"$(docker compose -f /opt/woodshed-cloud/compose.yml ps --quiet console)\" ]; then exec /usr/local/bin/woodshed-cloud-up; fi",
+          "if [ -z \"$(docker compose -f /opt/${local.p}/compose.yml ps --quiet console)\" ]; then exec /usr/local/bin/${local.p}-up; fi",
           "aws ecr get-login-password --region ${var.region} | docker login --username AWS --password-stdin ${split("/", aws_ecr_repository.images["console"].repository_url)[0]}",
-          "cd /opt/woodshed-cloud",
+          "cd /opt/${local.p}",
           "# Every build leaves the image before it behind: unused images filled the box's disk until a pull failed with",
           "# no space left on device. Running containers keep theirs; pruning first leaves room for the pull.",
           "docker image prune -af",
@@ -110,7 +110,7 @@ resource "aws_ssm_document" "redeploy_console" {
 resource "aws_ssm_document" "refresh_db_template" {
   count = local.db_admin ? 1 : 0
 
-  name            = "woodshed-cloud-refresh-db-template"
+  name            = "${local.p}-refresh-db-template"
   document_type   = "Command"
   document_format = "JSON"
   content = jsonencode({
@@ -139,7 +139,7 @@ resource "aws_ssm_document" "refresh_db_template" {
 }
 
 resource "aws_iam_role_policy" "github_images" {
-  name   = "push-woodshed-cloud-images"
+  name   = "push-${local.p}-images"
   role   = aws_iam_role.github_images.id
   policy = data.aws_iam_policy_document.github_images.json
 }

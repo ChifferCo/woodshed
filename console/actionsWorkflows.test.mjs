@@ -10,7 +10,7 @@ test('the menu\'s workflow links are the installation\'s own, label=file.yml pai
     { label: 'Build images', file: 'images.yml' }, { label: 'Run infrastructure', file: 'infra.yaml' },
   ]);
   assert.deepEqual(actionsWorkflows(''), []);
-  assert.deepEqual(loadConfig({ GH_TOKEN: 'x', WOODSHED_CLOUD_REPO: 'acme/app' }).actionsWorkflows, [], 'no repo\'s workflow names assumed');
+  assert.deepEqual(loadConfig({ GH_TOKEN: 'x', WOODSHED_REPO: 'acme/app' }).actionsWorkflows, [], 'no repo\'s workflow names assumed');
   for (const bad of ['images.yml', '=images.yml', 'Build=images', 'Build=../x.yml', 'Build=a/b.yml']) {
     assert.throws(() => actionsWorkflows(bad), /is not label=file\.yml/, bad);
   }

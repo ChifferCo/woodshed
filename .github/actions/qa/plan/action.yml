@@ -127,24 +127,17 @@ runs:
       env:
         APP_URL: ${{ inputs.app-url }}
         NOTES: ${{ inputs.notes }}
-        PROMPTS: ${{ github.action_path }}/..
+        QA: ${{ github.action_path }}/../../../../shared/qa/qa.mjs
       run: |
-        # The prompts are Woodshed's, then the repo's own QA notes from the base branch, so a pull request cannot change its own QA
+        # Woodshed's prompts, which a QA session uses too, then the repo's own QA notes from the base branch, so a pull request cannot change its own QA
         source .qa/state.env
-        cp "${PROMPTS}/rubric.md" .qa/rubric.md
         if [ -n "$NOTES" ] && git show "origin/${QA_BASE}:${NOTES}" > .qa/notes.md 2>/dev/null; then
           echo "QA notes: ${NOTES}"
         else
-          echo "No QA notes on the base branch" > .qa/notes.md
+          rm -f .qa/notes.md
           echo "No QA notes on the base branch"
         fi
-        for p in plan test; do
-          {
-            sed -e "s|{{APP_URL}}|${APP_URL}|g" -e "s|{{BASE}}|${QA_BASE}|g" -e "s|{{RUBRIC}}|.qa/rubric.md|g" "${PROMPTS}/${p}.md"
-            printf '\n# The repository'"'"'s QA notes\n\n'
-            cat .qa/notes.md
-          } > ".qa/${p}-prompt.md"
-        done
+        node "$QA" prompts .qa --app-url "$APP_URL" --base "$QA_BASE" --notes .qa/notes.md
 
     - name: Plan the tests
       shell: bash

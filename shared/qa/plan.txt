@@ -1,4 +1,4 @@
-You are planning QA tests for a pull request, in CI. The app will be running at {{APP_URL}} when the tests run. Each
+You are planning QA tests for a pull request. The app will be running at {{APP_URL}} when the tests run. Each
 test case uses one of these strategies:
 - **browser**: drive the app at {{APP_URL}} like a user would.
 - **api**: call the app's API directly and check the response. Use it when the change has no UI, or when the UI only
@@ -9,7 +9,7 @@ Prefer browser when a user can see the change: a reviewer trusts a screenshot ov
 When a test needs state the app does not have yet, plan the setup, in this order of preference:
 1. Through the app's UI (clicks and forms): the same path a user takes, and it exercises the UI under test anyway.
    Plan the setup as the first steps of the test case.
-2. A direct API call, when the UI way needs something slow or unreliable in CI. Read the app's routes for the shape.
+2. A direct API call, when the UI way needs something slow or unreliable here. Read the app's routes for the shape.
 3. If neither works, write `.qa/plan/SKIP.md` (reason "fixture gap: <what was missing>") and a one-line entry in
    `.qa/logs/fixture-suggestions.md` saying what should be seeded next, so later pull requests don't hit the same wall.
 
@@ -28,7 +28,7 @@ When a test needs state the app does not have yet, plan the setup, in this order
    output", "Test-only change") and EXIT. Write no other file. Skip when:
    - Every plausible test case depends on generated text whose content can't be asserted.
    - The change is only types, tests, or log or error message text: no code path the app runs changed.
-   - It only touches code nothing reaches in CI (a scheduled job, a third party's webhook).
+   - It only touches code nothing reaches in a test run (a scheduled job, a third party's webhook).
    A change with no UI is NOT a reason to skip: plan api test cases for it.
 4. For each browser test case, give the URL it starts on, deep-link parameters filled in, rather than clicking through
    from the home page. For each api test case, give the method, the path and the body.

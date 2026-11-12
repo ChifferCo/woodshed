@@ -6,10 +6,13 @@
 
 locals {
   github_infra_roles = {
-    plan  = "woodshed-cloud-plan"
-    infra = "woodshed-cloud-infra"
+    plan  = "${local.p}-plan"
+    infra = "${local.p}-infra"
   }
-  state_lock_key = "woodshed-cloud/terraform.tfstate.tflock"
+  # The state's bucket and key, as the installation's backend.hcl names them: Terraform cannot read its own backend.
+  tfstate_bucket = coalesce(var.tfstate_bucket, "${local.p}-tfstate-${local.account_id}")
+  tfstate_key    = coalesce(var.tfstate_key, "${local.p}/terraform.tfstate")
+  state_lock_key = "${local.tfstate_key}.tflock"
 }
 
 data "aws_iam_policy_document" "github_infra_assume" {
@@ -37,7 +40,7 @@ data "aws_iam_policy_document" "github_infra_assume" {
 resource "aws_iam_role" "github_infra" {
   for_each = local.github_infra_roles
 
-  name                 = "woodshed-cloud-github-${each.key}"
+  name                 = "${local.p}-github-${each.key}"
   assume_role_policy   = data.aws_iam_policy_document.github_infra_assume[each.key].json
   max_session_duration = 3600
 }
@@ -57,7 +60,7 @@ data "aws_iam_policy_document" "github_plan" {
   statement {
     sid       = "TakeTheStateLock"
     actions   = ["s3:PutObject", "s3:DeleteObject"]
-    resources = ["arn:aws:s3:::woodshed-cloud-tfstate-${local.account_id}/${local.state_lock_key}"]
+    resources = ["arn:aws:s3:::${local.tfstate_bucket}/${local.state_lock_key}"]
   }
 
   # ReadOnlyAccess reads object contents and log events, which a plan never needs: people's Claude homes
@@ -73,12 +76,12 @@ data "aws_iam_policy_document" "github_plan" {
       "logs:StartQuery",
       "logs:StartLiveTail",
     ]
-    not_resources = ["arn:aws:s3:::woodshed-cloud-tfstate-${local.account_id}/*"]
+    not_resources = ["arn:aws:s3:::${local.tfstate_bucket}/*"]
   }
 }
 
 resource "aws_iam_role_policy" "github_plan" {
-  name   = "plan-woodshed-cloud"
+  name   = "plan-${local.p}"
   role   = aws_iam_role.github_infra["plan"].id
   policy = data.aws_iam_policy_document.github_plan.json
 }
