@@ -10,7 +10,7 @@ set -uo pipefail
 : "${SESSION_DIR:?}" "${REPO_DIR:?}" "${PR:?}" "${QA_BASE:?}" "${SESSION_TOKEN:?}" "${WOODSHED_CONSOLE_URL:?}"
 QA=${QA_SCRIPT:-/opt/woodshed/shared/qa/qa.mjs}
 DIR=$REPO_DIR/.qa
-RUNNING=${QA_RUNNING:-/tmp/qa-running}
+RUNNING=${QA_RUNNING:-${WOODSHED_TMP:-/tmp}/qa-running}
 STATUSD=http://127.0.0.1:${STATUSD_PORT:-7682}
 NOTES=${QA_NOTES:-.woodshed/qa.md}
 APP_WAIT_SECONDS=${QA_APP_WAIT_SECONDS:-900}
@@ -64,7 +64,7 @@ sendReport() {
     --arg cost "$(awk -v p="$(cost_of "$DIR/logs/plan.jsonl")" -v t="$(cost_of "$DIR/logs/test.jsonl")" 'BEGIN { printf "%.2f", p + t }')" \
     '{verdict: $verdict, report: $report, sha: $sha, costUsd: ($cost | tonumber)}' > "$body"
   code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 60 -o /tmp/qa-report-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: application/json' \
+    | curl -sS --max-time 60 -o "${WOODSHED_TMP:-/tmp}/qa-report-reply.json" -w '%{http_code}' -X POST -K - -H 'content-type: application/json' \
       --data "@$body" "$WOODSHED_CONSOLE_URL/qa-report") || code=000
   rm -f "$body"
   say "Report sent to the console (status: $code)"

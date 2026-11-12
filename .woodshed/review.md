@@ -4,7 +4,9 @@ Read by `.github/workflows/review.yml` from the branch a pull request merges int
 Woodshed is open-source, dependency-free Node ESM with no build step, and this repository is public.
 
 - The rules in `CLAUDE.md`: a variable a session reads that is missing from `PER_SESSION_ENV`; a change to how a
-  session starts with no proof from the real image; a visible change to the console that skips
+  session starts with no proof from the real image (a `startInSession.mjs` log is enough only for a change to
+  `session/` and `shared/` scripts, with its list of what it does not prove, and never when it says `NOT COVERED`);
+  a visible change to the console that skips
   `console/designSystem/`.
 - The folders' READMEs: `docs/reference.md` lists them.
 - Security: anything that hands a session or a visitor another person's or another project's data, or a token a

@@ -9,7 +9,7 @@
 import { existsSync, openSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 
-const LOG_FILE = '/tmp/openvscode-server.log';
+const LOG_FILE = `${process.env.WOODSHED_TMP || '/tmp'}/openvscode-server.log`;
 // It answered in about 2 s on a dev box; this leaves room for SOCI fetching its files on a cold start.
 const START_TIMEOUT_MS = 60_000;
 const POLL_MS = 250;

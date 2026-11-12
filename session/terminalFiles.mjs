@@ -14,7 +14,7 @@ import { Transform } from 'node:stream';
 
 import { resolveTerminalImage } from '../shared/terminalImages.mjs';
 
-export const UPLOADS_DIR = process.env.UPLOADS_DIR || '/tmp/uploads';
+export const UPLOADS_DIR = process.env.UPLOADS_DIR || `${process.env.WOODSHED_TMP || '/tmp'}/uploads`;
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_SCROLL_STEPS = 40;
 // The two tmux sessions a page shows: claude's (the Agent tab) and the plain shell (the Terminal tab).

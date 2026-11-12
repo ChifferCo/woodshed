@@ -69,7 +69,7 @@ export function withStatusLineOf(b64, from) {
   const out = source.statusLine === undefined ? rest : { ...rest, statusLine: source.statusLine };
   return Buffer.from(`${JSON.stringify(out, null, 2)}\n`).toString('base64');
 }
-export const STATE_FILE = '/tmp/woodshed-settings-sync.json';
+export const STATE_FILE = `${process.env.WOODSHED_TMP || '/tmp'}/woodshed-settings-sync.json`;
 // A write renamed into place; one a crash left halfway is swept at the next start.
 const TEMP_SUFFIX = '.woodshed-';
 const REQUEST_TIMEOUT_MS = 15_000;

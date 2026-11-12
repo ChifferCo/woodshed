@@ -16,7 +16,8 @@ fi
 : "${WOODSHED_CONSOLE_URL:?neither GH_TOKEN nor WOODSHED_CONSOLE_URL is set}"
 : "${SESSION_TOKEN:?SESSION_TOKEN is not set}"
 
-CACHE=/tmp/woodshed-github-token
+# WOODSHED_TMP: a start run beside a live session keeps its own (entrypoint.sh).
+CACHE=${WOODSHED_TMP:-/tmp}/woodshed-github-token
 MIN_LEFT_SECONDS=600
 MAX_CACHE_SECONDS=300
 
@@ -33,7 +34,7 @@ fi
 # up to about 40 s on any failure but a 4xx, the answer in a file curl empties before each try. A refusal's reason,
 # such as an owner who must connect GitHub again, goes to stderr at once, where git and gh show it.
 umask 077
-answerFile=$(mktemp /tmp/woodshed-github-token-answer.XXXXXX)
+answerFile=$(mktemp "${WOODSHED_TMP:-/tmp}/woodshed-github-token-answer.XXXXXX")
 trap 'rm -f "$answerFile"' EXIT
 code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
   | curl -sS -X POST -K - -o "$answerFile" -w '%{http_code}' --max-time 15 \

@@ -12,7 +12,7 @@ import { isGithubWrite, sectionOf, withoutPullRequest, writesAllowed } from './p
 
 /** statusd mounts the shed's routes here; the console maps /review and /reviews/... to this prefix. */
 export const SHED_PREFIX = '/shed-review';
-const REVIEWS_DIR = '/tmp/woodshed-reviews';
+const REVIEWS_DIR = `${process.env.WOODSHED_TMP || '/tmp'}/woodshed-reviews`;
 const ACCOUNT_FRESH_MS = 60_000;
 const SESSION_ID_RE = /^[0-9a-f]{8}$/;
 
