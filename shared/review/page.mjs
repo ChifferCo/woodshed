@@ -840,7 +840,7 @@ ${DARK_PALETTE}
     }
     .filesbar .grow { flex: 1; }
     .filesbar button { height: 26px; padding: 0 0.6rem; font-size: 12.5px; }
-    /* Starters in the empty conversation: the analysis's own questions first. */
+    /* Starters in the empty conversation: the analysis's own decisions first. */
     .chat-starters { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.2rem 0 0.4rem; }
     .chat-starter {
       text-align: left; padding: 0.45rem 0.65rem; border: 1px solid var(--rule-strong); border-radius: 8px;
@@ -1443,7 +1443,7 @@ ${DARK_PALETTE}
     <div class="sheet-body">
       <div>This throws away, for this review:</div>
       <ul>
-        <li>the overview, questions, decisions, architecture and reading order</li>
+        <li>the overview, decisions, architecture and reading order</li>
         <li>the conversation about the change</li>
       </ul>
       <div class="keeps" id="discardKeeps"></div>
@@ -3273,7 +3273,7 @@ ${DARK_PALETTE}
         say('dim', 'no new commits.');
         if (offer) offer.remove();
         offer = el('button', 'quiet', 'Read it again anyway');
-        offer.dataset.tip = 'Read the same commit again and rebuild the overview, questions, decisions, architecture and reading order. A minute or two.';
+        offer.dataset.tip = 'Read the same commit again and rebuild the overview, decisions, architecture and reading order. A minute or two.';
         offer.addEventListener('click', function onReanalyse() {
           offer.textContent = 'reading\\u2026';
           startAnalysis(offer);
@@ -3418,7 +3418,7 @@ ${DARK_PALETTE}
         box.appendChild(el('span', 'grow'));
         box.appendChild(el('span', 'aside', 'the diff below is complete and in git order'));
         var run = el('button', 'quiet', 'Run analysis');
-        run.dataset.tip = 'Read the diff and build the overview, questions, decisions, architecture and reading order. A minute or two.';
+        run.dataset.tip = 'Read the diff and build the overview, decisions, architecture and reading order. A minute or two.';
         run.addEventListener('click', function onRun() { startAnalysis(run); });
         box.appendChild(run);
         return box;
@@ -4592,8 +4592,9 @@ ${DARK_PALETTE}
       els.log.scrollTop = els.log.scrollHeight;
     }
 
-    // Questions from an analysis written before they were folded into the
-    // decisions first, then general ones to fill out to five.
+    // The analysis's own decisions first, since they are about this change
+    // (or the questions of an analysis written before they were folded in),
+    // then general ones to fill out to five.
     var GENERAL_STARTERS = [
       'What should I look at first?',
       'What could this break, and for whom?',
@@ -4605,6 +4606,8 @@ ${DARK_PALETTE}
       var out = [];
       var qs = (state.review && state.review.questions) || [];
       for (var i = 0; i < qs.length && out.length < 3; i++) out.push(qs[i].question);
+      var ds = (state.review && state.review.decisions) || [];
+      for (var d = 0; d < ds.length && out.length < 3; d++) out.push('Talk me through this decision: ' + ds[d].title);
       for (var j = 0; j < GENERAL_STARTERS.length && out.length < 5; j++) out.push(GENERAL_STARTERS[j]);
       return out;
     }
