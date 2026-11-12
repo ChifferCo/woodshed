@@ -410,10 +410,11 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   for (const page of ['/people', '/secrets', '/events', '/console-settings', '/settings']) {
     assert.equal((await getWith(port, page, { ...sam, accept: 'text/html' })).status, 200, `${page} loads, and says what its calls answer`);
   }
-  const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings'];
+  const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings', '/api/console-settings/updates'];
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
-    '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/people/invite'];
+    '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/people/invite',
+    '/api/console-settings/updates/check', '/api/console-settings/updates/update'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -1053,6 +1054,42 @@ test('Console settings: a card\'s values and the channel saved together, refused
   assert.equal((await post(port, '/api/console-settings/clean', { kind: 'all', id: 'aaaaaaaa' })).status, 400);
   assert.equal((await post(port, '/api/console-settings/clean', { kind: 'home', id: 'aaaaaaaa' })).status, 200);
   assert.deepEqual(cleaned, [{ kind: 'home', id: 'aaaaaaaa', by: 'console' }]);
+});
+
+test('Console settings: the Woodshed card reads, checks and starts an update, and says why one is refused', async (t) => {
+  const calls = [];
+  let refusal = null;
+  const woodshedUpdate = {
+    behindBy: () => 3,
+    async view() { return { clone: '/srv/woodshed', behindBy: 3, job: calls.includes('update by console') ? { state: 'running' } : null }; },
+    async check() { calls.push('check'); },
+    async update({ by }) {
+      calls.push(`update by ${by}`);
+      if (refusal) throw Object.assign(new Error(refusal), { shown: true });
+    },
+  };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, woodshedUpdate });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  assert.deepEqual(JSON.parse(await getBody(port, '/api/console-settings/updates')), { clone: '/srv/woodshed', behindBy: 3, job: null });
+  assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/me`)).json()).updates, 3, 'the menu counts the newer commits for an admin');
+  assert.equal((await post(port, '/api/console-settings/updates/check', {})).status, 200);
+  const started = await post(port, '/api/console-settings/updates/update', {});
+  assert.equal(started.status, 202);
+  assert.deepEqual(started.body.job, { state: 'running' });
+  refusal = 'An update is already running.';
+  assert.deepEqual(await post(port, '/api/console-settings/updates/update', {}), { status: 409, body: { error: refusal } });
+  assert.equal((await post(port, '/api/console-settings/updates/update', {}, { origin: 'https://evil.example' })).status, 403);
+  assert.deepEqual(calls, ['check', 'update by console', 'update by console']);
+
+  const none = createHandler({ config, fleet: { sessions: () => [] }, woodshedUpdate: { ...woodshedUpdate, view: async () => null } });
+  const noneServer = http.createServer((req, res) => { none(req, res); });
+  const nonePort = await listen(noneServer);
+  t.after(() => noneServer.close());
+  assert.match(await getBody(nonePort, '/api/console-settings/updates'), /does not run from a git clone/);
 });
 
 test('Console settings: a repo is added and removed on the page, with its sessions counted, and a refused one says why', async (t) => {

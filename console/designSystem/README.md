@@ -44,6 +44,21 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   right end. Then a `line-soft` rule.
 - Each one is a plain link: never orange, never a button that looks like an action on the session.
 
+## Admin notices
+
+- What waits on an admin (someone asking to join, Woodshed commits the console lacks) is a `menu-count` on its page's
+  link, in the avatar menu and the settings list (`amber-tint` pill, `amber-ink` mono count), and one `amber` dot on the
+  avatar whose title says what. Never orange, and never on the rail's cards.
+
+## Woodshed card
+
+- First on Console settings. The state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
+  `set-name` weight, the running commit as a mono `rref`. The newer commits are a list, newest first: mono `slate` sha,
+  the title cut to one line, then the author and age in `meta`; it scrolls past about ten.
+- An update is a checklist (`components/Checklist`) under an Update head with its pill: Updating or Restarting
+  (`is-work`), Failed (`is-bad`). Commands and a build's last lines are mono on `stopped`.
+- **Update to latest** is the card's one orange button; **Check now** is quiet.
+
 ## Setup card
 
 - A member who has saved neither a Claude token nor a Codex sign-in (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The agent row, Choose your agent, has two outline buttons, Claude and Codex: equal choices that go to that box on My settings, so neither is orange. The databases row appears once either is saved: progress while it copies, and an outline Open My settings button when it failed or never started.

@@ -72,6 +72,12 @@ if (isMain(import.meta.url)) {
   } catch (err) {
     cannotStart(err);
   }
+  // Woodshed's Update starts the code it pulled this far before restarting onto it (console/woodshedUpdate.mjs): every
+  // module loaded, the settings read and the provider made, nothing listening or written.
+  if (process.env.WOODSHED_START_CHECK === '1') {
+    console.log('console: start check passed', { provider: provider.name });
+    process.exit(0);
+  }
   console.log('console: provider', { name: provider.name });
   startConsole({ provider, config }).catch(cannotStart);
 }

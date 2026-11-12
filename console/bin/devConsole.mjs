@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
 import { startDevAppsSession } from './devAppsSession.mjs';
 import { startDevReview } from './devReviewSession.mjs';
+import { makeDevClone } from './devWoodshedClone.mjs';
 
 const port = process.argv[2] || '7690';
 const sessionApp = process.env.DEV_CONSOLE_SESSION_APP === '1';
@@ -95,6 +96,12 @@ const sessions = [
   session('fedd1111', null, 'Plan limits in the pane bar', {
     kind: 'task', trigger: 'my-woodshed', owner: 'octocat', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
     planUsage: planReading({ minutesAgo: 1, fiveHour: [42, 132], sevenDay: [78, 2 * 1440 + 600] }),
+  }),
+  // A private session whose Resume failed at start: Resume stays, and the reason is the entrypoint's ERROR. Owned by
+  // `local`, the dev console's viewer, so its page opens.
+  session('fa11ed01', null, 'Update EC2 Woodshed to latest master', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'failed', state: null, prUrl: null,
+    error: '.woodshed/project.yaml: pullRequests.qa is missing author', startedAt: new Date(Date.parse(now) - 60_000).toISOString(),
   }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
@@ -219,30 +226,47 @@ function serveSessionApp(consolePort) {
 
 const consolePort = sessionApp ? await freePort() : port;
 
+// The Woodshed card on Console settings follows a made-up clone, four commits behind its made-up upstream, never this
+// checkout (devWoodshedClone.mjs). Update ends the console with code 75, and it is started again here, as install.sh's
+// bin/woodshed does.
+const devClone = makeDevClone(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-clone-')));
+const RESTART_EXIT_CODE = 75;
+
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
-const child = spawn(process.execPath, [server], {
-  stdio: 'inherit',
-  env: {
-    ...inherited, PATH: `${twoApps.binDir}${path.delimiter}${process.env.PATH}`, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
-    WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
-    // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
-    // through Tailscale's serve has them (appPorts.mjs).
-    ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
-    // Its own links name the port people open, not the one behind it.
-    ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
-    // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
-    // installation that adds its repos on the Console settings page does.
-    ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
-      : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
-    ...tlsAskPort,
-  },
-});
-child.on('exit', (code) => {
-  review.close();
-  twoApps.close();
-  fs.rmSync(stateDir, { recursive: true, force: true });
-  process.exit(code ?? 0);
-});
+let child = null;
+function startConsole() {
+  child = spawn(process.execPath, [server], {
+    stdio: 'inherit',
+    env: {
+      ...inherited, PATH: `${twoApps.binDir}${path.delimiter}${process.env.PATH}`, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
+      // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
+      // through Tailscale's serve has them (appPorts.mjs).
+      ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
+      WOODSHED_CHECKOUT: devClone, WOODSHED_SUPERVISED: '1',
+      // Its own links name the port people open, not the one behind it.
+      ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
+      // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
+      // installation that adds its repos on the Console settings page does.
+      ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
+        : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
+      ...tlsAskPort,
+    },
+  });
+  child.on('exit', (code) => {
+    if (code === RESTART_EXIT_CODE) {
+      console.log('dev console: the console asked to be started again');
+      startConsole();
+      return;
+    }
+    review.close();
+    twoApps.close();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(devClone), { recursive: true, force: true });
+    process.exit(code ?? 0);
+  });
+}
+startConsole();
 process.on('SIGINT', () => child.kill('SIGINT'));
 process.on('SIGTERM', () => child.kill('SIGTERM'));
 

@@ -31,6 +31,8 @@ import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createReviewSource } from './review.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
+import { CHECK_EVERY_MS, createWoodshedUpdate } from './woodshedUpdate.mjs';
+import { supervisorOf } from './githubAppSetup.mjs';
 import { createHeldData } from './heldData.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 import { APP_KEY_SECRET, createSettings } from './settings.mjs';
@@ -330,6 +332,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const appPorts = config.appPorts?.length ? createAppPorts({
     store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
   }) : null;
+  // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one.
+  const woodshedUpdate = createWoodshedUpdate({
+    config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(config).repo,
+    token: tokens ? async () => (await tokens.console.token()).token : null,
+  });
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
@@ -341,6 +348,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     trusted,
     userMenu,
     appPorts,
+    woodshedUpdate,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
@@ -386,6 +394,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     loops.every(config.tickMs, 'app shares sweep', () => appShares.sweep(fleet.sessions().filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.id)));
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
     loops.every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
+    loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
     if (databases.available) loops.every(databases.POLL_MS, 'databases', () => databases.poll());
     if (config.pollGitHub) {
       startGitHub({ webhooks, deliveredWebhooks }).catch((err) => console.error('console: GitHub start failed', { message: String(err?.message ?? err).split('\n')[0] }));

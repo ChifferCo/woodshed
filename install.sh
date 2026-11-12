@@ -15,10 +15,12 @@
 # session then read in its place; saved in stack.env), WOODSHED_REBUILD=1 (build the session image again),
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
 # empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
-# DOCKER_HOST set, on that docker host), WOODSHED_TAILSCALE=1 (also serve the console to your own Tailscale devices, at
-# https://<this machine>.<tailnet>.ts.net, with each session's app on a port of that name: providers/local/README.md,
-# "From your other devices, with Tailscale"), or WOODSHED_TAILSCALE=shared for a console others on the tailnet use,
-# which signs them in once its GitHub App is made: no app ports, since sign-in keeps apps apart only on names of their own.
+# DOCKER_HOST set, on that docker host), WOODSHED_IMAGE (the session image's tag, woodshed-session:<owner>-<name>
+# otherwise; the console's Update passes its own WOODSHED_IMAGE), WOODSHED_TAILSCALE=1 (also serve the console to your
+# own Tailscale devices, at https://<this machine>.<tailnet>.ts.net, with each session's app on a port of that name:
+# providers/local/README.md, "From your other devices, with Tailscale"), or WOODSHED_TAILSCALE=shared for a console
+# others on the tailnet use, which signs them in once its GitHub App is made: no app ports, since sign-in keeps apps
+# apart only on names of their own.
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
@@ -423,7 +425,7 @@ main() {
   refuseOtherRepo "$stackEnv" "$repo"
   local slug
   slug=$(printf '%s' "$repo" | tr '/[:upper:]' '-[:lower:]')
-  local image=woodshed-session:$slug repoDir=$home/repos/$slug
+  local image=${WOODSHED_IMAGE:-woodshed-session:$slug} repoDir=$home/repos/$slug
 
   local projectFilesDir=${WOODSHED_PROJECT_FILES_DIR:-$(savedConsoleSetting "$stackEnv" PROJECT_FILES_DIR)}
   [ -z "$projectFilesDir" ] || [[ $projectFilesDir = /* ]] || fail "WOODSHED_PROJECT_FILES_DIR must be an absolute path: $projectFilesDir"
