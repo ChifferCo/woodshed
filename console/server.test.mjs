@@ -696,6 +696,40 @@ test('My Woodshed writes act for the signed-in login, and need a saved Claude to
   assert.equal((await post(port, '/api/my/claude-token/remove', {}, as)).body.claudeToken.set, false);
 });
 
+test('New session offers only the agents set up to run, and a Codex start needs a sign-in or the team key', async (t) => {
+  const fleet = {
+    sessions: () => [], find: () => null,
+    startPrivate: async (args) => ({ id: '0a1b2c3d', owner: args.owner, token: 'secret', status: 'queued' }),
+  };
+  const claude = new Set(['mia-dev']);
+  const codex = new Set();
+  const userSettings = {
+    view: (login) => ({ claudeToken: { set: claude.has(login), savedAt: null }, codexAuth: { set: codex.has(login), savedAt: null }, setUp: true, available: true }),
+    setCodexAuth: async (login) => { codex.add(login); },
+  };
+  let teamKey = null;
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, openaiTeamKey: async () => teamKey });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const agents = async () => JSON.parse(await getBody(port, '/api/my', as)).agents;
+
+  assert.deepEqual(await agents(), { claude: true, codex: false }, 'no Codex sign-in and no team key');
+  assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as),
+    { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } });
+  teamKey = 'sk-team';
+  assert.deepEqual(await agents(), { claude: true, codex: true }, 'the team key runs Codex');
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as)).status, 201);
+  teamKey = null;
+  await post(port, '/api/my/codex-auth', { value: 'sk-own' }, as);
+  assert.deepEqual(await agents(), { claude: true, codex: true }, 'their own sign-in runs Codex');
+  claude.delete('mia-dev');
+  assert.deepEqual(await agents(), { claude: false, codex: true }, 'no Claude token, no Claude');
+});
+
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {
   const fleet = {
     sessions: () => [], find: () => null,

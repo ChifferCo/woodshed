@@ -563,7 +563,9 @@ you would any other, and save a new one. Saving a new token or removing it
 reaches running sessions only at their next start.
 
 New session opens on **Codex** for someone with a Codex sign-in saved and no Claude token, and on Claude otherwise,
-until they pick an agent. Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
+until they pick an agent. Its **Agent** menu lists only the agents set up to run (`agents` in `GET /api/my`): Claude with a
+Claude token saved, Codex with a Codex sign-in saved or the team's `openai-api-key`. With one, the menu is greyed out
+on it, and a Codex start with neither is refused (409). Its Codex **Model** and **Effort** menus are OpenAI's catalog, the one codex itself reads
 (`codexModels.mjs`): `GET https://chatgpt.com/backend-api/codex/models?client_version=<codex's version>`, asked with
 your own Codex sign-in, or the team's OpenAI key with none, kept 10 minutes. A model OpenAI ships shows the day it
 ships, and a start is refused with a model or effort the list does not offer. The console never refreshes a ChatGPT

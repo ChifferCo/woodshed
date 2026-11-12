@@ -451,7 +451,19 @@
 
     function update(next) {
       me = next;
-      const preferred = me?.codexAuth?.set && !me.claudeToken?.set ? 'codex' : 'claude';
+      // Only the agents set up to run are offered (`agents` in /api/my): a Claude token, or a Codex sign-in or the team's
+      // OpenAI key. A console from before `agents` offers both.
+      const offered = AGENTS.filter(([value]) => !me?.agents || me.agents[value]);
+      const shown = offered.length ? offered : AGENTS.slice(0, 1);
+      if (shown.map(([v]) => v).join() !== [...agent.options].map((o) => o.value).join()) {
+        const was = agent.value;
+        fill(agent, shown);
+        if (shown.some(([v]) => v === was)) agent.value = was;
+        else agentPicked = false;
+        if (agent.value !== was) showAgent();
+      }
+      agent.disabled = shown.length < 2;
+      const preferred = me?.codexAuth?.set && !me.claudeToken?.set && shown.some(([v]) => v === 'codex') ? 'codex' : shown[0][0];
       if (me && !agentPicked && agent.value !== preferred) {
         agent.value = preferred;
         showAgent();
