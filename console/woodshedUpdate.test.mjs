@@ -111,7 +111,7 @@ test('Update pulls, builds the session image when session/ changed, and restarts
   assert.deepEqual(job.steps.map((s) => s.state), ['done', 'done', 'done', 'now']);
   assert.equal(spawned.starts.length, 1, 'the new code was started as far as its start check');
   assert.deepEqual(spawned.starts[0].args, [path.join(clone, 'providers', 'console.mjs')]);
-  assert.equal(spawned.starts[0].env.WOODSHED_CLOUD_START_CHECK, '1');
+  assert.equal(spawned.starts[0].env.WOODSHED_START_CHECK, '1');
   assert.equal(git(clone, 'rev-list', '--count', 'HEAD..@{upstream}'), '0', 'the clone has the new commits');
   assert.equal(spawned.length, 1);
   assert.equal(spawned[0].args[0], path.join(clone, 'install.sh'));
@@ -215,9 +215,9 @@ test('new code that cannot start fails the update before the build or the restar
 
 test('a console that says why it could not start is quoted by that line', async (t) => {
   const { clone } = repos(t);
-  const { updates } = setup(t, { clone, startCode: 1, startLines: ["console: could not start { message: 'WOODSHED_CLOUD_NEW_THING is not set' }"] });
+  const { updates } = setup(t, { clone, startCode: 1, startLines: ["console: could not start { message: 'WOODSHED_NEW_THING is not set' }"] });
   await updates.update({ by: 'mia-dev' });
-  assert.match((await settle(updates)).error, /cannot start \(code 1\): console: could not start \{ message: 'WOODSHED_CLOUD_NEW_THING is not set' \}$/);
+  assert.match((await settle(updates)).error, /cannot start \(code 1\): console: could not start \{ message: 'WOODSHED_NEW_THING is not set' \}$/);
 });
 
 test('a clone reached through a symlink still tells a session/ change from any other', async (t) => {

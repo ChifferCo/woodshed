@@ -4,7 +4,7 @@
 # a valid certificate without a domain. The code is ../webhooks/index.mjs.
 
 resource "aws_secretsmanager_secret" "github_webhook" {
-  name        = "woodshed-cloud/github-webhook-secret"
+  name        = "${local.p}/github-webhook-secret"
   description = "The secret GitHub signs webhooks with; the console's Secrets page makes it and sets it on the GitHub App"
   # Gone at once on destroy, so a later apply can create the same name again.
   recovery_window_in_days = 0
@@ -12,20 +12,20 @@ resource "aws_secretsmanager_secret" "github_webhook" {
 
 # Slack signs its events with the app's signing secret; set on the console's Secrets page.
 resource "aws_secretsmanager_secret" "slack_signing" {
-  name                    = "woodshed-cloud/slack-signing-secret"
+  name                    = "${local.p}/slack-signing-secret"
   description             = "The Slack app's signing secret. The webhooks Lambda checks each Slack event with it"
   recovery_window_in_days = 0
 }
 
 # A message the console fails on three times lands here, so one bad event never loops.
 resource "aws_sqs_queue" "webhooks_dead" {
-  name                      = "woodshed-cloud-webhooks-dead"
+  name                      = "${local.p}-webhooks-dead"
   message_retention_seconds = 1209600
   sqs_managed_sse_enabled   = true
 }
 
 resource "aws_sqs_queue" "webhooks" {
-  name = "woodshed-cloud-webhooks"
+  name = "${local.p}-webhooks"
   # A label older than a day is stale; the fallback poll would have started it long before.
   message_retention_seconds = 86400
   # Longer than starting a session takes, so a message is not handed out twice while it is handled.
@@ -55,12 +55,12 @@ data "aws_iam_policy_document" "lambda_assume" {
 }
 
 resource "aws_iam_role" "webhooks" {
-  name               = "woodshed-cloud-webhooks"
+  name               = "${local.p}-webhooks"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
 resource "aws_cloudwatch_log_group" "webhooks" {
-  name              = "/aws/lambda/woodshed-cloud-webhooks"
+  name              = "/aws/lambda/${local.p}-webhooks"
   retention_in_days = 14
 }
 
@@ -85,7 +85,7 @@ data "aws_iam_policy_document" "webhooks" {
 }
 
 resource "aws_iam_role_policy" "webhooks" {
-  name   = "woodshed-cloud-webhooks"
+  name   = "${local.p}-webhooks"
   role   = aws_iam_role.webhooks.id
   policy = data.aws_iam_policy_document.webhooks.json
 }
@@ -93,7 +93,7 @@ resource "aws_iam_role_policy" "webhooks" {
 # No reserved concurrency: the account's limit is 10, the minimum AWS lets stay unreserved, so that
 # limit is the cap. An unsigned request is refused before any AWS call, in a few milliseconds.
 resource "aws_lambda_function" "webhooks" {
-  function_name    = "woodshed-cloud-webhooks"
+  function_name    = "${local.p}-webhooks"
   role             = aws_iam_role.webhooks.arn
   runtime          = "nodejs22.x"
   handler          = "index.handler"

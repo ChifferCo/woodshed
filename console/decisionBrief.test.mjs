@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildBrief, decisionsFrom, mergeRiskFrom, mergeRiskRunIds, qaReportFrom, riskAreasFrom, riskLineFrom } from './decisionBrief.mjs';
+import { buildBrief, decisionsFrom, mergeRiskFrom, mergeRiskRunIds, qaCheckFrom, qaCommentIn, qaReportFrom, riskAreasFrom, riskLineFrom } from './decisionBrief.mjs';
 
 const GATES = {
   review: { author: 'review-bot[bot]', heading: '## Code review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: 'review-bot[bot]' },
@@ -56,12 +56,12 @@ const BODY = [
 ].join('\n');
 
 function brief({ runs = [...shards, mergeRisk('Low: Only changes the empty-state text.'), qaCheck('Pass: 2 test cases passed', 'success')],
-  comments = [RISKY, QA_COMMENT], body = BODY, title = 'Add GTM', qa, gates = GATES } = {}) {
+  comments = [RISKY, QA_COMMENT], body = BODY, title = 'Add GTM', qa, gates = GATES, ownApp = null } = {}) {
   const pull = { number: 7, title, html_url: 'https://github.com/o/r/pull/7', body, head: { sha: SHA } };
   const check = qa === undefined ? runs.find((r) => r.name === 'QA') ?? null : qa;
   return buildBrief({
     pull, review, runs, comments, suites: [{ name: 'e2e suite', outcome: 'green' }], gates,
-    qa: { finished: Boolean(check), check, notRun: check ? null : 'no qa label' }, reviewRuns: TRUST.reviewRuns, commentUrl: 'https://github.com/o/r/pull/7#issuecomment-9',
+    qa: { finished: Boolean(check), check, notRun: check ? null : 'no qa label' }, reviewRuns: TRUST.reviewRuns, commentUrl: 'https://github.com/o/r/pull/7#issuecomment-9', ownApp,
   });
 }
 const line = (b, label) => b.slack.split('\n').find((l) => l.startsWith(`**${label}`));
@@ -175,6 +175,34 @@ test('a QA comment is quoted only from the project file\'s author, under its hea
   const { comment } = brief({ comments: [RISKY, someoneElse] });
   assert.doesNotMatch(comment, /Covered:/);
   assert.match(comment, /Not covered: the QA comment does not say\./);
+});
+
+test('a QA check is trusted from the console\'s own App, but its comments never are, since sessions post as that App', () => {
+  const own = { slug: 'my-woodshed', login: 'my-woodshed[bot]' };
+  const gate = { check: 'QA', author: 'qa-bot[bot]', heading: '## 🤖 QA' };
+  const fromApp = (slug) => ({ ...qaCheck('Pass: 2 test cases passed', 'success'), app: { slug } });
+  assert.equal(qaCheckFrom([fromApp('my-woodshed')], gate, own).finished, true);
+  assert.equal(qaCheckFrom([fromApp('my-woodshed')], gate, null).finished, false, 'before the App is known, only Actions counts');
+  assert.equal(qaCheckFrom([fromApp('someone-else')], gate, own).finished, false);
+  assert.equal(qaCheckFrom([fromApp('github-actions')], gate, own).finished, true, 'a workflow\'s QA check still counts');
+  const byApp = { ...QA_COMMENT, user: { login: 'my-woodshed[bot]' } };
+  assert.equal(qaCommentIn([byApp], gate), null, 'a session could have written it');
+  assert.equal(qaCommentIn([{ ...QA_COMMENT, user: { login: 'qa-bot[bot]' } }, byApp], gate).user.login, 'qa-bot[bot]');
+  assert.doesNotMatch(brief({ comments: [RISKY, byApp], ownApp: own }).comment, /Covered:/);
+  assert.match(brief({ ownApp: own }).comment, /Covered:/);
+});
+
+test('a QA session\'s report is read from the console\'s check, not from any comment', () => {
+  const own = { slug: 'my-woodshed', login: 'my-woodshed[bot]' };
+  const check = { ...qaCheck('Pass: 1 test cases passed', 'success'), app: { slug: 'my-woodshed' },
+    output: { title: 'Pass: 1 test cases passed', summary: '✅ **Pass**: all 1 test cases passed\n\n## TC-1: Saves the draft ✅' } };
+  const forged = { ...QA_COMMENT, user: { login: 'my-woodshed[bot]' }, body: '## 🤖 QA Review\n\n## TC-1: Everything works ✅' };
+  const { comment } = brief({ runs: [...shards, mergeRisk('Low: x'), check], comments: [RISKY, QA_COMMENT, forged], ownApp: own });
+  assert.match(comment, /Covered:\n.*Saves the draft/);
+  assert.doesNotMatch(comment, /Everything works|empty state shows the new text/);
+  const appAsAuthor = { ...GATES, qa: { ...GATES.qa, author: 'my-woodshed[bot]' } };
+  assert.doesNotMatch(brief({ comments: [RISKY, forged], gates: appAsAuthor, ownApp: own }).comment, /Everything works/,
+    'naming the App as the author does not make its comments trusted');
 });
 
 test('with nothing configured, the brief says so instead of waiting for or quoting a gate', () => {
@@ -365,4 +393,9 @@ test('the QA report is read from the headings a QA workflow counts', () => {
   assert.match(r.untested, /^the Slack DM/);
   assert.equal(qa(brief({ comments: [RISKY, { ...QA_COMMENT, body: QA_COMMENT.body.replace(/Untested:\*\* .*/, 'Untested:** nothing; every test case ran.') }] })),
     'QA ✅ 2/2 passed · [Full brief →](https://github.com/o/r/pull/7#issuecomment-9)', 'nothing untested adds nothing');
+});
+
+test('a QA with no author (a Woodshed QA session) trusts no comment', () => {
+  const comments = [{ user: { login: 'someone' }, body: '## QA\nPassed' }, { user: { login: null }, body: '## QA' }];
+  assert.equal(qaCommentIn(comments, { author: null, heading: '## QA' }), null);
 });

@@ -477,8 +477,11 @@
     return `${location.protocol}//${s.id}.${appDomain}${location.port ? `:${location.port}` : ''}/`;
   }
 
-  async function appAction(s, action) {
-    const res = await fetch(`/api/sessions/${s.id}/app/${action}`, { method: 'POST', headers: { 'x-woodshed': '1' } });
+  // `app` picks one of several to start; without it the session starts the default.
+  async function appAction(s, action, { app = null } = {}) {
+    const res = await fetch(`/api/sessions/${s.id}/app/${action}`, {
+      method: 'POST', headers: { 'x-woodshed': '1', ...(app && { 'content-type': 'application/json' }) }, body: app ? JSON.stringify({ app }) : undefined,
+    });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `${action} answered ${res.status}`);
     return body;
@@ -514,6 +517,54 @@
     return button;
   }
 
+  /** @returns {{name: string, label: string}[]|null}  the apps Start app picks from, when the project has more than one */
+  function appChoices(s) {
+    return Array.isArray(s.apps) && s.apps.length > 1 ? s.apps : null;
+  }
+
+  /** @returns {string|null}  the label of the app that runs, or would run, when there are several */
+  function runningAppLabel(s) {
+    return appChoices(s)?.find((a) => a.name === s.appName)?.label ?? null;
+  }
+
+  // What each app's line in the menu says it will do: one runs at a time.
+  function appChoiceNote(s, app) {
+    const up = s.app === 'running' || s.app === 'api-down' || s.app === 'frontend-down';
+    if (app.name === s.appName) return up ? 'Running now: starts it again' : 'Start it in this session';
+    return up ? `Stops ${runningAppLabel(s) ?? 'the running app'} first, then starts this one` : 'Start it in this session';
+  }
+
+  /** The apps as menu items: each starts that app, after the one running stops. */
+  function appChoiceItems(s, onDone) {
+    return (appChoices(s) ?? []).map((app) => ({
+      group: 'Start app', label: app.label, note: appChoiceNote(s, app),
+      run: async () => {
+        try {
+          s.app = (await appAction(s, 'start', { app: app.name })).app || s.app;
+        } catch (err) {
+          window.alert(`Could not start ${app.label}: ${err.message}`);
+        }
+        onDone();
+      },
+    }));
+  }
+
+  // Start app with several apps: a button that opens the page's one menu (session.js's Woodshed.openMenu) with each app's
+  // label. A page without that menu starts the default, as one app would.
+  function appPickButton(s, { label, ariaLabel = null, title, size, onDone }) {
+    const openMenu = window.Woodshed?.openMenu;
+    if (!openMenu) return actionButton(s, { action: 'start', label: label.replace(/ ▾$/, ''), ariaLabel, title, size, onDone });
+    const key = `${s.id}:apps`;
+    return h('button', {
+      type: 'button', class: `btn btn-plain btn-app-pick${size}`, title, 'aria-label': ariaLabel, 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-menu-for': key,
+      onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openMenu(e.currentTarget, s, { items: appChoiceItems(s, onDone) });
+      },
+    }, label);
+  }
+
   function setupAppToast(sent) {
     return sent === 'queued' ? 'claude will be asked to set up the app when its turn ends' : 'Asked claude to set up the app';
   }
@@ -534,20 +585,26 @@
       title: `Stop the app's backend and frontend.${serversTitle(s)}`,
     });
     const group = (...children) => h('span', { class: 'app-ctl' }, ...children);
+    // With several apps, the one that runs is named on the button that picks another.
+    const running = runningAppLabel(s);
+    const switcher = () => running && window.Woodshed?.openMenu && appPickButton(s, {
+      label: `${running} ▾`, ariaLabel: `${running} runs: start another app`, size, onDone,
+      title: `${running} is the app running. Pick another to start: ${running} stops first.`,
+    });
     if (s.app === 'running' || s.app === 'api-down') {
       const down = s.app === 'api-down';
       const open = h('a', {
         class: `btn btn-open${size}`, href: appUrl(s, appDomain), target: '_blank', rel: 'noopener',
-        title: down ? `The page loads, but its API is down, so every call under it fails.${serversTitle(s)}` : appUrl(s, appDomain),
+        title: down ? `The page loads, but its API is down, so every call under it fails.${serversTitle(s)}` : `${running ? `${running}: ` : ''}${appUrl(s, appDomain)}`,
       }, h('span', { class: `dot app-dot${down ? ' is-bad' : ''}`, 'aria-hidden': 'true' }), small ? 'App ↗' : 'Open app ↗');
-      return group(open, down && !small ? h('span', { class: 'app-tag' }, 'API down') : null, stop);
+      return group(open, down && !small ? h('span', { class: 'app-tag' }, 'API down') : null, switcher(), stop);
     }
     if (s.app === 'starting' || s.app === 'stopping') {
       const starting = s.app === 'starting';
       const busy = h('button', {
         type: 'button', class: `btn btn-plain${size}`, disabled: true,
-        title: starting ? 'Starting the backend and the frontend; usually one to three minutes' : 'Stopping the backend and the frontend',
-      }, h('span', { class: 'spin', 'aria-hidden': 'true' }), starting ? (small ? 'Starting' : 'Starting app…') : (small ? 'Stopping' : 'Stopping app…'));
+        title: starting ? `Starting ${running ?? 'the app'}'s backend and frontend; usually one to three minutes` : 'Stopping the backend and the frontend',
+      }, h('span', { class: 'spin', 'aria-hidden': 'true' }), starting ? (small ? 'Starting' : `Starting ${running ?? 'app'}…`) : (small ? 'Stopping' : 'Stopping app…'));
       return group(busy, starting ? stop : null);
     }
     // The project file has no app: Start app would have nothing to run, so this asks claude to write one.
@@ -575,12 +632,12 @@
     }
     const halfUp = s.app === 'frontend-down';
     const again = s.app === 'failed';
-    const start = actionButton(s, {
-      action: 'start', size, onDone,
-      label: halfUp || again ? (small ? 'Start again' : 'Start app again') : 'Start app',
-      title: halfUp ? `The backend is up and the frontend is not: Start app starts the frontend.${serversTitle(s)}`
-        : again ? 'The last start failed: /tmp/woodshed-app.log in the terminal says why' : 'Start the app in this session',
-    });
+    const startLabel = halfUp || again ? (small ? 'Start again' : 'Start app again') : 'Start app';
+    const startTitle = halfUp ? `The backend is up and the frontend is not: Start app starts the frontend.${serversTitle(s)}`
+      : again ? 'The last start failed: /tmp/woodshed-app.log in the terminal says why' : 'Start the app in this session';
+    const start = appChoices(s)
+      ? appPickButton(s, { label: `${startLabel} ▾`, size, onDone, title: `Pick which app to start: ${appChoices(s).map((a) => a.label).join(', ')}.${halfUp || again ? ` ${startTitle}` : ''}` })
+      : actionButton(s, { action: 'start', size, onDone, label: startLabel, title: startTitle });
     const ctl = group(start, halfUp && !small ? h('span', { class: 'app-tag' }, 'frontend down') : null, halfUp ? stop : null);
     // Nothing of the app up: the phone's rail hides it, as the shed's does, since starting one is a desk job.
     if (!halfUp) ctl.dataset.idle = 'true';
@@ -625,6 +682,45 @@
       class: `prchip is-${pr.state}`, title: tip, href: asLink ? s.prUrl : null, target: asLink ? '_blank' : null, rel: asLink ? 'noopener' : null,
     }, `PR ${number}`, queued && h('span', { class: 'prchip-word' }, 'queued'),
     level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
+  }
+
+  /**
+   * The pull requests a session's card shows, oldest first: each one, but a merged or closed one only while no newer
+   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. A console
+   * from before the list sends only `prUrl` and `pr`.
+   * @returns {{url: string, pr: object|null}[]}
+   */
+  function shownPrs(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.filter(({ pr }, i) => i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'));
+  }
+
+  /**
+   * A chip for each pull request shownPrs gives, the newest `max` of them; the older ones fold into a `+N` chip whose
+   * tooltip names each with its state. Details on a stopped session lists them all.
+   * @returns {HTMLElement[]}
+   */
+  function prChips(s, { max = 2, ...opts } = {}) {
+    const shown = shownPrs(s);
+    const folded = shown.slice(0, Math.max(0, shown.length - max));
+    const chips = shown.slice(folded.length).map(({ url, pr }) => prChip({ prUrl: url, pr, branch: s.branch }, opts));
+    if (!folded.length) return chips;
+    const tip = folded.map(({ url, pr }) => [prNumber(url), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
+    return [h('span', {
+      class: 'prchip is-more', title: `${folded.length} more pull request${folded.length === 1 ? '' : 's'}:\n${tip}`,
+      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url)).join(', ')}`,
+    }, `+${folded.length}`), ...chips];
+  }
+
+  /**
+   * Every pull request the session opened, a merged or closed one its chips no longer show too, oldest first: a link
+   * each, with its state and title, one to a line.
+   */
+  function prLines(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.map(({ url, pr }, i) => [i ? h('br') : null,
+      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url)),
+      pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
   }
 
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
@@ -755,7 +851,7 @@
   }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its
-  // WOODSHED_CLOUD_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
+  // WOODSHED_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
   function workflowLinks(me) {
     if (!me.repo) return [];
     return (me.workflows ?? []).map(({ label, file }) => ({ href: `https://github.com/${me.repo}/actions/workflows/${encodeURIComponent(file)}`, label: `${label} ↗` }));
@@ -808,7 +904,7 @@
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it.
       me.login && !me.hosted && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
-        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-cloud-last'); } catch { /* nothing kept */ } },
+        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-last'); } catch { /* nothing kept */ } },
       },
         h('button', { type: 'submit', class: 'menu-item', role: 'menuitem' }, 'Sign out')));
     function setOpen(open) {
@@ -1041,8 +1137,8 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

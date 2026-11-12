@@ -271,11 +271,15 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const pullWebhooks = createPullWebhooks();
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
+  const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
+  const appIdentity = createAppIdentity({ appApi });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
+    // The App that posts a QA session's check, so the brief trusts it.
+    ownApp: () => appIdentity.known(),
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -283,8 +287,6 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
-  const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
-  const appIdentity = createAppIdentity({ appApi });
   // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
   const brokerRead = tokens?.borrowFor
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
@@ -299,7 +301,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
   // A store the dashboard has not chosen yet holds no client secret either, so sign-in could never come on.
   if (config.requireSignIn && !trusted && (!auth || secrets?.configured?.() === false)) {
-    throw new Error('WOODSHED_CLOUD_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_CLOUD_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET');
+    throw new Error('WOODSHED_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_TRUSTED_IDENTITY_SECRET');
   }
   // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
   const settings = secrets && (appKey || config.githubBroker)

@@ -4,7 +4,7 @@
 // installation must host before a session starts (`databases`), and where a database keeps its migrations, which Restore
 // a dump counts a copy's against (`databases[].migrations`, with the table it records them in, what its dump commands
 // leave out and its migrate command, dbRestore.mjs). Read from the repo's default branch, or the installation's file for a
-// repo with none there (WOODSHED_CLOUD_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot
+// repo with none there (WOODSHED_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot
 // be read leaves My settings without that list, never without the page, and holds the pull requests until it can be
 // read: an unread file is not a file with no gates.
 import { parseYaml } from '../shared/yamlLite.mjs';

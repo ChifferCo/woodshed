@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { fixtureProject } from '../shared/projectFixture.mjs';
+import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -116,6 +116,24 @@ test('the project\'s rules follow Woodshed\'s, and its notes go inline in a shar
   assert.ok(own.setup.includes(PROJECT_NOTE));
 });
 
+test('a project of several apps has its rules name each, with how it starts and how to prove a change; one app adds nothing', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-apps-'));
+  after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  const apps = [
+    { name: 'web', label: 'Web app', ...fixtureApp({ start: 'make web', frontendPort: 3001, paths: ['web/'], howToProve: 'Open the page in the browser.' }) },
+    { name: 'admin', ...fixtureApp({ start: 'make admin', frontendPort: 3000, howToProve: 'Open the admin pages.' }) },
+  ];
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ apps }));
+  const { rules, out } = writePrompt({ attachments: false, repoDir: repo });
+  assert.match(rules, /^- This project has several apps, and one runs at a time/m);
+  assert.match(rules, /^ {2}- `web` \(Web app\), the default: `make web`, its frontend on port 3001, for changes under `web\/`\. To prove a change in it: Open the page in the browser\.$/m);
+  assert.match(rules, /^ {2}- `admin`: `make admin`, its frontend on port 3000\. To prove a change in it: Open the admin pages\.$/m);
+  assert.match(out, /Rules written .*apps: 2\)/);
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ app: fixtureApp() }));
+  assert.doesNotMatch(writePrompt({ attachments: false, repoDir: repo }).rules, /several apps/);
+});
+
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
   const none = writePrompt({ attachments: false, kind: 'shared' });
   assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
@@ -192,9 +210,17 @@ test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (
 
 test('claude gets the rules as a system prompt on a fresh start and on a resume, which rewrites them', () => {
   assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' \/tmp\/woodshed-rules\.md/);
-  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf('\n  if [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
+  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
+});
+
+test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
+  assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
+  const start = fn('startClaude');
+  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
+  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
+  assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
 
 // installDefaultPlugins with a stand-in claude that records each install, in a home of the test's own.

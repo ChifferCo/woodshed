@@ -10,11 +10,13 @@ function isNotFound(err) {
 }
 
 /**
- * @param {{prefix: string, aws: (args: string[]) => Promise<any>, specs: object[]}} opts  `prefix` turns a name into its secret id (`woodshed-cloud/`);
- *   `specs` is secretSpecs()'s
+ * @param {{prefix: string, aws: (args: string[]) => Promise<any>, specs: object[]}} opts  `prefix` turns a name into its secret id
+ *   (Terraform's name_prefix and a slash, such as `woodshed/`); `specs` is secretSpecs()'s
  */
 export function createSecretStore({ prefix, aws, specs }) {
   const idOf = (name) => `${prefix}${name}`;
+  // The project tag Terraform's default_tags give everything it makes: its name_prefix, which the prefix is.
+  const projectTag = prefix.replace(/\/+$/, '');
 
   /**
    * @returns {Promise<{name: string, group: string, kind: string, readable: boolean, exists: boolean,
@@ -82,7 +84,7 @@ export function createSecretStore({ prefix, aws, specs }) {
     }
     await withValueFile(value, (file) => aws([
       'secretsmanager', 'create-secret', '--name', idOf(name), '--description', description,
-      '--secret-string', file, '--tags', 'Key=project,Value=woodshed-cloud',
+      '--secret-string', file, '--tags', `Key=project,Value=${projectTag}`,
     ]));
     console.log('secrets: created', { name, bytes: Buffer.byteLength(value) });
   }

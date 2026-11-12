@@ -15,8 +15,10 @@ const UNTESTED_HEADING = '**Not tested: check before merging**';
 const RISK_HEADING = '**Risk areas to eyeball manually**';
 const NOTHING_RISKY = /^(No breaking or hard-to-undo changes|None)\.?$/i;
 // A workflow posts its checks with its GITHUB_TOKEN, so they come from GitHub Actions' app. Any workflow can post a
-// check with these names; one from another app (a session's own token, say) is not the review's or QA's.
+// check with these names; one from another app (a session's own token, say) is not the review's or QA's. A QA check
+// may also come from the console's own App, which posts a QA session's: sessions' tokens cannot post checks.
 const TRUSTED_CHECK_APP = 'github-actions';
+const qaPostedBy = (slug, ownApp) => slug === TRUSTED_CHECK_APP || (Boolean(ownApp?.slug) && slug === ownApp.slug);
 const SLACK_ITEM_CHARS = 160;
 // A safety net only: a headline is a bold lead or one sentence, and is shown whole.
 const HEADLINE_CHARS = 300;
@@ -79,11 +81,12 @@ export function mergeRiskFrom(runs, { sha, reviewRuns, check }) {
  * with `Waiting`, such as one posted before the review approved, is not a result.
  * @param {object[]} runs
  * @param {{check: string}|null} qa  the project file's `pullRequests.qa`
+ * @param {{slug: string}|null} [ownApp]  the console's own App, which posts a QA session's check
  * @returns {{finished: boolean, check: object|null}}
  */
-export function qaCheckFrom(runs, qa) {
+export function qaCheckFrom(runs, qa, ownApp = null) {
   if (!qa) return { finished: false, check: null };
-  const trusted = (runs ?? []).find((r) => r.name === qa.check && r.app?.slug === TRUSTED_CHECK_APP) ?? null;
+  const trusted = (runs ?? []).find((r) => r.name === qa.check && qaPostedBy(r.app?.slug, ownApp)) ?? null;
   const finished = Boolean(trusted) && trusted.status === 'completed' && !/^Waiting\b/.test(trusted.output?.title ?? '');
   return { finished, check: finished ? trusted : null };
 }
@@ -101,11 +104,14 @@ export function qaReportFrom(body) {
 }
 
 /**
+ * Only the QA workflow's author is trusted, never the console's own App: sessions comment as that App too, so a
+ * session could post a QA report of its own. A QA session's report reaches the brief through the console's check.
  * @param {object[]} comments
  * @param {{author: string, heading: string}} qa  the project file's `pullRequests.qa`
  * @returns {object|null}  the latest QA comment
  */
 export function qaCommentIn(comments, qa) {
+  if (!qa.author) return null;
   return (comments ?? []).filter((c) => c.user?.login === qa.author && (c.body ?? '').startsWith(qa.heading)).at(-1) ?? null;
 }
 
@@ -281,17 +287,21 @@ function gateWords(gates) {
 /**
  * @param {{pull: object, review: object|null, runs: object[], comments: object[], suites: {name: string, outcome: string}[],
  *          qa: {finished: boolean, check: object|null, notRun: string|null}, gates: object|null, reviewRuns?: Set<string>,
- *          commentUrl?: string|null}} args
+ *          commentUrl?: string|null, ownApp?: {slug: string, login: string}|null}} args
  *   `suites` are each suite's outcome; `qa.notRun` says why there is no QA check: no label, not configured, or it did
  *   not finish in time; `gates` is the project file's `pullRequests`; `reviewRuns` as for `mergeRiskFrom`
  * @returns {{slack: string, tier: 'Low'|'Medium'|'High'|null, comment: string, canMerge: boolean, facts: object}}
  *   `slack` is the thread reply; `tier` is the trusted merge risk's, null without one
  */
-export function buildBrief({ pull, review, runs, comments, suites, qa, gates, reviewRuns = new Set(), commentUrl = null }) {
+export function buildBrief({ pull, review, runs, comments, suites, qa, gates, reviewRuns = new Set(), commentUrl = null, ownApp = null }) {
   const words = gateWords(gates);
   const mergeRisk = mergeRiskFrom(runs, { sha: pull.head?.sha, reviewRuns, check: gates?.mergeRisk?.check ?? null });
-  const qaComment = qa.check && gates?.qa ? qaCommentIn(comments, gates.qa) : null;
-  const report = qaComment ? qaReportFrom(qaComment.body) : null;
+  // A QA session's check is the console's, and carries its report: the brief reads no comment for it.
+  const fromConsole = Boolean(ownApp?.slug) && qa.check?.app?.slug === ownApp.slug;
+  // Sessions comment as the App, so a project file naming the App as QA's author would trust them.
+  const authorIsApp = Boolean(ownApp?.login) && gates?.qa?.author === ownApp.login;
+  const qaComment = qa.check && gates?.qa && !fromConsole && !authorIsApp ? qaCommentIn(comments, gates.qa) : null;
+  const report = fromConsole ? qaReportFrom(qa.check.output?.summary) : qaComment ? qaReportFrom(qaComment.body) : null;
   const risk = riskAreasFrom({ comments, review, gate: gates?.review ?? null });
   const decisions = decisionsFrom(pull.body);
   const ranked = [...decisions.filter((d) => touches(d, risk.items)), ...decisions.filter((d) => !touches(d, risk.items))];

@@ -242,14 +242,14 @@ function upgrade(port, { path, host, headers }) {
 }
 
 test('the settings: the broker and an App of its own are refused together, and either half of the broker alone', () => {
-  const base = { WOODSHED_CLOUD_REPO: 'acme/app', GH_TOKEN: 'x' };
-  const broker = { WOODSHED_CLOUD_GITHUB_BROKER_URL: 'https://host.example/github/token', WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE: '/run/secrets/broker' };
-  const app = { WOODSHED_CLOUD_GITHUB_APP_ID: '1', WOODSHED_CLOUD_GITHUB_APP_INSTALLATION_ID: '2', WOODSHED_CLOUD_GITHUB_APP_KEY_FILE: '/k.pem' };
-  assert.throws(() => loadConfig({ ...base, ...broker, ...app }), /WOODSHED_CLOUD_GITHUB_APP_ID and WOODSHED_CLOUD_GITHUB_BROKER_URL cannot both be set/);
-  assert.throws(() => loadConfig({ ...base, ...app, WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE: '/f' }), /WOODSHED_CLOUD_GITHUB_APP_ID and WOODSHED_CLOUD_GITHUB_BROKER_URL/);
-  assert.throws(() => loadConfig({ ...base, WOODSHED_CLOUD_GITHUB_BROKER_URL: broker.WOODSHED_CLOUD_GITHUB_BROKER_URL }), /WOODSHED_CLOUD_GITHUB_BROKER_URL needs WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE too/);
-  assert.throws(() => loadConfig({ ...base, WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE: '/f' }), /WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE needs WOODSHED_CLOUD_GITHUB_BROKER_URL too/);
-  assert.throws(() => loadConfig({ ...base, ...broker, WOODSHED_CLOUD_GITHUB_BROKER_URL: 'ftp://host.example' }), /must be http\(s\)/);
+  const base = { WOODSHED_REPO: 'acme/app', GH_TOKEN: 'x' };
+  const broker = { WOODSHED_GITHUB_BROKER_URL: 'https://host.example/github/token', WOODSHED_GITHUB_BROKER_TOKEN_FILE: '/run/secrets/broker' };
+  const app = { WOODSHED_GITHUB_APP_ID: '1', WOODSHED_GITHUB_APP_INSTALLATION_ID: '2', WOODSHED_GITHUB_APP_KEY_FILE: '/k.pem' };
+  assert.throws(() => loadConfig({ ...base, ...broker, ...app }), /WOODSHED_GITHUB_APP_ID and WOODSHED_GITHUB_BROKER_URL cannot both be set/);
+  assert.throws(() => loadConfig({ ...base, ...app, WOODSHED_GITHUB_BROKER_TOKEN_FILE: '/f' }), /WOODSHED_GITHUB_APP_ID and WOODSHED_GITHUB_BROKER_URL/);
+  assert.throws(() => loadConfig({ ...base, WOODSHED_GITHUB_BROKER_URL: broker.WOODSHED_GITHUB_BROKER_URL }), /WOODSHED_GITHUB_BROKER_URL needs WOODSHED_GITHUB_BROKER_TOKEN_FILE too/);
+  assert.throws(() => loadConfig({ ...base, WOODSHED_GITHUB_BROKER_TOKEN_FILE: '/f' }), /WOODSHED_GITHUB_BROKER_TOKEN_FILE needs WOODSHED_GITHUB_BROKER_URL too/);
+  assert.throws(() => loadConfig({ ...base, ...broker, WOODSHED_GITHUB_BROKER_URL: 'ftp://host.example' }), /must be http\(s\)/);
 
   const hosted = loadConfig({ ...base, ...broker });
   assert.deepEqual(hosted.githubBroker, { url: 'https://host.example/github/token', tokenFile: '/run/secrets/broker' });
@@ -259,13 +259,13 @@ test('the settings: the broker and an App of its own are refused together, and e
 });
 
 test('the identity secret is sign-in required from the first request, so a reachable console may start with it', () => {
-  const base = { WOODSHED_CLOUD_REPO: 'acme/app', GH_TOKEN: 'x', WOODSHED_CLOUD_HOST: '0.0.0.0' };
-  assert.throws(() => requireClosedWhenReachable(loadConfig(base)), /WOODSHED_CLOUD_REQUIRE_SIGN_IN=1 \(with the GitHub App\) or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET/);
-  const config = loadConfig({ ...base, WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET: SECRET });
+  const base = { WOODSHED_REPO: 'acme/app', GH_TOKEN: 'x', WOODSHED_HOST: '0.0.0.0' };
+  assert.throws(() => requireClosedWhenReachable(loadConfig(base)), /WOODSHED_REQUIRE_SIGN_IN=1 \(with the GitHub App\) or WOODSHED_TRUSTED_IDENTITY_SECRET/);
+  const config = loadConfig({ ...base, WOODSHED_TRUSTED_IDENTITY_SECRET: SECRET });
   assert.doesNotThrow(() => requireClosedWhenReachable(config));
   assert.deepEqual([config.requireSignIn, config.trustedIdentitySecret], [true, SECRET]);
-  assert.throws(() => loadConfig({ ...base, WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET: 'short' }), /at least 32 characters/);
-  assert.equal(loadConfig({ WOODSHED_CLOUD_REPO: 'acme/app', GH_TOKEN: 'x' }).trustedIdentitySecret, null);
+  assert.throws(() => loadConfig({ ...base, WOODSHED_TRUSTED_IDENTITY_SECRET: 'short' }), /at least 32 characters/);
+  assert.equal(loadConfig({ WOODSHED_REPO: 'acme/app', GH_TOKEN: 'x' }).trustedIdentitySecret, null);
 });
 
 test('an App the setup page saved stays unused when the console borrows its GitHub access', () => {

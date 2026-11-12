@@ -21,6 +21,11 @@ export function isAsk(session) {
   return session.kind === 'ask';
 }
 
+/** @returns {boolean}  whether the session runs QA on a pull request (qaSessions.mjs), rather than working on it */
+export function isQa(session) {
+  return Boolean(session.qa);
+}
+
 /** @returns {boolean}  whether the session holds, or waits for, one of the shared slots */
 function takesSharedSlot(session) {
   return !session.owner && !isAsk(session);
@@ -102,8 +107,9 @@ export function keptIds(sessions) {
  */
 export function routeTrigger({ sessions, number, trigger, kind = 'issue', text = '' }) {
   if (trigger === 'label' && kind === 'pr') return { action: 'ignore', reason: 'a label on a pull request starts nothing: comment /woodshed <what to do>' };
-  // A private session on the same issue is someone's own: GitHub can neither type into it nor resume its branch.
-  const shared = sessions.filter((s) => !s.owner);
+  // A private session on the same issue is someone's own: GitHub can neither type into it nor resume its branch. A QA
+  // session on the same pull request tests it, and is no session to send work to.
+  const shared = sessions.filter((s) => !s.owner && !isQa(s));
   const forTarget = shared.filter((s) => s.number === number || pullNumber(s.prUrl) === number);
   const active = forTarget.find((s) => ACTIVE_STATUSES.has(s.status));
   if (active) {
@@ -118,6 +124,17 @@ export function routeTrigger({ sessions, number, trigger, kind = 'issue', text =
     .filter((s) => s.number === number && s.branch && s.kind === 'issue')
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   return { action: 'start', resumeBranch: previous?.branch ?? null };
+}
+
+/**
+ * Decides what the QA label on a pull request does: start a QA session, unless one is already testing it. A QA session
+ * is never resumed: each label tests the branch as it is then.
+ * @param {{sessions: object[], number: number}} args
+ * @returns {{action: 'ignore', reason: string}|{action: 'start'}}
+ */
+export function routeQa({ sessions, number }) {
+  const running = sessions.find((s) => isQa(s) && s.number === number && ACTIVE_STATUSES.has(s.status));
+  return running ? { action: 'ignore', reason: 'QA is already running on it' } : { action: 'start' };
 }
 
 /**
@@ -277,6 +294,21 @@ function appServersFrom(servers) {
   return { frontend: servers.frontend, backend: servers.backend, frontendPort: portFrom(servers.frontendPort), backendPort: portFrom(servers.backendPort) };
 }
 
+// As shared/project.mjs names an app; a label is the project's own words, kept short for a menu.
+const APP_NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MAX_APPS = 20;
+const MAX_APP_LABEL = 60;
+
+/**
+ * @returns {{name: string, label: string}[]|null}  the apps Start app can pick, as statusd listed them; null from a
+ *   statusd from before several apps, which runs its one app
+ */
+export function appsFrom(apps) {
+  if (!Array.isArray(apps)) return null;
+  const valid = apps.slice(0, MAX_APPS).filter((a) => APP_NAME_RE.test(a?.name ?? ''));
+  return valid.map((a) => ({ name: a.name, label: typeof a.label === 'string' && a.label.trim() ? a.label.trim().slice(0, MAX_APP_LABEL) : a.name }));
+}
+
 // Numbers only, and in range: the answer is the session's own.
 function usageFrom(usage) {
   if (!usage || typeof usage !== 'object') return null;
@@ -309,6 +341,19 @@ export function planUsageFrom(usage) {
   return out.fiveHour || out.sevenDay ? out : null;
 }
 
+const MAX_PR_URLS = 20;
+
+/** @returns {string[]}  the session's pull requests, oldest first; one from before the list is its only `prUrl` */
+export function prUrlsOf(session) {
+  if (Array.isArray(session?.prUrls) && session.prUrls.length) return session.prUrls;
+  return session?.prUrl ? [session.prUrl] : [];
+}
+
+function withPrUrl(session, prUrl) {
+  const known = prUrlsOf(session);
+  return prUrl && !known.includes(prUrl) ? [...known, prUrl].slice(-MAX_PR_URLS) : known;
+}
+
 /**
  * Folds one statusd answer into a session. Only a working claude counts as
  * activity: a session parked on a question for an hour is idle.
@@ -333,10 +378,15 @@ export function statusUpdate(session, status, nowIso) {
     branch: status.branch || session.branch,
     head: status.head || session.head,
     prUrl: prUrl || session.prUrl || null,
+    // Every pull request the session has reported, oldest first: a session can open another after one merged.
+    prUrls: withPrUrl(session, prUrl),
     app: APP_STATES.has(status.app) ? status.app : null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,
     appServers: appServersFrom(status.appServers),
+    // Which of the project's apps runs, or would run, and the ones Start app can pick. One of them, or none.
+    apps: appsFrom(status.apps),
+    appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
     // The project file turns the editor on and the image has it: Editor ↗ shows, and the console lets it through.
     editor: status.editor === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so

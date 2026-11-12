@@ -69,43 +69,18 @@ runs:
         GH_TOKEN: ${{ inputs.github-token }}
         HEADING: ${{ inputs.heading }}
         NOT_COVERED: ${{ inputs.not-covered }}
+        QA: ${{ github.action_path }}/../../../../shared/qa/qa.mjs
         ARTIFACTS: ${{ inputs.artifacts }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: |
-        # The verdict comes from the report's test case headings. A fail fails the check; anything that kept the run
-        # from a verdict is neutral, so a broken run never reads as a broken pull request
+        # The verdict, from the report's test case headings, as a QA session reads it too (shared/qa/qa.mjs)
         [ -f .qa/state.env ] && source .qa/state.env
-        total=0; pass=0; fail=0; warn=0
-        if [ -s .qa/report.md ]; then
-          total=$(grep -cE '^## TC-[0-9]+:' .qa/report.md) || total=0
-          pass=$(grep -cE '^## TC-[0-9]+:.*✅[[:space:]]*$' .qa/report.md) || pass=0
-          fail=$(grep -cE '^## TC-[0-9]+:.*❌[[:space:]]*$' .qa/report.md) || fail=0
-          warn=$(grep -cE '^## EC-[0-9]+:.*⚠️[[:space:]]*$' .qa/report.md) || warn=0
-        fi
-        unverified=$((total - pass - fail))
-        conclusion=neutral
-        if [ -n "$NOT_COVERED" ]; then
-          status="🔌 **Not covered**: ${NOT_COVERED}"; title="Not covered: ${NOT_COVERED}"
-        elif [ -f .qa/plan/SKIP.md ]; then
-          status="⏭️ **Not covered**: $(head -1 .qa/plan/SKIP.md)"; title="Not covered: nothing to test"
-        elif [ -f .qa/plan/NO_PLAN.md ]; then
-          status="⚠️ **Not covered**: $(head -1 .qa/plan/NO_PLAN.md)"; title="Not covered: no test plan"
-        elif [ "$total" -eq 0 ]; then
-          status="⚠️ **Not covered**: the run ended without a QA report"; title="Not covered: no QA report"
-        elif [ "$fail" -gt 0 ]; then
-          status="❌ **Fail**: ${fail} of ${total} test cases failed"; title="Fail: ${fail} of ${total} test cases failed"
-          conclusion=failure
-        elif [ "$unverified" -gt 0 ]; then
-          status="❓ **Not covered**: ${unverified} of ${total} test cases could not be verified"
-          title="Not covered: ${unverified} of ${total} test cases unverified"
-        else
-          status="✅ **Pass**: all ${total} test cases passed"; title="Pass: ${total} test cases passed"
-          conclusion=success
-        fi
-        # Edge cases are the planner's guesses, not agreed criteria: flagged, never part of the verdict.
-        [ "$warn" -eq 1 ] && status="${status} · ⚠️ 1 edge case to look at"
-        [ "$warn" -gt 1 ] && status="${status} · ⚠️ ${warn} edge cases to look at"
-        echo "Verdict: ${conclusion}, ${total} test cases, ${pass} passed, ${fail} failed, ${unverified} unverified, ${warn} edge cases to look at"
+        verdict=$(node "$QA" verdict .qa --not-covered "$NOT_COVERED")
+        conclusion=$(jq -r .conclusion <<< "$verdict")
+        title=$(jq -r .title <<< "$verdict")
+        status=$(jq -r .status <<< "$verdict")
+        total=$(jq -r .total <<< "$verdict")
+        echo "Verdict: $(jq -r '"\(.conclusion), \(.total) test cases, \(.passed) passed, \(.failed) failed, \(.unverified) unverified, \(.edgeWarnings) edge cases to look at"' <<< "$verdict")"
 
         # Each session's last stream-json line has its cost; one the step's timeout killed never wrote it.
         cost_of() { [ -f "$1" ] && jq -rR 'fromjson? | select(.type == "result") | .total_cost_usd // empty' "$1" | tail -1; }

@@ -23,7 +23,7 @@ provider "aws" {
 
   default_tags {
     tags = {
-      project = "woodshed-cloud"
+      project = local.p
     }
   }
 }

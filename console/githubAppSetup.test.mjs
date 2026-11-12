@@ -130,8 +130,8 @@ test('on the next start a saved App is the console\'s own, unless the environmen
 test('a supervisor is systemd\'s INVOCATION_ID or the setting, and the setting at 0 wins', () => {
   assert.equal(supervisorOf({}), null, 'a plain node in a shell');
   assert.equal(supervisorOf({ INVOCATION_ID: 'abc' }), 'systemd');
-  assert.equal(supervisorOf({ WOODSHED_CLOUD_SUPERVISED: '1' }), 'setting');
-  assert.equal(supervisorOf({ WOODSHED_CLOUD_SUPERVISED: '0', INVOCATION_ID: 'abc' }), null);
+  assert.equal(supervisorOf({ WOODSHED_SUPERVISED: '1' }), 'setting');
+  assert.equal(supervisorOf({ WOODSHED_SUPERVISED: '0', INVOCATION_ID: 'abc' }), null);
 });
 
 const installed = () => ({ githubAppSetup: { appId: '77', installationId: '4242' } });

@@ -16,7 +16,7 @@
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
 # empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
 # DOCKER_HOST set, on that docker host), WOODSHED_IMAGE (the session image's tag, woodshed-session:<owner>-<name>
-# otherwise; the console's Update passes its own WOODSHED_CLOUD_IMAGE).
+# otherwise; the console's Update passes its own WOODSHED_IMAGE).
 set -euo pipefail
 
 WOODSHED_GIT_DEFAULT=https://github.com/ChifferCo/woodshed.git
@@ -88,6 +88,34 @@ savedSetting() {
   sed -n "s/^$name=//p" "$file" | tail -1
 }
 
+# A console setting (shared/envNames.mjs) saved in stack.env, by its name without the prefix: WOODSHED_<NAME>, or else
+# the WOODSHED_CLOUD_<NAME> a stack.env written before the rename holds (warnOldNames says which).
+savedConsoleSetting() {
+  local file=$1 name=$2
+  [ -f "$file" ] || return 0
+  if grep -q "^WOODSHED_$name=" "$file"; then savedSetting "$file" "WOODSHED_$name"; else savedSetting "$file" "WOODSHED_CLOUD_$name"; fi
+}
+
+# The same once stack.env is sourced.
+consoleSetting() {
+  local current="WOODSHED_$1" old="WOODSHED_CLOUD_$1"
+  if [ -n "${!current+set}" ]; then printf '%s' "${!current}"; else printf '%s' "${!old:-}"; fi
+}
+
+# Once a run, each old name stack.env still has. The file is not rewritten: it may hold changes of its owner's. Only
+# names are said, never a value.
+warnOldNames() {
+  local file=$1 name current
+  [ -f "$file" ] || return 0
+  for name in $(sed -n 's/^WOODSHED_CLOUD_\([A-Z0-9_]*\)=.*/\1/p' "$file" | sort -u); do
+    case $name in
+      INSTALL_SECRETS) current=WOODSHED_INSTALL_SECRET_PAIRS ;;
+      *) current=WOODSHED_$name ;;
+    esac
+    printf 'woodshed install: deprecated variable, use %s (%s has WOODSHED_CLOUD_%s)\n' "$current" "$file" "$name" >&2
+  done
+}
+
 githubToken() {
   if [ -n "${GH_TOKEN:-}" ]; then printf '%s' "$GH_TOKEN"; return; fi
   if command -v gh >/dev/null && gh auth token >/dev/null 2>&1; then gh auth token; return; fi
@@ -110,13 +138,13 @@ fetchRepo() {
 }
 
 # What the repository's project file decides here, one per line: its env files and the seed's secrets, as
-# WOODSHED_CLOUD_ENV_FILES and WOODSHED_CLOUD_DB_ENV_SECRETS want them (either may be empty), and the engines its
+# WOODSHED_ENV_FILES and WOODSHED_DB_ENV_SECRETS want them (either may be empty), and the engines its
 # databases are on, space-separated, or `none`.
 projectSettings() {
   local src=$1 repoDir=$2 projectFilesDir=${3:-}
   # The paths go in the environment: as arguments, project.mjs would take argv[1] for itself and run as a command.
   # shellcheck disable=SC2016 # JavaScript, not shell, expands these
-  PROJECT_MJS=$src/shared/project.mjs REPO_DIR_TO_READ=$repoDir WOODSHED_CLOUD_PROJECT_FILES_DIR=$projectFilesDir node --input-type=module -e '
+  PROJECT_MJS=$src/shared/project.mjs REPO_DIR_TO_READ=$repoDir WOODSHED_PROJECT_FILES_DIR=$projectFilesDir node --input-type=module -e '
     const { loadProject } = await import(process.env.PROJECT_MJS);
     const project = loadProject(process.env.REPO_DIR_TO_READ);
     console.error(`woodshed install: project file from ${project.from}`);
@@ -132,7 +160,7 @@ buildImage() {
   rm -rf "$context"
   mkdir -p "$context/woodshed"
   cp -R "$src/session" "$src/shared" "$context/woodshed/"
-  (cd "$repoDir" && WOODSHED_CLOUD_PROJECT_FILES_DIR=$projectFilesDir bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
+  (cd "$repoDir" && WOODSHED_PROJECT_FILES_DIR=$projectFilesDir bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
   local runtime
   runtime=$(sessionRuntime)
   say "Building the session image $image (the first build takes several minutes)"
@@ -184,16 +212,16 @@ EOF
       if anyEngine "$engines"; then echo; fi
       cat <<EOF
 WOODSHED_PROVIDER=local
-WOODSHED_CLOUD_REPO=$repo
-WOODSHED_CLOUD_ENV_FILES=$envFiles
-WOODSHED_CLOUD_DB_ENV_SECRETS=$dbEnvSecrets
-WOODSHED_CLOUD_PORT=$CONSOLE_PORT
-WOODSHED_CLOUD_PUBLIC_URL=http://localhost:$CONSOLE_PORT
-WOODSHED_CLOUD_STATE_DIR=$home/console
-WOODSHED_CLOUD_IMAGE=$image
-WOODSHED_CLOUD_SESSION_ENV_FILE=$home/session-env.json
+WOODSHED_REPO=$repo
+WOODSHED_ENV_FILES=$envFiles
+WOODSHED_DB_ENV_SECRETS=$dbEnvSecrets
+WOODSHED_PORT=$CONSOLE_PORT
+WOODSHED_PUBLIC_URL=http://localhost:$CONSOLE_PORT
+WOODSHED_STATE_DIR=$home/console
+WOODSHED_IMAGE=$image
+WOODSHED_SESSION_ENV_FILE=$home/session-env.json
 # bin/woodshed starts the console again when the GitHub App setup page restarts it.
-WOODSHED_CLOUD_SUPERVISED=1
+WOODSHED_SUPERVISED=1
 WOODSHED_LOCAL_SECRETS_DIR=$home/secrets
 WOODSHED_LOCAL_SECRETS_KEY_FILE=$home/secrets.key
 WOODSHED_LOCAL_HOMES_DIR=$home/homes
@@ -260,11 +288,11 @@ writeSessionEnv() {
 saveProjectFilesDir() {
   local file=$1 dir=$2 kept
   [ -n "$dir" ] || return 0
-  [ "$(savedSetting "$file" WOODSHED_CLOUD_PROJECT_FILES_DIR)" != "$dir" ] || return 0
-  kept=$(grep -v '^WOODSHED_CLOUD_PROJECT_FILES_DIR=' "$file" || true)
+  [ "$(savedConsoleSetting "$file" PROJECT_FILES_DIR)" != "$dir" ] || return 0
+  kept=$(grep -v '^WOODSHED_\(CLOUD_\)\{0,1\}PROJECT_FILES_DIR=' "$file" || true)
   (
     umask 077
-    printf '%s\nWOODSHED_CLOUD_PROJECT_FILES_DIR=%s\n' "$kept" "$dir" >"$file"
+    printf '%s\nWOODSHED_PROJECT_FILES_DIR=%s\n' "$kept" "$dir" >"$file"
   )
 }
 
@@ -273,8 +301,8 @@ saveProjectFilesDir() {
 warnStaleStackEnv() {
   local file=$1 settings=$2 engines=$3 hosted=$4 wanted
   wanted=$(tr ' ' '\n' <<<"$engines" | sed '/^none$/d' | sort | paste -sd ' ' -)
-  [ "$(savedSetting "$file" WOODSHED_CLOUD_ENV_FILES)" != "$(sed -n 1p <<<"$settings")" ] \
-    || [ "$(savedSetting "$file" WOODSHED_CLOUD_DB_ENV_SECRETS)" != "$(sed -n 2p <<<"$settings")" ] \
+  [ "$(savedConsoleSetting "$file" ENV_FILES)" != "$(sed -n 1p <<<"$settings")" ] \
+    || [ "$(savedConsoleSetting "$file" DB_ENV_SECRETS)" != "$(sed -n 2p <<<"$settings")" ] \
     || [ "$wanted" != "$(tr ' ' '\n' <<<"$hosted" | sed '/^none$/d' | sort | paste -sd ' ' -)" ] || return 0
   say "$file was written for another project file: its env files, seed secrets or database engines are not the ones it names now. providers/local/README.md, \"Project files the installation supplies\", says what to change"
 }
@@ -282,7 +310,7 @@ warnStaleStackEnv() {
 # An install works on one repository: its stack.env, image and databases are that repository's.
 refuseOtherRepo() {
   local file=$1 repo=$2 saved
-  saved=$(savedSetting "$file" WOODSHED_CLOUD_REPO)
+  saved=$(savedConsoleSetting "$file" REPO)
   [ -z "$saved" ] || [ "$saved" = "$repo" ] || fail "this install works on $saved: set WOODSHED_HOME to another folder for $repo"
 }
 
@@ -326,10 +354,11 @@ main() {
   mkdir -p "$home"
   chmod 700 "$home"
   local stackEnv=$home/stack.env
+  warnOldNames "$stackEnv"
   local src
   src=$(findSource "$home")
 
-  local repo=${WOODSHED_REPO:-$(savedSetting "$stackEnv" WOODSHED_CLOUD_REPO)}
+  local repo=${WOODSHED_REPO:-$(savedConsoleSetting "$stackEnv" REPO)}
   [ -n "$repo" ] || repo=$(ask 'Which GitHub repository should sessions work on? (owner/name): ')
   validRepo "$repo" || fail "not a repository, owner/name: $repo"
   refuseOtherRepo "$stackEnv" "$repo"
@@ -337,7 +366,7 @@ main() {
   slug=$(printf '%s' "$repo" | tr '/[:upper:]' '-[:lower:]')
   local image=${WOODSHED_IMAGE:-woodshed-session:$slug} repoDir=$home/repos/$slug
 
-  local projectFilesDir=${WOODSHED_PROJECT_FILES_DIR:-$(savedSetting "$stackEnv" WOODSHED_CLOUD_PROJECT_FILES_DIR)}
+  local projectFilesDir=${WOODSHED_PROJECT_FILES_DIR:-$(savedConsoleSetting "$stackEnv" PROJECT_FILES_DIR)}
   [ -z "$projectFilesDir" ] || [[ $projectFilesDir = /* ]] || fail "WOODSHED_PROJECT_FILES_DIR must be an absolute path: $projectFilesDir"
 
   local token
@@ -371,7 +400,7 @@ main() {
   . "$stackEnv"
   set +a
 
-  mkdir -p "$WOODSHED_LOCAL_SECRETS_DIR" "$WOODSHED_LOCAL_HOMES_DIR" "$WOODSHED_CLOUD_STATE_DIR"
+  mkdir -p "$WOODSHED_LOCAL_SECRETS_DIR" "$WOODSHED_LOCAL_HOMES_DIR" "$(consoleSetting STATE_DIR)"
   local hosted engine files=()
   hosted=$(hostedEngines)
   warnStaleStackEnv "$stackEnv" "$settings" "$engines" "$hosted"
@@ -393,10 +422,10 @@ main() {
   api=$(sessionApiHost "$(uname -s)" "${network:-bridge}")
   apiHost=${api% *}
   consoleHost=${api#* }
-  if [ -z "$(savedSetting "$stackEnv" WOODSHED_CLOUD_SESSION_API_HOST)" ]; then
-    printf 'WOODSHED_CLOUD_SESSION_API_HOST=%s\n' "$apiHost" >>"$stackEnv"
+  if [ -z "$(savedConsoleSetting "$stackEnv" SESSION_API_HOST)" ]; then
+    printf 'WOODSHED_SESSION_API_HOST=%s\n' "$apiHost" >>"$stackEnv"
   fi
-  writeSessionEnv "$WOODSHED_CLOUD_SESSION_ENV_FILE" "$consoleHost" "$hosted"
+  writeSessionEnv "$(consoleSetting SESSION_ENV_FILE)" "$consoleHost" "$hosted"
 
   local secretCli=$src/providers/local/bin/secret.mjs
   [ -f "$WOODSHED_LOCAL_SECRETS_KEY_FILE" ] || node "$secretCli" new-key "$WOODSHED_LOCAL_SECRETS_KEY_FILE" >/dev/null

@@ -196,7 +196,7 @@ test('a run reads the installation\'s project file for the image\'s repo, mounte
   assert.deepEqual(mounts, [`type=bind,source=${path.join(dir, 'acme/app.yaml')},target=${PROJECT_FILES_MOUNT}/acme/app.yaml,readonly`]);
   const flags = args.slice(args.indexOf('/opt/woodshed/session/dbAdmin.mjs') + 1, args.indexOf('--'));
   assert.equal(flags[flags.indexOf('--project-files-dir') + 1], PROJECT_FILES_MOUNT);
-  assert.equal(env.WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined, 'the flag, never the environment');
+  assert.equal(env.WOODSHED_PROJECT_FILES_DIR, undefined, 'the flag, never the environment');
 
   const without = setup({ projectFilesDir: path.join(dir, 'missing') });
   await without.ready;

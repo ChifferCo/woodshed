@@ -24,9 +24,9 @@ means. The secrets table in `CLAUDE.md`, "The secrets", says what breaks when ea
 
 | Provider | Console log | A session's log |
 | --- | --- | --- |
-| This machine (`install.sh`) | `~/.woodshed/console.log` when started as `docs/self-host.md` says, else the terminal that runs `~/.woodshed/bin/woodshed` | `docker logs <container>`; `docker ps -a --filter label=woodshed-cloud.session` lists them |
+| This machine (`install.sh`) | `~/.woodshed/console.log` when started as `docs/self-host.md` says, else the terminal that runs `~/.woodshed/bin/woodshed` | `docker logs <container>`; `docker ps -a --filter label=woodshed.session` lists them (`label=woodshed-cloud.session` for one started before that label) |
 | A server | `journalctl -u <unit>` | As on this machine |
-| AWS | On the base box: `cd /opt/woodshed-cloud && sudo docker compose logs console` | `aws logs tail /woodshed-cloud/sessions`, stream `session/session/<taskId>`; `aws ecs describe-tasks` for `stoppedReason` |
+| AWS | On the base box: `cd /opt/<name_prefix> && sudo docker compose logs console` (`name_prefix` is in the installation's tfvars: `woodshed`, or `woodshed-cloud` for one set up before it existed) | `aws logs tail /<name_prefix>/sessions`, stream `session/session/<taskId>`; `aws ecs describe-tasks` for `stoppedReason` |
 
 `CLAUDE.md`, "Where everything is", has the rest for AWS (database admin runs, webhooks, images, state). Inside a
 running session, its own logs are under `/tmp` (`/tmp/woodshed-app.log`, `/tmp/pgweb.log` and the others "By symptom"

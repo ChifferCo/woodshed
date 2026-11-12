@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fixtureProject, fixtureProjectFiles } from '../../shared/projectFixture.mjs';
-import { createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
+import { OLD_SESSION_LABEL, SESSION_LABEL, createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 test('parseDockerPort reads the host port docker published', () => {
@@ -27,6 +27,19 @@ function launch({ projectFilesDir, repo = 'acme/app', env = {} }) {
   return launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4', ...env }).then(() => runs[0]);
 }
 
+test('a session is labelled woodshed.session, and what lists them reads that and the label it had before', async () => {
+  const { args } = await launch({ projectFilesDir: null });
+  const labels = args.flatMap((a, i) => (args[i - 1] === '--label' ? [a] : []));
+  assert.deepEqual(labels, [`${SESSION_LABEL}=a1b2c3d4`]);
+  assert.equal(SESSION_LABEL, 'woodshed.session');
+  // Nothing in the console lists sessions by label: the README's removal step does, and must still find a container
+  // started before the rename.
+  const readme = fs.readFileSync(path.join(import.meta.dirname, 'README.md'), 'utf8');
+  for (const label of [SESSION_LABEL, OLD_SESSION_LABEL]) {
+    assert.ok(readme.includes(`docker ps -aq --filter label=${label} | xargs -r docker rm -f`), label);
+  }
+});
+
 function mountsOf(args) {
   return args.flatMap((a, i) => (args[i - 1] === '--mount' ? [a] : []));
 }
@@ -40,8 +53,10 @@ test('a session gets its repo\'s and the image\'s repo\'s installation project f
 
   const own = await launch({ projectFilesDir: dir });
   assert.deepEqual(mountsOf(own.args), [`type=bind,source=${path.join(dir, 'acme/app.yaml')},target=${PROJECT_FILES_MOUNT}/acme/app.yaml,readonly`]);
-  assert.equal(own.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, PROJECT_FILES_MOUNT);
-  assert.ok(own.args.includes('WOODSHED_CLOUD_PROJECT_FILES_DIR'), 'passed by name, as every variable is');
+  assert.equal(own.env.WOODSHED_PROJECT_FILES_DIR, PROJECT_FILES_MOUNT);
+  assert.ok(own.args.includes('WOODSHED_PROJECT_FILES_DIR'), 'passed by name, as every variable is');
+  assert.equal(own.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, PROJECT_FILES_MOUNT, 'and under its old name, for an older session image');
+  assert.ok(own.args.includes('WOODSHED_CLOUD_PROJECT_FILES_DIR'));
 
   const other = await launch({ projectFilesDir: dir, env: { PROJECT_REPO: 'other/web' } });
   assert.deepEqual(mountsOf(other.args), [
@@ -51,7 +66,8 @@ test('a session gets its repo\'s and the image\'s repo\'s installation project f
 
   const none = await launch({ projectFilesDir: dir, repo: 'acme/nothing' });
   assert.deepEqual(mountsOf(none.args), []);
-  assert.equal(none.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined, 'a repo with no file there reads none, as one with no folder');
+  assert.equal(none.env.WOODSHED_PROJECT_FILES_DIR, undefined, 'a repo with no file there reads none, as one with no folder');
+  assert.equal(none.env.WOODSHED_CLOUD_PROJECT_FILES_DIR, undefined);
   assert.deepEqual(mountsOf((await launch({ projectFilesDir: null })).args), []);
   assert.deepEqual(mountsOf((await launch({ projectFilesDir: path.join(dir, 'missing') })).args), []);
 });

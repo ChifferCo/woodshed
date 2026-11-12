@@ -1,6 +1,6 @@
 // The question a reverse proxy asks before it gets a certificate for a name on demand (Caddy's `on_demand_tls { ask }`):
 //
-//   GET http://127.0.0.1:<WOODSHED_CLOUD_TLS_ASK_PORT>/tls-ask?domain=<name>   ->  200 yes, 403 no
+//   GET http://127.0.0.1:<WOODSHED_TLS_ASK_PORT>/tls-ask?domain=<name>   ->  200 yes, 403 no
 //
 // It is for a console with no wildcard certificate, such as one on a plain VM named through sslip.io, where each
 // session app's name needs a certificate of its own. Without the question anyone could have the proxy ask Let's

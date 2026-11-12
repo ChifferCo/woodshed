@@ -262,7 +262,7 @@ export function exchange({ consoleUrl, token, body, timeoutMs = REQUEST_TIMEOUT_
       res.on('data', (c) => { text += c; });
       res.on('end', () => {
         if (res.statusCode === 404) return resolve(null);
-        if (res.statusCode !== 200) return reject(new Error(`the console answered ${res.statusCode}: ${text.slice(0, 200)}`));
+        if (res.statusCode !== 200) return reject(Object.assign(new Error(`the console answered ${res.statusCode}: ${text.slice(0, 200)}`), { status: res.statusCode }));
         return resolve(JSON.parse(text));
       });
     });
@@ -270,6 +270,34 @@ export function exchange({ consoleUrl, token, body, timeoutMs = REQUEST_TIMEOUT_
     req.on('error', reject);
     req.end(payload);
   });
+}
+
+// The pull at start waits out a console restart (each redeploy) as the entrypoint's consoleCall does: about 40 s.
+const START_TRIES = 9;
+const START_RETRY_MS = 5_000;
+
+/** Whether a failed exchange is the console being away, not its answer: no answer at all, a 408, 429 or 5xx. */
+export function isTransient(err) {
+  return err?.status === undefined || err.status === 408 || err.status === 429 || err.status >= 500;
+}
+
+/**
+ * `call` until it succeeds, a failure is not transient, or `tries` ran out. A round is safe to repeat: the console
+ * merges what it is sent item by item, so the same changes sent twice leave the same copy.
+ * @template T
+ * @param {() => Promise<T>} call
+ * @returns {Promise<T>}
+ */
+export async function withRetries(call, { tries = START_TRIES, delayMs = START_RETRY_MS } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await call();
+    } catch (err) {
+      if (attempt >= tries || !isTransient(err)) throw err;
+      console.error(`settings: the console did not answer (${err.message}), trying again in ${delayMs / 1000} s`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 }
 
 /**
@@ -330,7 +358,7 @@ async function pullAtStart() {
     const prefix = `${path.basename(file)}${TEMP_SUFFIX}`;
     for (const name of await fs.readdir(dir).catch(() => [])) if (name.startsWith(prefix)) await fs.rm(path.join(dir, name), { force: true });
   }
-  const result = await syncOnce({ home, state: { version: null, synced: {} }, live: false, send: (body) => exchange({ consoleUrl, token, body }) });
+  const result = await syncOnce({ home, state: { version: null, synced: {} }, live: false, send: (body) => withRetries(() => exchange({ consoleUrl, token, body })) });
   if (!result) {
     console.log('settings: this console keeps no shared settings');
     return;

@@ -95,7 +95,7 @@
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
 //   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs)
 //   GET  /api/me                 who is signed in, and whether sign-in is on
-//   POST /api/sessions/<id>/app/start  start the session's app
+//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
 //   POST /api/sessions/<id>/app/stop   stop it
 //   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
@@ -112,7 +112,7 @@
 //        Editor ↗, for whoever can open the session itself (editorProxy.mjs)
 //
 // In AWS it sits behind Caddy, open to the internet, and every page, API call and terminal needs a GitHub
-// sign-in with write access (auth.mjs, always required there by WOODSHED_CLOUD_REQUIRE_SIGN_IN). Locally it
+// sign-in with write access (auth.mjs, always required there by WOODSHED_REQUIRE_SIGN_IN). Locally it
 // listens on loopback and has no sign-in. Hosted, a trusted proxy in front of it signs people in instead, with a
 // header on every request (trustedIdentity.mjs), and there is no GitHub sign-in at all. Every request must name a
 // host the console answers to, which stops DNS rebinding, and writes and terminal websockets must
@@ -142,7 +142,7 @@ import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, publicSession, sharedRunningCount } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -155,10 +155,11 @@ import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
+import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -172,6 +173,7 @@ const STATIC_FILES = {
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
+  'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
@@ -892,7 +894,9 @@ export function createHandler({
       // The slots are shared sessions' alone: My Woodshed's start at once.
       running: sharedRunningCount(all),
       queued: all.filter((s) => s.status === 'queued' && !s.owner).length,
-      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null })).reverse(),
+      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null,
+        // Every pull request it opened, oldest first, for its chips (common.js shownPrs).
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],
@@ -1614,7 +1618,13 @@ export function createHandler({
           const { session: after, sent } = await fleet.setupApp(session);
           return reply(res, 200, { ...publicSession(after), sent });
         }
-        return reply(res, 200, publicSession(await (action === 'start' ? fleet.startApp(session) : fleet.stopApp(session))));
+        if (action === 'start') {
+          // Which of several apps, by name; none is the default. A console page from before several apps sends no body.
+          const body = await readJson(req).catch(() => null);
+          if (!body || (body.app !== undefined && typeof body.app !== 'string')) return reply(res, 400, { error: 'app must be an app\'s name' });
+          return reply(res, 200, publicSession(await fleet.startApp(session, { app: body.app || null })));
+        }
+        return reply(res, 200, publicSession(await fleet.stopApp(session)));
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
         if (err.refused) return reply(res, 409, { error: err.message });
@@ -1936,11 +1946,19 @@ export async function startConsole({ provider, config: given = null }) {
   // A dump of a gigabyte or two takes longer to send than Node's 5-minute default for a whole request. Caddy is in front.
   server.requestTimeout = 60 * 60_000;
   server.on('upgrade', installation.upgrade);
+  const servers = [{ server, open: countRequests(server) }];
   server.listen(config.port, config.host, () => {
     console.log('console: listening', { host: config.host, port: config.port, ...installation.summary() });
   });
-  if (installation.sessionApi) listenSessionApi({ config, handle: installation.sessionApi });
-  await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (installation.sessionApi) {
+    const api = listenSessionApi({ config, handle: installation.sessionApi });
+    servers.push({ server: api, open: countRequests(api) });
+  }
+  const tlsAsk = await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (tlsAsk) servers.push({ server: tlsAsk, open: countRequests(tlsAsk) });
+  // Docker's stop on every redeploy (shutdown.mjs): sessions retry their calls to the console while it is away.
+  const shutdown = createShutdown({ servers, stop: () => installation.stop() });
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => shutdown(signal));
   installation.start({ webhooks: provider.webhooks ?? null });
 }
 

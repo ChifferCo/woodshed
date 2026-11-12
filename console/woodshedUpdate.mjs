@@ -4,7 +4,7 @@
 // the avatar menu counts them for admins. Update pulls them, builds the session image again when the code it is made
 // from changed (install.sh, WOODSHED_BUILD_ONLY), and exits with RESTART_EXIT_CODE, so whatever runs the console
 // (install.sh's bin/woodshed, a systemd unit with Restart=on-failure) starts it again on the new code. Before the
-// build and the restart, the new code is started as far as loading its modules and settings (WOODSHED_CLOUD_START_CHECK,
+// build and the restart, the new code is started as far as loading its modules and settings (WOODSHED_START_CHECK,
 // providers/console.mjs): one that cannot start fails the update while the clone can still go back, rather than after
 // the restart, when nothing would start the old code again.
 //
@@ -29,7 +29,7 @@ const IMAGE_PATHS = ['session', 'shared'];
 const LOG_LINES_KEPT = 200;
 // How long the new code may take to load its modules and settings before the start check gives up on it.
 const START_CHECK_MS = 60_000;
-// The console's own code: its clone is this folder's, unless WOODSHED_CLOUD_CHECKOUT names another.
+// The console's own code: its clone is this folder's, unless WOODSHED_CHECKOUT names another.
 const OWN_DIR = path.resolve(import.meta.dirname, '..');
 
 const firstLine = (text) => String(text ?? '').trim().split('\n')[0].trim();
@@ -70,7 +70,7 @@ export function commitRows(text) {
  *          repo?: () => string|null, token?: (() => Promise<string>)|null, run?: Function, now?: () => number,
  *          spawnImpl?: Function, exit?: (code: number) => void, ownDir?: string}} deps
  *   `repo` is the default project's, whose session image is built; `token` reads it for install.sh (gh's own login
- *   without). `config.checkout` (WOODSHED_CLOUD_CHECKOUT) is the Woodshed folder to follow, the console's own without
+ *   without). `config.checkout` (WOODSHED_CHECKOUT) is the Woodshed folder to follow, the console's own without
  */
 export function createWoodshedUpdate({
   config, store, supervisor, repo = () => null, token = null, run = execFileAsync, spawnImpl = spawn, now = Date.now,
@@ -163,13 +163,13 @@ export function createWoodshedUpdate({
     job.log = `${job.log}${plainText(text)}`.split('\n').slice(-LOG_LINES_KEPT).join('\n');
   }
 
-  // The new code's providers/console.mjs, with WOODSHED_CLOUD_START_CHECK=1: it loads every module, reads the settings
+  // The new code's providers/console.mjs, with WOODSHED_START_CHECK=1: it loads every module, reads the settings
   // this console runs with and makes its provider, then exits without listening. A throw, a setting the new code
   // refuses, or a Node too old for it fails here.
   async function startCheck() {
     await new Promise((resolve, reject) => {
       const child = spawnImpl(process.execPath, [path.join(sourceDir, 'providers', 'console.mjs')], {
-        env: { ...gitEnv, WOODSHED_CLOUD_START_CHECK: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...gitEnv, WOODSHED_START_CHECK: '1' }, stdio: ['ignore', 'pipe', 'pipe'],
       });
       let out = '';
       const take = (chunk) => { out += chunk; appendLog(String(chunk)); };

@@ -1,0 +1,134 @@
+{
+  "baseBox.sh.tftpl": [
+    "# woodshed-cloud-configure-base-box SSM association applies, then again whenever it changes.",
+    "[ -e \"$DATA_DEVICE\" ] || { echo \"woodshed-cloud: data volume ${data_volume_id} never appeared\" >&2; exit 1; }",
+    "mkdir -p /var/lib/woodshed-cloud",
+    "grep -q \" /var/lib/woodshed-cloud \" /etc/fstab || echo \"UUID=$(blkid -s UUID -o value \"$DATA_DEVICE\") /var/lib/woodshed-cloud xfs defaults,nofail 0 2\" >> /etc/fstab",
+    "mountpoint -q /var/lib/woodshed-cloud || mount /var/lib/woodshed-cloud"
+  ],
+  "baseBox.tf": [
+    "  name               = \"woodshed-cloud-base-box\"",
+    "      \"arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/users/*\",",
+    "      \"arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/sessions/*\",",
+    "  name   = \"woodshed-cloud-console\"",
+    "  name = \"woodshed-cloud-base-box\"",
+    "  tags = { Name = \"woodshed-cloud-console\" }",
+    "  tags = { Name = \"woodshed-cloud-base-box\" }",
+    "  name            = \"woodshed-cloud-configure-base-box\"",
+    "          \"echo ${base64encode(local.base_box_stack)} | base64 -d > /root/woodshed-cloud-stack.sh\",",
+    "          \"bash /root/woodshed-cloud-stack.sh\",",
+    "  association_name = \"woodshed-cloud-configure-base-box\"",
+    "  tags = { Name = \"woodshed-cloud-data\" }"
+  ],
+  "baseBoxStack.sh.tftpl": [
+    "# /opt/woodshed-cloud, then the stack (re)started with them. Applied over SSM by the",
+    "# woodshed-cloud-configure-base-box association (terraform/baseBox.tf) on a new box and after every",
+    "STACK=/opt/woodshed-cloud",
+    "  docker info >/dev/null 2>&1 && mountpoint -q /var/lib/woodshed-cloud && break",
+    "docker info >/dev/null 2>&1 || { echo \"woodshed-cloud: Docker never came up\" >&2; exit 1; }",
+    "mountpoint -q /var/lib/woodshed-cloud || { echo \"woodshed-cloud: the data volume is not mounted\" >&2; exit 1; }",
+    "mkdir -p \"$STACK/caddy\" /var/lib/woodshed-cloud/mongo /var/lib/woodshed-cloud/console /var/lib/woodshed-cloud/caddy",
+    "chown 1000:1000 /var/lib/woodshed-cloud/console",
+    "    volumes: [\"/var/lib/woodshed-cloud/mongo:/data/db\"]",
+    "    volumes: ${jsonencode([for i, file in keys(service.files) : \"/opt/woodshed-cloud/services/${name}/${i}:${file}:ro\"])}",
+    "      - ${prefix}STATE_DIR=/var/lib/woodshed-cloud",
+    "      - /var/lib/woodshed-cloud/console:/var/lib/woodshed-cloud",
+    "    # Built by woodshed-cloud-up with `docker build`: Compose's own build needs a newer buildx than",
+    "    image: woodshed-cloud-caddy",
+    "      - /opt/woodshed-cloud/Caddyfile:/etc/caddy/Caddyfile:ro",
+    "      - /var/lib/woodshed-cloud/caddy:/data",
+    "rm -f /usr/local/bin/woodshed-cloud-mongo-root",
+    "cat > /usr/local/bin/woodshed-cloud-mongo-root <<'EOF'",
+    "cd /opt/woodshed-cloud",
+    "  echo \"woodshed-cloud: Mongo has its root user already\"",
+    "    echo \"woodshed-cloud: Mongo's root user made, its password saved\"",
+    "cp \"$file\" /root/woodshed-cloud-mongo-root",
+    "echo \"woodshed-cloud: Mongo's root password could not be saved; it is in /root/woodshed-cloud-mongo-root\" >&2",
+    "chmod 0755 /usr/local/bin/woodshed-cloud-mongo-root",
+    "cat > /usr/local/bin/woodshed-cloud-up <<'EOF'",
+    "rm -rf /opt/woodshed-cloud/console.env /opt/woodshed-cloud/github-app",
+    "cd /opt/woodshed-cloud",
+    "docker build --quiet --tag woodshed-cloud-caddy /opt/woodshed-cloud/caddy",
+    "/usr/local/bin/woodshed-cloud-mongo-root",
+    "chmod 0755 /usr/local/bin/woodshed-cloud-up",
+    "systemctl disable --now woodshed-cloud-pgweb.timer 2>/dev/null || true",
+    "rm -f /etc/systemd/system/woodshed-cloud-pgweb.timer /etc/systemd/system/woodshed-cloud-pgweb.service \\",
+    "  /usr/local/bin/woodshed-cloud-pgweb /usr/local/bin/woodshed-cloud-pgweb-url \"$STACK/rds-ca.pem\"",
+    "cat > /etc/systemd/system/woodshed-cloud.service <<'EOF'",
+    "RequiresMountsFor=/var/lib/woodshed-cloud",
+    "ExecStart=/usr/local/bin/woodshed-cloud-up",
+    "systemctl enable woodshed-cloud.service",
+    "  /usr/local/bin/woodshed-cloud-up --no-pull",
+    "  systemctl start woodshed-cloud.service || echo \"woodshed-cloud: first start failed, see README.md\""
+  ],
+  "budget.tf": [
+    "  name         = \"woodshed-cloud\""
+  ],
+  "database.tf": [
+    "  name       = \"woodshed-cloud\"",
+    "  identifier     = \"woodshed-cloud\""
+  ],
+  "ecs.tf": [
+    "  name                 = \"woodshed-cloud-${each.key}\"",
+    "  name = \"woodshed-cloud\"",
+    "  name              = \"/woodshed-cloud/sessions\"",
+    "  name               = \"woodshed-cloud-session-execution\"",
+    "  family                   = \"woodshed-cloud-session\"",
+    "  name               = \"woodshed-cloud-db-admin-execution\"",
+    "  name               = \"woodshed-cloud-db-admin\"",
+    "      \"arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/users/*/database-??????\",",
+    "      \"arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/sessions/*/database-??????\",",
+    "  family                   = \"woodshed-cloud-db-admin\"",
+    "        \"--secret-prefix\", \"woodshed-cloud/\","
+  ],
+  "github.tf": [
+    "      values   = [\"repo:${var.github_repo}:environment:woodshed-cloud-images\"]",
+    "  name               = \"woodshed-cloud-github-images\"",
+    "  name            = \"woodshed-cloud-redeploy-console\"",
+    "          \"if [ -z \\\"$(docker compose -f /opt/woodshed-cloud/compose.yml ps --quiet console)\\\" ]; then exec /usr/local/bin/woodshed-cloud-up; fi\",",
+    "          \"cd /opt/woodshed-cloud\",",
+    "  name            = \"woodshed-cloud-refresh-db-template\"",
+    "  name   = \"push-woodshed-cloud-images\""
+  ],
+  "githubInfra.tf": [
+    "    plan  = \"woodshed-cloud-plan\"",
+    "    infra = \"woodshed-cloud-infra\"",
+    "  state_lock_key = \"woodshed-cloud/terraform.tfstate.tflock\"",
+    "  name                 = \"woodshed-cloud-github-${each.key}\"",
+    "    resources = [\"arn:aws:s3:::woodshed-cloud-tfstate-${local.account_id}/${local.state_lock_key}\"]",
+    "    not_resources = [\"arn:aws:s3:::woodshed-cloud-tfstate-${local.account_id}/*\"]",
+    "  name   = \"plan-woodshed-cloud\""
+  ],
+  "homes.tf": [
+    "  bucket        = \"woodshed-cloud-homes-${local.account_id}\""
+  ],
+  "network.tf": [
+    "  tags = { Name = \"woodshed-cloud\" }",
+    "  tags = { Name = \"woodshed-cloud\" }",
+    "  tags = { Name = \"woodshed-cloud-public-${count.index + 1}\" }",
+    "  tags = { Name = \"woodshed-cloud-public\" }",
+    "  name        = \"woodshed-cloud-base-box\"",
+    "  name        = \"woodshed-cloud-sessions\"",
+    "  name        = \"woodshed-cloud-database\""
+  ],
+  "secrets.tf": [
+    "  name        = \"woodshed-cloud/${replace(each.key, \"_\", \"-\")}\"",
+    "  name                    = \"woodshed-cloud/github-app-key\"",
+    "  name                    = \"woodshed-cloud/github-app-client-secret\"",
+    "  name                    = \"woodshed-cloud/slack-bot-token\"",
+    "  name                    = \"woodshed-cloud-root/mongo\""
+  ],
+  "versions.tf": [
+    "      project = \"woodshed-cloud\""
+  ],
+  "webhooks.tf": [
+    "  name        = \"woodshed-cloud/github-webhook-secret\"",
+    "  name                    = \"woodshed-cloud/slack-signing-secret\"",
+    "  name                      = \"woodshed-cloud-webhooks-dead\"",
+    "  name = \"woodshed-cloud-webhooks\"",
+    "  name               = \"woodshed-cloud-webhooks\"",
+    "  name              = \"/aws/lambda/woodshed-cloud-webhooks\"",
+    "  name   = \"woodshed-cloud-webhooks\"",
+    "  function_name    = \"woodshed-cloud-webhooks\""
+  ]
+}

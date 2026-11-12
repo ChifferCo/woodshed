@@ -1,4 +1,4 @@
-// The installation's project files (WOODSHED_CLOUD_PROJECT_FILES_DIR, docs/reference.md, "The project file") in a
+// The installation's project files (WOODSHED_PROJECT_FILES_DIR, docs/reference.md, "The project file") in a
 // container of the session image: a read-only bind mount of each file it needs, at `<owner>/<name>.yaml` under
 // PROJECT_FILES_MOUNT, which the container is told is the folder.
 //

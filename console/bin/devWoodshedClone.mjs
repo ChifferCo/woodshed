@@ -15,7 +15,7 @@ const NEWER = [
   ['feat(console): show how far behind its upstream the console is', 'Octo Cat', 'console/woodshedUpdate.mjs', 5],
 ];
 
-// The start check runs the clone's providers/console.mjs with WOODSHED_CLOUD_START_CHECK=1; the real one is the dev
+// The start check runs the clone's providers/console.mjs with WOODSHED_START_CHECK=1; the real one is the dev
 // console's own checkout, which the made-up clone is not.
 const FAKE_CONSOLE = `// The dev console's stand-in for providers/console.mjs: Update's start check runs it.
 await new Promise((r) => setTimeout(r, 1000));
@@ -34,7 +34,7 @@ echo "==> Built the session image \${WOODSHED_IMAGE:-woodshed-session}"
 
 /**
  * @param {string} dir  an empty folder to make them in
- * @returns {string}  the clone, which WOODSHED_CLOUD_CHECKOUT names
+ * @returns {string}  the clone, which WOODSHED_CHECKOUT names
  */
 export function makeDevClone(dir) {
   const upstream = path.join(dir, 'upstream');
