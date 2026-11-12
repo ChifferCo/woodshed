@@ -41,7 +41,7 @@ any account, DNS or firewall.
 Give the agent both things: the Woodshed link is the tool, and the repository your sessions should work on is a
 different one. If you name only Woodshed, a good agent asks which repository. Codex's default sandbox has no network and
 cannot write to `~/.woodshed`, so it cannot do the setup: start it with `codex --sandbox danger-full-access`, or run the
-installer's one command yourself (`docs/self-host.md` has it) and let the agent do the rest.
+installer's one command yourself (`docs/self-host.md` has it) and let the agent write the project file: the later steps need the same network and `~/.woodshed` access.
 
 ## Features
 
