@@ -309,6 +309,19 @@ export function planUsageFrom(usage) {
   return out.fiveHour || out.sevenDay ? out : null;
 }
 
+const MAX_PR_URLS = 20;
+
+/** @returns {string[]}  the session's pull requests, oldest first; one from before the list is its only `prUrl` */
+export function prUrlsOf(session) {
+  if (Array.isArray(session?.prUrls) && session.prUrls.length) return session.prUrls;
+  return session?.prUrl ? [session.prUrl] : [];
+}
+
+function withPrUrl(session, prUrl) {
+  const known = prUrlsOf(session);
+  return prUrl && !known.includes(prUrl) ? [...known, prUrl].slice(-MAX_PR_URLS) : known;
+}
+
 /**
  * Folds one statusd answer into a session. Only a working claude counts as
  * activity: a session parked on a question for an hour is idle.
@@ -333,6 +346,8 @@ export function statusUpdate(session, status, nowIso) {
     branch: status.branch || session.branch,
     head: status.head || session.head,
     prUrl: prUrl || session.prUrl || null,
+    // Every pull request the session has reported, oldest first: a session can open another after one merged.
+    prUrls: withPrUrl(session, prUrl),
     app: APP_STATES.has(status.app) ? status.app : null,
     // Claude's own id for the conversation, which Resume hands back to `claude --resume`.
     claudeSession: CLAUDE_SESSION_RE.test(status.claudeSession ?? '') ? status.claudeSession : session.claudeSession ?? null,

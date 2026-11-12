@@ -475,7 +475,7 @@
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
-        pr ? W.prChip(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
+        pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
         !live && W.isPrivate(s) && s.status === 'stopped' && resumeButton(s, true),
         W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
@@ -923,6 +923,8 @@
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
+      // One pull request is its chip; more are listed here, since the chips show only the newest.
+      s.prs?.length > 1 && row('Pull requests', W.prLines(s)),
       row('Started by', `${W.personText(s.startedBy)}, ${trigger}`),
       row(W.isLive(s) ? 'Running for' : 'Ran for', s.startedAt && W.duration(s.startedAt, s.stoppedAt)),
       row('Runs on', claude),
@@ -1034,7 +1036,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChip(s, { asLink: true }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1059,7 +1061,7 @@
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
       s.number && h('a', { class: 'pref', href: W.issueUrl(data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
-      pr && s.kind !== 'pr' && W.prChip(s, { asLink: true }),
+      pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         open: () => ({ body: sessionDetails(s), items: s.branch ? [copyBranch(s)] : [] }),
@@ -1259,7 +1261,7 @@
         : `${paused ? 'Paused' : 'Stopped'} ${W.ago(s.stoppedAt)}: ${s.stopReason || 'no reason recorded'}`],
       ['Branch', s.branch || 'none'],
       ['Head', s.head || 'unknown'],
-      ['Pull request', s.prUrl || 'none'],
+      prFact(s, 'none'),
       ['Ran', W.duration(s.startedAt, s.stoppedAt) || 'never started'],
       s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? 'after claude opened'],
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
@@ -1297,6 +1299,12 @@
         h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`)))));
   }
 
+  // Every pull request the session opened, a merged or closed one its card no longer shows too, one to a line.
+  function prFact(s, none) {
+    if ((s.prs?.length ?? 0) < 2) return ['Pull request', s.prUrl || none];
+    return ['Pull requests', W.prLines(s)];
+  }
+
   // A stopped shared session that keeps its conversation and databases: why it stopped, what is kept, and Resume.
   function keptBody(s) {
     const st = W.displayStatus(s);
@@ -1312,7 +1320,7 @@
     const box = h('textarea', { id: `resume-${s.id}`, placeholder: 'What to tell claude when it opens (optional)', maxlength: '4000' });
     const facts = [
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
-      ['Pull request', s.prUrl || 'none yet'],
+      prFact(s, 'none yet'),
       ['Branch', s.branch || 'none'],
       ['Stopped', `${W.ago(s.stoppedAt)}${s.stopReason ? `: ${s.stopReason}` : ''}`],
       ['Kept until', s.prClosedAt ? (W.deletedIn(s) || 'deleted soon') : s.prUrl ? 'its pull request merges or closes, and 3 days after'
