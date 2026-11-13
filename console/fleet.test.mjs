@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, push = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
@@ -98,7 +98,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, push, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -1071,9 +1071,9 @@ test('a shared session\'s databases are copied as it starts, and swept once it h
   assert.equal(calls.started.length, 2, 'and no container is started for it');
 });
 
-async function sessionWithPull({ createdAt }) {
+async function sessionWithPull({ createdAt, push = null }) {
   const slack = { available: true, posts: [], async postPr(pr) { this.posts.push(pr); return true; } };
-  const ctx = setup({ slack });
+  const ctx = setup({ slack, push });
   await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' });
   const [session] = ctx.fleet.sessions();
   ctx.github.pull = async (number) => ({ number, title: 'Add GTM to the agent', created_at: createdAt, state: 'open', head: { sha: 'abc' } });
@@ -2499,4 +2499,87 @@ test('a review on an author without Sessions from GitHub still runs, on the team
   t.github.pull = async () => REVIEW_PULL;
   assert.equal((await t.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.equal(t.fleet.sessions()[0].review.teamKey, true);
+});
+
+// What the fleet tells push.mjs, by name and session id; every change to a session goes to `sessionChanged`.
+function recordingPush() {
+  const told = [];
+  const changed = [];
+  const push = {
+    sessionChanged: (s) => changed.push({ id: s.id, status: s.status, state: s.state ?? null }),
+    statusRead: (s, args) => told.push(['statusRead', s.id, s.state, args]),
+    started: (s) => told.push(['started', s.id]),
+    startFailed: (s) => told.push(['startFailed', s.id, s.status]),
+    assigned: (s, by) => told.push(['assigned', s.id, s.assignee, by]),
+    prReady: (s, pull) => told.push(['prReady', s.id, pull]),
+    prStuck: (s, pull) => told.push(['prStuck', s.id, pull]),
+  };
+  return { push, told, changed };
+}
+
+test('push hears each status read with the state before it and when the session would pause, and its first read as running', async () => {
+  const { push, told, changed } = recordingPush();
+  const { fleet, statuses, store, advance } = setup({ assignables: ['joel'], push });
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = store.state.sessions;
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  advance(60_000);
+  statuses[session.id] = { state: 'done', lastMessage: { role: 'claude', text: 'Done.' } };
+  await fleet.tick();
+  const pauseAt = Date.parse(session.lastActiveAt) + 2 * HOUR;
+  assert.deepEqual(told, [
+    ['started', session.id],
+    ['statusRead', session.id, 'working', { wasState: null, pauseAt: Date.parse('2026-10-21T10:00:00.000Z') + 2 * HOUR }],
+    ['statusRead', session.id, 'done', { wasState: 'working', pauseAt }],
+  ]);
+  assert.ok(changed.some((c) => c.id === session.id && c.state === 'done'), 'every change is passed on');
+  await fleet.stop(session, 'stopped from the console');
+  assert.equal(changed.at(-1).status, 'stopped');
+});
+
+test('push hears of a failed start, a start that timed out, an assignment by someone else, and a pull request that needs a person', async () => {
+  const { push, told } = recordingPush();
+  const { fleet, store, fail, advance, github } = setup({ assignables: ['joel', 'ana'], push });
+  fail.start = true;
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [failed] = store.state.sessions;
+  assert.deepEqual(told, [['startFailed', failed.id, 'failed']]);
+
+  fail.start = false;
+  await fleet.handleTrigger({ number: 43, login: 'joel', trigger: 'label', title: 'y', kind: 'issue' });
+  const slow = store.state.sessions.find((s) => s.number === 43);
+  advance(16 * 60_000);
+  await fleet.tick();
+  assert.equal(slow.status, 'stopped');
+  assert.deepEqual(told.at(-1), ['startFailed', slow.id, 'stopped']);
+
+  fleet.assign({ id: slow.id, by: 'joel', to: 'ana' });
+  assert.deepEqual(told.at(-1), ['assigned', slow.id, 'ana', 'joel']);
+  fleet.assign({ id: slow.id, by: 'joel', to: null });
+  assert.equal(told.filter(([kind]) => kind === 'assigned').length, 1, 'unassigning tells nobody');
+
+  github.pullComments = async () => [];
+  store.state.github ??= { seenComments: [] };
+  store.state.github.seenComments ??= [];
+  await fleet.handleNeedsHuman({ number: 43, commentId: 601, url: 'https://github.com/o/r/issues/43#issuecomment-601', body: 'Needs a human: @joel look' });
+  assert.deepEqual(told.at(-1), ['prStuck', slow.id, { number: 43, why: 'needs a human' }]);
+});
+
+test('push hears of a pull request ready by its gates as it is posted, with its title', async () => {
+  const { push, told } = recordingPush();
+  const { fleet, github, slack, statuses, session, advance } = await sessionWithPull({ createdAt: '2026-10-21T10:05:00Z', push });
+  const pull = github.pull;
+  github.pull = async (number) => ({ ...(await pull(number)), html_url: `https://github.com/o/r/pull/${number}` });
+  github.reviews = async () => approvedReview();
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'working', prUrl: 'https://github.com/o/r/pull/7' };
+  await fleet.tick();
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(told.filter(([kind]) => kind === 'prReady').length, 0, 'held for the notes');
+  advance(APPROVAL_GRACE_MS);
+  await fleet.tick();
+  assert.equal(slack.posts.length, 1);
+  assert.deepEqual(told.filter(([kind]) => kind === 'prReady'), [['prReady', session.id, { number: 7, title: 'Add GTM to the agent' }]]);
 });

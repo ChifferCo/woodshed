@@ -1831,7 +1831,9 @@
       // My Woodshed's own answer is asked for on /, and once anywhere else, so moving to / has it already.
       // Asked again on every refresh while the setup card shows, so its databases row moves on whichever page is open.
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
-      const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
+      // A session on screen in a tab in front is one its person is looking at (push.mjs): no phone notification for it.
+      const looking = currentSession && !document.hidden ? currentSession.id : null;
+      const answer = await Promise.all([W.fetchSessions(looking), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
       if (version !== routeVersion) return;
       [data, me] = answer;

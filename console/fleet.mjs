@@ -210,12 +210,13 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `pullWebhooksFlowing`: pull request webhooks are arriving, so a waiting pull request is read only when one comes,
  *   or every `config.fallbackPollMs` (pullWebhooks.mjs)
  *   `pullRequests`: the repo's project file's gates for a pull request, from the default branch (projectFile.mjs)
+ *   `push`: notifications to people's phones (push.mjs), told of each change to a session and of the moments it notifies
  */
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
-  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null,
+  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, push = null,
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -255,6 +256,19 @@ export function createFleet({
   function update(session, fields) {
     Object.assign(session, fields);
     store.save();
+    // What the change makes dealt with leaves people's phones: a new turn, a stop, a closed pull request.
+    push?.sessionChanged(session);
+  }
+
+  // The idle and lifetime limits a session runs on: a private session's owner's own, where they set them on My settings.
+  function limitsOf(session) {
+    const own = session.owner ? userSettings?.limitsFor(session.owner) : null;
+    return own ? { ...config.limits, ...own } : config.limits;
+  }
+
+  /** @returns {number|null}  when the session pauses if it stays idle, epoch ms */
+  function pauseAtOf(session) {
+    return session.lastActiveAt ? Date.parse(session.lastActiveAt) + limitsOf(session).idleMs : null;
   }
 
   function find(id) {
@@ -371,6 +385,7 @@ export function createFleet({
       }
       console.error('fleet: session failed to start', { id: session.id, message: firstLine(err) });
       update(session, { status: 'failed', stoppedAt: nowIso(), error });
+      push?.startFailed(session);
       await announceFailure(session);
       return;
     }
@@ -549,7 +564,10 @@ export function createFleet({
       stopReason: failed ? null : 'container exited', error: failed ? reason : null,
       ...(failed ? {} : keptFields(session)),
     });
-    if (failed) await announceFailure(session);
+    if (failed) {
+      push?.startFailed(session);
+      await announceFailure(session);
+    }
   }
 
   // Only once the issue has been told the session started or queued: a first start that fails is
@@ -621,11 +639,16 @@ export function createFleet({
         return;
       }
       const wasStarting = session.status === 'starting';
-      const wasAsking = session.state === 'needs-you';
+      const wasState = session.state ?? null;
+      const wasAsking = wasState === 'needs-you';
       update(session, statusUpdate(session, status, nowIso()));
       // Once each time it starts to ask: a session still asking on the next read is not told about again.
       if (!wasAsking && session.state === 'needs-you' && pings) await safely('assignee message', () => pings.needsYou(session));
-      if (wasStarting) console.log('fleet: session running', { id: session.id, branch: session.branch, seconds: secondsSince(session.startedAt) });
+      if (wasStarting) {
+        console.log('fleet: session running', { id: session.id, branch: session.branch, seconds: secondsSince(session.startedAt) });
+        push?.started(session);
+      }
+      push?.statusRead(session, { wasState, pauseAt: pauseAtOf(session) });
       await deliverHeld(session);
       await announcePull(session);
     } finally {
@@ -729,10 +752,11 @@ export function createFleet({
           if (session.status === 'stopping' && !stopsInFlight.has(session.id)) await finishInterruptedStop(session);
           if (session.status !== 'starting' && session.status !== 'running') continue;
           await refresh(session, taskStates);
-          // A private session runs on its owner's own idle and lifetime, where they set them on My settings.
-          const own = session.owner ? userSettings?.limitsFor(session.owner) : null;
-          const reason = stopReason(session, now(), own ? { ...config.limits, ...own } : config.limits);
+          const wasStarting = session.status === 'starting';
+          const reason = stopReason(session, now(), limitsOf(session));
           if (reason) await stop(session, reason);
+          // A start that timed out failed, as one whose container died did.
+          if (reason && wasStarting) push?.startFailed(session);
         } catch (err) {
           console.error('fleet: session check failed', { id: session.id, message: firstLine(err) });
         }
@@ -935,6 +959,7 @@ export function createFleet({
     if (!session || why !== 'posted') return;
     // Where the post is stays with it, so its thread is found again after the project's channel changes.
     update(session, { slackPostedAt: nowIso(), ...(item.post ? { slackPost: item.post } : {}) });
+    push?.prReady(session, { number: item.number, title: item.title ?? null });
     if (announcer.waitingSessions().has(session.id)) {
       console.log('fleet: session kept, another pull request is still waiting', { id: session.id, number: item.number });
       return;
@@ -945,6 +970,7 @@ export function createFleet({
   // The announcer gave up on a pull request: its assignee hears it, besides the GitHub comment the announcer leaves.
   async function prGaveUp(item, pull) {
     const session = find(item.sessionId);
+    if (session) push?.prStuck(session, { number: item.number, why: 'gave up' });
     if (session && pings) await safely('assignee message', () => pings.gaveUp(session, pull));
   }
 
@@ -1001,6 +1027,7 @@ export function createFleet({
       ? { assignee: target, assignedBy: by, assignedHow: how, assignedAt: nowIso() }
       : { assignee: null, assignedBy: by, assignedHow: how, assignedAt: nowIso() });
     console.log('fleet: session assigned', { id, from, to: target, by, how });
+    if (target) push?.assigned(session, by);
     mirrorAssignee(session);
     return session;
   }
@@ -1727,6 +1754,7 @@ export function createFleet({
       return { outcome: 'ignored', reason: 'no shared session works on this issue or pull request' };
     }
     if (!claimComment(commentId)) return { outcome: 'duplicate', reason: 'already handled', sessionId: session.id };
+    push?.prStuck(session, { number, why: 'needs a human' });
     const sent = pings ? await safely('assignee message', () => pings.needsHuman(session, { number, url })) : null;
     console.log('fleet: a session asked for a person', { id: session.id, number, assignee: session.assignee ?? null, told: sent === true });
     return sent === true

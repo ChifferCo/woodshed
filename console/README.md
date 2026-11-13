@@ -1510,6 +1510,54 @@ only the `chat:write` scope the channel posts use; it lands in the bot's own
 conversation with the person, so the Slack app's **App Home** page needs
 **Messages Tab** on for people to read it there.
 
+## Push notifications
+
+The Woodshed phone app (`run.woodshed.app`) notifies you on your phone, through a relay that holds the Apple key and
+cannot read what it passes (`push.mjs`). After you sign in, the app registers your phone with the relay, which gives it
+a handle (the right to push to that phone, and nothing else), and then with the console, `POST /api/my/devices`, with
+that handle, a 32-byte key it made for this console, the relay's address, the phone's name and time zone, and which
+kinds you want. The console seals each notification with that phone's key, AES-256-GCM with a random 12-byte nonce, as
+base64 of the nonce, the ciphertext and the 16-byte tag, and posts only the handle and the sealed text to the relay's
+`/v1/push`; the app opens it on the phone before it is shown. The relay must be one of `WOODSHED_PUSH_RELAYS` (by
+default `https://console.woodshed.run/push`), so the console never posts where a request says; empty turns push off,
+and `/api/my` says `push.available` so the app knows. Phones, keys, notifications and their reminders are kept in
+`state.json` under `push`, which only the console can read, so a restart loses none. `GET /api/my/devices` lists your
+phones without a handle or a key, and the app's Notifications screen changes them (`POST /api/my/devices/<id>`) or
+removes one.
+
+Only you are notified: about your private sessions, and the shared sessions assigned to you; never about a question
+from Slack, a QA run or a review run.
+
+| Kind | When | Reminders |
+| --- | --- | --- |
+| `waiting` | Claude's turn ended (its state turned `done` or `needs-you` after it worked) and stayed so for 15 s: a question, a permission prompt, or done. Once per idle turn; the body is its last message. The only time-sensitive kind | At 15 minutes, then 10 minutes before the idle pause, if that is later |
+| `prReady` | Its pull request passed its gates, as the console posts it to Slack ("The decision brief"). Only a console that posts pull requests tracks them | At 4 hours, then 9:00 the next morning |
+| `prStuck` | Its pull request gave up waiting for an approval with green checks, or it left a `Needs a human:` comment | At 4 hours, then 9:00 the next morning |
+| `startFailed` | The start failed: the launch, its container, or the start timeout. The body names the step it failed at | None |
+| `started` | It started after waiting in line for a minute or more. Off until you turn it on | None |
+| `assigned` | Someone else assigned you a shared session | 9:00 the next morning |
+| `planLimit` | A private session's turn ended on your plan's limit: a window of the plan usage it reports (the plan chip's) is at 100% and resets later, or Claude's last message is Claude Code's own short "hit your limit". In place of `waiting`. The body says when it resets, on your phone's clock | None: `planReset` follows |
+| `planReset` | That window reset, and the session is still stopped or waiting | None |
+| `joinRequest` | Someone asks to join the console: each admin hears it | 9:00 the next morning |
+
+- **Not while you are looking.** No notification goes out about a session you read in the last 30 seconds: its page,
+  any of its routes (`/api/sessions/<id>/…`), its terminals and viewers, a terminal websocket opening, or the page's
+  poll, which adds `?looking=<id>` while it shows that session in a tab in front. An open terminal websocket alone does
+  not count: the page keeps the last few sessions' terminals connected, hidden (`public/terminalCache.js`), and a tab
+  in the background keeps its own.
+- **It stops once dealt with.** A new turn, the session stopping (for `waiting`), its pull request merging or closing
+  (for the pull request kinds; read from a stopped session's pull request, as retention does), a start again (for
+  `startFailed`), someone else having the session, opening it, `POST /api/my/notifications/<ref>/seen`, or a join
+  request accepted, declined or taken back: its reminders are dropped, and each phone that showed it gets a silent
+  `clear` that takes it down.
+- **Quiet hours,** 22:00 to 08:00 on the phone's clock, hold a reminder until they end, never a first notification.
+- **At most two reminders.** `POST /api/my/notifications/<ref>/snooze` `{"minutes": 60}` brings the next one then,
+  past quiet hours and the cap.
+- A reminder replaces its original on the phone: each goes with the collapse id `<session>:<kind>` (`join:<login>` for
+  a join request) and the thread `<session>`.
+- **Best effort.** A relay that fails is logged (`push: the relay did not answer`) and changes nothing else; the next
+  reminder tries again. One that answers 410 says the phone is gone, and it is dropped with its notifications.
+
 ## Questions from Slack
 
 Mention the bot in any channel it is in, with a question after the mention.
@@ -1746,6 +1794,7 @@ Remove My Woodshed.
 | `WOODSHED_LOCAL_DOCKER_NETWORK` | none | The docker network sessions and db-admin runs join, to reach the shared services by name (`providers/local/compose.yml`'s `woodshed`) |
 | `WOODSHED_LOCAL_WEBHOOK_PORT`, `_WEBHOOK_HOST`, `_WEBHOOK_URL` | none, `127.0.0.1`, none | On the local provider: where its webhook receiver listens (`providers/local/webhookReceiver.mjs`), at the Lambda's paths, `POST /github` and `POST /slack`, checked against `github-webhook-secret` and `slack-signing-secret` in `WOODSHED_LOCAL_SECRETS_DIR`, which it needs. `_WEBHOOK_URL` is the public address a proxy in front of it answers at, and the Secrets & webhooks page sets `<url>/github` on the GitHub App. A message the console fails on is tried three times; one still waiting when the console restarts is lost, and the poll finds it |
 | `WOODSHED_TUNNEL_POSTGRES`, `_TUNNEL_MONGO` | none | Where `woodshed-db.mjs`'s connections go, as `host:port`, each used only for a database the installation runs. Each one is a tunnel of its own, and the script listens for those alone; without either, or without own databases, My settings has no From your computer. Without the Postgres one there is no Restore a dump for Postgres either, and without the Mongo one none for Mongo. Set on the base box, for the databases it runs: RDS and the box's private address |
+| `WOODSHED_PUSH_RELAYS` | `https://console.woodshed.run/push` | The relays a phone may register through for push notifications, comma-separated (`push.mjs`, "Push notifications"). A phone naming any other is refused, so the console posts nowhere a request chooses. Empty turns push notifications off |
 | `WOODSHED_SESSION_API_HOST`, `_SESSION_API_PORT` | none, `7691` | With the App: the address the session API listens on (`sessionApi.mjs`). In AWS, the base box's private IP, which only session tasks can reach |
 | `GH_TOKEN` | `gh auth token` | Without the App: polls, comments and reacts. Sessions push with it too unless the env file sets its own `GH_TOKEN`, and the console warns at startup when it does not: your own token reaches far more than this repo, which undoes the narrow token "Why permissions are off" in `../session/README.md` relies on |
 

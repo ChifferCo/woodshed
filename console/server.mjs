@@ -7,8 +7,10 @@
 //   GET  /secrets                the secrets and webhook settings page
 //   GET  /                       My Woodshed: your private sessions, and New session
 //   GET  /settings               My settings: your Claude token
-//   GET  /api/sessions           every shared session and your own private ones, without their tokens
-//   GET  /api/my                 your settings' state (never a value), your running count and limit
+//   GET  /api/sessions           every shared session and your own private ones, without their tokens. With
+//                                ?looking=<id> the page says it shows that session, so its push notifications stay off your phone
+//   GET  /api/my                 your settings' state (never a value), your running count and limit, and
+//                                `push.available`: whether the console has a relay for push notifications
 //   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
@@ -36,6 +38,12 @@
 //                                POST /api/my/databases/restore/apply {"confirm": "apply"} swaps it in, /discard drops it (dbRestore.mjs)
 //   POST /api/my/tunnel-token    a token for woodshed-db.mjs, shown once; POST /api/my/tunnel-token/remove revokes it
 //   GET  /api/tunnel/connection, UPGRADE /api/tunnel/pg|mongo   your databases from your computer, by that token (dbTunnel.mjs)
+//   GET  /api/my/devices         your phones that get push notifications, never their key or relay handle (push.mjs)
+//   POST /api/my/devices         {"handle", "key", "relay", "name", "timeZone", "kinds"}   a phone, from the phone app; the
+//                                same handle again replaces it, and `relay` must be one of WOODSHED_PUSH_RELAYS
+//   POST /api/my/devices/<id>    {"kinds", "timeZone", "name"}   any of the three; POST /api/my/devices/<id>/remove drops it
+//   POST /api/my/notifications/<ref>/seen     its reminders stop, and the phones that show it take it down
+//   POST /api/my/notifications/<ref>/snooze   {"minutes": 60}   its next reminder comes then, past quiet hours and the cap
 //   POST /api/sessions           {"number": 123, "startedBy": "login", "prompt": "..."}
 //   POST /api/sessions/<id>/stop
 //   POST /api/sessions/<id>/pin     {"on": true}   pinned to the top of your rail; yours alone
@@ -146,7 +154,7 @@ import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf,
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
-import { handleTerminalRequest, handleTerminalUpgrade } from './terminalProxy.mjs';
+import { handleTerminalRequest, handleTerminalUpgrade, parseTerminalPath } from './terminalProxy.mjs';
 import { appIdFor, handleAppRequest, handleAppUpgrade } from './appProxy.mjs';
 import { handleEditorRequest, handleEditorUpgrade, isEditorPath } from './editorProxy.mjs';
 import { startTlsAsk } from './tlsAsk.mjs';
@@ -213,6 +221,12 @@ const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
+const MY_DEVICES_PATH = '/api/my/devices';
+const MY_DEVICE_RE = /^\/api\/my\/devices\/([0-9a-f]{16})(\/remove)?$/;
+const MY_NOTIFICATION_RE = /^\/api\/my\/notifications\/([0-9a-f]{16})\/(seen|snooze)$/;
+// A read that names one session, so whoever made it has that session open: its page, its routes, its terminals and
+// viewers (push.mjs's "looking").
+const SESSION_READ_RE = /^\/(?:s|api\/sessions|term|shell|redis|pg|mongo)\/([0-9a-f]{8})(?:\/|$)/;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_FILE_BODY_BYTES = 160 * 1024;
 const DATABASES_NOT_READY = 'your own databases are not ready yet: My settings shows how far along they are';
@@ -524,7 +538,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null,
+  openaiTeamKey = null, push = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -665,8 +679,14 @@ export function createHandler({
     const visitor = auth && members ? await auth.visitorFor(req.headers.cookie) : null;
     if (!visitor) return reply(res, 401, { error: 'sign in first' });
     if (members.isMember(visitor.login)) return reply(res, 200, { member: true });
-    if (pathname === '/api/access/ask') members.ask({ login: visitor.login });
-    else members.withdraw({ login: visitor.login });
+    if (pathname === '/api/access/ask') {
+      const asked = Boolean(members.requestOf(visitor.login));
+      members.ask({ login: visitor.login });
+      if (!asked) push?.joinRequest(visitor.login);
+    } else {
+      members.withdraw({ login: visitor.login });
+      push?.joinSettled(visitor.login);
+    }
     return reply(res, 200, { member: false, asked: members.requestOf(visitor.login)?.askedAt ?? null });
   }
 
@@ -759,6 +779,8 @@ export function createHandler({
       if (err.shown) return reply(res, 409, { error: err.message });
       throw err;
     }
+    // Accepted, declined or invited: their request is settled, on the admins' phones too.
+    if (action !== 'remove') push?.joinSettled(handle);
     if (action === 'remove') {
       fleet.releaseAssignments?.({ login: handle, by: login });
       // Their token is refused from now on (createTunnel's `allowed`); this also closes the tunnels already open.
@@ -1132,7 +1154,39 @@ export function createHandler({
       app: appIdentity?.known() ?? null,
       // With no App, sessions push with this machine's gh login, as its owner.
       pushesWithGh: !config.githubApp && !config.githubBroker && Boolean(config.ghToken),
+      // The phone app registers for push notifications only where the console has a relay to send them through.
+      push: { available: Boolean(push?.available) },
     };
+  }
+
+  // The phone app's calls (push.mjs): its phones, and what it says about a notification.
+  async function pushWrite(req, res, pathname, login) {
+    if (!push) return reply(res, 404, { error: 'this console has no push notifications' });
+    if (!login) return reply(res, 409, { error: 'push notifications need sign-in, which this console does not have' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
+    try {
+      if (pathname === MY_DEVICES_PATH) return reply(res, 201, push.register(login, body));
+      const device = MY_DEVICE_RE.exec(pathname);
+      if (device?.[2]) return push.removeDevice(login, device[1]) ? reply(res, 200, {}) : reply(res, 404, { error: 'no such device' });
+      if (device) {
+        const changed = push.updateDevice(login, device[1], body);
+        return changed ? reply(res, 200, changed) : reply(res, 404, { error: 'no such device' });
+      }
+      // A notification already dealt with, or not theirs, answers the same: the app sends these after the fact.
+      const [, ref, action] = MY_NOTIFICATION_RE.exec(pathname);
+      if (action === 'seen') push.seen(login, ref);
+      else push.snooze(login, ref, body.minutes);
+      return reply(res, 200, {});
+    } catch (err) {
+      if (err.shown) return reply(res, 400, { error: err.message });
+      throw err;
+    }
   }
 
   // Every repo the person may start on, each on its own project's client; a console without projects asks its one.
@@ -1670,6 +1724,7 @@ export function createHandler({
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
+    if (pathname === MY_DEVICES_PATH || MY_DEVICE_RE.test(pathname) || MY_NOTIFICATION_RE.test(pathname)) return pushWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname) || pathname === MY_OWN_FILES_PATH
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
       || MY_TUNNEL_RE.test(pathname) || MY_RESTORE_RE.test(pathname)) {
@@ -1758,6 +1813,15 @@ export function createHandler({
     return reply(res, 404, { error: 'not found' });
   }
 
+  // The person has the session open: a read that names it, or the page's poll while it shows it (?looking=<id>).
+  // Only a session they can open counts.
+  function sawSession(url, login) {
+    if (!push || !login) return;
+    const id = SESSION_READ_RE.exec(url.pathname)?.[1]
+      ?? (url.pathname === '/api/sessions' ? /^[0-9a-f]{8}$/.exec(url.searchParams.get('looking') ?? '')?.[0] : null);
+    if (id && findFor(id, login)) push.saw(login, id);
+  }
+
   return async function handle(req, res) {
     // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
     if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
@@ -1793,6 +1857,7 @@ export function createHandler({
       console.log('console: Connect GitHub started', { login: user.login });
       return redirect(res, location, setCookie);
     }
+    sawSession(url, user.login);
     if (handleTerminalRequest(req, res, { targetFor: terminalTarget(fleet, user.login, access) })) return;
     if (isReviewPath(url.pathname)) return proxyReview(req, res, url, user.login);
     const { pathname } = url;
@@ -1831,6 +1896,10 @@ export function createHandler({
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
+    if (pathname === MY_DEVICES_PATH) {
+      if (!push) return reply(res, 404, { error: 'this console has no push notifications' });
+      return reply(res, 200, { devices: user.login ? push.devicesOf(user.login) : [] });
+    }
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
     if (pathname === '/api/skills') {
@@ -1973,7 +2042,7 @@ function terminalTarget(fleet, login, members) {
  *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
  * @returns {(req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void}
  */
-export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null }) {
+export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null, push = null }) {
   const hosts = knownHosts(config);
   const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares, trusted });
   return function upgrade(req, socket, head) {
@@ -2006,7 +2075,11 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
         socket.end('HTTP/1.1 401 Unauthorized\r\n\r\n');
         return;
       }
-      if (!handleTerminalUpgrade(req, socket, head, { targetFor: terminalTarget(fleet, user.login, auth ? members : null) })) socket.destroy();
+      const targetFor = terminalTarget(fleet, user.login, auth ? members : null);
+      // Opening a terminal is a read of its session, as its page is (push.mjs's "looking").
+      const route = parseTerminalPath(new URL(req.url || '/', 'http://console.invalid').pathname);
+      if (route && targetFor(route.id) && user.login) push?.saw(user.login, route.id);
+      if (!handleTerminalUpgrade(req, socket, head, { targetFor })) socket.destroy();
     }, () => socket.destroy());
   };
 }

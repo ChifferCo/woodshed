@@ -1875,3 +1875,80 @@ test('the rail\'s pull requests are read from each repo the person may start on,
   assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
   assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
 });
+
+test('a phone registers through an allowed relay, is listed without its key, and says when a notification is seen or snoozed', async (t) => {
+  const { createPush } = await import('./push.mjs');
+  const relay = 'https://relay.example/push';
+  const session = { id: '0a1b2c3d', owner: 'ana', status: 'running', state: 'done', title: 't' };
+  const store = { state: { sessions: [session] }, save() {} };
+  const push = createPush({ store, relays: [relay], sessions: () => [session], fetch: async () => new Response('{}', { status: 202 }) });
+  const fleet = { sessions: () => [session], find: (id) => (id === session.id ? session : null) };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'ana',
+  };
+  const handle = createHandler({ config, fleet, push });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const get = (path) => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path, headers: { host: `localhost:${port}` } }, (res) => {
+      let raw = '';
+      res.on('data', (c) => { raw += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(raw) }));
+    }).on('error', reject);
+  });
+
+  assert.deepEqual((await get('/api/my')).body.push, { available: true });
+  const key = Buffer.alloc(32, 7).toString('base64');
+  const phone = { handle: 'h'.repeat(43), key, relay, name: 'Ana\'s iPhone', timeZone: 'America/Los_Angeles', kinds: { waiting: true } };
+  assert.deepEqual(await post(port, '/api/my/devices', { ...phone, relay: 'https://evil.example/push' }), { status: 400, body: { error: 'that relay is not one this console sends to' } });
+  assert.equal((await post(port, '/api/my/devices', phone, { 'x-woodshed': '' })).status, 403);
+  const made = await post(port, '/api/my/devices', phone);
+  assert.equal(made.status, 201);
+  assert.match(made.body.id, /^[0-9a-f]{16}$/);
+  const listed = await get('/api/my/devices');
+  assert.deepEqual(listed.body.devices.map((d) => [d.id, d.name, d.kinds.waiting, d.kinds.started]), [[made.body.id, 'Ana\'s iPhone', true, false]]);
+  assert.equal(JSON.stringify(listed.body).includes(key), false);
+  assert.equal(JSON.stringify(listed.body).includes(phone.handle), false);
+  assert.equal((await post(port, `/api/my/devices/${made.body.id}`, { name: 'Work phone', kinds: { started: true } })).body.kinds.started, true);
+  assert.equal((await post(port, `/api/my/devices/${'0'.repeat(16)}`, { name: 'x' })).status, 404);
+
+  // A notification of ana's: seen and snooze answer {} whether or not it is still there.
+  const note = push.startFailed({ ...session, status: 'failed' });
+  assert.ok(note);
+  assert.deepEqual(await post(port, `/api/my/notifications/${note.ref}/snooze`, { minutes: 60 }), { status: 200, body: {} });
+  assert.deepEqual(await post(port, `/api/my/notifications/${note.ref}/snooze`, { minutes: 'soon' }), { status: 400, body: { error: 'minutes must be a whole number from 1 to 10080' } });
+  assert.deepEqual(await post(port, `/api/my/notifications/${note.ref}/seen`, {}), { status: 200, body: {} });
+  assert.deepEqual(store.state.push.notes, []);
+  assert.deepEqual(await post(port, `/api/my/notifications/${note.ref}/seen`, {}), { status: 200, body: {} });
+
+  // The session's page polling with ?looking= is ana looking at it.
+  assert.equal(push.isLooking('ana', session.id), false);
+  assert.equal((await get(`/api/sessions?looking=${session.id}`)).status, 200);
+  assert.equal(push.isLooking('ana', session.id), true);
+
+  assert.deepEqual(await post(port, `/api/my/devices/${made.body.id}/remove`, {}), { status: 200, body: {} });
+  assert.deepEqual((await get('/api/my/devices')).body, { devices: [] });
+});
+
+test('without a relay the console offers no push, and refuses every phone', async (t) => {
+  const { createPush } = await import('./push.mjs');
+  const push = createPush({ store: { state: {}, save() {} }, relays: [] });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, launcher: { kind: 'docker' }, localLogin: 'ana',
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, push });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const my = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: '/api/my', headers: { host: `localhost:${port}` } }, (res) => {
+    let raw = '';
+    res.on('data', (c) => { raw += c; });
+    res.on('end', () => resolve(JSON.parse(raw)));
+  }));
+  assert.deepEqual(my.push, { available: false });
+  const phone = { handle: 'h'.repeat(43), key: Buffer.alloc(32).toString('base64'), relay: 'https://console.woodshed.run/push' };
+  assert.equal((await post(port, '/api/my/devices', phone)).status, 400);
+});
