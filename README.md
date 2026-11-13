@@ -113,57 +113,21 @@ jobs:
 
 ## AI review on any repository
 
-Any GitHub repository can run Woodshed's code review on its pull requests, with no Woodshed installation. The quickest
-way is the setup script, which writes the workflow, sets the key and flips the one required setting:
+Any GitHub repository can run Woodshed's code review, merge-risk check and QA on its pull requests with no Woodshed
+installation: the checks run in the repository's own GitHub Actions. The setup script writes the workflows, turns on the
+one required setting, and asks for an `ANTHROPIC_API_KEY`:
 
 ```
-scripts/enable-review.sh <owner/repo>
+scripts/enable-review.sh <owner/repo>        # review and merge risk
+scripts/enable-review.sh <owner/repo> --qa   # also QA
 ```
 
-It needs the GitHub CLI signed in with the `workflow` scope and admin on the repository, and asks for your
-`ANTHROPIC_API_KEY`. To wire it by hand instead, add a workflow that calls the reusable one, an `ANTHROPIC_API_KEY`
-secret, and turn on "Allow GitHub Actions to create and approve pull requests" under Settings, Actions, General:
+It needs the GitHub CLI signed in with the `workflow` scope and admin on the repository. Then end a pull request's last
+commit message with `[woodshed-review]` for a review, and add the `woodshed-qa` label for QA. QA starts the app the way
+[the project file](docs/reference.md#the-project-file) says, so there is nothing in the workflow to edit.
 
-```yaml
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-jobs:
-  review:
-    permissions: { contents: write, pull-requests: write, issues: read, id-token: write, checks: write }
-    uses: ChifferCo/woodshed/.github/workflows/review.yml@b673d640f39828ada55dc7083a0bac34fc3f4c90  # pin to a commit; bump it when you want updates
-    secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-```
-
-Merge it to the default branch, then end a pull request's last commit message with `[woodshed-review]`. The review
-approves or requests changes with comments on the lines, and rates the merge risk as a `Merge risk` check and a
-`merge risk: low`, `medium` or `high` label. On the default branch, `CLAUDE.md`, `.woodshed/rules.md` and
-`CONTRIBUTING.md` give the review your repo's rules, `.woodshed/review.md` says what to look for, and
-`.woodshed/riskAreas.md` lists changes that are always High risk. Pin the `uses:` line to a commit, as above, so a
-change to the workflow never surprises a review. [The review in another repo](docs/reference.md#the-review-in-another-repo)
-has every input.
-
-### QA too
-
-`scripts/enable-review.sh <owner/repo> --qa` also sets up QA: on a pull request, Claude plans tests from the change,
-starts the app, drives it in a browser, and posts a QA comment and a `QA` check. Add the `woodshed-qa` label (the
-script makes it) to a pull request to run it. QA runs on pull requests from a branch in the repository, not forks.
-
-QA needs to know how to start the app, read from a `.woodshed/project.yaml` on the default branch (the same file a
-Woodshed session uses), so there is nothing in the workflow to edit:
-
-```yaml
-version: 1
-app:
-  start: npm start       # however your app starts
-  frontendPort: 3000     # the port it serves on
-  backendPort: 3000
-  howToProve: Open the page and do one thing a user would.
-```
-
-Review and merge risk need no project file. [QA in another repo](docs/reference.md#qa-in-another-repo) has the steps
-for wiring QA by hand instead.
+See the [review](docs/reference.md#the-review-in-another-repo) and [QA](docs/reference.md#qa-in-another-repo) in another
+repo to wire them by hand and for every option.
 
 ## Documentation
 
