@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 
 const run = promisify(execFile);
 const LOGIN = fileURLToPath(new URL('./bin/woodshed-login', import.meta.url));
+const REAL_DATE = execFileSync('bash', ['-c', 'command -v date'], { encoding: 'utf8' }).trim();
 const hasTmux = (() => {
   try {
     execFileSync('tmux', ['-V'], { stdio: 'ignore' });
@@ -51,8 +52,15 @@ function setUp(t) {
   fs.copyFileSync(LOGIN, path.join(bin, 'woodshed-login'));
   fs.chmodSync(path.join(bin, 'woodshed-login'), 0o755);
   fs.writeFileSync(path.join(bin, 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+  // uutils' date (Ubuntu 26.04's coreutils) ignores the width on %N, so `date +%s%3N` gives nanoseconds: each test
+  // runs with a date that does the same, so the script's waits never lean on it again (they failed on that runner).
+  fs.writeFileSync(path.join(bin, 'date'), `#!/bin/bash
+args=()
+for a in "$@"; do args+=("\${a//%3N/%N}"); done
+exec ${REAL_DATE} "\${args[@]}"
+`, { mode: 0o755 });
   const env = {
-    PATH: process.env.PATH, HOME: home, TMUX_TMPDIR: dir, LANG: 'C.UTF-8', WOODSHED_CLAUDE_AUTH: 'own', WOODSHED_LOGIN_RUN_DIR: runDir,
+    PATH: `${bin}:${process.env.PATH}`, HOME: home, TMUX_TMPDIR: dir, LANG: 'C.UTF-8', WOODSHED_CLAUDE_AUTH: 'own', WOODSHED_LOGIN_RUN_DIR: runDir,
     WOODSHED_LOGIN_URL_WAIT: '50', WOODSHED_LOGIN_CODE_WAIT: '50', WOODSHED_LOGIN_TURN_WAIT: '100', WOODSHED_LOGIN_START_WAIT: '100',
   };
   const tmux = (...args) => execFileSync('tmux', args, { env, encoding: 'utf8' });
