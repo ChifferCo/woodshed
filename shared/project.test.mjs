@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appNamed, checkoutDir, EMPTY_PROJECT, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -34,6 +34,37 @@ test('an env file is the secret, the owner\'s own lines, then the project\'s, so
   assert.equal(envFileText({ base: 'A=1', own: 'B=2', lines: ['A={{X}}', 'K={{K?}}'], env: { X: '3' } }),
     'A=1\n\n# Your own lines, from My settings\nB=2\n\n# Woodshed overrides\nA=3\n');
   assert.equal(envFileText({ base: '', own: '', lines: [], env: {} }), '\n\n# Woodshed overrides\n\n');
+});
+
+test('an env file\'s defaults come first, so the secret\'s text, the owner\'s lines and the project\'s lines replace them', () => {
+  assert.equal(envFileText({ defaults: ['A=0', 'D=0'], base: 'A=1', own: 'B=2', lines: ['A={{X}}'], env: { X: '3' } }),
+    '# From the repo (.woodshed/project.yaml)\nA=0\nD=0\n\n# From this installation\nA=1\n\n# Your own lines, from My settings\nB=2\n\n# Woodshed overrides\nA=3\n');
+  assert.equal(envFileText({ defaults: [], base: 'A=1', own: '', lines: [], env: {} }), envFileText({ base: 'A=1', own: '', lines: [], env: {} }));
+});
+
+test('an env file\'s key is its secret, or else its path as a name, and two files cannot share one', () => {
+  assert.equal(envFileKey({ path: 'web/.env.local', secret: null }), 'web-env-local');
+  assert.equal(envFileKey({ path: 'API/Config/.ENV', secret: null }), 'api-config-env');
+  assert.equal(envFileKey({ path: '.env', secret: null }), 'env', 'never a name starting with a dot, which the local store refuses');
+  assert.equal(envFileKey({ path: 'web/.env.local', secret: 'web-env' }), 'web-env');
+  const read = (envFiles) => parseProject({ version: 1, envFiles }).envFiles;
+  assert.deepEqual(read([{ path: 'web/.env.local' }, { path: 'api/.env', secret: 'api-env' }]).map((f) => f.key), ['web-env-local', 'api-env']);
+  assert.throws(() => read([{ path: 'web/.env.local' }, { path: 'web.env/local' }]),
+    /envFiles\[0\] \(web\/\.env\.local\) and envFiles\[1\] \(web\.env\/local\) both have the key web-env-local: give one a secret of its own/);
+  assert.throws(() => read([{ path: 'api/.env' }, { path: 'web/.env', secret: 'api-env' }]), /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env/,
+    'a secret and a key made from a path are one name');
+  assert.throws(() => read([{ path: '---' }]), /whose path makes no key: give it a secret/);
+});
+
+test('defaults are plain NAME=value lines: a placeholder is the session\'s, in lines', () => {
+  const read = (file) => parseProject({ version: 1, envFiles: [{ path: 'api/.env', ...file }] }).envFiles[0];
+  assert.deepEqual(read({ defaults: ['SKIP_LOGIN=true', '# A comment'] }).defaults, ['SKIP_LOGIN=true', '# A comment']);
+  assert.deepEqual(read({}).defaults, [], 'none when left out');
+  assert.throws(() => read({ defaults: ['DB={{PGHOST}}'] }), /envFiles\[0\]\.defaults\[0\] has a \{\{…\}\} placeholder: a default is plain text, and a line the session fills in goes in lines/);
+  assert.throws(() => read({ defaults: ['KEY={{KEY?}}'] }), /defaults\[0\] has a \{\{…\}\} placeholder/);
+  assert.throws(() => read({ defaults: ['A={{ near }}'] }), /defaults\[0\] has a \{\{…\}\} placeholder/);
+  assert.throws(() => read({ defaults: 'A=1' }), /envFiles\[0\]\.defaults must be a list/);
+  assert.throws(() => read({ defaults: [''] }), /envFiles\[0\]\.defaults\[0\] must be a non-empty string/);
 });
 
 test('a wrong project file names the field', () => {
@@ -97,7 +128,7 @@ test('only version must be written: a field left out is none, and a misspelt one
   assert.deepEqual(parseProject({ version: 1 }), EMPTY_PROJECT, 'a file with only its version is a repo with nothing');
   const { app, ...noApp } = EMPTY_PROJECT;
   assert.equal(parseProject(noApp).app, null);
-  assert.deepEqual(parseProject({ version: 1, envFiles: [{ path: 'api/.env' }] }).envFiles, [{ path: 'api/.env', secret: null, lines: [] }]);
+  assert.deepEqual(parseProject({ version: 1, envFiles: [{ path: 'api/.env' }] }).envFiles, [{ path: 'api/.env', secret: null, key: 'api-env', defaults: [], lines: [] }]);
   const { stop, logs, paths, ...lean } = fixtureApp();
   assert.deepEqual(parseProject({ version: 1, app: lean }).app, { ...lean, stop: null, logs: {}, paths: [] });
   const [db] = parseProject({ version: 1, databases: [{ engine: 'mongo', dir: '.' }] }).databases;
@@ -334,6 +365,18 @@ test('the CLI writes the env files from their secrets\' variables, and prints th
     'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed overrides\nDB=app\n');
 });
 
+test('the CLI writes an env file\'s defaults first, and counts them in what it prints', (t) => {
+  const dir = scratch(t);
+  fs.mkdirSync(path.join(dir, '.woodshed'));
+  fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
+    envFiles: [{ path: 'web/.env.local', defaults: ['SKIP_LOGIN=true'], lines: ['DB={{PGDATABASE}}'] }],
+  }));
+  const cli = (env) => execFileSync('node', [SCRIPT, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env } });
+  assert.equal(cli({ PGDATABASE: 'app' }), 'web/.env.local (base: 0 bytes, defaults: 1)\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'web/.env.local'), 'utf8'),
+    '# From the repo (.woodshed/project.yaml)\nSKIP_LOGIN=true\n\n# Woodshed overrides\nDB=app\n');
+});
+
 test('check prints what a session takes from the project file, and fails as a start would', (t) => {
   const dir = scratch(t);
   fs.mkdirSync(path.join(dir, '.woodshed'));
@@ -369,6 +412,8 @@ test('a project uses a variable when its env exports it, an env file writes it, 
   const project = { ...EMPTY_PROJECT, env: { REDIS_URL: 'redis://127.0.0.1:6379', API: '{{PDF_URL}}' }, envFiles: [{ path: 'a/.env', secret: null, lines: ['PGHOST={{PGHOST}}', 'KEY={{S3?}}'] }] };
   for (const name of ['REDIS_URL', 'PDF_URL', 'PGHOST', 'S3']) assert.equal(usesVariable(project, name), true, name);
   for (const name of ['MONGODB_URI', 'PGHOS', 'REDIS']) assert.equal(usesVariable(project, name), false, name);
+  const withDefault = { ...EMPTY_PROJECT, envFiles: [{ path: 'a/.env', secret: null, defaults: ['REDIS_URL=redis://127.0.0.1:6379'], lines: [] }] };
+  assert.equal(usesVariable(withDefault, 'REDIS_URL'), true, 'a default the repo writes is the repo using it');
   assert.equal(usesVariable(EMPTY_PROJECT, 'REDIS_URL'), false);
 });
 

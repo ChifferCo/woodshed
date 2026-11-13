@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { databaseEnv, ENGINES } from './databases/index.mjs';
 import { PROJECT_FILE, SINGLE_APP_NAME, readRepoFile, secretEnvName } from './project.mjs';
+import { envKeys } from './repoSettings.mjs';
 import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
 
@@ -115,7 +116,6 @@ function envFileProblems(project, repoDir) {
   const problems = [];
   const files = project.envFiles;
   for (const p of repeated(files.map((f) => f.path))) problems.push(`envFiles has ${p} more than once: one entry a file`);
-  for (const s of repeated(files.map((f) => f.secret).filter(Boolean))) problems.push(`envFiles has the secret ${s} more than once: one file a secret`);
   files.forEach((file, i) => {
     const at = `envFiles[${i}]`;
     if (file.secret && CONSOLE_SECRETS.includes(file.secret)) problems.push(`${at}.secret is ${file.secret}, one of the console's own secrets, which no session is handed`);
@@ -129,6 +129,9 @@ function envFileProblems(project, repoDir) {
       if (status === 'tracked') problems.push(`${at}.path ${file.path} is tracked by git: a session would write its secret over it, where a commit takes it`);
       if (status === 'not ignored') problems.push(`${at}.path ${file.path} is not ignored by git (.gitignore): a session could commit its secret`);
     }
+    file.defaults.forEach((line, j) => {
+      if (!ENV_LINE.test(line)) problems.push(`${at}.defaults[${j}] is not NAME=value: ${quoted(line.slice(0, 40))}`);
+    });
     file.lines.forEach((line, j) => {
       if (!ENV_LINE.test(line)) problems.push(`${at}.lines[${j}] is not NAME=value: ${quoted(line.slice(0, 40))}`);
       for (const near of nearPlaceholders(line)) problems.push(`${at}.lines[${j}] has {{${near}}}, which is not a placeholder: write {{NAME}} or {{NAME?}}, in capitals`);
@@ -275,11 +278,30 @@ function takenFromSession(project) {
   return [...new Set(texts.flatMap(placeholderNames))].filter((name) => !given.has(name) && !isSessionVariable(name));
 }
 
+/**
+ * The keys each env file's `lines` set with no `{{…}}`: the same in every session, and still the session's, so no
+ * installation's or person's value replaces them. Not a problem, since a file may mean "always": a hint, one an env file.
+ * @returns {string[]}
+ */
+export function literalLineHints(project) {
+  return project.envFiles.flatMap((file, i) => {
+    const keys = envKeys(file.lines.filter((line) => !line.includes('{{')).join('\n'));
+    if (!keys.length) return [];
+    return [`hint: envFiles[${i}] (${file.path}) lines set ${keys.join(', ')} with no {{…}}: a line with none is the same in every session, so move it to defaults if a person may change it`];
+  });
+}
+
 // One app as it always read; several by name, the default first.
 function appLine({ apps }) {
   if (!apps.length) return 'app: none (no Start app)';
   if (apps.length === 1 && apps[0].name === SINGLE_APP_NAME) return `app: \`${apps[0].start}\`, frontend on ${apps[0].frontendPort}`;
   return `apps: ${apps.length} (${apps.map((a, i) => `${a.name}: \`${a.start}\`, frontend on ${a.frontendPort}${i === 0 ? ', the default' : ''}`).join('; ')})`;
+}
+
+// An env file as the summary names it: its path, its secret or the key made from its path, and its defaults.
+function envFileLine(file) {
+  const from = file.secret ? ` from ${file.secret}` : ` (key ${file.key})`;
+  return `${file.path}${from}${file.defaults.length ? `, ${file.defaults.length} default${file.defaults.length > 1 ? 's' : ''}` : ''}`;
 }
 
 /**
@@ -298,10 +320,11 @@ export function checkSummary(project, repoDir) {
     `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
     `install variables: ${list(installVariables(project, repoDir))}`,
     `databases: ${list(project.databases.map((d) => d.engine))}`,
-    `env files: ${list(project.envFiles.map((f) => (f.secret ? `${f.path} from ${f.secret}` : f.path)))}`,
+    `env files: ${list(project.envFiles.map(envFileLine))}`,
     `from the session: ${list(takenFromSession(project))}`,
     appLine(project),
     `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,
     `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
+    ...literalLineHints(project),
   ];
 }

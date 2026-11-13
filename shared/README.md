@@ -16,6 +16,9 @@ Woodshed can embed them too.
 - `qa/`: QA's prompts and rubric (`.txt`, so the images ship them) and `qa.mjs`, which builds the prompts and reads a
   run's report into its verdict. The QA actions in `.github/actions/qa/` and a QA session both use it, so they agree.
 - `reservedNames.mjs`: the variables, secrets and ports Woodshed keeps for itself in a session.
+- `repoSettings.mjs`: a repo's settings in layers (the repo's, the installation's, a person's, the session's): an env
+  file's text from them, which keys a later layer replaces, which the session wires, and a session's rules with the
+  installation's and the person's instructions after them. Pure, so the console and the session agree.
 - `envNames.mjs`: the console's settings, each read by its `WOODSHED_` name and then by its old `WOODSHED_CLOUD_` one.
 
 Rules:

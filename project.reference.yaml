@@ -27,14 +27,22 @@ env:
   NODE_ENV: development
   PORT: '9000'
 
-# Default: []. The env files a session writes, each from its secret, then the owner's own lines, then `lines`.
+# Default: []. The env files a session writes, in layers, later ones winning: `defaults`, the installation's text (its
+# secret), the owner's own lines, then `lines`.
 envFiles:
   - # Required. Where the file goes, in the repo.
     path: api/.env
-    # Default: null (no base text). The installation's secret holding the file's base text; it reaches the session as
-    # its name in capitals (api-env is API_ENV), and on My settings each person adds their own lines to it.
+    # Default: null, and the file's key is made from its path (web/.env.local is web-env-local). The file's key, one a
+    # file: the installation's secret holding its base text, which reaches the session as its name in capitals (api-env
+    # is API_ENV), and on My settings each person adds their own lines to it.
     secret: api-env
-    # Default: []. Lines written last, so they win. `{{NAME}}` and `{{NAME?}}` as in `env`.
+    # Default: []. The repo's own values, written first, so the installation's and each person's replace them. Plain
+    # NAME=value lines, no {{…}}, and never a secret: this file is in git.
+    defaults:
+      - LOG_LEVEL=info
+      - FEATURE_SEARCH=false
+    # Default: []. The session's wiring, written last, so nothing replaces it. `{{NAME}}` and `{{NAME?}}` as in `env`.
+    # A line with neither is the same in every session: put it in `defaults` if a person may change it.
     lines:
       - DATABASE_URL={{PG_URL}}
       - DB_PASSWORD={{PGPASSWORD}}
