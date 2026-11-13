@@ -16,7 +16,7 @@ import { reviewVerdict } from './pullGates.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
-  ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, keptIds, newSessionId, newSessionToken, sessionLink,
+  ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
   parseWorkOn, pullNumber, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
@@ -300,6 +300,12 @@ export function createFleet({
       env.SESSION_MODE = 'qa';
       env.PR = String(session.number);
       env.QA_BASE = session.qa.base;
+    } else if (isReview(session)) {
+      // The review reads the diff and changes nothing: the console submits the verdict and the Merge risk check.
+      delete env.GH_TOKEN;
+      env.SESSION_MODE = 'review';
+      env.PR = String(session.number);
+      env.REVIEW_BASE = session.review.base;
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
       if (session.kind === 'issue') env.ISSUE = String(session.number);
@@ -412,11 +418,11 @@ export function createFleet({
 
   async function createSession({
     kind, number, title, startedBy, trigger, prompt = '', branch = null, owner = null, options = null, resumeClaude = null, attach = null,
-    background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null,
+    background = false, reviewOnly = false, slack: thread = null, assignTo = null, project = defaultProject(config), qa = null, review = null,
   }) {
     refuseWithoutRepo(project, { kind, trigger });
-    // A question from Slack gets no databases, so it needs none hosted.
-    const refused = kind === 'ask' ? null : await databasesRefusal();
+    // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
+    const refused = kind === 'ask' || review ? null : await databasesRefusal();
     if (refused) {
       console.warn('fleet: session refused, its databases are not hosted', { kind, number, trigger, why: refused });
       throw shown(`Not started: ${refused}`);
@@ -434,6 +440,7 @@ export function createFleet({
       ...(attached ? { attachments: attached } : {}),
       ...(reviewOnly ? { reviewOnly: true } : {}),
       ...(qa ? { qa } : {}),
+      ...(review ? { review } : {}),
       ...(assignTo ? { assignee: assignTo.login, assignedBy: assignTo.login, assignedHow: assignTo.how, assignedAt: nowIso() } : {}),
     };
     state.sessions.push(session);
@@ -1547,6 +1554,99 @@ export function createFleet({
   }
 
   /**
+   * A pull request whose review runs in a session (pullRequests.review.runner: woodshed): when its head commit carries
+   * the review's rerun tag and no session has reviewed that commit, a review session starts, as the pull request's
+   * author. Once for each commit. Cheap to call on any pull request change: it returns early unless the runner is
+   * `woodshed`.
+   * @param {{number: number, project?: string|null}} args
+   */
+  async function reviewOnTag({ number, project: projectName = null }) {
+    const project = projectOfEvent(projectName);
+    const gates = project ? await pullRequests(project.name) : null;
+    const review = gates?.review;
+    if (!review || review.runner !== 'woodshed') return { unrecorded: true };
+    const gh = githubOf(project);
+    const pull = await gh.pull(number);
+    if (pull.state !== 'open' || pull.draft) return { unrecorded: true };
+    if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.sha === pull.head.sha)) return { unrecorded: true };
+    if (review.rerun) {
+      const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
+      if (!message || !message.includes(review.rerun)) return { unrecorded: true };
+    }
+    return startReview({ project, gates, number, login: pull.user?.login ?? '', pull });
+  }
+
+  // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
+  // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
+  // the verdict and the Merge risk check here (reviewFinished), as its own App. One review session per commit.
+  async function startReview({ project, gates, number, login, pull: known = null }) {
+    const { review, mergeRisk } = gates;
+    const gh = githubOf(project);
+    const ignored = (reason) => {
+      console.log('fleet: review not started', { number, login, reason, ...projectField(project) });
+      return { outcome: 'ignored', reason };
+    };
+    if (!(await gh.canWrite(login))) return ignored('no write access to the repo');
+    if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
+    if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
+    const pull = known ?? await gh.pull(number);
+    if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
+    if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project)
+      && (s.review.sha === pull.head.sha ? ACTIVE_STATUSES.has(s.status) || s.review.conclusion : ACTIVE_STATUSES.has(s.status)))) {
+      return ignored('a review session is already running on it, or has reviewed this commit');
+    }
+    const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
+    const session = await createSession({
+      kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
+      review: { base: pull.base.ref, sha: pull.head.sha, heading: review.heading, check: mergeRisk?.check ?? null, commentId },
+    });
+    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
+    return { outcome: 'started', sessionId: session.id };
+  }
+
+  /**
+   * A review session's result (POST /review-report): the console submits the formal review and the Merge risk check as
+   * its App, then the session stops. The head the session read goes to GitHub, so a push since makes GitHub refuse.
+   * @param {object} session
+   * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT', title: string, summary: string, comment: string,
+   *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}} result
+   */
+  async function reviewFinished(session, { conclusion, title, summary, comment, mergeRisk, sha, costUsd }) {
+    const project = projectFor(config, session);
+    const gh = githubOf(project);
+    if (comment) await postReviewComment(session, gh, comment);
+    const pull = await safely('review pull request', () => gh.pull(session.number));
+    // Only submit when the reviewed commit is still the head: a push since makes the review stale, so it is dropped
+    // rather than approving the wrong commit.
+    const ours = Boolean(pull?.head?.sha) && sha === pull.head.sha;
+    if (!ours) {
+      console.warn('fleet: review skipped, the head moved since it was reviewed', { id: session.id, number: session.number, reported: sha, head: pull?.head?.sha ?? null });
+    } else {
+      await safely('review verdict', () => gh.createReview(session.number, { event: conclusion, body: `${title}\n\n${summary}`.trim(), sha }));
+      if (session.review.check && mergeRisk?.tier) {
+        await safely('Merge risk check', () => gh.createCheckRun({
+          sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
+          summary: `Set by the AI review.\n\n${mergeRisk.summary}`.trim(), externalId: session.id,
+        }));
+      }
+    }
+    update(session, { review: { ...session.review, conclusion, reviewedSha: sha, costUsd } });
+    console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours });
+    stop(session, `Review finished: ${conclusion}`)
+      .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
+  }
+
+  async function postReviewComment(session, gh, body) {
+    const { commentId } = session.review;
+    if (commentId && await safely('review comment', async () => { await gh.updateComment(commentId, body); return true; })) return;
+    const posted = await safely('review comment', () => gh.comment(session.number, body));
+    if (!posted) return;
+    update(session, { review: { ...session.review, commentId: posted } });
+    if (state.github) state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
+    store.save();
+  }
+
+  /**
    * A session asked for a person in a `Needs a human:` comment on its issue or pull request (the webhooks Lambda queues
    * only the App's own). Its assignee is told in Slack, once for each comment. The console's own such comment, for a
    * pull request that gave up, already sent them a message.
@@ -1749,7 +1849,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaFinished, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

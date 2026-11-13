@@ -51,7 +51,8 @@ import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { MAX_REPORT_CHARS, parseQaReport } from './qaSessions.mjs';
-import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa } from './sessions.mjs';
+import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview } from './sessions.mjs';
+import { parseReviewReport } from './reviewSessions.mjs';
 
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
@@ -155,7 +156,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -167,6 +168,7 @@ export function createSessionApi({
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
+    if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
         res.writeHead(204).end();
@@ -408,6 +410,33 @@ async function qaReportReply(req, res, session, fleet) {
     return reply(res, 400, { error: err.message });
   }
   await fleet.qaFinished(session, result);
+  res.writeHead(204).end();
+}
+
+async function reviewReportReply(req, res, session, fleet) {
+  if (!isReview(session) || !fleet.reviewFinished) {
+    req.resume();
+    return reply(res, 404, { error: 'only a review session has a verdict to send' });
+  }
+  if (session.review.conclusion) {
+    req.resume();
+    console.warn('sessionApi: a second review report refused', { sessionId: session.id });
+    return reply(res, 409, { error: 'this session already sent its verdict' });
+  }
+  req.setEncoding('utf8');
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > MAX_QA_REPORT_BYTES) return reply(res, 413, { error: 'too large' });
+  }
+  let result;
+  try {
+    result = parseReviewReport(text);
+  } catch (err) {
+    console.warn('sessionApi: a review report refused', { sessionId: session.id, why: err.message });
+    return reply(res, 400, { error: err.message });
+  }
+  await fleet.reviewFinished(session, result);
   res.writeHead(204).end();
 }
 

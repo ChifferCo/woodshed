@@ -62,11 +62,14 @@ export function mergeRiskRunIds(runs, sha, check) {
  * @returns {{title: string, tier: 'Low'|'Medium'|'High'|null, summary: string, url: string|null}
  *   |{missing: 'not configured'|'not posted'|'not posted by the AI review', apps: string[]}}
  */
-export function mergeRiskFrom(runs, { sha, reviewRuns, check }) {
+export function mergeRiskFrom(runs, { sha, reviewRuns, check, ownAppSlug = null, fromSession = false }) {
   if (!check) return { missing: 'not configured', apps: [] };
   const named = (runs ?? []).filter((r) => r.name === check);
-  const trusted = named.find((r) => r.app?.slug === TRUSTED_CHECK_APP && r.head_sha === sha && r.status === 'completed'
-    && reviewRuns.has(reviewRunIdOf(r)));
+  // A review that runs as a Woodshed session posts the check as the console's App, not a workflow; trust that App on
+  // the head commit. Otherwise it is the review workflow's run, confirmed in reviewRuns.
+  const trusted = fromSession && ownAppSlug
+    ? named.find((r) => r.app?.slug === ownAppSlug && r.head_sha === sha && r.status === 'completed')
+    : named.find((r) => r.app?.slug === TRUSTED_CHECK_APP && r.head_sha === sha && r.status === 'completed' && reviewRuns.has(reviewRunIdOf(r)));
   if (!trusted) {
     return { missing: named.length ? 'not posted by the AI review' : 'not posted', apps: named.map((r) => r.app?.slug ?? 'unknown') };
   }
@@ -295,7 +298,10 @@ function gateWords(gates) {
  */
 export function buildBrief({ pull, review, runs, comments, suites, qa, gates, reviewRuns = new Set(), commentUrl = null, ownApp = null }) {
   const words = gateWords(gates);
-  const mergeRisk = mergeRiskFrom(runs, { sha: pull.head?.sha, reviewRuns, check: gates?.mergeRisk?.check ?? null });
+  const mergeRisk = mergeRiskFrom(runs, {
+    sha: pull.head?.sha, reviewRuns, check: gates?.mergeRisk?.check ?? null,
+    ownAppSlug: ownApp?.slug ?? null, fromSession: gates?.review?.runner === 'woodshed',
+  });
   // A QA session's check is the console's, and carries its report: the brief reads no comment for it.
   const fromConsole = Boolean(ownApp?.slug) && qa.check?.app?.slug === ownApp.slug;
   // Sessions comment as the App, so a project file naming the App as QA's author would trust them.

@@ -16,7 +16,7 @@ const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ nam
 
 function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
-  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
+  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
@@ -69,6 +69,8 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     async workflowRun() { return { path: '.github/workflows/review.yml', head_sha: 'abc' }; },
     async updateComment(id, body) { calls.comments.push({ id, body }); return id; },
     async createCheckRun(check) { calls.checks.push(check); return 'https://github.com/o/r/runs/1'; },
+    async createReview(number, review) { calls.reviews.push({ number, ...review }); return 1; },
+    async commitMessage() { return 'feat: do the thing [woodshed-review]'; },
     async removeLabel(number, label) { calls.unlabeled.push({ number, label }); return true; },
     async reactToIssue(number) { calls.reactions.push({ issue: number }); },
     async reactToComment(id) { calls.reactions.push({ comment: id }); },
@@ -2331,4 +2333,62 @@ test('the default\'s cursors from before they named a repo are kept, as the envi
   await fleet.pollGitHub();
   assert.equal(fleet.sessions().length, 1, 'polled from the kept cursor, not started again');
   assert.ok(store.state.github.seenComments.includes(7), 'the comments seen before are still seen');
+});
+
+const REVIEW_GATES = {
+  ...PULL_GATES,
+  review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' },
+  mergeRisk: { check: 'Merge risk' },
+};
+const REVIEW_PULL = { state: 'open', draft: false, title: 'Add GTM', user: { login: 'joel' }, head: { ref: 'joel/gtm', sha: 'a'.repeat(40) }, base: { ref: 'main' } };
+const REVIEW_RESULT = {
+  conclusion: 'APPROVE', title: '## Claude review — APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n> **Merge risk: Low**',
+  mergeRisk: { tier: 'Low', reason: 'Only a docs page.', summary: 'LOW\nOnly a docs page.' }, sha: 'a'.repeat(40), costUsd: 0.4,
+};
+function reviewSetup(options = {}) {
+  const t = setup({ gates: REVIEW_GATES, ...options });
+  t.github.pull = async () => REVIEW_PULL;
+  return t;
+}
+
+test('the review tag on the head starts a review session, once for the commit, only when the runner is woodshed', async () => {
+  const { fleet } = reviewSetup();
+  const started = await fleet.reviewOnTag({ number: 7 });
+  assert.equal(started.outcome, 'started');
+  const [session] = fleet.sessions();
+  assert.deepEqual([session.trigger, session.review.sha, session.review.base, session.review.check], ['review', 'a'.repeat(40), 'main', 'Merge risk']);
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'already reviewing this commit');
+
+  const actions = setup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, runner: 'actions' } } });
+  actions.github.pull = async () => REVIEW_PULL;
+  assert.deepEqual(await actions.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the actions runner stays in CI');
+});
+
+test('a head without the review tag starts nothing', async () => {
+  const { fleet, github } = reviewSetup();
+  github.commitMessage = async () => 'feat: no tag here';
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true });
+  assert.equal(fleet.sessions().length, 0);
+});
+
+test('reviewFinished submits the formal review and the Merge risk check as the console App, then stops', async () => {
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  await fleet.reviewFinished(session, REVIEW_RESULT);
+  assert.equal(calls.reviews.length, 1);
+  assert.deepEqual([calls.reviews[0].number, calls.reviews[0].event, calls.reviews[0].sha], [7, 'APPROVE', 'a'.repeat(40)]);
+  assert.match(calls.reviews[0].body, /Claude review — APPROVE/);
+  const risk = calls.checks.find((c) => c.name === 'Merge risk');
+  assert.deepEqual([risk.conclusion, risk.title], ['neutral', 'Low: Only a docs page.']);
+  assert.equal(fleet.sessions()[0].review.conclusion, 'APPROVE');
+});
+
+test('reviewFinished does not submit for a commit that is no longer the head', async () => {
+  const { fleet, calls, github } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  github.pull = async () => ({ ...REVIEW_PULL, head: { ...REVIEW_PULL.head, sha: 'c'.repeat(40) } });
+  await fleet.reviewFinished(session, REVIEW_RESULT);
+  assert.deepEqual([calls.reviews, calls.checks.filter((c) => c.name === 'Merge risk')], [[], []]);
 });

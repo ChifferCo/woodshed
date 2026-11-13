@@ -802,6 +802,10 @@ startClaude() {
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch /tmp/qa-running
     tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
+  elif [ "${SESSION_MODE:-}" = review ]; then
+    # The review reads the diff and sends its verdict to the console; no app, so it does not wait on statusd.
+    touch /tmp/review-running
+    tmux send-keys -t claude "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh" Enter
   elif [ "${AGENT:-claude}" = codex ]; then
     # A Codex conversation is not kept between runs, so a resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
@@ -932,6 +936,8 @@ runSession() {
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.
   if [ "${SESSION_MODE:-}" = qa ]; then
     log "Prompt skipped" "(QA: session/qa.sh runs the QA prompts)"
+  elif [ "${SESSION_MODE:-}" = review ]; then
+    log "Prompt skipped" "(review: session/review.sh runs the review prompt)"
   elif [ "${AGENT:-claude}" != codex ] && resumable; then
     log "Resuming claude's conversation" "(id: $RESUME_SESSION)"
   else
