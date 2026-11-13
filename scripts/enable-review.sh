@@ -26,13 +26,19 @@ done
 command -v gh >/dev/null || { echo "Install the GitHub CLI (gh) first: https://cli.github.com" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "Sign in first: gh auth login" >&2; exit 1; }
 
+# Pin to a commit by default, as the docs urge, so a later change to the workflow never surprises a review.
+if [ "$REF" = "main" ]; then
+  REF=$(gh api repos/ChifferCo/woodshed/commits/main --jq .sha)
+  echo "Pinned the review to ChifferCo/woodshed@${REF}"
+fi
+
 branch=$(gh repo view "$REPO" --json defaultBranchRef --jq .defaultBranchRef.name)
 echo "Default branch: $branch"
 
 # Commit a workflow to the default branch, replacing an earlier copy if one is there.
 write_workflow() {
   local path="$1" content="$2" sha encoded
-  sha=$(gh api "repos/${REPO}/contents/${path}?ref=${branch}" --jq .sha 2>/dev/null || true)
+  sha=$(gh api "repos/${REPO}/contents/${path}?ref=${branch}" --jq .sha 2>/dev/null) || sha=""
   encoded=$(printf '%s\n' "$content" | base64 | tr -d '\n')
   if ! gh api --method PUT "repos/${REPO}/contents/${path}" \
         -f message="ci: enable Woodshed $(basename "$path" .yml | sed 's/^woodshed-//')" \
