@@ -20,6 +20,8 @@ rm -rf "$dest"
 mkdir -p "$dest"
 printf '%s\n' "$editor" > "$dest.editor"
 echo "stageDeps: project file from $from"
+skipped=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get repoFileError) || skipped=
+[ -z "$skipped" ] || echo "stageDeps: the repo's own project file was skipped: $skipped"
 echo "stageDeps: editor $editor"
 # An empty file when there are no installs.
 : > "$dest.installs"

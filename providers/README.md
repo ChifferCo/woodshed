@@ -27,13 +27,30 @@ it: no Secrets page, no saved Claude homes, no databases of its own, or GitHub's
 | --- | --- | --- |
 | `name` | `aws` or `local` | Its start log, and which kind a fixed secret store is on the Secrets page |
 | `words` | What the pages say about where a session runs: the start checklist's first steps (`null` leaves one out), the wait when there is no room, the note under the session limits, where homes and databases are kept, and the webhook receiver. `console/providerWords.mjs` lists each and has the defaults, which name no provider | Every page, through `pageShell`'s `woodshed-provider` meta tag |
-| `launcher` | `start`, `stop`, `isAlive` and the rest, for session containers | `console/fleet.mjs` |
+| `launcher` | `start`, `stop`, `isAlive` and the rest, for session containers, and optionally `progress` (below) | `console/fleet.mjs` |
 | `secrets` | `list`, `read`, `write`, `save`, `remove`, over the names in `console/secrets.mjs` | The Secrets page, sign-in, the GitHub App key |
 | `homes` | `put`, `get`, `copy`, `remove` and the rest, for saved Claude homes | `console/sessionApi.mjs` |
 | `dbAdmin` | `start(command)`, `stop(id)`, `outcomes(ids)`, runs of `session/dbAdmin.mjs` | `console/databases.mjs` |
 | `databases` | The databases `dbAdmin` makes a copy of for each session, `postgres` and `mongo` (which needs `postgres`): the installation's own, `[]` without `dbAdmin` | `console/databases.mjs`, the tunnel, Restore a dump and the session page's Data ▾ |
 | `webhooks` | `run(handler)`, which hands each GitHub or Slack message to `handler.dispatch` | `console/webhookDispatch.mjs` |
 | `webhookUrl` | `() => Promise<string>`, where GitHub should post | The Secrets & webhooks page |
+
+### A wait's progress
+
+A launcher whose `start` throws one of the fleet's "no room" errors (`NO_ROOM_RE` in `console/fleet.mjs`) puts the
+session back in the queue, to be tried again a minute later. When the wait is for something the launcher can follow,
+such as a machine being set up for the sessions, it may also have `progress(sessionId)`, which answers
+`{steps: [{label, state, note, at}]}`, or `null` for nothing to show:
+
+- `label`: the step in words, such as `Installing Docker` (up to 80 characters).
+- `state`: `done`, `current`, `pending` or `failed`. A step in any other state is left out.
+- `note`: optional, a short line beside the label: what the current step is doing, or why a step failed (up to 200).
+- `at`: optional, an ISO time the step began. A done step's seconds run to the next step's `at`, the current one's to
+  now, and the wait's clock from the earliest.
+
+The fleet calls it every couple of seconds while a session waits for its retry, and once as the start goes back in the
+queue; an error keeps the steps it had and is logged once (`fleet: wait progress not read`). Neither provider here has
+one: their waits are AWS's quota, which says nothing of its progress.
 
 To add one: a folder with an `index.mjs` returning that object, an entry in `console.mjs`'s `PROVIDERS`, its own
 settings in `NEEDS` so the other providers refuse them, and a README in the shape of these two: what it gives, how to

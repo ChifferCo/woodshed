@@ -136,4 +136,11 @@ test('a repo with no project file stages the installs of the installation\'s fil
   assert.match(own.stdout, /stageDeps: project file from checkout\n/);
   assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), '');
   assert.equal(fs.readFileSync(path.join(repo, 'staged.editor'), 'utf8'), 'false\n');
+  assert.doesNotMatch(own.stdout, /skipped/);
+
+  // An own file that does not parse gives way to the installation's, and the log says why.
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), 'version: 1\ndatabase: null\n');
+  const broken = run({ WOODSHED_PROJECT_FILES_DIR: files });
+  assert.equal(broken.status, 0, broken.stderr);
+  assert.match(broken.stdout, /stageDeps: project file from installation\nstageDeps: the repo's own project file was skipped: \.woodshed\/project\.yaml: has database, which is not a field/);
 });

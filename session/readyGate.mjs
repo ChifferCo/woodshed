@@ -11,7 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 
 import { defaultBranchOf } from '../shared/defaultBranch.mjs';
-import { expandPath, loadProject } from '../shared/project.mjs';
+import { PROJECT_FILE, expandPath, loadProject } from '../shared/project.mjs';
 import { isMain } from '../shared/isMain.mjs';
 
 const FILES_NAMED = 5;
@@ -104,6 +104,18 @@ export function projectRefusal(err) {
   return `Not opened: ${err.message}. Fix the project file on this branch (README.md in woodshed, "The project file"), then run this again.`;
 }
 
+/**
+ * A branch that breaks its own project file is refused even where the installation's file stands in for it
+ * (`repoFileError`, shared/project.mjs): that file keeps this installation running and would hide the break from every
+ * other. A repo whose file the default branch already broke is not refused for it: this branch did not break it.
+ * @param {{project: {repoFileError?: string}, changedFiles: string[]|null}} args
+ * @returns {string|null}
+ */
+export function brokenFileRefusal({ project, changedFiles }) {
+  if (!project.repoFileError || !changedFiles?.includes(PROJECT_FILE)) return null;
+  return projectRefusal({ message: project.repoFileError });
+}
+
 function main() {
   let payload;
   try {
@@ -122,8 +134,9 @@ function main() {
     process.stderr.write(`${projectRefusal(err)}\n`);
     process.exit(2);
   }
+  const changedFiles = changedFilesIn(cwd);
   const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app }) }));
-  const reason = refusal({ payload, changedFiles: changedFilesIn(cwd), apps });
+  const reason = brokenFileRefusal({ project, changedFiles }) ?? refusal({ payload, changedFiles, apps });
   if (!reason) return;
   process.stderr.write(`${reason}\n`);
   process.exit(2);

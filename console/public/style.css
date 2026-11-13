@@ -289,6 +289,9 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .start-label { flex: 1; min-width: 0; }
 .start-secs { font-family: var(--mono); font-size: 12px; color: var(--meta); }
 .is-now .start-secs { color: var(--amber-ink); }
+.start-steps li.is-failed { color: var(--bad); font-weight: 600; }
+.start-note { font-weight: 400; color: var(--sub); }
+.is-failed .start-note { color: var(--bad); }
 .kept { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .kept span { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--idle-ink); }
 .btn-delete { border: 1px solid transparent; background: transparent; color: var(--bad); }
@@ -661,7 +664,6 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .restore-steps li.has-bar { padding: 7px 0; }
 .restore-step-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .restore-current { font-weight: 400; color: var(--sub); }
-.restore-steps li.is-failed { color: var(--bad); font-weight: 600; }
 .is-failed .start-mark { background: var(--bad); color: var(--ground); }
 .is-failed .start-secs { color: var(--bad); }
 .restore-bar { margin-left: 26px; height: 4px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }

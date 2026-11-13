@@ -17,7 +17,7 @@ import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, keptIds, newSessionId, newSessionToken, sessionLink,
-  parseWorkOn, pullNumber, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitsForRetry,
+  parseWorkOn, pullNumber, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
@@ -57,6 +57,13 @@ export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .wood
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
+}
+
+/** @returns {Promise}  the promise's answer, or a rejection once `ms` pass without one */
+function withinTime(promise, ms) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`no answer in ${ms / 1000} s`)), ms); });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }
 
 /**
@@ -226,6 +233,9 @@ export function createFleet({
   let ticking = false;
   // The quick check has its own guard: sharing the tick's would skip ticks while starting sessions time out.
   let checkingStarts = false;
+  let checkingWaits = false;
+  // The last error each waiting session's progress read gave, so a launcher that keeps failing logs it once.
+  const progressErrors = new Map();
   // Sessions whose statusd is being read, by the tick or the quick check: one read at a time, so a held message is
   // never typed in twice.
   const readingStatus = new Set();
@@ -331,7 +341,7 @@ export function createFleet({
   async function launchNow(session) {
     // Two callers can list the same queued session before either has launched it.
     if (session.status !== 'queued') return;
-    update(session, { status: 'starting', startedAt: nowIso(), retryAt: null });
+    update(session, { status: 'starting', startedAt: nowIso(), retryAt: null, waitProgress: null });
     console.log('fleet: starting session', { id: session.id, number: session.number, launcher: launcher.kind });
     if (!session.owner) {
       const plan = await planFor(session);
@@ -349,6 +359,8 @@ export function createFleet({
       if (NO_ROOM_RE.test(firstLine(err))) {
         update(session, { status: 'queued', startedAt: null, error, retryAt: new Date(now() + NO_ROOM_RETRY_MS).toISOString() });
         console.warn('fleet: AWS has no room, session back in the queue', { id: session.id, retryInMs: NO_ROOM_RETRY_MS });
+        // Not waited for: the queue goes on, and checkWaiting reads it again within a couple of seconds.
+        readProgress(session).catch((err) => console.error('fleet: wait progress failed', { id: session.id, message: firstLine(err) }));
         return;
       }
       console.error('fleet: session failed to start', { id: session.id, message: firstLine(err) });
@@ -658,6 +670,46 @@ export function createFleet({
     } finally {
       checkingStarts = false;
     }
+  }
+
+  // While a start waits for room (waitsForRetry), its launcher may say how the wait is going, as steps: an embedding
+  // whose sessions wait for a machine being set up shows that setup on the session page. Read with the starting check,
+  // and saved only when it changed.
+  async function checkWaiting() {
+    if (checkingWaits) return;
+    checkingWaits = true;
+    try {
+      await Promise.all(state.sessions.map(readProgress));
+    } finally {
+      checkingWaits = false;
+    }
+  }
+
+  async function readProgress(session) {
+    if (!(session.status === 'queued' && waitsForRetry(session, now()))) {
+      progressErrors.delete(session.id);
+      if (session.waitProgress) update(session, { waitProgress: null });
+      return;
+    }
+    if (!launcher.progress) return;
+    let progress;
+    try {
+      progress = waitProgressFrom(await withinTime(launcher.progress(session.id), STATUS_TIMEOUT_MS));
+    } catch (err) {
+      const message = firstLine(err);
+      if (progressErrors.get(session.id) !== message) console.warn('fleet: wait progress not read', { id: session.id, message });
+      progressErrors.set(session.id, message);
+      return;
+    }
+    progressErrors.delete(session.id);
+    // Started, or stopped, while the launcher answered.
+    if (!(session.status === 'queued' && waitsForRetry(session, now()))) return;
+    if (JSON.stringify(progress) === JSON.stringify(session.waitProgress ?? null)) return;
+    update(session, { waitProgress: progress });
+    const steps = progress?.steps ?? [];
+    console.log('fleet: wait progress', {
+      id: session.id, steps: steps.length, done: steps.filter((s) => s.state === 'done').length, failed: steps.some((s) => s.state === 'failed'),
+    });
   }
 
   async function tick() {
@@ -1696,7 +1748,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

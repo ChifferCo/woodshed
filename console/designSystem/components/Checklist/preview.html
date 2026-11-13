@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=300 subtitle="Steps of a running job: done, now with a bar, next, failed" -->
+<!-- @dsCard group="Cards" height=330 subtitle="Steps of a running job: done, now with a bar, next, now with a note, failed" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:15px/1.5 "Red Hat Display",system-ui,sans-serif}
@@ -13,6 +13,7 @@
  .done .m{background:var(--green);color:var(--ground)} .now .m{border:2px solid var(--amber);border-right-color:transparent}
  .next{color:var(--meta)} .next .m{border:1.5px solid var(--idle-dot)} .failed{color:var(--bad);font-weight:600} .failed .m{background:var(--bad);color:var(--ground)}
  .now{font-weight:600;padding:7px 0} .l{flex:1} .s{font:12px "JetBrains Mono",ui-monospace,monospace;color:var(--meta)} .now .s{color:var(--amber-ink)} .failed .s{color:var(--bad)}
+ .n{font-weight:400;color:var(--sub)} .failed .n{color:var(--bad)}
  .bar{margin-left:26px;height:4px;border-radius:999px;background:var(--line-soft)} .bar i{display:block;width:40%;height:100%;border-radius:999px;background:var(--slate)}
 </style>
 <div class="head"><strong>staging.dump</strong><span class="clock">3:21</span></div>
@@ -20,6 +21,7 @@
  <li class="done"><div class="r"><span class="m">✓</span><span class="l">Send the dump</span><span class="s">1.2 GB · 2 min 16 s</span></div></li>
  <li class="now"><div class="r"><span class="m"></span><span class="l">Restore the data</span><span class="s">412 of 1,030 items</span></div><div class="bar"><i></i></div></li>
  <li class="next"><div class="r"><span class="m"></span><span class="l">Count what came in</span></div></li>
+ <li class="now"><div class="r"><span class="m"></span><span class="l">Building the session image<span class="n"> · step 4 of 9</span></span><span class="s">22 s</span></div></li>
  <li class="failed"><div class="r"><span class="m">✗</span><span class="l">Restore the data</span><span class="s">stopped at item 326 of 1,106</span></div></li>
 </ol>
 <span class="pill work">Restoring</span> <span class="pill ok">Ready to check</span> <span class="pill bad">Failed</span>
