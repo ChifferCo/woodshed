@@ -5111,6 +5111,8 @@ ${DARK_PALETTE}
       // The commit this review read. Merging is offered only while the pull
       // request is still at it.
       state.headSha = got.headSha || null;
+      // What the Re-review that took this pulled from origin first, or why it did not.
+      state.pull = got.pull || null;
       stampTab();
       state.reviewBranch = got.reviewBranch || null;
       // The worktree header's "as of" timestamp, and the only answer this
