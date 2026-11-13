@@ -124,16 +124,18 @@ on:
 jobs:
   review:
     permissions: { contents: write, pull-requests: write, issues: read, id-token: write, checks: write }
-    uses: ChifferCo/woodshed/.github/workflows/review.yml@main  # pin to a commit to choose when it changes
+    uses: ChifferCo/woodshed/.github/workflows/review.yml@b673d640f39828ada55dc7083a0bac34fc3f4c90  # pin to a commit; bump it when you want updates
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
 Merge it to the default branch, then end a pull request's last commit message with `[woodshed-review]`. The review
 approves or requests changes with comments on the lines, and rates the merge risk as a `Merge risk` check and a
-`merge risk: low`, `medium` or `high` label. Your `CLAUDE.md`, `.woodshed/review.md` and `.woodshed/riskAreas.md` on the
-default branch add your own rules. [The review in another repo](docs/reference.md#the-review-in-another-repo) has every
-input.
+`merge risk: low`, `medium` or `high` label. On the default branch, `CLAUDE.md`, `.woodshed/rules.md` and
+`CONTRIBUTING.md` give the review your repo's rules, `.woodshed/review.md` says what to look for, and
+`.woodshed/riskAreas.md` lists changes that are always High risk. Pin the `uses:` line to a commit, as above, so a
+change to the workflow never surprises a review. [The review in another repo](docs/reference.md#the-review-in-another-repo)
+has every input.
 
 ## Documentation
 
