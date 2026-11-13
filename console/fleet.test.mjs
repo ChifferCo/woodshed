@@ -2415,9 +2415,27 @@ test('a review session runs for a same-repo pull request opened by the App', asy
   assert.equal((await fleet.reviewOnTag({ number: 7 })).outcome, 'started');
 });
 
-test('a review on a human author with a reused handle is refused, so it never spends the wrong plan', async () => {
+test('a review on a human author with a reused handle still runs, on the team key, so it never spends the wrong plan', async () => {
   const t = setup({ gates: REVIEW_GATES, people: { check: async () => false } });
   t.github.pull = async () => REVIEW_PULL;
-  assert.match((await t.fleet.reviewOnTag({ number: 7 })).reason, /another account/);
-  assert.equal(t.fleet.sessions().length, 0);
+  assert.equal((await t.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+  assert.equal(t.fleet.sessions()[0].review.teamKey, true);
+});
+
+test('a review runs on its author\'s plan, unless it failed the identity checks', async () => {
+  const onPlan = setup({ gates: REVIEW_GATES, userSettings: ownTokens(), databases: madeDatabases() });
+  onPlan.github.pull = async () => REVIEW_PULL;
+  await onPlan.fleet.reviewOnTag({ number: 7 });
+  assert.equal(onPlan.fleet.sessions()[0].plan, 'joel');
+  const reused = setup({ gates: REVIEW_GATES, userSettings: ownTokens(), databases: madeDatabases(), people: { check: async () => false } });
+  reused.github.pull = async () => REVIEW_PULL;
+  await reused.fleet.reviewOnTag({ number: 7 });
+  assert.equal(reused.fleet.sessions()[0].plan, null, 'the team key, never the old person\'s plan');
+});
+
+test('a review on an author without Sessions from GitHub still runs, on the team key', async () => {
+  const t = setup({ gates: REVIEW_GATES, githubSessions: [] });
+  t.github.pull = async () => REVIEW_PULL;
+  assert.equal((await t.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+  assert.equal(t.fleet.sessions()[0].review.teamKey, true);
 });

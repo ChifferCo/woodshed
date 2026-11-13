@@ -323,7 +323,7 @@ export function createFleet({
   // console makes the session's databases: the entrypoint asks the session API for its plan with them, so without
   // them claude would stay on the team key while the pages said otherwise.
   async function planFor(session) {
-    if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || !databases?.available) return null;
+    if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || session.review?.teamKey || !databases?.available) return null;
     await userSettings?.refresh?.(session.startedBy, { force: true });
     if (!userSettings?.usesOwnTokenForShared(session.startedBy)) return null;
     try {
@@ -1588,14 +1588,11 @@ export function createFleet({
     };
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
-    // The session runs on the author's Claude plan when they set one up, so a human author is held to the same identity
-    // checks as a label trigger: a reused handle must not spend the old person's token, and only someone set up for
-    // sessions runs on their plan. A pull request a session opened carries a bot author, which has no plan and runs on
-    // the team key, so it skips these.
-    if (!login.endsWith('[bot]')) {
-      if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
-      if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
-    }
+    // The session runs on the author's Claude plan only when they pass the label trigger's identity checks: a reused
+    // handle must not spend the old person's token, and only someone set up for sessions runs on their plan. Failing them
+    // still gets a review, on the team key. A bot author (a pull request a session opened) has no plan.
+    const teamKeyWhy = await teamKeyReason(login);
+    if (teamKeyWhy) console.log('fleet: review runs on the team key', { number, login, why: teamKeyWhy, ...projectField(project) });
     // The head must be a branch in the repo, never a fork, as the Actions review requires too.
     if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
     if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project) && ACTIVE_STATUSES.has(s.status))) {
@@ -1604,10 +1601,17 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
-      review: { base: pull.base.ref, sha: pull.head.sha, heading: review.heading, check: mergeRisk?.check ?? null, commentId },
+      review: { base: pull.base.ref, sha: pull.head.sha, heading: review.heading, check: mergeRisk?.check ?? null, commentId, ...(teamKeyWhy ? { teamKey: true } : {}) },
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
+  }
+
+  async function teamKeyReason(login) {
+    if (login.endsWith('[bot]')) return null;
+    if (people && !(await people.check(login))) return 'the GitHub name was another account\'s when last used here';
+    if (members && !members.hasGithubSessions(login)) return 'cannot start sessions from GitHub';
+    return null;
   }
 
   /**
