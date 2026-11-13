@@ -105,3 +105,22 @@ test('a given --ref is used as-is, with no commit lookup', (t) => {
   assert.match(fs.readFileSync(path.join(written, '.github/workflows/woodshed-review.yml'), 'utf8'), /review\.yml@v1\.2\.3/);
   assert.doesNotMatch(fs.readFileSync(log, 'utf8'), /commits\/main/, 'no lookup when --ref is given');
 });
+
+test('--qa-runner woodshed writes no QA workflow, makes the label, and prints the console steps', (t) => {
+  const { bin, log, written } = fakeGh(t, { secretExists: true });
+  const r = run(bin, 'acme/game', '--qa-runner', 'woodshed');
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(!fs.existsSync(path.join(written, '.github/workflows/woodshed-qa.yml')), 'no CI QA workflow for the session runner');
+  assert.match(fs.readFileSync(log, 'utf8'), /label create woodshed-qa/);
+  assert.match(r.stdout, /runner: woodshed/, 'tells the user the project-file setting');
+  assert.match(r.stdout, /Install the Woodshed GitHub App/);
+  // The review workflow is still written: review always runs in CI.
+  assert.ok(fs.existsSync(path.join(written, '.github/workflows/woodshed-review.yml')));
+});
+
+test('an unknown --qa-runner is rejected', (t) => {
+  const { bin } = fakeGh(t, { secretExists: true });
+  const r = run(bin, 'acme/game', '--qa-runner', 'lambda');
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /must be actions or woodshed/);
+});

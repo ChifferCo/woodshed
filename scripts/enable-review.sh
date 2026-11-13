@@ -3,25 +3,30 @@
 # the calling workflow to the default branch, lets GitHub Actions approve pull requests, and sets the Anthropic API
 # key. After it runs, end a pull request's last commit message with [woodshed-review] to get a review.
 #
-#   scripts/enable-review.sh <owner/repo> [--ref <commit-or-branch>]
+#   scripts/enable-review.sh <owner/repo> [--ref <commit-or-branch>] [--qa] [--qa-runner actions|woodshed]
 #
 # --ref pins the review to a commit (the default is this repository's main); pin it so a change to the workflow never
-# surprises a review. It needs the GitHub CLI signed in with the `workflow` scope (gh auth refresh -s workflow) and
-# admin on the repository.
+# surprises a review. --qa also sets up QA, which runs on the woodshed-qa label. --qa-runner picks where QA runs:
+# `actions` (the default) runs it in this repository's own CI; `woodshed` runs it as a session on a Woodshed console
+# you already have (the script then sets no QA workflow and prints the console steps). It needs the GitHub CLI signed
+# in with the `workflow` scope (gh auth refresh -s workflow) and admin on the repository.
 set -euo pipefail
 
 REPO=""
 REF="main"
 QA=false
+QA_RUNNER="actions"
 while [ $# -gt 0 ]; do
   case "$1" in
     --ref) REF="$2"; shift 2 ;;
     --qa) QA=true; shift ;;
+    --qa-runner) QA=true; QA_RUNNER="$2"; shift 2 ;;
     -*) echo "Unknown option: $1" >&2; exit 2 ;;
     *) REPO="$1"; shift ;;
   esac
 done
-[ -n "$REPO" ] || { echo "Usage: enable-review.sh <owner/repo> [--ref <commit-or-branch>] [--qa]" >&2; exit 2; }
+[ -n "$REPO" ] || { echo "Usage: enable-review.sh <owner/repo> [--ref <commit-or-branch>] [--qa] [--qa-runner actions|woodshed]" >&2; exit 2; }
+case "$QA_RUNNER" in actions|woodshed) ;; *) echo "--qa-runner must be actions or woodshed" >&2; exit 2 ;; esac
 
 command -v gh >/dev/null || { echo "Install the GitHub CLI (gh) first: https://cli.github.com" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "Sign in first: gh auth login" >&2; exit 1; }
@@ -66,9 +71,21 @@ jobs:
 YAML
 )"
 
-# QA runs the app and tests it in a browser. The app is started from .woodshed/project.yaml's app.start, so there is
-# nothing repo-specific to edit. Add the woodshed-qa label to a pull request to run it.
-if [ "$QA" = true ]; then
+# QA runs the app and tests it in a browser, on the woodshed-qa label. In the default `actions` runner it runs in this
+# repository's CI, starting the app from .woodshed/project.yaml's app.start, with nothing repo-specific to edit. The
+# `woodshed` runner runs it as a session on a console you already have: the script writes no QA workflow and prints the
+# steps, since a console and the GitHub App are what it needs, not CI.
+if [ "$QA" = true ] && [ "$QA_RUNNER" = woodshed ]; then
+  gh label create woodshed-qa -R "$REPO" --color 0e8a16 --description "Run Woodshed QA" --force >/dev/null
+  echo "Created the woodshed-qa label"
+  echo
+  echo "QA will run as a Woodshed session. On the console you set up:"
+  echo "  1. Install the Woodshed GitHub App on ${REPO} and add the repo in Console settings."
+  echo "  2. In .woodshed/project.yaml add:"
+  echo "       pullRequests:"
+  echo "         qa: { runner: woodshed, label: woodshed-qa, check: QA, heading: '## QA' }"
+  echo "Then the woodshed-qa label starts a QA session. No QA workflow was written."
+elif [ "$QA" = true ]; then
   write_workflow ".github/workflows/woodshed-qa.yml" "$(cat <<YAML
 name: QA
 on:

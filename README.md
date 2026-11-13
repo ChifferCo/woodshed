@@ -123,8 +123,10 @@ scripts/enable-review.sh <owner/repo> --qa   # also QA
 ```
 
 It needs the GitHub CLI signed in with the `workflow` scope and admin on the repository. Then end a pull request's last
-commit message with `[woodshed-review]` for a review, and add the `woodshed-qa` label for QA. QA starts the app the way
-[the project file](docs/reference.md#the-project-file) says, so there is nothing in the workflow to edit.
+commit message with `[woodshed-review]` for a review, and add the `woodshed-qa` label for QA (on pull requests from a
+branch in the repository, not forks). QA starts the app the way [the project file](docs/reference.md#the-project-file)
+says, so there is nothing in the workflow to edit. Already running a Woodshed console? `--qa-runner woodshed` runs QA as
+a [session](docs/reference.md#qa-in-a-woodshed-session) there instead of in CI.
 
 See the [review](docs/reference.md#the-review-in-another-repo) and [QA](docs/reference.md#qa-in-another-repo) in another
 repo to wire them by hand and for every option.
