@@ -596,7 +596,8 @@
       railFrame.add = h('a', { class: 'rail-new', href: '/?new=1', 'data-keys': 'new' }, '+ New session', railFrame.slots);
       railFrame.seg = h('div', { class: 'rail-seg', role: 'group', 'aria-label': 'Whose sessions' }, railFrame.mine, railFrame.everyone);
       railFrame.only = h('b', { class: 'rail-only' }, 'My sessions');
-      railFrame.el = h('div', { class: 'rail-head' }, railFrame.seg, railFrame.only, picker.el, railFrame.add);
+      railFrame.hide = h('button', { type: 'button', class: 'rail-toggle', title: 'Hide the sessions list', 'aria-label': 'Hide the sessions list', onclick: () => toggleRail() }, '«');
+      railFrame.el = h('div', { class: 'rail-head' }, railFrame.hide, railFrame.seg, railFrame.only, picker.el, railFrame.add);
     }
     railFrame.seg.hidden = !sharesShown();
     railFrame.only.hidden = sharesShown();
@@ -1633,7 +1634,8 @@
     slots.diff = h('div', { class: 'pane-view is-diff', role: 'tabpanel', hidden: true });
     slots.launch = launcher.el;
     slots.home = h('div', { style: 'display: contents' });
-    slots.shell = h('div', { class: 'shell' }, slots.rail,
+    slots.showRail = h('button', { type: 'button', class: 'rail-toggle rail-show', title: 'Show the sessions list', 'aria-label': 'Show the sessions list', onclick: () => toggleRail() }, '»');
+    slots.shell = h('div', { class: 'shell' }, slots.rail, slots.showRail,
       h('main', { class: 'pane' }, slots.head, slots.keys, slots.body, messageBox.el, slots.plain, slots.review, slots.diff, slots.applog, slots.launch, slots.home));
     document.getElementById('app').replaceChildren(slots.shell);
     applyTermScale();
@@ -1699,6 +1701,7 @@
     slots.shell.classList.toggle('is-launcher', tabPage);
     slots.shell.classList.toggle('is-new', onNew);
     slots.shell.classList.toggle('is-railless', railHidden);
+    slots.showRail.hidden = !railHidden;
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
     else launcher.stopDictating();

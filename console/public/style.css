@@ -132,7 +132,7 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 /* One head: Mine | Everyone, the people filter on Everyone, and New session. */
 .rail-head { display: flex; align-items: center; gap: 6px; padding: 10px 10px; border-bottom: 1px solid var(--line-soft); }
 .rail-seg { display: inline-flex; flex: none; padding: 2px; border-radius: 8px; background: var(--chip-count); }
-.rail-seg-link { display: inline-flex; align-items: center; min-height: 30px; padding: 0 12px; border-radius: 6px; font-size: 12.5px; font-weight: 600; color: var(--sub); text-decoration: none; white-space: nowrap; }
+.rail-seg-link { display: inline-flex; align-items: center; min-height: 30px; padding: 0 9px; border-radius: 6px; font-size: 12.5px; font-weight: 600; color: var(--sub); text-decoration: none; white-space: nowrap; }
 .rail-seg-link[aria-current="page"], .rail-seg-link[aria-current="true"] { background: var(--ground); color: var(--ink); box-shadow: 0 1px 2px rgba(27, 34, 50, 0.18); }
 .rail-seg-link:hover { color: var(--ink); }
 .rail-head .who-pick { flex: none; }
@@ -841,6 +841,12 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   .launch-actions .btn { flex: 1 1 100%; min-height: 44px; justify-content: center; font-size: 15px; }
 }
 .shell.is-railless .rail { display: none; }
+.rail-toggle { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; min-height: 30px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--sub); font: inherit; font-size: 15px; line-height: 1; cursor: pointer; }
+.rail-toggle:hover { color: var(--ink); }
+.rail-show { position: fixed; top: 3px; left: 8px; z-index: 5; }
+@media (min-width: 900px) { .shell.is-railless .pane-bar { padding-left: 48px; } }
+.rail-show[hidden] { display: none; }
+@media (max-width: 899px) { .rail-toggle { display: none; } }
 
 kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--ground); color: var(--ink); font: 500 10.5px/1.5 var(--mono); text-align: center; }
 /* ---- the palette, the shortcuts and settings sheets ---- */
