@@ -1346,7 +1346,16 @@ a signal that is missing is said to be missing:
 - **The ask**, first, is `Can be merged without further review!` only when
   Merge risk is Low, QA passed and every check on the head commit is green;
   otherwise `Please confirm before merging`, or `Please look before merging`
-  with no decisions listed. It is a suggestion: nothing merges by itself.
+  with no decisions listed. It is a suggestion: nothing merges by itself unless
+  the project file turns on `pullRequests.autoMerge` (below).
+
+Auto-merge (`pullRequests.autoMerge`, off unless `enabled`) has the console
+merge a pull request itself once it is approved, every suite is green, QA has
+passed (when QA is configured), the trusted merge-risk tier is one of `tiers`,
+and every changed file is within `paths`. It enqueues at the reviewed head
+where the base branch has a merge queue, else squash-merges; a push since the
+brief read makes GitHub refuse, not merge the wrong commit. It logs
+`auto-merge: merged` / `enqueued`, or `auto-merge: held` with the reason.
 
 The reply in the thread is best effort: a brief Slack refuses leaves the post
 as it is, and the post is not made again (`slack: decision brief not replied`).

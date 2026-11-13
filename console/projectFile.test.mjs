@@ -53,7 +53,7 @@ test('the gates for a pull request are the file\'s pullRequests; an unread file 
   ].join('\n'));
   const reader = createProjectReader({ github: { projectFile: async () => gated } });
   assert.deepEqual(await reader.pullRequests(), {
-    review: null, suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: '[e2e]' }], qa: null, mergeRisk: null,
+    review: null, suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: '[e2e]' }], qa: null, mergeRisk: null, autoMerge: null,
   });
   assert.equal(await createProjectReader({ github: { projectFile: async () => PROJECT } }).pullRequests(), null);
   assert.equal(await createProjectReader({ github: { projectFile: async () => null } }).pullRequests(), null, 'no project file');

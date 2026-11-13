@@ -188,13 +188,25 @@ const PULL_REQUESTS = {
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
   qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions' },
   mergeRisk: { check: 'Merge risk' },
+  autoMerge: { enabled: true, tiers: ['Low'], paths: ['docs/'] },
 };
 
 test('pullRequests names the repo\'s own review, suites, QA and Merge risk checks', () => {
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, pullRequests: PULL_REQUESTS }).pullRequests, PULL_REQUESTS);
   assert.equal(parseProject({ ...EMPTY_PROJECT, pullRequests: null }).pullRequests, null, 'null: no gates of the repo\'s');
-  const none = { review: null, suites: [], qa: null, mergeRisk: null };
+  const none = { review: null, suites: [], qa: null, mergeRisk: null, autoMerge: null };
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, pullRequests: none }).pullRequests, none);
+});
+
+test('autoMerge: tiers and paths default, enabled is required, and it needs review and mergeRisk', () => {
+  const full = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests });
+  const { autoMerge, ...noAuto } = PULL_REQUESTS;
+  assert.equal(full(noAuto).pullRequests.autoMerge, null, 'left out is none');
+  assert.deepEqual(full({ ...PULL_REQUESTS, autoMerge: { enabled: false } }).pullRequests.autoMerge, { enabled: false, tiers: ['Low'], paths: [] }, 'tiers and paths default');
+  assert.throws(() => full({ ...PULL_REQUESTS, autoMerge: { tiers: ['Low'] } }), /pullRequests\.autoMerge is missing enabled/);
+  assert.throws(() => full({ ...PULL_REQUESTS, autoMerge: { enabled: true, tiers: ['Lowish'] } }), /tiers\[0\] must be one of Low, Medium, High/);
+  assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, autoMerge: { enabled: true } }), /pullRequests\.autoMerge needs pullRequests\.review/);
+  assert.throws(() => full({ ...PULL_REQUESTS, mergeRisk: null, autoMerge: { enabled: true } }), /pullRequests\.autoMerge needs pullRequests\.mergeRisk/);
 });
 
 test('a wrong pullRequests section names the field', () => {
