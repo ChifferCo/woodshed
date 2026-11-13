@@ -113,9 +113,16 @@ jobs:
 
 ## AI review on any repository
 
-Any GitHub repository can run Woodshed's code review on its pull requests, with no Woodshed installation. Add a
-workflow that calls the reusable one, an `ANTHROPIC_API_KEY` secret, and turn on "Allow GitHub Actions to create and
-approve pull requests" under Settings, Actions, General:
+Any GitHub repository can run Woodshed's code review on its pull requests, with no Woodshed installation. The quickest
+way is the setup script, which writes the workflow, sets the key and flips the one required setting:
+
+```
+scripts/enable-review.sh <owner/repo>
+```
+
+It needs the GitHub CLI signed in with the `workflow` scope and admin on the repository, and asks for your
+`ANTHROPIC_API_KEY`. To wire it by hand instead, add a workflow that calls the reusable one, an `ANTHROPIC_API_KEY`
+secret, and turn on "Allow GitHub Actions to create and approve pull requests" under Settings, Actions, General:
 
 ```yaml
 on:
