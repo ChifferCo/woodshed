@@ -1588,6 +1588,13 @@ export function createFleet({
     };
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
+    // The session runs on the author's Claude plan, so a human author is held to the same identity checks as a label
+    // trigger: a reused handle must not spend the old person's token, and only someone set up for sessions runs on
+    // their plan. A pull request a session opened carries a bot author, which has no plan, so it runs on the team key.
+    if (!login.endsWith('[bot]')) {
+      if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
+      if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
+    }
     // The review is automated, so it gates on the pull request, not on who triggered it (a session opens pull requests
     // as the App, which has no write access to name): the head must be a branch in the repo, never a fork, as the
     // Actions review requires too.
