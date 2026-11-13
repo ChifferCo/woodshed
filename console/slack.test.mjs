@@ -41,7 +41,7 @@ test('quoted text cannot become a Slack link or mention, and shows no entity', (
 test('a post goes to the channel as the bot, with the token read for that post', async () => {
   const { calls, secrets, fetchImpl } = fakes();
   const slack = createSlack({ store: storeWith('C0123456789'), secrets, fetchImpl });
-  assert.equal(await slack.postPr({ title: 'Add GTM', url: 'https://github.com/o/r/pull/7' }), true);
+  assert.deepEqual(await slack.postPr({ title: 'Add GTM', url: 'https://github.com/o/r/pull/7' }), { channel: 'C0123456789', ts: null });
   assert.deepEqual(calls.reads, [SLACK_TOKEN_SECRET]);
   assert.equal(calls.posts[0].url, 'https://slack.com/api/chat.postMessage');
   assert.equal(calls.posts[0].headers.authorization, 'Bearer xoxb-1');
@@ -51,7 +51,7 @@ test('a post goes to the channel as the bot, with the token read for that post',
 test('the decision brief is a reply in the thread of the pull request\'s post', async () => {
   const { calls, secrets, fetchImpl } = fakes({ answer: { ok: true, ts: '1730000000.000100' } });
   const slack = createSlack({ store: storeWith('C0123456789'), secrets, fetchImpl });
-  assert.equal(await slack.postPr({ title: 'Add GTM', url: 'https://github.com/o/r/pull/7', brief: '**Merge risk:** Low: docs' }), true);
+  assert.deepEqual(await slack.postPr({ title: 'Add GTM', url: 'https://github.com/o/r/pull/7', brief: '**Merge risk:** Low: docs' }), { channel: 'C0123456789', ts: '1730000000.000100' });
   assert.deepEqual(calls.posts.map((p) => p.body), [
     { channel: 'C0123456789', text: 'Add GTM - https://github.com/o/r/pull/7' },
     { channel: 'C0123456789', thread_ts: '1730000000.000100', markdown_text: '**Merge risk:** Low: docs', unfurl_links: false },
@@ -73,25 +73,72 @@ test('a brief Slack rate limits still counts the post as made, so the line is no
   const answers = [{ ok: true, ts: '1.2' }, { ok: false, error: 'ratelimited' }];
   const fetchImpl = async (url, opts) => { calls.posts.push(JSON.parse(opts.body)); return { status: 200, async json() { return answers.shift(); } }; };
   const slack = createSlack({ store: storeWith('C0123456789'), secrets: { async read() { return 'xoxb-1'; } }, fetchImpl });
-  assert.equal(await slack.postPr({ title: 't', url: 'u', brief: 'b' }), true);
+  assert.deepEqual(await slack.postPr({ title: 't', url: 'u', brief: 'b' }), { channel: 'C0123456789', ts: '1.2' });
   assert.equal(calls.posts.length, 2);
 });
 
 test('with no token yet, or a refusal, nothing is sent again: the post is given up', async () => {
   const none = fakes({ token: null });
-  assert.equal(await createSlack({ store: storeWith('C0123456789'), ...none }).postPr({ title: 't', url: 'u' }), false);
+  assert.equal(await createSlack({ store: storeWith('C0123456789'), ...none }).postPr({ title: 't', url: 'u' }), null);
   assert.equal(none.calls.posts.length, 0);
 
   const refused = fakes({ answer: { ok: false, error: 'not_in_channel' } });
-  assert.equal(await createSlack({ store: storeWith('C0123456789'), ...refused }).postPr({ title: 't', url: 'u' }), false);
+  assert.equal(await createSlack({ store: storeWith('C0123456789'), ...refused }).postPr({ title: 't', url: 'u' }), null);
 });
 
 test('without a channel there is nowhere to post', async () => {
   const { calls, secrets, fetchImpl } = fakes();
   const slack = createSlack({ store: storeWith(''), secrets, fetchImpl });
   assert.equal(slack.available, false);
-  assert.equal(await slack.postPr({ title: 't', url: 'u' }), false);
+  assert.equal(await slack.postPr({ title: 't', url: 'u' }), null);
   assert.equal(calls.reads.length + calls.posts.length, 0);
+});
+
+test('a project with its own channel posts there, a project without one posts to the console\'s, each logged once', async (t) => {
+  const logs = t.mock.method(console, 'log', () => {});
+  const { calls, secrets, fetchImpl } = fakes({ answer: { ok: true, ts: '1.2' } });
+  const store = storeWith('C0CONSOLE01');
+  const slack = createSlack({ store, secrets, fetchImpl });
+  slack.setProjectChannel({ project: 'api', channel: 'C0APIPRS01', by: 'mia-dev' });
+  assert.deepEqual(await slack.postPr({ title: 't', url: 'u', project: 'api' }), { channel: 'C0APIPRS01', ts: '1.2' });
+  assert.deepEqual(await slack.postPr({ title: 't', url: 'u', project: 'web' }), { channel: 'C0CONSOLE01', ts: '1.2' });
+  assert.deepEqual(calls.posts.map((p) => p.body.channel), ['C0APIPRS01', 'C0CONSOLE01']);
+  const chosen = logs.mock.calls.filter((c) => c.arguments[0] === 'slack: pull request channel chosen').map((c) => c.arguments[1]);
+  assert.deepEqual(chosen, [{ project: 'api', channel: 'project' }, { project: 'web', channel: 'console' }]);
+});
+
+test('a project\'s channel is a channel ID, cleared back to the console\'s, and enough to post with no console channel', async () => {
+  const { calls, secrets, fetchImpl } = fakes();
+  const store = storeWith('');
+  const slack = createSlack({ store, secrets, fetchImpl });
+  assert.throws(() => slack.setProjectChannel({ project: 'api', channel: '#acme-prs', by: 'mia-dev' }), /channel's ID/);
+  assert.equal(slack.available, false);
+  slack.setProjectChannel({ project: 'api', channel: ' C0APIPRS01 ', by: 'mia-dev' });
+  assert.deepEqual(store.state.settings.projectSlackChannels, { api: 'C0APIPRS01' });
+  assert.equal(slack.projectChannel('api'), 'C0APIPRS01');
+  assert.equal(slack.available, true, 'a project\'s own channel is somewhere to post');
+  assert.equal(await slack.postPr({ title: 't', url: 'u', project: 'web' }), null, 'a project without one has nowhere');
+  assert.equal(calls.posts.length, 0);
+  slack.setProjectChannel({ project: 'api', channel: '', by: 'mia-dev' });
+  assert.deepEqual(store.state.settings.projectSlackChannels, {});
+  assert.deepEqual(slack.channelFor('api'), { channel: '', from: 'console' });
+});
+
+test('the brief and the mention go in the post\'s thread even when the project\'s channel changes meanwhile', async () => {
+  const store = storeWith('C0CONSOLE01');
+  const posts = [];
+  let slack;
+  const fetchImpl = async (url, opts) => {
+    posts.push(JSON.parse(opts.body));
+    // The setting changes while Slack is taking the post.
+    if (posts.length === 1) slack.setProjectChannel({ project: 'api', channel: 'C0OTHER001', by: 'mia-dev' });
+    return { status: 200, async json() { return { ok: true, ts: '1.2' }; } };
+  };
+  slack = createSlack({ store, secrets: { async read() { return 'xoxb-1'; } }, fetchImpl });
+  slack.setProjectChannel({ project: 'api', channel: 'C0APIPRS01', by: 'mia-dev' });
+  const post = await slack.postPr({ title: 't', url: 'u', brief: 'b', mention: 'U01ANA00001', project: 'api' });
+  assert.deepEqual(post, { channel: 'C0APIPRS01', ts: '1.2' });
+  assert.deepEqual(posts.map((p) => [p.channel, p.thread_ts ?? null]), [['C0APIPRS01', null], ['C0APIPRS01', '1.2'], ['C0APIPRS01', '1.2']]);
 });
 
 test('the channel is a setting: set, used for the next post, and cleared to turn the posts off', async () => {

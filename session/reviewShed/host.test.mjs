@@ -5,7 +5,7 @@ import http from 'node:http';
 import { createReviewHost } from './host.mjs';
 
 // A stand-in for the shed's module: it answers what the host passes its ctx, which is the host's whole contract.
-function fakeShed({ account, created = false }) {
+function fakeShed({ account, created = false, hasAnalysis = false }) {
   const calls = [];
   const analyses = [];
   return {
@@ -14,7 +14,11 @@ function fakeShed({ account, created = false }) {
     load: async () => ({
       ghAccount: async () => account,
       ensureWorktreeReview: async () => ({ ok: true, created }),
-      startReviewAnalysis: ({ sessionName }) => { analyses.push(sessionName); },
+      startReviewAnalysisIfNone: ({ sessionName }) => {
+        if (hasAnalysis) return false;
+        analyses.push(sessionName);
+        return true;
+      },
       handleReviewRequest: async (req, res, ctx) => {
         calls.push({ url: req.url, method: req.method, repoRoot: ctx.repoRoot, worktree: ctx.worktreePathFor('claude-0a1b2c3d') });
         if (req.url.startsWith('/review?') || req.url === '/review') {
@@ -77,19 +81,27 @@ test('a session without an id answers nothing, rather than every session\'s revi
   assert.equal((await call('GET', '/shed-review/review?session=claude-0a1b2c3d')).status, 404);
 });
 
-test('a review-only session starts the analysis when its review is first taken, and a normal one does not', async (t) => {
-  const only = fakeShed({ account: 'a', created: true });
-  const callOnly = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', reviewOnly: true, load: only.load }));
-  await callOnly('GET', '/shed-review/reviews/claude-0a1b2c3d');
-  assert.deepEqual(only.analyses, ['claude-0a1b2c3d']);
+test('opening the review starts the analysis once, in any session, and only when it has none', async (t) => {
+  const fresh = fakeShed({ account: 'a', created: true });
+  const callFresh = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: fresh.load }));
+  await callFresh('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.deepEqual(fresh.analyses, ['claude-0a1b2c3d']);
+  await callFresh('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.deepEqual(fresh.analyses, ['claude-0a1b2c3d'], 'a reload, or a Discard since, is not run again');
 
-  const taken = fakeShed({ account: 'a', created: false });
-  const callTaken = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', reviewOnly: true, load: taken.load }));
+  // A review taken before, by an earlier open, still has no analysis: the first open in this container runs it.
+  const taken = fakeShed({ account: 'the-app', created: false });
+  const callTaken = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'shared', load: taken.load }));
   await callTaken('GET', '/shed-review/reviews/claude-0a1b2c3d');
-  assert.deepEqual(taken.analyses, [], 'a review that already exists is not run again by a reload');
+  assert.deepEqual(taken.analyses, ['claude-0a1b2c3d']);
 
-  const normal = fakeShed({ account: 'a', created: true });
-  const callNormal = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', reviewOnly: false, load: normal.load }));
-  await callNormal('GET', '/shed-review/reviews/claude-0a1b2c3d');
-  assert.deepEqual(normal.analyses, []);
+  const done = fakeShed({ account: 'a', created: false, hasAnalysis: true });
+  const callDone = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: done.load }));
+  await callDone('GET', '/shed-review/reviews/claude-0a1b2c3d');
+  assert.deepEqual(done.analyses, [], 'an analysis already there, or one that failed, is left as it is');
+
+  const diffOnly = fakeShed({ account: 'a', created: true });
+  const callDiff = await serve(t, createReviewHost({ repoDir: '/w', sessionId: '0a1b2c3d', sessionKind: 'private', load: diffOnly.load }));
+  await callDiff('GET', '/shed-review/reviews/claude-0a1b2c3d/diff');
+  assert.deepEqual(diffOnly.analyses, [], 'only the page\'s status read is an opening');
 });

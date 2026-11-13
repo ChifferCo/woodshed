@@ -1,10 +1,10 @@
-// Woodshed Cloud's one way in from the internet. GitHub posts its webhooks to
+// Woodshed's one way in from the internet. GitHub posts its webhooks to
 // this function's URL; it checks the signature, keeps only the events the
 // console acts on, and queues a small message the console long-polls for. The
 // console itself never takes an inbound connection.
 //
-//   POST /github   GitHub webhooks, signed with the woodshed-cloud/github-webhook-secret value
-//   POST /slack    Slack's Events API, signed with the woodshed-cloud/slack-signing-secret value: a mention of
+//   POST /github   GitHub webhooks, signed with the <name_prefix>/github-webhook-secret value
+//   POST /slack    Slack's Events API, signed with the <name_prefix>/slack-signing-secret value: a mention of
 //                  the bot, which asks a question (the console's asks.mjs)
 //   anything else  404
 //

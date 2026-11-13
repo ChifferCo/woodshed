@@ -1,0 +1,2 @@
+# Each .yaml is read byte for byte: CRLF and a byte order mark are cases of their own.
+* -text

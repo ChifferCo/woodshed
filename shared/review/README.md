@@ -424,14 +424,32 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   `clamp()` after the fact, where overrunning is free. There is a regression
   test.
 
-- **`architecture` and `decisions` are required fields, and there are
+- **`decisions` and `architecture` are required fields, and there are
   deliberately no more.** Left optional, models simply omit them, exactly as
-  they omitted `role`. An empty decisions list is legal; a missing one is
-  not. A glossary, a problem statement, a what-to-check list and a tests list
-  were each added as sections and cut again — every one read well on its own
-  and together they made the page longer than the diff it introduces. If a
-  new section is proposed, that is the bar: it has to earn its place over
-  the four that are there.
+  they omitted `role`. An empty decisions list is legal; a missing one is not.
+  `diagram` is optional on purpose: the prompt asks for it only when the change
+  rewires how pieces connect, and `reconcileArtifact` drops one in which
+  nothing was added, removed or changed, so most reviews show no drawing. The decisions are what a reviewer has to agree
+  with before approving, each with the changed files that carry it, under the
+  overview; a path not in the diff is dropped by `reconcileArtifact`. They are
+  written as statements: questions for the reviewer were a section of their own
+  and were folded in, since each repeated a decision as a question. An analysis
+  written before that still has `questions`, and the page lists them after the
+  decisions. A glossary, a problem statement, a what-to-check list and
+  a tests list were each added as sections and cut again — every one read well
+  on its own and together they made the page longer than the diff it
+  introduces. If a new section is proposed, that is the bar: it has to earn its
+  place over the ones that are there.
+
+- **The diagram is one graph, drawn twice.** Each node and edge says whether the
+  change added, removed, changed or kept it; the page draws the before from
+  everything not added and the after from everything not removed, with one
+  layout of the whole graph (`diagram.mjs`, inlined into the page like
+  `askState.mjs`), so a piece sits in the same place on both sides.
+  `reconcileArtifact` makes the marks agree: an edge to an added node is added,
+  one from a removed node is removed, one between the two is dropped. The model
+  never writes SVG: the page draws boxes and curves from ids and labels, as
+  text.
 
 - **`reconcileArtifact` guarantees every file in the diff renders exactly
   once**, whatever the model returns. `page.mjs` guards it a second time.
@@ -505,12 +523,12 @@ across its whole range at boot, so sharing a range kills the live service's
 terminals. But note that its worktrees still land in the **real** repo, because
 that is the thing under test.
 
-## A second host: Woodshed Cloud
+## A second host: Woodshed sessions
 
-`index.mjs` and `page.mjs` also run inside Woodshed Cloud sessions
+`index.mjs` and `page.mjs` also run inside Woodshed sessions
 (`woodshed/session/reviewShed/`), which supplies the `ctx` this
 file's header describes and calls `ensureWorktreeReview` to open the page on a
-session's own checkout without the launcher. Cloud's session image ships every
-file this module imports from an allow-list, and a Cloud test fails when a new
+session's own checkout without the launcher. The session image ships every
+file this module imports from an allow-list, and a session test fails when a new
 import is missing from it: when you add one, add it to
 `woodshed/session/Dockerfile` and `Dockerfile.dockerignore`.

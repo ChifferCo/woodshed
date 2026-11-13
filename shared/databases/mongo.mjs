@@ -12,7 +12,7 @@ export const MONGO_READY = '_woodshed_template_ready';
 const NAMESPACE_NOT_FOUND = 26;
 
 function uri({ host, user, password, name }) {
-  // The passwords Woodshed Cloud makes are hex, so nothing in the URI needs escaping; anyone else's is escaped.
+  // The passwords Woodshed makes are hex, so nothing in the URI needs escaping; anyone else's is escaped.
   return `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}/${name}?authSource=${name}`;
 }
 

@@ -15,6 +15,10 @@
   --bar-well: #12161f; --bar-well-line: #333a48; --bar-hover: #1b2130; --bar-on: #262b36; --bar-green: #57c785;
   --bar-slate: #9fb2dd; --bar-amber: #f0b45f; --bar-amber-line: #6b4a17; --bar-amber-well: #2c2013; --bar-off: #4a5162;
   --add: #1a7f4b; --add-tint: #e9f6ee; --del: #b3261e; --del-tint: #fcebea; --hunk-tint: #f2f4f9;
+  /* A project's colour, for its cards' edge and its filter chip on the rail: identity, never a status. */
+  --proj-teal: #1b7485; --proj-teal-tint: #e5f3f6; --proj-plum: #8b4f8f; --proj-plum-tint: #f6ecf6;
+  --proj-sienna: #8f5a3c; --proj-sienna-tint: #f7eee8; --proj-rose: #b0446a; --proj-rose-tint: #fbebf1;
+  --proj-violet: #6652c2; --proj-violet-tint: #efecfb; --proj-moss: #57711f; --proj-moss-tint: #f0f5e4;
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 /* Dark follows the device unless the settings sheet picked light; a picked dark wins anywhere. */
@@ -26,6 +30,9 @@
     --needs: #f59433; --bad: #f97066; --green: #7fc9a3; --idle-dot: #5a6070; --idle-ink: #9aa3b5; --chip-count: #232a38;
     --add: #57c785; --add-tint: #132a1f; --del: #f08b81; --del-tint: #2e1716; --hunk-tint: #1a2133;
     --action: #f59433; --action-ink: #1b1204; --wait: #e6c04a; --private: #47516b; --private-ink: #f2f4f9;
+    --proj-teal: #5ec4dc; --proj-teal-tint: #122a30; --proj-plum: #d39bd6; --proj-plum-tint: #2a1a2b;
+    --proj-sienna: #cda48f; --proj-sienna-tint: #2b1d16; --proj-rose: #ec8fb0; --proj-rose-tint: #2e1620;
+    --proj-violet: #ab9cf0; --proj-violet-tint: #1f1a36; --proj-moss: #b3cf6f; --proj-moss-tint: #1f2711;
   }
 }
 :root[data-theme="dark"] {
@@ -36,6 +43,9 @@
   --needs: #f59433; --bad: #f97066; --green: #7fc9a3; --idle-dot: #5a6070; --idle-ink: #9aa3b5; --chip-count: #232a38;
   --add: #57c785; --add-tint: #132a1f; --del: #f08b81; --del-tint: #2e1716; --hunk-tint: #1a2133;
   --action: #f59433; --action-ink: #1b1204; --wait: #e6c04a; --private: #47516b; --private-ink: #f2f4f9;
+  --proj-teal: #5ec4dc; --proj-teal-tint: #122a30; --proj-plum: #d39bd6; --proj-plum-tint: #2a1a2b;
+  --proj-sienna: #cda48f; --proj-sienna-tint: #2b1d16; --proj-rose: #ec8fb0; --proj-rose-tint: #2e1620;
+  --proj-violet: #ab9cf0; --proj-violet-tint: #1f1a36; --proj-moss: #b3cf6f; --proj-moss-tint: #1f2711;
 }
 :root[data-theme="light"] { color-scheme: light; }
 [hidden] { display: none !important; }
@@ -173,6 +183,22 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .rcard.is-stopped { padding: 6px 9px 6px 10px; }
 .rcard.is-stopped .rname { font-size: 12px; font-weight: 500; }
 .rcard.is-stopped .rsub { min-height: 0; }
+/* A project's colour, on a console with more than one: its cards' left edge, through hover and the open session's
+   outline, and its chip in the filter above the list. The name is in the card's tooltip and the chip. */
+.proj-teal { --project: var(--proj-teal); --project-tint: var(--proj-teal-tint); }
+.proj-plum { --project: var(--proj-plum); --project-tint: var(--proj-plum-tint); }
+.proj-sienna { --project: var(--proj-sienna); --project-tint: var(--proj-sienna-tint); }
+.proj-rose { --project: var(--proj-rose); --project-tint: var(--proj-rose-tint); }
+.proj-violet { --project: var(--proj-violet); --project-tint: var(--proj-violet-tint); }
+.proj-moss { --project: var(--proj-moss); --project-tint: var(--proj-moss-tint); }
+.rcard.has-project, .rcard.has-project:hover, .rcard.has-project[aria-current="true"] { border-left: 3px solid var(--project, var(--line)); padding-left: 8px; }
+.rail-projects { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--line-soft); }
+.proj-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--ground); color: var(--sub); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.proj-chip:hover { color: var(--ink); }
+.proj-chip .proj-swatch { width: 8px; height: 8px; border-radius: 50%; background: var(--project, var(--idle-dot)); flex: none; }
+.proj-chip .n { font-family: var(--mono); font-size: 10.5px; font-weight: 500; color: var(--meta); }
+.proj-chip[aria-pressed="true"] { border-color: var(--ink); background: var(--project-tint, var(--chip-count)); color: var(--ink); }
+.proj-chip[aria-pressed="true"] .n { color: var(--sub); }
 /* The app's button, on the rail, the header and the Shared page. */
 .btn-sm { min-height: 24px; padding: 0 8px; font-size: 11.5px; font-family: inherit; }
 .rsub .btn { flex: none; font-family: "Red Hat Display", system-ui, sans-serif; }
@@ -474,7 +500,7 @@ dialog.wizard:focus { outline: none; }
   .pphone-meta > * { flex: none; }
   .pane-bar .pmore { display: grid; place-items: center; order: 2; flex: none; width: 38px; height: 34px; margin: 0; padding: 0; font: inherit; font-size: 17px; letter-spacing: 1px; color: var(--bar-ink); background: none; border: 1px solid var(--bar-well-line); border-radius: 6px; cursor: pointer; }
   .pane-bar .pmore[aria-expanded="true"] { background: var(--bar-on); }
-  .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-template-columns: repeat(4, 1fr); }
+  .pane-bar .ptabs { order: 3; flex: 1 1 100%; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); }
   .pane-bar .ptab { justify-content: center; padding: 6px 0; font-size: 13px; }
   .pane-bar > .ptitle, .pane-bar > .status, .pane-bar > .prchip, .pane-bar .pright, .pane-bar .pkeys,
   .pane-bar .pref, .pane-bar .pmark, .pane-bar .pbtn { display: none; }
@@ -562,6 +588,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 /* The Project select, with Make my default beside it when the pick is not the person's default. */
 .project-pick { display: flex; gap: 8px; align-items: center; }
 .project-pick select { flex: 1; min-width: 0; }
+.project-only { padding: 6px 0; overflow-wrap: anywhere; }
 .lgrid2, .lgrid3, .lgrid4 { display: grid; gap: 12px; }
 .loptions > summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; cursor: pointer; list-style: none; }
 .loptions > summary::-webkit-details-marker { display: none; }
@@ -574,6 +601,10 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .lgrid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lgrid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .launch-actions, .set-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.btn-keys { display: inline-flex; margin-left: 8px; }
+.btn-keys kbd { border-color: currentColor; background: transparent; color: inherit; opacity: 0.75; }
+.btn-keys kbd:last-child { margin-right: 0; }
+@media (hover: none) { .btn-keys { display: none; } }
 .launch-card, .set-card { border: 1px solid var(--line); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
 .launch-card h3 { margin: 0; font-size: 15px; }
 .set-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; }
@@ -595,21 +626,25 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 
 .is-pulls-zone { background: var(--slate-tint); }
 .is-pulls-zone.is-folded { background: var(--ground); }
-/* A pull request row, after the shed's: number and title, its checks and age, then a session for it and GitHub. */
-.prow { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 6px; background: var(--ground); border: 1px solid var(--line); color: var(--ink); min-width: 0; }
-.prow-top { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.prow-num { font-family: var(--mono); font-size: 12px; color: var(--meta); flex: none; }
+/* A pull request row, after the shed's: its title and checks' dot, then the repo and number, its checks and age, with a
+   session for it and GitHub at the end. With more than one project, its project's edge, as a session card has. */
+.prow { display: flex; flex-direction: column; gap: 3px; padding: 7px 9px 6px 10px; border-radius: 7px; background: var(--ground); border: 1px solid var(--line); color: var(--ink); min-width: 0; }
+.prow.has-project { border-left: 3px solid var(--project, var(--line)); padding-left: 8px; }
+.prow-top { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.prow-num { color: var(--meta); }
+.prow-repo { color: var(--sub); font-weight: 600; }
 .prow-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.prow-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; align-self: center; background: var(--idle-dot); }
+.prow-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--idle-dot); }
 .prow-dot.is-pass { background: var(--green); }
 .prow-dot.is-pending { background: var(--amber); }
 .prow-dot.is-fail { background: var(--bad); }
-.prow-sub { font-family: var(--mono); font-size: 11px; color: var(--meta); }
+.prow-sub { display: flex; align-items: center; gap: 6px; min-height: 24px; font-family: var(--mono); font-size: 10.5px; color: var(--meta); }
+.prow-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow-sub .btn { flex: none; font-family: "Red Hat Display", system-ui, sans-serif; }
 .prow-checks.is-pass { color: var(--green); }
 .prow-checks.is-pending { color: var(--amber-ink); }
 .prow-checks.is-fail { color: var(--bad); }
-.prow-actions { display: flex; align-items: center; gap: 10px; margin-top: 2px; }
-.prow-gh { font-size: 12.5px; color: var(--slate); text-decoration: none; }
+.prow-gh { flex: none; padding: 0 2px; font-family: "Red Hat Display", system-ui, sans-serif; font-size: 13px; color: var(--slate); text-decoration: none; }
 .prow-gh:hover { text-decoration: underline; }
 .prow-group { padding: 4px 2px 0; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .set-card.is-danger { border-color: var(--bad); }
@@ -646,6 +681,11 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .restore-done { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--stopped); }
 .restore-done .start-mark { width: 20px; height: 20px; background: var(--green); color: var(--ground); font-size: 12px; }
 .restore-done .sub { margin: 4px 0 0; }
+.cmd-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; color: var(--ink); font-size: 14px; }
+.cmd-steps li::marker { color: var(--meta); font-weight: 600; }
+.cmd-steps p { margin: 0; }
+.cmd-steps .value-box, .cmd-aside .value-box { flex: 0 1 auto; white-space: pre; overflow-x: auto; }
+.cmd-aside { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .restore-cmd { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .restore-cmd-title { margin: 0; font-size: 12.5px; color: var(--meta); }
 .restore-cmd .value-box { white-space: pre; overflow-x: auto; }
@@ -674,12 +714,13 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .set-value { display: flex; align-items: center; gap: 8px; }
 .set-value .field { width: 84px; text-align: right; font-family: var(--mono); }
 .set-value .field.is-text { width: 150px; text-align: left; }
+.set-value .field.is-repo { width: 240px; text-align: left; }
 .set-value .unit { font-size: 13px; color: var(--sub); min-width: 42px; }
 .set-row.is-changed .field { border-color: var(--amber); background: var(--amber-tint); }
 .set-row.is-changed .set-bounds::after { content: " · changed"; color: var(--amber-ink); }
 .set-row.is-bad .field { border-color: var(--bad); }
 .set-row .form-error { grid-column: 1 / -1; margin: 0; font-size: 12.5px; color: var(--bad); }
-@media (max-width: 560px) { .set-row { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .set-row { grid-template-columns: 1fr; } .set-value { flex-wrap: wrap; } .set-value .field.is-repo { width: 100%; } }
 .card-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
 .card-foot .sub { font-size: 12.5px; }
 .cap-note { margin: 0; font-size: 12.5px; color: var(--sub); padding: 9px 11px; border-radius: 6px; background: var(--slate-tint); }
@@ -700,8 +741,26 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
 .data-meta > * + *::before { content: "·"; margin-right: 8px; opacity: 0.7; }
 .data-why { margin-top: 4px; font-size: 12.5px; color: var(--needs); }
 .data-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+/* A repo's colour on Console settings: one radio per palette colour, those another repo has disabled. */
+.proj-colors { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 8px; }
+.proj-swatches { display: flex; gap: 6px; margin: 0; padding: 0; border: 0; }
+.proj-pick { position: relative; width: 24px; height: 24px; }
+.proj-pick input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.proj-pick span { display: block; width: 100%; height: 100%; border-radius: 50%; background: var(--project); border: 2px solid var(--ground); box-shadow: 0 0 0 1px var(--line); }
+.proj-pick input:checked + span { box-shadow: 0 0 0 2px var(--ink); }
+.proj-pick input:focus-visible + span { outline: 2px solid var(--amber); outline-offset: 2px; }
+.proj-pick input:disabled { cursor: not-allowed; }
+.proj-pick input:disabled + span { opacity: 0.25; }
+.proj-colors .proj-name { font-family: var(--mono); font-size: 11px; color: var(--sub); }
 .sub-head { display: flex; align-items: baseline; gap: 8px; font-size: 13px; font-weight: 600; margin-top: 4px; }
 .empty-ok { margin: 0; font-size: 13px; color: var(--green); }
+.update-commits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow-y: auto; font-size: 13px; }
+.update-commits li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: baseline; }
+.update-commits .sha { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--slate); }
+.update-commits .what { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.update-commits .when { font-family: var(--mono); font-size: 11px; color: var(--meta); white-space: nowrap; }
+.update-cmd { margin: 0; padding: 8px 10px; border-radius: 6px; background: var(--stopped); font-family: var(--mono); font-size: 11.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .update-commits li { grid-template-columns: auto minmax(0, 1fr); } .update-commits .when { grid-column: 2; } .update-commits .what { white-space: normal; } }
 @media (max-width: 560px) { .data-row { grid-template-columns: 1fr; } .data-actions { justify-content: flex-start; } }
 
 /* ---- rail: pin and the hints at its foot ---- */
@@ -748,6 +807,10 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   .zone-cards { gap: 0; }
   .rcard, .rcard.is-stopped { gap: 3px; padding: 10px 6px 10px 14px; border: 0; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: var(--ground); }
   .rcard[aria-current="true"] { box-shadow: inset 3px 0 0 var(--amber); }
+  .rcard.has-project, .rcard.has-project.is-stopped, .rcard.has-project:hover { border-left: 3px solid var(--project, var(--line-soft)); padding-left: 11px; }
+  .rail-projects { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .proj-chip { flex: none; min-height: 32px; padding: 0 12px; font-size: 13px; }
+  .proj-chip .n { font-size: 11px; }
   .rname, .rcard.is-stopped .rname { font-size: 14.5px; font-weight: 600; }
   .rsub { font-size: 12px; padding-left: 15px; }
   .favstar, .rmenu { width: 34px; height: 34px; border-radius: 8px; }
@@ -769,9 +832,6 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   .card-menu-item { padding: 11px 10px; }
   .card-menu-item b { font-size: 15px; }
   .card-menu-item span { font-size: 12.5px; }
-
-  /* The session's bar: the four tabs across the whole width. */
-  .pane-bar .ptabs { grid-template-columns: repeat(4, 1fr); }
 
   /* / is the list; New session is a screen of its own, /?new=1, with a way back. */
   .shell.is-launcher:not(.is-new) .launch { display: none; }
@@ -805,6 +865,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .sheet-body { padding: 10px 16px 14px; overflow-y: auto; }
 .krow { display: grid; grid-template-columns: 11rem 1fr; gap: 12px; align-items: center; padding: 5px 0; font-size: 13px; }
 .kkeys { text-align: right; }
+.kwhere { color: var(--sub); }
 .sheet-note { margin: 10px 0 0; color: var(--sub); font-size: 11.5px; }
 .kor { margin: 0 6px 0 2px; color: var(--meta); font-size: 11px; }
 .menu-kbd { margin: 0 0 0 auto; color: var(--sub); }
@@ -843,6 +904,9 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .prompt-wrap.is-dragover .field { border-color: var(--amber); background: var(--amber-tint); }
 .attach-row { display: flex; align-items: center; gap: 10px; }
 .attach-row .hint.is-error { color: var(--bad); }
+/* Dictate's line while it listens (launcher.js): a word, no motion; the words still settling in mono. */
+.dictate-line { margin: 6px 0 0; color: var(--sub); font-size: 12.5px; }
+.dictate-heard { color: var(--meta); font-family: var(--mono); font-size: 12px; }
 .attach-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .attach-chips:empty { display: none; }
 .attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; padding: 3px 4px 3px 3px; border: 1px solid var(--line); border-radius: 6px; font-size: 12px; }
@@ -859,7 +923,7 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 
 /* ---- session info: the pull request's chip, the container's usage, the app log ---- */
 .prchip { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 5px; border: 1px solid #a8ddc0; border-radius: 4px; background: #e8f6ee; color: #1a7f4b; font: 600 10.5px/1.6 var(--mono); text-decoration: none; white-space: nowrap; }
-.prchip.is-draft { border-color: #d8d3ca; background: #f1f0ed; color: #6e7681; }
+.prchip.is-draft, .prchip.is-more { border-color: #d8d3ca; background: #f1f0ed; color: #6e7681; }
 .prchip.is-merged { border-color: #cdb8f0; background: #f2ecfd; color: #7a4fc0; }
 .prchip.is-closed { border-color: #f0bdb8; background: #fbeceb; color: #b3261e; }
 .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
@@ -871,7 +935,7 @@ a.prchip:hover { border-color: currentColor; }
 .pane-bar .prchip { border-color: var(--bar-well-line); background: var(--bar-well); color: var(--bar-green); }
 .pane-bar .prchip.is-merged { color: #b190f5; }
 .pane-bar .prchip.is-closed { color: #f08b81; }
-.pane-bar .prchip.is-draft { color: var(--bar-sub); }
+.pane-bar .prchip.is-draft, .pane-bar .prchip.is-more { color: var(--bar-sub); }
 .pane-bar .prchip.is-queued { color: #e6c04a; }
 .usage { font: 10.5px var(--mono); color: var(--meta); white-space: nowrap; }
 .usage.is-warn { color: var(--needs); }
@@ -909,13 +973,13 @@ a.prchip:hover { border-color: currentColor; }
 .prow.is-busy { opacity: 0.6; pointer-events: none; }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .prchip { border-color: #1f4d36; background: #132a1f; color: #57c785; }
-  :root:not([data-theme="light"]) .prchip.is-draft { border-color: #3a4152; background: #21252e; color: #8a93a8; }
+  :root:not([data-theme="light"]) .prchip.is-draft, :root:not([data-theme="light"]) .prchip.is-more { border-color: #3a4152; background: #21252e; color: #8a93a8; }
   :root:not([data-theme="light"]) .prchip.is-merged { border-color: #4a3878; background: #241b3a; color: #b190f5; }
   :root:not([data-theme="light"]) .prchip.is-closed { border-color: #6b2b26; background: #2d1614; color: #f08b81; }
   :root:not([data-theme="light"]) .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
 }
 :root[data-theme="dark"] .prchip { border-color: #1f4d36; background: #132a1f; color: #57c785; }
-:root[data-theme="dark"] .prchip.is-draft { border-color: #3a4152; background: #21252e; color: #8a93a8; }
+:root[data-theme="dark"] .prchip.is-draft, :root[data-theme="dark"] .prchip.is-more { border-color: #3a4152; background: #21252e; color: #8a93a8; }
 :root[data-theme="dark"] .prchip.is-merged { border-color: #4a3878; background: #241b3a; color: #b190f5; }
 :root[data-theme="dark"] .prchip.is-closed { border-color: #6b2b26; background: #2d1614; color: #f08b81; }
 :root[data-theme="dark"] .prchip.is-queued { border-color: var(--wait); background: color-mix(in srgb, var(--wait) 12%, transparent); color: var(--wait); }
@@ -963,6 +1027,7 @@ a.prchip:hover { border-color: currentColor; }
 .setup-label { flex: 1; min-width: 0; font-weight: 600; }
 .setup-label small { display: block; font-weight: 400; font-size: 11.5px; color: var(--sub); }
 .setup-card.is-compact .setup-label small { display: none; }
+.setup-choices { flex: none; display: flex; gap: 6px; }
 .setup-card.is-nudged { animation: setup-nudge 0.9s ease-out; }
 @keyframes setup-nudge { 0%, 60% { box-shadow: 0 0 0 3px var(--amber); } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .setup-card.is-nudged { animation: none; } }

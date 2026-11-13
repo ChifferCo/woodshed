@@ -154,6 +154,8 @@ test('a Codex sign-in is an API key or a codex auth.json, kept under the person\
 test('a Codex sign-in is checked, and the error never repeats it', () => {
   assert.equal(checkCodexAuth(' sk-proj-abc '), 'sk-proj-abc');
   assert.equal(checkCodexAuth('{"OPENAI_API_KEY":"sk-x"}'), '{"OPENAI_API_KEY":"sk-x"}');
+  assert.equal(checkCodexAuth('{"OPENAI_API_KEY":"sk-x"}%'), '{"OPENAI_API_KEY":"sk-x"}', 'zsh\'s no-newline mark, copied with the file');
+  assert.equal(checkCodexAuth('{\n  "tokens": {"refresh_token": "r"}\n}%\n'), '{"tokens":{"refresh_token":"r"}}');
   for (const bad of ['', 'hunter2 hunter3', '{"nothing":1}', '[1]', 'sk-a b']) {
     assert.throws(() => checkCodexAuth(bad), (err) => err.shown && !err.message.includes('hunter'), bad);
   }
@@ -226,4 +228,37 @@ test('with no token saved, page loads inside the minute ask the store once', asy
   assert.equal(reads, 2, 'one refresh in the first minute, its claude-token and codex-auth reads');
   await settings.refresh('mia-dev');
   assert.equal(reads, 4, 'and one more once the minute is up');
+});
+
+test('a person\'s own whole files are one secret of theirs, kept by path, and an env file\'s path is refused', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: {}, save() {} };
+  let clock = Date.parse('2026-11-11T10:00:00Z');
+  const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, now: () => clock });
+
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), {}, 'none yet');
+  assert.deepEqual(await settings.saveOwnFile('Octocat', ' app/.env.production ', 'NOTION_TOKEN=a\r\n'), { 'app/.env.production': 'NOTION_TOKEN=a\n' });
+  clock += 60_000;
+  await settings.saveOwnFile('octocat', '.mcp.local.json', '{}');
+  assert.deepEqual(JSON.parse(secrets.values.get('users/octocat/own-files')), { 'app/.env.production': 'NOTION_TOKEN=a\n', '.mcp.local.json': '{}' });
+  assert.deepEqual(settings.view('octocat').ownFiles, [
+    { path: '.mcp.local.json', savedAt: '2026-11-11T10:01:00.000Z' },
+    { path: 'app/.env.production', savedAt: '2026-11-11T10:00:00.000Z' },
+  ], 'a save keeps the others\' times');
+  assert.equal(JSON.stringify(store.state).includes('NOTION_TOKEN'), false, 'state.json never holds the text');
+  assert.deepEqual(await settings.ownWholeFiles('mia-dev'), {}, 'nobody else\'s');
+
+  for (const [file, message] of [['/etc/passwd', /leading/], ['../x', /\.\./], ['.git/config', /git's own/], ['a b', /letters/], ['api/.env', /env files/]]) {
+    await assert.rejects(settings.saveOwnFile('octocat', file, 'x'), (err) => err.shown && message.test(err.message), file);
+  }
+  await assert.rejects(settings.saveOwnFile('octocat', 'big', 'x'.repeat(70_000)), /64 KB/);
+
+  await settings.saveOwnFile('octocat', 'app/.env.production', '  ');
+  await settings.saveOwnFile('octocat', '.mcp.local.json', '');
+  assert.equal(secrets.values.has('users/octocat/own-files'), false, 'the last one removed takes the secret with it');
+  assert.deepEqual(settings.view('octocat').ownFiles, []);
+
+  await settings.saveOwnFile('octocat', 'a/.env', 'X=1');
+  await settings.removeAll('octocat');
+  assert.equal(secrets.values.size, 0, 'Remove My Woodshed deletes them too');
 });

@@ -6,10 +6,10 @@
 //
 //   node woodshed/providers/aws/bin/askInImage.mjs <image> [question]
 //
-// Needs Docker, the image (the installation's ECR `woodshed-cloud-session` repository, from Terraform's
+// Needs Docker, the image (the installation's ECR `<name_prefix>-session` repository, from Terraform's
 // `ecr_repositories` output, with `:latest`, after `aws ecr get-login-password | docker login`; or a tag built
 // locally), `gh auth token` for a GitHub token, and ANTHROPIC_API_KEY in the environment. Nothing
-// reaches Slack. WOODSHED_CLOUD_INSTALL_SECRETS, as the console's (`secret=VARIABLE` pairs, from its compose.yml), adds
+// reaches Slack. WOODSHED_INSTALL_SECRET_PAIRS, as the console's (`secret=VARIABLE` pairs, from its compose.yml), adds
 // the installation's install secrets to the task definition's, with dummy values; without it there are none.
 
 import http from 'node:http';
@@ -23,6 +23,7 @@ import { sessionOverrides } from '../ecsLauncher.mjs';
 import { createFleet } from '../../../console/fleet.mjs';
 import { createSessionApi } from '../../../console/sessionApi.mjs';
 import { installSecrets } from '../../../console/config.mjs';
+import { envValue } from '../../../shared/envNames.mjs';
 import { loadProject } from '../../../shared/project.mjs';
 import { leakPattern, taskDefinitionEnv } from './askInImageEnv.mjs';
 
@@ -61,7 +62,7 @@ async function askEnv() {
   };
   // As in AWS: no GH_TOKEN and no Anthropic key for sessions.
   const config = {
-    repo: process.env.WOODSHED_CLOUD_REPO || 'example-org/example-repo', label: 'woodshed', publicUrl: 'https://woodshed.example', maxRunning: 5,
+    repo: envValue(process.env, 'REPO') || 'example-org/example-repo', label: 'woodshed', publicUrl: 'https://woodshed.example', maxRunning: 5,
     limits: { idleMs: 3_600_000, lifetimeMs: 3_600_000, startTimeoutMs: 900_000 },
     sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
   };

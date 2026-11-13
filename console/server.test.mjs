@@ -5,6 +5,7 @@ import http from 'node:http';
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
 import { createAddedProjects } from './addedProjects.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
+import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
 import { createHandler } from './server.mjs';
 import { createSlack } from './slack.mjs';
@@ -409,10 +410,11 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   for (const page of ['/people', '/secrets', '/events', '/console-settings', '/settings']) {
     assert.equal((await getWith(port, page, { ...sam, accept: 'text/html' })).status, 200, `${page} loads, and says what its calls answer`);
   }
-  const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings'];
+  const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings', '/api/console-settings/updates'];
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
-    '/api/console-settings', '/api/console-settings/clean', '/api/people/invite'];
+    '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/people/invite',
+    '/api/console-settings/updates/check', '/api/console-settings/updates/update'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -625,10 +627,11 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
     // Whose page it is, so the rail draws from what it kept only for the same person.
     assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
     // The same scripts on each, since session.js moves between them in place.
-    assert.deepEqual(scripts.slice(-6), ['terminal.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'], `${page} is the shell`);
+    assert.deepEqual(scripts.slice(-7), ['terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'], `${page} is the shell`);
   }
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
+  assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
 
   // The version a page names is kept by the browser; any other is asked for again, so a deploy is never stale.
   const named = /href="(\/static\/style\.css\?v=[0-9a-f]{12})"/.exec(await getBody(port, '/', as('octocat')))[1];
@@ -639,7 +642,7 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.equal(await request(port, { path: '/static/sessions.js', headers: { host: `localhost:${port}`, ...as('octocat') } }), 404, 'the old page is gone');
 
   const manifest = JSON.parse(await getBody(port, '/manifest.webmanifest', {}));
-  assert.equal(manifest.name, 'Woodshed Cloud');
+  assert.equal(manifest.name, 'Woodshed');
   assert.equal(await request(port, { path: '/icon-192.png', headers: { host: `localhost:${port}` } }), 200, 'icons before sign-in');
 });
 
@@ -691,6 +694,40 @@ test('My Woodshed writes act for the signed-in login, and need a saved Claude to
   assert.equal(started[0].owner, 'mia-dev', 'the body cannot say whose it is');
   assert.equal(started[0].background, true, 'the page does not wait for the container');
   assert.equal((await post(port, '/api/my/claude-token/remove', {}, as)).body.claudeToken.set, false);
+});
+
+test('New session offers only the agents set up to run, and a Codex start needs a sign-in or the team key', async (t) => {
+  const fleet = {
+    sessions: () => [], find: () => null,
+    startPrivate: async (args) => ({ id: '0a1b2c3d', owner: args.owner, token: 'secret', status: 'queued' }),
+  };
+  const claude = new Set(['mia-dev']);
+  const codex = new Set();
+  const userSettings = {
+    view: (login) => ({ claudeToken: { set: claude.has(login), savedAt: null }, codexAuth: { set: codex.has(login), savedAt: null }, setUp: true, available: true }),
+    setCodexAuth: async (login) => { codex.add(login); },
+  };
+  let teamKey = null;
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet, auth, userSettings, openaiTeamKey: async () => teamKey });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const agents = async () => JSON.parse(await getBody(port, '/api/my', as)).agents;
+
+  assert.deepEqual(await agents(), { claude: true, codex: false }, 'no Codex sign-in and no team key');
+  assert.deepEqual(await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as),
+    { status: 409, body: { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' } });
+  teamKey = 'sk-team';
+  assert.deepEqual(await agents(), { claude: true, codex: true }, 'the team key runs Codex');
+  assert.equal((await post(port, '/api/my/sessions', { prompt: 'go', agent: 'codex' }, as)).status, 201);
+  teamKey = null;
+  await post(port, '/api/my/codex-auth', { value: 'sk-own' }, as);
+  assert.deepEqual(await agents(), { claude: true, codex: true }, 'their own sign-in runs Codex');
+  claude.delete('mia-dev');
+  assert.deepEqual(await agents(), { claude: false, codex: true }, 'no Claude token, no Claude');
 });
 
 test('the first Claude token starts your own databases, and New session waits for them', async (t) => {
@@ -882,7 +919,7 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
     'Forget takes every session\'s copy too, so no Resume brings it back, and the owner\'s last, so a failure leaves its size on the page true');
 
   const pulls = async () => (await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: as })).json()).pulls;
-  assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours' }]);
+  assert.deepEqual(await pulls(), [{ number: 7, title: "mia-dev's PR", why: 'yours', project: 'r', repo: 'o/r' }]);
   await pulls();
   assert.equal(asked, 1, 'kept for a minute');
 });
@@ -910,6 +947,46 @@ test('a person\'s files are read and written for the signed-in login only', asyn
   assert.equal((await post(port, '/api/my/files/tmux-conf', { text: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
   assert.deepEqual(calls.filter((c) => c[0] !== 'file'), [['save', 'mia-dev', 'api-env', 'A=1'], ['reset', 'mia-dev', 'tmux-conf']]);
   assert.ok(calls.every((c) => c[1] === 'mia-dev'));
+});
+
+test('a person\'s own whole files are read and saved for the signed-in login only, and a refused path says why', async (t) => {
+  const calls = [];
+  let failRead = false;
+  const userSettings = {
+    view: (login) => ({ claudeToken: { set: false }, files: {}, ownFiles: [{ path: 'app/.env.production', savedAt: 'x' }], setUp: true, available: true, login }),
+    ownWholeFiles: async (login) => {
+      calls.push(['read', login]);
+      if (failRead) throw new Error('AccessDeniedException');
+      return { 'app/.env.production': `A=${login}` };
+    },
+    saveOwnFile: async (login, file, text) => {
+      calls.push(['save', login, file, text]);
+      if (file.includes('..')) throw Object.assign(new Error('a path cannot have . or .. in it'), { shown: true });
+      return { [file]: text };
+    },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as })).json(), { files: { 'app/.env.production': 'A=mia-dev' } });
+  const saved = await post(port, '/api/my/own-files', { path: 'app/.env.production', text: 'B=1', login: 'octocat' }, as);
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.files, { 'app/.env.production': 'B=1' });
+  assert.equal(saved.body.view.ownFiles[0].path, 'app/.env.production', 'the page gets its new view with the answer');
+  const refused = await post(port, '/api/my/own-files', { path: '../x', text: 'x' }, as);
+  assert.equal(refused.status, 409);
+  assert.equal(refused.body.error, 'a path cannot have . or .. in it');
+  assert.equal((await post(port, '/api/my/own-files', { path: 'a', text: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
+  assert.ok(calls.every((c) => c[1] === 'mia-dev'), 'never the login a body names');
+  failRead = true;
+  const failed = await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as });
+  assert.equal(failed.status, 502);
+  assert.equal(JSON.stringify(await failed.json()).includes('AccessDenied'), false, 'the store\'s error stays in the log');
 });
 
 test('Connect GitHub starts a sign-in that keeps its token, and the git identity is the signed-in person\'s', async (t) => {
@@ -1013,6 +1090,42 @@ test('Console settings: a card\'s values and the channel saved together, refused
   assert.deepEqual(cleaned, [{ kind: 'home', id: 'aaaaaaaa', by: 'console' }]);
 });
 
+test('Console settings: the Woodshed card reads, checks and starts an update, and says why one is refused', async (t) => {
+  const calls = [];
+  let refusal = null;
+  const woodshedUpdate = {
+    behindBy: () => 3,
+    async view() { return { clone: '/srv/woodshed', behindBy: 3, job: calls.includes('update by console') ? { state: 'running' } : null }; },
+    async check() { calls.push('check'); },
+    async update({ by }) {
+      calls.push(`update by ${by}`);
+      if (refusal) throw Object.assign(new Error(refusal), { shown: true });
+    },
+  };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, woodshedUpdate });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  assert.deepEqual(JSON.parse(await getBody(port, '/api/console-settings/updates')), { clone: '/srv/woodshed', behindBy: 3, job: null });
+  assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/me`)).json()).updates, 3, 'the menu counts the newer commits for an admin');
+  assert.equal((await post(port, '/api/console-settings/updates/check', {})).status, 200);
+  const started = await post(port, '/api/console-settings/updates/update', {});
+  assert.equal(started.status, 202);
+  assert.deepEqual(started.body.job, { state: 'running' });
+  refusal = 'An update is already running.';
+  assert.deepEqual(await post(port, '/api/console-settings/updates/update', {}), { status: 409, body: { error: refusal } });
+  assert.equal((await post(port, '/api/console-settings/updates/update', {}, { origin: 'https://evil.example' })).status, 403);
+  assert.deepEqual(calls, ['check', 'update by console', 'update by console']);
+
+  const none = createHandler({ config, fleet: { sessions: () => [] }, woodshedUpdate: { ...woodshedUpdate, view: async () => null } });
+  const noneServer = http.createServer((req, res) => { none(req, res); });
+  const nonePort = await listen(noneServer);
+  t.after(() => noneServer.close());
+  assert.match(await getBody(nonePort, '/api/console-settings/updates'), /does not run from a git clone/);
+});
+
 test('Console settings: a repo is added and removed on the page, with its sessions counted, and a refused one says why', async (t) => {
   const store = { state: { sessions: [] }, save() {} };
   const config = liveConfig({
@@ -1021,6 +1134,9 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   }, store);
   const check = async (repo) => {
     if (repo === 'o/missing') throw Object.assign(new Error('The GitHub App is not installed on o/missing.'), { shown: true });
+    if (repo === 'o/uninstalled') {
+      throw Object.assign(new Error('The GitHub App is not installed on o/uninstalled.'), { shown: true, link: { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' } });
+    }
     return { installationId: null };
   };
   const addedProjects = createAddedProjects({ store, config, check });
@@ -1034,12 +1150,129 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.deepEqual(added.body.projects.map((p) => [p.name, p.removable]), [['r', false], ['api', true]]);
   assert.deepEqual(config.projects.map((p) => p.name), ['r', 'api'], 'the live config has it, with no restart');
   assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/missing' }), { status: 400, body: { error: 'The GitHub App is not installed on o/missing.' } });
+  assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/uninstalled' }), {
+    status: 400, body: { error: 'The GitHub App is not installed on o/uninstalled.', link: { href: 'https://github.com/apps/w/installations/new', text: 'Install w on GitHub' } },
+  }, 'the App\'s install page goes with the reason');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/api' })).status, 400, 'twice');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
   const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
+});
+
+test('Console settings: Add a repo\'s list is the App\'s repos less the projects, null with no App, and a 502 when GitHub did not answer', async (t) => {
+  const store = { state: { sessions: [] }, save() {} };
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store);
+  let fail = false;
+  const list = async () => {
+    if (fail) throw Object.assign(new Error('GitHub did not list the App\'s repos.'), { shown: true });
+    return { repos: [{ repo: 'o/R', private: true }, { repo: 'o/web', private: false }], grant: [{ account: 'o', href: 'https://github.com/settings/installations/1' }], install: null };
+  };
+  const serve = (addedProjects) => {
+    const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    t.after(() => server.close());
+    return listen(server);
+  };
+  const port = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }), list }));
+  const ask = async (p) => {
+    const res = await fetch(`http://127.0.0.1:${p}/api/console-settings/projects/repos`);
+    return { status: res.status, body: await res.json() };
+  };
+  assert.deepEqual(await ask(port), { status: 200, body: { repos: [{ repo: 'o/web', private: false }], grant: [{ account: 'o', href: 'https://github.com/settings/installations/1' }], install: null } });
+  fail = true;
+  assert.deepEqual(await ask(port), { status: 502, body: { error: 'GitHub did not list the App\'s repos.' } });
+  const noApp = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }) }));
+  assert.deepEqual(await ask(noApp), { status: 200, body: { repos: null, grant: [], install: null } });
+});
+
+test('Console settings: a repo\'s colour is picked from the palette, never one another repo has, and the rail gets it', async (t) => {
+  const store = { state: { sessions: [], addedProjects: [{ name: 'web', repo: 'o/web', default: false }] }, save() {} };
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }, { name: 'api', repo: 'o/api', default: false }],
+  }, store);
+  const addedProjects = createAddedProjects({ store, config, check: async () => ({ installationId: null }) });
+  const handle = createHandler({
+    config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects,
+    projectColors: createProjectColors({ store, config }),
+  });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const page = JSON.parse(await getBody(port, '/api/console-settings'));
+  assert.deepEqual(page.projects.map((p) => [p.name, p.color]), [['r', 'teal'], ['api', 'plum'], ['web', 'sienna']], 'the environment\'s repos and the added one, each a colour of its own');
+  assert.deepEqual(page.palette, ['teal', 'plum', 'sienna', 'rose', 'violet', 'moss']);
+
+  const picked = await post(port, '/api/console-settings/projects/color', { name: 'api', color: 'moss' });
+  assert.equal(picked.status, 200);
+  assert.deepEqual(picked.body.projects.map((p) => [p.name, p.color]), [['r', 'teal'], ['api', 'moss'], ['web', 'sienna']]);
+  assert.deepEqual(await post(port, '/api/console-settings/projects/color', { name: 'web', color: 'teal' }), { status: 400, body: { error: 'r has teal already: pick another colour, or change r\'s first.' } });
+  assert.equal((await post(port, '/api/console-settings/projects/color', { name: 'web', color: 'red' })).status, 400, 'not in the palette');
+  assert.equal((await post(port, '/api/console-settings/projects/color', { name: 'gone', color: 'rose' })).status, 400, 'no such project');
+  assert.equal((await post(port, '/api/console-settings/projects/color', { name: 'web', color: 'rose' }, { origin: 'https://evil.example' })).status, 403);
+
+  const rail = JSON.parse(await getBody(port, '/api/sessions'));
+  assert.deepEqual(rail.projects, [{ name: 'r', color: 'teal', default: true }, { name: 'api', color: 'moss', default: false }, { name: 'web', color: 'sienna', default: false }]);
+
+  assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'web' })).status, 200);
+  assert.deepEqual(store.state.projectColors, { r: 'teal', api: 'moss' }, 'a removed repo\'s colour is not kept for its name');
+});
+
+test('Console settings: a repo\'s own Slack channel, for the installation\'s repos and added ones, an admin\'s alone', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = {
+    state: {
+      sessions: [],
+      members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } },
+      addedProjects: [{ name: 'api', repo: 'o/api', default: false, addedBy: 'mia-dev', addedAt: '2026-10-03T00:00:00.000Z' }],
+    },
+    save() {},
+  };
+  const members = createMembers({ store });
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store);
+  const addedProjects = createAddedProjects({ store, config, check: async () => ({ installationId: null }) });
+  const slack = createSlack({ store, secrets: { read: async () => null } });
+  const auth = {
+    enabled: () => true,
+    available: () => true,
+    sessionFor: async (cookie) => {
+      const login = /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1];
+      return members.isMember(login) ? { login } : null;
+    },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, auth, members, slack, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+  const sam = { cookie: 'woodshed_session=sam-ops' };
+  const path = '/api/console-settings/projects/slack-channel';
+
+  assert.equal((await post(port, path, { name: 'api', channel: 'C0APIPRS01' }, sam)).status, 403, 'not an admin');
+  assert.equal(store.state.settings?.projectSlackChannels, undefined, 'nothing kept from a refused call');
+  const own = await post(port, path, { name: 'r', channel: 'C0ACMEPRS1' }, mia);
+  assert.equal(own.status, 200, 'the installation\'s own repo');
+  const added = await post(port, path, { name: 'api', channel: ' C0APIPRS01 ' }, mia);
+  assert.deepEqual(added.body.projects.map((p) => [p.name, p.slackChannel]), [['r', 'C0ACMEPRS1'], ['api', 'C0APIPRS01']]);
+  assert.deepEqual(added.body.slack, { channel: '', canPost: true }, 'the console\'s channel is left alone');
+  const name = await post(port, path, { name: 'api', channel: '#acme-prs' }, mia);
+  assert.equal(name.status, 400);
+  assert.match(name.body.error, /channel's ID/, 'a name is refused as the console\'s channel is');
+  assert.deepEqual(await post(port, path, { name: 'nope', channel: 'C0APIPRS01' }, mia), { status: 400, body: { error: 'There is no project called nope.' } });
+  assert.equal((await post(port, path, { name: 'api', channel: 'C0APIPRS01' }, { ...mia, origin: 'https://evil.example' })).status, 403);
+  const cleared = await post(port, path, { name: 'r', channel: '' }, mia);
+  assert.deepEqual(cleared.body.projects.map((p) => p.slackChannel), ['', 'C0APIPRS01'], 'empty goes back to the console\'s channel');
+  await post(port, '/api/console-settings/projects/remove', { name: 'api' }, mia);
+  assert.deepEqual(store.state.settings.projectSlackChannels, {}, 'a removed repo\'s channel goes with it');
 });
 
 test('the switch for shared sessions is set for the signed-in person alone, behind the same write checks', async (t) => {
@@ -1506,7 +1739,7 @@ test('the session list names each session\'s project, and the projects there are
   const port = await listen(server);
   t.after(() => server.close());
   const body = JSON.parse(await getBody(port, '/api/sessions'));
-  assert.deepEqual(body.projects, ['app', 'tools']);
+  assert.deepEqual(body.projects, [{ name: 'app', color: 'teal', default: true }, { name: 'tools', color: 'plum', default: false }]);
   assert.deepEqual(Object.fromEntries(body.sessions.map((s) => [s.id, s.project])), { aaaa0001: 'tools', aaaa0002: 'tools', aaaa0003: 'app' });
 });
 
@@ -1544,4 +1777,25 @@ test('another project\'s / list is only for someone who may start sessions on it
   assert.deepEqual(await names('/api/skills?project=tools'), ['deploy'], 'refused: the default project\'s list, never the other repo\'s');
   assert.deepEqual(await names('/api/skills?project=app'), ['deploy']);
   assert.deepEqual(asked.map(([, name]) => name), ['tools', 'app']);
+});
+
+test('the rail\'s pull requests are read from each repo the person may start on, on that project\'s own client', async (t) => {
+  const projects = [{ name: 'shop', repo: 'acme/shop', default: true }, { name: 'app', repo: 'acme/app' }, { name: 'ops', repo: 'acme/ops' }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'acme/shop', projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const asked = [];
+  const client = (repo, updatedAt) => ({ openPullsFor: async (login) => { asked.push(`${repo} ${login}`); return [{ number: 1, title: repo, why: 'yours', updatedAt }]; } });
+  const github = client('acme/shop', '2026-11-01T00:00:00Z');
+  const others = { app: client('acme/app', '2026-11-02T00:00:00Z'), ops: client('acme/ops', '2026-11-03T00:00:00Z') };
+  // mia may start on shop and app, not ops.
+  const projectAccess = { view: async () => ({ projects: projects.slice(0, 2).map(({ name, repo }) => ({ name, repo })), defaultProject: 'shop', saved: false }) };
+  const fleet = { sessions: () => [], find: () => null };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const handle = createHandler({ config, fleet, auth, github, githubFor: (p) => others[p.name], projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const answer = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
+  assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
+  assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
 });

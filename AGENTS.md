@@ -8,6 +8,9 @@ databases and running app. What you were asked decides what to read:
   token). Stop at those and say what to do. The repository's `.woodshed/project.yaml` is the part you write:
   `project.reference.yaml` has every field, and `node shared/project.mjs check`, run from that repository, checks it.
 - **Something in an installation is not working**: `CLAUDE.md`, "By symptom", lists what the console logs for each.
+- **Claude Code** in this checkout has project skills for the first two, in `.claude/skills/`: `setup-woodshed`,
+  `write-project-file` (the repository's `.woodshed/project.yaml`) and `debug-woodshed`. They drive the documents
+  above, which stay the source: another agent reads those directly.
 - **Changing Woodshed**: `CLAUDE.md` first, for its rules on secrets and the design system, then the README of the
   folder you change. It is plain Node 22 with no dependencies and no build step; the checks are
   `node --test $(git ls-files '*.test.mjs' '**/*.test.mjs')`, and `node console/bin/devConsole.mjs` for a console page.

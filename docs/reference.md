@@ -22,7 +22,7 @@ here use `woodshed.example.com` for an installation's domain.
 | `shared/` | Modules the console and the sessions both run, and other tools can embed: review, the project file's reader, the terminal and same-origin helpers | [shared/README.md](../shared/README.md) |
 | `providers/` | Where Woodshed runs. `providers/console.mjs` picks one and starts the console on it | [providers/README.md](../providers/README.md), and "Providers", below |
 | `test/` | Checks across the folders: `layout.test.mjs` | |
-| `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request | |
+| `scripts/` | Tools for working on Woodshed itself: `prAssets.sh` attaches screenshots to a pull request, on a `refs/pr-assets/` ref that `.github/workflows/prAssetsCleanup.yml` deletes when the pull request is closed unmerged | |
 
 Imports go one way, and `test/layout.test.mjs` checks every one:
 - `shared/` imports nothing outside itself.
@@ -48,12 +48,13 @@ A provider gives the console up to six things. Each one it lacks, the console ru
 | Databases | Those `databases` in Terraform names: RDS Postgres, and the base box's Mongo, copied by a db-admin Fargate task (`aws/dbAdminRunner.mjs`) | The Postgres, and the Mongo, `WOODSHED_LOCAL_DB_*` names, copied by a db-admin container (`local/dbAdminRunner.mjs`); without them, the ones the session's environment names |
 | The machine | The base box and the rest of `aws/terraform/` | Your own |
 
-`WOODSHED_PROVIDER` (`aws` or `local`) picks one. Without it, `WOODSHED_CLOUD_LAUNCHER=ecs` means `aws`, and the
+`WOODSHED_PROVIDER` (`aws` or `local`) picks one. Without it, `WOODSHED_LAUNCHER=ecs` means `aws`, and the
 default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local provider runs as it is
 (`providers/local/README.md`, "On a server your team reaches").
 
 - **Try the console on your machine:** `node console/bin/devConsole.mjs`, then open `http://localhost:7690/s/aaaa1111`.
-  It serves made-up sessions on the local provider, with no AWS, GitHub or Docker.
+  It serves made-up sessions on the local provider, with no AWS, GitHub or Docker. A session on this repo runs it as
+  its app, with `scripts/devConsoleApp.sh` (`.woodshed/project.yaml`).
 - **Host it on AWS:** [providers/aws/README.md](../providers/aws/README.md) covers setting it up, updating it, what it
   costs, and removing it.
 - **Work on Woodshed with Woodshed, on your machine:** [.woodshed/README.md](../.woodshed/README.md). The lightest
@@ -66,11 +67,11 @@ default `docker` means `local`. On a VM, such as one on Hetzner Cloud, the local
 A service that hosts a console for an organization, with the organization's GitHub already connected and its own
 sign-in in front, hands both to the console with two settings, each off unless set:
 
-- `WOODSHED_CLOUD_GITHUB_BROKER_URL` and `WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE`: the console has no GitHub App of
+- `WOODSHED_GITHUB_BROKER_URL` and `WOODSHED_GITHUB_BROKER_TOKEN_FILE`: the console has no GitHub App of
   its own and asks the host's broker for every installation token, its own and its sessions', each narrowed as an
   App's would be. No `/setup/github`, no
-  Connect GitHub, no webhooks (it polls). It refuses to start with `WOODSHED_CLOUD_GITHUB_APP_ID` set too.
-- `WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
+  Connect GitHub, no webhooks (it polls). It refuses to start with `WOODSHED_GITHUB_APP_ID` set too.
+- `WOODSHED_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
   (an HMAC-SHA256 over the person's login, role and expiry), which is then the only sign-in, and required. The host
   says who is in, so there is no People list; its `owner`s are the console's admins.
 
@@ -117,7 +118,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
    session. Open its terminal in the console to watch or take over.
 6. A session pauses after an hour waiting for input, stops at 8 hours in all
    (both on the Console settings page),
-   and stops once its pull request is posted to Slack, or when someone presses
+   and stops once its pull request is posted to Slack (its project's channel from the Repos card of
+   Console settings, else the Slack card's channel), or when someone presses
    Stop. It commits and pushes work in progress first and keeps its
    conversation and databases, so a later label or comment resumes it where it
    was. See "Session states" in `console/README.md`.
@@ -136,16 +138,20 @@ sign-in in front, hands both to the console with two settings, each off unless s
   page until the machine is up, then moves to its Review tab with the analysis
   already running. Claude starts with no prompt, so it waits for you. The move
   happens only for a page that saw the session starting: opened once it is up,
-  it stays on Agent, and the analysis starts when you open Review.
+  it stays on Agent. In every session, the analysis starts when Review first opens.
 - **Talk to it:** `/woodshed <text>` on the same issue, or type in its terminal.
 - **Watch:** the console lists every session; click one for its live terminal.
 - **Review:** the session page's **Review** tab shows what its checkout
-  changes against the default branch, uncommitted work included, with Claude's analysis
-  of it, answers about any line or file, and a chat. A stopped session's tab
-  shows what it pushed, as GitHub has it.
+  changes against the default branch, uncommitted work included. Its **Overview** has Claude's analysis: what
+  the change does, the decisions it made that a reviewer has to agree with (each links to the files that carry it),
+  and how the code is shaped, with a drawing of it before and after when the change rewires how pieces connect. **Files changed** has every file's diff, open, in the
+  analysis's reading order. Answers about any line or file, and a chat that offers starter questions. A stopped
+  session's tab shows what it pushed, as GitHub has it.
 - **Try its app:** **Start app** on the session's rail card (in the pane bar
   while the rail is hidden), then **Open app**, at
-  `https://<session>.woodshed.example.com`.
+  `https://<session>.woodshed.example.com`. A project with several apps (`apps`) has **Start app ▾** list them: one
+  runs at a time, and Open app opens whichever runs. The session is told the domain after its id in `SESSION_APP_DOMAIN`
+  (`session/README.md`, "Environment"), for an app that checks the name it is reached by.
 - **Edit its code:** **Editor ↗** in the session's pane bar opens VS Code on its checkout in a new tab, on the
   session's app name, started the first time someone opens it. The project file's `editor` turns it on and off. See "The editor" in `console/README.md`.
 - **Ask a question:** mention the bot in any Slack channel it is in, e.g.
@@ -156,6 +162,11 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **The console:** `https://woodshed.example.com`, with a Let's Encrypt
   certificate, open to the internet behind a GitHub sign-in. The bare IP
   answers too, with Caddy's own certificate, and moves to the name.
+- **Its name:** the console calls itself Woodshed unless the installation names it: `WOODSHED_CONSOLE_NAME`
+  (`console_name` in Terraform, a line in the local provider's `stack.env`), such as `Acme Woodshed`. The name is the
+  pages' title, the sign-in page's heading, the installed app's name and what the console's GitHub comments call it.
+  1 to 40 printable characters without `< > " '` or a backtick; the console uses Woodshed in place of any other value,
+  and warns once. An app already installed from the browser keeps its old name until it is installed again.
 
 ## Who commits
 
@@ -163,11 +174,11 @@ sign-in in front, hands both to the console with two settings, each off unless s
 | --- | --- |
 | Commits | `woodshed-bot <woodshed-bot@users.noreply.github.com>`; in a private session whose owner connected GitHub, the owner's name and noreply address |
 | Pushes, PRs, comments, reactions | The installation's GitHub App, as `<slug>[bot]` ; a connected owner's private session pushes and opens PRs as them, "via `<slug>`" |
-| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed Cloud](<console>/s/<id>)". When the repo's project file says `consoleLinks: false` (a public repo), the console is not linked: "Started by @<login> via Woodshed Cloud." |
+| The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed](<console>/s/<id>)". When the repo's project file says `consoleLinks: false` (a public repo), the console is not linked: "Started by @<login> via Woodshed." |
 | Attribution | Claude Code's own `Co-Authored-By` trailer and PR footer, unless the repo's `.claude/settings.json` turns them off (`attribution`), as this one does |
 
 The only long-lived GitHub credential is the App's private key, in
-`woodshed-cloud/github-app-key`, which only the console reads (it never touches
+`<prefix>/github-app-key` (`<prefix>` is Terraform's `name_prefix`), which only the console reads (it never touches
 the disk) and never shows. The console
 mints installation tokens from it: one hour, this repo only. Sessions ask the
 console for one (`POST /github-token` on port 7691, with their `SESSION_TOKEN`)
@@ -195,10 +206,10 @@ requests and issues, no workflows.
 A session reads what it needs from the repo it works on (its env files, dependency installs, databases and app) from
 `.woodshed/project.yaml` at that repo's root, through `woodshed/shared/project.mjs`. It reads the
 checkout's copy, so a branch can change it, and the default branch's when a branch predates the file. A repo with no file gets
-an empty project: no dependency installs, env files, databases or app, and Woodshed Cloud's own rules alone.
+an empty project: no dependency installs, env files, databases or app, and Woodshed's own rules alone.
 
 **A project file the installation supplies.** To try Woodshed on a repo without committing a project file, the
-installation can keep one for it: `WOODSHED_CLOUD_PROJECT_FILES_DIR` names a folder of them, one a repo, at
+installation can keep one for it: `WOODSHED_PROJECT_FILES_DIR` names a folder of them, one a repo, at
 `<owner>/<name>.yaml` as GitHub names the repo (matched in any case). It is read only when the repo has no
 `.woodshed/project.yaml` of its own, on the checkout or the default branch: once one is committed, it wins. The one
 exception is a repo's own file Woodshed cannot read (one written for another version of Woodshed, say): where the
@@ -223,7 +234,42 @@ session at start with the field named, and makes `readyGate` refuse to open a pu
 Nothing required has a default: the ports, the database's folder and `howToProve` come from the file. `project.reference.yaml`
 writes every field there is, with an example, and says which are required and what each one is when left out.
 
-**Changing the format.** While Woodshed Cloud is in beta the format stays `version: 1` and changes in place: a new
+**Checking it.** `node <woodshed>/shared/project.mjs check`, run from the repo's root (or with `REPO_DIR` naming it),
+reads the file as a session's start does, then checks it against the checkout it is in, so a repo needs no tests of its
+own against Woodshed's code (`shared/projectCheck.mjs`). It reads files and asks git what it ignores and tracks, with no
+network and no AWS. It prints a line for each part a session takes, or exits 1 with every problem at once, one line
+each, naming its field:
+
+- `pullRequests`: `review.workflow` and each suite's `workflow` are files there; each suite's `on:` section reads, since
+  the console takes its path filters from it; and some job of the suite's workflow has check runs whose names start
+  with its `jobs`: the job's `name`, or its id without one, a matrix's ` (…)` and a called workflow's ` / …` after it,
+  and for a name with an expression, its text before the expression or a name quoted in it.
+- `envFiles`: one entry a path and a secret; no secret is one of the console's own (`github-app-key` and the rest), or
+  reaches the session in one of Woodshed's own variables (`gh-token` would be `GH_TOKEN`); each path is a file that git
+  ignores and does not track, since it holds its secret's text, and not a folder, `.git/` or the project file; each line
+  is `NAME=value` or a `#` comment; and a placeholder that is almost one (`{{ PGHOST }}`, `{{pgHost}}`), which would be written as it is,
+  is refused. `env` the same: a variable name, not one of Woodshed's own, and no such placeholder.
+- `dependencies.installs`: each `dir` is a folder, and each of its `files` without a glob is there.
+- `databases`: each `dir` is a folder, its `paths` are there, `migrations` is a folder under one of them.
+- `app`, and each of `apps` (named `apps[<i>]`): neither port is below 1024 (the app runs as an unprivileged user) or one a session's own programs take
+  (claude's and the shell's terminals, statusd, Redis and its viewer, the editor, the database viewers:
+  `SESSION_PORTS` in `shared/reservedNames.mjs`); something in the checkout starts with each of its `paths`; and each
+  `logs` file is under `~/` or in the repo.
+- Every command (an install's, a database's `migrate` and `seed`, each app's `start` and `stop`): the script it hands a
+  shell, node or python, or runs by its path, is there, relative to the command's folder, unless git ignores it (an
+  install's or a build's, as `node_modules/.bin/x`), and not outside the repo (`../setup.sh`); and `npm run <script>` (or
+  `pnpm`, `yarn`) names a script of that folder's `package.json`. Each part of `a && b` is checked up to a `cd`, and a
+  word the shell would expand (`$HOME`, `~`) is left alone.
+- `rules` and `setup` are files there.
+
+Beside what each part is, it prints `install variables`, the `${NAME}`s an install's `.npmrc` reads, each of which
+must be an install secret of the installation's, and `from the session`, the variables the `env` and the env files'
+lines use that neither the `env` nor the databases give, such as a shared service's URL. A repo runs it on its pull
+requests with the reusable workflow `.github/workflows/project-check.yml` (`docs/self-host.md`, "Before any of them:
+the project file"), whose inputs are `ref`, the Woodshed branch, tag or commit to take the check from (default `main`),
+`repository` (default `ChifferCo/woodshed`) and `node-version` (default `22.16.0`).
+
+**Changing the format.** While Woodshed is in beta the format stays `version: 1` and changes in place: a new
 or changed field comes with every project file it applies to, in the same pull request, and with no reader for the old
 shape. Each branch carries its own copy, and the image reads it, so after such a change an open branch from before it
 stops at start until it merges the default branch, and a session on an image from before it refuses the new file until
@@ -238,38 +284,39 @@ quote a number (`PORT: '9000'`).
 
 | Field | What reads it | What it is |
 | --- | --- | --- |
-| `version` | `project.mjs` | `1`, the format this Woodshed Cloud reads |
-| `dependencies` | `stageDeps.sh` and the `Dockerfile` (the image workflow), `refreshDeps` (entrypoint), `session/deps.sh` | `installs[]`: each a `dir` in the repo; its `files` there, globs allowed within one folder (`packages/*/package.json`), which the image workflow stages for the build and whose change reinstalls at a session's start; the `command` that installs, one line run with bash in the dir; and its `output`, at least one folder it makes that the image keeps, under the dir or under the home as `~/...` (`[node_modules, ~/.cache/ms-playwright]`). Nothing else an install writes reaches the image. A secret an install reads, such as a registry's token, is not here: it is the installation's install secret, in the variable the repo's own tools read (below). Left out, or `{installs: []}`: nothing to install |
+| `version` | `project.mjs` | `1`, the format this version of Woodshed reads |
+| `dependencies` | `stageDeps.sh` and the `Dockerfile` (the deploy workflow's session job), `refreshDeps` (entrypoint), `session/deps.sh` | `installs[]`: each a `dir` in the repo; its `files` there, globs allowed within one folder (`packages/*/package.json`), which the deploy workflow's session job stages for the build and whose change reinstalls at a session's start; the `command` that installs, one line run with bash in the dir; and its `output`, at least one folder it makes that the image keeps, under the dir or under the home as `~/...` (`[node_modules, ~/.cache/ms-playwright]`). Nothing else an install writes reaches the image. A secret an install reads, such as a registry's token, is not here: it is the installation's install secret, in the variable the repo's own tools read (below). Left out, or `{installs: []}`: nothing to install |
 | `env` | `writeEnvFiles` | Variables exported for everything the session runs, after the databases' own (below), so a value can map one to the app's name: `DATABASE_HOST: '{{PGHOST}}'` |
 | `envFiles[]` | `writeEnvFiles`, the db-admin task | `path` in the repo, `secret` (its base text, which reaches the task in the secret's name in capitals: `api-env` is `API_ENV`, and on My settings each person adds their own lines to it), and `lines` written after both. `{{NAME}}` is the variable's value; a line with `{{NAME?}}` is left out when it is empty. My settings lists the variables the `lines` write, read from this file on GitHub (`console/projectFile.mjs`) |
-| `databases[]` | `writeEnvFiles`, `seed`/`migrate`, `dbAdmin.mjs`, the console, the image workflow | The databases each session gets its own copy of (see "Databases" below). Each names its `engine` (`postgres` or `mongo`, one database an engine) and the `dir` its commands run in; `migrate` and `seed` (`null` for none); `envFiles`, the secrets its commands need, each one an `envFiles` entry's `secret`; `paths`, what its template is built from, and `migrations`, the folder under them where a new file only migrates a copy (`null` for none); for `postgres`, `migrationsTable`, the `table` (or `schema.table`) and `column` where its migration tool records each migration it ran, which Restore a dump reads (`null` for none: nothing is said of a dump's migrations); `dump`, what Restore a dump's commands leave out: `skip`, tables whose rows (postgres) or collections (mongo), and for `postgres` the `extensions` the dump keeps (`null`: nothing left out); `user` and `name`, for a database the environment does not name (the docker launcher). `[]`: the db-admin task refuses to run, and sessions get none. The image workflow builds the templates again when `paths` changed since the last session build |
-| `app` | statusd's Start app and Stop app, `readyGate.mjs` | `start` and `stop` commands, the `frontendPort` and `backendPort` statusd probes, `logs` (name to file, `~` and `{{CHECKOUT}}` filled in) for the App log tab and to tell the app was started, `paths` that count as an app change for `readyGate` (prefixes: write a folder with its `/`, as `web/`, or `web` also matches `webhooks.md`), and `howToProve`, its refusal's advice. `stop` may be `null`, and then Stop app does nothing, not even for a start still waiting on its health checks. statusd reads it once, when the session starts, so a change to it takes effect at the next start. `app: null`: no Start app, no ports probed, and no pull request refused |
-| `editor` | `stageDeps.sh` (the image workflow), statusd | `true` or `false`: VS Code in the browser on the checkout (**Editor ↗**). The image workflow's `stageDeps.sh` writes the built commit's value to `woodshed-deps.editor`, and the `Dockerfile` leaves openvscode-server out of the image when it is `false`. statusd reads the checkout's copy once, at start: `false` refuses the editor and hides the button. Optional: left out, or no project file at all, it is `false` |
-| `consoleLinks` | the console's GitHub comments, from the default branch; `writeRules` | `true` or `false`, default `true`. `false` keeps the installation's console address out of what is posted to the repo: the console's comments on its issues and pull requests (a session started, queued, resumed or failed, a refusal) and the session's link in the pull requests it opens (`{{VIA}}` reads `Woodshed Cloud`, unlinked). For a public repo. The console reads it with the project's other gates; when the file cannot be read, a comment on the installation's default project keeps its links and one on another project leaves them out |
+| `databases[]` | `writeEnvFiles`, `seed`/`migrate`, `dbAdmin.mjs`, the console, the deploy workflow's session job | The databases each session gets its own copy of (see "Databases" below). Each names its `engine` (`postgres` or `mongo`, one database an engine) and the `dir` its commands run in; `migrate` and `seed` (`null` for none); `envFiles`, the secrets its commands need, each one an `envFiles` entry's `secret`; `paths`, what its template is built from, and `migrations`, the folder under them where a new file only migrates a copy (`null` for none); for `postgres`, `migrationsTable`, the `table` (or `schema.table`) and `column` where its migration tool records each migration it ran, which Restore a dump reads (`null` for none: nothing is said of a dump's migrations); `dump`, what Restore a dump's commands leave out: `skip`, tables whose rows (postgres) or collections (mongo), and for `postgres` the `extensions` the dump keeps (`null`: nothing left out); `user` and `name`, for a database the environment does not name (the docker launcher). `[]`: the db-admin task refuses to run, and sessions get none. The deploy workflow's session job builds the templates again when `paths` changed since the last session build |
+| `app` | statusd's Start app and Stop app, `readyGate.mjs` | `start` and `stop` commands, the `frontendPort` and `backendPort` statusd probes (the same port twice for an app that is one server, as Woodshed's own dev console is), `logs` (name to file, `~` and `{{CHECKOUT}}` filled in) for the App log tab and to tell the app was started, `paths` that count as an app change for `readyGate` (prefixes: write a folder with its `/`, as `web/`, or `web` also matches `webhooks.md`), and `howToProve`, its refusal's advice. `stop` may be `null`, and then Stop app does nothing, not even for a start still waiting on its health checks. statusd reads it once, when the session starts, so a change to it takes effect at the next start; a project with no app yet is read again at each Start app, so one written in the session starts there. `app: null`: no Start app but **Set up app**, which asks the session's claude to write one, no ports probed, and no pull request refused |
+| `apps[]` | statusd's Start app and Stop app, `readyGate.mjs`, `writeRules` | Instead of `app`, for a repo with more than one app; a file with both is refused. Each entry has every field `app` has, plus `name` (lowercase letters, digits and dashes, at most 32, each its own) and `label` (what the console's menu shows, default the name). The first is the default. One runs at a time: **Start app ▾** picks one (`POST /app/start {"app": "<name>"}`, the default without a name), and statusd stops the one running first with its own `stop`, then runs the one picked; it remembers which, and probes, proxies (Open app) and reads the logs (App log) of that one. An app claude starts itself from the shell is followed too: with the remembered app's frontend down and exactly one other app's frontend listening, statusd switches to it at the next `/status`, so Open app and the logs are its own (several listening, or a frontend port shared with the remembered app, keep it). Two apps may share a port, such as one backend behind two frontends, but then each needs a `stop`: an app with none is left running, and the next one starts beside it, where a shared port cannot bind. `readyGate` reads each app's `paths` and `logs` on their own: a change under an app's `paths` needs that app started, so give each its own log. A session's rules name each app, how it starts and its `howToProve`. `node project.mjs get app` gives the default. With one entry it behaves as `app` |
+| `editor` | `stageDeps.sh` (the deploy workflow's session job), statusd | `true` or `false`: VS Code in the browser on the checkout (**Editor ↗**). In the deploy workflow's session job, `stageDeps.sh` writes the built commit's value to `woodshed-deps.editor`, and the `Dockerfile` leaves openvscode-server out of the image when it is `false`. statusd reads the checkout's copy once, at start: `false` refuses the editor and hides the button. Optional: left out, or no project file at all, it is `false` |
+| `consoleLinks` | the console's GitHub comments, from the default branch; `writeRules` | `true` or `false`, default `true`. `false` keeps the installation's console address out of what is posted to the repo: the console's comments on its issues and pull requests (a session started, queued, resumed or failed, a refusal) and the session's link in the pull requests it opens (`{{VIA}}` reads `Woodshed`, unlinked). For a public repo. The console reads it with the project's other gates; when the file cannot be read, a comment on the installation's default project keeps its links and one on another project leaves them out |
 | `githubAccess` | the session API's `/github-token`, from the default branch | `full` or `repo`, default `full`. A private session acts as its owner, whose connected GitHub token it gets. `full` hands it the token as GitHub issued it, reaching every repo the GitHub App is on that the owner can write to. `repo` has GitHub scope it to this repo and the session permissions (`githubUser.scopedTokenFor`; the App's token when GitHub makes none): for a repo whose content outsiders write, such as public issues, where a prompt injection should reach no other repo. Shared sessions and questions use the App's token either way. When the file cannot be read, a session on the installation's default project gets `full` and one on another project `repo`. `repo` is only as strong as the protection on the repo's default branch: the setting lives in the repo it guards, so someone who can change that branch's project file can switch it back to `full` |
 | `rules`, `setup` | `writeRules` | The project's rules, after `prompt.md`, and its environment notes: inline in a shared session's rules, in `/tmp/woodshed-setup.md` for a private one |
-| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"). `review`: the code review, as the `author` and `heading` of its verdict (a pull request review whose body starts with `heading`), the `workflow` file that writes it, the `rerun` tag a commit carries to run it again, and the `commentAuthor` of the PR comment the brief quotes its risk areas from (the one with the review folded under `<summary>` of the heading's words, `## Code review` giving `<summary>Code review</summary>`; `null` for none). `suites[]`: test suites that must pass, each a `name` to show, its `workflow` file, the `jobs` name its runs' jobs start with (a skipped matrix's one run, whose name is the whole expression, counts by the `'jobs` quoted in it), and its `rerun` tag. A pull request touching only paths the workflow's `on.pull_request` `paths-ignore` (or not its `paths`) names is not held for it: the console reads the workflow from the default branch. `qa`: a QA pass, as its `check` run's name (one whose title starts with `Waiting` is not a result yet), the `label` that asks for it, and the `author` and `heading` of its comment. `mergeRisk`: the `check` run that rates the merge, trusted only from a run of `review.workflow` on the head commit, so it needs `review`. Each is `null` (or `[]`) for none. `null`, or no `review` and no `suites`: the console posts a pull request once it is out of draft and none of its checks is running or failed |
+| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"). `review`: the code review, as the `author` and `heading` of its verdict (a pull request review whose body starts with `heading`), the `workflow` file that writes it, the `rerun` tag a commit carries to run it again (a session's rules tell it to end the last commit of each push with it once its PR is ready), and the `commentAuthor` of the PR comment the brief quotes its risk areas from (the one with the review folded under `<summary>` of the heading's words, `## Code review` giving `<summary>Code review</summary>`; `null` for none). `suites[]`: test suites that must pass, each a `name` to show, its `workflow` file, the `jobs` name its runs' jobs start with (a skipped matrix's one run, whose name is the whole expression, counts by the `'jobs` quoted in it), and its `rerun` tag. A pull request touching only paths the workflow's `on.pull_request` `paths-ignore` (or not its `paths`) names is not held for it: the console reads the workflow from the default branch. `qa`: a QA pass, as its `check` run's name (one whose title starts with `Waiting` is not a result yet), the `label` that asks for it, and the `author` and `heading` of its comment (`author` may be left out with `runner: woodshed`, whose report is the console's check). `mergeRisk`: the `check` run that rates the merge, trusted only from a run of `review.workflow` on the head commit, so it needs `review`. Each is `null` (or `[]`) for none. `null`, or no `review` and no `suites`: the console posts a pull request once it is out of draft and none of its checks is running or failed |
 
 ## Using it on another repo
 
 An installation works on one repo, and nothing in this folder names one. To set one up for your own repo:
 
-- **The repo:** `WOODSHED_CLOUD_REPO=owner/name` for the console (it refuses to start without it), `github_repo` for
-  Terraform, and the image workflow builds the repo it runs in.
+- **The repo:** `WOODSHED_REPO=owner/name` for the console (it refuses to start without it), `github_repo` for
+  Terraform, and the deploy workflow's session job builds the repo it runs in.
 - **The session image:** `session/Dockerfile` takes `REPO` and `REPO_DIR` (`/work/<name>`, `checkoutDir` in
-  `shared/project.mjs`) as build arguments. The image workflow passes them and stages the files of the project file's
+  `shared/project.mjs`) as build arguments. The deploy workflow's session job passes them and stages the files of the project file's
   `dependencies.installs` (`session/stageDeps.sh`), so the image runs those installs and no others, in any language.
   The optional build secret `install_env` is `NAME=value` lines, the install secrets below under their variables, which
-  `deps.sh` exports before the installs; the image workflow writes it from repo secrets of the installation's choosing.
+  `deps.sh` exports before the installs; the deploy workflow's session job writes it from repo secrets of the installation's choosing.
 - **Install secrets:** what the installs read that is secret, such as a private registry's token. `install_secrets` in
-  Terraform (`WOODSHED_CLOUD_INSTALL_SECRETS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
+  Terraform (`WOODSHED_INSTALL_SECRET_PAIRS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
   variable the repo's tools read it from (`{ "registry-token" = "REGISTRY_TOKEN" }`, the one its `.npmrc` names, say).
   Each is made by Terraform, set on the Secrets page, and reaches a session in that variable as it is, for a reinstall
   and claude's terminal alike; Woodshed names no variable and renames nothing. Sessions also get
   `WOODSHED_INSTALL_SECRETS`, the list of those variables, which an ask session unsets. A variable cannot be one of
   Woodshed's own (`WOODSHED_*`, `SESSION_ID`, `GH_TOKEN`, `PGHOST` and the rest, `SESSION_VARIABLES` in
-  `console/config.mjs`) or an env file's.
-- **The env files:** `env_files` in Terraform (`WOODSHED_CLOUD_ENV_FILES` for the console) is each `envFiles` entry's `secret` with its `path`,
+  `shared/reservedNames.mjs`) or an env file's.
+- **The env files:** `env_files` in Terraform (`WOODSHED_ENV_FILES` for the console) is each `envFiles` entry's `secret` with its `path`,
   and `database_env_secrets` is every `envFiles` of the project file's `databases`. Each secret is made by Terraform, set on the Secrets page and
   reaches a session as its name in capitals. A test checks this installation's tfvars against its project file.
 - **The databases:** `databases` in Terraform names the engines the installation hosts, each on its own:
@@ -285,8 +332,9 @@ An installation works on one repo, and nothing in this folder names one. To set 
 - **The project file:** `.woodshed/project.yaml` in the repo, as above.
 
 - **The default branch** is whatever the remote says (`HEAD`), read at each session's start into `DEFAULT_BRANCH`, so a repo
-  may use `main`, `trunk` or any name. The image workflow's `if`s read `github.event.repository.default_branch`; the infra
-  workflow's `push` trigger cannot, so a repo whose default is not `main` edits its `branches:` line.
+  may use `main`, `trunk` or any name. The deploy workflow's `if`s can read `github.event.repository.default_branch`
+  (`providers/aws/README.md`, "The deploy workflow"); a `push` or `schedule` trigger cannot, so one that names a branch
+  names the repo's own.
 - **Which services a session needs** follow the project file: its `databases`, and Redis, started only when its
   `env` or `envFiles` mention `REDIS_URL` (`usesVariable` in `shared/project.mjs`; the start logs `Redis started` or
   `Redis not started`, and Data ▾ offers Redis only then). A shared service is the installation's: an env file line needing a variable that is not set
@@ -325,22 +373,101 @@ jobs:
   `.woodshed/review.md`; none is fine).
 - `risk-areas`: a file listing the changes this repo always counts as High merge risk (default
   `.woodshed/riskAreas.md`; none is fine).
-- `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default
-  `woodshed-cloud`).
+- `allowed-bots`: bots whose pull requests are reviewed, such as the App an installation opens them as (default none,
+  or the calling repo's `REVIEW_ALLOWED_BOTS` variable).
 
 The review also rates the merge risk, Low, Medium or High, and posts it as a neutral `Merge risk` check on the reviewed
-commit, which never blocks merging. That is why the caller grants `checks: write`. To show it in the decision brief and
+commit, which never blocks merging, and as a `merge risk: low`, `medium` or `high` label on the pull request. The
+check's title says which rule decided the tier, and the check says how each tier is decided. A pull request has one
+review comment, posted by the first review and edited by each one after, so it keeps its place and GitHub's edit history
+holds the earlier reviews; each run's verdict is its own pull request review. The review comment opens
+with an alert for whoever merges, in the tier's colour: the tier and its reason, what they accept by merging, and what
+no test covers that they should try first, each a line that opens to what changed, why, and a link to the lines. Size counts only code: tests and docs are left out of the Low limit (under 5 files and 200 lines). That is
+why the caller grants `checks: write`. The label is only for people: anyone who can triage can change it, so the
+console reads the check. To show it in the decision brief and
 Slack, the project file's `pullRequests.mergeRisk.check` is `Merge risk`.
 
 An input left empty takes its default. The rules, the instructions and the risk areas are read from the branch the pull request merges into, so a pull request cannot soften
 its own review. The repo's Actions settings must allow GitHub Actions to create and approve pull requests, or the
-approval is refused. On an approval, the review resolves its own threads that later commits made outdated, so a
-ruleset that requires conversation resolution is not blocked by fixed findings; a person's thread, and one of the
-review's still on current code, stay open. That runs in a job of its own, with no checkout and no Claude, because
+approval is refused. On an approval, the review resolves its own threads that later commits made outdated, and those
+whose comment the reviewer judged fixed by the head (a fix on other lines leaves the thread current), so a ruleset that
+requires conversation resolution is not blocked by fixed findings; a person's thread, and one of the review's it did
+not judge fixed, stay open. That runs in a job of its own, with no checkout and no Claude, because
 resolving a thread needs `contents: write`, which the calling job grants and the reviewer's job never takes. A repo
 that already calls the review adds `contents: write` to its calling job when it moves to a commit with this job: GitHub
 refuses to start a called workflow whose job asks for more than the caller grants. To have the console wait for it, the project file's `pullRequests.review.workflow` names the
 repo's calling workflow, the run GitHub reports.
+
+## QA in another repo
+
+A repo's own CI can run Woodshed's QA on its pull requests: Claude plans tests from the diff and the description,
+drives the running app in a browser through Playwright, and posts a QA report as a comment and a QA check. It is three
+actions in `.github/actions/qa/`, so the repo starts its app between them with its own steps:
+
+```yaml
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    permissions: { contents: read, pull-requests: write, issues: write, checks: write }
+    steps:
+      - uses: actions/checkout@<commit>
+        with: { ref: '${{ github.head_ref }}', fetch-depth: 50 }
+      - id: plan
+        uses: <woodshed's repo>/.github/actions/qa/plan@<commit>
+        with: { anthropic-api-key: '${{ secrets.ANTHROPIC_API_KEY }}', app-url: http://localhost:3000 }
+      - id: app
+        if: steps.plan.outputs.should-run == 'true'
+        run: make serve-ci   # the repo's own way to start its app
+      - if: steps.plan.outputs.should-run == 'true'
+        timeout-minutes: 15
+        uses: <woodshed's repo>/.github/actions/qa/test@<commit>
+        with: { anthropic-api-key: '${{ secrets.ANTHROPIC_API_KEY }}' }
+      - if: ${{ !cancelled() }}
+        uses: <woodshed's repo>/.github/actions/qa/report@<commit>
+        with:
+          not-covered: ${{ steps.app.outcome == 'failure' && 'the app did not start' || '' }}
+```
+
+- **plan** posts that QA is running, then plans. When the change has nothing a browser or API test can check, its
+  `should-run` is false and the app never starts. `notes` (default `.woodshed/qa.md`, read from the base branch, so a
+  pull request cannot change its own QA) is what the app's tests need: how to sign in, the data already there, how to
+  read what the app saved. `heading` (default `## QA`) starts the comment; `budget-usd` (default 2) caps the planner.
+- **test** runs the plan with Claude in a browser and writes the report. It never changes code. `budget-usd`
+  (default 20) caps it; give its step a `timeout-minutes`, so a stuck run still reaches the report.
+- **report** reads the verdict, updates the comment and posts the check: `check` (default `QA`) names it, which is
+  the project file's `pullRequests.qa.check`. A failed test case fails the check; a run that reached no verdict (nothing
+  to test, no plan, `not-covered` set, a test it could not verify) is neutral, so it never reads as a broken pull
+  request. The plan, the screenshots and the session logs are uploaded as `qa-*` artifacts. The check's `external_id`
+  holds the run's cost (`cost_usd=1.65`), for a repo that adds up what QA spends.
+
+The prompts, the rubric and the verdict are `shared/qa/`'s, the same a QA session runs with.
+
+When to run it (a label, an approved review, which files changed) is the calling workflow's to decide.
+
+### QA in a Woodshed session
+
+A repo with a Woodshed console can run the same QA there instead of in its CI. The project file says so with
+`pullRequests.qa.runner: woodshed` (the default is `actions`), and then the QA label (`pullRequests.qa.label`) on a
+pull request starts a QA session on its branch. It needs nothing in the repo's CI and no API key there:
+
+- The session gets its own databases, as any session does, and a GitHub token that only reads. `session/qa.sh` runs in
+  its terminal in place of claude: it plans with the same prompts as the actions (`shared/qa/`), starts the app with
+  the project file's `app.start` when there is something to test, and runs the plan in the image's browser.
+- The console posts the QA comment as its GitHub App when the session starts (`Running`, linking the session) and writes
+  the report into it when the session ends. Each later run writes over that comment. It also posts the
+  `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
+  session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
+  An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check
+  failed`), and the comment still gets the report.
+- With a `pullRequests.review`, QA tests only what the review approved, as QA in CI does: a label on a pull request
+  whose latest commit the review has not approved posts a neutral `Waiting for the review to approve this commit`
+  check, and the review's approval then starts QA, as whoever added the label. Each newly approved commit of a
+  labelled pull request runs QA again, once, including one approved while an earlier run was still going, which runs
+  when that one finishes. Without a review, the label starts QA straight away.
+- The session stops itself once it has sent its report, and is not kept. Adding the label again runs QA again. A label
+  added while a QA session runs on the pull request starts nothing.
+
+A label and a review reach the console through its webhooks only, not its poll.
 
 ## Databases
 
@@ -369,11 +496,27 @@ database's seed may read another's: each database's `paths` decide keep, migrate
 every one's, and the commands run in the list's order, each database's `migrate` then its `seed`, with every database's
 variables set. A copy waits until each engine's template is ready.
 
-The installation says which engines it hosts: `databases` in Terraform (`WOODSHED_CLOUD_DATABASES` for the console), or
+The installation says which engines it hosts: `databases` in Terraform (`WOODSHED_DATABASES` for the console), or
 the local provider's `WOODSHED_LOCAL_DB_*`. A project file whose `databases` need an engine it does not host starts no
 session: the console reads the default branch's file (`console/databaseGate.mjs`), says why on New session and My
 settings, refuses the API's starts with the reason, and answers a label or `/woodshed` comment with it. A session started
 from a branch whose own file differs stops at start with the same reason (`requireDatabases` in the entrypoint).
+
+## Renamed variables
+
+The console's settings, and `WOODSHED_PROJECT_FILES_DIR` in a session, were named `WOODSHED_CLOUD_<NAME>` before the
+project was called Woodshed. Each is now `WOODSHED_<NAME>`, except two whose plain rename a session already has with
+another meaning: `WOODSHED_CLOUD_INSTALL_SECRETS` is `WOODSHED_INSTALL_SECRET_PAIRS`, and `WOODSHED_CLOUD_CONSOLE_URL`
+(`console/bin/start-session.mjs`) is `WOODSHED_CONSOLE_WEB_URL`. `shared/envNames.mjs` lists them all.
+
+The old names still work. Each is read when its new name is unset, and the console logs
+`config: deprecated variable, use WOODSHED_<NAME>` once for each, with the old name and never the value; `install.sh`
+says the same once a run for each old name its `stack.env` still has. Where both are set, the new one is read. Until a
+later release, Terraform writes both names into the base box's compose file, since it can reach the box before the
+console image that reads the new ones, and the local provider hands a session both `WOODSHED_PROJECT_FILES_DIR` names,
+since an older session image reads only the old one. The deploy workflow's repository variables
+(`WOODSHED_CLOUD_AWS_ROLE_ARN` and the rest, `providers/aws/README.md`) are the installation's GitHub settings and keep
+their names for now.
 
 ## License
 

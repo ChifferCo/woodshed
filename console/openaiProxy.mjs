@@ -86,7 +86,7 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
     if (!session) {
       req.resume();
       console.warn('openaiProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
-      return refuse(res, 401, 'not an active Woodshed Cloud session');
+      return refuse(res, 401, 'not an active Woodshed session');
     }
     if (session.options?.agent !== 'codex') {
       req.resume();

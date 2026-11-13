@@ -8,6 +8,6 @@ settings but `WOODSHED_PROVIDER=local` runs sessions in Docker and nothing else.
 
 | File | What it is |
 | --- | --- |
-| `project.yaml`, `rules.md` | The project file for Woodshed: no dependencies, no databases, no app; checks with `node --test` and the dev console. Nothing reads it while Woodshed is inside another repo, where sessions read that repo's; `test/selfProject.test.mjs` keeps it valid |
+| `project.yaml`, `rules.md` | The project file for Woodshed: no dependencies or databases, and the dev console as its app (`scripts/devConsoleApp.sh`); checks with `node --test` and that app. Nothing reads it while Woodshed is inside another repo, where sessions read that repo's; `test/selfProject.test.mjs` keeps it valid |
 | `review.md` | What `.github/workflows/review.yml` looks for in a pull request to Woodshed, on top of its own checks. Another repo calling that review keeps its own |
 | `riskAreas.md` | The changes to Woodshed that `.github/workflows/review.yml` always rates High merge risk, on top of its own list |

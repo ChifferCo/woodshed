@@ -51,3 +51,71 @@ test('the app buttons\' title names the project\'s own ports, and the servers al
   assert.equal(W.serversTitle({ appServers: { ...servers, frontendPort: null, backendPort: null } }), ' Backend down, frontend up.');
   assert.equal(W.serversTitle({ appServers: null }), '');
 });
+
+test('a merged or closed pull request shows only while no newer one came after it', () => {
+  const states = { 1: 'merged', 2: 'open', 3: 'closed', 4: 'draft', 5: 'merged' };
+  const shown = (numbers) => [...W.shownPrs({ prs: numbers.map((n) => ({ url: `${n}`, pr: states[n] ? { state: states[n] } : null })) }).map((p) => p.url)];
+  assert.deepEqual(shown([]), []);
+  assert.deepEqual(shown([1]), ['1'], 'the only one stays, merged');
+  assert.deepEqual(shown([1, 2]), ['2'], 'a newer one hides the merged one');
+  assert.deepEqual(shown([2, 1]), ['2', '1'], 'an older open one stays beside the newest');
+  assert.deepEqual(shown([1, 3, 5]), ['5'], 'all settled: only the newest');
+  assert.deepEqual(shown([2, 3, 4]), ['2', '4']);
+  assert.deepEqual(shown([9, 1, 2]), ['9', '2'], 'one not read yet counts as open');
+  assert.deepEqual([...W.shownPrs({ prUrl: PR, pr: { state: 'merged' } }).map((p) => p.url)], [PR], 'a console from before the list');
+  assert.equal(W.shownPrs({ prUrl: null }).length, 0);
+});
+
+// common.js with a stand-in document whose elements keep their attributes and text, for what builds chips.
+function loadCommonWithElements() {
+  class Node {}
+  class El extends Node {
+    constructor(tag) { super(); this.tag = tag; this.attrs = {}; this.text = ''; }
+    setAttribute(key, value) { this.attrs[key] = value; }
+    addEventListener() {}
+    append(child) { this.text += child.text ?? ''; }
+  }
+  const window = { WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs') };
+  const context = vm.createContext({
+    window, console, Node,
+    document: { addEventListener() {}, createElement: (tag) => new El(tag), createTextNode: (text) => ({ text }) },
+    matchMedia: () => ({}),
+    fetch: () => new Promise(() => {}),
+  });
+  vm.runInContext(read('common.js'), context);
+  return window.Woodshed;
+}
+
+test('past the cap, the older pull requests fold into one +N chip, the newest shown', () => {
+  const prs = [1, 2, 3, 4].map((n) => ({ url: `https://github.com/o/r/pull/${n}`, pr: null }));
+  const W2 = loadCommonWithElements();
+  const chips = W2.prChips({ prs }, { max: 2 });
+  assert.deepEqual([...chips.map((c) => c.text)], ['+2', 'PR #3', 'PR #4']);
+  assert.match(chips[0].attrs.title, /2 more pull requests:\n#1\n#2/);
+  assert.deepEqual([...W2.prChips({ prs: prs.slice(0, 2) }, { max: 2 }).map((c) => c.text)], ['PR #1', 'PR #2'], 'at the cap, nothing folds');
+});
+
+test('Start app offers a pick only with more than one app, and each line says what picking it does', () => {
+  const apps = [{ name: 'web', label: 'Web' }, { name: 'admin', label: 'Admin' }];
+  assert.equal(W.appChoices({ apps: null }), null, 'a session from an image before several apps');
+  assert.equal(W.appChoices({ apps: [apps[0]] }), null, 'one app: one Start app');
+  assert.equal(W.appChoices({ apps }).length, 2);
+  const running = { status: 'running', app: 'running', appName: 'admin', apps };
+  assert.equal(W.runningAppLabel(running), 'Admin');
+  assert.deepEqual(W.appChoiceItems(running, () => {}).map((i) => [i.label, i.note]),
+    [['Web', 'Stops Admin first, then starts this one'], ['Admin', 'Running now: starts it again']]);
+  assert.deepEqual(W.appChoiceItems({ ...running, app: 'stopped' }, () => {}).map((i) => i.note), ['Start it in this session', 'Start it in this session']);
+});
+
+test('a Codex session is named codex where a Claude session says claude', () => {
+  const codex = { options: { agent: 'codex' } };
+  assert.equal(W.agentOf(codex), 'codex');
+  assert.equal(W.agentOf({ options: null }), 'claude');
+  assert.equal(W.agentTitle(codex), 'Codex');
+  assert.equal(W.displayStatus(running({ ...codex, state: 'idle' })).word, 'codex exited');
+  assert.equal(W.displayStatus(running({ state: 'idle' })).word, 'claude exited');
+  assert.equal(W.setupAppToast('typed', codex), 'Asked codex to set up the app');
+  const opening = (s) => W.startProgress({ status: 'starting', startedAt: '2026-11-12T10:00:00Z', startSteps: {}, ...s }).steps.at(-1).label;
+  assert.equal(opening(codex), 'Opening codex');
+  assert.equal(opening({}), 'Opening claude');
+});

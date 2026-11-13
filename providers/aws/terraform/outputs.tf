@@ -1,5 +1,5 @@
 output "console_url" {
-  value = "https://${var.domain}"
+  value = "https://${local.console_domain}"
 }
 
 output "base_box_instance_id" {
@@ -17,22 +17,22 @@ output "ecr_repositories" {
 }
 
 output "github_images_role_arn" {
-  description = "The WOODSHED_CLOUD_AWS_ROLE_ARN repository variable for woodshed-cloud-image.yml."
+  description = "The WOODSHED_CLOUD_AWS_ROLE_ARN repository variable, for the deploy workflow's image jobs."
   value       = aws_iam_role.github_images.arn
 }
 
 output "github_plan_role_arn" {
-  description = "The WOODSHED_CLOUD_PLAN_ROLE_ARN repository variable for woodshed-cloud-infra.yml."
+  description = "The WOODSHED_CLOUD_PLAN_ROLE_ARN repository variable, for the deploy workflow's plan job."
   value       = aws_iam_role.github_infra["plan"].arn
 }
 
 output "github_infra_role_arn" {
-  description = "The WOODSHED_CLOUD_INFRA_ROLE_ARN repository variable for woodshed-cloud-infra.yml."
+  description = "The WOODSHED_CLOUD_INFRA_ROLE_ARN repository variable, for the deploy workflow's apply job."
   value       = aws_iam_role.github_infra["infra"].arn
 }
 
 output "redeploy_console_document" {
-  description = "The SSM document the image workflow runs on the base box after a console build."
+  description = "The SSM document the deploy workflow's console job runs on the base box after a console build."
   value       = aws_ssm_document.redeploy_console.name
 }
 
@@ -45,12 +45,12 @@ locals {
 }
 
 output "db_template_command" {
-  description = "Builds the database template every session's databases are copied from, from the session image's master, as a one-off task. Once before the first session; after that the image workflow runs it after each session image. null with no databases."
+  description = "Builds the database template every session's databases are copied from, from the session image's default branch, as a one-off task. Once before the first session; after that the deploy workflow's session job runs it after each session image. null with no databases."
   value       = local.db_admin ? "${local.db_admin_run} --overrides '{\"containerOverrides\":[{\"name\":\"db-admin\",\"command\":[\"template\"]}]}'" : null
 }
 
 output "refresh_db_template_document" {
-  description = "The SSM document the image workflow runs on the base box after a session build, to build the database template again. null with no databases."
+  description = "The SSM document the deploy workflow's session job runs on the base box after a session build, to build the database template again. null with no databases."
   value       = one(aws_ssm_document.refresh_db_template[*].name)
 }
 
@@ -65,6 +65,6 @@ output "slack_events_url" {
 }
 
 output "dns_nameservers" {
-  description = "Delegate var.domain to these: an NS record for each, where the parent domain's DNS is hosted."
-  value       = aws_route53_zone.console.name_servers
+  description = "Delegate var.domain to these: an NS record for each, where the parent domain's DNS is hosted. Empty with no domain: sslip.io needs nothing."
+  value       = flatten(aws_route53_zone.console[*].name_servers)
 }

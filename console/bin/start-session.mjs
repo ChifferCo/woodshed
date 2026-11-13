@@ -6,12 +6,14 @@
 
 import { parseArgs } from 'node:util';
 
+import { envValue } from '../../shared/envNames.mjs';
+
 const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     as: { type: 'string' },
     prompt: { type: 'string', default: '' },
-    console: { type: 'string', default: process.env.WOODSHED_CLOUD_CONSOLE_URL || 'http://127.0.0.1:7690' },
+    console: { type: 'string', default: envValue(process.env, 'CONSOLE_URL') || 'http://127.0.0.1:7690' },
   },
 });
 

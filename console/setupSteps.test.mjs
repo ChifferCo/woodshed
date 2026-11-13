@@ -32,3 +32,24 @@ test('a console with no GitHub App puts connecting one first, and is not done un
   assert.deepEqual(rows(m), ['github:waiting', 'token:done', 'databases:done']);
   assert.equal(setupDone(m), false);
 });
+
+test('a Codex sign-in alone finishes the token step, for someone who only uses Codex', () => {
+  const m = { login: 'mia-dev', claudeToken: { set: false }, codexAuth: { set: true }, databases: { available: true, status: 'ready' } };
+  assert.deepEqual(rows(m), ['token:done', 'databases:done']);
+  assert.equal(setupDone(m), true);
+  assert.match(setupSteps(m)[0].hint, /Claude.*Codex/, 'the step names both agents');
+});
+
+test('a console with no repo puts adding one first, and is not done until it has', () => {
+  assert.deepEqual(rows({ ...me({ token: true }), repoNeeded: true }), ['repo:waiting', 'token:done']);
+  assert.equal(setupDone({ ...me({ token: true }), repoNeeded: true }), false);
+  assert.equal(setupDone({ ...me({ token: true }), repoNeeded: false }), true);
+});
+
+test('an optional GitHub App is offered on the card and never holds New session back', () => {
+  const m = { ...me({ token: false }), githubSetupOptional: true };
+  assert.deepEqual(rows(m), ['github:waiting', 'token:waiting']);
+  assert.equal(setupSteps(m)[0].optional, true);
+  assert.match(setupSteps(m)[0].label, /optional/);
+  assert.equal(setupDone({ ...me({ token: true }), githubSetupOptional: true }), true);
+});

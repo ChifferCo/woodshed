@@ -1,9 +1,9 @@
-# Lets .github/workflows/woodshed-cloud-image.yml push the two images to ECR,
+# Lets the installation's deploy workflow (providers/aws/README.md, "The deploy workflow") push the two images to ECR,
 # restart the console after a console build, and build the database template
 # again after a session build, through GitHub OIDC, so no AWS keys are stored
 # in GitHub. The trust names the
-# workflow's environment, not the branch: issue and comment workflows (claude-bot
-# among them) also run as master, and an image push runs code on the base box
+# image jobs' environment, not the branch: issue and comment workflows (a bot
+# answering comments among them) also run as the default branch, and an image push runs code on the base box
 # and in every session.
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -26,13 +26,13 @@ data "aws_iam_policy_document" "github_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:environment:woodshed-cloud-images"]
+      values   = ["repo:${var.github_repo}:environment:${local.p}-images"]
     }
   }
 }
 
 resource "aws_iam_role" "github_images" {
-  name               = "woodshed-cloud-github-images"
+  name               = "${local.p}-github-images"
   assume_role_policy = data.aws_iam_policy_document.github_assume.json
 }
 
@@ -73,12 +73,12 @@ data "aws_iam_policy_document" "github_images" {
 # Pulls the newest console image and recreates only the console container.
 # Sessions keep running; the console picks them back up from its state on start.
 resource "aws_ssm_document" "redeploy_console" {
-  name            = "woodshed-cloud-redeploy-console"
+  name            = "${local.p}-redeploy-console"
   document_type   = "Command"
   document_format = "JSON"
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Pull the newest Woodshed Cloud console image and restart only the console."
+    description   = "Pull the newest Woodshed console image and restart only the console."
     mainSteps = [{
       action = "aws:runShellScript"
       name   = "redeployConsole"
@@ -87,9 +87,9 @@ resource "aws_ssm_document" "redeploy_console" {
         runCommand = [
           "set -euo pipefail",
           "# The stack has never started (its first boot ran before the console image existed): start all of it.",
-          "if [ -z \"$(docker compose -f /opt/woodshed-cloud/compose.yml ps --quiet console)\" ]; then exec /usr/local/bin/woodshed-cloud-up; fi",
+          "if [ -z \"$(docker compose -f /opt/${local.p}/compose.yml ps --quiet console)\" ]; then exec /usr/local/bin/${local.p}-up; fi",
           "aws ecr get-login-password --region ${var.region} | docker login --username AWS --password-stdin ${split("/", aws_ecr_repository.images["console"].repository_url)[0]}",
-          "cd /opt/woodshed-cloud",
+          "cd /opt/${local.p}",
           "# Every build leaves the image before it behind: unused images filled the box's disk until a pull failed with",
           "# no space left on device. Running containers keep theirs; pruning first leaves room for the pull.",
           "docker image prune -af",
@@ -110,12 +110,12 @@ resource "aws_ssm_document" "redeploy_console" {
 resource "aws_ssm_document" "refresh_db_template" {
   count = local.db_admin ? 1 : 0
 
-  name            = "woodshed-cloud-refresh-db-template"
+  name            = "${local.p}-refresh-db-template"
   document_type   = "Command"
   document_format = "JSON"
   content = jsonencode({
     schemaVersion = "2.2"
-    description   = "Build the Woodshed Cloud database template again, from the newest session image."
+    description   = "Build the Woodshed database template again, from the newest session image."
     mainSteps = [{
       action = "aws:runShellScript"
       name   = "refreshDbTemplate"
@@ -139,7 +139,7 @@ resource "aws_ssm_document" "refresh_db_template" {
 }
 
 resource "aws_iam_role_policy" "github_images" {
-  name   = "push-woodshed-cloud-images"
+  name   = "push-${local.p}-images"
   role   = aws_iam_role.github_images.id
   policy = data.aws_iam_policy_document.github_images.json
 }

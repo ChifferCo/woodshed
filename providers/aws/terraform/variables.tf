@@ -5,9 +5,47 @@ variable "region" {
 
 # No default for the values that name one installation: an apply without its -var-file fails on them, naming them,
 # rather than using another installation's.
-variable "domain" {
-  description = "The console's name, given its own Route 53 zone (dns.tf)."
+# No default for name_prefix either: an installation made before it existed is named woodshed-cloud, and an apply that
+# guessed woodshed would make every resource again under the new name, empty.
+variable "name_prefix" {
+  description = "What every AWS resource, tag, secret and base box path of this installation is named after, such as woodshed (woodshed-base-box, /opt/woodshed). woodshed-cloud for an installation made before this setting existed: any other value replaces all of it, and its secrets, Claude homes, images and state are left behind under the old names."
   type        = string
+
+  # The tightest limit is an S3 bucket's 63 characters, with -tfstate- and the 12-digit account id after it, and RDS's
+  # identifier, which is the prefix itself: a letter first, no "--" and no "-" last.
+  validation {
+    condition     = can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.name_prefix)) && !strcontains(var.name_prefix, "--") && length(var.name_prefix) <= 20
+    error_message = "name_prefix is lowercase letters, digits and single dashes, starts with a letter, ends with a letter or digit, and is at most 20 long, such as woodshed."
+  }
+}
+
+locals {
+  p = var.name_prefix
+}
+
+# The installation's backend.hcl bucket and key, which the deploy workflow's plan role may write the lock beside.
+variable "tfstate_bucket" {
+  description = "The S3 bucket holding this Terraform's state, as backend.hcl names it. Empty (the default) for <name_prefix>-tfstate-<account id>."
+  type        = string
+  default     = ""
+}
+
+variable "tfstate_key" {
+  description = "The state's key in that bucket, as backend.hcl names it. Empty (the default) for <name_prefix>/terraform.tfstate."
+  type        = string
+  default     = ""
+}
+
+# Empty, the default, needs no DNS of your own: the console is woodshed.<the base box's IP, dashed>.sslip.io (dns.tf).
+variable "domain" {
+  description = "The console's name, given its own Route 53 zone (dns.tf), whose parent must delegate it. Empty (the default) names the console woodshed.<the base box's IP, with dashes>.sslip.io, with no zone and no DNS to set up: Caddy then gets a certificate for each name the first time it is opened, after asking the console (on-demand TLS)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.domain == "" || can(regex("^([a-z0-9]([a-z0-9-]*[a-z0-9])?\\.)+[a-z]{2,}$", var.domain))
+    error_message = "domain is a lowercase DNS name, such as woodshed.example.com, or empty for a name on sslip.io."
+  }
 }
 
 variable "budget_email" {
@@ -21,13 +59,21 @@ variable "monthly_budget_usd" {
 }
 
 variable "github_repo" {
-  description = "The repository sessions work on, owner/name; the GitHub roles trust its workflows (github.tf)."
+  description = "The repository that deploys this installation, owner/name: the GitHub roles trust its workflows (github.tf), and the session image is built from it. Sessions work on it too, unless sessions_on_github_repo is false."
   type        = string
 }
 
-# Empty, the default, leaves the console on github_repo alone, as before projects (console/projects.mjs).
+# False starts the console with no repo: an admin adds the ones sessions work on, on its Console settings page.
+variable "sessions_on_github_repo" {
+  description = "Whether github_repo is also a repo sessions work on, the console's default. False for a repo kept only to deploy the installation: the console then starts with no repo (or with projects alone), and the first repo an admin adds on the Console settings page becomes the default."
+  type        = bool
+  default     = true
+}
+
+# Empty, the default, leaves the console on github_repo alone, as before projects (console/projects.mjs), or on none
+# without sessions_on_github_repo.
 variable "projects" {
-  description = "The repos the console starts sessions on, handed to it as WOODSHED_CLOUD_PROJECTS: each with a name (lowercase words joined by single dashes, at most 32 long), its repo (owner/name), whether it is the default, and, when the App is installed on its repo's account under another installation, that installation's ID. [] (the default) for github_repo alone. Every project uses this installation's session image, task definition and databases for now."
+  description = "The repos the console starts sessions on, handed to it as WOODSHED_PROJECTS: each with a name (lowercase words joined by single dashes, at most 32 long), its repo (owner/name), whether it is the default, and, when the App is installed on its repo's account under another installation, that installation's ID. [] (the default) for github_repo alone, or for none when sessions_on_github_repo is false. Every project uses this installation's session image, task definition and databases for now."
   type = list(object({
     name            = string
     repo            = string
@@ -57,10 +103,11 @@ variable "projects" {
     condition     = length(var.projects) <= 1 || length([for p in var.projects : p if p.default]) == 1
     error_message = "With more than one project, exactly one is the default."
   }
-  # WOODSHED_CLOUD_REPO stays github_repo, and the console refuses a list whose default is another repo.
+  # WOODSHED_REPO stays github_repo, and the console refuses a list whose default is another repo. Without
+  # sessions_on_github_repo the console gets no WOODSHED_REPO, so any repo may be the default.
   validation {
-    condition     = length(var.projects) == 0 || anytrue([for p in var.projects : lower(p.repo) == lower(var.github_repo) && (p.default || length(var.projects) == 1)])
-    error_message = "The default project's repo is github_repo."
+    condition     = length(var.projects) == 0 || !var.sessions_on_github_repo || anytrue([for p in var.projects : lower(p.repo) == lower(var.github_repo) && (p.default || length(var.projects) == 1)])
+    error_message = "The default project's repo is github_repo, unless sessions_on_github_repo is false."
   }
 }
 
@@ -114,9 +161,9 @@ variable "install_secrets" {
     error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets or an env file's."
   }
   validation {
-    # Woodshed's own session variables: the same list as SESSION_VARIABLES in console/config.mjs.
+    # Woodshed's own session variables: the same list as SESSION_VARIABLES in shared/reservedNames.mjs.
     condition = alltrue([for env_name in values(var.install_secrets) : can(regex("^[A-Z_][A-Z0-9_]*$", env_name)) && !startswith(env_name, "WOODSHED_") && !contains(
-      ["SESSION_ID", "SESSION_TOKEN", "TERMINAL_TOKEN", "SESSION_URL", "SESSION_KIND", "SESSION_MODE", "STARTED_BY", "ISSUE", "PR", "BRANCH", "PROMPT", "ASKED_BY", "AGENT", "MODEL", "EFFORT", "PERMISSION_MODE", "RESUME_SESSION", "ATTACHMENTS", "REVIEW_ONLY", "REPO_DIR", "GH_TOKEN", "ANTHROPIC_API_KEY", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE", "PGSSLROOTCERT", "PG_URL", "MONGODB_URI", "HOME", "PATH"],
+      ["SESSION_ID", "SESSION_TOKEN", "TERMINAL_TOKEN", "SESSION_URL", "SESSION_APP_DOMAIN", "SESSION_KIND", "SESSION_MODE", "STARTED_BY", "ISSUE", "PR", "BRANCH", "PROMPT", "ASKED_BY", "AGENT", "MODEL", "EFFORT", "PERMISSION_MODE", "RESUME_SESSION", "ATTACHMENTS", "REVIEW_ONLY", "REPO_DIR", "GH_TOKEN", "ANTHROPIC_API_KEY", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE", "PGSSLROOTCERT", "PG_URL", "MONGODB_URI", "HOME", "PATH"],
     env_name) && !contains([for name in keys(var.env_files) : upper(replace(name, "-", "_"))], env_name)]) && length(distinct(values(var.install_secrets))) == length(var.install_secrets)
     error_message = "Each install secret's variable is a different name of capitals, digits and underscores, and not one of Woodshed's own (WOODSHED_*, SESSION_ID, GH_TOKEN, PGHOST and the rest) or an env file's."
   }
@@ -168,8 +215,20 @@ variable "max_sessions" {
   default = 5
 }
 
+variable "console_name" {
+  description = "What the console calls itself: its pages' titles, the installed app's name and its GitHub comments, as WOODSHED_CONSOLE_NAME."
+  type        = string
+  default     = "Woodshed"
+
+  # The console falls back to Woodshed on a name it refuses (console/config.mjs, consoleName), so plan refuses it first.
+  validation {
+    condition     = trimspace(var.console_name) == var.console_name && can(regex("^[^\\p{C}<>\"'`]{1,40}$", var.console_name))
+    error_message = "The console_name is 1 to 40 printable characters, without spaces around it and without < > \" ' or `."
+  }
+}
+
 variable "console_workflow_links" {
-  description = "The console menu's GitHub Actions links, label to workflow file in the repo (the image and infra workflows). None leaves the group out."
+  description = "The console menu's GitHub Actions links, label to workflow file in the repo (such as its deploy workflow). None leaves the group out."
   type        = map(string)
   default     = {}
 
@@ -205,7 +264,7 @@ variable "github_app_installation_id" {
 }
 
 variable "base_box_instance_type" {
-  description = "x86, like the session image, so one build serves both."
+  description = "The base box's EC2 type, x86 like the session image so one build serves both. null picks by what the box runs: t3.small (2 GB) for the console and Caddy alone, t3.medium (4 GB) with mongo in databases or any shared_services. A type smaller than that is refused at plan."
   type        = string
-  default     = "t3.medium"
+  default     = null
 }

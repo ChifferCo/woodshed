@@ -1,4 +1,4 @@
-The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and its rail. Build mocks and console changes from these tokens; do not add a palette of your own.
+The look of the Woodshed console (`woodshed/console/public/style.css`) and its rail. Build mocks and console changes from these tokens; do not add a palette of your own.
 
 ## Content fundamentals
 
@@ -12,6 +12,7 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
 ## Visual foundations
 
 - **Color roles.** Orange (`action`) is only for the one primary action in a view: New session, Resume, Take it, Assign. Yellow (`wait`) is only for a session that needs a person, and for a PR chip in the merge queue, as GitHub colors it. `slate` is for working, in review, waiting on a job, links and the Assigned outline. `green` is done. `bad` is failed. `amber` is the focus ring and the open session's outline, never text.
+- **Project colours.** `proj-*` (teal, plum, sienna, rose, violet, moss) say which project a session is on, and nothing else: never a status, a warning or an action. None of them is a status hue, and the palette is fixed, so do not add one or borrow a status colour for a project. A project colour never stands alone: its name is on the filter chip and in the card's tooltip. Two projects never share one.
 - **Surfaces.** Page and cards on `ground`; rail groups and stopped cards on `stopped`. Borders are `line`; dividers inside the rail are `line-soft`. No shadows on cards. `menu` shadow only on menus.
 - **Type.** `title` (Merriweather) once per page. Everything else is Red Hat Display: `card-title`, `button`, `group-label`. Meta lines, PR chips and counts are JetBrains Mono: `meta`, `chip`.
 - **Spacing and radius.** Gaps are `space-2` between cards and head controls, `space-3` for rail padding. Cards are `radius-lg`, rail buttons `radius-md`, form buttons `radius-sm`, the People filter and count chips `radius-pill`.
@@ -23,9 +24,14 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
 
 - The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop.
 - The user menu sits in a footer and opens upward.
-- A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then the session's project in `meta` when the console has more than one project, then a name only when the card does not already say it, with the PR chip (or issue number) and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card.
+- With more than one project, a row of filter chips sits under the head: All with its count, then one per project with its `proj-*` swatch, name and count. They are the legend of the cards' edges, and picking one shows only that project's sessions (the zone counts follow); the pick is kept in the browser.
+- A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its tooltip and its link's accessible name.
 - A whole card is the click target. A button on it must stop the click from also opening the session.
-- CPU and memory, the Plan chip and Start app are in the pane bar, never on a card. So is **Editor ↗**, a quiet `pbtn` link to a new tab, never filled. The Plan chip is the owner's Claude plan on a private session: `bar-amber` from 70% of a window, with the word `out` at 100%. Its detail, in the bar's menu, colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
+- With several apps, Start app is **Start app ▾**, a menu of the apps' labels, and while one runs the button beside
+  Open app carries its label (`Admin ▾`), which says which app runs and opens the same menu (`components/AppPicker`).
+  One app: one Start app, no menu.
+- CPU and memory, the Plan chip and Start app are in the pane bar, never on a card. So is **Editor ↗**, a quiet `pbtn` link to a new tab, never filled. The Plan chip shows the private session's agent's plan (Claude or Codex); only sessions on that agent share its readings and running count, and no chip appears before that agent reports limits: `bar-amber` from 70% of a window, with the word `out` at 100%. Its detail, in the bar's menu, colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
+- A pull request row has two lines, as a card does: its title and its checks' dot, then (`meta`) the project's name and the number, the checks in their colour and how long since it moved, with Open, Resume or Start and a `slate` ↗ to GitHub at the right end. With more than one project it has its project's 3px edge, and the name is always on line two.
 - Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions assigned to you whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups.
 - A shared session someone has carries the Assigned tag: on Mine the word Assigned, on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch: the rail head reads My sessions. **People** on Everyone filters by assignee. A resume keeps the assignee.
 
@@ -38,11 +44,26 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
   right end. Then a `line-soft` rule.
 - Each one is a plain link: never orange, never a button that looks like an action on the session.
 
+## Admin notices
+
+- What waits on an admin (someone asking to join, Woodshed commits the console lacks) is a `menu-count` on its page's
+  link, in the avatar menu and the settings list (`amber-tint` pill, `amber-ink` mono count), and one `amber` dot on the
+  avatar whose title says what. Never orange, and never on the rail's cards.
+
+## Woodshed card
+
+- First on Console settings. The state is a sentence: "Up to date with …" in `green`, or "N commits behind …" in
+  `set-name` weight, the running commit as a mono `rref`. The newer commits are a list, newest first: mono `slate` sha,
+  the title cut to one line, then the author and age in `meta`; it scrolls past about ten.
+- An update is a checklist (`components/Checklist`) under an Update head with its pill: Updating or Restarting
+  (`is-work`), Failed (`is-bad`). Commands and a build's last lines are mono on `stopped`.
+- **Update to latest** is the card's one orange button; **Check now** is quiet.
+
 ## Setup card
 
-- A member who has not saved a Claude token (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The token row has the one primary button, Set up, which goes to My settings. The databases row appears once the token is saved: progress while it copies, and an outline Open My settings button when it failed or never started.
+- A member who has saved neither a Claude token nor a Codex sign-in (or whose databases are not ready) sees one card at the top of Mine: `amber-tint` fill, `amber` border, the steps as rows with a `green` check when done. The agent row, Choose your agent, has two outline buttons, Claude and Codex: equal choices that go to that box on My settings, so neither is orange. The databases row appears once either is saved: progress while it copies, and an outline Open My settings button when it failed or never started.
 - Show only what a person can do or is waiting on: no "signed in" row, no step for something the console does by itself, and Connect GitHub stays on My settings.
-- The same card fills the pane when New session is pressed before the token is saved and the databases are ready.
+- The same card fills the pane when New session is pressed before a Claude token or a Codex sign-in is saved and the databases are ready.
 
 ## Checklists
 
@@ -62,6 +83,9 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
 - A command a person runs on their own computer is a `value-box` in mono, one argument a line, with its own **Copy**
   (`btn-plain`) beside it and a `meta` line above saying when to use it. Two commands never share a box: copying one
   must never run the other.
+- Steps a person follows to get something to paste (My settings' Claude and Codex cards) are a numbered list
+  (`cmd-steps`, its numbers in `meta`, 600): each step a line of `ink` text, its command in its own box under it. What
+  the step does with the output ("Paste it below and press Save") is its own step, never folded into a sentence.
 - Commands a person needs again after the first time stay on the page under a fold (`<details>`, its summary in
   `slate`, 600): Restore a dump's **How to make a dump**. Open before first use, folded after.
 
@@ -88,4 +112,4 @@ The look of the Woodshed Cloud console (`woodshed/console/public/style.css`) and
 
 ## Iconography
 
-No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image.
+No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).

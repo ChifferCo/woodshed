@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { bothNames } from '../../shared/envNames.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -23,7 +24,18 @@ export function parseDockerPort(output) {
 }
 
 // The docker CLI's own settings: a session's environment never chooses which daemon the console's calls go to.
+// What finds a session's containers (providers/local/README.md, "Removing it"). Containers started before this one was
+// named carry OLD_SESSION_LABEL instead, so what lists them reads both for one release; the old one goes after it.
+export const SESSION_LABEL = 'woodshed.session';
+export const OLD_SESSION_LABEL = 'woodshed-cloud.session';
 const DOCKER_SETTINGS = new Set(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH']);
+
+// The daemon's socket, where `docker run -v` finds it on the machine (Docker Desktop and OrbStack give this path to every
+// container for their VM's daemon) and where a session finds it.
+export const DOCKER_SOCKET = '/var/run/docker.sock';
+// What says a session has it, to claude's rules (writeRules in session/entrypoint.sh) and the project file's scripts.
+// Only the launcher sets it: one from the session env file is left out.
+const SESSION_DOCKER = 'WOODSHED_SESSION_DOCKER';
 
 /**
  * @param {{image: string, memory: string, cpus: string, network?: string|null, projectFilesDir?: string|null,
@@ -33,10 +45,13 @@ const DOCKER_SETTINGS = new Set(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG
  *   (projectFileMounts.mjs). `dockerHost` is another machine's daemon, as DOCKER_HOST takes it (`ssh://woodshed@10.8.0.12`):
  *   every docker call goes there, and `projectFilesHostDir` is where that machine has the project files. `reachHost`
  *   is the address the console reaches the sessions' ports on (that machine's private address); they are published
- *   on it alone, and on 127.0.0.1 without it. `run(args, env, {dockerHost})` stands in for the docker CLI in tests
+ *   on it alone, and on 127.0.0.1 without it. `hostDocker` gives every session but a question from Slack the daemon's
+ *   socket, which is root on that machine (config.mjs, sessionDocker). `run(args, env, {dockerHost})` stands in for the
+ *   docker CLI in tests
  */
 export function createDockerLauncher({
-  image, memory, cpus, network = null, projectFilesDir = null, projectFilesHostDir = null, repo = null, dockerHost = null, reachHost = null, run = null,
+  image, memory, cpus, network = null, projectFilesDir = null, projectFilesHostDir = null, repo = null, dockerHost = null, reachHost = null,
+  hostDocker = false, run = null,
 }) {
   const bind = reachHost || '127.0.0.1';
   const cliEnv = (env) => ({ ...process.env, ...env, ...(dockerHost ? { DOCKER_HOST: dockerHost } : {}) });
@@ -45,6 +60,34 @@ export function createDockerLauncher({
     if (run) return run(args, env, { dockerHost });
     const { stdout } = await execFileAsync('docker', args, { env: cliEnv(env) });
     return stdout.trim();
+  }
+
+  // The group that owns the socket inside a container, which the session's node user (uid 1000) joins to use it: root's
+  // (0) on Docker Desktop and OrbStack, the docker group's on Linux. Asked of a container rather than read from this
+  // machine's own socket, so it is right wherever the daemon runs. Once per console, and again after a failure.
+  let socketGroup = null;
+  function hostSocketGroup() {
+    socketGroup ??= docker(['run', '--rm', '--network', 'none', '--entrypoint', 'stat', '-v', `${DOCKER_SOCKET}:${DOCKER_SOCKET}`, image, '-c', '%g', DOCKER_SOCKET])
+      .then((out) => {
+        const gid = String(out).trim();
+        if (!/^\d+$/.test(gid)) throw new Error(`stat said ${JSON.stringify(gid.slice(0, 80))}`);
+        console.log('launcher: sessions get this machine\'s Docker', { socket: DOCKER_SOCKET, group: Number(gid) });
+        return gid;
+      })
+      .catch((err) => {
+        socketGroup = null;
+        throw new Error(`sessions use this machine's Docker (WOODSHED_SESSION_DOCKER=0 turns that off), and its socket could not be given to the session: ${String(err?.stderr || err?.message || err).trim().split('\n')[0]}`);
+      });
+    return socketGroup;
+  }
+
+  /** @returns {Promise<string[]>}  `docker run`'s arguments that give the session the daemon, or none */
+  async function hostDockerArgs(sessionId, env) {
+    // A question from Slack reads and answers, and anyone in the workspace can ask one: it never gets the machine.
+    if (!hostDocker || env.SESSION_MODE === 'ask') return [];
+    const group = await hostSocketGroup();
+    console.log('launcher: session given this machine\'s Docker', { sessionId });
+    return ['-v', `${DOCKER_SOCKET}:${DOCKER_SOCKET}`, '--group-add', group, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=1`];
   }
 
   return {
@@ -63,16 +106,20 @@ export function createDockerLauncher({
       const ref = this.refFor(sessionId);
       const mounts = projectFileMounts({ dir: projectFilesDir, hostDir: projectFilesHostDir, repos: [repo, given.PROJECT_REPO] });
       if (projectFilesDir) console.log('launcher: installation project files', { sessionId, mounted: mounts.repos });
-      const named = Object.fromEntries(Object.entries(given).filter(([key]) => !DOCKER_SETTINGS.has(key)));
+      const named = Object.fromEntries(Object.entries(given).filter(([key]) => !DOCKER_SETTINGS.has(key) && key !== SESSION_DOCKER));
       if (Object.keys(named).length !== Object.keys(given).length) console.warn('launcher: docker\'s own settings left out of the session\'s environment', { sessionId });
-      const env = mounts.repos.length ? { ...named, WOODSHED_CLOUD_PROJECT_FILES_DIR: PROJECT_FILES_MOUNT } : named;
+      const withDocker = await hostDockerArgs(sessionId, given);
+      // Both names while a session image older than shared/envNames.mjs, which reads only the old one, may be running;
+      // the old name goes in a later release.
+      const env = mounts.repos.length ? { ...named, ...bothNames('PROJECT_FILES_DIR', PROJECT_FILES_MOUNT) } : named;
       const args = [
         'run', '-d', '--name', ref, '--init', '--memory', memory, '--cpus', cpus,
         '--add-host=host.docker.internal:host-gateway',
         '-p', `${bind}::7681`, '-p', `${bind}::7682`, '-p', `${bind}::7684`,
-        '--label', `woodshed-cloud.session=${sessionId}`,
+        '--label', `${SESSION_LABEL}=${sessionId}`,
         ...(network ? ['--network', network] : []),
         ...mounts.args,
+        ...withDocker,
       ];
       for (const key of Object.keys(env)) args.push('-e', key);
       args.push(image);

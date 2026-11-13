@@ -3,6 +3,7 @@
 //
 //   POST /github-token   Authorization: Bearer <SESSION_TOKEN>  ->  {"token": "...", "expiresAt": "..."}
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...},
+//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
@@ -23,12 +24,16 @@
 //                        (attachments.mjs)
 //   POST /answer         {"text": "<Markdown>"}  ->  {"posted": true|false}: an ask session's answer, posted in its
 //                        Slack thread (asks.mjs). 404 for any other session
+//   POST /qa-report      {"verdict", "report", "sha", "costUsd"}  ->  204: a QA session's result (session/qa.sh), written
+//                        into the pull request's QA comment, after which the console stops the session
+//                        (qaSessions.mjs). 404 for any other session, 409 for a second report
 //
 // A session's git credential helper and its `gh` wrapper call /github-token, so a
 // session only ever holds a token that expires within hours: an installation
 // token, or for a private session whose owner connected GitHub, their own user
 // token (githubUser.mjs), so it pushes and opens PRs as them. An ask session's
-// installation token reads and writes nothing: it answers questions about the default branch.
+// installation token reads and writes nothing: it answers questions about the default branch. Nor does a QA
+// session's: it tests a pull request, and the console posts what it found.
 // A session's entrypoint calls /settings at start: a private one for its
 // owner's settings and databases, a shared one for its own databases. Where
 // the console makes no databases, a shared session gets 404 there. Only a
@@ -45,13 +50,16 @@ import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
-import { ACTIVE_STATUSES, START_STEPS, isAsk } from './sessions.mjs';
+import { MAX_REPORT_CHARS, parseQaReport } from './qaSessions.mjs';
+import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa } from './sessions.mjs';
 
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
 const MAX_CODEX_AUTH_BYTES = 40_000;
 // JSON escapes can grow the text up to six-fold; past this the answer is over MAX_ANSWER_CHARS anyway.
 const MAX_ANSWER_BYTES = MAX_ANSWER_CHARS * 6;
+// The report, cut to MAX_REPORT_CHARS by the console, plus the verdict: the same six-fold for escapes.
+const MAX_QA_REPORT_BYTES = MAX_REPORT_CHARS * 6 + 10_000;
 
 function reply(res, code, body) {
   res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -147,7 +155,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -158,6 +166,7 @@ export function createSessionApi({
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
+    if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
         res.writeHead(204).end();
@@ -174,7 +183,8 @@ export function createSessionApi({
     // A private session acts as its owner. Their own token reaches every repo the App is on that they can write to; the
     // project file's githubAccess says whether the session gets it as it is (`full`) or scoped by GitHub to the project's
     // repo (`repo`), for a repo whose content outsiders write. Read from its default branch, as the console's other gates are.
-    const access = session.owner && githubUser && !isAsk(session) ? await accessFor(session, own) : null;
+    const readOnly = isAsk(session) || isQa(session);
+    const access = session.owner && githubUser && !readOnly ? await accessFor(session, own) : null;
     const ownerToken = access === 'full';
     if (access === 'repo' && githubUser.scopedTokenFor) {
       let scopedToken;
@@ -207,13 +217,13 @@ export function createSessionApi({
       console.warn('sessionApi: no GitHub token, this console has no GitHub App', { sessionId: session.id });
       return reply(res, 404, { error: 'this console has no GitHub App, so it mints no GitHub tokens' });
     }
-    const source = isAsk(session) ? (own?.asks ?? askTokens) : (own?.sessions ?? tokens);
+    const source = readOnly ? (own?.asks ?? askTokens) : (own?.sessions ?? tokens);
     if (!source) {
-      console.warn('sessionApi: no read-only token for an ask session', { sessionId: session.id });
+      console.warn('sessionApi: no read-only token for the session', { sessionId: session.id, qa: isQa(session) });
       return reply(res, 404, { error: 'this console mints no read-only tokens' });
     }
     const { token, expiresAt } = await source.token();
-    console.log('sessionApi: github token handed out', { sessionId: session.id, readOnly: isAsk(session), token: 'installation', ...(own ? { project: own.project } : {}) });
+    console.log('sessionApi: github token handed out', { sessionId: session.id, readOnly, token: 'installation', ...(own ? { project: own.project } : {}) });
     return reply(res, 200, { token, expiresAt: new Date(expiresAt).toISOString() });
   };
 }
@@ -271,13 +281,14 @@ async function settingsReply(res, session, userSettings, databases) {
   }
   // null for a file is the console's default, which the task definition already gives every session.
   const files = await userSettings.ownFiles(session.owner);
+  const ownFiles = await userSettings.ownWholeFiles?.(session.owner) ?? {};
   console.log('sessionApi: settings handed out', {
-    sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), database: database?.name ?? null,
+    sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,
   });
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
   const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
-  return reply(res, 200, { files, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
+  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.
@@ -370,6 +381,34 @@ async function answerReply(req, res, session, asks) {
     if (!err.shown) throw err;
     return reply(res, 400, { error: err.message });
   }
+}
+
+// A QA session's result, once: the console writes it into the pull request's QA comment and stops the session.
+async function qaReportReply(req, res, session, fleet) {
+  if (!isQa(session) || !fleet.qaFinished) {
+    req.resume();
+    return reply(res, 404, { error: 'only a QA session has a report to send' });
+  }
+  if (session.qa.conclusion) {
+    req.resume();
+    console.warn('sessionApi: a second QA report refused', { sessionId: session.id });
+    return reply(res, 409, { error: 'this session already sent its report' });
+  }
+  req.setEncoding('utf8');
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > MAX_QA_REPORT_BYTES) return reply(res, 413, { error: 'too large' });
+  }
+  let result;
+  try {
+    result = parseQaReport(text);
+  } catch (err) {
+    console.warn('sessionApi: a QA report refused', { sessionId: session.id, why: err.message });
+    return reply(res, 400, { error: err.message });
+  }
+  await fleet.qaFinished(session, result);
+  res.writeHead(204).end();
 }
 
 // A private session's turn at its owner's shared Claude settings.

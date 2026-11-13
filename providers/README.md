@@ -14,8 +14,8 @@ reaches", says what to decide, with Hetzner's own pieces under "On Hetzner Cloud
 
 ## Picking one
 
-`WOODSHED_PROVIDER` is `aws` or `local`. Without it, `WOODSHED_CLOUD_LAUNCHER` decides, as it always has: `ecs` is
-`aws`, and `docker` (its default) is `local`. A setting only one provider serves, such as `WOODSHED_CLOUD_HOMES_BUCKET`
+`WOODSHED_PROVIDER` is `aws` or `local`. Without it, `WOODSHED_LAUNCHER` decides, as it always has: `ecs` is
+`aws`, and `docker` (its default) is `local`. A setting only one provider serves, such as `WOODSHED_HOMES_BUCKET`
 or `WOODSHED_LOCAL_SECRETS_DIR`, stops a console started on the other, naming it.
 
 ## What a provider gives the console

@@ -1,0 +1,5 @@
+{
+  "name": "woodshed",
+  "description": "Woodshed's own commands for claude in a My Woodshed session (session/claudePlugin in the Woodshed repo)",
+  "version": "1.0.0"
+}

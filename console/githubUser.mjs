@@ -1,5 +1,5 @@
 // A person's own GitHub token, for their private sessions to push and open pull requests as them. It is a GitHub
-// App user token ("via woodshed-cloud" on GitHub), from the same authorization as signing in: Connect GitHub on My
+// App user token ("via <the App's slug>" on GitHub), from the same authorization as signing in: Connect GitHub on My
 // settings signs in once more, and this time the console keeps what GitHub answered.
 //
 // With expiring user tokens (the App's default) the answer holds an 8-hour token and a refresh token, which works

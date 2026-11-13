@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 #
-# Woodshed Cloud session image: everything one Claude session needs except the
+# Woodshed session image: everything one Claude session needs except the
 # databases, which it reaches over the network. Build from the repo root:
 #
 #   bash woodshed/session/stageDeps.sh woodshed-deps    # also writes woodshed-deps.editor and woodshed-deps.installs
@@ -20,7 +20,7 @@
 # --build-arg RUNTIME=<that image> builds the repository's part on it instead of building the runtime here, which is
 # most of the time and memory a first build takes (install.sh does this). Without RUNTIME the stage is built here.
 #
-# The image workflow builds with a layer cache in ECR. These build args decide
+# The deploy workflow's session job builds with a layer cache in ECR. These build args decide
 # what it rebuilds: BASE_WEEK the system packages, CLAUDE_DAY the Claude CLI and
 # BUILD_SHA the checkout. The repo's installs run again only when their files or the project file's installs change.
 
@@ -30,6 +30,15 @@ ARG PLAYWRIGHT_MCP_VERSION=0.0.83
 ARG OPENVSCODE_VERSION=1.109.5
 ARG OPENVSCODE_SHA256_AMD64=b433bf4f0227321a7014d8460d10a8f958adc0f45aa79bd889e84e65e8f88363
 ARG OPENVSCODE_SHA256_ARM64=36d9c14036489b63de84ebace837fcacf7e60e669a0dc715802c5443684ea4dc
+# The docker CLI and its compose plugin, for a session given the machine's Docker (providers/local/dockerLauncher.mjs,
+# hostDocker): the client only, talking to the machine's daemon through its socket. Docker publishes no checksum for its
+# static builds, so these are the sha256 of the files as first downloaded; compose's are its release's checksums.txt.
+ARG DOCKER_VERSION=29.9.2
+ARG DOCKER_SHA256_AMD64=9ac225999fd5e863f7694c728ef23d480616b1e5639328fa309befd4243d69eb
+ARG DOCKER_SHA256_ARM64=873b3e0207857c3b2f28392fb922f3ea6efe37620c16d4d4aaf2fef409c90b73
+ARG COMPOSE_VERSION=5.6.1
+ARG COMPOSE_SHA256_AMD64=47737f4236e6d3ccea7291995203f8f018058783b4c3a9469119811a0b5db8c0
+ARG COMPOSE_SHA256_ARM64=42cfa75f51ad0ccf290bad37899e0038a8c10a0069e85233ecc1d53e3ff1347d
 
 FROM node:22.16.0-bookworm-slim AS base
 
@@ -45,7 +54,7 @@ ARG REDIS_COMMANDER_VERSION=0.9.0
 # definition). Pinned: when AWS changes the bundle the build fails here, rather than trusting what it got.
 ARG RDS_CA_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
 
-# Changes once a week in the image workflow, so security updates and a new gh still arrive.
+# Changes once a week in the deploy workflow's session job, so security updates and a new gh still arrive.
 ARG BASE_WEEK=
 # The slim base has no compiler: g++, make and python3 are for native modules a repo's install builds from source,
 # here and in a session that reinstalls. The rest are tools the full base had that sessions use.
@@ -84,6 +93,28 @@ RUN npm install -g npm@10.9.0 "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" "redis
   && npm cache clean --force && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /work && chown node:node /work
 
+# The docker CLI and compose (the ARGs above say why). The last stage adds them to a published runtime from before they
+# were here, until it is published again.
+ARG TARGETARCH
+ARG DOCKER_VERSION
+ARG DOCKER_SHA256_AMD64
+ARG DOCKER_SHA256_ARM64
+ARG COMPOSE_VERSION
+ARG COMPOSE_SHA256_AMD64
+ARG COMPOSE_SHA256_ARM64
+RUN case "$TARGETARCH" in \
+    amd64) arch=x86_64; docker_sha="$DOCKER_SHA256_AMD64"; compose_sha="$COMPOSE_SHA256_AMD64" ;; \
+    arm64) arch=aarch64; docker_sha="$DOCKER_SHA256_ARM64"; compose_sha="$COMPOSE_SHA256_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && curl -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_VERSION}.tgz" \
+  && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
+  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker && rm /tmp/docker.tgz \
+  && mkdir -p /usr/local/lib/docker/cli-plugins \
+  && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
+  && echo "${compose_sha}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
+  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+
 # The session should not be root: the node image's own uid 1000 user runs everything below.
 USER node
 ENV PATH=/home/node/.local/bin:$PATH
@@ -91,7 +122,7 @@ ENV PATH=/home/node/.local/bin:$PATH
 ENV LANG=C.UTF-8
 
 # Claude, Chromium, the checkout and each node_modules are separate layers on purpose: BuildKit gzips layers in
-# parallel, and gzipping one layer that held them all was most of the image workflow's time.
+# parallel, and gzipping one layer that held them all was most of the session job's build time.
 # --no-shell: the MCP runs the full Chromium even when headless, so the separate headless shell is never used.
 RUN cd "$(npm root -g)/@playwright/mcp" && npx playwright install --no-shell chromium
 
@@ -103,7 +134,7 @@ USER root
 # The repo's checkout folder, /work/<name>.
 ARG REPO_DIR
 # The project file's installs (session/deps.sh), keyed on their files and the manifest alone: a commit that changes
-# neither reuses them from the cache. The image workflow puts each install's files under woodshed-deps/, in the repo's
+# neither reuses them from the cache. The deploy workflow's session job puts each install's files under woodshed-deps/, in the repo's
 # own layout, so what is installed here is what the checkout will hold.
 RUN test -n "$REPO_DIR" || { echo "REPO_DIR is not set: build with --build-arg REPO_DIR=/work/<repo name>" >&2; exit 1; } \
   && mkdir -p "$REPO_DIR" /woodshed-out && chown node:node "$REPO_DIR" /woodshed-out
@@ -145,6 +176,29 @@ RUN --mount=type=bind,source=woodshed-deps.editor,target=/tmp/woodshed-editor \
   && mkdir -p /opt/openvscode-server && tar -xzf /tmp/openvscode.tgz -C /opt/openvscode-server --strip-components=1 \
   && rm /tmp/openvscode.tgz
 
+# The runtime stage's docker CLI and compose, for a published runtime built before they were in it (or with others):
+# the same install, skipped when the runtime has these versions.
+ARG DOCKER_VERSION
+ARG DOCKER_SHA256_AMD64
+ARG DOCKER_SHA256_ARM64
+ARG COMPOSE_VERSION
+ARG COMPOSE_SHA256_AMD64
+ARG COMPOSE_SHA256_ARM64
+RUN if docker --version 2>/dev/null | grep -qF "version ${DOCKER_VERSION}," \
+    && [ "$(docker compose version --short 2>/dev/null)" = "${COMPOSE_VERSION}" ]; then echo "docker ${DOCKER_VERSION} and compose ${COMPOSE_VERSION} from the runtime"; exit 0; fi \
+  && case "$TARGETARCH" in \
+    amd64) arch=x86_64; docker_sha="$DOCKER_SHA256_AMD64"; compose_sha="$COMPOSE_SHA256_AMD64" ;; \
+    arm64) arch=aarch64; docker_sha="$DOCKER_SHA256_ARM64"; compose_sha="$COMPOSE_SHA256_ARM64" ;; \
+    *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+  esac \
+  && curl -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_VERSION}.tgz" \
+  && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
+  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker && rm /tmp/docker.tgz \
+  && mkdir -p /usr/local/lib/docker/cli-plugins \
+  && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
+  && echo "${compose_sha}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
+  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+
 USER node
 
 # Claude changes every day, so it is here rather than in the runtime: on the runtime, the installs built on it would run
@@ -159,11 +213,15 @@ RUN curl -fsSL https://claude.ai/install.sh | bash \
 # Before the token leaves the URL: the partial clone fetches that commit's files from GitHub.
 ARG BUILD_SHA=
 # The repo this image is for, owner/name, and where its checkout goes, /work/<name> (checkoutDir in shared/project.mjs).
+# With REPO empty the image holds no checkout, only an empty REPO_DIR (install.sh's /work/.no-checkout), and needs no
+# gh_token: every session clones its project's repo at start instead (PROJECT_REPO, useProjectRepo in entrypoint.sh)
+# and runs that repo's installs there. install.sh builds it for a local install that names no repository.
 ARG REPO
 ARG REPO_DIR
-RUN test -n "$REPO" && test -n "$REPO_DIR" || { echo "build with --build-arg REPO=<owner>/<name> --build-arg REPO_DIR=/work/<name>" >&2; exit 1; }
+RUN test -n "$REPO_DIR" || { echo "build with --build-arg REPO=<owner>/<name> --build-arg REPO_DIR=/work/<name>, or REPO= for no checkout" >&2; exit 1; }
 RUN --mount=type=secret,id=gh_token,uid=1000 \
-  git clone --filter=blob:none "https://x-access-token:$(cat /run/secrets/gh_token)@github.com/${REPO}.git" "$REPO_DIR" \
+  if [ -z "$REPO" ]; then mkdir -p "$REPO_DIR"; echo "no checkout: each session clones its project's repo at start"; exit 0; fi \
+  && git clone --filter=blob:none "https://x-access-token:$(cat /run/secrets/gh_token)@github.com/${REPO}.git" "$REPO_DIR" \
   && if [ -n "$BUILD_SHA" ]; then git -C "$REPO_DIR" reset --quiet --hard "$BUILD_SHA"; fi \
   && git -C "$REPO_DIR" remote set-url origin "https://github.com/${REPO}.git" \
   # A repo with submodules (such as a repo that pins Woodshed itself as one) gets them at the built commit's pins. Public
@@ -191,7 +249,7 @@ RUN --mount=type=bind,source=woodshed-deps.installs,target=/tmp/woodshed-install
 # Copied under the repo's own layout so the session's relative imports of woodshed/shared/ resolve the same way here
 # as they do in a checkout.
 COPY --chown=node:node woodshed/session/ /opt/woodshed/session/
-# What Woodshed and Woodshed Cloud share, whole: the review feature, whose page and server run in statusd
+# What the shed and Woodshed's sessions share, whole: the review feature, whose page and server run in statusd
 # (session/reviewShed), the pane classifier, the project file's reader and the rest. Its tests and fixtures stay out
 # (Dockerfile.dockerignore).
 COPY --chown=node:node woodshed/shared/ /opt/woodshed/shared/

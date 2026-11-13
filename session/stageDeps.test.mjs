@@ -118,7 +118,7 @@ test('a repo with no project file stages the installs of the installation\'s fil
     cwd: repo, encoding: 'utf8', env: { PATH: process.env.PATH, DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main', ...env },
   });
 
-  const supplied = run({ WOODSHED_CLOUD_PROJECT_FILES_DIR: files });
+  const supplied = run({ WOODSHED_PROJECT_FILES_DIR: files });
   assert.equal(supplied.status, 0, supplied.stderr);
   assert.match(supplied.stdout, /stageDeps: project file from installation\n/);
   assert.deepEqual(stagedFiles(path.join(repo, 'staged')), ['api/deps.lock']);
@@ -132,7 +132,7 @@ test('a repo with no project file stages the installs of the installation\'s fil
 
   fs.mkdirSync(path.join(repo, '.woodshed'));
   fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ editor: false }));
-  const own = run({ WOODSHED_CLOUD_PROJECT_FILES_DIR: files });
+  const own = run({ WOODSHED_PROJECT_FILES_DIR: files });
   assert.match(own.stdout, /stageDeps: project file from checkout\n/);
   assert.equal(fs.readFileSync(path.join(repo, 'staged.installs'), 'utf8'), '');
   assert.equal(fs.readFileSync(path.join(repo, 'staged.editor'), 'utf8'), 'false\n');

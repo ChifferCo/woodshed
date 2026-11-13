@@ -146,3 +146,12 @@ test('a project added or removed while the console runs gets or loses its chips 
   assert.equal(chips.view(sessions[1].prUrl), null, 'removed again');
   assert.deepEqual(chips.stale([2], 'api'), []);
 });
+
+test('every pull request a session opened is read, not only its last', async () => {
+  const asked = [];
+  const github = { pullStatuses: async (numbers) => { asked.push(numbers); return numbers.map((n) => pr(n)); } };
+  const chips = createPrChips({ github, repo: 'o/r', now: () => 0 });
+  await chips.refresh([{ prUrl: 'https://github.com/o/r/pull/11', prUrls: ['https://github.com/o/r/pull/10', 'https://github.com/o/r/pull/11'] }]);
+  assert.deepEqual(asked, [[10, 11]]);
+});
+

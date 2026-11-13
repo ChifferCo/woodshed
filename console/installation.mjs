@@ -23,12 +23,16 @@ import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
+import { appOwnerCheck } from './appOwner.mjs';
 import { createAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
+import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createReviewSource } from './review.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
+import { CHECK_EVERY_MS, createWoodshedUpdate } from './woodshedUpdate.mjs';
+import { supervisorOf } from './githubAppSetup.mjs';
 import { createHeldData } from './heldData.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 import { APP_KEY_SECRET, createSettings } from './settings.mjs';
@@ -46,9 +50,11 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { createAddedProjects, repoChecker } from './addedProjects.mjs';
+import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
+import { createProjectColors } from './projectColors.mjs';
+import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
-import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -114,6 +120,7 @@ export function createLoops() {
  * secret on the Secrets page makes sign-in available without a restart; the first one to complete makes it required.
  */
 async function startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) {
+  const ownsApp = appOwnerCheck({ appApi, installationId: config.githubApp?.installationId ?? null });
   let clientSecret = await secrets.read(CLIENT_SECRET).catch((err) => {
     console.error('console: GitHub App client secret not readable', { message: String(err?.message ?? err).split('\n')[0] });
     return null;
@@ -136,7 +143,11 @@ async function startAuth({ config, store, secrets, appApi, github, userSettings,
       return clientId;
     },
     clientSecret: () => clientSecret,
-    canWrite: (login) => github.canWrite(login),
+    // With no repo yet, the App's owner signs in to add the first (appOwner.mjs); then write access to it, as before.
+    canWrite: (login) => (hasRepo(config) ? github.canWrite(login) : ownsApp(login)),
+    noAccess: (login) => (hasRepo(config)
+      ? `@${login} has no write access to the repository, so cannot sign in.`
+      : `The console has no repo yet, so only the owner of the account its GitHub App is installed on (an admin, for an organization) can sign in to add one. @${login} is not.`),
     onConnect: (args) => githubUser.connect(args),
     people,
     members,
@@ -206,12 +217,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const { secrets, homes, dbAdmin } = provider;
   const appKey = config.githubApp ? await loadAppKey(config, secrets) : null;
   const tokens = createProjectTokens({ config, privateKey: () => appKey.current() });
-  const github = createGitHub({ repo: defaultProject(config).repo, token: tokens && (async () => (await tokens.console.token()).token) });
+  // The default project's repo, read on each call: a console that started with none works on the first one added.
+  const github = createGitHub({ repo: () => defaultProject(config).repo, token: tokens && (async () => (await tokens.console.token()).token) });
   // Each project's repo, on that project's own token: the default project's is the console's own client.
-  const projectClients = new Map([[defaultProject(config).name, github]]);
+  const projectClients = new Map();
   const githubFor = (project) => {
+    if (project.name === defaultProject(config).name) return github;
     // A repo an admin removed and added again is a new client, since it may be on another installation.
-    const key = project.default ? project.name : `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
+    const key = `${project.name}\n${project.repo}\n${project.installationId ?? ''}`;
     if (!projectClients.has(key)) {
       const token = tokens && (async () => (await tokens.forSession({ project: project.name }).console.token()).token);
       projectClients.set(key, createGitHub({ repo: project.repo, token }));
@@ -231,19 +244,27 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
   // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
   const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
-  const projectReader = createProjectReader({ github, installationFile: installationFileOf(defaultProject(config).repo) });
+  const projectReader = createProjectReader({ github, installationFile: () => installationFileOf(defaultProject(config).repo)() });
   // Each project's file, from its own repo: the gates its pull requests wait for. The default project's is the one above.
-  const projectReaders = new Map([[defaultProject(config).name, projectReader]]);
+  const projectReaders = new Map();
   const readerOf = (name) => {
     const project = (name && projectNamed(config, name)) || defaultProject(config);
+    if (project.name === defaultProject(config).name) return projectReader;
     // Keyed by repo too: a repo removed and added again may be another repo under the same name.
-    const key = project.default ? project.name : `${project.name}\n${project.repo}`;
+    const key = `${project.name}\n${project.repo}`;
     if (!projectReaders.has(key)) {
       projectReaders.set(key, createProjectReader({ github: githubFor(project), installationFile: installationFileOf(project.repo) }));
     }
     return projectReaders.get(key);
   };
-  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted });
+  // A local install that named no repo hosts no database: install.sh, given the repo, builds its image and starts them.
+  const databasesFix = () => {
+    const project = defaultProject(config);
+    return provider.name === 'local' && project.clonedAtStart
+      ? `run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases`
+      : null;
+  };
+  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
@@ -252,16 +273,21 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
   const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null });
+  const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const pullWebhooks = createPullWebhooks();
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
+  const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
+  const appIdentity = createAppIdentity({ appApi });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
+    // The App that posts a QA session's check, so the brief trusts it.
+    ownApp: () => appIdentity.known(),
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -269,19 +295,23 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
-  const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
-  const appIdentity = createAppIdentity({ appApi });
   // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
   const brokerRead = tokens?.borrowFor
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
     : undefined;
-  const addedProjects = createAddedProjects({ store, config, check: repoChecker({ appApi, read: brokerRead }) });
+  const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
+  const addedProjects = createAddedProjects({
+    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), 
+    // With no App, a console on its own gh login lists what that login can push to; borrowed access lists nothing.
+    list: appApi ? repoLister({ appApi, appSlug }) : config.ghToken && !brokerRead ? ghRepoLister() : null,
+  });
+  const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
   const auth = !trusted && secrets && appApi ? await startAuth({ config, store, secrets, appApi, github, userSettings, people, members, slackPeople }) : null;
   // Without sign-in every gate lets a request through, which a console the internet reaches must never do.
   // A store the dashboard has not chosen yet holds no client secret either, so sign-in could never come on.
   if (config.requireSignIn && !trusted && (!auth || secrets?.configured?.() === false)) {
-    throw new Error('WOODSHED_CLOUD_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_CLOUD_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET');
+    throw new Error('WOODSHED_REQUIRE_SIGN_IN needs the GitHub App (WOODSHED_GITHUB_APP_ID) and Secrets Manager, or WOODSHED_TRUSTED_IDENTITY_SECRET');
   }
   // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
   const settings = secrets && (appKey || config.githubBroker)
@@ -305,18 +335,31 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (!reviewSources.has(key)) reviewSources.set(key, createReviewSource({ github: githubFor(project) }));
     return reviewSources.get(key)(session);
   };
+  // Session apps on ports of the console's own name, where it has one name and nobody signs in (appPorts.mjs).
+  const appPorts = config.appPorts?.length ? createAppPorts({
+    store, config, isActive: (id) => ACTIVE_STATUSES.has(fleet.find(id)?.status),
+  }) : null;
+  // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one. The image
+  // is built for the environment's repo, not one an admin added, so a console that started with none builds it with no
+  // checkout again, as install.sh did.
+  const woodshedUpdate = createWoodshedUpdate({
+    config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(loaded).repo || null,
+    token: tokens ? async () => (await tokens.console.token()).token : null,
+  });
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
-    prChips, members, asks, dbRestore, githubSetup, secrets, appShares, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects,
+    prChips, members, asks, dbRestore, githubSetup, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    databaseGate, addedProjects, projectColors,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
     trusted,
     userMenu,
+    appPorts,
+    woodshedUpdate,
   });
-  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted });
+  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
@@ -361,6 +404,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
     loops.every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
     loops.every(config.startingCheckMs, 'wait progress', () => fleet.checkWaiting());
+    loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
     if (databases.available) loops.every(databases.POLL_MS, 'databases', () => databases.poll());
     if (config.pollGitHub) {
       startGitHub({ webhooks, deliveredWebhooks }).catch((err) => console.error('console: GitHub start failed', { message: String(err?.message ?? err).split('\n')[0] }));
@@ -375,6 +419,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     handle,
     upgrade,
     sessionApi,
+    appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
     stop: () => loops.stop(),
@@ -386,6 +431,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
+      appPorts: appPorts ? appPorts.ports.length : 0,
     }),
   };
 }

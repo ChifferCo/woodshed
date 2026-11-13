@@ -16,7 +16,7 @@
 //
 // The icon bytes live in this file as base64 rather than as files in a
 // directory, because a *.mjs in woodshed/shared/ is already shipped by the
-// shed's install.sh and both Woodshed Cloud images, and already hashed by
+// shed's install.sh and both Woodshed images, and already hashed by
 // selfUpdate.mjs, all by glob. Image files would mean teaching each of those
 // a second kind of file to move 32 KB.
 //

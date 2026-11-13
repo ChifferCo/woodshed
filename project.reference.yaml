@@ -3,7 +3,7 @@
 # is. A name that is not a field here is refused, so a typo is never read as "none". docs/reference.md, "The project file",
 # says what reads each field; test/projectReference.test.mjs keeps this file naming every field the parser knows.
 
-# Required. The format this Woodshed Cloud reads.
+# Required. The format this version of Woodshed reads.
 version: 1
 
 # Default: {installs: []}. The installs the session image runs, and a session runs again where a branch changed their
@@ -13,7 +13,7 @@ dependencies:
   installs:
     - # Required. The folder in the repo the command runs in.
       dir: api
-      # Required, at least one. Files in the dir, globs allowed within one folder, which the image workflow stages for
+      # Required, at least one. Files in the dir, globs allowed within one folder, which the deploy workflow's session job stages for
       # the build and whose change runs the install again at a session's start.
       files: [package.json, package-lock.json, .npmrc]
       # Required. One line, run with bash in the dir.
@@ -56,7 +56,7 @@ databases:
     seed: npm run seed
     # Default: []. Which envFiles' secrets the commands read: each must be an `envFiles` entry's `secret`.
     envFiles: [api-env]
-    # Default: []. What the template is built from: the image workflow builds it again when any changed.
+    # Default: []. What the template is built from: the deploy workflow's session job builds it again when any changed.
     paths: [api/db/]
     # Default: null. The folder under `paths` where a new file only migrates a copy, not rebuilds the template.
     migrations: api/db/migrations
@@ -99,6 +99,33 @@ app:
   # Required. What readyGate tells a session that opens a pull request without having started the app.
   howToProve: Run `make serve` and check each change in the browser.
 
+# Default: null. Instead of `app`, for a repo with more than one app: never both. A list, the first the default, one
+# running at a time: Start app in the console picks one, and starting another runs the running one's `stop` first.
+# Each entry has every field `app` has, plus `name` and `label`. Commented out here, since a file may not have both.
+# apps:
+#   - # Required. Lowercase letters, digits and dashes, at most 32, each its own: Start app sends it, and logs name it.
+#     name: web
+#     # Default: the name. What the console's Start app menu calls it.
+#     label: Web app
+#     start: make serve
+#     stop: make stop
+#     frontendPort: 3001
+#     backendPort: 9000
+#     logs:
+#       api: ~/.cache/app/{{CHECKOUT}}/api.log
+#       web: ~/.cache/app/{{CHECKOUT}}/web.log
+#     # A change under these needs this app started, not just any of them, before a pull request opens ready.
+#     paths: [web/]
+#     howToProve: Run `make serve` and check each change in the browser.
+#   - name: admin
+#     start: make serve-admin
+#     stop: make stop
+#     # The same backend beside a second frontend: two apps may share a port, as one runs at a time.
+#     frontendPort: 3000
+#     backendPort: 9000
+#     paths: [admin/]
+#     howToProve: Run `make serve-admin` and check the admin pages in the browser.
+
 # Default: false. VS Code in the browser on each session's checkout (Editor ↗).
 editor: true
 
@@ -113,7 +140,7 @@ consoleLinks: false
 # public issues and comments. Shared sessions and questions use the App's token, whatever this says.
 githubAccess: repo
 
-# Default: null. Files in the repo: its rules for sessions, added after Woodshed Cloud's own, and its environment notes.
+# Default: null. Files in the repo: its rules for sessions, added after Woodshed's own, and its environment notes.
 rules: .woodshed/rules.md
 setup: .woodshed/setup.md
 
@@ -128,7 +155,7 @@ pullRequests:
     workflow: .github/workflows/review.yml
     # Default: null. What a commit subject carries to run the review again.
     rerun: '[review]'
-    # Default: null. Who posts the review's inline comments, which the decision brief quotes.
+    # Default: null. Who posts the review's PR comment, whose risk areas the decision brief quotes.
     commentAuthor: review-bot[bot]
   # Default: []. Test suites that must pass on the head commit.
   suites:
@@ -141,10 +168,16 @@ pullRequests:
   # Default: null (no QA waited for).
   qa:
     # Required. The QA check run's name, the label that asks for it, and the author and heading of its comment.
+    # `author` may be left out with `runner: woodshed`, whose report is the console's check, not a comment.
     check: QA
     label: qa
     heading: '## QA'
     author: qa-bot[bot]
+    # Default: actions. Where QA runs: `actions` in the repo's own CI (the QA actions, docs/reference.md), or `woodshed`
+    # in a QA session the console starts when `label` goes on a pull request, which posts the comment and the check as
+    # the console's GitHub App. With `woodshed`, the decision brief reads the report from that check and not `author`'s
+    # comment; never name the App as `author`, since sessions comment as the App too.
+    runner: actions
   # Default: null. The check run that rates the merge; it needs `review`, whose workflow must post it.
   mergeRisk:
     # Required.

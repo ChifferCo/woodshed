@@ -69,7 +69,7 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   const config = {
     projects: [{ name: 'r', repo: 'o/r', default: true }, { name: 'tools', repo: 'o/tools', default: false }], label: 'woodshed', publicUrl: 'https://console.test', maxRunning: 5,
     limits: { idleMs: 3_600_000, lifetimeMs: 3_600_000, startTimeoutMs: 900_000 },
-    sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
+    appDomain: 'apps.console.test', sessionEnv: {}, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000, maxPrivatePerPerson: 3,
   };
   const databases = { available: true, async createForSession() {}, async sweep() {} };
   const fleet = createFleet({ config, store: { state: { sessions: [], github: null }, save() {} }, launcher, github: {}, databases, statusd: async () => ({}) });
@@ -77,11 +77,12 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p', options: { model: 'opus', effort: 'high', permissionMode: 'plan' } });
   await fleet.createSession({ kind: 'pr', number: 8, title: 'r', startedBy: 'joel', trigger: 'console', branch: 'a/b', reviewOnly: true });
   await fleet.createSession({ kind: 'task', number: null, title: 't', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', attach: async () => 2 });
-  await fleet.createSession({ kind: 'task', number: null, title: 'c', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', options: { agent: 'codex', model: 'gpt-5.5', effort: 'high', permissionMode: 'auto' } });
+  await fleet.createSession({ kind: 'task', number: null, title: 'c', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', options: { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'auto' } });
   await fleet.createSession({ kind: 'task', number: null, title: 'o', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', project: config.projects[1] });
-  assert.equal(started.length, 6);
+  await fleet.createSession({ kind: 'pr', number: 9, title: 'QA', startedBy: 'joel', trigger: 'qa', branch: 'a/c', qa: { base: 'main', sha: 'a'.repeat(40), heading: '## QA', commentId: null } });
+  assert.equal(started.length, 7);
   const set = new Set(started.flatMap((env) => Object.keys(env)));
-  for (const name of ['SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO']) {
+  for (const name of ['SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE']) {
     assert.ok(set.has(name), `the sessions above set ${name}`);
   }
   for (const env of started) {
@@ -218,6 +219,15 @@ test('logTail ends with the stop reason, which explains a task that never ran', 
   assert.equal(tail.split('\n').pop(), 'ResourceInitializationError: unable to pull secrets');
   const logs = calls.find((c) => c[0] === 'logs');
   assert.equal(logs[logs.indexOf('--log-stream-name') + 1], 'session/session/abc123');
+});
+
+test('logTail\'s stop reason carries the exit code, which tells a crash from an out-of-memory kill', async () => {
+  const { aws } = fakeAws({
+    'ecs describe-tasks': { tasks: [{ lastStatus: 'STOPPED', stoppedReason: 'Essential container in task exited', containers: [{ name: 'session', exitCode: 137, reason: 'OutOfMemoryError: Container killed due to memory usage' }] }] },
+    'logs get-log-events': { events: [{ message: '[woodshed] Cloning\n' }] },
+  });
+  const tail = await launcher(aws).logTail(ARN);
+  assert.equal(tail.split('\n').pop(), 'Essential container in task exited: exit code 137, OutOfMemoryError: Container killed due to memory usage');
 });
 
 test('stop by session id finds the task a lost start left running', async () => {

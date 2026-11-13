@@ -26,7 +26,7 @@ function request(port, { method = 'POST', path = '/github-token', authorization,
     const req = http.request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
-      res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(body) }));
+      res.on('end', () => resolve({ status: res.statusCode, body: body ? JSON.parse(body) : null }));
     });
     req.on('error', reject);
     req.end(body);
@@ -62,6 +62,7 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
   const userSettings = {
     claudeToken: async (login) => { asked.push(login); return login === 'octocat' ? 'sk-ant-joel' : null; },
     ownFiles: async (login) => ({ 'api-env': `LOG_LEVEL=debug # ${login}`, 'web-env': null, 'tmux-conf': null }),
+    ownWholeFiles: async (login) => ({ 'app/.env.production': `NOTION_TOKEN=x # ${login}` }),
     gitIdentity: (login) => (login === 'octocat' ? { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' } : null),
   };
   const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
@@ -75,6 +76,7 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
     status: 200,
     body: {
       files: { 'api-env': 'LOG_LEVEL=debug # octocat', 'web-env': null, 'tmux-conf': null },
+      ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat' },
       git: { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' }, database: null, claudeToken: 'sk-ant-joel',
     },
   });
@@ -308,6 +310,36 @@ test('an ask session gets a read-only token, and posts its answer through /answe
   });
   assert.equal(split, 200);
   assert.equal(answers.at(-1).text, 'Não é.');
+});
+
+test('a QA session gets a read-only token, and sends its report once through /qa-report; no other session can', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
+  const tokens = { token: async () => ({ token: 'ghs_write', expiresAt: 0 }) };
+  const askTokens = { token: async () => ({ token: 'ghs_read', expiresAt: 0 }) };
+  const finished = [];
+  const fleet = {
+    sessions: () => sessions,
+    async qaFinished(session, result) { finished.push({ id: session.id, ...result }); session.qa.conclusion = result.verdict.conclusion; },
+  };
+  const handle = createSessionApi({ fleet, tokens, askTokens });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  assert.equal((await request(port, { authorization: 'Bearer qa-token' })).body.token, 'ghs_read');
+  assert.equal((await request(port, { authorization: 'Bearer pr-token' })).body.token, 'ghs_write');
+
+  const report = (authorization, body) => request(port, { path: '/qa-report', authorization, body: JSON.stringify(body) });
+  const verdict = { conclusion: 'failure', title: 'Fail: 1 of 2 test cases failed', status: '❌ **Fail**', total: 2 };
+  const sha = 'b'.repeat(40);
+  assert.equal((await report('Bearer pr-token', { verdict, report: 'r', sha })).status, 404);
+  assert.equal((await report('Bearer qa-token', { verdict: { ...verdict, conclusion: 'skipped' }, report: 'r', sha })).status, 400);
+  assert.equal((await report('Bearer qa-token', { verdict, report: 'r', sha: 'HEAD' })).status, 400);
+  assert.equal((await report('Bearer qa-token', { verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 })).status, 204);
+  assert.equal((await report('Bearer qa-token', { verdict, report: 'again', sha })).status, 409);
+  assert.deepEqual(finished, [{ id: 'aaaaaaaa', verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 }]);
 });
 
 test('a private session syncs its owner\'s shared Claude settings; a shared one, or one whose owner removed My Woodshed, cannot', async (t) => {

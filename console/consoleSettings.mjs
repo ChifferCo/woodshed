@@ -129,7 +129,12 @@ export function liveConfig(config, store) {
       if (merged?.added !== added) {
         const own = allProjects(config);
         const taken = (p) => own.some((o) => o.name === p.name || o.repo.toLowerCase() === p.repo.toLowerCase());
-        merged = { added, list: [...own, ...added.filter((p) => !taken(p))] };
+        const list = [...own, ...added.filter((p) => !taken(p))];
+        // A console that started with no repo of its own works on the first one added, until it is removed. No session
+        // image holds its checkout (the image is the environment's repo's, or has none), so its sessions clone it at
+        // start like any added repo's (fleet.mjs, PROJECT_REPO).
+        if (!own.length) list[0] = { ...list[0], default: true, clonedAtStart: true };
+        merged = { added, list };
       }
       return merged.list;
     },

@@ -1,21 +1,47 @@
 // Runs the console on this machine with a few made-up sessions, so a change to console/public can be checked in a
 // browser without AWS, GitHub or Docker. Usage: node console/bin/devConsole.mjs [port] [tls ask port]
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
+// /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
+// analysis already written (devReviewSession.mjs). /s/abbaabba is running on a project with two apps, web and admin,
+// behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs.
+// DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
+// DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
+// `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
+import { startDevAppsSession } from './devAppsSession.mjs';
+import { startDevReview } from './devReviewSession.mjs';
+import { makeDevClone } from './devWoodshedClone.mjs';
+
 const port = process.argv[2] || '7690';
+const sessionApp = process.env.DEV_CONSOLE_SESSION_APP === '1';
+const sessionId = process.env.SESSION_ID ?? '';
+if (sessionApp && !/^[0-9a-f]{8}$/.test(sessionId)) {
+  console.error('dev console: DEV_CONSOLE_SESSION_APP=1 needs the session\'s SESSION_ID');
+  process.exit(1);
+}
+const appDomain = (process.env.SESSION_APP_DOMAIN ?? '').trim().toLowerCase();
+// A console from before SESSION_APP_DOMAIN sends none: the app still opens, on any name whose first label is the id.
+if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so any name starting with the session id is let in');
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
-const tlsAskPort = process.argv[3] ? { WOODSHED_CLOUD_TLS_ASK_PORT: process.argv[3] } : {};
+const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher).
 const server = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'providers', 'console.mjs');
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
+const REVIEW_ID = 'beadfeed';
+const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}` });
+const APPS_ID = 'abbaabba';
+const twoApps = await startDevAppsSession({ id: APPS_ID, token: `t${APPS_ID}` });
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -37,16 +63,30 @@ function planReading({ minutesAgo, fiveHour, sevenDay }) {
 const sessions = [
   session('aaaa1111', 26325, 'Speed up Claude sessions'),
   session('bbbb2222', 26326, 'A session with no pull request yet', { prUrl: null }),
+  // A finished QA session: it opened no pull request, and tested the one it was started on.
+  session('9a9a9a9a', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'QA finished: Pass: 6 test cases passed', qa: { conclusion: 'success' } }),
+  session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console' }),
+  // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
+  // Polling is off, so none has a state here and all three show.
+  session('cafe7777', 26330, 'Split the billing page into steps', {
+    kind: 'task', number: null, status: 'running', state: 'done', stoppedAt: null, stopReason: null,
+    prUrl: 'https://github.com/example-org/example-repo/pull/26333',
+    prUrls: [26331, 26332, 26333].map((n) => `https://github.com/example-org/example-repo/pull/${n}`),
+  }),
   session('cccc3333', 26327, 'A failed start', { status: 'failed', error: 'The container did not start.' }),
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
   session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true }),
+  // Running on a project whose file has no app: Set up app in place of Start app.
+  session('a0a0b1b1', 26329, 'A project with no app yet', { status: 'running', stoppedAt: null, stopReason: null, app: 'none', appServers: { frontend: false, backend: false, frontendPort: null, backendPort: null }, hasShell: true }),
   // The rail's names: one started and assigned to octocat, one handed to him, one someone else has, and a private
   // one. Mine needs a signed-in octocat, which a stub of the page's data call gives.
   session('abcd7777', 26627, 'Merge Shared and My Woodshed tabs', { status: 'running', state: 'done', stoppedAt: null, stopReason: null, assignee: 'octocat' }),
   session('bcde8888', 26590, 'Fix CSV upload for large files', { kind: 'issue', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, startedBy: 'ana-dev', assignee: 'octocat' }),
-  // On a second project: the rail names it when the console has two, as with
-  // WOODSHED_CLOUD_PROJECTS='[{"name":"example-repo","repo":"example-org/example-repo","default":true},{"name":"example-api","repo":"example-org/example-api"}]'.
+  // On a second and a third project: the rail marks each in its colour, with a filter chip per project, when the
+  // console has more than one, as with WOODSHED_PROJECTS='[{"name":"example-repo","repo":"example-org/example-repo","default":true},
+  // {"name":"example-api","repo":"example-org/example-api"},{"name":"example-web","repo":"example-org/example-web"}]'.
   session('beef4242', 26631, 'Rate limit the public API', { project: 'example-api', repo: 'example-org/example-api', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
+  session('beef4343', 26632, 'Show the plan picker on the pricing page', { project: 'example-web', repo: 'example-org/example-web', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   // Its project uses no Redis, so Data ▾ has only the databases.
   session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
@@ -60,6 +100,17 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'octocat', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
     planUsage: planReading({ minutesAgo: 1, fiveHour: [42, 132], sevenDay: [78, 2 * 1440 + 600] }),
   }),
+  // A private session whose Resume failed at start: Resume stays, and the reason is the entrypoint's ERROR. Owned by
+  // `local`, the dev console's viewer, so its page opens.
+  session('fa11ed01', null, 'Update EC2 Woodshed to latest master', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'failed', state: null, prUrl: null,
+    error: '.woodshed/project.yaml: pullRequests.qa is missing author', startedAt: new Date(Date.parse(now) - 60_000).toISOString(),
+  }),
+  // Private Codex sessions, owned by `local`: their pages say codex, not claude, and offer no Remote Control.
+  session('c0dec0de', null, 'Session names on Codex', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+  }),
+  session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
   session('de1e7e01', 26689, 'manage_datasets convert_file keeps headers', { cleanedAt: now, stopReason: 'its pull request merged 3 days ago', prClosedAt: now, prMerged: true }),
@@ -74,6 +125,16 @@ const sessions = [
     kind: 'ask', status: 'running', state: 'idle', stoppedAt: null, stopReason: null, branch: null, prUrl: null,
     startedBy: 'slack:U0DEV', trigger: 'slack', lastActiveAt: new Date(Date.now() - 2 * 60_000).toISOString(),
     slack: { channel: 'C0DEV', threadTs: '1.0', user: 'U0DEV', name: 'Joel' },
+  }),
+  // Running, with its Review tab answered by the stand-in statusd above. Its terminal, Diff and app go nowhere.
+  session(REVIEW_ID, 26701, 'Retry webhook deliveries with backoff', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
+    endpoint: { host: '127.0.0.1', statusPort: review.port, termPort: review.port },
+  }),
+  // Running on a project that declares two apps, with the real statusd behind it: Start app ▾ lists them.
+  session(APPS_ID, 26702, 'A project with two apps', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
+    ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
   }),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
@@ -96,28 +157,151 @@ const sessions = [
 ];
 fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null }));
 
-// The shell's own WOODSHED_CLOUD_* settings (a GitHub App, required sign-in, the ECS launcher) would turn this back
-// into the real console, so none of them are passed on, but hosted mode's (console/README.md, "Hosted mode"), to try it
-// with a stand-in broker and signed headers.
-const HOSTED = ['WOODSHED_CLOUD_GITHUB_BROKER_URL', 'WOODSHED_CLOUD_GITHUB_BROKER_TOKEN_FILE', 'WOODSHED_CLOUD_TRUSTED_IDENTITY_SECRET'];
-const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('WOODSHED_CLOUD_') || HOSTED.includes(key)));
+// The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
+// launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
+// (console/README.md, "Hosted mode"), to try it with a stand-in broker and signed headers, and the console's name. In a
+// session that also keeps out the session's own WOODSHED_PROJECT_FILES_DIR.
+const HOSTED = ['GITHUB_BROKER_URL', 'GITHUB_BROKER_TOKEN_FILE', 'TRUSTED_IDENTITY_SECRET', 'CONSOLE_NAME'];
+const hosted = Object.fromEntries(HOSTED.map((name) => [currentName(name), envValue(process.env, name)]).filter(([, value]) => value !== undefined));
+const projects = envValue(process.env, 'PROJECTS');
+const inherited = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !isSettingName(key))), ...hosted };
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer().once('error', reject).listen(0, '127.0.0.1', () => {
+      const { port: free } = probe.address();
+      probe.close(() => resolve(String(free)));
+    });
+  });
+}
+
+// The console refuses a host name it does not know (shared/sameOrigin.mjs), and a session's app name,
+// `<SESSION_ID>.<SESSION_APP_DOMAIN>`, is known only to the console in front of it. So a request comes in on `port`, and
+// one for loopback or that name reaches the console on a port of its own as if for loopback: an Origin naming the host
+// it came by names loopback too, and any other Origin is still refused. Any other name gets the console's own 421, which
+// keeps a DNS-rebound page out (isKnownHost), `<SESSION_ID>.attacker.example` too.
+const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+function isSessionAppHost(host) {
+  const name = String(host ?? '').replace(/:\d+$/, '').toLowerCase();
+  if (LOOPBACK_NAMES.has(name)) return true;
+  if (appDomain) return name === `${sessionId}.${appDomain}`;
+  const labels = name.split('.');
+  return labels.length > 1 && labels[0] === sessionId;
+}
+
+function asLoopback(headers, consolePort) {
+  const out = { ...headers, host: `127.0.0.1:${consolePort}` };
+  let sameHost = false;
+  try {
+    sameHost = new URL(headers.origin).host === headers.host;
+  } catch {
+    // No Origin, or one that does not parse: passed on as it came.
+  }
+  if (sameHost) out.origin = `http://127.0.0.1:${consolePort}`;
+  return out;
+}
+
+const MISDIRECTED = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+
+function serveSessionApp(consolePort) {
+  const front = http.createServer((req, res) => {
+    if (!isSessionAppHost(req.headers.host)) {
+      console.warn('dev console: unknown host refused', { host: String(req.headers.host).slice(0, 100) });
+      res.writeHead(421, MISDIRECTED);
+      return res.end(JSON.stringify({ error: 'unknown host' }));
+    }
+    const upstream = http.request({ host: '127.0.0.1', port: consolePort, method: req.method, path: req.url, headers: asLoopback(req.headers, consolePort) }, (upRes) => {
+      res.writeHead(upRes.statusCode || 502, upRes.headers);
+      upRes.pipe(res);
+    });
+    upstream.on('error', () => {
+      if (res.headersSent) return res.destroy();
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('the dev console is not up yet\n');
+    });
+    req.pipe(upstream);
+  });
+  front.on('upgrade', (req, socket, head) => {
+    if (!isSessionAppHost(req.headers.host)) return socket.end('HTTP/1.1 421 Misdirected Request\r\n\r\n');
+    const upstream = net.connect(Number(consolePort), '127.0.0.1', () => {
+      const lines = [`${req.method} ${req.url} HTTP/1.1`];
+      for (const [key, value] of Object.entries(asLoopback(req.headers, consolePort))) {
+        for (const v of [value].flat()) lines.push(`${key}: ${v}`);
+      }
+      upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
+      if (head?.length) upstream.write(head);
+      upstream.pipe(socket);
+      socket.pipe(upstream);
+    });
+    upstream.on('error', () => socket.destroy());
+    socket.on('error', () => upstream.destroy());
+  });
+  return new Promise((resolve, reject) => {
+    front.once('error', reject).listen(Number(port), '127.0.0.1', () => {
+      console.log('dev console: answering as the session\'s app too', { port, consolePort, appDomain: appDomain || null });
+      resolve();
+    });
+  });
+}
+
+const consolePort = sessionApp ? await freePort() : port;
+
+// The Woodshed card on Console settings follows a made-up clone, four commits behind its made-up upstream, never this
+// checkout (devWoodshedClone.mjs). Update ends the console with code 75, and it is started again here, as install.sh's
+// bin/woodshed does.
+const devClone = makeDevClone(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-clone-')));
+const RESTART_EXIT_CODE = 75;
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
-const child = spawn(process.execPath, [server], {
-  stdio: 'inherit',
-  env: {
-    ...inherited, WOODSHED_CLOUD_HOST: '127.0.0.1', WOODSHED_CLOUD_PORT: port, WOODSHED_CLOUD_STATE_DIR: stateDir,
-    WOODSHED_CLOUD_POLL_GITHUB: '0', GH_TOKEN: 'dev', WOODSHED_CLOUD_APP_DOMAIN: 'apps.localhost',
-    // The console starts only with a repo set: the sessions' made-up one, or the projects this shell names.
-    ...(process.env.WOODSHED_CLOUD_PROJECTS
-      ? { WOODSHED_CLOUD_PROJECTS: process.env.WOODSHED_CLOUD_PROJECTS }
-      : { WOODSHED_CLOUD_REPO: 'example-org/example-repo' }),
-    ...tlsAskPort,
-  },
-});
-child.on('exit', (code) => {
-  fs.rmSync(stateDir, { recursive: true, force: true });
-  process.exit(code ?? 0);
-});
+let child = null;
+function startConsole() {
+  child = spawn(process.execPath, [server], {
+    stdio: 'inherit',
+    env: {
+      ...inherited, PATH: `${twoApps.binDir}${path.delimiter}${process.env.PATH}`, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
+      // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
+      // through Tailscale's serve has them (appPorts.mjs).
+      ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
+      WOODSHED_CHECKOUT: devClone, WOODSHED_SUPERVISED: '1',
+      // Its own links name the port people open, not the one behind it.
+      ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
+      // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
+      // installation that adds its repos on the Console settings page does.
+      ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
+        : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
+      ...tlsAskPort,
+    },
+  });
+  child.on('exit', (code) => {
+    if (code === RESTART_EXIT_CODE) {
+      console.log('dev console: the console asked to be started again');
+      startConsole();
+      return;
+    }
+    review.close();
+    twoApps.close();
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    fs.rmSync(path.dirname(devClone), { recursive: true, force: true });
+    process.exit(code ?? 0);
+  });
+}
+startConsole();
 process.on('SIGINT', () => child.kill('SIGINT'));
 process.on('SIGTERM', () => child.kill('SIGTERM'));
+
+function answersOn(onPort) {
+  return new Promise((resolve) => {
+    const probe = net.connect(Number(onPort), '127.0.0.1', () => {
+      probe.destroy();
+      resolve(true);
+    });
+    probe.once('error', () => resolve(false));
+  });
+}
+
+// The port people open answers only once the console behind it does, so devConsoleApp.sh's start never returns into a 502.
+if (sessionApp) {
+  while (!(await answersOn(consolePort))) await new Promise((resolve) => setTimeout(resolve, 100));
+  await serveSessionApp(consolePort);
+}

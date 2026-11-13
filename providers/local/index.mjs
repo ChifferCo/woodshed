@@ -31,7 +31,7 @@ export function sessionSecrets({ envFiles, installSecrets = [] }) {
 
 /**
  * The launcher, with each session's secrets read from the store as it starts, so a value the Secrets page replaced
- * reaches the next session. One the console's own settings already set (WOODSHED_CLOUD_SESSION_ENV_FILE) stays. With
+ * reaches the next session. One the console's own settings already set (WOODSHED_SESSION_ENV_FILE) stays. With
  * install secrets, WOODSHED_INSTALL_SECRETS lists their variables, as the task definition does on AWS.
  * @param {{launcher: object, secrets: {read: (name: string) => Promise<string|null>}, envFiles: {secret: string}[],
  *          installSecrets?: {secret: string, variable: string}[]}} opts
@@ -131,10 +131,12 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
  *          localDatabases: object|null, localWebhooks: object|null, sessionEnv: Record<string, string>}} config  loadConfig()'s
  */
 export function localProvider(config) {
-  const { image, memory, cpus } = config.launcher;
+  const { image, memory, cpus, hostDocker = false } = config.launcher;
   const docker = createDockerLauncher({
-    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo,
+    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, hostDocker,
   });
+  // Root on this machine for whoever can start a session (providers/local/README.md, "Docker in a session").
+  console.log('local: sessions use this machine\'s Docker', { on: hostDocker, ...(hostDocker ? { off: 'WOODSHED_SESSION_DOCKER=0' } : { onWith: 'WOODSHED_SESSION_DOCKER=1' }) });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);
   const secrets = fixed ?? createSecretSlot({ stateDir: config.stateDir, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) });

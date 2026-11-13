@@ -117,3 +117,53 @@ test('run as the hook, it blocks with exit code 2 and its reason on stderr, and 
   assert.match(broken.stderr, /^Not opened: \.woodshed\/project\.yaml: app is missing howToProve.*Fix the project file on this branch/);
   assert.equal(run('gh pr create --draft -t x').status, 0, 'a draft is still not gated');
 });
+
+test('with several apps, a change under an app\'s paths needs that app started, not another', () => {
+  const payload = bash('gh pr create -t x');
+  const web = { name: 'web', label: 'web', ...app, paths: ['web/'], howToProve: 'Open the web app.' };
+  const admin = { name: 'admin', label: 'Admin', ...app, paths: ['admin/'], howToProve: 'Open the admin pages.' };
+  const apps = (webStarted, adminStarted) => [{ ...web, started: webStarted }, { ...admin, started: adminStarted }];
+  const reason = refusal({ payload, changedFiles: ['admin/users.tsx'], apps: apps(true, false) });
+  assert.match(reason, /^Not opened: this branch changes the Admin app \(`admin\/users\.tsx`\), but the Admin app was never started in this session/);
+  assert.match(reason, /Open the admin pages\. Put what you saw under `## Proof`/, 'that app\'s own advice');
+  assert.equal(refusal({ payload, changedFiles: ['admin/users.tsx'], apps: apps(false, true) }), null, 'the app the change is in ran');
+  assert.equal(refusal({ payload, changedFiles: ['README.md'], apps: apps(false, false) }), null, 'a change in neither');
+  assert.match(refusal({ payload, changedFiles: ['admin/users.tsx', 'web/page.tsx'], apps: apps(false, true) }), /changes the web app \(`web\/page\.tsx`\)/,
+    'a change in both needs both');
+  assert.equal(refusal({ payload, changedFiles: ['admin/users.tsx', 'web/page.tsx'], apps: apps(true, true) }), null);
+});
+
+test('run as the hook on a project of several apps, it reads each app\'s own logs', (t) => {
+  const script = fileURLToPath(new URL('./readyGate.mjs', import.meta.url));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-apps-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'readyGate-apps-home-'));
+  t.after(() => {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+  const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'ignore' });
+  git('init', '-q', '-b', 'master');
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed', 'project.yaml'), fixtureProject({
+    apps: [
+      { name: 'web', ...fixtureApp({ paths: ['web/'], logs: { web: '~/logs/web.log' } }) },
+      { name: 'admin', ...fixtureApp({ paths: ['admin/'], logs: { admin: '~/logs/admin.log' } }) },
+    ],
+  }));
+  git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'base');
+  git('update-ref', 'refs/remotes/origin/master', 'HEAD');
+  fs.mkdirSync(path.join(repo, 'admin'));
+  fs.writeFileSync(path.join(repo, 'admin', 'users.tsx'), 'x');
+  const run = () => spawnSync('node', [script], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x' }, cwd: repo }),
+    env: { ...process.env, HOME: home, DEFAULT_BRANCH: '' },
+    encoding: 'utf8',
+  });
+  fs.mkdirSync(path.join(home, 'logs'));
+  fs.writeFileSync(path.join(home, 'logs', 'web.log'), 'listening on 3001\n');
+  const blocked = run();
+  assert.equal(blocked.status, 2, 'the web app ran, and the change is in admin');
+  assert.match(blocked.stderr, /changes the admin app \(`admin\/users\.tsx`\)/);
+  fs.writeFileSync(path.join(home, 'logs', 'admin.log'), 'listening on 3000\n');
+  assert.deepEqual([run().status, run().stderr], [0, '']);
+});

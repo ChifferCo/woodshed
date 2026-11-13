@@ -1,6 +1,6 @@
 // The analysis pass: one `claude -p` run, in the review session's worktree,
-// that returns an architecture note, decisions, a reading order and a
-// preamble per file.
+// that returns an architecture note and a before-and-after diagram of it,
+// decisions, a reading order and a preamble per file.
 //
 // It is given the title and body, the --stat, and the file list with each
 // file's @@ hunk-context headers — but NOT the diff body. Feeding the diff
@@ -40,26 +40,80 @@ export const ANALYSIS_SCHEMA = {
   // is: left optional, models simply omit them, and the sections that make
   // the artifact worth reading before the diff never render. An empty
   // decisions array is allowed (minItems is deliberately absent) — a small
-  // change may make no choice worth questioning — but the model has to decide
+  // change may make no choice worth weighing — but the model has to decide
   // that rather than skip the field.
+  //
+  // `diagram` is the one optional field, on purpose: most changes work inside
+  // pieces whose connections stay as they were, and a before and after that
+  // are the same drawing is noise. The prompt asks for it only when the change
+  // rewires something, and reconcileDiagram drops one that shows no change.
   //
   // Kept deliberately small. A problem statement, a what-to-check list, a
   // tests list and a glossary were each tried as sections and cut again: each
   // read well alone, and together they made the page longer than the diff.
-  required: ['overview', 'architecture', 'decisions', 'groups'],
+  // Questions for the reviewer were a section of their own too, and were
+  // folded into the decisions: a question and the choice it was about said the
+  // same thing twice, and the page asked its reader things the analysis could
+  // state.
+  //
+  // `decisions` is what a reviewer reads before anything else: the choices
+  // they have to agree with before approving, most consequential first, each
+  // pointing at the files that carry it.
+  //
+  // `diagram` is one graph, not two: each piece and edge says whether the
+  // change added, removed or kept it, and the page draws the before and the
+  // after from it in the same places (diagram.mjs).
+  required: ['overview', 'decisions', 'architecture', 'groups'],
   properties: {
     overview: { type: 'string' },
-    architecture: { type: 'string' },
     decisions: {
       type: 'array',
       maxItems: 6,
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['title', 'why'],
+        required: ['title', 'why', 'files'],
         properties: {
           title: { type: 'string' },
           why: { type: 'string' },
+          files: { type: 'array', items: { type: 'string' } },
+        },
+      },
+    },
+    architecture: { type: 'string' },
+    diagram: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['nodes', 'edges'],
+      properties: {
+        nodes: {
+          type: 'array',
+          maxItems: 14,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['id', 'label', 'change'],
+            properties: {
+              id: { type: 'string' },
+              label: { type: 'string' },
+              change: { type: 'string', enum: ['added', 'removed', 'changed', 'unchanged'] },
+            },
+          },
+        },
+        edges: {
+          type: 'array',
+          maxItems: 24,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['from', 'to', 'label', 'change'],
+            properties: {
+              from: { type: 'string' },
+              to: { type: 'string' },
+              label: { type: 'string' },
+              change: { type: 'string', enum: ['added', 'removed', 'unchanged'] },
+            },
+          },
         },
       },
     },
@@ -196,16 +250,35 @@ export function buildAnalysisPrompt({ meta, files, retryReason }) {
     'Your job has four parts:',
     '',
     '0. WRITE the pieces a reader needs BEFORE they look at any code:',
-    '   - decisions: two to five choices this change makes that a reader might question — what',
-    '     was deliberately done, deliberately not done, or left for a later change — each as a',
-    '     short title and one or two sentences of why. These are the things a reviewer would',
-    '     otherwise have to ask about.',
+    '   - decisions: the choices this change makes that a reviewer has to agree with before',
+    '     approving, most consequential first, at most six. Each is a real choice in THIS change,',
+    '     not a generic checklist item: what was deliberately done, deliberately not done, or left',
+    '     for a later change, and what that changes for whom. For each, a short title stating',
+    '     the choice; one or two sentences on why it was made, what it costs or risks, and what',
+    '     to look at to agree with it; and the paths of the changed files that carry it (from the',
+    '     list below, exactly as given; empty when none does). Write every one as a statement,',
+    '     never as a question, and leave out what is plain from the description.',
     '   - architecture: how the changed code is SHAPED and how the pieces relate — what the',
     '     modules are, what each is responsible for, what talks to what, and where the seams',
     '     are. Open with a sentence or two of narrative and then name the pieces: of everything',
     '     you write this is the section most likely to read better as a short list, or as a',
     '     two-column table of piece and responsibility, than as a wall of prose. Describe the',
     '     design AS IT NOW STANDS on this branch, not the delta. Aim for 1200 characters.',
+    '   - diagram: include it whenever the change alters how the pieces connect. That is a',
+    '     module, service or store added, removed or replaced, or a change in which piece calls,',
+    '     reads or feeds which. A new module that an existing one now calls counts, and is the',
+    '     most common case. Leave the field out only when every edit stays inside pieces whose',
+    '     connections are as they were (a bug fix in one function, a rename, a tweak to logic),',
+    '     or the change is docs, config or tests alone: a before and an after that look alike',
+    '     add nothing. The page draws it as a before and an after. One list of nodes: each a',
+    '     module, service, store or other piece, with a short id, a label under 30 characters',
+    '     in plain text (no backticks), and what this change does to it: added, removed,',
+    '     changed or unchanged. Then the edges, each from the piece that calls, sends to or',
+    '     depends on another, the way calls or data flow, with a label of two or three words',
+    '     and whether the change added, removed or kept it.',
+    '     The before is drawn from everything not added and the after from everything not',
+    '     removed, in the same places, so include the unchanged pieces the changed ones connect',
+    '     to and leave out what the change does not touch. At most twelve nodes.',
     '',
     '1. ORDER the changed files into groups ("acts") that make a reading order. The first act',
     '   should be whatever a reader must understand before anything else makes sense — usually',
@@ -377,6 +450,13 @@ const MAX_ARCHITECTURE = 4_000;
 const MAX_DECISION_TITLE = 90;
 const MAX_DECISION_WHY = 500;
 const MAX_DECISIONS = 6;
+const MAX_DECISION_FILES = 6;
+const MAX_NODES = 14;
+const MAX_EDGES = 24;
+const MAX_NODE_LABEL = 40;
+const MAX_EDGE_LABEL = 30;
+const NODE_CHANGES = ['added', 'removed', 'changed', 'unchanged'];
+const EDGE_CHANGES = ['added', 'removed', 'unchanged'];
 
 export function clamp(text, max) {
   const s = String(text ?? '').trim();
@@ -431,8 +511,9 @@ export function reconcileArtifact({ artifact, files, log }) {
 
   return {
     overview: clamp(artifact.overview, MAX_OVERVIEW),
+    decisions: reconcileDecisions(artifact.decisions, known),
     architecture: clamp(artifact.architecture, MAX_ARCHITECTURE),
-    decisions: reconcileDecisions(artifact.decisions),
+    diagram: reconcileDiagram(artifact.diagram),
     groups,
     // How many files the model actually placed, as opposed to the ones swept
     // into the synthetic trailing group. Zero means the run produced nothing
@@ -441,16 +522,67 @@ export function reconcileArtifact({ artifact, files, log }) {
   };
 }
 
-function reconcileDecisions(decisions) {
+// A path the diff does not have would draw as a link to nothing, so it is
+// dropped here, the way reconcileArtifact drops one from a group.
+function reconcileDecisions(decisions, known) {
   if (!Array.isArray(decisions)) return [];
   const out = [];
   for (const d of decisions) {
     if (!d || typeof d !== 'object') continue;
     const title = clamp(d.title, MAX_DECISION_TITLE);
-    const why = clamp(d.why, MAX_DECISION_WHY);
     if (!title) continue;
-    out.push({ title, why });
+    const files = [];
+    for (const f of Array.isArray(d.files) ? d.files : []) {
+      if (typeof f === 'string' && known.has(f) && !files.includes(f)) files.push(f);
+      if (files.length >= MAX_DECISION_FILES) break;
+    }
+    out.push({ title, why: clamp(d.why, MAX_DECISION_WHY), files });
     if (out.length >= MAX_DECISIONS) break;
   }
   return out;
+}
+
+// The page draws the before from what is not added and the after from what
+// is not removed, so the marks have to agree with each other: an edge to a
+// piece that was added cannot have been there before, and one from a piece
+// that was removed cannot be there after. An edge whose end is not a node
+// would draw to nowhere, and goes. A missing diagram, the usual case, is an
+// empty one. Labels are drawn as plain text, so code marks are taken out
+// rather than shown.
+function reconcileDiagram(diagram) {
+  const nodes = [];
+  const edges = [];
+  const byId = new Map();
+  const plain = (text, max) => clamp(String(text ?? '').replace(/`/g, ''), max);
+  for (const n of Array.isArray(diagram?.nodes) ? diagram.nodes : []) {
+    if (!n || typeof n.id !== 'string' || !n.id.trim() || byId.has(n.id)) continue;
+    const node = {
+      id: n.id,
+      label: plain(n.label || n.id, MAX_NODE_LABEL),
+      change: NODE_CHANGES.includes(n.change) ? n.change : 'unchanged',
+    };
+    byId.set(n.id, node);
+    nodes.push(node);
+    if (nodes.length >= MAX_NODES) break;
+  }
+  const seen = new Set();
+  for (const e of Array.isArray(diagram?.edges) ? diagram.edges : []) {
+    if (!e || !byId.has(e.from) || !byId.has(e.to) || e.from === e.to) continue;
+    const key = `${e.from}\0${e.to}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const ends = [byId.get(e.from).change, byId.get(e.to).change];
+    let change = EDGE_CHANGES.includes(e.change) ? e.change : 'unchanged';
+    if (ends.includes('added') && ends.includes('removed')) continue;
+    if (ends.includes('added')) change = 'added';
+    else if (ends.includes('removed')) change = 'removed';
+    edges.push({ from: e.from, to: e.to, label: plain(e.label, MAX_EDGE_LABEL), change });
+    if (edges.length >= MAX_EDGES) break;
+  }
+  // A drawing in which nothing was added, removed or changed is the same
+  // picture twice: the model was asked to leave it out, and it goes here if
+  // it did not.
+  const moved = nodes.some((n) => n.change !== 'unchanged') || edges.some((e) => e.change !== 'unchanged');
+  if (!moved) return { nodes: [], edges: [] };
+  return { nodes, edges };
 }

@@ -4,7 +4,7 @@
 resource "aws_ecr_repository" "images" {
   for_each = toset(["session", "console"])
 
-  name                 = "woodshed-cloud-${each.key}"
+  name                 = "${local.p}-${each.key}"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 }
@@ -24,11 +24,11 @@ resource "aws_ecr_lifecycle_policy" "images" {
 }
 
 resource "aws_ecs_cluster" "main" {
-  name = "woodshed-cloud"
+  name = local.p
 }
 
 resource "aws_cloudwatch_log_group" "sessions" {
-  name              = "/woodshed-cloud/sessions"
+  name              = "/${local.p}/sessions"
   retention_in_days = 14
 }
 
@@ -45,7 +45,7 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
 # Pulls the image, writes logs and reads the secrets at start. There is no task
 # role at all, so code running in a session has no AWS credentials.
 resource "aws_iam_role" "session_execution" {
-  name               = "woodshed-cloud-session-execution"
+  name               = "${local.p}-session-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
@@ -125,7 +125,7 @@ locals {
 }
 
 resource "aws_ecs_task_definition" "session" {
-  family                   = "woodshed-cloud-session"
+  family                   = "${local.p}-session"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = 2048
@@ -150,8 +150,8 @@ resource "aws_ecs_task_definition" "session" {
 
 # The db-admin task (session/dbAdmin.mjs): the only thing that reads the databases' root passwords. It builds the
 # database template from master, and makes every other database user and database as a copy of it. The console runs
-# it for each person's databases and each shared session's; the template is the image workflow's, through the
-# base box (github.tf), or the db_template_command output's. All of it exists only with a database in var.databases.
+# it for each person's databases and each shared session's; the deploy workflow's session job builds the template through the
+# base box (github.tf), or the db_template_command output does. All of it exists only with a database in var.databases.
 locals {
   # Each database's host, as dbAdmin.mjs's flags: a database the installation does not run has none.
   db_admin_hosts = concat(
@@ -165,7 +165,7 @@ locals {
 resource "aws_iam_role" "db_admin_execution" {
   count = local.db_admin ? 1 : 0
 
-  name               = "woodshed-cloud-db-admin-execution"
+  name               = "${local.p}-db-admin-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
@@ -203,7 +203,7 @@ resource "aws_iam_role_policy" "db_admin_execution" {
 resource "aws_iam_role" "db_admin_task" {
   count = local.db_admin ? 1 : 0
 
-  name               = "woodshed-cloud-db-admin"
+  name               = "${local.p}-db-admin"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
 }
 
@@ -214,8 +214,8 @@ data "aws_iam_policy_document" "db_admin_task" {
     sid     = "DatabasePasswords"
     actions = ["secretsmanager:GetSecretValue"]
     resources = [
-      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/users/*/database-??????",
-      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:woodshed-cloud/sessions/*/database-??????",
+      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/users/*/database-??????",
+      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/sessions/*/database-??????",
     ]
   }
 
@@ -238,7 +238,7 @@ resource "aws_iam_role_policy" "db_admin_task" {
 resource "aws_ecs_task_definition" "db_admin" {
   count = local.db_admin ? 1 : 0
 
-  family                   = "woodshed-cloud-db-admin"
+  family                   = "${local.p}-db-admin"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = 2048
@@ -272,7 +272,7 @@ resource "aws_ecs_task_definition" "db_admin" {
       ],
       local.db_admin_hosts,
       [
-        "--secret-prefix", "woodshed-cloud/",
+        "--secret-prefix", "${local.p}/",
         "--repo", "/work/${split("/", var.github_repo)[1]}",
         "--",
       ],

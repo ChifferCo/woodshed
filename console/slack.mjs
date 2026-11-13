@@ -1,6 +1,7 @@
-// Posts each pull request a session opens to one Slack channel, with its decision brief in the post's thread, as the bot whose token is the console's
+// Posts each pull request a session opens to Slack, with its decision brief in the post's thread, as the bot whose token is the console's
 // slack-bot-token secret. Console only, like the GitHub App key: a session never sees the token. The channel is a
-// setting on the Console settings page, kept in state.json as `settings.slackChannel`.
+// setting on the Console settings page, kept in state.json as `settings.slackChannel`; a project may have its own,
+// from the page's Repos card, under `settings.projectSlackChannels` by project name.
 
 export const SLACK_TOKEN_SECRET = 'slack-bot-token';
 const POST_TIMEOUT_MS = 10_000;
@@ -67,6 +68,16 @@ export function plainText(text) {
  */
 export function createSlack({ store, secrets, fetchImpl = fetch }) {
   const channel = () => store.state.settings?.slackChannel ?? '';
+  const projectChannels = () => store.state.settings?.projectSlackChannels ?? {};
+
+  /**
+   * @param {string|null} project  the project's name
+   * @returns {{channel: string, from: 'project'|'console'}}  the project's own channel, or else the console's
+   */
+  function channelFor(project) {
+    const own = project ? projectChannels()[project] : '';
+    return own ? { channel: own, from: 'project' } : { channel: channel(), from: 'console' };
+  }
 
   /**
    * @param {string} value  an empty channel turns the posts off
@@ -89,6 +100,21 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
     store.state.settings = { ...store.state.settings, slackChannel: next };
     store.save();
     console.log('slack: channel changed', { from: before || null, to: next || null, by });
+  }
+
+  /**
+   * @param {{project: string, channel: string, by: string}} args  an empty channel sends the project's pull requests
+   *   to the console's channel again
+   * @throws {Error}  shown on the page, for anything but a channel ID
+   */
+  function setProjectChannel({ project, channel: value, by }) {
+    const next = checkChannel(value);
+    const before = projectChannels()[project] ?? '';
+    if (next === before) return;
+    const { [project]: _, ...rest } = projectChannels();
+    store.state.settings = { ...store.state.settings, projectSlackChannels: next ? { ...rest, [project]: next } : rest };
+    store.save();
+    console.log('slack: project channel changed', { project, from: before || null, to: next || null, by });
   }
 
   /**
@@ -130,21 +156,26 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
   /**
    * The pull request's one line, `PR title - PR link`, then its decision brief as a reply in that post's thread. The
    * reply is best effort: once the post is in, a brief Slack refuses or rate limits must not post the line again.
-   * @param {{title: string, url: string, tier?: string|null, brief?: string|null, mention?: string|null}} args  `tier`
+   * The channel is chosen once, before the post, so the brief and the mention land in the post's thread even when
+   * the setting changes meanwhile.
+   * @param {{title: string, url: string, tier?: string|null, brief?: string|null, mention?: string|null, project?: string|null}} args  `tier`
    *   as for `prMessage`; `brief` is Markdown, its quotes already through `plainText`; `mention` is the Slack member ID
-   *   of the person to tag in the thread, after the brief
-   * @returns {Promise<boolean>}  whether Slack took the post
+   *   of the person to tag in the thread, after the brief; `project` is the pull request's project, whose own channel
+   *   it goes to when it has one
+   * @returns {Promise<{channel: string, ts: string|null}|null>}  where the post is, or null when Slack did not take it
    */
-  async function postPr({ title, url, tier, brief = null, mention = null }) {
-    const to = channel();
-    if (!to) return false;
+  async function postPr({ title, url, tier, brief = null, mention = null, project = null }) {
+    const { channel: to, from } = channelFor(project);
+    if (!to) return null;
+    console.log('slack: pull request channel chosen', { project, channel: from });
     const posted = await call('chat.postMessage', { channel: to, text: prMessage({ title, url, tier }) });
-    if (!posted) return false;
+    if (!posted) return null;
+    const post = { channel: to, ts: posted.ts ?? null };
     console.log('slack: pull request posted', { url, channel: to });
-    if (!brief) return true;
+    if (!brief) return post;
     if (!posted.ts) {
       console.warn('slack: no thread to reply the decision brief in', { url });
-      return true;
+      return post;
     }
     try {
       const replied = await reply({ channel: to, threadTs: posted.ts, markdown: brief });
@@ -157,7 +188,7 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
     } catch (err) {
       console.warn('slack: decision brief not replied', { url, message: String(err?.message ?? err).split('\n')[0] });
     }
-    return true;
+    return post;
   }
 
   /**
@@ -280,11 +311,15 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
   }
 
   return {
-    get available() { return Boolean(channel() && secrets); },
+    // A project's own channel is somewhere to post even while the console's is empty.
+    get available() { return Boolean(secrets && (channel() || Object.values(projectChannels()).some(Boolean))); },
     canReply: Boolean(secrets),
     view: () => ({ channel: channel(), canPost: Boolean(secrets) }),
+    projectChannel: (project) => projectChannels()[project] ?? '',
+    channelFor,
     checkChannel,
     setChannel,
+    setProjectChannel,
     postPr,
     reply,
     dm,

@@ -199,22 +199,29 @@ export function commandTriggers(comments, { seen, notBefore }) {
 }
 
 /**
- * @param {{repo: string, token?: () => Promise<string>, run?: Function}} opts  `token` is the GitHub App's; without it,
+ * @param {{repo: string|(() => string), token?: () => Promise<string>, run?: Function}} opts  `token` is the GitHub App's; without it,
  *   `gh` uses its own login or GH_TOKEN. `run` stands in for execFile in tests
  */
-export function createGitHub({ repo, token, run = execFileAsync }) {
+export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync }) {
   const ghApi = (args) => ghApiWith(args, token, run);
-  let defaultBranch = null;
+  // A getter follows the console's default repo, which a console that started with none gets when an admin adds one.
+  const currentRepo = typeof repoOrGetter === 'function' ? repoOrGetter : () => repoOrGetter;
+  const branches = new Map();
   return {
+    get repo() { return currentRepo(); },
     async defaultBranch() {
-      defaultBranch ??= (await ghApi([`repos/${repo}`]))?.default_branch;
-      if (!defaultBranch) throw new Error(`GitHub did not name ${repo}'s default branch`);
-      return defaultBranch;
+      const repo = currentRepo();
+      if (!branches.has(repo)) {
+        const branch = (await ghApi([`repos/${repo}`]))?.default_branch;
+        if (!branch) throw new Error(`GitHub did not name ${repo}'s default branch`);
+        branches.set(repo, branch);
+      }
+      return branches.get(repo);
     },
     /** @returns {Promise<string|null>}  a file on the repo's default branch, null when it has none */
     async defaultBranchFile(filePath) {
       try {
-        const file = await ghApi([`repos/${repo}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}`]);
+        const file = await ghApi([`repos/${currentRepo()}/contents/${filePath.split('/').map(encodeURIComponent).join('/')}`]);
         return file?.content ? Buffer.from(file.content, 'base64').toString('utf8') : null;
       } catch (err) {
         if (/HTTP 404/.test(`${err?.stderr ?? ''}${err?.message ?? ''}`)) return null;
@@ -226,11 +233,11 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
       return this.defaultBranchFile('.woodshed/project.yaml');
     },
     compare(base, head) {
-      return ghApi([`repos/${repo}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`]);
+      return ghApi([`repos/${currentRepo()}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`]);
     },
     pageSize: PAGE_SIZE,
     async latestEventId() {
-      const events = await ghApi([`repos/${repo}/issues/events?per_page=1`]);
+      const events = await ghApi([`repos/${currentRepo()}/issues/events?per_page=1`]);
       return events?.[0]?.id ?? 0;
     },
     /**
@@ -241,18 +248,18 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
     async issueEventsSince(afterId) {
       const events = [];
       for (let page = 1; page <= MAX_EVENT_PAGES; page++) {
-        const batch = (await ghApi([`repos/${repo}/issues/events?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
+        const batch = (await ghApi([`repos/${currentRepo()}/issues/events?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
         events.push(...batch);
         if (batch.length < PAGE_SIZE || batch.some((e) => e.id <= afterId)) return { events, complete: true };
       }
       return { events, complete: false };
     },
     commentsSince(since) {
-      return ghApi([`repos/${repo}/issues/comments?since=${encodeURIComponent(since)}&sort=updated&direction=asc&per_page=${PAGE_SIZE}`]);
+      return ghApi([`repos/${currentRepo()}/issues/comments?since=${encodeURIComponent(since)}&sort=updated&direction=asc&per_page=${PAGE_SIZE}`]);
     },
     async canWrite(login) {
       try {
-        return canWrite(await ghApi([`repos/${repo}/collaborators/${encodeURIComponent(login)}/permission`]));
+        return canWrite(await ghApi([`repos/${currentRepo()}/collaborators/${encodeURIComponent(login)}/permission`]));
       } catch (err) {
         // A 404 is what a non-collaborator, or a bot, gets. Anything else is GitHub or gh failing.
         if (!/HTTP 404/.test(`${err?.stderr ?? ''}${err?.message ?? ''}`)) throw err;
@@ -265,7 +272,7 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
       return ghApi([`users/${encodeURIComponent(login)}`]);
     },
     issue(number) {
-      return ghApi([`repos/${repo}/issues/${number}`]);
+      return ghApi([`repos/${currentRepo()}/issues/${number}`]);
     },
     /**
      * The folder's tree, not its contents: the contents API stops at 1,000 entries, and a tree lists 100,000.
@@ -273,19 +280,19 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
      */
     async fileNames(folder) {
       const branch = await this.defaultBranch();
-      const tree = await ghApi([`repos/${repo}/git/trees/${encodeURIComponent(`${branch}:${folder}`)}`]);
+      const tree = await ghApi([`repos/${currentRepo()}/git/trees/${encodeURIComponent(`${branch}:${folder}`)}`]);
       if (tree?.truncated) console.warn('github: folder listing cut short', { folder, entries: tree.tree?.length });
       return (tree?.tree ?? []).filter((e) => e.type === 'blob').map((e) => e.path);
     },
     async addAssignees(number, logins) {
-      await ghApi(['--method', 'POST', `repos/${repo}/issues/${Number(number)}/assignees`, ...logins.flatMap((l) => ['-f', `assignees[]=${l}`])]);
+      await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${Number(number)}/assignees`, ...logins.flatMap((l) => ['-f', `assignees[]=${l}`])]);
     },
     async removeAssignees(number, logins) {
-      await ghApi(['--method', 'DELETE', `repos/${repo}/issues/${Number(number)}/assignees`, ...logins.flatMap((l) => ['-f', `assignees[]=${l}`])]);
+      await ghApi(['--method', 'DELETE', `repos/${currentRepo()}/issues/${Number(number)}/assignees`, ...logins.flatMap((l) => ['-f', `assignees[]=${l}`])]);
     },
     /** @returns {Promise<object[]>}  the issue's cards on project boards, each with its board's Status field and value */
     async issueProjectItems(number) {
-      const [owner, name] = repo.split('/');
+      const [owner, name] = currentRepo().split('/');
       const answer = await ghApi(['graphql', '-f', `query=${ISSUE_PROJECT_ITEMS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${Number(number)}`]);
       return answer?.data?.repository?.issue?.projectItems?.nodes ?? [];
     },
@@ -295,26 +302,36 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
         '-f', `field=${fieldId}`, '-f', `option=${optionId}`]);
     },
     pull(number) {
-      return ghApi([`repos/${repo}/pulls/${number}`]);
+      return ghApi([`repos/${currentRepo()}/pulls/${number}`]);
     },
     /** @returns {Promise<string[]|null>}  the pull request's file paths, or null when there are more than we read */
     async pullFiles(number) {
       const files = [];
       for (let page = 1; page <= MAX_PULL_FILE_PAGES; page++) {
-        const batch = (await ghApi([`repos/${repo}/pulls/${number}/files?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
+        const batch = (await ghApi([`repos/${currentRepo()}/pulls/${number}/files?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
         files.push(...batch.map((f) => f.filename));
         if (batch.length < PAGE_SIZE) return files;
       }
       return null;
     },
+    /** @returns {Promise<string|null>}  who last added the label to the issue or pull request */
+    async labeledBy(number, label) {
+      let by = null;
+      for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+        const batch = (await ghApi([`repos/${currentRepo()}/issues/${number}/events?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
+        by = batch.filter((e) => e.event === 'labeled' && e.label?.name === label).at(-1)?.actor?.login ?? by;
+        if (batch.length < PAGE_SIZE) break;
+      }
+      return by;
+    },
     reviews(number) {
-      return ghApi([`repos/${repo}/pulls/${number}/reviews?per_page=${PAGE_SIZE}`]);
+      return ghApi([`repos/${currentRepo()}/pulls/${number}/reviews?per_page=${PAGE_SIZE}`]);
     },
     /** @returns {Promise<object[]>}  the commit's latest run of each check */
     async checkRuns(sha) {
       const runs = [];
       for (let page = 1; page <= MAX_CHECK_RUN_PAGES; page++) {
-        const batch = (await ghApi([`repos/${repo}/commits/${sha}/check-runs?filter=latest&per_page=${PAGE_SIZE}&page=${page}`]))?.check_runs ?? [];
+        const batch = (await ghApi([`repos/${currentRepo()}/commits/${sha}/check-runs?filter=latest&per_page=${PAGE_SIZE}&page=${page}`]))?.check_runs ?? [];
         runs.push(...batch);
         if (batch.length < PAGE_SIZE) break;
       }
@@ -326,7 +343,7 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
      *   the repo that are theirs, then those waiting on their review, newest first; `branch` finds a session on it
      */
     async openPullsFor(login) {
-      const q = (qualifier) => `repo:${repo} is:pr is:open ${qualifier}:${login} sort:updated-desc`;
+      const q = (qualifier) => `repo:${currentRepo()} is:pr is:open ${qualifier}:${login} sort:updated-desc`;
       const answer = await ghApi(['graphql', '-f', `query=${PULLS_FOR_QUERY}`, '-f', `mine=${q('author')}`, '-f', `review=${q('review-requested')}`]);
       const mine = answer?.data?.mine?.nodes ?? [];
       const review = answer?.data?.review?.nodes ?? [];
@@ -340,7 +357,7 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
      * @returns {Promise<object[]>}  each pull request that exists, with its state, review and latest checks
      */
     async pullStatuses(numbers) {
-      const [owner, name] = repo.split('/');
+      const [owner, name] = currentRepo().split('/');
       const fields = numbers.map((n) => `pr${Number(n)}: pullRequest(number: ${Number(n)}) { ${PR_STATUS_FIELDS} }`).join('\n');
       const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields} } }`;
       let answer;
@@ -355,42 +372,57 @@ export function createGitHub({ repo, token, run = execFileAsync }) {
       return Object.values(answer?.data?.repository ?? {}).filter(Boolean);
     },
     async skills() {
-      const [owner, name] = repo.split('/');
+      const [owner, name] = currentRepo().split('/');
       const answer = await ghApi(['graphql', '-f', `query=${SKILLS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`]);
       return skillsFrom(answer?.data?.repository);
     },
     /** @returns {Promise<{path: string, head_sha: string}>}  an Actions workflow run: `path` is its workflow file */
     workflowRun(runId) {
-      return ghApi([`repos/${repo}/actions/runs/${Number(runId)}`]);
+      return ghApi([`repos/${currentRepo()}/actions/runs/${Number(runId)}`]);
     },
     /** @returns {Promise<object[]>}  the issue or pull request's comments, oldest first, up to the pages we read */
     async issueComments(number) {
       const comments = [];
       for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
-        const batch = (await ghApi([`repos/${repo}/issues/${number}/comments?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
+        const batch = (await ghApi([`repos/${currentRepo()}/issues/${number}/comments?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
         comments.push(...batch);
         if (batch.length < PAGE_SIZE) break;
       }
       return comments;
     },
     async updateComment(commentId, body) {
-      const updated = await ghApi(['--method', 'PATCH', `repos/${repo}/issues/comments/${commentId}`, '-f', `body=${body}`]);
+      const updated = await ghApi(['--method', 'PATCH', `repos/${currentRepo()}/issues/comments/${commentId}`, '-f', `body=${body}`]);
       return updated?.id ?? null;
     },
+    /**
+     * Posts a finished check run on a commit, as the console's App. An installation that has not accepted the App's
+     * Checks write permission answers 403, which throws.
+     * @param {{sha: string, name: string, conclusion: 'success'|'failure'|'neutral', title: string, summary: string,
+     *          detailsUrl?: string|null, externalId?: string|null}} check
+     * @returns {Promise<string|null>}  the check's page
+     */
+    async createCheckRun({ sha, name, conclusion, title, summary, detailsUrl = null, externalId = null }) {
+      const fields = ['-f', `name=${name}`, '-f', `head_sha=${sha}`, '-f', 'status=completed', '-f', `conclusion=${conclusion}`,
+        '-f', `output[title]=${title}`, '-f', `output[summary]=${summary.slice(0, 60_000)}`];
+      if (detailsUrl) fields.push('-f', `details_url=${detailsUrl}`);
+      if (externalId) fields.push('-f', `external_id=${externalId}`);
+      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/check-runs`, ...fields]);
+      return created?.html_url ?? null;
+    },
     async comment(number, body) {
-      const created = await ghApi(['--method', 'POST', `repos/${repo}/issues/${number}/comments`, '-f', `body=${body}`]);
+      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
       return created?.id ?? null;
     },
     /** @returns {Promise<true>}  once GitHub took the label off; a label that was not there answers 404 and throws */
     async removeLabel(number, label) {
-      await ghApi(['--method', 'DELETE', `repos/${repo}/issues/${number}/labels/${encodeURIComponent(label)}`]);
+      await ghApi(['--method', 'DELETE', `repos/${currentRepo()}/issues/${number}/labels/${encodeURIComponent(label)}`]);
       return true;
     },
     reactToIssue(number, content = 'eyes') {
-      return ghApi(['--method', 'POST', `repos/${repo}/issues/${number}/reactions`, '-f', `content=${content}`]);
+      return ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/reactions`, '-f', `content=${content}`]);
     },
     reactToComment(commentId, content = 'eyes') {
-      return ghApi(['--method', 'POST', `repos/${repo}/issues/comments/${commentId}/reactions`, '-f', `content=${content}`]);
+      return ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/comments/${commentId}/reactions`, '-f', `content=${content}`]);
     },
   };
 }

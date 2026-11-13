@@ -10,6 +10,8 @@
   // What the pages say about where sessions run, in the provider's own words: pageShell's meta tag, from
   // providerWords.mjs. A page without it leaves out the steps only a provider can name.
   const PROVIDER_WORDS = readProviderWords();
+  // What this installation calls its console (config.consoleName): pageShell's meta tag, read as text.
+  const CONSOLE_NAME = document.querySelector?.('meta[name="woodshed-console-name"]')?.content || 'Woodshed';
   /** @returns {string}  the text with its first letter capitalised, for a provider's words at the start of a sentence */
   function capitalised(text) {
     return String(text).replace(/^./, (c) => c.toUpperCase());
@@ -107,7 +109,7 @@
       if (s.state === 'done' && s.shells > 0 && s.prUrl) return { key: 'job', word: 'waiting on a job' };
       if (s.state === 'done') return { key: 'done', word: 'done' };
       if (s.state === 'starting') return { key: 'starting', word: 'starting' };
-      return { key: 'idle', word: 'claude exited' };
+      return { key: 'idle', word: `${agentOf(s)} exited` };
     }
     if (!isLive(s) && s.kept && !s.owner) {
       if (s.prClosedAt) return { key: 'merged', word: s.prMerged ? 'merged' : 'closed' };
@@ -237,17 +239,22 @@
     return null;
   }
 
-  /** The setup card: what is left, with Set up taking you to My settings for the token, or for databases that did not start. */
+  /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false } = {}) {
-    const rows = setupSteps(me).map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
+    const steps = setupSteps(me);
+    const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
       h('span', { class: 'setup-check', 'aria-hidden': 'true' }, step.done ? '✓' : ''),
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
-      step.key === 'github' ? h('a', { class: 'btn btn-primary btn-sm', href: '/setup/github' }, 'Set up')
-        : step.key === 'token' && !step.done ? h('a', { class: 'btn btn-primary btn-sm', href: '/settings' }, 'Set up')
+      step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
+        : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
+        // Two equal choices, each to its own box on My settings: neither agent is the default.
+        : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
+          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
+          h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
       h('h3', null, 'Set up your Woodshed'),
-      h('p', null, 'New session needs these, and nothing else does.'),
+      h('p', null, steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
       rows);
   }
 
@@ -298,7 +305,7 @@
   // Resume on a stopped shared session: the same session again, on its branch and databases, with its conversation.
   function resumeSharedButton(s, { small = false, onDone, message = () => '' }) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again where it was: its branch, databases and claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: `Start it again where it was: its branch, databases and ${agentOf(s)}'s conversation`,
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -378,7 +385,7 @@
     ['branch', 'Checking out the branch', 'checkout'],
     ['databases', 'Getting its databases', 'databases'],
     ['env', 'Writing the env files and the prompt', 'env files'],
-    ['claude', 'Opening claude', 'opening claude'],
+    ['claude', 'Opening the agent', 'opening the agent'],
   ].filter(([, label]) => label);
 
   /** @returns {{steps: {key: string, label: string, short: string, state: 'done'|'now'|'next', seconds: number|null}[], current: object|null}} */
@@ -386,7 +393,10 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    const steps = START_STEPS.map(([key, label, short], i) => {
+    // The last step opens the session's own agent: claude, or codex.
+    const agent = agentOf(s);
+    const steps = START_STEPS.map(([key, l, sh], i) => {
+      const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
       const doneAt = at[key] ? Date.parse(at[key]) : null;
       const state = i <= last ? 'done' : i === last + 1 ? 'now' : 'next';
       const end = state === 'now' ? nowMs : doneAt;
@@ -430,9 +440,24 @@
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
   }
 
+  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  function agentOf(s) {
+    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+  }
+
+  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  function agentTitle(s) {
+    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
+  }
+
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
   function isPrivate(s) {
     return Boolean(s.owner);
+  }
+
+  /** @returns {boolean}  a private session Resume starts again: one that stopped, or failed (its saved home and branch are kept) */
+  function canResumePrivate(s) {
+    return isPrivate(s) && (s.status === 'stopped' || s.status === 'failed');
   }
 
   function issueUrl(repo, s) {
@@ -489,11 +514,17 @@
    *   scheme and port (a local console's `http://<id>.localhost:7690/`)
    */
   function appUrl(s, appDomain) {
+    // With app ports (WOODSHED_APP_PORTS) the console says which port of its own name each running app is on.
+    // One with none yet goes through the console, which lends it one; what follows `next=/` (the editor's path) is kept.
+    if (s.appUrl !== undefined) return s.appUrl || `/auth/app?id=${encodeURIComponent(s.id)}&next=/`;
     return `${location.protocol}//${s.id}.${appDomain}${location.port ? `:${location.port}` : ''}/`;
   }
 
-  async function appAction(s, action) {
-    const res = await fetch(`/api/sessions/${s.id}/app/${action}`, { method: 'POST', headers: { 'x-woodshed': '1' } });
+  // `app` picks one of several to start; without it the session starts the default.
+  async function appAction(s, action, { app = null } = {}) {
+    const res = await fetch(`/api/sessions/${s.id}/app/${action}`, {
+      method: 'POST', headers: { 'x-woodshed': '1', ...(app && { 'content-type': 'application/json' }) }, body: app ? JSON.stringify({ app }) : undefined,
+    });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || `${action} answered ${res.status}`);
     return body;
@@ -529,6 +560,59 @@
     return button;
   }
 
+  /** @returns {{name: string, label: string}[]|null}  the apps Start app picks from, when the project has more than one */
+  function appChoices(s) {
+    return Array.isArray(s.apps) && s.apps.length > 1 ? s.apps : null;
+  }
+
+  /** @returns {string|null}  the label of the app that runs, or would run, when there are several */
+  function runningAppLabel(s) {
+    return appChoices(s)?.find((a) => a.name === s.appName)?.label ?? null;
+  }
+
+  // What each app's line in the menu says it will do: one runs at a time.
+  function appChoiceNote(s, app) {
+    const up = s.app === 'running' || s.app === 'api-down' || s.app === 'frontend-down';
+    if (app.name === s.appName) return up ? 'Running now: starts it again' : 'Start it in this session';
+    return up ? `Stops ${runningAppLabel(s) ?? 'the running app'} first, then starts this one` : 'Start it in this session';
+  }
+
+  /** The apps as menu items: each starts that app, after the one running stops. */
+  function appChoiceItems(s, onDone) {
+    return (appChoices(s) ?? []).map((app) => ({
+      group: 'Start app', label: app.label, note: appChoiceNote(s, app),
+      run: async () => {
+        try {
+          s.app = (await appAction(s, 'start', { app: app.name })).app || s.app;
+        } catch (err) {
+          window.alert(`Could not start ${app.label}: ${err.message}`);
+        }
+        onDone();
+      },
+    }));
+  }
+
+  // Start app with several apps: a button that opens the page's one menu (session.js's Woodshed.openMenu) with each app's
+  // label. A page without that menu starts the default, as one app would.
+  function appPickButton(s, { label, ariaLabel = null, title, size, onDone }) {
+    const openMenu = window.Woodshed?.openMenu;
+    if (!openMenu) return actionButton(s, { action: 'start', label: label.replace(/ ▾$/, ''), ariaLabel, title, size, onDone });
+    const key = `${s.id}:apps`;
+    return h('button', {
+      type: 'button', class: `btn btn-plain btn-app-pick${size}`, title, 'aria-label': ariaLabel, 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-menu-for': key,
+      onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openMenu(e.currentTarget, s, { items: appChoiceItems(s, onDone) });
+      },
+    }, label);
+  }
+
+  function setupAppToast(sent, s) {
+    const agent = agentOf(s);
+    return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
+  }
+
   /**
    * The app's controls, after the shed's app line: Open app while it runs, Start app otherwise, and Stop app
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
@@ -545,30 +629,59 @@
       title: `Stop the app's backend and frontend.${serversTitle(s)}`,
     });
     const group = (...children) => h('span', { class: 'app-ctl' }, ...children);
+    // With several apps, the one that runs is named on the button that picks another.
+    const running = runningAppLabel(s);
+    const switcher = () => running && window.Woodshed?.openMenu && appPickButton(s, {
+      label: `${running} ▾`, ariaLabel: `${running} runs: start another app`, size, onDone,
+      title: `${running} is the app running. Pick another to start: ${running} stops first.`,
+    });
     if (s.app === 'running' || s.app === 'api-down') {
       const down = s.app === 'api-down';
       const open = h('a', {
         class: `btn btn-open${size}`, href: appUrl(s, appDomain), target: '_blank', rel: 'noopener',
-        title: down ? `The page loads, but its API is down, so every call under it fails.${serversTitle(s)}` : appUrl(s, appDomain),
+        title: down ? `The page loads, but its API is down, so every call under it fails.${serversTitle(s)}` : `${running ? `${running}: ` : ''}${appUrl(s, appDomain)}`,
       }, h('span', { class: `dot app-dot${down ? ' is-bad' : ''}`, 'aria-hidden': 'true' }), small ? 'App ↗' : 'Open app ↗');
-      return group(open, down && !small ? h('span', { class: 'app-tag' }, 'API down') : null, stop);
+      return group(open, down && !small ? h('span', { class: 'app-tag' }, 'API down') : null, switcher(), stop);
     }
     if (s.app === 'starting' || s.app === 'stopping') {
       const starting = s.app === 'starting';
       const busy = h('button', {
         type: 'button', class: `btn btn-plain${size}`, disabled: true,
-        title: starting ? 'Starting the backend and the frontend; usually one to three minutes' : 'Stopping the backend and the frontend',
-      }, h('span', { class: 'spin', 'aria-hidden': 'true' }), starting ? (small ? 'Starting' : 'Starting app…') : (small ? 'Stopping' : 'Stopping app…'));
+        title: starting ? `Starting ${running ?? 'the app'}'s backend and frontend; usually one to three minutes` : 'Stopping the backend and the frontend',
+      }, h('span', { class: 'spin', 'aria-hidden': 'true' }), starting ? (small ? 'Starting' : `Starting ${running ?? 'app'}…`) : (small ? 'Stopping' : 'Stopping app…'));
       return group(busy, starting ? stop : null);
+    }
+    // The project file has no app: Start app would have nothing to run, so this asks claude to write one.
+    if (s.app === 'none') {
+      if (s.kind === 'ask') return null;
+      const setup = h('button', {
+        type: 'button', class: `btn btn-plain${size}`,
+        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
+        onclick: async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setup.disabled = true;
+          try {
+            const { sent } = await appAction(s, 'setup');
+            window.Woodshed.shell?.toast(setupAppToast(sent, s));
+          } catch (err) {
+            window.alert(`Could not set up the app: ${err.message}`);
+          }
+          onDone();
+        },
+      }, 'Set up app');
+      const ctl = group(setup);
+      ctl.dataset.idle = 'true';
+      return ctl;
     }
     const halfUp = s.app === 'frontend-down';
     const again = s.app === 'failed';
-    const start = actionButton(s, {
-      action: 'start', size, onDone,
-      label: halfUp || again ? (small ? 'Start again' : 'Start app again') : 'Start app',
-      title: halfUp ? `The backend is up and the frontend is not: Start app starts the frontend.${serversTitle(s)}`
-        : again ? 'The last start failed: /tmp/woodshed-app.log in the terminal says why' : 'Start the app in this session',
-    });
+    const startLabel = halfUp || again ? (small ? 'Start again' : 'Start app again') : 'Start app';
+    const startTitle = halfUp ? `The backend is up and the frontend is not: Start app starts the frontend.${serversTitle(s)}`
+      : again ? 'The last start failed: /tmp/woodshed-app.log in the terminal says why' : 'Start the app in this session';
+    const start = appChoices(s)
+      ? appPickButton(s, { label: `${startLabel} ▾`, size, onDone, title: `Pick which app to start: ${appChoices(s).map((a) => a.label).join(', ')}.${halfUp || again ? ` ${startTitle}` : ''}` })
+      : actionButton(s, { action: 'start', size, onDone, label: startLabel, title: startTitle });
     const ctl = group(start, halfUp && !small ? h('span', { class: 'app-tag' }, 'frontend down') : null, halfUp ? stop : null);
     // Nothing of the app up: the phone's rail hides it, as the shed's does, since starting one is a desk job.
     if (!halfUp) ctl.dataset.idle = 'true';
@@ -615,6 +728,45 @@
     level && h('span', { class: `prchip-mark is-${level}`, 'aria-hidden': 'true' }, glyph));
   }
 
+  /**
+   * The pull requests a session's card shows, oldest first: each one, but a merged or closed one only while no newer
+   * one came after it. The newest always shows, so a session whose last pull request merged keeps its chip. A console
+   * from before the list sends only `prUrl` and `pr`.
+   * @returns {{url: string, pr: object|null}[]}
+   */
+  function shownPrs(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.filter(({ pr }, i) => i === all.length - 1 || !(pr?.state === 'merged' || pr?.state === 'closed'));
+  }
+
+  /**
+   * A chip for each pull request shownPrs gives, the newest `max` of them; the older ones fold into a `+N` chip whose
+   * tooltip names each with its state. Details on a stopped session lists them all.
+   * @returns {HTMLElement[]}
+   */
+  function prChips(s, { max = 2, ...opts } = {}) {
+    const shown = shownPrs(s);
+    const folded = shown.slice(0, Math.max(0, shown.length - max));
+    const chips = shown.slice(folded.length).map(({ url, pr }) => prChip({ prUrl: url, pr, branch: s.branch }, opts));
+    if (!folded.length) return chips;
+    const tip = folded.map(({ url, pr }) => [prNumber(url), pr?.title, pr && PR_STATE_WORD[pr.state]].filter(Boolean).join(' · ')).join('\n');
+    return [h('span', {
+      class: 'prchip is-more', title: `${folded.length} more pull request${folded.length === 1 ? '' : 's'}:\n${tip}`,
+      'aria-label': `${folded.length} more pull request${folded.length === 1 ? '' : 's'}: ${folded.map(({ url }) => prNumber(url)).join(', ')}`,
+    }, `+${folded.length}`), ...chips];
+  }
+
+  /**
+   * Every pull request the session opened, a merged or closed one its chips no longer show too, oldest first: a link
+   * each, with its state and title, one to a line.
+   */
+  function prLines(s) {
+    const all = s.prs?.length ? s.prs : s.prUrl ? [{ url: s.prUrl, pr: s.pr ?? null }] : [];
+    return all.map(({ url, pr }, i) => [i ? h('br') : null,
+      h('a', { href: url, target: '_blank', rel: 'noopener' }, prNumber(url)),
+      pr && ` · ${PR_STATE_WORD[pr.state]}${pr.title ? ` · ${pr.title}` : ''}`]);
+  }
+
   // What the container uses, against what it may: amber past 70% of its memory or 150% CPU, red past 90% or 190%.
   function fmtBytes(bytes) {
     if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} KB`;
@@ -646,9 +798,8 @@
     return u && h('span', { class: `usage${u.level ? ` is-${u.level}` : ''}`, title: u.tip }, u.text);
   }
 
-  // The owner's Claude plan, which all their private sessions draw on, so the newest reading any of them saw stands for
-  // each (sessions.mjs keeps a stopped session's last one). Claude Code reports a reading after each answer and leaves
-  // a window out on its own, so either can be missing.
+  // Each agent's plan is shared by the owner's private sessions on that agent. Keep readings and counts separate;
+  // an untagged reading is from Claude. Either window can be missing.
   const PLAN_WINDOWS = [
     { key: 'fiveHour', short: '5h', label: 'Five-hour session', ms: 5 * 3600_000 },
     { key: 'sevenDay', short: 'wk', label: 'Week, all models', ms: 7 * 86400_000 },
@@ -667,7 +818,9 @@
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
-    const newest = sessions.filter((o) => o.owner === s.owner && o.planUsage).map((o) => o.planUsage)
+    const agent = agentOf(s);
+    const agentSessions = sessions.filter((o) => o.owner === s.owner && agentOf(o) === agent);
+    const newest = agentSessions.filter((o) => o.planUsage && (o.planUsage.agent ?? 'claude') === agent).map((o) => o.planUsage)
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
     const now = Date.now();
@@ -677,12 +830,13 @@
       const rolled = reset !== null && reset <= now;
       const usedPercent = !w ? null : rolled ? 0 : w.usedPercent;
       const pace = reset !== null && !rolled ? Math.min(1, Math.max(0, 1 - (reset - now) / ms)) : null;
-      return { key, short, label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
+      return { key, short, label: agent === 'codex' && key === 'sevenDay' ? 'Week' : label, usedPercent, resetsAt: rolled ? null : w?.resetsAt ?? null, pace, level: planLevel(usedPercent) };
     });
     return {
+      agent,
       asOf: newest.asOf,
       stale: Boolean(newest.asOf) && now - Date.parse(newest.asOf) > PLAN_STALE_MS,
-      running: sessions.filter((o) => o.owner === s.owner && o.status === 'running').length,
+      running: agentSessions.filter((o) => o.status === 'running').length,
       windows,
     };
   }
@@ -715,17 +869,19 @@
       h('div', { class: 'plan-bar', role: 'img', 'aria-label': w.usedPercent === null ? `${w.label}: not reported` : `${w.label}: ${Math.round(w.usedPercent)}% used` },
         h('i', { style: `width:${w.usedPercent ?? 0}%` }),
         w.pace !== null && h('span', { class: 'plan-pace', style: `left:${(w.pace * 100).toFixed(1)}%`, title: 'How much of the window has gone by' })),
-      h('div', { class: 'plan-sub' }, w.usedPercent === null ? 'Claude Code has not reported it yet'
+      h('div', { class: 'plan-sub' }, w.usedPercent === null ? `${u.agent === 'codex' ? 'Codex' : 'Claude Code'} has not reported it yet`
         : w.resetsAt ? `Resets ${resetText(w.resetsAt)} · in ${span(Date.parse(w.resetsAt) - Date.now())}` : 'Reset since the reading'));
     const others = u.running - 1;
+    const codex = u.agent === 'codex';
+    const name = codex ? 'Codex' : 'Claude';
     return h('div', { class: 'plan-detail' },
-      h('div', { class: 'card-menu-group' }, 'Your Claude plan'),
+      h('div', { class: 'card-menu-group' }, `Your ${name} plan`),
       ...u.windows.map(meter),
       h('p', { class: 'plan-foot' },
-        `Read from Claude Code after its last answer${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
-        others > 0 ? `Shared with your ${others} other running private session${others === 1 ? '' : 's'}. ` : '',
+        `${codex ? 'Last reported by Codex' : 'Read from Claude Code after its last answer'}${u.asOf ? `, ${ago(u.asOf)}` : ''}. `,
+        others > 0 ? `Shared with your ${others} other running private ${name} session${others === 1 ? '' : 's'}. ` : '',
         'The tick marks how much of each window has gone by. ',
-        h('a', { href: 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, 'claude.ai usage ↗')));
+        h('a', { href: codex ? 'https://chatgpt.com/codex/settings/usage' : 'https://claude.ai/settings/usage', target: '_blank', rel: 'noopener' }, codex ? 'Codex usage ↗' : 'claude.ai usage ↗')));
   }
 
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
@@ -743,10 +899,22 @@
   }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its
-  // WOODSHED_CLOUD_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
+  // WOODSHED_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
   function workflowLinks(me) {
     if (!me.repo) return [];
     return (me.workflows ?? []).map(({ label, file }) => ({ href: `https://github.com/${me.repo}/actions/workflows/${encodeURIComponent(file)}`, label: `${label} ↗` }));
+  }
+
+  // What waits on an admin, so the menu says so wherever you are: someone asking to join, and newer Woodshed commits
+  // than the console runs (woodshedUpdate.mjs).
+  function waitingOn(link, me) {
+    if (link.href === '/people' && me?.asking > 0) return h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
+    if (link.href === '/console-settings' && me?.updates > 0) return h('span', { class: 'menu-count', title: `Woodshed has ${me.updates} newer ${me.updates === 1 ? 'commit' : 'commits'}` }, me.updates);
+    return null;
+  }
+
+  function dotTitle(me) {
+    return [me.asking > 0 && `${me.asking} asking to join`, me.updates > 0 && 'a Woodshed update'].filter(Boolean).join(', ');
   }
 
   function initials(login) {
@@ -761,19 +929,17 @@
   function userMenu(me, current) {
     const button = h('button', { type: 'button', class: 'user-btn', 'aria-haspopup': 'menu', 'aria-expanded': 'false' },
       h('span', { class: 'avatar', 'aria-hidden': 'true' }, me.login ? initials(me.login) : '··'),
-      me.asking > 0 && h('span', { class: 'asking-dot', title: `${me.asking} asking to join` }),
+      (me.asking > 0 || me.updates > 0) && h('span', { class: 'asking-dot', title: dotTitle(me) }),
       h('span', { class: 'user-name' }, me.login ? personText(me.login) : 'Not signed in',
         // Under the name, what a program embedding the console says the person is in (server.mjs, menuOf).
         me.menuSubtitle && h('span', { class: 'user-sub' }, me.menuSubtitle)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
-    // Someone asking to join waits on an admin, so the menu says so wherever you are.
-    const asking = (link) => link.href === '/people' && me.asking > 0 && h('span', { class: 'menu-count', title: `${me.asking} asking to join` }, me.asking);
-    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, asking(link));
+    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, waitingOn(link, me));
     const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
-      h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : 'Woodshed Cloud'), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
+      h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : CONSOLE_NAME), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
       menuGroups(me),
       me.login && MY_LINKS.map(item),
       h('button', {
@@ -786,7 +952,7 @@
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it.
       me.login && !me.hosted && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
-        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-cloud-last'); } catch { /* nothing kept */ } },
+        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-last'); } catch { /* nothing kept */ } },
       },
         h('button', { type: 'submit', class: 'menu-item', role: 'menuitem' }, 'Sign out')));
     function setOpen(open) {
@@ -841,7 +1007,7 @@
   const consoleSlot = h('div', { class: 'side-console' });
   function fillConsoleSlot() {
     const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': link.href === navCurrent ? 'page' : null },
-      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
+      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label, waitingOn(link, meNow));
     consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...consoleLinks(meNow).map(item)] : []));
   }
   fetch('/api/me', { cache: 'no-store' }).then((r) => r.json()).then(learnNames).then((me) => {
@@ -880,7 +1046,7 @@
   async function getJson(path) {
     const res = await fetch(path, { cache: 'no-store' });
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(body.error || `GET ${path} answered ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(body.error || `GET ${path} answered ${res.status}`), { status: res.status });
     return learnNames(body);
   }
 
@@ -890,7 +1056,7 @@
       method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
     });
     const answer = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(answer.error || `POST ${path} answered ${res.status}`);
+    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), answer.link && { link: answer.link });
     return answer;
   }
 
@@ -900,9 +1066,19 @@
   }
 
   /**
+   * An error's message, then the server's `link` (an https page that fixes it, such as the App's install page) opening
+   * in a new tab, as the children of a `form-error`.
+   * @param {{message: string, link?: {href: string, text?: string}}} err
+   */
+  function errorParts(err) {
+    const href = /^https:\/\//.test(err.link?.href ?? '') ? err.link.href : null;
+    return [err.message, ...(href ? [' ', h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, `${err.link.text || 'Open on GitHub'} ↗`)] : [])];
+  }
+
+  /**
    * A change the person must confirm by typing `word`: what it is now, what it becomes, and what that affects.
    * @param {{title: string, before?: string, after?: string, rows?: string[][], effect: string, word: string, goLabel: string,
-   *          run: () => Promise<void>}} opts  `run` makes the change; its error stays in the dialog. `rows`, for several
+   *          run: () => Promise<void>}} opts  `run` makes the change; its error stays in the dialog (errorParts). `rows`, for several
    *   changes at once, is [what, now, after] for each, in place of `before` and `after`
    */
   function confirmChange({ title, before, after, rows = null, effect, word, goLabel, run }) {
@@ -931,7 +1107,7 @@
         await run();
         dialog.close();
       } catch (err) {
-        error.textContent = err.message;
+        error.replaceChildren(...errorParts(err));
         error.hidden = false;
         go.disabled = false;
       }
@@ -1007,10 +1183,10 @@
   }
 
   window.Woodshed = {
-    invite, providerWords: PROVIDER_WORDS, capitalised,
-    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, confirmChange, pickedLogins, byQuery, peoplePicker,
+    invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
+    appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

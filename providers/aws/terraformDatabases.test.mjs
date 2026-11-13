@@ -7,19 +7,21 @@ import { hostedEngines } from '../../shared/databases/index.mjs';
 
 // The databases are optional (`databases` in variables.tf), so what was always there gained a `count`. An installation
 // from before must keep each at its address, or the next apply destroys and makes again its RDS instance and secrets:
-// these read the Terraform as text, since no test here runs terraform.
+// these read the Terraform as text, since no test here runs terraform. The console's DNS zone is optional the same way
+// (`domain`), and a zone made again gets new nameservers, so it is held to the same rules.
 const DIR = path.join(import.meta.dirname, 'terraform');
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.tf'));
 const text = files.map((f) => fs.readFileSync(path.join(DIR, f), 'utf8')).join('\n');
-const counted = [...text.matchAll(/^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{\n {2}count = local\.(postgres|mongo|db_admin) \? 1 : 0\n/gm)]
+const counted = [...text.matchAll(/^resource "([a-z0-9_]+)" "([a-z0-9_]+)" \{\n {2}count = local\.(postgres|mongo|db_admin|own_domain) \? 1 : 0\n/gm)]
   .map((m) => ({ address: `${m[1]}.${m[2]}`, by: m[3] }));
 const moved = [...text.matchAll(/^moved \{\n {2}from = ([a-z0-9_.]+)\n {2}to {3}= ([a-z0-9_.]+)\[0\]\n\}/gm)].map((m) => [m[1], m[2]]);
 
-test('every resource a database decides has a moved block from the address it had before', () => {
+test('every resource a database or the domain decides has a moved block from the address it had before', () => {
   assert.deepEqual(counted.map((c) => c.address).sort(), [
     'aws_db_instance.postgres', 'aws_db_subnet_group.main', 'aws_ecs_task_definition.db_admin', 'aws_iam_role.db_admin_execution',
     'aws_iam_role.db_admin_task', 'aws_iam_role_policy.db_admin_execution', 'aws_iam_role_policy.db_admin_task',
-    'aws_iam_role_policy_attachment.db_admin_execution', 'aws_secretsmanager_secret.mongo_root', 'aws_security_group.database',
+    'aws_iam_role_policy_attachment.db_admin_execution', 'aws_route53_record.console', 'aws_route53_record.console_caa',
+    'aws_route53_record.session_apps', 'aws_route53_zone.console', 'aws_secretsmanager_secret.mongo_root', 'aws_security_group.database',
     'aws_ssm_document.refresh_db_template',
   ]);
   for (const { address } of counted) assert.ok(moved.some(([from, to]) => from === address && to === address), `${address} has no moved block`);
@@ -40,9 +42,9 @@ test('the rules and settings keyed by a database keep their keys, and come only 
   assert.match(text, /local\.mongo \? \{ mongo = 27017 \} : \{\}/, 'the Mongo ingress rule keeps its key, mongo');
   const stack = fs.readFileSync(path.join(DIR, 'baseBoxStack.sh.tftpl'), 'utf8');
   assert.match(stack, /%\{ if mongo ~\}\n {2}# Every database has a user of its own[^]*?\n {2}mongo:\n[^]*?%\{ endif ~\}\n%\{ for name, service in services ~\}/);
-  assert.match(stack, /%\{ if mongo ~\}\n\/usr\/local\/bin\/woodshed-cloud-mongo-root\n%\{ endif ~\}/);
-  assert.match(stack, / {6}- WOODSHED_CLOUD_DATABASES=\$\{databases\}\n/);
-  assert.match(stack, /%\{ if db_admin_task != "" ~\}\n {6}- WOODSHED_CLOUD_ECS_DB_ADMIN_TASK_DEFINITION=\$\{db_admin_task\}\n%\{ endif ~\}/);
+  assert.match(stack, /%\{ if mongo ~\}\n\/usr\/local\/bin\/\$\{name_prefix\}-mongo-root\n%\{ endif ~\}/);
+  assert.match(stack, / {6}- \$\{prefix\}DATABASES=\$\{databases\}\n/);
+  assert.match(stack, /%\{ if db_admin_task != "" ~\}\n {6}- \$\{prefix\}ECS_DB_ADMIN_TASK_DEFINITION=\$\{db_admin_task\}\n%\{ endif ~\}/);
 });
 
 test('an installation with both databases gets the db-admin entryPoint and secrets in the order they always had', () => {

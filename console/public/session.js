@@ -160,10 +160,15 @@
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
   }
 
+  // What Resume does for a private session: claude picks its conversation up again; codex keeps none between runs.
+  function resumeNote(s) {
+    return W.agentOf(s) === 'codex' ? 'Start it again on its branch, in a new Codex conversation' : 'Start it again on its branch, with claude\'s conversation';
+  }
+
   // Resume, as the shed has it: a stopped private session again, on its branch, with claude's conversation.
   function resumeButton(s, small) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again on its branch, with claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: resumeNote(s),
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -246,15 +251,15 @@
   // A card's ⋯ menu, after the shed's: what can be done to this session, each with what it does. Ending ones last.
   function cardActions(s) {
     const live = W.isLive(s);
-    const stoppedPrivate = W.isPrivate(s) && s.status === 'stopped';
+    const stoppedPrivate = W.canResumePrivate(s);
     const removable = W.isPrivate(s) && s.status !== 'stopping';
     const deletable = !s.owner && s.status !== 'stopping' && (live || s.kept);
     const gone = !s.owner && !live && !s.kept && s.status !== 'stopping';
     const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
     return [
-      stoppedPrivate && { label: 'Resume', note: 'Start it again on its branch, with claude\'s conversation', run: () => resumePrivate(s) },
+      stoppedPrivate && { label: 'Resume', note: resumeNote(s), run: () => resumePrivate(s) },
       W.isResumable(s) && W.group(s) !== 'merged' && {
-        label: 'Resume', note: 'Start it again where it was: its branch, databases and claude\'s conversation',
+        label: 'Resume', note: `Start it again where it was: its branch, databases and ${W.agentOf(s)}'s conversation`,
         run: async () => { await W.sharedAction(s, 'resume', { message: '' }).catch((err) => window.alert(`Could not resume: ${err.message}`)); refresh(); },
       },
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
@@ -307,7 +312,7 @@
   const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null };
   const acting = new Set();
   document.body.append(cardMenu.el);
-  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.branch}:${s.assignee ?? ''}`;
+  const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
   const menuAnchor = () => (cardMenu.key
     ? [...document.querySelectorAll(`[data-menu-for="${cardMenu.key}"]`)].find((b) => b.offsetParent) ?? null : null);
@@ -452,35 +457,37 @@
     const starting = s.status === 'starting' && s.startedAt ? W.startProgress(s).current : null;
     const place = W.linePlace(s, data.sessions);
     const who = cardPerson(s);
-    // The session's project, right after the status word, where the installation has more than one.
-    const head = data.projects?.length > 1 && s.project ? [word, ' · ', h('span', { class: 'rproject', title: `Project ${s.project}` }, s.project)] : word;
-    const sub = starting ? [head, ` · ${starting.short} · ${W.clock(s.startedAt)}`]
-      : place ? [head, ` · ${W.lineText(place)}`]
-      : live ? [head, who && [' · ', who], pauses && [' · ', h('span', { class: 'timer' }, pauses)], ownPlan]
-      : W.isResumable(s) ? [head, ` · ${W.keptLine(s)}`, who && [' · ', who]]
-        : W.isPrivate(s) ? [head, ` · ${W.privateStopLine(s, data.login)}`]
-          : [head, who && [' · ', who]];
+    // Where the installation has more than one project, the card's left edge is its project's colour, and the name
+    // is in the card's tooltip and its link's accessible name, so the colour is never all there is.
+    const project = projectsShown() && s.project ? projectList().find((p) => p.name === s.project) ?? { name: s.project, color: null } : null;
+    const sub = starting ? [word, ` · ${starting.short} · ${W.clock(s.startedAt)}`]
+      : place ? [word, ` · ${W.lineText(place)}`]
+      : live ? [word, who && [' · ', who], pauses && [' · ', h('span', { class: 'timer' }, pauses)], ownPlan]
+      : W.isResumable(s) ? [word, ` · ${W.keptLine(s)}`, who && [' · ', who]]
+        : W.isPrivate(s) ? [word, ` · ${W.privateStopLine(s, data.login)}`]
+          : [word, who && [' · ', who]];
     const href = sessionHref(s);
     return h('div', {
-      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}`,
+      class: `rcard is-${st.key}${live ? '' : ' is-stopped'}${project ? ` has-project${project.color ? ` proj-${project.color}` : ''}` : ''}`,
       'aria-current': s.id === id ? 'true' : null,
+      title: project ? `Project ${project.name}` : null,
       onclick: (e) => { if (!e.target.closest('a, button')) navigate(href); },
     },
       h('div', { class: 'rtop' },
         live ? h('span', { class: `status is-${st.key}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })) : h('span', { class: `dot ring is-${st.key}`, 'aria-hidden': 'true' }),
-        h('a', { class: 'rname', href, title: s.title }, s.title),
+        h('a', { class: 'rname', href, title: project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
         showOwnerTag(s) && W.ownerTag(s, { named: !railMine() }),
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
-        pr ? W.prChip(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
+        pr ? W.prChips(s, { asLink: true }) : h('span', { class: `rref${s.kind === 'pr' ? ' is-pr' : ''}` }, W.ref(s)),
         W.isUnassigned(s) && data.assignable && takeButton(s),
-        !live && W.isPrivate(s) && s.status === 'stopped' && resumeButton(s, true),
+        !live && W.canResumePrivate(s) && resumeButton(s, true),
         W.isResumable(s) && W.group(s) !== 'merged' && W.resumeSharedButton(s, { small: true, onDone: refresh })));
   }
 
   // Which zones are folded is this viewer's own choice, kept in their browser when it lets us.
-  const ZONES_KEY = 'woodshed-cloud-rail-zones';
+  const ZONES_KEY = 'woodshed-rail-zones';
   function readZones() {
     try {
       return JSON.parse(window.localStorage.getItem(ZONES_KEY) || '{}');
@@ -497,6 +504,55 @@
       // A private window keeps the choice for this page only.
     }
     render();
+  }
+
+  // The installation's projects, the default first, each with its colour key. A page kept from before the console sent
+  // colours has the names alone.
+  function projectList() {
+    return (data.projects ?? []).map((p) => (typeof p === 'string' ? { name: p, color: null, default: false } : p));
+  }
+  function projectsShown() {
+    return projectList().length > 1;
+  }
+
+  // The project the rail is filtered to, this viewer's own choice, kept in their browser when it lets us. One that
+  // names a project the console no longer has is All.
+  const PROJECT_KEY = 'woodshed-rail-project';
+  let savedProject = null;
+  try {
+    savedProject = window.localStorage.getItem(PROJECT_KEY);
+  } catch {
+    // A private window starts on All.
+  }
+  function railProject() {
+    if (!projectsShown()) return null;
+    return window.WoodshedProjectColors.railProject({ saved: savedProject, names: projectList().map((p) => p.name) });
+  }
+  function pickProject(name) {
+    savedProject = name;
+    try {
+      if (name) window.localStorage.setItem(PROJECT_KEY, name);
+      else window.localStorage.removeItem(PROJECT_KEY);
+    } catch {
+      // A private window keeps the choice for this page only.
+    }
+    render();
+  }
+
+  // All, then a chip per project with its colour and how many of the sessions the rail shows are on it. They are the
+  // legend of the cards' edges too. A rail with no sessions has nothing to filter.
+  function projectChips(listed) {
+    if (!projectsShown() || !listed.length) return null;
+    const current = railProject();
+    const counts = window.WoodshedProjectColors.countByProject(listed);
+    const chip = (name, label, n, color) => h('button', {
+      type: 'button', class: `proj-chip${color ? ` proj-${color}` : ''}`, 'aria-pressed': String(current === name), 'data-project': name ?? '',
+      title: name ? `Only the sessions on ${name}` : 'Every project\'s sessions',
+      onclick: () => pickProject(name),
+    }, name && h('span', { class: 'proj-swatch', 'aria-hidden': 'true' }), label, h('span', { class: 'n' }, n));
+    return h('div', { class: 'rail-projects', role: 'group', 'aria-label': 'Project' },
+      chip(null, 'All', listed.length, null),
+      projectList().map((p) => chip(p.name, p.name, counts[p.name] || 0, p.color)));
   }
 
   // Each zone's dot: the colour of what is in it, and a ring for what has stopped.
@@ -578,19 +634,27 @@
     return railUser;
   }
 
-  // Your session on a pull request's branch, as the shed finds one: a live one first, then a stopped one.
-  function sessionOnBranch(branch) {
+  // Your session on a pull request's branch in its repo, as the shed finds one: a live one first, then a stopped one.
+  // A session or row from before projects is on the default project.
+  function sessionOnBranch(branch, project) {
     if (!branch) return null;
-    const mineOn = data.sessions.filter((s) => W.isPrivate(s) && s.branch === branch);
-    return mineOn.find(W.isLive) ?? mineOn.find((s) => s.status === 'stopped') ?? null;
+    const main = projectList().find((p) => p.default)?.name ?? null;
+    const on = (x) => (x ?? main) === (project ?? main);
+    const mineOn = data.sessions.filter((s) => W.isPrivate(s) && s.branch === branch && on(s.project));
+    return mineOn.find(W.isLive) ?? mineOn.find(W.canResumePrivate) ?? null;
   }
 
-  // The shed's third group: your open pull requests, and those waiting on your review. Each opens your session on
-  // its branch, resumes a stopped one, or starts a new one.
-  function pullsZone() {
-    if (!pulls.length) return null;
+  // The shed's third group: your open pull requests on every repo you may start on, and those waiting on your review.
+  // Each opens your session on its branch, resumes a stopped one, or starts a new one. The rail's project filter
+  // applies to them as to the sessions.
+  function pullsZone(onProject) {
+    const main = projectList().find((p) => p.default)?.name ?? null;
+    const listed = onProject ? pulls.filter((p) => (p.project ?? main) === onProject) : pulls;
+    if (!listed.length) return null;
     const open = !folded.pulls;
-    // After the shed's rows: the number and title, the checks and how long since it moved, then what to do with it.
+    const marked = projectsShown();
+    // Two lines: the title and its checks' dot, then the repo and number, the checks and how long since it moved, with
+    // what to do with it at the end, as a session card has its Resume.
     const checksOf = (p) => {
       const c = p.checks;
       if (!c) return { key: 'none', text: p.draft ? 'draft · no checks' : 'no checks' };
@@ -599,40 +663,50 @@
       return { key: 'pass', text: 'all green' };
     };
     const row = (p) => {
-      const found = sessionOnBranch(p.branch);
+      const project = p.project ?? main;
+      const found = sessionOnBranch(p.branch, project);
       const live = found && W.isLive(found);
       const checks = checksOf(p);
+      const color = marked ? projectList().find((x) => x.name === project)?.color : null;
+      const isDefault = !p.project || p.project === main;
+      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${isDefault ? '' : `&project=${encodeURIComponent(project)}`}`;
       const action = live
         ? h('a', { class: 'btn btn-sm btn-open', href: `/s/${found.id}`, title: `${found.title} is on this branch: open it` },
-          h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open session')
+          h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open')
         : found
           ? h('button', {
             type: 'button', class: 'btn btn-sm btn-open', title: `${found.title} is on this branch, stopped: resume it`,
             onclick: (e) => resumeFromRow(found, e.currentTarget.closest('.prow')),
-          }, 'Resume session')
+          }, 'Resume')
           : h('a', {
-            class: 'btn btn-sm btn-plain', href: `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}`,
+            class: 'btn btn-sm btn-plain', href: startHref,
             title: p.why === 'review' ? 'Waiting on your review: start a session on it' : 'Yours: start a session on it',
-          }, 'Start session');
-      return h('div', { class: 'prow' },
+          }, 'Start');
+      const ref = marked ? `${project} #${p.number}` : `#${p.number}`;
+      return h('div', { class: `prow${marked ? ` has-project${color ? ` proj-${color}` : ''}` : ''}`, title: marked ? `${project}: ${p.title}` : p.title },
         h('div', { class: 'prow-top' },
-          h('span', { class: 'prow-num' }, `#${p.number}`),
-          h('span', { class: 'prow-title', title: p.title }, p.title),
+          h('span', { class: 'prow-title' }, p.title),
           h('span', { class: `prow-dot is-${checks.key}`, 'aria-hidden': 'true' })),
-        h('div', { class: 'prow-sub' }, h('span', { class: `prow-checks is-${checks.key}` }, checks.text), p.updatedAt && ` · ${W.ago(p.updatedAt)}`),
-        h('div', { class: 'prow-actions' }, action,
-          h('a', { class: 'prow-gh', href: W.issueUrl(data.repo, { kind: 'pr', number: p.number }), target: '_blank', rel: 'noopener' }, 'GitHub ↗')));
+        h('div', { class: 'prow-sub' },
+          h('span', { class: 'prow-text' },
+            marked ? [h('span', { class: 'prow-repo' }, project), ` #${p.number}`] : h('span', { class: 'prow-num' }, `#${p.number}`),
+            ' · ', h('span', { class: `prow-checks is-${checks.key}` }, checks.text), p.updatedAt && ` · ${W.ago(p.updatedAt)}`),
+          action,
+          h('a', {
+            class: 'prow-gh', href: W.issueUrl(p.repo ?? data.repo, { kind: 'pr', number: p.number }), target: '_blank', rel: 'noopener',
+            'aria-label': `${ref} on GitHub`, title: 'Open it on GitHub',
+          }, '↗')));
     };
     // Yours, and everything else a person is asked to look at, so no row the header counts goes unshown.
     const group = (mine, label) => {
-      const listed = pulls.filter((p) => (p.why === 'yours') === mine);
-      return listed.length ? [h('div', { class: 'prow-group' }, `${label} · ${listed.length}`), listed.map(row)] : null;
+      const rows = listed.filter((p) => (p.why === 'yours') === mine);
+      return rows.length ? [h('div', { class: 'prow-group' }, `${label} · ${rows.length}`), rows.map(row)] : null;
     };
     return h('section', { class: `zone is-pulls-zone${open ? '' : ' is-folded'}` },
       h('button', { type: 'button', class: 'zone-head', 'aria-expanded': String(open), onclick: () => toggleZone('pulls') },
         h('span', null, 'Pull requests'),
         h('span', { class: 'caret', 'aria-hidden': 'true' }, open ? '▾' : '▸'),
-        h('span', { class: 'count' }, pulls.length)),
+        h('span', { class: 'count' }, listed.length)),
       open && h('div', { class: 'zone-cards' }, group(true, 'Yours'), group(false, 'Review requested')));
   }
 
@@ -673,8 +747,12 @@
   }
 
   function railBody() {
-    const listed = railListing();
-    const empty = !listed.length && h('p', { class: 'rail-empty' }, railMine() ? 'No sessions yet. Start one with New session.' : W.sharedEmptyText(picked));
+    const all = railListing();
+    const onProject = railProject();
+    const listed = onProject ? all.filter((s) => s.project === onProject) : all;
+    const emptyText = all.length && onProject ? `No sessions on ${onProject} here. All shows the other projects'.`
+      : railMine() ? 'No sessions yet. Start one with New session.' : W.sharedEmptyText(picked);
+    const empty = !listed.length && h('p', { class: 'rail-empty' }, emptyText);
     // On a phone the rail is the Shared page, so its status filter is chips above the list; a desktop has the
     // filter in the pane beside it and shows every group.
     const status = !railMine() && narrow.matches ? railStatus() : 'all';
@@ -692,12 +770,13 @@
       : [zone('unassigned', 'Unassigned', unassigned),
         ...W.GROUPS.filter((g) => status === 'all' || g.key === status).map((g) => zone(g.key, g.title, rest.filter((s) => W.group(s) === g.key)))];
     return [
+      projectChips(all),
       !railMine() && statusChips(listed, status),
       h('div', { class: 'rail-list' },
         setupNotice(),
         empty,
         zones,
-        railMine() && pullsZone()),
+        railMine() && pullsZone(onProject)),
     ].filter(Boolean);
   }
 
@@ -710,7 +789,7 @@
   }
 
   // ⌘. hides the rail, as the shed's; this browser remembers it.
-  const RAIL_KEY = 'woodshed-cloud-rail-hidden';
+  const RAIL_KEY = 'woodshed-rail-hidden';
   let railHidden = false;
   try {
     railHidden = window.localStorage.getItem(RAIL_KEY) === '1';
@@ -740,8 +819,8 @@
     return [
       { group: 'Session', label: 'Open the agent', run: open('') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
-      s.status === 'running' && s.hasShell && W.isPrivate(s) && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
-      s.status === 'running' && data.appDomain && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
+      s.status === 'running' && s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
+      s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
@@ -761,6 +840,9 @@
     ].filter(Boolean);
   }
 
+  // For a menu another module draws a button for, such as Start app's pick of several apps (common.js).
+  W.openMenu = openCardMenu;
+
   W.shell.register({
     sessions: paletteSessions, actions: paletteActions, toggleRail, railShown: () => !railHidden,
   });
@@ -774,17 +856,35 @@
     };
     const up = s.app === 'running' || s.app === 'api-down';
     const busy = s.app === 'starting' || s.app === 'stopping';
+    const none = s.app === 'none';
+    // Several apps: one Start item each, which also switches from the one running.
+    const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
+    const running = W.runningAppLabel(s);
     return [
-      s.hasShell && W.isPrivate(s) && {
-        group: 'Claude', label: 'Sign in for Remote Control', note: 'Opens the Terminal tab on claude auth login: open the link and paste the code', run: () => claudeLogin(s),
+      s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && {
+        group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
-      data.appDomain && up && { group: 'App', label: 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener') },
-      data.appDomain && !up && !busy && {
+      data.appDomain && up && {
+        group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener'),
+      },
+      data.appDomain && none && s.kind !== 'ask' && {
+        group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
+        run: async () => {
+          try {
+            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
+          } catch (err) {
+            window.alert(`Could not set up the app: ${err.message}`);
+          }
+          refresh();
+        },
+      },
+      ...choices,
+      data.appDomain && !up && !busy && !none && !choices.length && {
         group: 'App', label: s.app === 'failed' || s.app === 'frontend-down' ? 'Start app again' : 'Start app',
         note: 'Start the app in this session: one to three minutes', run: app('start'),
       },
       data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', run: app('stop') },
-      data.appDomain && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
+      data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
       data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', run: () => openEditor(s) },
       ...dataActions(s),
       !PAGE_TABS.has(tab) && {
@@ -793,13 +893,14 @@
     ].filter(Boolean);
   }
 
-  // Remote Control needs a login of its own, which the Terminal tab's woodshed-login makes: this types it there.
+  // Remote Control needs a login of its own, which woodshed-login makes. claude's /woodshed:remote-control runs it in the
+  // conversation; a session from an older image gets it typed at the Terminal tab. The answer says which tab to open.
   async function claudeLogin(s) {
     try {
       const res = await fetch(`/api/sessions/${s.id}/claude-login`, { method: 'POST', headers: { 'x-woodshed': '1' } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `sign in answered ${res.status}`);
-      navigate(`/s/${s.id}?tab=terminal`);
+      navigate(body.where === 'agent' ? `/s/${s.id}` : `/s/${s.id}?tab=terminal`);
     } catch (err) {
       window.alert(`Could not start the sign-in: ${err.message}`);
     }
@@ -831,11 +932,14 @@
   // who can see it.
   function sessionDetails(s) {
     const trigger = s.trigger === 'label' ? `with the ${data.label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
-      : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack' : 'from the console';
-    const claude = W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+      : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
+        : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
+    const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
+      // One pull request is its chip; more are listed here, since the chips show only the newest.
+      s.prs?.length > 1 && row('Pull requests', W.prLines(s)),
       row('Started by', `${W.personText(s.startedBy)}, ${trigger}`),
       row(W.isLive(s) ? 'Running for' : 'Ran for', s.startedAt && W.duration(s.startedAt, s.stoppedAt)),
       row('Runs on', claude),
@@ -920,7 +1024,7 @@
     const face = W.planUsageFace(plan);
     return barMenuButton(s, {
       key: 'plan', label: face.nodes, className: `pplan${face.level ? ` is-${face.level}` : ''}`,
-      title: 'How much of your Claude plan is used, and when it resets',
+      title: `How much of your ${plan.agent === 'codex' ? 'Codex' : 'Claude'} plan is used, and when it resets`,
       open: () => ({ body: W.planUsageDetails(W.planUsageOf(s, data.sessions) ?? plan), items: [] }),
     });
   }
@@ -947,7 +1051,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChip(s, { asLink: true }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -972,7 +1076,7 @@
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
       s.number && h('a', { class: 'pref', href: W.issueUrl(data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
-      pr && s.kind !== 'pr' && W.prChip(s, { asLink: true }),
+      pr && s.kind !== 'pr' && W.prChips(s, { asLink: true }),
       barMenuButton(s, {
         key: 'details', label: 'Details ▾', title: 'Its branch, who started it, how long it has run, whose Claude it runs on and who can see it',
         open: () => ({ body: sessionDetails(s), items: s.branch ? [copyBranch(s)] : [] }),
@@ -998,8 +1102,8 @@
     ['esc', '\x1b'], ['↑', null, 'A'], ['↓', null, 'B'],
     ['tab', '\t'], ['⇧tab', '\x1b[Z'], ['⏎', '\r'], ['^C', '\x03'],
   ];
-  const TERM_SCALE_KEY = 'woodshed-cloud-term-scale';
-  const KEY_BAR_KEY = 'woodshed-cloud-key-bar';
+  const TERM_SCALE_KEY = 'woodshed-term-scale';
+  const KEY_BAR_KEY = 'woodshed-key-bar';
   const TERM_SCALE_MIN = 0.5;
   const TERM_SCALE_MAX = 1;
   let termScale = 0.7;
@@ -1173,18 +1277,23 @@
         : `${paused ? 'Paused' : 'Stopped'} ${W.ago(s.stoppedAt)}: ${s.stopReason || 'no reason recorded'}`],
       ['Branch', s.branch || 'none'],
       ['Head', s.head || 'unknown'],
-      ['Pull request', s.prUrl || 'none'],
+      prFact(s, 'none'),
       ['Ran', W.duration(s.startedAt, s.stoppedAt) || 'never started'],
-      s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? 'after claude opened'],
+      s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? `after ${W.agentOf(s)} opened`],
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
     ].filter(Boolean);
     return h('div', { class: 'ended' },
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
-        ? [h('p', null, 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
-          h('div', { class: 'row' }, s.status === 'stopped' && resumeButton(s, false), removeButton(s))]
+        ? [h('p', null, W.agentOf(s) === 'codex'
+          ? 'Work in progress is committed and pushed to the branch before a stop. Resume starts codex again on the same branch, in a new conversation: Codex keeps none between runs.'
+          : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
+          h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
-          : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
+          : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
+            ? `A QA session pushes nothing: its report is the QA comment and check on ${W.ref(s)}. Add the QA label to the pull request again to run QA again.`
+            : `This QA session stopped before it sent a report, so ${W.ref(s)} has no QA result from it. Add the QA label to the pull request again to run QA again.`)
+            : h('p', null, 'Work in progress is committed and pushed to the branch before a stop. Comment ', h('code', null, '/woodshed …'), ` on ${W.ref(s)} to start a new session on the same branch.`),
       h('dl', null, facts.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])));
   }
 
@@ -1202,7 +1311,7 @@
   function startingBody(s) {
     return h('div', { class: 'ended starting' },
       h('div', { class: 'start-head' }, h('h2', null, 'Starting'), h('span', { class: 'start-clock' }, W.clock(s.startedAt))),
-      h('p', null, 'The terminal appears here when claude is open.'),
+      h('p', null, `The terminal appears here when ${W.agentOf(s)} is open.`),
       startSteps(W.startProgress(s).steps));
   }
 
@@ -1225,6 +1334,14 @@
       h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`))));
   }
 
+  // Every pull request the session opened, a merged or closed one its card no longer shows too, one to a line.
+  function prFact(s, none) {
+    // A QA session opens no pull request: it tests the one it was started on.
+    if (s.trigger === 'qa' && s.number) return ['Pull request', h('a', { href: W.issueUrl(s.repo ?? data.repo, s), target: '_blank', rel: 'noopener' }, W.ref(s))];
+    if ((s.prs?.length ?? 0) < 2) return ['Pull request', s.prUrl || none];
+    return ['Pull requests', W.prLines(s)];
+  }
+
   // A stopped shared session that keeps its conversation and databases: why it stopped, what is kept, and Resume.
   function keptBody(s) {
     const st = W.displayStatus(s);
@@ -1237,10 +1354,10 @@
       finished: ['Finished: its pull request is in Slack', `The review approved ${pr ? `PR ${pr}` : 'it'} and the agent Playwright suite passed, so it was posted to Slack and the session stopped.`],
       merged: [s.prMerged ? 'Merged' : 'Closed without merging', `${pr ? `PR ${pr}` : 'Its pull request'} ${s.prMerged ? 'merged' : 'closed'} ${W.ago(s.prClosedAt)}. Its conversation and databases are ${W.deletedIn(s) || 'deleted soon'}. The branch stays on GitHub.`],
     }[st.key] || ['Stopped', ''];
-    const box = h('textarea', { id: `resume-${s.id}`, placeholder: 'What to tell claude when it opens (optional)', maxlength: '4000' });
+    const box = h('textarea', { id: `resume-${s.id}`, placeholder: `What to tell ${W.agentOf(s)} when it opens (optional)`, maxlength: '4000' });
     const facts = [
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
-      ['Pull request', s.prUrl || 'none yet'],
+      prFact(s, 'none yet'),
       ['Branch', s.branch || 'none'],
       ['Stopped', `${W.ago(s.stoppedAt)}${s.stopReason ? `: ${s.stopReason}` : ''}`],
       ['Kept until', s.prClosedAt ? (W.deletedIn(s) || 'deleted soon') : s.prUrl ? 'its pull request merges or closes, and 3 days after'
@@ -1571,7 +1688,11 @@
       if (slots.rail.firstChild !== slots.railBody) slots.rail.firstChild.remove();
       slots.rail.prepend(top);
     }
+    // The rail's list is drawn again on every refresh: a project chip that had the focus gets it back, so the keyboard
+    // stays where it was.
+    const focusedChip = document.activeElement?.closest?.('.rail-projects') ? document.activeElement.dataset.project ?? null : null;
     slots.railBody.replaceChildren(...railBody());
+    if (focusedChip !== null) slots.railBody.querySelector(`.rail-projects [data-project="${CSS.escape(focusedChip)}"]`)?.focus();
     syncCardMenu();
     // A tab's own page puts what it is in the pane: Shared's sessions on /all, New session on /.
     const tabPage = onMy || onShared;
@@ -1580,6 +1701,7 @@
     slots.shell.classList.toggle('is-railless', railHidden);
     slots.launch.hidden = !onMy;
     if (onMy) launcher.update(me);
+    else launcher.stopDictating();
     if (onShared && !sharedHome) {
       sharedHome = W.createSharedHome({ onChange: () => refresh() });
       slots.home.append(sharedHome.el);
@@ -1659,7 +1781,7 @@
   // showing Loading… first. Only this tab's, gone when it closes, and never anything the page did not already show.
   // Kept with whose it was, the login the page was served to, and drawn only for that same person: a tab someone else
   // signs into after a sign-out never shows the last one's private sessions. Sign out also clears it (common.js).
-  const LAST_KEY = 'woodshed-cloud-last';
+  const LAST_KEY = 'woodshed-last';
   const signedInAs = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
   // Until the first answer confirms it, the kept list is a guess: a first refresh that fails drops it.
   let fromLast = false;

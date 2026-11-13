@@ -1,6 +1,6 @@
 // The shed's review feature, run inside the session: its page, its server routes and its GitHub calls, unchanged
 // (woodshed/shared/review). The console carries the requests (console/reviewProxy.mjs) and knows nothing of reviews.
-// This folder is everything Cloud adds for it: what the shed's `ctx` asks of its host, and which calls a session may
+// This folder is everything Woodshed adds for it: what the shed's `ctx` asks of its host, and which calls a session may
 // answer (policy.mjs).
 //
 // The checkout is the session's own, so the shed's "worktree" kind applies. Its state goes under /tmp: a session's
@@ -19,27 +19,28 @@ const SESSION_ID_RE = /^[0-9a-f]{8}$/;
 async function loadShed(repoDir) {
   // The shed reads this when its store module loads.
   process.env.WOODSHED_REVIEWS ??= REVIEWS_DIR;
-  const [{ handleReviewRequest, ensureWorktreeReview, startReviewAnalysis, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
+  const [{ handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, warmLivePr }, { ghAccount }, { configurePrStatus }] = await Promise.all([
     import('../../shared/review/index.mjs'),
     import('../../shared/review/github.mjs'),
     import('../../shared/prStatus.mjs'),
   ]);
   // Without the checkout, the shed cannot name the repo, so its pull request lookup finds nothing and the page gets no PR.
   configurePrStatus({ repoRoot: repoDir, log: (event, fields) => console.log(`review: ${event}`, fields) });
-  return { handleReviewRequest, ensureWorktreeReview, startReviewAnalysis, warmLivePr, ghAccount };
+  return { handleReviewRequest, ensureWorktreeReview, startReviewAnalysisIfNone, warmLivePr, ghAccount };
 }
 
 /**
- * @param {{repoDir: string, sessionId: string, sessionKind?: string, reviewOnly?: boolean, load?: typeof loadShed,
- *          now?: () => number}} opts  `reviewOnly`: the session was started only to read a review, so opening it starts the analysis
+ * @param {{repoDir: string, sessionId: string, sessionKind?: string, load?: typeof loadShed, now?: () => number}} opts
  * @returns {{handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<boolean>}}
  */
 export function createReviewHost({
-  repoDir, sessionId, sessionKind = process.env.SESSION_KIND, reviewOnly = process.env.REVIEW_ONLY === '1', load = loadShed, now = Date.now,
+  repoDir, sessionId, sessionKind = process.env.SESSION_KIND, load = loadShed, now = Date.now,
 }) {
   const sessionName = `claude-${sessionId}`;
   let shed = null;
   let account = { at: 0, login: null };
+  // Whether this container has already offered to start the analysis: after that, a Discard stays discarded.
+  let analysisOffered = false;
 
   function json(res, status, body) {
     res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
@@ -87,17 +88,19 @@ export function createReviewHost({
       removeWorktree: async () => ({ ok: false, error: 'a session\'s own checkout is not removed by a review' }),
     };
     if (req.method === 'GET' && pathname.startsWith('/reviews/') && !sectionOf(pathname)) {
-      // The page needs a review to open. The shed's launcher makes one; here opening the tab does, and starts the analysis only for a review-only session.
+      // The page needs a review to open. The shed's launcher makes one; here opening the tab does, and starts the analysis.
       const made = await shed.ensureWorktreeReview({ ctx, sessionName });
       console.log('review: worktree review ensured', { reqId, ok: made.ok, created: made.ok ? made.created : false, status: made.ok ? null : made.status });
       if (!made.ok) {
         json(res, 200, { ok: false, status: 'missing', error: made.error });
         return true;
       }
-      // Only on the review's first taking: a reload, or a second viewer, must not pay for another run.
-      if (reviewOnly && made.created) {
-        shed.startReviewAnalysis({ ctx, sessionName });
-        console.log('review: analysis started for a review-only session', { reqId });
+      // Once per container, and only when the review has no analysis: a reload, a second viewer, a finished or failed
+      // run, or a Discard pressed since, must not pay for another.
+      if (!analysisOffered) {
+        analysisOffered = true;
+        const started = shed.startReviewAnalysisIfNone({ ctx, sessionName });
+        console.log('review: analysis on opening', { reqId, started });
       }
       // The first read would otherwise answer before the shed has asked GitHub for the branch's pull request.
       await shed.warmLivePr?.({ sessionName });

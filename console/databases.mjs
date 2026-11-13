@@ -113,7 +113,7 @@ export function createDatabases({ store, secrets, dbAdmin, engines: given = [], 
   async function create(login) {
     if (!available) throw shown('this console has no db-admin task, so there are no databases of your own');
     if (recordFor('people', login)?.status === 'working') throw shown('your databases are busy with the last change: wait for it to finish');
-    await ensurePassword('people', login, `Woodshed Cloud: @${login}'s database password, for their My Woodshed sessions only`);
+    await ensurePassword('people', login, `Woodshed: @${login}'s database password, for their My Woodshed sessions only`);
     await start('people', login, recordFor('people', login)?.status === 'ready' ? 'reset' : 'create', ['reset', login]);
     return view(login);
   }
@@ -141,7 +141,7 @@ export function createDatabases({ store, secrets, dbAdmin, engines: given = [], 
       console.log('databases: the session\'s copy is already running', { session: id });
       return;
     }
-    await ensurePassword('sessions', id, `Woodshed Cloud: session ${id}'s database password, deleted with its databases`);
+    await ensurePassword('sessions', id, `Woodshed: session ${id}'s database password, deleted with its databases`);
     try {
       await start('sessions', id, 'clone', ['clone', id]);
     } catch (err) {

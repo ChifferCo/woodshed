@@ -1,6 +1,6 @@
 // The local provider's secret store from a shell. The folder and its key are WOODSHED_LOCAL_SECRETS_DIR and
-// WOODSHED_LOCAL_SECRETS_KEY_FILE, as the console's, and `list` shows the secrets for WOODSHED_CLOUD_ENV_FILES
-// and WOODSHED_CLOUD_INSTALL_SECRETS.
+// WOODSHED_LOCAL_SECRETS_KEY_FILE, as the console's, and `list` shows the secrets for WOODSHED_ENV_FILES
+// and WOODSHED_INSTALL_SECRET_PAIRS.
 //   new-key <file>   writes a new key, readable by its owner only, and never over one that is there
 //   put <name>       saves the value on stdin, so it is never on a command line or in a shell's history:
 //                    `printf %s "$VALUE" | node secret.mjs put db-root/postgres`

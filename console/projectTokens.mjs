@@ -50,20 +50,33 @@ export function createProjectTokens({ config, privateKey, fetchImpl, now }) {
   const broker = !config.githubBroker ? null
     : config.githubBroker.source ? createInProcessBroker({ source: config.githubBroker.source, now })
       : createGitHubBroker({ ...config.githubBroker, fetchImpl, now });
-  const main = defaultProject(config);
   // A project an admin removed and added again may be on another installation, so a source is kept per repo and installation.
   const keyOf = (project) => `${project.name}\n${project.repo}\n${broker ? '' : installationIdFor(config, project)}`;
-  const byName = new Map([[keyOf(main), sourcesFor({ config, privateKey, fetchImpl, now, project: main, broker })]]);
+  const byName = new Map();
+  const sourcesOf = (project) => {
+    const key = keyOf(project);
+    if (!byName.has(key)) byName.set(key, sourcesFor({ config, privateKey, fetchImpl, now, project, broker }));
+    return byName.get(key);
+  };
+  // The default project's: read each time, since a console that started with no repo gets one when an admin adds it.
+  // With none yet there is nothing to mint a token for.
+  const ofDefault = (kind) => ({
+    token() {
+      const main = defaultProject(config);
+      if (!main.repo) return Promise.reject(new Error('the console has no repo yet: add one on the Console settings page'));
+      return sourcesOf(main)[kind].token();
+    },
+  });
   return {
-    ...byName.get(keyOf(main)),
+    console: ofDefault('console'),
+    sessions: ofDefault('sessions'),
+    asks: ofDefault('asks'),
     borrowFor: broker ? (repo) => broker.tokenSource({ repo, permissions: { contents: 'read', metadata: 'read' }, label: 'repo check' }).token() : null,
     forSession(session) {
       const project = projectFor(config, session);
-      const key = keyOf(project);
-      if (!byName.has(key)) byName.set(key, sourcesFor({ config, privateKey, fetchImpl, now, project, broker }));
       return {
-        project: project.name, default: project.name === main.name, repo: project.repo, permissions: SESSION_PERMISSIONS,
-        ...byName.get(key),
+        project: project.name, default: project.name === defaultProject(config).name, repo: project.repo, permissions: SESSION_PERMISSIONS,
+        ...sourcesOf(project),
       };
     },
   };

@@ -3,13 +3,160 @@
 # inference-only, so /remote-control refuses it. The login made here is this session's alone: Anthropic rotates the
 # refresh token at each use, so a copy in another session would log one of them out. session/bin/claude then runs on
 # the login instead of the token (until `claude auth logout`).
+#
+#   woodshed-login          the sign-in in this terminal: open the link, paste the code. Then restart claude yourself
+#   woodshed-login start    for /woodshed:remote-control (session/claudePlugin): starts the sign-in in a tmux session of
+#                           its own and prints its link, so claude can show it. Already signed in, it types
+#                           /remote-control into claude once claude's turn ends
+#   woodshed-login code C   types the code into that sign-in; once it worked, reopens claude's conversation on the login
+#                           when its turn ends, with /remote-control typed in. claude never has to be left by hand
+#   woodshed-login restart  that reopening, in the background: run by `code`, its log in /tmp/woodshed-login.log
 set -euo pipefail
+
+BIN_DIR=$(cd "$(dirname "$0")" && pwd)
+LOGIN_TMUX=woodshed-login
+# /tmp as the entrypoint and hookState.mjs write it; the tests give a folder of their own.
+RUN_DIR=${WOODSHED_LOGIN_RUN_DIR:-/tmp}
+STATUS_FILE=$RUN_DIR/woodshed-login.status
+LOG_FILE=$RUN_DIR/woodshed-login.log
+STATE_FILE=$RUN_DIR/woodshed-claude-state.json
+FLAGS_FILE=$RUN_DIR/woodshed-claude-flags
+CLAUDE_PANE=claude
+CREDENTIALS=$HOME/.claude/.credentials.json
+# How long each wait lasts, in tenths of a second: the tests make them short.
+URL_WAIT=${WOODSHED_LOGIN_URL_WAIT:-200}
+CODE_WAIT=${WOODSHED_LOGIN_CODE_WAIT:-300}
+TURN_WAIT=${WOODSHED_LOGIN_TURN_WAIT:-3000}
+START_WAIT=${WOODSHED_LOGIN_START_WAIT:-600}
 
 if [ "${WOODSHED_CLAUDE_AUTH:-}" != own ]; then
   echo "woodshed-login is for a My Woodshed session: this one's claude is not on your own Claude plan." >&2
   exit 1
 fi
-echo "Sign in with your Claude account. Open the link below, approve, and paste the code it shows."
-claude auth login --claudeai
-echo
-echo "Done. Start claude again (or /exit and reopen it) and run /remote-control."
+
+signedIn() { grep -q '"claudeAiOauth"' "$CREDENTIALS" 2>/dev/null; }
+now() { date +%s%3N; }
+# The `at` of claude's last hook, and its event, from session/hookState.mjs's file: "<at> <event>".
+lastHook() { node -e 'try { const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`${s.at ?? 0} ${s.event ?? ""} ${s.state ?? ""}`); } catch { console.log("0  "); }' "$STATE_FILE"; }
+say() { echo "[woodshed-login $(date -u +%H:%M:%S)] $*" >> "$LOG_FILE"; }
+
+# Waits, a tenth of a second at a time, until the command succeeds or the wait runs out.
+waitFor() {
+  local tenths=$1
+  shift
+  for ((i = 0; i < tenths; i++)); do
+    "$@" && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+# Starts restart in the background, out of claude's process group, so it outlives the command claude ran. The time is
+# taken here: a turn that ended before the background job started must still count.
+restartLater() {
+  setsid "$0" restart "$1" "$(now)" >> "$LOG_FILE" 2>&1 < /dev/null &
+}
+
+case "${1:-}" in
+  '')
+    echo "Sign in with your Claude account. Open the link below, approve, and paste the code it shows."
+    claude auth login --claudeai
+    echo
+    echo "Done. Start claude again (or /exit and reopen it) and run /remote-control. Inside claude, /woodshed:remote-control does all of this for you."
+    ;;
+
+  start)
+    if signedIn && [ "${WOODSHED_CLAUDE_ON_LOGIN:-}" = 1 ]; then
+      restartLater type
+      echo "Already signed in: this claude runs on your Claude login. /remote-control is typed in once this reply ends."
+      exit 0
+    fi
+    tmux kill-session -t "=$LOGIN_TMUX" 2>/dev/null || true
+    rm -f "$STATUS_FILE"
+    # Wide, so the link is on one line of the pane; the exit status says how it went, the pane what claude said.
+    tmux new-session -d -s "$LOGIN_TMUX" -x 1000 -y 20 \
+      "'$BIN_DIR/claude' auth login --claudeai; echo \$? > '$STATUS_FILE'; sleep 900"
+    link() { tmux capture-pane -p -J -t "=$LOGIN_TMUX:" 2>/dev/null | grep -o 'https://[^ ]*oauth/authorize?[^ ]*' | head -n 1; }
+    hasLink() { [ -n "$(link)" ]; }
+    if ! waitFor "$URL_WAIT" hasLink; then
+      tmux kill-session -t "=$LOGIN_TMUX" 2>/dev/null || true
+      echo "Error: claude auth login printed no sign-in link. In the Terminal tab, woodshed-login does the same by hand." >&2
+      exit 1
+    fi
+    say "sign-in started"
+    echo "Sign-in link (open it, approve with your Claude account, and paste the code it shows back here):"
+    link
+    ;;
+
+  code)
+    code=${2:-}
+    [ -n "$code" ] || { echo "Error: give the code: woodshed-login code <code>" >&2; exit 2; }
+    if ! tmux has-session -t "=$LOGIN_TMUX" 2>/dev/null || [ -f "$STATUS_FILE" ]; then
+      echo "Error: no sign-in is waiting for a code. Run woodshed-login start for a new link." >&2
+      exit 1
+    fi
+    tmux send-keys -t "=$LOGIN_TMUX:" -l "$code"
+    tmux send-keys -t "=$LOGIN_TMUX:" Enter
+    if ! waitFor "$CODE_WAIT" test -f "$STATUS_FILE"; then
+      echo "Error: the sign-in did not finish within half a minute. Run woodshed-login start for a new link." >&2
+      exit 1
+    fi
+    said=$(tmux capture-pane -p -J -t "=$LOGIN_TMUX:" | grep -i 'login\|error' | grep -v 'oauth/authorize' | tail -n 1 || true)
+    tmux kill-session -t "=$LOGIN_TMUX" 2>/dev/null || true
+    if [ "$(cat "$STATUS_FILE")" != 0 ] || ! signedIn; then
+      say "sign-in failed"
+      echo "The code was not accepted: ${said:-claude auth login failed}" >&2
+      exit 1
+    fi
+    say "signed in"
+    restartLater resume
+    echo "Signed in. Once this reply ends, claude reopens this conversation on your login and types /remote-control."
+    ;;
+
+  restart)
+    # resume: claude stops and opens this conversation again, now on the login. type: claude is on it already.
+    mode=${2:-resume}
+    since=${3:-$(now)}
+    turnEnded() { read -r at event state < <(lastHook); [ "$state" = done ] && [ "$at" -gt "$since" ]; }
+    if ! waitFor "$TURN_WAIT" turnEnded; then say "claude's turn did not end within five minutes, nothing done"; exit 1; fi
+    if [ "$mode" = resume ]; then
+      [ -n "${CLAUDE_PID:-}" ] && [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || { say "no CLAUDE_PID or CLAUDE_CODE_SESSION_ID, cannot reopen claude"; exit 1; }
+      [ -f "$FLAGS_FILE" ] || { say "no $FLAGS_FILE, cannot reopen claude with its flags"; exit 1; }
+      say "stopping claude to reopen it on the login" "(pid: $CLAUDE_PID)"
+      kill -TERM "$CLAUDE_PID" 2>/dev/null || true
+      if ! waitFor 100 bash -c "! kill -0 $CLAUDE_PID 2>/dev/null"; then kill -KILL "$CLAUDE_PID" 2>/dev/null || true; sleep 0.5; fi
+      since=$(now)
+      tmux send-keys -t "$CLAUDE_PANE" -l "$BIN_DIR/claude$(cat "$FLAGS_FILE") --resume $CLAUDE_CODE_SESSION_ID"
+      tmux send-keys -t "$CLAUDE_PANE" Enter
+      opened() { read -r at event state < <(lastHook); [ "$event" = SessionStart ] && [ "$at" -gt "$since" ]; }
+      if ! waitFor "$START_WAIT" opened; then say "claude did not open again within a minute"; exit 1; fi
+      say "claude reopened" "(conversation: $CLAUDE_CODE_SESSION_ID)"
+    fi
+    # A resumed claude fires SessionStart twice, about 4 seconds apart, and keys typed between them are lost (measured on
+    # Claude Code 2.1.322). So the command is typed until claude's prompt shows it ("❯", a no-break space, the text: an
+    # autocomplete row below it starts with spaces), the line cleared before each try, and
+    # only then sent.
+    for ((try = 1; try <= 15; try++)); do
+      sleep 1
+      tmux send-keys -t "$CLAUDE_PANE" C-u
+      tmux send-keys -t "$CLAUDE_PANE" -l /remote-control
+      sleep 0.5
+      if tmux capture-pane -p -t "$CLAUDE_PANE" | grep -v '^[[:space:]]*$' | tail -n 6 | grep -q '^❯[^/]*/remote-control *$'; then
+        tmux send-keys -t "$CLAUDE_PANE" Enter
+        # Its panel says "Remote Control"; an Enter swallowed by the second start leaves the prompt as it was.
+        panel() { tmux capture-pane -p -t "$CLAUDE_PANE" | grep -v '^[[:space:]]*$' | tail -n 12 | grep -q 'Remote Control'; }
+        if waitFor 30 panel; then
+          say "/remote-control typed in" "(tries: $try)"
+          exit 0
+        fi
+      fi
+    done
+    say "claude's prompt never showed /remote-control, type it yourself"
+    exit 1
+    ;;
+
+  *)
+    echo "usage: woodshed-login [start | code <code>]" >&2
+    exit 2
+    ;;
+esac

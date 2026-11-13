@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { fixtureProject } from '../shared/projectFixture.mjs';
+import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -22,7 +22,7 @@ function fn(name) {
 // woodshed/shared/, where the project file's reader lives: the image's SHARED_DIR.
 const SHARED_DIR = path.resolve(SESSION_DIR, '../shared');
 
-// A repo whose project file names the rules and notes its sessions add to Woodshed Cloud's own.
+// A repo whose project file names the rules and notes its sessions add to Woodshed's own.
 const PROJECT_RULE = 'Run `make check` before every push.';
 const PROJECT_NOTE = 'Before anything that needs `vendor/`, wait for the install.';
 const REPO = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-project-'));
@@ -33,7 +33,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -53,7 +53,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}) },
     });
     return {
       out,
@@ -79,7 +79,7 @@ test('a review-only session writes no prompt, and claude starts with none', () =
   assert.match(out, /Prompt skipped/);
   assert.match(out, /after writePrompt/);
   assert.equal(prompt, null);
-  assert.match(rules, /You are running in a Woodshed Cloud session/);
+  assert.match(rules, /You are running in a Woodshed session/);
   assert.match(fn('startClaude'), /REVIEW_ONLY:-\}" = 1 \]; then\n\s+tmux send-keys -t claude "\$SESSION_DIR\/bin\/claude\$\(claudeFlags\)" Enter/);
 });
 
@@ -90,8 +90,8 @@ test('attached files are listed under the prompt', () => {
 
 test('the first message is the request alone, and the rules are written apart for the system prompt', () => {
   const { prompt, rules } = writePrompt({ attachments: false });
-  assert.doesNotMatch(prompt, /You are running in a Woodshed Cloud session/);
-  assert.match(rules, /You are running in a Woodshed Cloud session/);
+  assert.doesNotMatch(prompt, /You are running in a Woodshed session/);
+  assert.match(rules, /You are running in a Woodshed session/);
   assert.match(rules, /branch `woodshed\/x`/);
   assert.match(rules, /Started by @octocat/);
   assert.doesNotMatch(rules, /\{\{/);
@@ -104,10 +104,10 @@ test('a shared session\'s rules drop the private lines, and a private one\'s dro
   assert.match(rules, /Someone may be watching this terminal/);
 });
 
-test('the project\'s rules follow Woodshed Cloud\'s, and its notes go inline in a shared session and in a file for a private one', () => {
+test('the project\'s rules follow Woodshed\'s, and its notes go inline in a shared session and in a file for a private one', () => {
   const shared = writePrompt({ attachments: false, kind: 'shared' });
   assert.ok(shared.rules.includes(PROJECT_RULE));
-  assert.ok(shared.rules.indexOf('You are running in a Woodshed Cloud session') < shared.rules.indexOf(PROJECT_RULE));
+  assert.ok(shared.rules.indexOf('You are running in a Woodshed session') < shared.rules.indexOf(PROJECT_RULE));
   assert.ok(shared.rules.includes(`- ${PROJECT_NOTE}`));
   assert.doesNotMatch(shared.rules, /Environment notes:/);
   const own = writePrompt({ attachments: false });
@@ -116,10 +116,50 @@ test('the project\'s rules follow Woodshed Cloud\'s, and its notes go inline in 
   assert.ok(own.setup.includes(PROJECT_NOTE));
 });
 
+test('a project of several apps has its rules name each, with how it starts and how to prove a change; one app adds nothing', () => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-apps-'));
+  after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  const apps = [
+    { name: 'web', label: 'Web app', ...fixtureApp({ start: 'make web', frontendPort: 3001, paths: ['web/'], howToProve: 'Open the page in the browser.' }) },
+    { name: 'admin', ...fixtureApp({ start: 'make admin', frontendPort: 3000, howToProve: 'Open the admin pages.' }) },
+  ];
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ apps }));
+  const { rules, out } = writePrompt({ attachments: false, repoDir: repo });
+  assert.match(rules, /^- This project has several apps, and one runs at a time/m);
+  assert.match(rules, /^ {2}- `web` \(Web app\), the default: `make web`, its frontend on port 3001, for changes under `web\/`\. To prove a change in it: Open the page in the browser\.$/m);
+  assert.match(rules, /^ {2}- `admin`: `make admin`, its frontend on port 3000\. To prove a change in it: Open the admin pages\.$/m);
+  assert.match(out, /Rules written .*apps: 2\)/);
+  fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ app: fixtureApp() }));
+  assert.doesNotMatch(writePrompt({ attachments: false, repoDir: repo }).rules, /several apps/);
+});
+
+test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
+  const none = writePrompt({ attachments: false, kind: 'shared' });
+  assert.doesNotMatch(none.rules, /code review runs on a push|\{\{REVIEW_TAG\}\}/);
+  assert.match(none.out, /review tag: none/);
+
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-reviewtag-'));
+  try {
+    fs.mkdirSync(path.join(repo, '.woodshed'));
+    const review = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[run-review]', commentAuthor: null };
+    fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ pullRequests: { review, suites: [], qa: null, mergeRisk: null } }));
+    for (const kind of ['shared', 'private']) {
+      const tagged = writePrompt({ attachments: false, kind, repoDir: repo });
+      assert.ok(tagged.rules.includes('end the subject of the last commit of each push with ` [run-review]`'), kind);
+      assert.match(tagged.rules, /keep the tag out of the PR title/);
+      assert.doesNotMatch(tagged.rules, /\{\{/);
+      assert.match(tagged.out, /review tag: \[run-review\]/);
+    }
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test('a project file with consoleLinks: false keeps the session\'s link out of its pull requests, on any repo', () => {
   const url = 'https://console.example/s/0a1b2c3d';
   const linked = writePrompt({ attachments: false, sessionUrl: url });
-  assert.ok(linked.rules.includes(`Started by @octocat via [Woodshed Cloud](${url}).`), 'left out, the link stays');
+  assert.ok(linked.rules.includes(`Started by @octocat via [Woodshed](${url}).`), 'left out, the link stays');
   assert.doesNotMatch(linked.out, /Session link left out/);
 
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-nolinks-'));
@@ -128,7 +168,7 @@ test('a project file with consoleLinks: false keeps the session\'s link out of i
     fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ consoleLinks: false }));
     const unlinked = writePrompt({ attachments: false, sessionUrl: url, repoDir: repo });
     assert.match(unlinked.out, /Session link left out of pull requests \(the project file's consoleLinks\)/);
-    assert.ok(unlinked.rules.includes('Started by @octocat via Woodshed Cloud.'));
+    assert.ok(unlinked.rules.includes('Started by @octocat via Woodshed.'));
     assert.doesNotMatch(unlinked.rules, /console\.example/);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
@@ -150,7 +190,7 @@ test('a consoleLinks read that fails never stops the start: the link stays', () 
   assert.doesNotMatch(out, /ERROR/);
 });
 
-test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no notes', (t) => {
+test('a repo with no project file gets Woodshed\'s rules alone, and no notes', (t) => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-noproject-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
   // A repository whose default branch, `trunk`, has no project file, as a session's checkout of another repo would be.
@@ -159,7 +199,7 @@ test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no not
   git('commit', '-q', '--allow-empty', '-m', 'empty');
   git('update-ref', 'refs/remotes/origin/trunk', 'HEAD');
   const { rules, setup } = writePrompt({ attachments: false, kind: 'shared', repoDir, defaultBranch: 'trunk' });
-  assert.match(rules, /You are running in a Woodshed Cloud session/);
+  assert.match(rules, /You are running in a Woodshed session/);
   assert.match(rules, /Started by @octocat/);
   assert.ok(!rules.includes(PROJECT_RULE), 'no project rules');
   assert.doesNotMatch(rules, /\{\{/);
@@ -170,9 +210,39 @@ test('a repo with no project file gets Woodshed Cloud\'s rules alone, and no not
 
 test('claude gets the rules as a system prompt on a fresh start and on a resume, which rewrites them', () => {
   assert.match(fn('claudeFlags'), /--append-system-prompt-file %s' \/tmp\/woodshed-rules\.md/);
-  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf('\n  if [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
+  const run = ENTRYPOINT.slice(ENTRYPOINT.indexOf(' [ "${AGENT:-claude}" != codex ] && resumable; then\n    log "Resuming'));
   assert.ok(run.indexOf('  writeRules\n') > run.indexOf('  fi\n'), 'writeRules runs after the resume branch, for both');
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
+});
+
+test('a session given this machine\'s Docker is told so, with its own id to name stacks by, and one without is told nothing', () => {
+  const on = writePrompt({ attachments: false, hostDocker: '1' });
+  assert.match(on.rules, /`docker` here is the Docker of the machine Woodshed runs on, not this container's own/);
+  assert.match(on.rules, /keep running after this session ends unless you stop them/);
+  assert.match(on.rules, /use named volumes/);
+  assert.match(on.rules, /forwarded to the same port on 127\.0\.0\.1 here/);
+  assert.match(on.rules, /this session's id, `0a1b2c3d`/);
+  assert.match(on.rules, /other ports too/);
+  assert.doesNotMatch(on.rules, /\{\{/);
+  assert.match(on.out, /host docker: 1/);
+  for (const off of [writePrompt({ attachments: false }), writePrompt({ attachments: false, hostDocker: '0' })]) {
+    assert.doesNotMatch(off.rules, /`docker` here/);
+  }
+});
+
+test('the forwarder of the machine\'s ports starts only with the machine\'s Docker, after the session\'s Redis', () => {
+  assert.match(fn('startDockerPorts'), /\[ "\$\{WOODSHED_SESSION_DOCKER:-\}" = 1 \] \|\| return 0\n\s+node "\$SESSION_DIR\/dockerPorts\.mjs" >\/tmp\/woodshed-docker-ports\.log 2>&1 &/);
+  const start = fn('startClaude');
+  assert.ok(start.indexOf('startRedisIfUsed viewer') < start.indexOf('startDockerPorts'), 'Redis has 6379 first');
+  assert.ok(start.indexOf('startDockerPorts') < start.indexOf('tmux new-session -d -s claude'), 'before claude can start a container');
+});
+
+test('a QA session writes no prompt, and runs qa.sh in claude\'s pane once statusd answers, working from the start', () => {
+  assert.match(ENTRYPOINT, /if \[ "\$\{SESSION_MODE:-\}" = qa \]; then\n    log "Prompt skipped"/);
+  const start = fn('startClaude');
+  const qa = start.slice(start.indexOf('SESSION_MODE:-}" = qa'), start.indexOf('elif [ "${AGENT:-claude}" = codex ]'));
+  assert.ok(qa.indexOf('touch /tmp/qa-running') < qa.indexOf('tmux send-keys'), 'the session reads as working before the run starts');
+  assert.match(qa, /until curl -s -o \/dev\/null http:\/\/127\.0\.0\.1:.*; do sleep 1; done; SESSION_DIR=\$SESSION_DIR bash \$SESSION_DIR\/qa\.sh/);
 });
 
 // installDefaultPlugins with a stand-in claude that records each install, in a home of the test's own.
@@ -530,7 +600,7 @@ test('a Codex session starts codex with the picked flags, and the rules go in co
 
 
 // useProjectRepo as the entrypoint has it, with GitHub swapped for a folder of bare repos and the credential helper
-// for a no-op, in a HOME of its own.
+// for a no-op, in a HOME of its own. With no `imageOrigin`, the image has no checkout (session/Dockerfile, REPO empty).
 function useProjectRepo({ projectRepo, imageOrigin }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-project-repo-'));
   const remotes = path.join(tmp, 'remotes');
@@ -546,8 +616,11 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
   }
   const work = path.join(tmp, 'work');
   fs.mkdirSync(work);
-  git(['clone', '-q', path.join(remotes, 'acme/app.git'), path.join(work, 'app')]);
-  git(['remote', 'set-url', 'origin', `https://github.com/${imageOrigin}.git`], path.join(work, 'app'));
+  const imageDir = path.join(work, imageOrigin ? 'app' : '.no-checkout');
+  if (imageOrigin) {
+    git(['clone', '-q', path.join(remotes, 'acme/app.git'), imageDir]);
+    git(['remote', 'set-url', 'origin', `https://github.com/${imageOrigin}.git`], imageDir);
+  } else fs.mkdirSync(imageDir);
   const script = [
     'set -euo pipefail',
     'log() { echo "[woodshed] $*"; }',
@@ -568,7 +641,7 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
     const run = spawnSync('bash', ['-c', script], {
       encoding: 'utf8',
       env: {
-        PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1', REPO_DIR: path.join(work, 'app'), IMAGE_DIR: path.join(work, 'app'),
+        PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1', REPO_DIR: imageDir, IMAGE_DIR: imageDir,
         WOODSHED_INSTALL_SECRETS: 'NPM_TOKEN', NPM_TOKEN: 'npm-s3cret', API_ENV: 'api-s3cret', OTHER_VAR: 'kept',
         SESSION_URL: 'https://console.example/s/0a1b2c3d',
         ...(projectRepo ? { PROJECT_REPO: projectRepo } : {}),
@@ -601,6 +674,20 @@ test('a session on the image\'s own repo, or with no project named, keeps the im
     assert.match(run.stdout, /secrets: npm=npm-s3cret api=api-s3cret/, 'the default project keeps them, as before');
     assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'and links the session from its pull requests');
   }
+});
+
+test('an image with no checkout clones the session\'s repo, the default project\'s too, and keeps the secrets it was handed', () => {
+  const run = useProjectRepo({ projectRepo: 'acme/app', imageOrigin: null });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /Cloning the project's repo \(repo: acme\/app, image: none\)/);
+  assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/app\\n`), 'at /work/<name>, beside the empty folder');
+  assert.match(run.stdout, /acme\/app\n$/);
+  assert.doesNotMatch(run.stdout, /withheld/, 'no image repo for them to belong to instead');
+  assert.match(run.stdout, /secrets: npm=npm-s3cret api=api-s3cret other=kept/);
+
+  const none = useProjectRepo({ projectRepo: null, imageOrigin: null });
+  assert.equal(none.status, 1);
+  assert.match(none.stdout, /ERROR: the session image has no checkout and the console named no repo \(PROJECT_REPO\)/);
 });
 
 test('a project whose repo has the image\'s folder name is cloned beside it, not over it', () => {
@@ -661,4 +748,22 @@ test('a checkout with a submodule gets it at the commit\'s pin, and one without 
   assert.equal(without.status, 0, without.stderr);
   assert.doesNotMatch(without.stdout, /Submodules/);
   assert.match(without.stdout, /no woodshed/);
+});
+
+test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped, and deletes the JSON', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-own-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(repo);
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.env*\n');
+  const json = path.join(dir, 'own-files.json');
+  fs.writeFileSync(json, JSON.stringify({ 'app/.env.production': 'NOTION_TOKEN=x\n', 'notes.txt': 'not ignored' }));
+  const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', `SESSION_DIR=${SESSION_DIR}`, `REPO_DIR=${repo}`, `OWN_FILES_JSON=${json}`, fn('writeOwnFiles'), 'writeOwnFiles'].join('\n');
+  const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
+  assert.equal(out, '[woodshed] WARNING: some of the owner\'s own files were not written (written: app/.env.production, skipped: notes.txt (git does not ignore it))\n');
+  assert.equal(fs.readFileSync(path.join(repo, 'app/.env.production'), 'utf8'), 'NOTION_TOKEN=x\n');
+  assert.equal(fs.existsSync(path.join(repo, 'notes.txt')), false);
+  assert.equal(fs.existsSync(json), false);
+  assert.equal(execFileSync('bash', ['-c', script], { encoding: 'utf8' }), '', 'nothing to write without the JSON');
 });

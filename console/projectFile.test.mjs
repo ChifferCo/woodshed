@@ -143,3 +143,13 @@ test('a malformed installation file is an unread file, as a malformed repo file 
   await assert.rejects(reader.pullRequests(), /the project file could not be read: .*envfiles, which is not a field/);
   assert.equal(await reader.databases(), null);
 });
+
+test('with no repo yet the reader asks GitHub nothing, and reads the default repo again once there is one', async () => {
+  const github = { repo: '', asked: 0, async projectFile() { this.asked += 1; return PROJECT; } };
+  const reader = createProjectReader({ github, now: () => 0 });
+  assert.equal(await reader.pullRequests(), null, 'no file, and no error: nothing waits on it');
+  assert.equal(github.asked, 0);
+  github.repo = 'acme/app';
+  assert.deepEqual(await reader.appendedFor('app-env'), ['DATABASE_HOST', 'PORT'], 'the same clock: the cache follows the repo, not only the time');
+  assert.equal(github.asked, 1);
+});

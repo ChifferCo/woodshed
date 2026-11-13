@@ -8,6 +8,8 @@
 
 import crypto from 'node:crypto';
 
+import { envValue } from '../shared/envNames.mjs';
+import { DEFAULT_CONSOLE_NAME } from './config.mjs';
 import { appJwt, createAppApi, createTokenSource } from './githubApp.mjs';
 import { APP_KEY_SECRET } from './settings.mjs';
 import { checkValue, secretSpecs } from './secrets.mjs';
@@ -28,10 +30,11 @@ const RESTART_DELAY_MS = 300;
 // What the console and its sessions use (projectTokens.mjs's SESSION_PERMISSIONS is the narrower set sessions get). Projects is
 // an organization permission. GitHub refuses a manifest that asks for the account permission Email addresses ("Default
 // permission records resource is not included in the list"), so the Slack match's verified emails are added to the App
-// by hand; without them sign-in matches on the public email alone (auth.mjs, emailsOf).
+// by hand; without them sign-in matches on the public email alone (auth.mjs, emailsOf). Checks is write so the console
+// can post a QA session's QA check; sessions' tokens keep it read, so no session posts a check.
 const PERMISSIONS = {
   contents: 'write', pull_requests: 'write', issues: 'write', actions: 'write',
-  metadata: 'read', checks: 'read', statuses: 'read', organization_projects: 'write',
+  metadata: 'read', checks: 'write', statuses: 'read', organization_projects: 'write',
 };
 
 function firstLine(err) {
@@ -56,10 +59,11 @@ function refusal(message) {
  * somewhere for GitHub to post, and the console polls until then.
  * @returns {object}
  */
-export function appManifest({ publicUrl, repo }) {
+export function appManifest({ publicUrl, repo, consoleName = DEFAULT_CONSOLE_NAME }) {
   const [owner] = repo.split('/');
   return {
-    name: `Woodshed Cloud ${owner}`.slice(0, 34),
+    // 34 is GitHub's limit on an App's name.
+    name: `${consoleName} ${owner}`.slice(0, 34),
     url: publicUrl,
     redirect_url: `${publicUrl}/setup/github/created`,
     callback_urls: [`${publicUrl}/auth/callback`],
@@ -81,15 +85,28 @@ export function manifestPostUrl({ repo, state, ownerType }) {
 
 /**
  * What starts this console again when it exits, so the setup page can restart it. Docker does not tell a container
- * its restart policy, so a container says it with WOODSHED_CLOUD_SUPERVISED=1; systemd sets INVOCATION_ID in every
- * unit it runs, which must then have Restart=on-failure or always. WOODSHED_CLOUD_SUPERVISED=0 says nothing will.
+ * its restart policy, so a container says it with WOODSHED_SUPERVISED=1; systemd sets INVOCATION_ID in every
+ * unit it runs, which must then have Restart=on-failure or always. WOODSHED_SUPERVISED=0 says nothing will.
  * @param {NodeJS.ProcessEnv} env
  * @returns {'setting'|'systemd'|null}  null when nothing is known to start it again: a plain `node` in a shell
  */
 export function supervisorOf(env = process.env) {
-  if (env.WOODSHED_CLOUD_SUPERVISED === '0') return null;
-  if (env.WOODSHED_CLOUD_SUPERVISED === '1') return 'setting';
+  if (envValue(env, 'SUPERVISED') === '0') return null;
+  if (envValue(env, 'SUPERVISED') === '1') return 'setting';
   return env.INVOCATION_ID ? 'systemd' : null;
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+
+/**
+ * One person's console: it listens on this machine's loopback alone and asks nobody to sign in. Whatever reaches it
+ * from elsewhere is a proxy its owner put in front (Tailscale's `serve` to their own devices, say), which is theirs to
+ * fence. Sign-in required, or a hosting proxy's identity, says others use it.
+ * @param {{host?: string, requireSignIn?: boolean, trustedIdentitySecret?: string|null}} config
+ * @returns {boolean}
+ */
+export function isOnePersonConsole(config) {
+  return LOOPBACK_HOSTS.has(String(config.host ?? '127.0.0.1').toLowerCase()) && !config.requireSignIn && !config.trustedIdentitySecret;
 }
 
 /**
@@ -120,6 +137,16 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     return Boolean(secrets) && !config.githubApp;
   }
 
+  /**
+   * On one person's console the App is a choice, not a step: the console runs on their own `gh` token, sessions push
+   * as them, and nobody signs in. That holds on their other devices too, through a proxy of theirs such as Tailscale.
+   * A console that requires sign-in still needs it: sign-in is the App's.
+   * @returns {boolean}
+   */
+  function optional() {
+    return available() && Boolean(config.ghToken) && isOnePersonConsole(config);
+  }
+
   function requireAvailable() {
     if (!secrets) throw refusal('this console has no secret store, so it cannot keep an App key: see woodshed/providers/local/README.md for the secrets folder');
     if (secrets.configured?.() === false) throw refusal('this console has no secrets manager yet: choose one on the Secrets page first, then come back');
@@ -137,6 +164,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     const needsRestart = Boolean(found?.installationId) && !config.githubApp;
     return {
       available: available(),
+      optional: optional(),
       hasSecretStore: Boolean(secrets),
       configuredBy: config.githubApp ? (found && found.appId === String(config.githubApp.appId) ? 'setup' : 'environment') : null,
       repo: defaultProject(config).repo,
@@ -168,7 +196,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     console.log('githubSetup: manifest started', { ownerType: ownerType === 'User' ? 'User' : 'Organization' });
     return {
       url: manifestPostUrl({ repo: defaultProject(config).repo, state, ownerType: ownerType === 'User' ? 'User' : 'Organization' }),
-      manifest: appManifest({ publicUrl: config.publicUrl, repo: defaultProject(config).repo }),
+      manifest: appManifest({ publicUrl: config.publicUrl, repo: defaultProject(config).repo, consoleName: config.consoleName }),
     };
   }
 
@@ -270,7 +298,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     if (!stored()?.installationId) throw refusal('make the App and install it first (steps 1 and 2)');
     if (!supervisor) {
       console.warn('githubSetup: restart refused, nothing would start the console again', { by });
-      throw refusal('nothing would start this console again: restart it from its shell, or set WOODSHED_CLOUD_SUPERVISED=1 where a supervisor restarts it');
+      throw refusal('nothing would start this console again: restart it from its shell, or set WOODSHED_SUPERVISED=1 where a supervisor restarts it');
     }
     if (!restarting) {
       restarting = true;
@@ -280,7 +308,7 @@ export function createGitHubAppSetup({ store, secrets, config, fetchImpl = fetch
     return { restarting: true };
   }
 
-  return { available, view, startManifest, completeManifest, saveManual, findInstallation, restart };
+  return { available, optional, view, startManifest, completeManifest, saveManual, findInstallation, restart };
 }
 
 /**

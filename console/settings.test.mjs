@@ -223,6 +223,19 @@ test('a person\'s secret is created on its first save, and deleted at once, with
   assert.ok(!calls.join(' ').includes('sk-ant'));
 });
 
+test('a secret the console makes is named and tagged after the installation\'s prefix, as Terraform tags its own', async () => {
+  const created = [];
+  const aws = async (args) => {
+    if (args[1] === 'put-secret-value') throw Object.assign(new Error('failed'), { stderr: 'ResourceNotFoundException' });
+    if (args[1] === 'create-secret') created.push(args);
+    return {};
+  };
+  await createSecretStore({ prefix: 'woodshed/', aws, specs: SPECS }).save('users/joel/claude-token', 'sk-ant-1', 'Joel’s');
+  const [args] = created;
+  assert.equal(args[args.indexOf('--name') + 1], 'woodshed/users/joel/claude-token');
+  assert.equal(args[args.indexOf('--tags') + 1], 'Key=project,Value=woodshed');
+});
+
 test('the Secrets page lists one secret for each env file and each install secret the installation names, and none without', () => {
   const names = (opts) => secretSpecs(opts).map((s) => s.name);
   assert.deepEqual(names({ envFiles: [{ secret: 'app-env' }], installSecrets: INSTALL_SECRETS }).slice(0, 4),

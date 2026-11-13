@@ -1,6 +1,6 @@
 // A session's Review tab: what its branch changes against the repository's default branch, read from GitHub's
 // compare API. The shed reads the worktree instead, so it also sees uncommitted work and writes an analysis
-// with claude; a cloud session's worktree is in its container, so this shows what the session has pushed.
+// with claude; a Woodshed session's worktree is in its container, so this shows what the session has pushed.
 
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
 const MAX_PATCH_LINES = 400;

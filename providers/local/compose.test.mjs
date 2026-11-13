@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { hostedEngines } from '../../shared/databases/index.mjs';
+import { SETTINGS, currentName } from '../../shared/envNames.mjs';
 
 const HERE = import.meta.dirname;
 const read = (file) => fs.readFileSync(path.join(HERE, file), 'utf8');
@@ -21,7 +22,9 @@ test('every console setting in stack.env.example is one the console reads', () =
   const read = [path.join(HERE, '../../console/config.mjs'), path.join(HERE, '../console.mjs')].map((f) => fs.readFileSync(f, 'utf8')).join('\n');
   const forCompose = new Set(['WOODSHED_LOCAL_DATA_DIR', 'WOODSHED_LOCAL_PG_ROOT_PASSWORD', 'WOODSHED_LOCAL_MONGO_ROOT_PASSWORD',
     'WOODSHED_LOCAL_PG_PORT', 'WOODSHED_LOCAL_MONGO_PORT']);
-  assert.deepEqual(exampleKeys().filter((k) => !forCompose.has(k) && !read.includes(k)), []);
+  // A renamed setting is read through envValue (shared/envNames.mjs), by its name without the prefix.
+  const readByName = (k) => SETTINGS.some((name) => currentName(name) === k && read.includes(`envValue(env, '${name}')`));
+  assert.deepEqual(exampleKeys().filter((k) => !forCompose.has(k) && !read.includes(k) && !readByName(k)), []);
 });
 
 test('compose.yml is the sessions\' network alone, and each database\'s file runs that one, pinned, on it', () => {

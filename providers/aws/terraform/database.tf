@@ -13,14 +13,14 @@ locals {
 resource "aws_db_subnet_group" "main" {
   count = local.postgres ? 1 : 0
 
-  name       = "woodshed-cloud"
+  name       = local.p
   subnet_ids = aws_subnet.public[*].id
 }
 
 resource "aws_db_instance" "postgres" {
   count = local.postgres ? 1 : 0
 
-  identifier     = "woodshed-cloud"
+  identifier     = local.p
   engine         = "postgres"
   engine_version = "16"
   instance_class = "db.t4g.micro"

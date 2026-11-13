@@ -1,4 +1,4 @@
-// Woodshed Cloud console: lists sessions, opens a live terminal on each, and
+// The Woodshed console: lists sessions, opens a live terminal on each, and
 // starts them from GitHub labels and `/woodshed` comments.
 //
 //   GET  /all                    Shared: the rail, and the shared sessions in the pane
@@ -11,6 +11,7 @@
 //   GET  /api/my                 your settings' state (never a value), your running count and limit
 //   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
+//   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
 //   POST /api/my/projects/default {"project": "<name>"}   New session opens on it for you
 //   POST /api/my/claude-token    {"value": "sk-ant-..."}
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
@@ -18,10 +19,12 @@
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
-//   GET  /api/my/pulls           your open pull requests, and those waiting on your review, for the rail
+//   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
 //   GET  /api/my/files/<file>    the console's shared file for one of the repo's env files or tmux-conf, and your own lines added after it
 //   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
 //   POST /api/my/files/<file>/reset                clears them: the console's file alone again
+//   GET  /api/my/own-files       your own whole files, {"files": {"<path>": "<text>"}}, which your sessions write into the checkout
+//   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it
 //   GET  /auth/connect           Connect GitHub: sign in once more and keep the token, so your sessions push as you
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
@@ -73,8 +76,15 @@
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
+//   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off
+//   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
+//   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
+//   GET  /api/console-settings/updates         the Woodshed commit this console runs, the newer ones on the branch its
+//                                git clone follows, and an update's steps (woodshedUpdate.mjs)
+//   POST /api/console-settings/updates/check   fetch that branch again, now
+//   POST /api/console-settings/updates/update  pull the new commits, build the session image if it changed, restart
 //   GET  /api/webhook/deliveries GitHub's last 10 deliveries to the App's webhook, with their status codes
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
 //   POST /api/webhook/apply      {"confirm": "webhook"}   the Lambda's URL and the stored secret, set on the App
@@ -85,8 +95,9 @@
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
 //   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs)
 //   GET  /api/me                 who is signed in, and whether sign-in is on
-//   POST /api/sessions/<id>/app/start  start the session's app
+//   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
 //   POST /api/sessions/<id>/app/stop   stop it
+//   POST /api/sessions/<id>/app/setup  ask its claude to write the project file's app, when it has none
 //   POST /api/sessions/<id>/claude-login   type woodshed-login at the session's Terminal tab (a My Woodshed session)
 //   GET  /api/sessions/<id>/review     what the session's branch changes, from GitHub (review.mjs)
 //   *    https://<id>.<app domain>/...  the session's running app, through its statusd (appProxy.mjs)
@@ -101,7 +112,7 @@
 //        Editor ↗, for whoever can open the session itself (editorProxy.mjs)
 //
 // In AWS it sits behind Caddy, open to the internet, and every page, API call and terminal needs a GitHub
-// sign-in with write access (auth.mjs, always required there by WOODSHED_CLOUD_REQUIRE_SIGN_IN). Locally it
+// sign-in with write access (auth.mjs, always required there by WOODSHED_REQUIRE_SIGN_IN). Locally it
 // listens on loopback and has no sign-in. Hosted, a trusted proxy in front of it signs people in instead, with a
 // header on every request (trustedIdentity.mjs), and there is no GitHub sign-in at all. Every request must name a
 // host the console answers to, which stops DNS rebinding, and writes and terminal websockets must
@@ -124,13 +135,14 @@ import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
-import { loadConfig } from './config.mjs';
+import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
+import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
 import { applyStored, createGitHubAppSetup, supervisorOf } from './githubAppSetup.mjs';
 import { createInstallation } from './installation.mjs';
-import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, publicSession, sharedRunningCount } from './sessions.mjs';
+import { ACTIVE_STATUSES, activePrivateCount, canSee, linkQueryString, prUrlsOf, publicSession, sharedRunningCount } from './sessions.mjs';
 import { WEBHOOK_SECRET } from './settings.mjs';
 import { openStore } from './store.mjs';
 import { parseHandle } from './members.mjs';
@@ -140,23 +152,28 @@ import { handleEditorRequest, handleEditorUpgrade, isEditorPath } from './editor
 import { startTlsAsk } from './tlsAsk.mjs';
 import { providerMetaContent } from './providerWords.mjs';
 import { createTrustedIdentity } from './trustedIdentity.mjs';
-import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import projectColorsShared from './public/projectColors.cjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
+import { readMyPulls } from './myPulls.mjs';
+import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
   'setupSteps.cjs': 'text/javascript; charset=utf-8',
   'inviteLink.cjs': 'text/javascript; charset=utf-8',
   'keys.cjs': 'text/javascript; charset=utf-8',
+  'projectColors.cjs': 'text/javascript; charset=utf-8',
   'common.js': 'text/javascript; charset=utf-8',
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
+  'dictation.js': 'text/javascript; charset=utf-8',
   'messageBox.js': 'text/javascript; charset=utf-8',
   'appShare.js': 'text/javascript; charset=utf-8',
   'session.js': 'text/javascript; charset=utf-8',
@@ -182,10 +199,16 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
+const UPDATES_PATH = '/api/console-settings/updates';
+const UPDATES_CHECK_PATH = `${UPDATES_PATH}/check`;
+const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
+const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
+const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
+const MY_OWN_FILES_PATH = '/api/my/own-files';
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
@@ -201,13 +224,19 @@ const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
-// The shed's mark and install details, under the console's name. Served before sign-in: a browser fetches the
-// manifest without cookies.
-const CONSOLE_MANIFEST = JSON.stringify({ ...MANIFEST, name: 'Woodshed Cloud', short_name: 'Woodshed Cloud', description: 'Claude sessions in containers.' }, null, 2);
+// The shed's mark and install details, under the console's name (config.consoleName), made once for each name.
+// Served before sign-in: a browser fetches the manifest without cookies.
+const consoleManifests = new Map();
+function consoleManifest(name) {
+  if (!consoleManifests.has(name)) {
+    consoleManifests.set(name, JSON.stringify({ ...MANIFEST, name, short_name: name, description: 'Claude sessions in containers.' }, null, 2));
+  }
+  return consoleManifests.get(name);
+}
 const PWA_PATHS = new Set(['/manifest.webmanifest', '/favicon.svg', '/favicon-32.png', '/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png']);
 const MAX_RESUME_MESSAGE_CHARS = 4000;
 const CLAUDE_LOGIN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/claude-login$/;
-const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop)$/;
+const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop|setup)$/;
 const REVIEW_RE = /^\/api\/sessions\/([0-9a-f]{8})\/review$/;
 const SECRET_RE = /^\/api\/secrets\/([a-z0-9-]+)(\/reveal)?$/;
 const SETUP_WRITE_RE = /^\/api\/setup\/github\/(manifest|paste|installation|restart)$/;
@@ -292,6 +321,11 @@ function staticHash(file) {
   return staticHashes.get(file).hash;
 }
 
+/** @returns {string}  the text with what HTML reads in an attribute or between tags escaped */
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"'`]/g, (c) => `&#${c.charCodeAt(0)};`);
+}
+
 /** @returns {string}  the file's URL, versioned */
 function staticUrl(file) {
   return `/static/${file}?v=${staticHash(file)}`;
@@ -300,8 +334,10 @@ function staticUrl(file) {
 /**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
  *          linkQuery?: Record<string, string>|null}} args
- *   the page's scripts, loaded in order after common.js; `provider`'s words are what the page says about where
- *   sessions run (providerWords.mjs), the defaults where it has none; `linkQuery` is config.linkQuery
+ *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
+ *   what the scripts call the console (common.js, W.consoleName); `script` is the page's scripts, loaded in order
+ *   after common.js; `provider`'s words are what the page says about where sessions run (providerWords.mjs), the
+ *   defaults where it has none; `linkQuery` is config.linkQuery
  * @returns {string}  the page shell; the script renders everything from /api/sessions
  */
 export function pageShell({ title, script, login = null, provider = null, linkQuery = null }) {
@@ -310,13 +346,15 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
   // What the links a page copies carry (config.linkQuery). URLSearchParams leaves nothing an attribute needs escaped.
   const query = linkQueryString(linkQuery);
   const queryMeta = query ? `\n<meta name="woodshed-link-query" content="${query}">` : '';
+  const name = escapeHtml(title);
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">${who}${queryMeta}
 <meta name="woodshed-provider" content="${providerMetaContent(provider)}">
-<title>${title}</title>
+<meta name="woodshed-console-name" content="${name}">
+<title>${name}</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#1b2232">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -324,7 +362,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Woodshed Cloud">
+<meta name="apple-mobile-web-app-title" content="${name}">
 <script src="${staticUrl('theme.js')}"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
@@ -335,6 +373,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('logins.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
+<script src="${staticUrl('projectColors.cjs')}"></script>
 <script src="${staticUrl('common.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
@@ -345,15 +384,17 @@ ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n
 }
 
 /**
- * What the console serves to anyone, signed in or not, the same for every installation: the page scripts and styles, the
- * install-as-an-app manifest and its icons (a browser fetches the manifest without cookies).
+ * What the console serves to anyone, signed in or not: the page scripts and styles, the same for every installation,
+ * and the install-as-an-app manifest, under the console's name, and its icons (a browser fetches the manifest without
+ * cookies).
+ * @param {string} [consoleName]  config.consoleName
  * @returns {boolean}  whether it answered
  */
-export function servePublic(req, res, url) {
+export function servePublic(req, res, url, consoleName = DEFAULT_CONSOLE_NAME) {
   if (req.method !== 'GET' && req.method !== 'HEAD') return false;
   if (url.pathname === '/manifest.webmanifest') {
     res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8', 'cache-control': 'no-cache' });
-    res.end(CONSOLE_MANIFEST);
+    res.end(consoleManifest(consoleName));
     return true;
   }
   if (PWA_PATHS.has(url.pathname) && handlePwaRequest(req, res)) return true;
@@ -397,6 +438,9 @@ function readJson(req, maxBytes = MAX_BODY_BYTES) {
     req.on('error', reject);
   });
 }
+
+// The app states in which a session's app holds one of WOODSHED_APP_PORTS (appPorts.mjs).
+const APP_HOLDS_PORT = new Set(['starting', 'running', 'api-down', 'frontend-down']);
 
 function appUrl(config, id, path) {
   return `https://${id}.${config.appDomain}${path}`;
@@ -478,10 +522,13 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  githubFor = null, trusted = null, userMenu = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  openaiTeamKey = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
+  // A config made in a test or by a program embedding the console may not have been through loadConfig.
+  const consoleName = config.consoleName || DEFAULT_CONSOLE_NAME;
   // Who may open a shared session is the People list's to say, once sign-in tells people apart.
   const access = auth ? members : null;
   // Each project's skills, by project name: one read of GitHub at a time for each, since every keystroke after `/` asks.
@@ -536,7 +583,7 @@ export function createHandler({
   async function authRoute(req, res, url) {
     const { pathname } = url;
     if (pathname === '/login' && req.method === 'GET') {
-      html(res, pageShell({ title: 'Woodshed Cloud', script: 'login.js' }));
+      html(res, pageShell({ title: consoleName, script: 'login.js' }));
       return true;
     }
     if (pathname === '/api/me' && req.method === 'GET' && trusted) {
@@ -544,6 +591,7 @@ export function createHandler({
       reply(res, 200, {
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
+        ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
         repo: user ? defaultProject(config).repo : null, workflows: user ? (config.actionsWorkflows ?? []) : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
@@ -559,6 +607,8 @@ export function createHandler({
         // Without sign-in turned on the server lets everyone through (signedIn gives no login), so the menu says the same.
         admin: !auth?.enabled() || Boolean(user && isAdmin(user)),
         asking: user && members && isAdmin(user) ? members.view().requests.length : 0,
+        // Admins see how many Woodshed commits the console lacks, on the menu's Console settings.
+        ...(woodshedUpdate && { updates: !auth?.enabled() || (user && isAdmin(user)) ? woodshedUpdate.behindBy() : 0 }),
         names: namesFor([user?.login ?? visitor?.login]),
         // The menu's workflow links. A signed-out browser is not told which repo this is: it may be private.
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
@@ -768,6 +818,23 @@ export function createHandler({
     return redirect(res, `${config.publicUrl}/auth/app?id=${id}&next=${encodeURIComponent(url.pathname + url.search)}`);
   }
 
+  // A request on one of WOODSHED_APP_PORTS: the app of the session the port is lent to (appPorts.mjs).
+  function appPortRequest(req, res, port) {
+    // The name is the console's, so the same check as its own pages: a rebinding page's name is refused (sameOrigin.mjs).
+    if (!isKnownHost(req.headers.host, hosts)) {
+      console.warn('appPorts: unknown host refused', { port, host: String(req.headers.host).slice(0, 100) });
+      return reply(res, 421, { error: 'unknown host' });
+    }
+    // A cookie is the name's, whatever the port, so with sign-in on these apps could not keep theirs apart.
+    if (signInOn()) return reply(res, 403, { error: 'app ports are for a console nobody signs in to: use WOODSHED_APP_DOMAIN' });
+    const id = appPorts.idFor(port);
+    if (!id) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end('no session\'s app is on this port: open it from the console\n');
+    }
+    return appRequest(req, res, id);
+  }
+
   // The editor, on the app's name, for whoever can open the session itself: the app's sign-in cookie says who, and a
   // share link's cookie never counts (editorProxy.mjs).
   async function editorRequest(req, res, id, url) {
@@ -786,7 +853,11 @@ export function createHandler({
   async function appSignIn(req, res, url, login) {
     const id = url.searchParams.get('id') || '';
     const next = safeNext(url.searchParams.get('next'));
-    if (!config.appDomain || !APP_ID_RE.test(id) || !findAppFor(id, login)) return reply(res, 404, { error: 'no such session' });
+    if ((!config.appDomain && !appPorts) || !APP_ID_RE.test(id) || !findAppFor(id, login)) return reply(res, 404, { error: 'no such session' });
+    if (appPorts) {
+      const at = appPorts.urlFor(id, next);
+      return at ? redirect(res, at) : reply(res, 503, { error: 'every app port is lent to another session: stop one, or add ports to WOODSHED_APP_PORTS' });
+    }
     if (!signInOn()) return redirect(res, appUrl(config, id, next));
     // The hosting proxy signs the app's name in itself (appRequest).
     if (trusted) return redirect(res, appUrl(config, id, `${APP_AUTH_PATH}?next=${encodeURIComponent(next)}`));
@@ -814,6 +885,13 @@ export function createHandler({
 
   const proxyReview = createReviewProxy({ findFor });
 
+  /** @returns {object[]}  every project, the default first, each with its colour key (null past the palette's six) */
+  function projectsWithColors() {
+    const projects = allProjects(config);
+    const colors = projectColors?.view() ?? projectColorsShared.projectColors({ names: projects.map((p) => p.name) });
+    return projects.map((p) => ({ ...p, default: Boolean(p.default), color: colors[p.name] ?? null }));
+  }
+
   // Every shared session for someone with sessions from GitHub, and the asker's own private ones. The counts are the
   // fleet's, which say nothing of whose.
   function sessionsBody(login) {
@@ -822,12 +900,15 @@ export function createHandler({
     const slackWaiting = fleet.slackWaiting?.() ?? new Set();
     return {
       repo: defaultProject(config).repo,
-      // The rail names each session's project only when there is more than one to tell apart.
-      projects: allProjects(config).map((p) => p.name),
+      // The rail marks each session's project, in its colour, only when there is more than one to tell apart.
+      projects: projectsWithColors().map(({ name, color, default: main }) => ({ name, color, default: main })),
       label: config.label,
       maxRunning: config.maxRunning,
       login,
-      appDomain: config.appDomain || null,
+      // Whether session apps are on: their name's domain, or with app ports the console's own name.
+      appDomain: config.appDomain || (appPorts ? new URL(config.publicUrl).hostname : null),
+      // With app ports each running session carries its `appUrl`, and an app is not shared: nobody signs in to it.
+      appPorts: Boolean(appPorts),
       // What Data ▾ offers: the viewers of the databases each session has a copy of.
       databases: databases?.available ? databases.engines : [],
       viewers: databases?.available ? viewersOf(databases.engines).filter((v) => !v.own).map(({ route, name, program }) => ({ route, name, program })) : [],
@@ -841,7 +922,12 @@ export function createHandler({
       // The slots are shared sessions' alone: My Woodshed's start at once.
       running: sharedRunningCount(all),
       queued: all.filter((s) => s.status === 'queued' && !s.owner).length,
-      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null })).reverse(),
+      sessions: sessions.map((s) => ({ ...publicSession(s), project: projectFor(config, s).name, slackWaiting: slackWaiting.has(s.id), pr: prChips?.view(s.prUrl) ?? null,
+        // A port is lent once the app is up or starting; until then `appUrl` is null and the page opens it through
+        // /auth/app, which lends one.
+        ...(appPorts && s.status === 'running' && s.kind !== 'ask' ? { appUrl: APP_HOLDS_PORT.has(s.app) ? appPorts.urlFor(s.id) : null } : {}),
+        // Every pull request it opened, oldest first, for its chips (common.js shownPrs).
+        prs: prUrlsOf(s).map((url) => ({ url, pr: prChips?.view(url) ?? null })) })).reverse(),
       // Who may have a shared session, and whether the asker is one: the Assign menu and the rail's Mine read them.
       // `shared` is whether the rail has an Everyone tab.
       assignables: members?.assignables() ?? [],
@@ -981,35 +1067,58 @@ export function createHandler({
   async function projectsView(login) {
     if (projectAccess) return projectAccess.view(login);
     const { name, repo } = defaultProject(config);
+    if (!repo) return { projects: [], defaultProject: null, saved: false };
     return { projects: [{ name, repo }], defaultProject: name, saved: false };
+  }
+
+  // Whether the console has the team's OpenAI key, as last read: Codex runs on it for someone with no sign-in of their own.
+  // A read that fails keeps the last answer, so a blip in the store does not take Codex away from New session.
+  let teamOpenAiKey = false;
+  async function readTeamOpenAiKey() {
+    if (!openaiTeamKey) return false;
+    try {
+      teamOpenAiKey = Boolean(await openaiTeamKey());
+    } catch (err) {
+      console.warn('console: team OpenAI key not read', { message: String(err?.message ?? err).split('\n')[0] });
+    }
+    return teamOpenAiKey;
   }
 
   function myView(login) {
     const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: false, available: false };
     return {
-      login, ...view, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
+      login, ...view,
+      // The agents New session offers: each only with something to run it on.
+      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
-      // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github.
-      githubSetupNeeded: Boolean(githubSetup?.available()),
+      // A console that started with no repo: the setup card sends an admin to add one on Console settings.
+      repoNeeded: !hasRepo(config),
+      // A console with a secret store and no GitHub App: the setup card sends whoever opens it to /setup/github. On
+      // one person's own machine with a gh token it is optional, and does not hold New session back.
+      githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional?.(),
+      githubSetupOptional: Boolean(githubSetup?.optional?.()),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
       app: appIdentity?.known() ?? null,
+      // With no App, sessions push with this machine's gh login, as its owner.
+      pushesWithGh: !config.githubApp && !config.githubBroker && Boolean(config.ghToken),
     };
   }
 
+  // Every repo the person may start on, each on its own project's client; a console without projects asks its one.
   async function pullsReply(res, login) {
     if (!login || !github) return reply(res, 200, { pulls: [] });
     const cached = pullsCache.get(login);
     if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls });
-    try {
-      const pulls = await github.openPullsFor(login);
-      pullsCache.set(login, { at: Date.now(), pulls });
-      return reply(res, 200, { pulls });
-    } catch (err) {
-      console.warn('console: pull requests not readable', { login, message: String(err?.message ?? err).split('\n')[0] });
-      return reply(res, 200, { pulls: cached?.pulls ?? [], stale: true });
-    }
+    const named = (await projectsView(login)).projects;
+    // A name the installation no longer has (removed since the access check was kept) is left out.
+    const projects = named.map((p) => projectNamed(config, p.name)).filter(Boolean);
+    const clientFor = (project) => (project.default ? github : (githubFor?.(project) ?? null));
+    const { pulls, stale } = await readMyPulls({ login, projects, githubFor: clientFor, kept: cached?.pulls ?? [] });
+    // Kept for the minute even when a repo failed, with that repo's last rows: every page asks on each refresh.
+    pullsCache.set(login, { at: Date.now(), pulls });
+    return reply(res, 200, stale ? { pulls, stale: true } : { pulls });
   }
 
   async function fileReply(res, login, key) {
@@ -1020,6 +1129,17 @@ export function createHandler({
     } catch (err) {
       if (err.shown) return reply(res, 404, { error: err.message });
       console.error('console: file not readable', { login, key, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'The secret store did not answer: try again in a moment' });
+    }
+  }
+
+  async function ownFilesReply(res, login) {
+    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
+    if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
+    try {
+      return reply(res, 200, { files: await userSettings.ownWholeFiles(login) });
+    } catch (err) {
+      console.error('console: own files not readable', { login, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The secret store did not answer: try again in a moment' });
     }
   }
@@ -1067,7 +1187,7 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : undefined);
+      body = await readJson(req, fileMatch || pathname === MY_OWN_FILES_PATH ? MAX_FILE_BODY_BYTES : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
@@ -1118,11 +1238,21 @@ export function createHandler({
         else await userSettings.saveFile(login, key, body.text);
         return reply(res, 200, await userSettings.file(login, key));
       }
+      if (pathname === MY_OWN_FILES_PATH) {
+        if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
+        return reply(res, 200, { files: await userSettings.saveOwnFile(login, body.path, body.text), view: myView(login) });
+      }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
         await userSettings?.refresh?.(login, { force: true });
         // A Codex session signs in with its own login or the team's OpenAI key: it needs no Claude token.
         if (agent !== 'codex' && !userSettings?.view(login).claudeToken.set) return reply(res, 409, { error: 'save your Claude token on My settings first' });
+        if (agent === 'codex' && !userSettings?.view(login).codexAuth?.set && !(await readTeamOpenAiKey())) {
+          return reply(res, 409, { error: 'save your Codex sign-in on My settings first: the console has no OpenAI key' });
+        }
+        // A Codex model or effort is one OpenAI's catalog offers this person now, as New session listed it.
+        const codexRefusal = agent === 'codex' && codexModels ? await codexModels.allows(login, String(model ?? ''), String(effort ?? '')) : null;
+        if (codexRefusal) return reply(res, 400, { error: codexRefusal });
         if (!databasesReady(login)) return reply(res, 409, { error: DATABASES_NOT_READY });
         const project = projectAccess ? await projectAccess.forStart(login, body.project) : undefined;
         if (project === null) {
@@ -1175,6 +1305,8 @@ export function createHandler({
           await userSettings.setCodexAuth(login, body.value);
           await firstDatabases(login);
         }
+        // The models list was read on the sign-in that is gone: the next look reads it on the new one.
+        codexModels?.forget(login);
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {
@@ -1360,12 +1492,26 @@ export function createHandler({
 
   async function consoleSettingsReply(res) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
+    const colors = new Map(projectsWithColors().map((p) => [p.name, p.color]));
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
-      projects: addedProjects?.view() ?? null,
+      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
+      palette: projectColorsShared.PALETTE,
       data: heldData ? await heldData.report() : null,
     });
+  }
+
+  // `repos: null` where the console has no App to ask: the page then takes owner/name typed in.
+  async function repoChoicesReply(res) {
+    if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+    try {
+      const found = await addedProjects.choices();
+      return reply(res, 200, found ?? { repos: null, grant: [], install: null });
+    } catch (err) {
+      if (err.shown) return reply(res, 502, { error: err.message });
+      throw err;
+    }
   }
 
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
@@ -1379,11 +1525,24 @@ export function createHandler({
     }
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
     try {
-      if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
+      if (pathname === PROJECT_COLOR_PATH) {
+        if (!projectColors) return reply(res, 404, { error: 'this console keeps no project colours' });
+        projectColors.set({ name: body.name, color: body.color, by: login ?? 'console' });
+      } else if (pathname === PROJECT_CHANNEL_PATH) {
+        if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
+        if (!slack) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+        if (!addedProjects.view().some((p) => p.name === body.name)) return reply(res, 400, { error: `There is no project called ${body.name}.` });
+        slack.setProjectChannel({ project: body.name, channel: body.channel, by: login ?? 'console' });
+      } else if (pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) {
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
-        else addedProjects.remove({ name: body.name, by });
+        else {
+          addedProjects.remove({ name: body.name, by });
+          projectColors?.forget({ name: body.name });
+          // A repo added again later under the same name starts on the console's channel.
+          slack?.setProjectChannel({ project: body.name, channel: '', by });
+        }
       } else if (pathname === '/api/console-settings') {
         const by = login ?? 'console';
         const values = body.values ?? {};
@@ -1401,11 +1560,33 @@ export function createHandler({
         await heldData.clean({ kind: body.kind, id: body.id, by: login ?? 'console' });
       }
     } catch (err) {
-      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message });
+      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message, ...(err.link && { link: err.link }) });
       console.error('console: console settings change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The change failed; the console log says why' });
     }
     return consoleSettingsReply(res);
+  }
+
+  async function woodshedUpdateReply(res, status = 200) {
+    const view = woodshedUpdate ? await woodshedUpdate.view() : null;
+    if (!view) return reply(res, 404, { error: 'this console does not run from a git clone, so it follows no Woodshed updates' });
+    return reply(res, status, view);
+  }
+
+  // Check now, or Update: an update answers at once, and the page follows its steps.
+  async function woodshedUpdateWrite(res, pathname, login) {
+    if (!woodshedUpdate) return woodshedUpdateReply(res);
+    try {
+      if (pathname === UPDATES_CHECK_PATH) await woodshedUpdate.check();
+      else {
+        await woodshedUpdate.update({ by: login ?? 'console' });
+        return woodshedUpdateReply(res, 202);
+      }
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      throw err;
+    }
+    return woodshedUpdateReply(res);
   }
 
   // Who else may open a My Woodshed session's app is its owner's to say, and nobody else's: a teammate gets the
@@ -1454,9 +1635,10 @@ export function createHandler({
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
-    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove`) return consoleSettingsWrite(req, res, pathname, login);
+    if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
+    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
-    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
+    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname) || pathname === MY_OWN_FILES_PATH
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
       || MY_TUNNEL_RE.test(pathname) || MY_RESTORE_RE.test(pathname)) {
       return myWrite(req, res, pathname, login);
@@ -1466,8 +1648,8 @@ export function createHandler({
       const session = findFor(loginMatch[1], login);
       if (!session) return reply(res, 404, { error: 'no such session' });
       try {
-        await fleet.startClaudeLogin(session);
-        return reply(res, 200, { ok: true });
+        const { where } = await fleet.startClaudeLogin(session);
+        return reply(res, 200, { ok: true, where });
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
         if (err.notPrivate) return reply(res, 409, { error: err.message });
@@ -1485,9 +1667,20 @@ export function createHandler({
       const session = findFor(id, login);
       if (!session) return reply(res, 404, { error: 'no such session' });
       try {
-        return reply(res, 200, publicSession(await (action === 'start' ? fleet.startApp(session) : fleet.stopApp(session))));
+        if (action === 'setup') {
+          const { session: after, sent } = await fleet.setupApp(session);
+          return reply(res, 200, { ...publicSession(after), sent });
+        }
+        if (action === 'start') {
+          // Which of several apps, by name; none is the default. A console page from before several apps sends no body.
+          const body = await readJson(req).catch(() => null);
+          if (!body || (body.app !== undefined && typeof body.app !== 'string')) return reply(res, 400, { error: 'app must be an app\'s name' });
+          return reply(res, 200, publicSession(await fleet.startApp(session, { app: body.app || null })));
+        }
+        return reply(res, 200, publicSession(await fleet.stopApp(session)));
       } catch (err) {
         if (err.notRunning) return reply(res, 409, { error: 'the session is not running' });
+        if (err.refused) return reply(res, 409, { error: err.message });
         const message = String(err?.message ?? err).split('\n')[0];
         console.warn('console: app action failed', { id: session.id, action, message });
         // A session started before its image had the action has a statusd without the route.
@@ -1534,6 +1727,8 @@ export function createHandler({
   }
 
   return async function handle(req, res) {
+    // An app port answers its session's app and nothing else: the console's own pages there would share the app's origin.
+    if (appPorts?.owns(req.socket?.localPort)) return appPortRequest(req, res, req.socket.localPort);
     const appId = appIdFor(req.headers.host, config.appDomain);
     if (appId) return appRequest(req, res, appId);
     if (!isKnownHost(req.headers.host, hosts)) {
@@ -1551,7 +1746,7 @@ export function createHandler({
     if (auth?.available() && req.method === 'GET' && !stays && otherPublicNames.has(hostnameOf(req.headers.host))) {
       return redirect(res, `${config.publicUrl}${url.pathname}${url.search}`);
     }
-    if (servePublic(req, res, url)) return;
+    if (servePublic(req, res, url, consoleName)) return;
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;
@@ -1576,16 +1771,18 @@ export function createHandler({
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
-    if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: 'Woodshed Cloud', script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings') return html(res, pageShell({ title: 'Woodshed Cloud', script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
-    if (pathname === '/setup/github') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'githubSetup.js' }));
+    if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
+    if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
-    if (pathname === '/events') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'events.js', provider }));
-    if (pathname === '/secrets') return html(res, pageShell({ title: 'Woodshed Cloud', script: ['webhookSetup.js', 'secrets.js'], provider }));
-    if (pathname === '/console-settings') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'consoleSettings.js', provider }));
+    if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
+    if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
+    if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
-    if (pathname === '/people') return html(res, pageShell({ title: 'Woodshed Cloud', script: 'people.js', provider }));
+    if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
+    if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
+    if (pathname === '/people') return html(res, pageShell({ title: consoleName, script: 'people.js', provider }));
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));
@@ -1596,11 +1793,12 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([databaseGate?.refusal(), first ? looking : null]);
+      await Promise.all([databaseGate?.refusal(), first ? looking : null, readTeamOpenAiKey()]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
+    if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
     if (pathname === '/api/skills') {
       // Another project's list only for someone who may start sessions on it, as New session offers it; anyone else,
       // and a project this console does not have, gets the default project's.
@@ -1625,6 +1823,7 @@ export function createHandler({
     }
     const fileRead = MY_FILE_RE.exec(pathname);
     if (fileRead && !fileRead[2]) return fileReply(res, user.login, fileRead[1]);
+    if (pathname === MY_OWN_FILES_PATH) return ownFilesReply(res, user.login);
     const reviewMatch = REVIEW_RE.exec(pathname);
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
     if (pathname === '/api/webhook-events') {
@@ -1740,12 +1939,22 @@ function terminalTarget(fleet, login, members) {
  *          tunnel?: {handleUpgrade: Function}|null, trusted?: ReturnType<typeof createTrustedIdentity>|null}} deps
  * @returns {(req: import('node:http').IncomingMessage, socket: import('node:net').Socket, head: Buffer) => void}
  */
-export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null }) {
+export function createConsoleUpgrade({ config, fleet, auth = null, members = null, appShares = null, tunnel = null, trusted = null, appPorts = null }) {
   const hosts = knownHosts(config);
   const appUpgrade = createAppUpgrade({ config, fleet, auth, members, appShares, trusted });
   return function upgrade(req, socket, head) {
     // An error on a socket nobody listens to is an uncaught exception.
     socket.on('error', () => socket.destroy());
+    // An app port's websockets are its app's alone, as its requests are (appPortRequest).
+    if (appPorts?.owns(socket.localPort)) {
+      if (!isKnownHost(req.headers.host, hosts)) {
+        console.warn('appPorts: unknown host refused', { port: socket.localPort, host: String(req.headers.host).slice(0, 100) });
+        return socket.end('HTTP/1.1 421 Misdirected Request\r\n\r\n');
+      }
+      const portId = !auth?.enabled() && !trusted ? appPorts.idFor(socket.localPort) : null;
+      if (!portId) return socket.end('HTTP/1.1 404 Not Found\r\n\r\n');
+      return appUpgrade(req, socket, head, portId);
+    }
     const appId = appIdFor(req.headers.host, config.appDomain);
     if (appId) return appUpgrade(req, socket, head, appId);
     // woodshed-db.mjs is no browser: no Origin, no cookie, and a token that does what the same-origin check does here.
@@ -1802,11 +2011,29 @@ export async function startConsole({ provider, config: given = null }) {
   // A dump of a gigabyte or two takes longer to send than Node's 5-minute default for a whole request. Caddy is in front.
   server.requestTimeout = 60 * 60_000;
   server.on('upgrade', installation.upgrade);
+  const servers = [{ server, open: countRequests(server) }];
   server.listen(config.port, config.host, () => {
     console.log('console: listening', { host: config.host, port: config.port, ...installation.summary() });
   });
-  if (installation.sessionApi) listenSessionApi({ config, handle: installation.sessionApi });
-  await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  // Each app port is the same server: a request's own port says which session's app it is (appPorts.mjs).
+  for (const appPort of installation.appPorts?.ports ?? []) {
+    const onPort = http.createServer(server.listeners('request')[0]);
+    onPort.requestTimeout = server.requestTimeout;
+    onPort.on('upgrade', installation.upgrade);
+    onPort.on('error', (err) => console.error('appPorts: could not listen', { port: appPort, message: err?.message }));
+    onPort.listen(appPort, config.host);
+    servers.push({ server: onPort, open: countRequests(onPort) });
+  }
+  if (installation.appPorts) console.log('appPorts: listening', { host: config.host, ports: installation.appPorts.ports.length, first: installation.appPorts.ports[0] });
+  if (installation.sessionApi) {
+    const api = listenSessionApi({ config, handle: installation.sessionApi });
+    servers.push({ server: api, open: countRequests(api) });
+  }
+  const tlsAsk = await startTlsAsk({ config, sessions: () => installation.fleet.sessions() });
+  if (tlsAsk) servers.push({ server: tlsAsk, open: countRequests(tlsAsk) });
+  // Docker's stop on every redeploy (shutdown.mjs): sessions retry their calls to the console while it is away.
+  const shutdown = createShutdown({ servers, stop: () => installation.stop() });
+  for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => shutdown(signal));
   installation.start({ webhooks: provider.webhooks ?? null });
 }
 

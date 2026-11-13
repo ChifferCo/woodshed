@@ -97,7 +97,7 @@
         showPaste && pasteForm());
     }
     return step(1, 'Make the GitHub App', false,
-      h('p', null, 'Woodshed needs a GitHub App for ', h('code', null, data.repo), ': it pushes, opens pull requests and comments as the App, and people sign in through it. ',
+      h('p', null, data.optional ? 'A GitHub App for ' : 'Woodshed needs a GitHub App for ', h('code', null, data.repo), ': it pushes, opens pull requests and comments as the App, and people sign in through it. ',
         'One click makes it with the right permissions: GitHub asks you to confirm the name, then brings you back here.'),
       h('label', { class: 'field-label' }, 'Make it under',
         h('select', { class: 'field', onchange: (e) => { ownerType = e.target.value; } },
@@ -105,7 +105,7 @@
           h('option', { value: 'User', selected: ownerType === 'User' }, 'my own GitHub account'))),
       h('div', null, h('button', { type: 'button', class: 'btn btn-open', disabled: busy, onclick: () => act(createApp) }, 'Create the App on GitHub')),
       h('p', { class: 'msg-plain' }, 'Its Callback URL will be ', h('code', null, `${data.publicUrl}/auth/callback`),
-        '. GitHub only takes an http address for localhost: anywhere else this console\'s public URL must be https, and set WOODSHED_CLOUD_PUBLIC_URL to it first.'),
+        '. GitHub only takes an http address for localhost: anywhere else this console\'s public URL must be https, and set WOODSHED_PUBLIC_URL to it first.'),
       h('details', null, h('summary', null, 'I already have an App: paste its details instead'), pasteForm()));
   }
 
@@ -162,7 +162,7 @@
         h('code', null, 'node woodshed/providers/console.mjs'), ' again as in providers/local/README.md; under systemd, ', h('code', null, 'systemctl restart'),
         ' its unit; in Docker, ', h('code', null, 'docker compose restart console'), '.'),
       h('p', { class: 'msg-plain' }, 'Nothing is known to start this console again if it exits, so the page offers no Restart button. ',
-        'Under systemd with Restart=on-failure it offers one; in Docker with a restart policy, set ', h('code', null, 'WOODSHED_CLOUD_SUPERVISED=1'), '.'));
+        'Under systemd with Restart=on-failure it offers one; in Docker with a restart policy, set ', h('code', null, 'WOODSHED_SUPERVISED=1'), '.'));
   }
 
   function render() {
@@ -170,7 +170,9 @@
     const head = h('header', { class: 'page-head' }, h('div', null,
       h('a', { class: 'side-back', href: '/' }, '‹ Back to sessions'),
       h('h1', { class: 'title' }, 'Set up the GitHub App'),
-      h('p', { class: 'sub' }, 'Sessions push, open pull requests and sign people in through a GitHub App. This console has none yet.')));
+      h('p', { class: 'sub' }, data?.optional
+        ? 'Optional on this machine: sessions already push and open pull requests as you, with your gh sign-in. An App does it as a bot scoped to the repo, and lets teammates sign in.'
+        : 'Sessions push, open pull requests and sign people in through a GitHub App. This console has none yet.')));
     let body;
     if (!data) body = h('p', { class: 'empty' }, loadError ? `Could not load: ${loadError}` : 'Loading…');
     else if (data.configuredBy) body = h('p', { class: 'form-ok' }, `This console already runs on a GitHub App (${data.configuredBy === 'setup' ? 'from this page' : 'from its settings'}). Change its key on the Secrets page.`);

@@ -1,37 +1,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { parseYaml } from './yamlLite.mjs';
 
-const READ = {
-  'mappings, nested by indentation': ['a: 1\nb:\n  c: x\n  d:\n    e: true\n', { a: 1, b: { c: 'x', d: { e: true } } }],
-  'lists, under a key at its indent or further in': ['a:\n- 1\n- 2\nb:\n  - x\n', { a: [1, 2], b: ['x'] }],
-  'list items that are mappings': ['- name: a\n  port: 1\n-   name: b\n    port: 2\n', [{ name: 'a', port: 1 }, { name: 'b', port: 2 }]],
-  'a list in a list, and an item on the next line': ['- - a\n  - b\n-\n  c: 1\n', [['a', 'b'], { c: 1 }]],
-  'comments, not inside quotes or a word': ['# top\na: x # end\nb: "x # y"\nc: a#b\n\n  # indented\n', { a: 'x', b: 'x # y', c: 'a#b' }],
-  'a quote inside a plain value, before a comment': ["a: rock 'n roll # c\nb: say \"hi # c\n", { a: "rock 'n roll", b: 'say "hi' }],
-  'plain values keep their quotes and colons when they cannot start or end a key':
-    ['- DB="{{X}}"\n- http://localhost:9000\n- ~/.cache/{{CHECKOUT}}/a.log\n', ['DB="{{X}}"', 'http://localhost:9000', '~/.cache/{{CHECKOUT}}/a.log']],
-  'null, booleans and numbers as YAML 1.2 core reads them':
-    ['a:\nb: ~\nc: null\nd: false\ne: -12\nf: 1.5e3\ng: "9000"\nh: yes\ni: 0x1F\nj: 012\n', { a: null, b: null, c: null, d: false, e: -12, f: 1500, g: '9000', h: 'yes', i: 31, j: 12 }],
-  'quoted values with their escapes': ['a: "t\\tn\\n\\u00e9\\"q"\nb: \'it\'\'s\'\n"c d": 1\n', { a: 't\tn\né"q', b: "it's", 'c d': 1 }],
-  'literal block text, clipped, stripped and kept':
-    ['a: |\n  one\n    two\n\nb: |-\n  x\nc: |+\n  y\n\nd: 1\n', { a: 'one\n  two\n', b: 'x', c: 'y\n\n', d: 1 }],
-  'block text as a list item': ['- |\n  one\n  two\n- >-\n  x\n  y\n', ['one\ntwo\n', 'x y']],
-  'folded block text': ['a: >\n  one\n  two\n\n  three\n    kept\n  four\nb: >-\n  x\n  y\n', { a: 'one two\nthree\n  kept\nfour\n', b: 'x y' }],
-  'one-line flow, which JSON is': ['{"a":[1,"b",{"c":null}],"d":true}', { a: [1, 'b', { c: null }], d: true }],
-  'flow under keys, with plain values': ['a: [x, y z, ]\nb: {k: v, n: 2}\nc: []\n', { a: ['x', 'y z'], b: { k: 'v', n: 2 }, c: [] }],
-  'a document marker at the top, CRLF and a byte order mark': ['\uFEFF---\r\na: 1\r\n', { a: 1 }],
-  'an empty document': ['# nothing\n', null],
-};
+// Each case is a YAML file in __fixtures__/yamlLite/ beside the JSON js-yaml reads it as, so Woodshed's own CI keeps
+// yamlLite honest without js-yaml as a dependency: small cases for each construct, and a project file and a workflow
+// of the size repos write. A new case is a new .yaml there, with its .json from js-yaml:
+//   node -e "const y=require('js-yaml'),fs=require('fs');for(const f of process.argv.slice(1))fs.writeFileSync(f.replace(/yaml$/,'json'),JSON.stringify(y.load(fs.readFileSync(f,'utf8')),null,2)+'\\n')" <case>.yaml
+const FIXTURES = path.join(import.meta.dirname, '__fixtures__', 'yamlLite');
+const CASES = fs.readdirSync(FIXTURES).filter((f) => f.endsWith('.yaml')).sort().map((f) => ({
+  name: f.replace(/\.yaml$/, ''), source: fs.readFileSync(path.join(FIXTURES, f), 'utf8'),
+  expected: JSON.parse(fs.readFileSync(path.join(FIXTURES, f.replace(/\.yaml$/, '.json')), 'utf8')),
+}));
 
-for (const [name, [source, expected]] of Object.entries(READ)) {
-  test(`reads ${name}`, () => assert.deepEqual(parseYaml(source), expected));
+test('the fixtures cover every construct, the real-sized files and the CRLF one', () => {
+  assert.ok(CASES.length >= 18, `${CASES.length} cases`);
+  assert.ok(CASES.some((c) => c.source.startsWith('\uFEFF') && c.source.includes('\r\n')), 'the CRLF and byte order mark case kept its bytes');
+  for (const name of ['project-file', 'workflow']) assert.ok(CASES.some((c) => c.name === name), name);
+});
+
+for (const { name, source, expected } of CASES) {
+  test(`reads ${name} as js-yaml does`, () => assert.deepEqual(parseYaml(source), expected));
 }
 
-// Woodshed has no dependencies, so js-yaml is compared with only where a node_modules above this folder or NODE_PATH has
-// it. A repo that has it elsewhere runs this file with NODE_PATH pointing there. Where it is not, the cases above still run.
+// Woodshed has no dependencies, so the fixtures' JSON is compared with js-yaml itself only where a node_modules above
+// this folder or NODE_PATH has it: that catches a .json written by hand.
 const jsYaml = (() => {
   try {
     return createRequire(import.meta.url)('js-yaml');
@@ -41,9 +37,8 @@ const jsYaml = (() => {
   }
 })();
 
-test('reads each case as js-yaml does', { skip: !jsYaml && 'js-yaml is not reachable from here or NODE_PATH' }, () => {
-  const sources = Object.values(READ).map(([source]) => source);
-  for (const source of sources) assert.deepEqual(parseYaml(source), jsYaml.load(source), source);
+test('each fixture\'s JSON is what js-yaml reads', { skip: !jsYaml && 'js-yaml is not reachable from here or NODE_PATH' }, () => {
+  for (const { name, source, expected } of CASES) assert.deepEqual(jsYaml.load(source), expected, name);
 });
 
 const REFUSED = {

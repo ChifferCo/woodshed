@@ -77,11 +77,15 @@
     const pill = set
       ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(me.codexAuth.savedAt)}`)
       : h('span', { class: 'pill' }, 'Not set');
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'codex' },
       h('div', { class: 'set-head' }, h('h2', null, 'Codex'), pill),
-      h('p', { class: 'sub' }, 'Choose Codex as the agent in New session. It runs on your own sign-in when you save one: an OpenAI API key, or the ',
-        h('code', null, '~/.codex/auth.json'), ' that ', h('code', null, 'codex login'), ' made on your laptop. With none, it runs on the team\u2019s OpenAI key, if the console has one. ',
-        'A ChatGPT login is saved back when the session stops, since OpenAI rotates it.'),
+      h('p', { class: 'sub' }, 'Choose Codex as the agent in New session. With no sign-in saved here, it runs on the team\u2019s OpenAI key, if the console has one.'),
+      steps(
+        { text: 'Sign in to Codex on your laptop:', command: 'codex login' },
+        { text: 'Print the sign-in it saved:', command: 'cat ~/.codex/auth.json' },
+        { text: 'Paste all of it below and press Save. A ChatGPT login is saved back when a session stops, since OpenAI rotates it.' },
+      ),
+      h('p', { class: 'form-note' }, 'Or paste an OpenAI API key (', h('code', null, 'sk-…'), ') instead.'),
       h('label', { class: 'field-label', for: 'codex-auth' }, h('span', null, set ? 'Replace the sign-in' : 'Paste your sign-in')),
       codexInput,
       h('div', { class: 'set-actions' },
@@ -91,7 +95,16 @@
             if (window.confirm('Remove your Codex sign-in? Codex sessions then run on the team key, if there is one.')) codexChange('/api/my/codex-auth/remove', {}, 'Removed.', 'Removing…');
           },
         }, 'Remove')),
+      !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
       codexStatus);
+  }
+
+  // Numbered steps for a card, each { text, command }: a command gets its own box and Copy, so copying one never
+  // runs another (designSystem/README.md, "Commands to copy").
+  function steps(...items) {
+    return h('ol', { class: 'cmd-steps' }, items.map(({ text, command }) => h('li', null,
+      h('p', null, text),
+      command && h('div', { class: 'value-row' }, h('code', { class: 'value-box' }, command), window.WoodshedRestoreParts.copyButton(command)))));
   }
 
   function tokenCard() {
@@ -99,11 +112,13 @@
     const pill = set
       ? h('span', { class: 'pill is-ok' }, `Saved ${W.when(me.claudeToken.savedAt)}`)
       : h('span', { class: 'pill is-warn' }, 'Not set');
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'claude' },
       h('div', { class: 'set-head' }, h('h2', null, 'Claude'), pill),
-      h('p', { class: 'sub' }, 'Your My Woodshed sessions run on your own Claude plan, not the team key. Make a token on your laptop with ',
-        h('code', null, 'claude setup-token'), ' and paste it here. Sessions that are already running keep the one they started with. For Remote Control, which that token cannot do, type ',
-        h('code', null, 'woodshed-login'), ' in the session\'s terminal, or use Sign in for Remote Control in its ⋯ menu.'),
+      h('p', { class: 'sub' }, 'Your My Woodshed sessions run on your own Claude plan, not the team key.'),
+      steps(
+        { text: 'Make a token on your laptop:', command: 'claude setup-token' },
+        { text: 'Paste the token it prints below and press Save. Sessions already running keep the one they started with.' },
+      ),
       h('label', { class: 'field-label', for: 'claude-token' }, h('span', null, set ? 'Replace the token' : 'Paste your token')),
       tokenInput,
       h('div', { class: 'set-actions' },
@@ -118,7 +133,10 @@
         }, 'Remove')),
       sharedSwitch(),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
-      status);
+      status,
+      h('div', { class: 'cmd-aside' },
+        h('p', { class: 'form-note' }, 'Remote Control needs more than this token can do. In a session, type this in claude, or use Sign in for Remote Control in the session\u2019s ⋯ menu:'),
+        h('div', { class: 'value-row' }, h('code', { class: 'value-box' }, '/woodshed:remote-control'), window.WoodshedRestoreParts.copyButton('/woodshed:remote-control'))));
   }
 
   // Whether the shared sessions you start from GitHub run on your token too. Only with a token saved: removing it
@@ -165,6 +183,12 @@
     // The App's own name for itself, read from GitHub; before the console has read it, a plain description.
     const bot = me.app?.login ?? 'the console\'s GitHub App';
     const via = me.app?.slug ?? 'the App';
+    // No App at all, on one person's machine: sessions push with its gh login, as that person.
+    if (!gh.connected && !me.githubConnect && me.pushesWithGh) {
+      return h('section', { class: 'set-card' },
+        h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, 'Pushes as you')),
+        h('p', { class: 'sub' }, 'Your My Woodshed sessions commit, push and open pull requests as you, with this machine\'s gh login.'));
+    }
     // No App sign-in to connect through (a console that borrows its GitHub access from its host): sessions push as the App.
     if (!gh.connected && !me.githubConnect) {
       const app = me.app?.login ?? 'the GitHub App';
@@ -426,7 +450,7 @@
       editor,
       replaced,
       f?.appended?.length
-        ? h('p', { class: 'sub' }, 'Woodshed Cloud always adds these last, so your databases, ports and URLs are right whatever the files say: ',
+        ? h('p', { class: 'sub' }, 'Woodshed always adds these last, so your databases, ports and URLs are right whatever the files say: ',
           h('code', null, f.appended.join(', ')), '.')
         : fileKey === 'tmux-conf' && h('p', { class: 'sub' }, 'Loaded by claude\'s tmux. Prefix then r reloads it in a running session.'),
       h('div', { class: 'set-actions' },
@@ -444,6 +468,106 @@
           },
         }, 'Clear mine')),
       fileStatus);
+  }
+
+  // Your own whole files (an app/.env.production), which your sessions write into the checkout where git ignores
+  // them. All of them come in one read, the first time the card is drawn; `ownPath` is the one open, '' a new one.
+  let ownFiles = null;
+  let ownLoad = null;
+  // A read that failed is not tried again by itself: render() would otherwise ask the console again at once, for as
+  // long as the secret store is down. Try again asks.
+  let ownLoadFailed = false;
+  let ownPath = null;
+  const ownPathInput = h('input', { id: 'own-file-path', class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' });
+  const ownEditor = h('textarea', { id: 'own-file-text', class: 'field mono file-text', rows: '10', spellcheck: 'false', placeholder: 'NOTION_TOKEN=…' });
+  const ownStatus = h('p', { class: 'form-note', role: 'status' });
+
+  function loadOwnFiles() {
+    ownLoad ??= W.getJson('/api/my/own-files').then((answer) => {
+      ownFiles = answer.files ?? {};
+      openOwnFile(Object.keys(ownFiles).sort()[0] ?? '');
+    }, (err) => {
+      ownStatus.textContent = err.message;
+      ownStatus.classList.add('is-error');
+      ownLoad = null;
+      ownLoadFailed = true;
+      render();
+    });
+  }
+
+  function retryOwnFiles() {
+    ownLoadFailed = false;
+    ownStatus.textContent = 'Reading your files…';
+    ownStatus.classList.remove('is-error');
+    loadOwnFiles();
+    render();
+  }
+
+  function openOwnFile(file) {
+    ownPath = file;
+    ownPathInput.value = file;
+    ownEditor.value = file ? ownFiles?.[file] ?? '' : '';
+    ownStatus.textContent = '';
+    ownStatus.classList.remove('is-error');
+    render();
+  }
+
+  function saveOwnFile(file, text, done) {
+    return act({
+      card: 'own-files', note: ownStatus, done, call: async () => {
+        const answer = await W.postJson('/api/my/own-files', { path: file, text });
+        ownFiles = answer.files;
+        me = answer.view;
+        const next = ownFiles[file.trim()] !== undefined ? file.trim() : Object.keys(ownFiles).sort()[0] ?? '';
+        ownPath = next;
+        ownPathInput.value = next;
+        ownEditor.value = next ? ownFiles[next] : '';
+      },
+    });
+  }
+
+  function ownFilesCard() {
+    if (me.available && ownFiles === null && !ownLoadFailed) loadOwnFiles();
+    const paths = (me.ownFiles ?? []).map((f) => f.path);
+    const savedAt = (file) => me.ownFiles?.find((f) => f.path === file)?.savedAt;
+    const working = busy.has('own-files');
+    ownPathInput.readOnly = working || Boolean(ownPath);
+    ownEditor.readOnly = working;
+    ownPathInput.disabled = ownEditor.disabled = !me.available || ownFiles === null;
+    return h('section', { class: 'set-card is-wide' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Your own files'),
+        h('span', { class: `pill${paths.length ? ' is-ok' : ''}` }, paths.length ? `${paths.length} file${paths.length === 1 ? '' : 's'}` : 'None')),
+      h('p', { class: 'sub' }, 'Whole files your sessions write into the repo at start, such as the ', h('code', null, '.env.production'),
+        ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Your next My Woodshed session picks up what you save; running ones keep theirs.'),
+      h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Your file' },
+        paths.map((file) => h('button', { type: 'button', 'aria-pressed': String(file === ownPath), disabled: working, onclick: () => openOwnFile(file) }, file)),
+        h('button', { type: 'button', 'aria-pressed': String(ownPath === ''), disabled: working || ownFiles === null, onclick: () => openOwnFile('') }, '+ Add a file')),
+      h('label', { class: 'field-label', for: 'own-file-path' }, h('span', null, 'Path in the repo')),
+      ownPathInput,
+      h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, ownPath ? `${ownPath}${savedAt(ownPath) ? `, saved ${W.when(savedAt(ownPath))}` : ''}` : 'Its text')),
+      ownEditor,
+      h('div', { class: 'set-actions' },
+        ownLoadFailed && h('button', { type: 'button', class: 'btn btn-quiet', onclick: retryOwnFiles }, 'Try again'),
+        h('button', {
+          type: 'button', class: 'btn btn-open', disabled: !me.available || ownFiles === null || working,
+          onclick: () => {
+            const file = ownPathInput.value.trim();
+            if (!ownEditor.value.trim()) {
+              ownStatus.textContent = 'Write the file\'s text first. To delete a file, use Remove.';
+              ownStatus.classList.add('is-error');
+              return;
+            }
+            saveOwnFile(file, ownEditor.value, `Saved ${file}. Your next session writes it.`);
+          },
+        }, 'Save'),
+        ownPath && h('button', {
+          type: 'button', class: 'btn btn-quiet', disabled: working,
+          onclick: () => {
+            if (!window.confirm(`Remove ${ownPath}? Your next sessions no longer write it.`)) return;
+            saveOwnFile(ownPath, '', `Removed ${ownPath}.`);
+          },
+        }, 'Remove')),
+      ownStatus);
   }
 
   // Your own pause and stop times, for your My Woodshed sessions. Empty is the console's number.
@@ -523,6 +647,9 @@
             const answer = await W.postJson('/api/my/remove', { confirm: me.login });
             me = answer;
             for (const key of fileKeys()) delete files[key];
+            ownFiles = null;
+            ownLoad = null;
+            ownLoadFailed = false;
             editor.dataset.key = '';
             openFile(fileKey);
             status.textContent = `My Woodshed removed: ${answer.stopped} stopped, ${answer.removed} taken off the list.`;
@@ -538,6 +665,8 @@
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
       return;
     }
+    // The page is rebuilt on each answer (the projects, a save): a box being typed in keeps its focus.
+    const focused = document.activeElement;
     app.replaceChildren(h('div', { class: 'page settings-page' },
       W.nav('/settings'),
       h('header', { class: 'page-head' }, h('div', null,
@@ -551,8 +680,22 @@
       githubCard(),
       homeCard(),
       filesCard(),
+      ownFilesCard(),
       removeCard()));
+    if (focused?.id && focused !== document.activeElement && focused.isConnected) focused.focus({ preventScroll: true });
     watchDatabases();
+    showAsked();
+  }
+
+  // The setup card's Claude and Codex go to #claude and #codex: once the cards are there, that one is scrolled to and
+  // its box focused, so whichever agent was picked is the one in front of the person. Once per page load.
+  let asked = ({ '#claude': 'claude-token', '#codex': 'codex-auth' })[window.location.hash] ?? null;
+  function showAsked() {
+    const input = asked && document.getElementById(asked);
+    if (!input) return;
+    asked = null;
+    input.closest('.set-card')?.scrollIntoView({ block: 'start' });
+    input.focus({ preventScroll: true });
   }
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));

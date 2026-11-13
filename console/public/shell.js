@@ -11,7 +11,7 @@
   const MAC = K.isMac(window.navigator);
   // A shortcut's key as text, for this computer: ⇧⌘O on a Mac, Ctrl+Shift+O elsewhere.
   const keyText = (id) => K.label(K.byId[id].mod, MAC);
-  const THEME_KEY = 'woodshed-cloud-theme';
+  const THEME_KEY = 'woodshed-theme';
   // Read by the shed's review page, which is framed on this origin: writing it fires a storage event there.
   const REVIEW_EXPAND_KEY = 'shed.review.expand';
 
@@ -215,7 +215,7 @@
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }
   const keys = sheet('Keyboard shortcuts', [
-    K.SHORTCUTS.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what))),
+    K.SHORTCUTS.map((s) => h('div', { class: 'krow' }, h('div', { class: 'kkeys' }, keyCaps(s)), h('div', null, s.id === 'keys' ? 'This list' : s.what, s.where && h('span', { class: 'kwhere' }, ` on ${s.where}`)))),
     h('p', { class: 'sheet-note' }, MAC
       ? 'Ctrl works for ⌘ too, except inside a terminal, where Ctrl is the terminal\'s. A key alone works while you are not typing. Sessions have no key of their own: ⌘K, then type a name.'
       : 'A key alone works while you are not typing. Inside a terminal, Ctrl is the terminal\'s: click outside it first. Sessions have no key of their own: Ctrl+K, then type a name.'),
@@ -238,16 +238,17 @@
     paintSettings();
   }
 
+  // Expanded unless folded by choice: the review page reads 'collapsed' as folded and anything else as open.
   function reviewExpands() {
     try {
-      return window.localStorage.getItem(REVIEW_EXPAND_KEY) === 'all';
+      return window.localStorage.getItem(REVIEW_EXPAND_KEY) !== 'collapsed';
     } catch {
-      return false;
+      return true;
     }
   }
   function setReviewExpand(value) {
     try {
-      if (value === 'all') window.localStorage.setItem(REVIEW_EXPAND_KEY, 'all');
+      if (value === 'collapsed') window.localStorage.setItem(REVIEW_EXPAND_KEY, 'collapsed');
       else window.localStorage.removeItem(REVIEW_EXPAND_KEY);
     } catch {
       // A private window keeps nothing.
@@ -303,7 +304,8 @@
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
     const overlayOpen = !palette.hidden || !keys.el.hidden || !settings.el.hidden;
     const id = K.match(e, { inFrame, afterG, typing: overlayOpen || K.takesTyping(e.composedPath?.()[0] ?? e.target) });
-    if (!id || (id === 'rail' && !page.toggleRail)) return;
+    // A form's own key (⌘↵ on New session) is left to the form, which reads it from its fields.
+    if (!id || K.byId[id]?.where || (id === 'rail' && !page.toggleRail)) return;
     e.preventDefault();
     e.stopPropagation();
     if (id === 'g') {

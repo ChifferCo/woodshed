@@ -1,5 +1,5 @@
-// readyGate: a PreToolUse hook (claudeHooks.json) that refuses to open or mark ready a pull request that changes the
-// app when the app was never started in this session, since nothing can have been checked in it (#26686 did this
+// readyGate: a PreToolUse hook (claudeHooks.json) that refuses to open or mark ready a pull request that changes an
+// app when that app was never started in this session, since nothing can have been checked in it (#26686 did this
 // with the proof rules in its prompt). A draft is always allowed: the session opens one, says under `## Proof` why
 // the change cannot be shown here, and asks for a person with a `Needs a human:` comment.
 //
@@ -35,18 +35,29 @@ export function marksReady(payload) {
 }
 
 /**
- * @param {{payload: any, changedFiles: string[]|null, appStarted: boolean, app: {paths: string[], howToProve: string}|null}} args
- *   `changedFiles` is what the branch changes against the default branch, null when git could not say; `app` is the project
- *   file's, null for a project with no app, whose pull requests are never refused
+ * @param {{payload: any, changedFiles: string[]|null, appStarted?: boolean, app?: {paths: string[], howToProve: string}|null,
+ *   apps?: {name: string, label: string, paths: string[], howToProve: string, started: boolean}[]}} args
+ *   `changedFiles` is what the branch changes against the default branch, null when git could not say. `app` and
+ *   `appStarted` are a project's one app; `apps` its several, each with whether it was started. A project with no app
+ *   has its pull requests never refused
  * @returns {string|null}  why the call is refused, or null to let it through
  */
-export function refusal({ payload, changedFiles, appStarted, app }) {
-  if (!app || !marksReady(payload) || appStarted || !changedFiles) return null;
-  const appFiles = changedFiles.filter((f) => app.paths.some((prefix) => f.startsWith(prefix)));
-  if (!appFiles.length) return null;
+export function refusal({ payload, changedFiles, appStarted, app, apps = app ? [{ ...app, started: appStarted }] : [] }) {
+  if (!apps.length || !marksReady(payload) || !changedFiles) return null;
+  // A change under an app's paths needs that app started: another app having run checked nothing of it.
+  for (const one of apps) {
+    if (one.started) continue;
+    const appFiles = changedFiles.filter((f) => one.paths.some((prefix) => f.startsWith(prefix)));
+    if (appFiles.length) return refusalText(one, appFiles, apps.length > 1);
+  }
+  return null;
+}
+
+function refusalText(app, appFiles, several) {
   const named = appFiles.slice(0, FILES_NAMED).map((f) => `\`${f}\``).join(', ');
+  const which = several ? `the ${app.label} app` : 'the app';
   return [
-    `Not opened: this branch changes the app (${named}${appFiles.length > FILES_NAMED ? ', …' : ''}), but the app was never started in this session, so nothing was checked in it.`,
+    `Not opened: this branch changes ${which} (${named}${appFiles.length > FILES_NAMED ? ', …' : ''}), but ${which} was never started in this session, so nothing was checked in it.`,
     `${app.howToProve} Put what you saw under \`## Proof\`, then run this again.`,
     'If it really cannot be shown here, open the pull request as a draft (`gh pr create --draft`) with the reason under `## Proof`, '
       + 'post a PR comment that opens with `Needs a human:`, tags the person on the PR body\'s `Started by @…` line and says what could not be proven and why, then stop.',
@@ -74,9 +85,9 @@ function checkoutOf(cwd) {
   }
 }
 
-// The app was started when one of the project's app logs has something in it. They are outside the Claude home a
-// session keeps (the project file's app.logs, such as ~/.cache/<app>/<checkout>/), so a log
-// there was written in this container.
+// An app was started when one of its logs has something in it. They are outside the Claude home a session keeps (the
+// project file's app.logs, such as ~/.cache/<app>/<checkout>/), so a log there was written in this container. Each of
+// several apps counts by its own logs alone.
 export function appStartedIn({ repoDir, app, home = os.homedir() }) {
   return Object.values(app?.logs ?? {}).some((log) => {
     try {
@@ -104,14 +115,15 @@ function main() {
   const cwd = payload.cwd || process.cwd();
   const repoDir = checkoutOf(cwd);
   if (!repoDir) return;
-  let app;
+  let project;
   try {
-    app = loadProject(repoDir).app;
+    project = loadProject(repoDir);
   } catch (err) {
     process.stderr.write(`${projectRefusal(err)}\n`);
     process.exit(2);
   }
-  const reason = refusal({ payload, changedFiles: changedFilesIn(cwd), appStarted: appStartedIn({ repoDir, app }), app });
+  const apps = project.apps.map((app) => ({ ...app, started: appStartedIn({ repoDir, app }) }));
+  const reason = refusal({ payload, changedFiles: changedFilesIn(cwd), apps });
   if (!reason) return;
   process.stderr.write(`${reason}\n`);
   process.exit(2);

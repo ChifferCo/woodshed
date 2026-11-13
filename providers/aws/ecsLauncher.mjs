@@ -14,7 +14,8 @@ const execFileAsync = promisify(execFile);
 // Never a person's own secret: anyone who can describe a task reads these. A private session fetches those at start.
 const PER_SESSION_ENV = [
   'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'STARTED_BY', 'SESSION_URL', 'ISSUE', 'PR', 'BRANCH', 'PROMPT',
-  'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'PROJECT_REPO',
+  'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'QA_BASE', 'PROJECT_REPO',
+  'SESSION_APP_DOMAIN',
 ];
 const CONTAINER = 'session';
 const IP_WAIT_MS = 90_000;
@@ -146,7 +147,7 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
       const out = await aws([
         'ecs', 'run-task', '--cluster', cluster, '--task-definition', taskDefinition, '--launch-type', 'FARGATE',
         '--started-by', sessionId, '--network-configuration', JSON.stringify(network), '--overrides', JSON.stringify(overrides),
-        // The task definition's `project` tag, so the bill shows a session's Fargate time under Woodshed Cloud.
+        // The task definition's `project` tag, so the bill shows a session's Fargate time under Woodshed.
         '--propagate-tags', 'TASK_DEFINITION',
       ]);
       const taskArn = out?.tasks?.[0]?.taskArn;
@@ -165,7 +166,7 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
         throw new Error('task got no network address in time');
       } catch (err) {
         console.log('launcher: start failed, stopping the task', { sessionId, taskArn, error: err.message });
-        await stopTask(taskArn, 'start failed in the Woodshed Cloud console');
+        await stopTask(taskArn, 'start failed in the Woodshed console');
         throw err;
       }
     },
@@ -205,8 +206,12 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
         'logs', 'get-log-events', '--log-group-name', logGroup, '--log-stream-name', stream, '--limit', String(lines), '--no-start-from-head',
       ]).catch(() => null);
       const text = (events?.events ?? []).map((e) => e.message.trimEnd()).join('\n');
-      // A task that never ran has no logs; its stop reason (a pull or secrets error) is the line that explains it.
-      return [text, task?.stoppedReason].filter(Boolean).join('\n');
+      // A task that never ran has no logs; its stop reason (a pull or secrets error) is the line that explains it. The
+      // exit code tells a crash (1) from an out-of-memory kill (137) when the session logged no ERROR.
+      const container = task?.containers?.find((c) => c.name === CONTAINER) ?? task?.containers?.[0];
+      const exit = typeof container?.exitCode === 'number' ? `exit code ${container.exitCode}` : null;
+      const stopped = task?.stoppedReason ? [task.stoppedReason, [exit, container?.reason].filter(Boolean).join(', ')].filter(Boolean).join(': ') : null;
+      return [text, stopped].filter(Boolean).join('\n');
     },
 
     async stop(ref) {
@@ -214,7 +219,7 @@ export function ecsLauncher({ cluster, taskDefinition, subnets, securityGroup, l
       const taskArns = ref.startsWith(STARTED_BY_PREFIX)
         ? ((await aws(['ecs', 'list-tasks', '--cluster', cluster, '--started-by', ref.slice(STARTED_BY_PREFIX.length)]))?.taskArns ?? [])
         : [ref];
-      for (const taskArn of taskArns) await stopTask(taskArn, 'stopped by the Woodshed Cloud console');
+      for (const taskArn of taskArns) await stopTask(taskArn, 'stopped by the Woodshed console');
     },
   };
 }

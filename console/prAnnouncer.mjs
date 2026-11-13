@@ -6,12 +6,14 @@
 // session. A verdict asking for changes, or a suite that failed or was skipped, is handed to the session to act on,
 // once for each. An approval is handed over too, once, and the post waits a short grace period so the session can
 // read the review's notes first. The brief goes in the thread of the post, and is kept as one PR comment, updated in
-// place, which the brief links to.
+// place, which the brief links to. A pull request goes to its project's own channel when the project has one, and
+// otherwise to the console's; where it went is kept with the post (`slackPost` on the session, by the fleet).
 
 import { DEFAULT_RETENTION } from './consoleSettings.mjs';
 import { briefCommentIn, buildBrief, mergeRiskRunIds, qaCheckFrom } from './decisionBrief.mjs';
 import { approvalNotesFor, feedbackFor, gaveUpComment } from './prMessages.mjs';
-import { checksPass, pullRequestFilters, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
+import { checksPass, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
+import { pullRequestFilters } from '../shared/workflowFile.mjs';
 
 const CHECK_EVERY_MS = 60_000;
 const APPROVAL_GRACE_MS = 5 * 60_000;
@@ -28,7 +30,8 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
 
 /**
  * @param {{store: {state: object, save: () => void}, github: object, slack: {available: boolean, postPr: Function}|null,
- *          githubOf?: ((project: string) => object)|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
+ *          ownApp?: () => {slug: string, login: string}|null,
+ *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
  *                    feedback?: (item: object, text: string) => Promise<void>|void,
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
@@ -44,8 +47,8 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *   a deadline of its own, which is still read every minute
  */
 export function createPrAnnouncer({
-  store, github, githubOf = null, slack, gates: gatesOf = async () => null, now = Date.now, giveUpMs = () => DEFAULT_RETENTION.slackGiveUpMs,
-  qaWaitMs = () => DEFAULT_RETENTION.qaWaitMs, events = {}, webhooksFlowing = () => false, fallbackMs = CHECK_EVERY_MS,
+  store, github, githubOf = null, defaultProjectName = () => null, slack, gates: gatesOf = async () => null, now = Date.now, giveUpMs = () => DEFAULT_RETENTION.slackGiveUpMs,
+  qaWaitMs = () => DEFAULT_RETENTION.qaWaitMs, events = {}, webhooksFlowing = () => false, fallbackMs = CHECK_EVERY_MS, ownApp = () => null,
 }) {
   const { state } = store;
   // When each waiting pull request was last read, by number. Not kept: after a restart each is read at once.
@@ -55,6 +58,17 @@ export function createPrAnnouncer({
   // project carry no `project`, as they did before projects.
   const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
   const gh = (item) => (item.project && githubOf ? githubOf(item.project) : github);
+  const projectOf = (item) => item.project ?? defaultProjectName();
+  const hasChannel = (name) => (slack?.channelFor ? Boolean(slack.channelFor(name).channel) : Boolean(slack?.available));
+
+  /**
+   * Whether a project's pull requests have a channel to go to: its own, or the console's. One with neither is not
+   * tracked, as every pull request was not before projects had channels, so it is tracked once one is set.
+   * @param {{name: string}|null} [project]  null for the default project
+   */
+  function postsFor(project = null) {
+    return Boolean(slack?.available) && hasChannel(project?.name ?? defaultProjectName());
+  }
 
   async function drop(item, why) {
     state.slackPending = pending().filter((p) => p !== item);
@@ -186,7 +200,7 @@ export function createPrAnnouncer({
   function qaFor(item, pull, runs, qa) {
     if (!qa) return { waiting: false, check: null, notRun: 'not configured' };
     const sha = pull.head.sha;
-    const { finished, check } = qaCheckFrom(runs, qa);
+    const { finished, check } = qaCheckFrom(runs, qa, ownApp());
     if (finished) return { waiting: false, check, notRun: null };
     if (!(pull.labels ?? []).some((l) => l.name === qa.label)) return { waiting: false, check: null, notRun: `no ${qa.label} label` };
     if (item.qaSha !== sha) {
@@ -228,13 +242,16 @@ export function createPrAnnouncer({
 
   async function announce(item, { pull, review, runs, suites, qa, gates }) {
     const [comments, reviewRuns] = await Promise.all([gh(item).issueComments(item.number), reviewRunsFor(item, runs, pull.head.sha, gates)]);
-    const args = { pull, review, runs, comments: comments ?? [], suites, qa, gates, reviewRuns };
+    const args = { pull, review, runs, comments: comments ?? [], suites, qa, gates, reviewRuns, ownApp: ownApp() };
     const written = await writeBriefComment(item, comments ?? [], buildBrief(args).comment);
     const brief = buildBrief({ ...args, commentUrl: written.id ? `${pull.html_url}#issuecomment-${written.id}` : null });
     console.log('slack: decision brief written on the pull request', { number: item.number, commentId: written.id, updated: written.updated, ...brief.facts });
     // No `mergeRisk`, no risk tag on the post: undefined leaves it out, where null says the check was not posted.
     const tier = gates?.mergeRisk ? brief.tier : undefined;
-    const posted = await slack.postPr({ title: pull.title, url: pull.html_url, tier, brief: brief.slack, mention: (await events.mention?.(item)) ?? null });
+    const posted = await slack.postPr({
+      title: pull.title, url: pull.html_url, tier, brief: brief.slack, mention: (await events.mention?.(item)) ?? null, project: projectOf(item),
+    });
+    if (posted?.channel) item.post = { channel: posted.channel, ts: posted.ts ?? null };
     return drop(item, posted ? 'posted' : 'Slack did not take it');
   }
 
@@ -273,6 +290,12 @@ export function createPrAnnouncer({
       return drop(item, 'not approved and green in time');
     }
     if (passed) {
+      // Its channel was cleared after it was tracked: it waits for one, and gives up in time like any other.
+      if (!hasChannel(projectOf(item))) {
+        if (gaveUp) return drop(item, 'no Slack channel');
+        console.log('slack: ready, but its project has no channel now', { number: item.number, project: projectOf(item) });
+        return;
+      }
       const holding = gates?.review ? await holdForNotes(item, pull, review, gates) : false;
       const qa = qaFor(item, pull, runs, gates?.qa ?? null);
       if (holding || qa.waiting) return;
@@ -326,5 +349,5 @@ export function createPrAnnouncer({
   }
 
   // A getter: the channel is a setting, and can be set or cleared while the console runs.
-  return { get available() { return Boolean(slack?.available); }, track, check, stale, waitingSessions };
+  return { get available() { return Boolean(slack?.available); }, postsFor, track, check, stale, waitingSessions };
 }
