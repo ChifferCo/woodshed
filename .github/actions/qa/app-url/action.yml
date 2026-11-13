@@ -1,0 +1,37 @@
+name: QA app url
+description: >-
+  Reads the project file's app.start and app URL, so a repo's QA workflow can start and test its app the same way a
+  Woodshed session does, with nothing to hand-edit. Run it before the plan step: the plan needs the URL, and the start
+  step needs the command.
+inputs:
+  project-file:
+    description: The project file to read, in the checked-out repo.
+    default: .woodshed/project.yaml
+outputs:
+  start:
+    description: The app's start command, from the project file's app.start (empty when there is no app).
+    value: ${{ steps.read.outputs.start }}
+  url:
+    description: Where the app will be, http://localhost:<app.frontendPort> (3000 when none is set).
+    value: ${{ steps.read.outputs.url }}
+runs:
+  using: composite
+  steps:
+    - name: Read the app from the project file
+      id: read
+      shell: bash
+      env:
+        PROJECT_FILE: ${{ inputs.project-file }}
+      run: |
+        # The same reader a session's start uses, from this action's own checkout, against the repo's project file.
+        shared="${{ github.action_path }}/../../../../shared/project.mjs"
+        start=$(node "$shared" get app.start || true)
+        port=$(node "$shared" get app.frontendPort || true)
+        [ -n "$port" ] || port=3000
+        {
+          echo "start<<WOODSHED_EOF"
+          echo "$start"
+          echo "WOODSHED_EOF"
+          echo "url=http://localhost:${port}"
+        } >> "$GITHUB_OUTPUT"
+        echo "app.start: ${start:-none}; url: http://localhost:${port}"
