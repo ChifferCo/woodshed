@@ -185,7 +185,7 @@ export function createSessionApi({
     // A private session acts as its owner. Their own token reaches every repo the App is on that they can write to; the
     // project file's githubAccess says whether the session gets it as it is (`full`) or scoped by GitHub to the project's
     // repo (`repo`), for a repo whose content outsiders write. Read from its default branch, as the console's other gates are.
-    const readOnly = isAsk(session) || isQa(session);
+    const readOnly = isAsk(session) || isQa(session) || isReview(session);
     const access = session.owner && githubUser && !readOnly ? await accessFor(session, own) : null;
     const ownerToken = access === 'full';
     if (access === 'repo' && githubUser.scopedTokenFor) {
@@ -221,7 +221,7 @@ export function createSessionApi({
     }
     const source = readOnly ? (own?.asks ?? askTokens) : (own?.sessions ?? tokens);
     if (!source) {
-      console.warn('sessionApi: no read-only token for the session', { sessionId: session.id, qa: isQa(session) });
+      console.warn('sessionApi: no read-only token for the session', { sessionId: session.id, qa: isQa(session), review: isReview(session) });
       return reply(res, 404, { error: 'this console mints no read-only tokens' });
     }
     const { token, expiresAt } = await source.token();
