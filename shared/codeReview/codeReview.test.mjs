@@ -31,7 +31,6 @@ test('the verdict reads back the conclusion, summary, comment and merge risk', (
   fs.writeFileSync(path.join(d, 'merge-risk.md'), 'LOW\nOnly changes a docs page.\n- nothing else\n');
   const v = verdictIn(d);
   assert.equal(v.conclusion, 'APPROVE');
-  assert.equal(v.title, '## Claude review — APPROVE');
   assert.equal(v.summary, 'Looks good.');
   assert.match(v.comment, /Claude review/);
   assert.deepEqual(v.mergeRisk, { tier: 'Low', reason: 'Only changes a docs page.', summary: 'LOW\nOnly changes a docs page.\n- nothing else' });

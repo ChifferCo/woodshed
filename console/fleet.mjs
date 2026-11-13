@@ -1598,9 +1598,8 @@ export function createFleet({
     }
     // The head must be a branch in the repo, never a fork, as the Actions review requires too.
     if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
-    if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project)
-      && (s.review.sha === pull.head.sha ? ACTIVE_STATUSES.has(s.status) || s.review.conclusion : ACTIVE_STATUSES.has(s.status)))) {
-      return ignored('a review session is already running on it, or has reviewed this commit');
+    if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project) && ACTIVE_STATUSES.has(s.status))) {
+      return ignored('a review session is already running on it');
     }
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
     const session = await createSession({
@@ -1613,34 +1612,44 @@ export function createFleet({
 
   /**
    * A review session's result (POST /review-report): the console submits the formal review and the Merge risk check as
-   * its App, then the session stops. The head the session read goes to GitHub, so a push since makes GitHub refuse.
+   * its App, then the session stops. A null conclusion (the session wrote no verdict) submits nothing and only stops it.
    * @param {object} session
-   * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT', title: string, summary: string, comment: string,
+   * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string,
    *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}} result
    */
-  async function reviewFinished(session, { conclusion, title, summary, comment, mergeRisk, sha, costUsd }) {
+  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, sha, costUsd }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
+    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, sha }) : false;
+    if (!conclusion) console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
+    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd } });
+    console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours });
+    stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
+      .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
+  }
+
+  // Only submits when the reviewed commit is still the head: a push since makes the review stale, so it is dropped
+  // rather than approving the wrong commit. The verdict starts with the project file's heading, which the gate looks for.
+  async function submitReview(session, gh, { conclusion, summary, comment, mergeRisk, sha }) {
     if (comment) await postReviewComment(session, gh, comment);
     const pull = await safely('review pull request', () => gh.pull(session.number));
-    // Only submit when the reviewed commit is still the head: a push since makes the review stale, so it is dropped
-    // rather than approving the wrong commit.
-    const ours = Boolean(pull?.head?.sha) && sha === pull.head.sha;
-    if (!ours) {
-      console.warn('fleet: review skipped, the head moved since it was reviewed', { id: session.id, number: session.number, reported: sha, head: pull?.head?.sha ?? null });
-    } else {
-      await safely('review verdict', () => gh.createReview(session.number, { event: conclusion, body: `${title}\n\n${summary}`.trim(), sha }));
-      if (session.review.check && mergeRisk?.tier) {
-        await safely('Merge risk check', () => gh.createCheckRun({
-          sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
-          summary: `Set by the AI review.\n\n${mergeRisk.summary}`.trim(), externalId: session.id,
-        }));
-      }
+    if (!pull?.head?.sha) {
+      console.warn('fleet: review not submitted, the pull request could not be read', { id: session.id, number: session.number });
+      return false;
     }
-    update(session, { review: { ...session.review, conclusion, reviewedSha: sha, costUsd } });
-    console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours });
-    stop(session, `Review finished: ${conclusion}`)
-      .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
+    if (sha !== pull.head.sha) {
+      console.warn('fleet: review not submitted, the head moved since it was reviewed', { id: session.id, number: session.number, reported: sha, head: pull.head.sha });
+      return false;
+    }
+    const body = `${session.review.heading} — ${conclusion}\n\n${summary}`.trim();
+    await safely('review verdict', () => gh.createReview(session.number, { event: conclusion, body, sha }));
+    if (session.review.check && mergeRisk?.tier) {
+      await safely('Merge risk check', () => gh.createCheckRun({
+        sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
+        summary: `Set by the AI review.\n\n${mergeRisk.summary}`.trim(), externalId: session.id,
+      }));
+    }
+    return true;
   }
 
   async function postReviewComment(session, gh, body) {

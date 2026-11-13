@@ -392,14 +392,27 @@ async function answerReply(req, res, session, asks) {
 }
 
 // A QA session's result, once: the console writes it into the pull request's QA comment and stops the session.
-async function qaReportReply(req, res, session, fleet) {
-  if (!isQa(session) || !fleet.qaFinished) {
+function qaReportReply(req, res, session, fleet) {
+  return reportReply(req, res, session, {
+    kind: 'QA', mine: isQa(session), sent: Boolean(session.qa?.conclusion), parse: parseQaReport, finish: fleet.qaFinished,
+  });
+}
+
+function reviewReportReply(req, res, session, fleet) {
+  return reportReply(req, res, session, {
+    kind: 'review', mine: isReview(session), sent: Boolean(session.review?.reported), parse: parseReviewReport, finish: fleet.reviewFinished,
+  });
+}
+
+// A QA or review session's one report: read whole, parsed, then handed to the fleet, which posts it and stops the session.
+async function reportReply(req, res, session, { kind, mine, sent, parse, finish }) {
+  if (!mine || !finish) {
     req.resume();
-    return reply(res, 404, { error: 'only a QA session has a report to send' });
+    return reply(res, 404, { error: `only a ${kind} session has a report to send` });
   }
-  if (session.qa.conclusion) {
+  if (sent) {
     req.resume();
-    console.warn('sessionApi: a second QA report refused', { sessionId: session.id });
+    console.warn('sessionApi: a second report refused', { sessionId: session.id, kind });
     return reply(res, 409, { error: 'this session already sent its report' });
   }
   req.setEncoding('utf8');
@@ -410,39 +423,12 @@ async function qaReportReply(req, res, session, fleet) {
   }
   let result;
   try {
-    result = parseQaReport(text);
+    result = parse(text);
   } catch (err) {
-    console.warn('sessionApi: a QA report refused', { sessionId: session.id, why: err.message });
+    console.warn('sessionApi: a report refused', { sessionId: session.id, kind, why: err.message });
     return reply(res, 400, { error: err.message });
   }
-  await fleet.qaFinished(session, result);
-  res.writeHead(204).end();
-}
-
-async function reviewReportReply(req, res, session, fleet) {
-  if (!isReview(session) || !fleet.reviewFinished) {
-    req.resume();
-    return reply(res, 404, { error: 'only a review session has a verdict to send' });
-  }
-  if (session.review.conclusion) {
-    req.resume();
-    console.warn('sessionApi: a second review report refused', { sessionId: session.id });
-    return reply(res, 409, { error: 'this session already sent its verdict' });
-  }
-  req.setEncoding('utf8');
-  let text = '';
-  for await (const chunk of req) {
-    text += chunk;
-    if (text.length > MAX_QA_REPORT_BYTES) return reply(res, 413, { error: 'too large' });
-  }
-  let result;
-  try {
-    result = parseReviewReport(text);
-  } catch (err) {
-    console.warn('sessionApi: a review report refused', { sessionId: session.id, why: err.message });
-    return reply(res, 400, { error: err.message });
-  }
-  await fleet.reviewFinished(session, result);
+  await finish(session, result);
   res.writeHead(204).end();
 }
 

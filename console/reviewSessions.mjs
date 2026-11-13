@@ -7,7 +7,8 @@ const CONCLUSIONS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 const TIERS = new Set(['Low', 'Medium', 'High']);
 
 /**
- * @returns {{conclusion: string, title: string, summary: string, comment: string,
+ * A report with `conclusion: null` says the session wrote no verdict: the console submits nothing and stops it.
+ * @returns {{conclusion: string|null, summary: string, comment: string,
  *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}}
  */
 export function parseReviewReport(raw) {
@@ -17,12 +18,11 @@ export function parseReviewReport(raw) {
   } catch {
     throw new Error('body must be JSON');
   }
-  if (!CONCLUSIONS.has(body?.conclusion)) throw new Error('conclusion must be APPROVE, REQUEST_CHANGES or COMMENT');
+  if (body?.conclusion !== null && !CONCLUSIONS.has(body?.conclusion)) throw new Error('conclusion must be APPROVE, REQUEST_CHANGES, COMMENT or null');
   if (typeof body.sha !== 'string' || !/^[0-9a-f]{40}$/.test(body.sha)) throw new Error('sha must be a commit');
   const mr = body.mergeRisk ?? {};
   return {
     conclusion: body.conclusion,
-    title: String(body.title ?? '').slice(0, 200),
     summary: String(body.summary ?? '').slice(0, MAX_REPORT_CHARS),
     comment: String(body.comment ?? '').slice(0, MAX_REPORT_CHARS),
     mergeRisk: {

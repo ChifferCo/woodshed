@@ -350,7 +350,7 @@ test('a review session gets a read-only token, and sends its verdict once throug
   const finished = [];
   const fleet = {
     sessions: () => sessions,
-    async reviewFinished(session, result) { finished.push({ id: session.id, ...result }); session.review.conclusion = result.conclusion; },
+    async reviewFinished(session, result) { finished.push({ id: session.id, ...result }); session.review.reported = true; },
   };
   const handle = createSessionApi({ fleet, tokens, askTokens });
   const server = http.createServer((req, res) => { handle(req, res); });
@@ -364,7 +364,7 @@ test('a review session gets a read-only token, and sends its verdict once throug
   const sha = 'b'.repeat(40);
   const send = (authorization, over) => request(port, {
     path: '/review-report', authorization,
-    body: JSON.stringify({ conclusion: 'APPROVE', title: '## Claude review — APPROVE', summary: 'ok', comment: '> ok', mergeRisk: { tier: 'Low', reason: 'r', summary: 'LOW' }, sha, costUsd: 0.3, ...over }),
+    body: JSON.stringify({ conclusion: 'APPROVE', summary: 'ok', comment: '> ok', mergeRisk: { tier: 'Low', reason: 'r', summary: 'LOW' }, sha, costUsd: 0.3, ...over }),
   });
   assert.equal((await send('Bearer pr-token', {})).status, 404, 'only a review session has a verdict to send');
   assert.equal((await send('Bearer review-token', { conclusion: 'LGTM' })).status, 400);

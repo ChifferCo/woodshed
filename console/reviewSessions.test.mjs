@@ -4,13 +4,13 @@ import { parseReviewReport } from './reviewSessions.mjs';
 
 const SHA = 'a'.repeat(40);
 const body = (over = {}) => JSON.stringify({
-  conclusion: 'APPROVE', title: '## Claude review — APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n…',
+  conclusion: 'APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n…',
   mergeRisk: { tier: 'Low', reason: 'Only a docs page.', summary: 'LOW\nOnly a docs page.' }, sha: SHA, costUsd: 0.5, ...over,
 });
 
 test('a well-formed review report parses', () => {
   assert.deepEqual(parseReviewReport(body()), {
-    conclusion: 'APPROVE', title: '## Claude review — APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n…',
+    conclusion: 'APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n…',
     mergeRisk: { tier: 'Low', reason: 'Only a docs page.', summary: 'LOW\nOnly a docs page.' }, sha: SHA, costUsd: 0.5,
   });
 });

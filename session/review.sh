@@ -52,7 +52,8 @@ gatherContext() {
 
 sendReport() {
   local verdict code body
-  verdict=$(node "$REVIEW" verdict "$DIR") || { say "The reviewer wrote no verdict, so nothing is submitted"; return; }
+  # No verdict still reports, with a null conclusion, so the console stops the session rather than leaving it idle.
+  verdict=$(node "$REVIEW" verdict "$DIR") || { say "The reviewer wrote no verdict, so nothing is submitted"; verdict='{"conclusion":null}'; }
   cost_of() { [ -f "$1" ] && jq -rR 'fromjson? | select(.type == "result") | .total_cost_usd // empty' "$1" | tail -1; }
   body=$(mktemp)
   jq -n --argjson v "$verdict" --arg sha "$(git -C "$REPO_DIR" rev-parse HEAD)" \

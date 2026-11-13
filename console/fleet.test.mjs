@@ -2342,7 +2342,7 @@ const REVIEW_GATES = {
 };
 const REVIEW_PULL = { state: 'open', draft: false, title: 'Add GTM', user: { login: 'joel' }, head: { ref: 'joel/gtm', sha: 'a'.repeat(40) }, base: { ref: 'main' } };
 const REVIEW_RESULT = {
-  conclusion: 'APPROVE', title: '## Claude review — APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n> **Merge risk: Low**',
+  conclusion: 'APPROVE', summary: 'Looks good.', comment: '> [!TIP]\n> **Merge risk: Low**',
   mergeRisk: { tier: 'Low', reason: 'Only a docs page.', summary: 'LOW\nOnly a docs page.' }, sha: 'a'.repeat(40), costUsd: 0.4,
 };
 function reviewSetup(options = {}) {
@@ -2378,7 +2378,7 @@ test('reviewFinished submits the formal review and the Merge risk check as the c
   await fleet.reviewFinished(session, REVIEW_RESULT);
   assert.equal(calls.reviews.length, 1);
   assert.deepEqual([calls.reviews[0].number, calls.reviews[0].event, calls.reviews[0].sha], [7, 'APPROVE', 'a'.repeat(40)]);
-  assert.match(calls.reviews[0].body, /Claude review — APPROVE/);
+  assert.ok(calls.reviews[0].body.startsWith(`${REVIEW_GATES.review.heading} — APPROVE`), 'starts with the heading the gate looks for');
   const risk = calls.checks.find((c) => c.name === 'Merge risk');
   assert.deepEqual([risk.conclusion, risk.title], ['neutral', 'Low: Only a docs page.']);
   assert.equal(fleet.sessions()[0].review.conclusion, 'APPROVE');
@@ -2393,6 +2393,15 @@ test('reviewFinished does not submit for a commit that is no longer the head', a
   assert.deepEqual([calls.reviews, calls.checks.filter((c) => c.name === 'Merge risk')], [[], []]);
 });
 
+test('a review that wrote no verdict submits nothing and stops the session', async () => {
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  await fleet.reviewFinished(session, { conclusion: null, sha: 'a'.repeat(40), costUsd: null });
+  assert.deepEqual([calls.reviews, calls.checks.filter((c) => c.name === 'Merge risk')], [[], []]);
+  assert.deepEqual([session.review.reported, session.review.conclusion], [true, null]);
+});
+
 test('a review session is not started for a pull request from a fork', async () => {
   const { fleet, github } = reviewSetup();
   github.pull = async () => ({ ...REVIEW_PULL, head: { ...REVIEW_PULL.head, repo: { full_name: 'someone/fork' } } });
@@ -2405,7 +2414,6 @@ test('a review session runs for a same-repo pull request opened by the App', asy
   github.pull = async () => ({ ...REVIEW_PULL, user: { login: 'woodshed-console[bot]' }, head: { ...REVIEW_PULL.head, repo: { full_name: 'o/r' } } });
   assert.equal((await fleet.reviewOnTag({ number: 7 })).outcome, 'started');
 });
-
 
 test('a review on a human author with a reused handle is refused, so it never spends the wrong plan', async () => {
   const t = setup({ gates: REVIEW_GATES, people: { check: async () => false } });

@@ -7,8 +7,8 @@
 //       writes <dir>/review-prompt.md, pointing at <dir>/context.md, <dir>/base-rules/, <dir>/instructions.md and
 //       <dir>/risk-areas.md, which session/review.sh fills from the base branch
 //   node codeReview.mjs verdict <dir>
-//       prints {conclusion, title, summary, comment, mergeRisk: {tier, reason, summary}} as JSON, or exits 3 when the
-//       session wrote no verdict
+//       prints {conclusion, summary, comment, mergeRisk: {tier, reason, summary}} as JSON, or exits 3 when the session
+//       wrote no verdict
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -55,15 +55,14 @@ export function mergeRiskIn(dir) {
 /**
  * What the review session decided, read back for the console to submit. `conclusion` is null when the session wrote no
  * verdict (it could not review), so the console posts nothing and the pull request stays unapproved.
- * @returns {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, title: string, summary: string, comment: string,
+ * @returns {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string,
  *   mergeRisk: {tier: string|null, reason: string, summary: string}}}
  */
 export function verdictIn(dir) {
   const raw = readFile(dir, 'verdict.txt').trim().toUpperCase().replace(/[^A-Z_]/g, '');
   const conclusion = CONCLUSIONS.includes(raw) ? raw : null;
   const mergeRisk = mergeRiskIn(dir);
-  const title = conclusion ? `## Claude review — ${conclusion}` : '';
-  return { conclusion, title, summary: readFile(dir, 'summary.md').trim(), comment: readFile(dir, 'review-comment.md').trim(), mergeRisk };
+  return { conclusion, summary: readFile(dir, 'summary.md').trim(), comment: readFile(dir, 'review-comment.md').trim(), mergeRisk };
 }
 
 function main([command, dir]) {
