@@ -6,8 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { appStartedIn, marksReady, refusal } from './readyGate.mjs';
-import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
+import { appStartedIn, brokenFileRefusal, marksReady, refusal } from './readyGate.mjs';
+import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from '../shared/projectFixture.mjs';
 
 // A repo's app as its project file would give it. The repo Woodshed is in checks its own (.woodshed/test/).
 const app = fixtureApp({
@@ -166,4 +166,40 @@ test('run as the hook on a project of several apps, it reads each app\'s own log
   assert.match(blocked.stderr, /changes the admin app \(`admin\/users\.tsx`\)/);
   fs.writeFileSync(path.join(home, 'logs', 'admin.log'), 'listening on 3000\n');
   assert.deepEqual([run().status, run().stderr], [0, '']);
+});
+
+test('a branch that breaks its own project file is refused though the installation\'s file stands in; one the default branch broke is not', (t) => {
+  assert.match(brokenFileRefusal({ project: { repoFileError: '.woodshed/project.yaml: has database' }, changedFiles: ['.woodshed/project.yaml'] }),
+    /^Not opened: \.woodshed\/project\.yaml: has database\. Fix the project file on this branch/);
+  assert.equal(brokenFileRefusal({ project: { repoFileError: 'x' }, changedFiles: ['web/a.ts'] }), null, 'the branch left the file alone');
+  assert.equal(brokenFileRefusal({ project: { repoFileError: 'x' }, changedFiles: null }), null, 'git could not say');
+  assert.equal(brokenFileRefusal({ project: {}, changedFiles: ['.woodshed/project.yaml'] }), null, 'the file reads');
+
+  const script = fileURLToPath(new URL('./readyGate.mjs', import.meta.url));
+  const scratch = (prefix) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    return dir;
+  };
+  const repo = fixtureCheckout(scratch('readyGate-broken-'), { repo: 'acme/app' });
+  const files = fixtureProjectFiles(scratch('readyGate-files-'), { 'acme/app': fixtureProject() });
+  const home = scratch('readyGate-broken-home-');
+  const run = () => spawnSync('node', [script], {
+    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'gh pr create -t x -F b.md' }, cwd: repo }),
+    env: { ...process.env, HOME: home, DEFAULT_BRANCH: 'main', WOODSHED_PROJECT_FILES_DIR: files },
+    encoding: 'utf8',
+  });
+  fs.mkdirSync(path.join(repo, '.woodshed'));
+  fs.writeFileSync(path.join(repo, '.woodshed', 'project.yaml'), 'version: 1\ndatabase: null\n');
+  const broken = run();
+  assert.equal(broken.status, 2);
+  assert.match(broken.stderr, /^Not opened: \.woodshed\/project\.yaml: has database, which is not a field/);
+
+  // The same file on the default branch: this branch did not break it, and the installation's file runs the repo.
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { stdio: 'ignore' });
+  git('add', '.woodshed');
+  git('commit', '-q', '-m', 'old project file');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  const allowed = run();
+  assert.deepEqual([allowed.status, allowed.stderr], [0, '']);
 });

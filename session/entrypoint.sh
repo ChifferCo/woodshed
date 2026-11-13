@@ -194,10 +194,13 @@ configureGitIdentity() {
 # anyway. Each database's engine exports its variables first, from the console's credentials, so the project's `env`
 # and lines can name them; a database the environment does not name takes the project file's user and name.
 writeEnvFiles() {
-  local exports written from
+  local exports written from skipped
   # The first read of the project file: one that does not parse stops the start here, naming the field.
   from=$(project get from) || die "the project file could not be read"
   log "Project file read" "(from: $from)"
+  # The installation's file stood in for a repo's own that does not parse: say why, or it reads as a repo with none.
+  skipped=$(project get repoFileError) || skipped=
+  [ -z "$skipped" ] || log "WARNING: the repo's own project file was skipped: $skipped"
   exports=$(WOODSHED_DB_USER=${WOODSHED_DB_USER:-} WOODSHED_DB_PASSWORD=${WOODSHED_DB_PASSWORD:-} WOODSHED_DB_NAME=${WOODSHED_DB_NAME:-} \
     databases env) || die "the databases' variables could not be made"
   eval "$exports"

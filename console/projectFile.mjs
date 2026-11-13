@@ -4,7 +4,8 @@
 // installation must host before a session starts (`databases`), and where a database keeps its migrations, which Restore
 // a dump counts a copy's against (`databases[].migrations`, with the table it records them in, what its dump commands
 // leave out and its migrate command, dbRestore.mjs). Read from the repo's default branch, or the installation's file for a
-// repo with none there (WOODSHED_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot
+// repo with none there or one whose own file does not parse (WOODSHED_PROJECT_FILES_DIR, shared/project.mjs), and kept
+// for a while. A file that cannot
 // be read leaves My settings without that list, never without the page, and holds the pull requests until it can be
 // read: an unread file is not a file with no gates.
 import { parseYaml } from '../shared/yamlLite.mjs';
@@ -26,7 +27,8 @@ export function appendedBySecret(text) {
 /**
  * @param {{github: {projectFile: () => Promise<string|null>, fileNames: (folder: string) => Promise<string[]>},
  *          installationFile?: () => {text: string}|null, now?: () => number}} deps  `installationFile` is the
- *   installation's project file for the repo (installationProjectFile), read only when its default branch has none
+ *   installation's project file for the repo (installationProjectFile), read only when its default branch has none,
+ *   or one that does not parse
  */
 export function createProjectReader({ github, installationFile = () => null, now = Date.now }) {
   let pending = null;
@@ -34,7 +36,8 @@ export function createProjectReader({ github, installationFile = () => null, now
   let keepMs = KEEP_MS;
   let readFrom;
 
-  // The repo's own file wins: the installation's is for a repo that has none. A console with no repo yet has neither.
+  // The repo's own file wins: the installation's is for a repo that has none, or one it cannot read (`parsed`). A
+  // console with no repo yet has neither.
   async function readText() {
     if (github.repo === '') return { text: null, from: 'none' };
     const text = await github.projectFile();
@@ -43,13 +46,28 @@ export function createProjectReader({ github, installationFile = () => null, now
     return supplied ? { text: supplied.text, from: 'installation' } : { text: null, from: 'none' };
   }
 
+  // A default branch's file the console cannot read (one written for another version, say) gives way to the
+  // installation's for the repo, where there is one, as a session's read does (loadProject): the console and the sessions
+  // then run the repo from the same file. `repoFileError` says why the repo's was skipped.
+  async function parsed() {
+    const { text, from } = await readText();
+    if (text === null) return { project: null, from };
+    try {
+      return { project: parseProject(parseYaml(text)), from };
+    } catch (err) {
+      const supplied = from === 'default branch' ? installationFile() : null;
+      if (!supplied) throw err;
+      const repoFileError = String(err?.message ?? err).split('\n')[0];
+      return { project: parseProject(parseYaml(supplied.text)), from: 'installation', repoFileError };
+    }
+  }
+
   async function load() {
     try {
-      const { text, from } = await readText();
-      const project = text === null ? null : parseProject(parseYaml(text));
+      const { project, from, repoFileError } = await parsed();
       console.log('projectFile: read', {
-        found: text !== null, from, envFiles: project?.envFiles?.length ?? 0, pullRequests: Boolean(project?.pullRequests),
-        databases: project?.databases?.map((d) => d.engine) ?? [],
+        found: project !== null, from, envFiles: project?.envFiles?.length ?? 0, pullRequests: Boolean(project?.pullRequests),
+        databases: project?.databases?.map((d) => d.engine) ?? [], ...(repoFileError && { repoFileError }),
       });
       return { project, error: null };
     } catch (err) {
