@@ -143,8 +143,8 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .rail-new .rail-slots { margin-left: 8px; padding-left: 8px; border-left: 1px solid currentColor; font-family: var(--mono); font-size: 11px; font-weight: 500; opacity: .85; }
 .rail-new:hover { filter: brightness(1.06); }
 /* The user menu, at the foot of the rail, opening upward. */
-.rail-user { flex: none; border-top: 1px solid var(--line-soft); padding: 8px 10px; }
-.rail-user .nav-user { width: 100%; }
+.rail-user { flex: none; display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line-soft); padding: 8px 10px; }
+.rail-user .nav-user { flex: 1 1 auto; min-width: 0; width: 100%; }
 .rail-user .user-btn { width: 100%; border-radius: 6px; padding: 4px 8px 4px 4px; }
 .rail-user .user-name { display: inline; flex: 1; text-align: left; }
 .rail-user .caret { margin-left: auto; }
@@ -841,6 +841,14 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   .launch-actions .btn { flex: 1 1 100%; min-height: 44px; justify-content: center; font-size: 15px; }
 }
 .shell.is-railless .rail { display: none; }
+/* ⌘.'s buttons: Hide at the rail's foot, beside the user menu; while it is hidden, Show on a strip down the left edge. */
+.rail-hide, .rail-show { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--sub); cursor: pointer; }
+.rail-hide:hover, .rail-show:hover { color: var(--ink); background: var(--chip-count); }
+.rail-hide svg, .rail-show svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+.rail-strip { display: none; }
+.shell.is-railless .rail-strip { flex: none; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; padding: 8px 5px; border-right: 1px solid var(--line); background: var(--ground); }
+@media (min-width: 900px) { .shell.is-railless .rail-strip { height: 100vh; position: sticky; top: 0; } }
+@media (max-width: 720px) { .rail-hide, .shell.is-railless .rail-strip { display: none; } }
 
 kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--ground); color: var(--ink); font: 500 10.5px/1.5 var(--mono); text-align: center; }
 /* ---- the palette, the shortcuts and settings sheets ---- */

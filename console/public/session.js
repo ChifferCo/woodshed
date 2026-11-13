@@ -630,8 +630,17 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot());
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
     return railUser;
+  }
+
+  // The rail's two buttons for ⌘.: one at its foot hides it, and a strip down the page's left edge, there only while
+  // it is hidden, shows it again.
+  const RAIL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/></svg>';
+  function railToggle(className, label) {
+    const btn = h('button', { type: 'button', class: className, 'aria-label': label, 'data-keys': 'rail', 'data-hint': label, onclick: () => toggleRail() });
+    btn.innerHTML = RAIL_ICON;
+    return btn;
   }
 
   // Your session on a pull request's branch in its repo, as the shed finds one: a live one first, then a stopped one.
@@ -1633,7 +1642,8 @@
     slots.diff = h('div', { class: 'pane-view is-diff', role: 'tabpanel', hidden: true });
     slots.launch = launcher.el;
     slots.home = h('div', { style: 'display: contents' });
-    slots.shell = h('div', { class: 'shell' }, slots.rail,
+    slots.railStrip = h('div', { class: 'rail-strip' }, railToggle('rail-show', 'Show the rail'));
+    slots.shell = h('div', { class: 'shell' }, slots.rail, slots.railStrip,
       h('main', { class: 'pane' }, slots.head, slots.keys, slots.body, messageBox.el, slots.plain, slots.review, slots.diff, slots.applog, slots.launch, slots.home));
     document.getElementById('app').replaceChildren(slots.shell);
     applyTermScale();
@@ -1759,7 +1769,11 @@
       }
       if (s.status === 'running') {
         // Made once: a refresh would drop the chat, the open asks and the scroll.
-        if (!slots.review.firstChild) slots.review.append(h('iframe', { class: 'review-frame', src: `/review?session=claude-${s.id}&embed=1`, title: `Review of ${s.title}` }));
+        if (!slots.review.firstChild) slots.review.append(h('iframe', {
+          class: 'review-frame', src: `/review?session=claude-${s.id}&embed=1`, title: `Review of ${s.title}`,
+          // ⌘. and the palette's keys still work once a click put the focus in the review.
+          onload: (e) => W.shell.bindFrame(e.target, { terminal: false }),
+        }));
       } else {
         if (!slots.review.firstChild) renderReview(s);
         loadReview(s, false);
