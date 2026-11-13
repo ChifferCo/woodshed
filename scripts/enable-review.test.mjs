@@ -9,7 +9,7 @@ const SCRIPT = path.join(import.meta.dirname, 'enable-review.sh');
 
 // A fake `gh` on PATH that logs every call, answers the reads the script makes, and saves the contents of each file
 // it is asked to write (the base64 of -f content=, decoded) so a test can read what the workflow would be.
-function fakeGh(t, { secretExists = false } = {}) {
+function fakeGh(t, { secretExists = false, qaWorkflowExists = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'enable-review-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const bin = path.join(dir, 'bin');
@@ -29,11 +29,17 @@ case "$*" in
   "secret set"*) exit 0 ;;
   "label create"*) exit 0 ;;
 esac
-# contents GET for the existing sha: pretend the file is not there yet (404, like real gh: body to stdout, exit 1)
+# contents GET for the existing sha. The QA workflow is "there" only when the test says so (switching runners); every
+# other file is new, so a 404 (body to stdout, exit 1), like real gh.
 if [[ "$*" == api*contents*--jq\\ .sha* && "$*" != *--method* ]]; then
+  if [[ ${qaWorkflowExists ? 'true' : 'false'} == true && "$*" == *woodshed-qa.yml* ]]; then
+    echo existingsha123 ; exit 0
+  fi
   echo '{"message":"Not Found","status":"404"}'
   exit 1
 fi
+# contents DELETE: record it
+[[ "$*" == *--method\\ DELETE*contents* ]] && exit 0
 # contents PUT: save the decoded file content under its path
 if [[ "$*" == *--method\\ PUT*contents* ]]; then
   p=""; c=""
@@ -123,4 +129,13 @@ test('an unknown --qa-runner is rejected', (t) => {
   const r = run(bin, 'acme/game', '--qa-runner', 'lambda');
   assert.equal(r.status, 2);
   assert.match(r.stderr, /must be actions or woodshed/);
+});
+
+test('switching to the session runner removes a leftover CI QA workflow, so QA does not run twice', (t) => {
+  const { bin, log } = fakeGh(t, { secretExists: true, qaWorkflowExists: true });
+  const r = run(bin, 'acme/game', '--qa-runner', 'woodshed');
+  assert.equal(r.status, 0, r.stderr);
+  const calls = fs.readFileSync(log, 'utf8');
+  assert.match(calls, /--method DELETE repos\/acme\/game\/contents\/\.github\/workflows\/woodshed-qa\.yml/, 'deletes the CI QA workflow');
+  assert.match(r.stdout, /Removed the CI QA workflow/);
 });

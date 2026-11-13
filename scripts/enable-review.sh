@@ -78,6 +78,15 @@ YAML
 if [ "$QA" = true ] && [ "$QA_RUNNER" = woodshed ]; then
   gh label create woodshed-qa -R "$REPO" --color 0e8a16 --description "Run Woodshed QA" --force >/dev/null
   echo "Created the woodshed-qa label"
+  # A repo switched here from the actions runner still has the CI QA workflow, which would run QA a second time on the
+  # label. Remove it so only the session runs.
+  qa_wf=".github/workflows/woodshed-qa.yml"
+  old_sha=$(gh api "repos/${REPO}/contents/${qa_wf}?ref=${branch}" --jq .sha 2>/dev/null) || old_sha=""
+  if [ -n "$old_sha" ]; then
+    gh api --method DELETE "repos/${REPO}/contents/${qa_wf}" \
+      -f message="ci: QA moves to a Woodshed session" -f sha="$old_sha" -f branch="$branch" >/dev/null
+    echo "Removed the CI QA workflow, so QA runs only as a session"
+  fi
   echo
   echo "QA will run as a Woodshed session. On the console you set up:"
   echo "  1. Install the Woodshed GitHub App on ${REPO} and add the repo in Console settings."
