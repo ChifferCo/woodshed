@@ -2392,3 +2392,16 @@ test('reviewFinished does not submit for a commit that is no longer the head', a
   await fleet.reviewFinished(session, REVIEW_RESULT);
   assert.deepEqual([calls.reviews, calls.checks.filter((c) => c.name === 'Merge risk')], [[], []]);
 });
+
+test('a review session is not started for a pull request from a fork', async () => {
+  const { fleet, github } = reviewSetup();
+  github.pull = async () => ({ ...REVIEW_PULL, head: { ...REVIEW_PULL.head, repo: { full_name: 'someone/fork' } } });
+  assert.equal((await fleet.reviewOnTag({ number: 7 })).reason, 'the pull request is from a fork');
+  assert.equal(fleet.sessions().length, 0);
+});
+
+test('a review session runs for a same-repo pull request opened by the App', async () => {
+  const { fleet, github } = reviewSetup();
+  github.pull = async () => ({ ...REVIEW_PULL, user: { login: 'woodshed-console[bot]' }, head: { ...REVIEW_PULL.head, repo: { full_name: 'o/r' } } });
+  assert.equal((await fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+});

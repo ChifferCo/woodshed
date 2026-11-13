@@ -43,7 +43,7 @@ const NO_ROOM_RE = /limit on the number of vCPUs|LimitExceeded|Capacity is unava
 // A start AWS had no room for waits in the queue this long before it is tried again.
 const NO_ROOM_RETRY_MS = 60_000;
 // The triggers whose starter GitHub vouches for, so the only ones a personal Claude plan may run on.
-const GITHUB_TRIGGERS = new Set(['label', 'comment']);
+const GITHUB_TRIGGERS = new Set(['label', 'comment', 'qa', 'review']);
 
 // What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
 // the session image, so they are named here.
@@ -357,7 +357,7 @@ export function createFleet({
     let started;
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
-      if (!session.owner && !isAsk(session) && databases?.available) await databases.createForSession(session.id);
+      if (!session.owner && !isAsk(session) && !isReview(session) && databases?.available) await databases.createForSession(session.id);
       started = await launcher.start(session.id, sessionEnv(session));
     } catch (err) {
       const error = startError(err);
@@ -1586,11 +1586,12 @@ export function createFleet({
       console.log('fleet: review not started', { number, login, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
-    if (!(await gh.canWrite(login))) return ignored('no write access to the repo');
-    if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
-    if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
+    // The review is automated, so it gates on the pull request, not on who triggered it (a session opens pull requests
+    // as the App, which has no write access to name): the head must be a branch in the repo, never a fork, as the
+    // Actions review requires too.
+    if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
     if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project)
       && (s.review.sha === pull.head.sha ? ACTIVE_STATUSES.has(s.status) || s.review.conclusion : ACTIVE_STATUSES.has(s.status)))) {
       return ignored('a review session is already running on it, or has reviewed this commit');
