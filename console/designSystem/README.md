@@ -6,6 +6,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A control says what happens. Buttons are verbs or "+ New session". Errors say what went wrong and what to do: "Slack has no active user U0NOSUCH999: give a member ID or @handle."
 - Sentence case everywhere except group labels, which are uppercase `group-label`.
 - A status is always a word. "Paused", "Needs you", "Working", "Done". A dot or color never stands alone.
+- A session absent from the previous page's list shows "Loading…" until its page's lookup answers. Only a successful lookup can say there is no session; a failed lookup shows its error.
 - No emoji. Use the glyphs the console already uses: `▾ ▸ ✓ ✗ ⋯ ☆ ↗`.
 - Say "Mine" and "Everyone" for the rail's two views, "People" for the filter on Everyone, "Assigned" and "Private" for the tags.
 
