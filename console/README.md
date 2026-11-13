@@ -204,6 +204,14 @@ begins "Getting a machine from AWS", "Waiting for AWS to start it" and "Pulling
 the session image" on AWS, and "Starting a container" and "Booting the
 container" on the local provider, which has no wait for a pull of its own.
 
+A start waiting for room shows the provider's `noRoom` title and detail. When
+the launcher can say how the wait is going (its optional `progress`,
+`providers/README.md`), the page shows its steps under them, as the start's
+checklist: each step's seconds, the current one counting, a failed one with
+what stopped it, and the wait's clock. The fleet reads it every couple of
+seconds while the session waits (`checkWaiting`), keeps it on the session as
+`waitProgress` when it changed, and drops it when the session starts.
+
 ## Session states
 
 The rail and the Shared page group shared sessions by state, and the Shared
@@ -1137,6 +1145,8 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
+- A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
+  such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 

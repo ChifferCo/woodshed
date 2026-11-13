@@ -397,6 +397,27 @@
     return { steps, current: steps.find((step) => step.state === 'now') ?? null };
   }
 
+  // A wait for room whose launcher says how it is going (the session's `waitProgress`, from the fleet's checkWaiting),
+  // in the start checklist's states. A step's seconds run from when it began to when the next one did, the current
+  // one's to now; the wait's clock runs from the first step's start, and stops showing once a step failed.
+  const WAIT_STATES = { done: 'done', current: 'now', pending: 'next', failed: 'failed' };
+
+  /** @returns {{steps: {label: string, note: string|null, state: 'done'|'now'|'next'|'failed', seconds: number|null}[], since: string|null}} */
+  function waitProgress(s, nowMs = Date.now()) {
+    const given = s.waitProgress?.steps ?? [];
+    const steps = given.map((step, i) => {
+      const state = WAIT_STATES[step.state] ?? 'next';
+      const from = step.at ? Date.parse(step.at) : null;
+      const next = given.slice(i + 1).find((later) => later.at)?.at;
+      const end = state === 'now' ? nowMs : state === 'done' && next ? Date.parse(next) : null;
+      const seconds = from && end ? Math.max(0, Math.round((end - from) / 1000)) : null;
+      return { label: step.label, note: step.note ?? null, state, seconds };
+    });
+    const failed = steps.some((step) => step.state === 'failed');
+    const since = failed ? null : given.map((step) => step.at).filter(Boolean).sort()[0] ?? null;
+    return { steps, since };
+  }
+
   /** @returns {string}  m:ss since the ISO time */
   function clock(fromIso, nowMs = Date.now()) {
     const total = Math.max(0, Math.floor((nowMs - Date.parse(fromIso)) / 1000));
@@ -990,6 +1011,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

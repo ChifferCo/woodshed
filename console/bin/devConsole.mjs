@@ -81,6 +81,18 @@ const sessions = [
     status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 6_000).toISOString(),
     startSteps: { machine: new Date(Date.now() - 2_000).toISOString() },
   }),
+  // Waiting for room, with the steps its launcher says the wait is at (a launcher's `progress`, providers/README.md).
+  // Its next try is an hour away, so the docker launcher never takes it, and nothing here changes the steps.
+  session('6b6b6b6b', 26701, 'A session waiting for its machine', {
+    status: 'queued', startedAt: null, stoppedAt: null, stopReason: null, prUrl: null,
+    retryAt: new Date(Date.now() + 3_600_000).toISOString(), error: 'Capacity is unavailable: a machine is being set up',
+    waitProgress: { steps: [
+      { label: 'Creating a machine', state: 'done', note: null, at: new Date(Date.now() - 95_000).toISOString() },
+      { label: 'Installing Docker', state: 'done', note: null, at: new Date(Date.now() - 70_000).toISOString() },
+      { label: 'Building the session image', state: 'current', note: 'step 4 of 9', at: new Date(Date.now() - 22_000).toISOString() },
+      { label: 'Starting the databases', state: 'pending', note: null, at: null },
+    ] },
+  }),
 ];
 fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null }));
 
