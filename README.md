@@ -111,6 +111,30 @@ jobs:
 
 [Setting it up](docs/self-host.md#before-any-of-them-the-project-file) has the steps.
 
+## AI review on any repository
+
+Any GitHub repository can run Woodshed's code review on its pull requests, with no Woodshed installation. Add a
+workflow that calls the reusable one, an `ANTHROPIC_API_KEY` secret, and turn on "Allow GitHub Actions to create and
+approve pull requests" under Settings, Actions, General:
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+jobs:
+  review:
+    permissions: { contents: write, pull-requests: write, issues: read, id-token: write, checks: write }
+    uses: ChifferCo/woodshed/.github/workflows/review.yml@main  # pin to a commit to choose when it changes
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+```
+
+Merge it to the default branch, then end a pull request's last commit message with `[woodshed-review]`. The review
+approves or requests changes with comments on the lines, and rates the merge risk as a `Merge risk` check and a
+`merge risk: low`, `medium` or `high` label. Your `CLAUDE.md`, `.woodshed/review.md` and `.woodshed/riskAreas.md` on the
+default branch add your own rules. [The review in another repo](docs/reference.md#the-review-in-another-repo) has every
+input.
+
 ## Documentation
 
 - Self-hosting: [step by step, for you or your agent](docs/self-host.md); in depth, [on your laptop or a server](providers/local/README.md) and [on AWS](providers/aws/README.md)
