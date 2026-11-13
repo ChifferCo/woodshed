@@ -144,6 +144,27 @@ approves or requests changes with comments on the lines, and rates the merge ris
 change to the workflow never surprises a review. [The review in another repo](docs/reference.md#the-review-in-another-repo)
 has every input.
 
+### QA too
+
+`scripts/enable-review.sh <owner/repo> --qa` also sets up QA: on a pull request, Claude plans tests from the change,
+starts the app, drives it in a browser, and posts a QA comment and a `QA` check. Add the `woodshed-qa` label (the
+script makes it) to a pull request to run it. QA runs on pull requests from a branch in the repository, not forks.
+
+QA needs to know how to start the app, read from a `.woodshed/project.yaml` on the default branch (the same file a
+Woodshed session uses), so there is nothing in the workflow to edit:
+
+```yaml
+version: 1
+app:
+  start: npm start       # however your app starts
+  frontendPort: 3000     # the port it serves on
+  backendPort: 3000
+  howToProve: Open the page and do one thing a user would.
+```
+
+Review and merge risk need no project file. [QA in another repo](docs/reference.md#qa-in-another-repo) has the steps
+for wiring QA by hand instead.
+
 ## Documentation
 
 - Self-hosting: [step by step, for you or your agent](docs/self-host.md); in depth, [on your laptop or a server](providers/local/README.md) and [on AWS](providers/aws/README.md)
