@@ -111,6 +111,26 @@ jobs:
 
 [Setting it up](docs/self-host.md#before-any-of-them-the-project-file) has the steps.
 
+## AI review on any repository
+
+Any GitHub repository can run Woodshed's code review, merge-risk check and QA on its pull requests with no Woodshed
+installation: the checks run in the repository's own GitHub Actions. The setup script writes the workflows, turns on the
+one required setting, and asks for an `ANTHROPIC_API_KEY`:
+
+```
+scripts/enable-review.sh <owner/repo>        # review and merge risk
+scripts/enable-review.sh <owner/repo> --qa   # also QA
+```
+
+It needs the GitHub CLI signed in with the `workflow` scope and admin on the repository. Then end a pull request's last
+commit message with `[woodshed-review]` for a review, and add the `woodshed-qa` label for QA (on pull requests from a
+branch in the repository, not forks). QA starts the app the way [the project file](docs/reference.md#the-project-file)
+says, so there is nothing in the workflow to edit. Already running a Woodshed console? `--qa-runner woodshed` runs QA as
+a [session](docs/reference.md#qa-in-a-woodshed-session) there instead of in CI.
+
+See the [review](docs/reference.md#the-review-in-another-repo) and [QA](docs/reference.md#qa-in-another-repo) in another
+repo to wire them by hand and for every option.
+
 ## Documentation
 
 - Self-hosting: [step by step, for you or your agent](docs/self-host.md); in depth, [on your laptop or a server](providers/local/README.md) and [on AWS](providers/aws/README.md)
