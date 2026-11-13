@@ -313,7 +313,9 @@ An installation works on one repo, and nothing in this folder names one. To set 
   `shared/project.mjs`) as build arguments. The deploy workflow's session job passes them and stages the files of the project file's
   `dependencies.installs` (`session/stageDeps.sh`), so the image runs those installs and no others, in any language.
   The optional build secret `install_env` is `NAME=value` lines, the install secrets below under their variables, which
-  `deps.sh` exports before the installs; the deploy workflow's session job writes it from repo secrets of the installation's choosing.
+  `deps.sh` exports before the installs; the deploy workflow's session job writes it from repo secrets of the installation's choosing,
+  and `install.sh` passes the file `WOODSHED_INSTALL_ENV_FILE` names (a host that builds images for others, such as
+  Woodshed Cloud, writes it from its own store).
 - **Install secrets:** what the installs read that is secret, such as a private registry's token. `install_secrets` in
   Terraform (`WOODSHED_INSTALL_SECRET_PAIRS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
   variable the repo's tools read it from (`{ "registry-token" = "REGISTRY_TOKEN" }`, the one its `.npmrc` names, say).

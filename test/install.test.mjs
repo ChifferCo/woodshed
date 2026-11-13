@@ -449,6 +449,24 @@ test('the generic image is built from session/ and shared/ alone, with no checko
   assert.ok(fs.existsSync(path.join(home, 'build/woodshed/session/entrypoint.sh')));
 });
 
+test('WOODSHED_INSTALL_ENV_FILE is the build\'s install_env secret, by its path: no value on the command line', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-env-'));
+  const repoDir = fixtureCheckout(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-env-repo-')));
+  const file = path.join(home, 'install.env');
+  fs.writeFileSync(file, 'REGISTRY_TOKEN=npm_secret_value\n', { mode: 0o600 });
+  const woodshed = path.resolve(import.meta.dirname, '..');
+  const build = (env) => {
+    const docker = fakeDocker(0);
+    runInstallFunction(`buildImage "${woodshed}" acme/app "${repoDir}" woodshed-session:acme-app t "${home}/build" "" >/dev/null 2>&1`, { PATH: docker.PATH, ...env });
+    return docker.calls().find((call) => call.startsWith('build '));
+  };
+  const withFile = build({ WOODSHED_INSTALL_ENV_FILE: file });
+  assert.match(withFile, /--secret id=gh_token,env=GH_TOKEN --secret id=install_env,src=\S+\/install\.env /);
+  assert.doesNotMatch(withFile, /npm_secret_value/);
+  assert.doesNotMatch(build({}), /install_env/, 'none without the file');
+  assert.throws(() => build({ WOODSHED_INSTALL_ENV_FILE: path.join(home, 'missing.env') }), 'a file that is not there stops the build');
+});
+
 test('a later run with WOODSHED_REPO gives a repo-less install that repo\'s image and databases, keeping the rest of stack.env', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-addrepo-'));
   runMain({ WOODSHED_HOME: home });
