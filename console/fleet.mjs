@@ -43,7 +43,7 @@ const NO_ROOM_RE = /limit on the number of vCPUs|LimitExceeded|Capacity is unava
 // A start AWS had no room for waits in the queue this long before it is tried again.
 const NO_ROOM_RETRY_MS = 60_000;
 // The triggers whose starter GitHub vouches for, so the only ones a personal Claude plan may run on.
-const GITHUB_TRIGGERS = new Set(['label', 'comment', 'qa', 'review']);
+const GITHUB_TRIGGERS = new Set(['label', 'comment']);
 
 // What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
 // the session image, so they are named here.
@@ -1588,16 +1588,9 @@ export function createFleet({
     };
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
-    // The session runs on the author's Claude plan, so a human author is held to the same identity checks as a label
-    // trigger: a reused handle must not spend the old person's token, and only someone set up for sessions runs on
-    // their plan. A pull request a session opened carries a bot author, which has no plan, so it runs on the team key.
-    if (!login.endsWith('[bot]')) {
-      if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
-      if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
-    }
-    // The review is automated, so it gates on the pull request, not on who triggered it (a session opens pull requests
-    // as the App, which has no write access to name): the head must be a branch in the repo, never a fork, as the
-    // Actions review requires too.
+    // The review is automated and runs on the console's team key, so it gates on the pull request, not on who
+    // triggered it (a session opens pull requests as the App): the head must be a branch in the repo, never a fork, as
+    // the Actions review requires too.
     if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
     if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project)
       && (s.review.sha === pull.head.sha ? ACTIVE_STATUSES.has(s.status) || s.review.conclusion : ACTIVE_STATUSES.has(s.status)))) {
