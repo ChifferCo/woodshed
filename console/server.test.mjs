@@ -1533,7 +1533,7 @@ test('an admin turns on sessions from GitHub, then Can be assigned, and only the
 test('a local console with no sign-in and no GitHub App gives the person at the keyboard a login of their own', async () => {
   const { soloLoginOf } = await import('./server.mjs');
   assert.equal(soloLoginOf({ launcher: { kind: 'docker' }, githubApp: null, localLogin: 'local' }), 'local');
-  assert.equal(soloLoginOf({ launcher: { kind: 'docker' }, githubApp: { appId: '1' }, localLogin: 'local' }), null, 'a GitHub App means sign-in tells people apart');
+  assert.equal(soloLoginOf({ launcher: { kind: 'docker' }, githubApp: { appId: '1' }, localLogin: 'local' }), 'local', 'a GitHub App with no sign-in armed yet keeps the local login');
   assert.equal(soloLoginOf({ launcher: { kind: 'ecs' }, githubApp: null, localLogin: 'local' }), null, 'AWS never guesses who is asking');
 });
 
