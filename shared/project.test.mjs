@@ -182,7 +182,7 @@ test('the installs\' manifest is one tab-separated line each, for session/deps.s
     'install\tapi\ta b/*\tvendor ~/.cache/tool\ta && b\n');
 });
 
-const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null };
+const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null, runner: 'actions' };
 const PULL_REQUESTS = {
   review: REVIEW,
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
@@ -195,6 +195,17 @@ test('pullRequests names the repo\'s own review, suites, QA and Merge risk check
   assert.equal(parseProject({ ...EMPTY_PROJECT, pullRequests: null }).pullRequests, null, 'null: no gates of the repo\'s');
   const none = { review: null, suites: [], qa: null, mergeRisk: null };
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, pullRequests: none }).pullRequests, none);
+});
+
+test('review.runner: defaults to actions and needs a workflow, woodshed may leave the workflow out', () => {
+  const full = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests });
+  const { runner, ...noRunner } = REVIEW;
+  assert.equal(full({ ...PULL_REQUESTS, review: noRunner }).pullRequests.review.runner, 'actions', 'left out runs in the workflow');
+  const { workflow, ...noWorkflow } = noRunner;
+  assert.throws(() => full({ ...PULL_REQUESTS, review: noWorkflow }), /pullRequests\.review is missing workflow/);
+  const wood = full({ ...PULL_REQUESTS, review: { ...noWorkflow, runner: 'woodshed' } }).pullRequests.review;
+  assert.deepEqual([wood.runner, wood.workflow], ['woodshed', null], 'a review session needs no workflow');
+  assert.throws(() => full({ ...PULL_REQUESTS, review: { ...REVIEW, runner: 'jenkins' } }), /pullRequests\.review\.runner must be one of actions, woodshed/);
 });
 
 test('a wrong pullRequests section names the field', () => {

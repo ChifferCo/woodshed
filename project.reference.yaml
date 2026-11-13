@@ -157,6 +157,10 @@ pullRequests:
     rerun: '[review]'
     # Default: null. Who posts the review's PR comment, whose risk areas the decision brief quotes.
     commentAuthor: review-bot[bot]
+    # Default: actions. Where the review runs: `actions` in the `workflow` above, or `woodshed` in a review session the
+    # console starts on the `rerun` tag, which posts the verdict and the Merge risk check as the console's App. With
+    # `woodshed`, `workflow` may be left out.
+    runner: actions
   # Default: []. Test suites that must pass on the head commit.
   suites:
     - # Required. The name shown, the workflow file, and the prefix of its jobs' names.
