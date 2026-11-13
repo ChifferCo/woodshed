@@ -42,6 +42,11 @@ your own machine. Everything it makes is in `~/.woodshed`, and `~/.woodshed/bin/
 writes your repository's project file with it, and stops for the steps that are yours: picking the repository, your
 Claude token, and on a server or AWS the GitHub App and any account, DNS or firewall.
 
+Give the agent both things: the Woodshed link is the tool, and the repository your sessions should work on is a
+different one. If you name only Woodshed, a good agent asks which repository. Codex's default sandbox has no network and
+cannot write to `~/.woodshed`, so it cannot do the setup: start it with `codex --sandbox danger-full-access`, or run the
+installer's one command yourself (`docs/self-host.md` has it) and let the agent write the project file: the later steps need the same network and `~/.woodshed` access.
+
 ## Features
 
 - **Isolated environments.** Sessions don't share a branch, a database or an app, so they can run side by side.
