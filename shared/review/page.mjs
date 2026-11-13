@@ -3376,9 +3376,24 @@ ${DARK_PALETTE}
         parts.push(' ahead of ', mono(state.meta.baseRefName));
       }
       parts.push('. It may have changed since.');
+      // What the last Re-review did with origin, then whether GitHub has moved on since: a branch pushed to from
+      // elsewhere is the case a re-read of the tree alone used to miss.
+      var pull = state.pull;
+      if (pull && pull.commits) {
+        parts.push(' Pulled ', el('b', null, pull.commits + ' new commit' + (pull.commits === 1 ? '' : 's')),
+          ' from ', mono('origin/' + pull.branch), ' first.');
+      } else if (pull && pull.refused) {
+        parts.push(' Not pulled from origin: ' + pull.refused + '.');
+      }
+      if (draft.headSha && state.headSha && draft.headSha !== state.headSha && !(pull && pull.refused)) {
+        // Not "Re-review pulls it": GitHub can be the one behind, when the session has commits it has not pushed.
+        parts.push(' The pull request\\u2019s head on GitHub is ', mono(draft.headSha.slice(0, 8)),
+          ', not the commit read here.');
+      }
       return reviewNote(parts, {
         path: '',
-        tip: 'Take the diff again from the worktree as it is now, and re-run the analysis',
+        tip: 'Pull the branch from origin when it is behind, take the diff again from the worktree as it is now, '
+          + 'and re-run the analysis',
       });
     }
 
