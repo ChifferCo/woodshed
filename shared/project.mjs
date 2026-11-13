@@ -59,12 +59,15 @@ export const PROJECT_FIELDS = Object.freeze({
   'databases.dump': ['skip', 'extensions'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
-  pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
+  pullRequests: ['review', 'suites', 'qa', 'mergeRisk', 'autoMerge'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
   'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
   'pullRequests.mergeRisk': ['check'],
+  'pullRequests.autoMerge': ['enabled', 'tiers', 'paths'],
 });
+
+const MERGE_TIERS = ['Low', 'Medium', 'High'];
 
 const PLACEHOLDER = /\{\{([A-Z_][A-Z0-9_]*)(\?)?\}\}/g;
 
@@ -330,7 +333,7 @@ export function appNamed(project, name) {
 // the review whose verdict counts, the suites whose jobs must pass, and the QA and Merge risk checks the brief quotes.
 // The console has no names of its own for any of them (console/prAnnouncer.mjs, decisionBrief.mjs).
 function pullRequests(value) {
-  const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null });
+  const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null, autoMerge: null });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
     const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null });
     return {
@@ -363,7 +366,23 @@ function pullRequests(value) {
     if (!review) fail('pullRequests.mergeRisk needs pullRequests.review: only the review\'s own workflow may post it');
     return { check: string(f.check, 'pullRequests.mergeRisk.check') };
   });
-  return { review, suites, qa, mergeRisk };
+  // The console merges a pull request by itself when its rules pass: a merge-risk tier it allows, QA passed (when QA is
+  // configured), and every file within `paths` (when set). It needs the review's approval and the trusted tier to read.
+  const autoMerge = nullable(p.autoMerge, 'pullRequests.autoMerge', (a) => {
+    const f = fields(a, 'pullRequests.autoMerge', PROJECT_FIELDS['pullRequests.autoMerge'], { tiers: ['Low'], paths: [] });
+    if (!review) fail('pullRequests.autoMerge needs pullRequests.review: it merges only what the review approved');
+    if (!mergeRisk) fail('pullRequests.autoMerge needs pullRequests.mergeRisk: it gates on the merge-risk tier');
+    const tiers = list(f.tiers, 'pullRequests.autoMerge.tiers', (t, where) => {
+      const tier = string(t, where);
+      if (!MERGE_TIERS.includes(tier)) fail(`${where} must be one of ${MERGE_TIERS.join(', ')}`);
+      return tier;
+    });
+    return {
+      enabled: boolean(f.enabled, 'pullRequests.autoMerge.enabled'),
+      tiers, paths: list(f.paths, 'pullRequests.autoMerge.paths', repoPath),
+    };
+  });
+  return { review, suites, qa, mergeRisk, autoMerge };
 }
 
 // Only `version` must be written: everything else left out is none.

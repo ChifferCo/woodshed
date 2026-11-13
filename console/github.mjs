@@ -65,6 +65,16 @@ export function partialGraphql(err) {
 
 const LATEST_CHECKS = `commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
     ... on CheckRun { status conclusion } ... on StatusContext { state } } } } } } }`;
+
+// Whether the base branch has a merge queue and whether this pull request is already in it: the fields the auto-merge
+// read needs that `gh pr view` does not carry on older gh.
+const MERGE_QUEUE_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) { isMergeQueueEnabled isInMergeQueue } }
+}`;
+// `expectedHeadOid` makes GitHub refuse a head that moved between the console's read and the enqueue.
+const ENQUEUE_MUTATION = `mutation($pr: ID!, $sha: GitObjectID!) {
+  enqueuePullRequest(input: {pullRequestId: $pr, expectedHeadOid: $sha}) { mergeQueueEntry { position } }
+}`;
 const PR_STATUS_FIELDS = `number title state isDraft reviewDecision mergeQueueEntry { position } ${LATEST_CHECKS}`;
 // The rail's pull request rows: each one's checks and age too, as the shed's rows show them.
 const PULL_ROW_FIELDS = `number title isDraft headRefName updatedAt ${LATEST_CHECKS}`;
@@ -303,6 +313,34 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
     },
     pull(number) {
       return ghApi([`repos/${currentRepo()}/pulls/${number}`]);
+    },
+    /**
+     * What the console reads right before an auto-merge: the pull request's node id and head, whether its base branch
+     * has a merge queue, whether it is already in it, and GitHub's mergeable state. The queue fields are not on every
+     * gh, so they come from GraphQL.
+     * @returns {Promise<{nodeId: string|null, headSha: string|null, state: string, draft: boolean,
+     *   mergeableState: string|null, mergeQueueEnabled: boolean, inMergeQueue: boolean}|null>}
+     */
+    async mergeInfo(number) {
+      const pull = await ghApi([`repos/${currentRepo()}/pulls/${number}`]);
+      if (!pull) return null;
+      const [owner, name] = currentRepo().split('/');
+      const q = await ghApi(['graphql', '-f', `query=${MERGE_QUEUE_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${Number(number)}`]);
+      const prq = q?.data?.repository?.pullRequest ?? {};
+      return {
+        nodeId: pull.node_id ?? null, headSha: pull.head?.sha ?? null, state: pull.state, draft: Boolean(pull.draft),
+        mergeableState: pull.mergeable_state ?? null, mergeQueueEnabled: Boolean(prq.isMergeQueueEnabled), inMergeQueue: Boolean(prq.isInMergeQueue),
+      };
+    },
+    /** @returns {Promise<number|null>}  the queue position; `expectedHeadOid` makes GitHub refuse a head that moved. */
+    enqueuePull(nodeId, headSha) {
+      return ghApi(['graphql', '-f', `query=${ENQUEUE_MUTATION}`, '-f', `pr=${nodeId}`, '-f', `sha=${headSha}`,
+        '--jq', '.data.enqueuePullRequest.mergeQueueEntry.position']);
+    },
+    /** @returns {Promise<string>}  the merge commit's sha; `sha` makes GitHub refuse a head that moved. */
+    squashMergePull(number, headSha, subject) {
+      return ghApi(['--method', 'PUT', `repos/${currentRepo()}/pulls/${number}/merge`, '-f', 'merge_method=squash',
+        '-f', `sha=${headSha}`, '-f', `commit_title=${subject}`, '--jq', '.sha']);
     },
     /** @returns {Promise<string[]|null>}  the pull request's file paths, or null when there are more than we read */
     async pullFiles(number) {

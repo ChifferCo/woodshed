@@ -182,3 +182,13 @@ pullRequests:
   mergeRisk:
     # Required.
     check: Merge risk
+  # Default: null. The console merges a pull request by itself once its rules pass. It needs `review` (it merges only
+  # what the review approved) and `mergeRisk` (it gates on the tier). A failed QA, when `qa` is set, blocks it.
+  autoMerge:
+    # Required. The off switch: nothing auto-merges unless this is true.
+    enabled: true
+    # Default: [Low]. The merge-risk tiers allowed to auto-merge.
+    tiers: [Low]
+    # Default: []. When set, every changed file must be within one of these: a path, a directory (ending in `/`), or a
+    # prefix (ending in `*`). Empty allows any files.
+    paths: [docs/, README.md]

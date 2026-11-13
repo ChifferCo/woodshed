@@ -681,3 +681,56 @@ test('a tracked pull request whose channel is cleared waits for one, and is stil
   assert.deepEqual(dropped.map((d) => [d.item.number, d.why]), [[7, 'closed'], [8, 'no Slack channel']]);
   assert.deepEqual(store.state.slackPending, []);
 });
+
+// A trusted Low merge-risk check and a passing QA check on the head, so the brief's tier is Low and QA passed. The
+// Merge risk check links run 41700000001, which the harness maps to review.yml on `abc`, so the console trusts it.
+const LOW_RISK = {
+  name: 'Merge risk', app: { slug: 'github-actions' }, head_sha: 'abc', status: 'completed', conclusion: 'neutral',
+  output: { title: 'Low: a one-line copy change', summary: '' }, details_url: 'https://github.com/acme/app/actions/runs/41700000001',
+};
+const QA_PASS = { name: 'QA', app: { slug: 'github-actions' }, status: 'completed', conclusion: 'success', output: { title: 'Pass: 2 test cases passed' } };
+const AUTO = (over = {}) => ({ ...GATES, autoMerge: { enabled: true, tiers: ['Low'], paths: ['docs/'], ...over } });
+
+function autoSetup(gatesOver, setupOver = {}) {
+  const calls = { merged: [], enqueued: [] };
+  const s = setup({
+    runs: [...allShards('success'), LOW_RISK, QA_PASS],
+    pull: { labels: [{ name: 'qa' }] }, files: ['docs/x.md'], gates: gatesOver, ...setupOver,
+  });
+  s.github.mergeInfo = async () => ({ nodeId: 'PR_1', headSha: 'abc', state: 'open', draft: false, mergeableState: 'clean', mergeQueueEnabled: false, inMergeQueue: false, ...(setupOver.mergeInfo ?? {}) });
+  s.github.squashMergePull = async (number, headSha, subject) => { calls.merged.push({ number, headSha, subject }); return 'd'.repeat(40); };
+  s.github.enqueuePull = async (nodeId, headSha) => { calls.enqueued.push({ nodeId, headSha }); return 1; };
+  return { ...s, calls };
+}
+
+test('auto-merge: an eligible pull request is squash-merged when there is no merge queue', async () => {
+  const { announcer, session, calls } = autoSetup(AUTO());
+  await announcer.track(session);
+  await announcer.check();
+  assert.deepEqual(calls.merged, [{ number: 7, headSha: 'abc', subject: 'Add GTM' }]);
+  assert.deepEqual(calls.enqueued, []);
+});
+
+test('auto-merge: it enqueues instead when the base branch has a merge queue', async () => {
+  const { announcer, session, calls } = autoSetup(AUTO(), { mergeInfo: { mergeQueueEnabled: true } });
+  await announcer.track(session);
+  await announcer.check();
+  assert.deepEqual(calls.enqueued, [{ nodeId: 'PR_1', headSha: 'abc' }]);
+  assert.deepEqual(calls.merged, []);
+});
+
+test('auto-merge: off, a disallowed tier, and a file outside the paths each hold it', async () => {
+  for (const over of [{ enabled: false }, { tiers: ['Medium'] }, { paths: ['src/'] }]) {
+    const { announcer, session, calls } = autoSetup(AUTO(over));
+    await announcer.track(session);
+    await announcer.check();
+    assert.deepEqual([calls.merged, calls.enqueued], [[], []], JSON.stringify(over));
+  }
+});
+
+test('auto-merge: a head that moved since the brief is not merged', async () => {
+  const { announcer, session, calls } = autoSetup(AUTO(), { mergeInfo: { headSha: 'moved' } });
+  await announcer.track(session);
+  await announcer.check();
+  assert.deepEqual([calls.merged, calls.enqueued], [[], []]);
+});

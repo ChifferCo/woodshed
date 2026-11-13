@@ -28,6 +28,7 @@ test('the reference project file parses, and writes every field of every section
     '': { ...raw, apps }, dependencies: raw.dependencies, 'dependencies.installs': raw.dependencies.installs[0], envFiles: raw.envFiles[0], databases: raw.databases[0], 'databases.migrationsTable': raw.databases[0].migrationsTable, 'databases.dump': raw.databases[0].dump, app: raw.app, apps: apps[0], pullRequests: raw.pullRequests,
     'pullRequests.review': raw.pullRequests.review, 'pullRequests.suites': raw.pullRequests.suites[0],
     'pullRequests.qa': raw.pullRequests.qa, 'pullRequests.mergeRisk': raw.pullRequests.mergeRisk,
+    'pullRequests.autoMerge': raw.pullRequests.autoMerge,
   };
   assert.deepEqual(Object.keys(sections).sort(), Object.keys(PROJECT_FIELDS).sort(), 'every section the parser has');
   for (const [section, fields] of Object.entries(PROJECT_FIELDS)) {

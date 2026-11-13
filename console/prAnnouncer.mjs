@@ -10,6 +10,7 @@
 // otherwise to the console's; where it went is kept with the post (`slackPost` on the session, by the fleet).
 
 import { DEFAULT_RETENTION } from './consoleSettings.mjs';
+import { autoMergeDecision } from './autoMerge.mjs';
 import { briefCommentIn, buildBrief, mergeRiskRunIds, qaCheckFrom } from './decisionBrief.mjs';
 import { approvalNotesFor, feedbackFor, gaveUpComment } from './prMessages.mjs';
 import { checksPass, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
@@ -23,6 +24,16 @@ const NO_CHECKS_WAIT_MS = 2 * 60_000;
 
 function firstLine(err) {
   return String(err?.stderr?.trim() || err?.message || err).split('\n')[0].slice(0, 300);
+}
+
+// Run a GitHub read for the auto-merge and swallow a failure to undefined: a read that did not come back never merges.
+async function safely(what, fn) {
+  try {
+    return await fn();
+  } catch (err) {
+    console.warn(`auto-merge: ${what} failed`, { message: firstLine(err) });
+    return undefined;
+  }
 }
 
 // No review and no suite: nothing to wait for but the pull request itself.
@@ -252,7 +263,41 @@ export function createPrAnnouncer({
       title: pull.title, url: pull.html_url, tier, brief: brief.slack, mention: (await events.mention?.(item)) ?? null, project: projectOf(item),
     });
     if (posted?.channel) item.post = { channel: posted.channel, ts: posted.ts ?? null };
+    await maybeAutoMerge(item, { pull, brief, qa, gates });
     return drop(item, posted ? 'posted' : 'Slack did not take it');
+  }
+
+  // Merge the pull request when the auto-merge rules pass. Reached only with the review approving the head and every
+  // suite green; this adds the owner's rules (console/autoMerge.mjs) and the writes that cannot be taken back. The head
+  // the brief read goes to GitHub, so a push since this check makes GitHub refuse rather than merge the wrong commit.
+  async function maybeAutoMerge(item, { pull, brief, qa, gates }) {
+    const autoMerge = gates?.autoMerge ?? null;
+    if (!autoMerge?.enabled) return;
+    const changedFiles = await safely('auto-merge files', () => gh(item).pullFiles(item.number));
+    const decision = autoMergeDecision({
+      autoMerge, tier: brief.tier, qaConfigured: Boolean(gates?.qa), qaConclusion: qa.check?.conclusion ?? null,
+      changedFiles: changedFiles === undefined ? null : changedFiles,
+    });
+    if (!decision.merge) {
+      console.log('auto-merge: held', { number: item.number, reason: decision.reason, project: projectOf(item) });
+      return;
+    }
+    const info = await safely('auto-merge info', () => gh(item).mergeInfo(item.number));
+    if (!info || info.state !== 'open' || info.draft) return;
+    if (info.inMergeQueue) return console.log('auto-merge: already in the merge queue', { number: item.number });
+    if (info.mergeableState === 'dirty') return console.log('auto-merge: a conflict blocks it', { number: item.number });
+    if (info.headSha !== pull.head.sha) return console.log('auto-merge: the head moved, not merging', { number: item.number });
+    try {
+      if (info.mergeQueueEnabled) {
+        const position = await gh(item).enqueuePull(info.nodeId, info.headSha);
+        console.log('auto-merge: enqueued', { number: item.number, position: position ?? null, reason: decision.reason });
+      } else {
+        const sha = await gh(item).squashMergePull(item.number, info.headSha, pull.title);
+        console.log('auto-merge: merged', { number: item.number, sha: typeof sha === 'string' ? sha.slice(0, 7) : null, reason: decision.reason });
+      }
+    } catch (err) {
+      console.warn('auto-merge: the merge failed', { number: item.number, message: firstLine(err) });
+    }
   }
 
   /** @returns {Promise<{passed: boolean, review: object|null, suites: object[]}>}  whether the gates passed on the head */
