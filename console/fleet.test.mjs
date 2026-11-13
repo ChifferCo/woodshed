@@ -2406,3 +2406,10 @@ test('a review session runs for a same-repo pull request opened by the App', asy
   assert.equal((await fleet.reviewOnTag({ number: 7 })).outcome, 'started');
 });
 
+
+test('a review on a human author with a reused handle is refused, so it never spends the wrong plan', async () => {
+  const t = setup({ gates: REVIEW_GATES, people: { check: async () => false } });
+  t.github.pull = async () => REVIEW_PULL;
+  assert.match((await t.fleet.reviewOnTag({ number: 7 })).reason, /another account/);
+  assert.equal(t.fleet.sessions().length, 0);
+});

@@ -268,6 +268,12 @@ async function starterToken(session, userSettings) {
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
 async function settingsReply(res, session, userSettings, databases) {
+  // A review session has no databases; it asks /settings only for the plan it runs on.
+  if (isReview(session)) {
+    const onPlan = Boolean(await starterToken(session, userSettings));
+    console.log('sessionApi: review settings handed out', { sessionId: session.id, plan: onPlan ? session.plan : null });
+    return reply(res, 200, onPlan ? { plan: session.plan } : {});
+  }
   if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings);
   const codex = session.options?.agent === 'codex';
   const claudeToken = userSettings ? await userSettings.claudeToken(session.owner) : null;

@@ -601,3 +601,18 @@ test('a private session\'s GitHub access is logged when decided and when it chan
   await tokenOf();
   assert.deepEqual(logged, ['full', 'repo'], 'a changed decision is logged again, once');
 });
+
+test('a review session gets the plan from /settings, no database, and the team key when the starter has none', async (t) => {
+  const sessions = [
+    { id: 'rrrrrrrr', status: 'running', token: 'review-plan', kind: 'pr', number: 7, review: { base: 'main' }, plan: 'joel', startedBy: 'joel' },
+    { id: 'tttttttt', status: 'running', token: 'review-team', kind: 'pr', number: 8, review: { base: 'main' }, plan: null, startedBy: 'joel' },
+  ];
+  const userSettings = { usesOwnTokenForShared: () => true, claudeToken: async () => 'sk-ant-joel' };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, databases: { available: true }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-plan' }), { status: 200, body: { plan: 'joel' } }, 'the plan, no database');
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-team' }), { status: 200, body: {} }, 'no plan recorded, so the team key');
+});

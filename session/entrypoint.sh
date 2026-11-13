@@ -520,8 +520,17 @@ DATABASE_WAIT_SECONDS=600
 # The console's /settings answer, between consoleCall and its reader, which deletes it: it holds a database password.
 SETTINGS_ANSWER=/tmp/woodshed-settings.json
 fetchSessionDatabases() {
-  # A review session reads the diff and runs no app, so the console makes it no databases: never wait on them.
-  [ "${SESSION_MODE:-}" != review ] || return 0
+  # A review session reads the diff and runs no app, so the console makes it no databases: it asks once only for the
+  # Claude plan it runs on (the /settings answer's .plan), and never waits on databases.
+  if [ "${SESSION_MODE:-}" = review ]; then
+    [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+    local code
+    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+    [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
+    rm -f "$SETTINGS_ANSWER"
+    [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
+    return 0
+  fi
   [ "${SESSION_KIND:-}" != private ] && [ -z "$(databases given)" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   if [ -z "$(databases hosted)" ]; then
     log "No databases to fetch" "(the installation hosts no database engine)"
