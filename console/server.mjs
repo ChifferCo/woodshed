@@ -1526,6 +1526,8 @@ export function createHandler({
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
+      // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
+      repoNames: addedProjects ? addedProjects.names !== false : null,
       palette: projectColorsShared.PALETTE,
       data: heldData ? await heldData.report() : null,
     });
@@ -1567,7 +1569,7 @@ export function createHandler({
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
         else {
-          addedProjects.remove({ name: body.name, by });
+          await addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
           // A repo added again later under the same name starts on the console's channel.
           slack?.setProjectChannel({ project: body.name, channel: '', by });
