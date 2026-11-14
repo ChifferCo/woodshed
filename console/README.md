@@ -1263,6 +1263,15 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
+- `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
+  installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
+  core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
+  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only,
+  less the projects (core takes those out). `add` checks the repo, keeps it, and answers the project as the program
+  named it, `{name, repo}`; `remove` takes one off. Either throws an error with `shown: true` (and `link: {href, text}`
+  where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
+  the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
+  the program names each repo itself: the page then asks for no name, and one sent is refused.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
@@ -1633,7 +1642,8 @@ is read again on **List again** and when the tab comes back into view. On a cons
 the list is every repo that login can push to (`gh api user/repos`, `ghRepoLister`), since sessions push with it, and the
 console logs `projects: repos listed` with `via: 'gh'`. With borrowed GitHub access, or when GitHub did not list them,
 the field takes `owner/name` typed in (a `github.com`
-link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
+link works too). The list's last option, **Another repo**, swaps it for that field too (**Choose from the list** goes
+back), for a repo the list does not have: the console then checks it as below and says where to give the App access. The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
 Add repo, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be able to reach
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
 the console's own. A repo on an account the App is installed on, but not given, is refused with a link to that
@@ -1655,6 +1665,15 @@ it is no longer dropped), in the default project's session image and databases, 
 database check staying on the default project. The
 console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`
 when GitHub did not answer.
+
+In a console embedded with a `repos` hook (below, "Embedding the console"), the program keeps the list: Add a repo
+offers the program's list with its links to give access, **Add repo** and **Remove** go to it (`via: 'host'` in
+`projects: repo added` and `removed`), and nothing is written to `addedProjects`. Every project is the program's, and any
+but the default can be removed here, on the same terms as above; one added on this page before the program kept the
+list stays in `addedProjects` and is removed from it. A program that names each repo itself (`names: false`) gets no
+name field. The change applies to the installation at once, until the program builds it again from its own list; the
+program's refusal is shown under the field with its link, and a failure that is not a refusal answers `The change failed;
+the console log says why`.
 
 Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
 the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,

@@ -7,6 +7,9 @@ import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('./public/consoleSettings.js', import.meta.url), 'utf8');
 
+// What the page put the focus on, last one last.
+const focused = [];
+
 function element(tag) {
   return {
     tag, attrs: {}, listeners: {}, children: [], className: '',
@@ -14,6 +17,7 @@ function element(tag) {
     addEventListener(k, fn) { this.listeners[k] = fn; },
     append(c) { this.children.push(c); },
     replaceChildren(...c) { this.children = c; },
+    focus() { focused.push(this); },
   };
 }
 
@@ -193,7 +197,7 @@ test('with the App, Add a repo is a list of the repos it may reach, and says whe
   const select = walk(app).find((e) => e.attrs.id === 'repo-new');
   assert.equal(select.tag, 'select');
   assert.deepEqual(walk(select).filter((e) => e.tag === 'option').map((o) => [o.attrs.value, textOf(o)]),
-    [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web']]);
+    [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web'], [':type', 'Another repo: type owner/name']]);
   const card = cardOf(app, 'projects');
   assert.match(textOf(card), /Not listed\? Give the App access to it on GitHub: acme ↗, akurilin ↗; or install it on another account ↗\. Then List again/);
   assert.deepEqual(walk(card).filter((e) => e.tag === 'a').map((a) => [a.attrs.href, a.attrs.target]), [
@@ -217,13 +221,52 @@ test('List again reads the App\'s repos again, so one just given on GitHub shows
   let repos = { ...REPOS, repos: [] };
   const { app } = await loadPage(ANSWER, { repos: () => repos });
   const select = () => walk(app).find((e) => e.attrs.id === 'repo-new');
-  assert.equal(select().attrs.disabled, '');
-  assert.equal(textOf(select()), 'No repo left to add');
+  assert.equal(textOf(select()), 'No repo left in the listAnother repo: type owner/name', 'one not listed can still be typed in');
   repos = REPOS;
   walk(app).find((e) => e.tag === 'button' && textOf(e) === 'List again').listeners.click();
   await tick();
-  assert.equal(select().attrs.disabled, undefined);
   assert.match(textOf(select()), /akurilin\/social/);
+});
+
+test('Another repo swaps the list for a typed owner/name, keeps the links to give the App access, and goes back to the list', async () => {
+  const { app, posted } = await loadPage(ANSWER, { repos: REPOS });
+  const field = () => walk(app).find((e) => e.attrs.id === 'repo-new');
+  field().listeners.change({ target: { value: ':type' } });
+  assert.equal(field().tag, 'input');
+  assert.equal(focused.at(-1), app, 'the field takes the focus (the test DOM answers every id with the page)');
+  assert.match(textOf(cardOf(app, 'projects')), /Not listed\? Give the App access to it on GitHub: acme ↗/, 'the grant links stay');
+  field().listeners.input({ target: { value: 'acme/secret' } });
+  const link = { href: 'https://github.com/organizations/acme/settings/installations/1', text: 'Give the App access to acme/secret on GitHub' };
+  posted.refuse = Object.assign(new Error('The GitHub App may not reach acme/secret.'), { link });
+  walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Add repo').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects', body: { repo: 'acme/secret', name: '' } }]);
+  const error = walk(app).find((e) => e.className === 'form-error');
+  assert.equal(walk(error).find((e) => e.tag === 'a').attrs.href, link.href);
+  assert.equal(field().tag, 'input', 'still typing, to try again once access is given');
+  walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Choose from the list').listeners.click();
+  assert.equal(field().tag, 'select');
+});
+
+test('where the embedding program names each repo, there is no name field, and its repos say added and can be removed', async () => {
+  const hosted = {
+    ...ANSWER,
+    repoNames: false,
+    projects: [
+      { name: 'app', repo: 'acme/app', default: true, source: 'host', removable: false, sessions: 0, slackChannel: '' },
+      { name: 'api', repo: 'acme/api', default: false, source: 'host', removable: true, sessions: 0, slackChannel: '' },
+    ],
+  };
+  const { app, posted } = await loadPage(hosted, { repos: { ...REPOS, via: 'host' } });
+  assert.equal(walk(app).find((e) => e.attrs.id === 'repo-name'), undefined);
+  const card = textOf(cardOf(app, 'projects'));
+  assert.match(card, /Sessions show it by the repo's own name/);
+  assert.doesNotMatch(card, /installation's configuration/);
+  assert.match(card, /acme\/apiapiadded/);
+  posted.reply = () => ({ projects: hosted.projects.slice(0, 1) });
+  walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Remove').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects/remove', body: { name: 'api' } }]);
 });
 
 test('with no App to ask, or GitHub not answering, Add a repo takes owner/name typed in', async () => {
