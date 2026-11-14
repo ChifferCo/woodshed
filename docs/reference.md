@@ -174,6 +174,7 @@ sign-in in front, hands both to the console with two settings, each off unless s
 | --- | --- |
 | Commits | `woodshed-bot <woodshed-bot@users.noreply.github.com>`; in a private session whose owner connected GitHub, the owner's name and noreply address |
 | Pushes, PRs, comments, reactions | The installation's GitHub App, as `<slug>[bot]` ; a connected owner's private session pushes and opens PRs as them, "via `<slug>`" |
+| A review session's verdict | The reviewer App, a second App that can only review pull requests, since GitHub never lets a PR's author approve it (console/README.md, "The reviewer App"); without one, the installation's App |
 | The PR body | Names who started it and links the session's page: "Started by @<login> via [Woodshed](<console>/s/<id>)". When the repo's project file says `consoleLinks: false` (a public repo), the console is not linked: "Started by @<login> via Woodshed." |
 | Attribution | Claude Code's own `Co-Authored-By` trailer and PR footer, unless the repo's `.claude/settings.json` turns them off (`attribution`), as this one does |
 

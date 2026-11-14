@@ -665,6 +665,25 @@ console logs `console: gh not installed, GitHub calls will fail` at start. The p
 The page and its calls are an admin's like the Secrets page. A console with no sign-in has no admin to tell apart, which
 is why it is only for a console nobody else can reach, until the App exists and sign-in can be switched on.
 
+### The reviewer App
+
+GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
+installation's App's. So a review session (`pullRequests.review.runner: woodshed`) submits its verdict as a second App,
+the reviewer App (`reviewerApp.mjs`), which asks for pull requests (write) and nothing else. Once the console has its
+App, `/setup/github` offers it:
+
+1. **Make the reviewer App.** *Create the reviewer App on GitHub* posts its manifest (`reviewerManifest`: no webhook,
+   no sign-in). GitHub sends the browser back to `/setup/github/reviewer-created`, and the console keeps the key in the
+   secret store (`github-reviewer-app-key`) and the App's ID and slug in `state.json` under `reviewerApp`. No restart:
+   the key is read at each review.
+2. **Install it** on each repo whose review runs as a session, and set that project file's `pullRequests.review.author`
+   to its `<slug>[bot]` login. The review's PR comment and the Merge risk check stay the installation's App's.
+
+At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
+and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
+`as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
+requests.
+
 ## Webhook events, secrets and the GitHub App's webhook
 
 In AWS the console has two more pages, under Console in the menu under your

@@ -460,6 +460,37 @@ test('the setup page\'s Restart is an admin\'s, from the console\'s own origin, 
   assert.deepEqual(asked, ['mia-dev']);
 });
 
+test('the reviewer App\'s setup is an admin\'s: its view and its Create, from the console\'s own origin', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const started = [];
+  const reviewerApp = {
+    view: async () => ({ available: true, appId: null, slug: null, login: null, installUrl: null }),
+    startManifest: ({ ownerType }) => { started.push(ownerType); return { url: 'https://github.com/organizations/o/settings/apps/new?state=s', manifest: {} }; },
+  };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = {
+    enabled: () => true, available: () => true,
+    sessionFor: async (cookie) => {
+      const login = /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1];
+      return members.isMember(login) ? { login } : null;
+    },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, reviewerApp });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const sam = { cookie: 'woodshed_session=sam-ops' };
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.equal((await post(port, '/api/setup/github/reviewer/manifest', { ownerType: 'Organization' }, sam)).status, 403, 'a member who is not an admin');
+  assert.equal((await post(port, '/api/setup/github/reviewer/manifest', {}, { ...mia, origin: 'https://evil.example' })).status, 403, 'cross-origin');
+  assert.deepEqual(started, []);
+  const ok = await post(port, '/api/setup/github/reviewer/manifest', { ownerType: 'Organization' }, mia);
+  assert.deepEqual([ok.status, started], [200, ['Organization']]);
+});
+
 test('on a list with no admin yet every member is one, until the first is switched on', async (t) => {
   const { createMembers } = await import('./members.mjs');
   const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'already using the console' }, 'sam-ops': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'already using the console' } } }, save() {} };

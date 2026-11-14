@@ -240,6 +240,7 @@ const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop|setup)$
 const REVIEW_RE = /^\/api\/sessions\/([0-9a-f]{8})\/review$/;
 const SECRET_RE = /^\/api\/secrets\/([a-z0-9-]+)(\/reveal)?$/;
 const SETUP_WRITE_RE = /^\/api\/setup\/github\/(manifest|paste|installation|restart)$/;
+const REVIEWER_SETUP_PATH = '/api/setup/github/reviewer';
 const WEBHOOK_RE = /^\/api\/webhook\/(rotate|apply|url)$/;
 // The calls behind People, Secrets & webhooks, Webhook events and Console settings. Their pages load for anyone signed
 // in, and say what these calls answer.
@@ -521,7 +522,7 @@ export function createHandler({
   config, fleet, settings = null, events = { list: () => [] }, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
-  dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
+  dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null,
 }) {
@@ -1019,6 +1020,34 @@ export function createHandler({
     } catch (err) {
       if (!err.shown) console.error('console: GitHub App creation failed', { message: String(err?.message ?? err).split('\n')[0] });
       return redirect(res, `/setup/github?error=${encodeURIComponent(err.shown ? err.message : 'the console could not keep the App: its log says why')}`);
+    }
+  }
+
+  // GitHub sends the browser back from creating the reviewer App the same way.
+  async function reviewerSetupCreated(res, url) {
+    if (!reviewerApp) return redirect(res, '/setup/github');
+    try {
+      await reviewerApp.completeManifest({ code: url.searchParams.get('code'), state: url.searchParams.get('state') });
+      return redirect(res, '/setup/github?reviewer=created');
+    } catch (err) {
+      if (!err.shown) console.error('console: reviewer App creation failed', { message: String(err?.message ?? err).split('\n')[0] });
+      return redirect(res, `/setup/github?error=${encodeURIComponent(err.shown ? err.message : 'the console could not keep the reviewer App: its log says why')}`);
+    }
+  }
+
+  async function reviewerSetupWrite(req, res) {
+    if (!reviewerApp) return reply(res, 404, { error: 'this console cannot make a reviewer App' });
+    let body;
+    try {
+      body = await readJson(req, MAX_SECRET_BODY_BYTES);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      return reply(res, 200, reviewerApp.startManifest({ ownerType: body?.ownerType }));
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      throw err;
     }
   }
 
@@ -1631,6 +1660,7 @@ export function createHandler({
     if (pathname === '/api/secrets-manager') return managerWrite(req, res, login);
     if (SECRET_RE.test(pathname) || WEBHOOK_RE.test(pathname)) return settingsWrite(req, res, pathname);
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
+    if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
@@ -1775,6 +1805,8 @@ export function createHandler({
     if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
+    if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
+    if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));

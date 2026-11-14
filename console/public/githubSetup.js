@@ -2,6 +2,8 @@
 // manifest flow, or paste the details of one already made), install it on the repo, then restart the console: from
 // here when something starts it again (`canRestart`), else from its shell.
 // ?created=1 and ?error= are where GitHub's redirect lands (server.mjs, /setup/github/created).
+// Once the console has its App, the page offers the reviewer App (reviewerApp.mjs): a second App that submits the
+// review session's verdict, since GitHub never lets a pull request's author approve it. ?reviewer=created lands there.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -9,6 +11,7 @@
   const params = new URLSearchParams(window.location.search);
 
   let data = null;
+  let reviewer = null;
   let loadError = params.get('error');
   let busy = false;
   let message = null;
@@ -33,6 +36,7 @@
   async function load() {
     try {
       data = await W.getJson('/api/setup/github');
+      reviewer = data.configuredBy ? await W.getJson('/api/setup/github/reviewer').catch(() => null) : null;
       if (!params.get('error')) loadError = null;
     } catch (err) {
       loadError = err.message;
@@ -41,8 +45,8 @@
   }
 
   // GitHub takes the manifest as a form post, so the browser leaves for GitHub with it.
-  async function createApp() {
-    const { url, manifest } = await W.postJson('/api/setup/github/manifest', { ownerType });
+  async function createApp(path = '/api/setup/github/manifest') {
+    const { url, manifest } = await W.postJson(path, { ownerType });
     const form = h('form', { method: 'post', action: url },
       h('input', { type: 'hidden', name: 'manifest', value: JSON.stringify(manifest) }));
     document.body.append(form);
@@ -99,11 +103,8 @@
     return step(1, 'Make the GitHub App', false,
       h('p', null, data.optional ? 'A GitHub App for ' : 'Woodshed needs a GitHub App for ', h('code', null, data.repo), ': it pushes, opens pull requests and comments as the App, and people sign in through it. ',
         'One click makes it with the right permissions: GitHub asks you to confirm the name, then brings you back here.'),
-      h('label', { class: 'field-label' }, 'Make it under',
-        h('select', { class: 'field', onchange: (e) => { ownerType = e.target.value; } },
-          h('option', { value: 'Organization', selected: ownerType === 'Organization' }, `the ${data.repo.split('/')[0]} organization (you must be an owner of it)`),
-          h('option', { value: 'User', selected: ownerType === 'User' }, 'my own GitHub account'))),
-      h('div', null, h('button', { type: 'button', class: 'btn btn-open', disabled: busy, onclick: () => act(createApp) }, 'Create the App on GitHub')),
+      ownerChoice(),
+      h('div', null, h('button', { type: 'button', class: 'btn btn-open', disabled: busy, onclick: () => act(() => createApp()) }, 'Create the App on GitHub')),
       h('p', { class: 'msg-plain' }, 'Its Callback URL will be ', h('code', null, `${data.publicUrl}/auth/callback`),
         '. GitHub only takes an http address for localhost: anywhere else this console\'s public URL must be https, and set WOODSHED_PUBLIC_URL to it first.'),
       h('details', null, h('summary', null, 'I already have an App: paste its details instead'), pasteForm()));
@@ -165,6 +166,32 @@
         'Under systemd with Restart=on-failure it offers one; in Docker with a restart policy, set ', h('code', null, 'WOODSHED_SUPERVISED=1'), '.'));
   }
 
+  function ownerChoice() {
+    return h('label', { class: 'field-label' }, 'Make it under',
+      h('select', { class: 'field', onchange: (e) => { ownerType = e.target.value; } },
+        h('option', { value: 'Organization', selected: ownerType === 'Organization' }, `the ${data.repo.split('/')[0]} organization (you must be an owner of it)`),
+        h('option', { value: 'User', selected: ownerType === 'User' }, 'my own GitHub account')));
+  }
+
+  function reviewerSection() {
+    if (!reviewer?.available) return null;
+    const made = Boolean(reviewer.appId);
+    return h('div', { class: 'wizard-body' },
+      h('h2', null, 'Reviewer App'),
+      h('p', { class: 'msg-plain' }, 'GitHub never lets a pull request\'s author approve it, and a pull request a shared session opens is the App\'s. ',
+        'A review session therefore submits its verdict as a second App, which can only review pull requests.'),
+      made
+        ? step(1, 'Make the reviewer App', true, h('p', null, 'Reviewer App ', h('b', null, reviewer.slug), ' is saved, its key in the secret store.'))
+        : step(1, 'Make the reviewer App', false, ownerChoice(),
+          h('div', null, h('button', { type: 'button', class: 'btn btn-open', disabled: busy, onclick: () => act(() => createApp('/api/setup/github/reviewer/manifest')) }, 'Create the reviewer App on GitHub'))),
+      step(2, 'Install it and name it in the project file', false,
+        made
+          ? [h('p', null, 'Install it on every repo whose review runs as a session, then set the project file\'s ', h('code', null, 'pullRequests.review.author'),
+            ' to ', h('code', null, reviewer.login), '. The review\'s PR comment stays the console App\'s, so ', h('code', null, 'commentAuthor'), ' does not change.'),
+          h('p', null, h('a', { class: 'btn btn-plain', href: reviewer.installUrl, target: '_blank', rel: 'noopener' }, 'Open the installation page'))]
+          : h('p', { class: 'msg-plain' }, 'After step 1.')));
+  }
+
   function render() {
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' }, h('div', null,
@@ -175,11 +202,15 @@
         : 'Sessions push, open pull requests and sign people in through a GitHub App. This console has none yet.')));
     let body;
     if (!data) body = h('p', { class: 'empty' }, loadError ? `Could not load: ${loadError}` : 'Loading…');
-    else if (data.configuredBy) body = h('p', { class: 'form-ok' }, `This console already runs on a GitHub App (${data.configuredBy === 'setup' ? 'from this page' : 'from its settings'}). Change its key on the Secrets page.`);
+    else if (data.configuredBy) {
+      body = h('div', null, h('p', { class: 'form-ok' }, `This console already runs on a GitHub App (${data.configuredBy === 'setup' ? 'from this page' : 'from its settings'}). Change its key on the Secrets page.`),
+        reviewerSection());
+    }
     else if (!data.hasSecretStore) body = h('p', { class: 'form-error' }, 'This console has no secret store, so it cannot keep an App\'s key. Set WOODSHED_LOCAL_SECRETS_DIR and WOODSHED_LOCAL_SECRETS_KEY_FILE (providers/local/README.md, step 4) and restart.');
     else body = h('div', { class: 'wizard-body' }, createStep(), installStep(), restartStep());
     app.replaceChildren(h('div', { class: 'page' }, head,
       params.get('created') && !params.get('error') && h('p', { class: 'form-ok' }, 'GitHub made the App and the console saved its key.'),
+      params.get('reviewer') && !params.get('error') && h('p', { class: 'form-ok' }, 'GitHub made the reviewer App and the console saved its key. Install it next.'),
       message && h('p', { class: 'msg-plain' }, message),
       data && loadError && h('p', { class: 'form-error', role: 'alert' }, loadError),
       body));
