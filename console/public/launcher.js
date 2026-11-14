@@ -26,6 +26,8 @@
   }
 
   const MAX_ATTACH = 8;
+  // How long New session's Work on keeps a project's open pull requests before asking the console again.
+  const PULLS_FRESH_MS = 60_000;
   const MAX_ATTACH_MB = 25;
   const MAX_TOTAL_MB = 40;
 
@@ -197,16 +199,19 @@
     let active = -1;
     let all = false;
 
+    // Read again once a minute old, as the console's own copy is: the page stays open while sessions open pull requests.
     function load() {
       const project = projectOf();
-      if (!byProject.has(project)) {
+      const kept = byProject.get(project);
+      if (!kept || Date.now() - kept.at >= PULLS_FRESH_MS) {
         const url = project ? `/api/pulls?project=${encodeURIComponent(project)}` : '/api/pulls';
-        byProject.set(project, W.getJson(url).then((b) => b, () => {
+        const promise = W.getJson(url).then((b) => b, () => {
           byProject.delete(project);
           return { pulls: [], total: 0, stale: true };
-        }));
+        });
+        byProject.set(project, { at: Date.now(), promise });
       }
-      return byProject.get(project);
+      return byProject.get(project).promise;
     }
 
     // The pull request the field names exactly (`PR #123`, `#123`), when it is one of the listed.
