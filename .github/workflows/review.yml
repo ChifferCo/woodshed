@@ -13,9 +13,9 @@ name: Claude review
 # look for, comes from its files on the branch the pull request merges into; Woodshed's own are in .woodshed/review.md.
 # The review also rates the merge risk, posted as a "Merge risk" check that never blocks merging, and as a label.
 
+# Woodshed's own pull requests are reviewed by a review session instead (.woodshed/project.yaml, runner: woodshed), so
+# this file runs only when another repo calls it.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   workflow_call:
     inputs:
       tag:

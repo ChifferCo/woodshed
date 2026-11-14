@@ -31,25 +31,26 @@ rules: .woodshed/rules.md
 # .github/workflows/review.yml, the Check suite's `test` job, and the review's Merge risk check, which the brief quotes.
 pullRequests:
   review:
-    # review.yml posts the verdict with the workflow's token, as a review whose body starts `## Claude review — APPROVE`.
-    author: github-actions[bot]
+    # The review runs as a Woodshed session, started by the rerun tag on the head commit. The console posts the verdict
+    # as its App, a review whose body starts `## Claude review — APPROVE`, and the PR comment with its risk areas.
+    runner: woodshed
+    author: woodshed-console[bot]
     heading: '## Claude review'
-    workflow: .github/workflows/review.yml
     rerun: '[woodshed-review]'
-    # The review's PR comment comes from the same token: its risk areas, then the review under
-    # <summary>Claude review</summary>, the heading's words.
-    commentAuthor: github-actions[bot]
+    commentAuthor: woodshed-console[bot]
   suites:
     - name: Check
       workflow: .github/workflows/check.yml
       jobs: test
   mergeRisk:
     check: Merge risk
-  # QA in a Woodshed session: the `woodshed-qa` label on a pull request starts a QA session on its branch, which tests it against
-  # the dev console app above and reports in the console's `QA` check, quoted by the decision brief. No `author`: the
-  # report is that check, and sessions comment as the App, whose login must never be trusted as a QA comment author.
+  # QA in a Woodshed session: the console adds the `woodshed-qa` label to each new pull request, and once the review
+  # approves, a QA session tests it against the dev console app above and reports in the console's `QA` check, quoted
+  # by the decision brief. Removing the label skips QA. No `author`: the report is that check, and sessions comment as
+  # the App, whose login must never be trusted as a QA comment author.
   qa:
     runner: woodshed
+    autoLabel: true
     label: woodshed-qa
     check: QA
     heading: '## QA'
