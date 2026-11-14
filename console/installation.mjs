@@ -50,7 +50,7 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
+import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
@@ -203,17 +203,25 @@ async function loadAppKey(config, secrets) {
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
- *          userMenu?: ((headers: object) => object)|null, newId?: () => string}} args
+ *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
- *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation
+ *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation.
+ *   `repos` is where the program keeps the installation's repo list, which `config.projects` was built from, so the
+ *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
+ *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null }) {
+  if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
+    throw new Error('repos needs add and remove, and list when it has one');
+  }
+  // What the program's repos hook added or removed since this installation was built, applied to its live list.
+  const hostProjects = repos ? createHostProjects() : null;
   // The limits and retention numbers are the Console settings page's, read each time they are used.
-  const config = liveConfig(loaded, store);
+  const config = liveConfig(loaded, store, { hostProjects });
   const consoleSettings = createConsoleSettings({ store, config: loaded });
   const { secrets, homes, dbAdmin } = provider;
   const appKey = config.githubApp ? await loadAppKey(config, secrets) : null;
@@ -306,9 +314,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
     : undefined;
   const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
   const addedProjects = createAddedProjects({
-    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), 
+    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }),
     // With no App, a console on its own gh login lists what that login can push to; borrowed access lists nothing.
     list: appApi ? repoLister({ appApi, appSlug }) : config.ghToken && !brokerRead ? ghRepoLister() : null,
+    // A program that keeps the repo list lists, checks, adds and removes them itself.
+    host: repos, hostProjects,
   });
   const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.

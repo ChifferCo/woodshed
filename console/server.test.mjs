@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
-import { createAddedProjects } from './addedProjects.mjs';
+import { createAddedProjects, createHostProjects } from './addedProjects.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
@@ -1219,6 +1219,51 @@ test('Console settings: Add a repo\'s list is the App\'s repos less the projects
   assert.deepEqual(await ask(port), { status: 502, body: { error: 'GitHub did not list the App\'s repos.' } });
   const noApp = await serve(createAddedProjects({ store, config, check: async () => ({ installationId: null }) }));
   assert.deepEqual(await ask(noApp), { status: 200, body: { repos: null, grant: [], install: null } });
+});
+
+test('Console settings: with an embedder\'s repos hook, its list is offered, an add and a removal go to it, and its refusal links to the fix', async (t) => {
+  const store = { state: { sessions: [] }, save() { throw new Error('nothing of the repo list is the console\'s to save'); } };
+  const hostProjects = createHostProjects();
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store, { hostProjects });
+  const kept = ['o/r'];
+  const grant = { account: 'o', href: 'https://github.com/organizations/o/settings/installations/9' };
+  const repos = {
+    names: false,
+    list: async () => ({ repos: ['o/r', 'o/api', 'o/web'].filter((r) => !kept.includes(r)), grant: [grant], install: null }),
+    async add({ repo }) {
+      if (repo === 'o/secret') throw Object.assign(new Error('The App may not reach o/secret.'), { shown: true, link: { href: grant.href, text: 'Give the App access to o/secret on GitHub' } });
+      kept.push(repo);
+      return { name: repo.split('/')[1], repo };
+    },
+    async remove({ repo }) { kept.splice(kept.indexOf(repo), 1); },
+  };
+  const addedProjects = createAddedProjects({ store, config, check: async () => { throw new Error('not asked'); }, host: repos, hostProjects });
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const page = JSON.parse(await getBody(port, '/api/console-settings'));
+  assert.equal(page.repoNames, false, 'the page asks for no name');
+  assert.deepEqual(page.projects.map((p) => [p.name, p.source, p.removable]), [['r', 'host', false]]);
+  const choices = JSON.parse(await getBody(port, '/api/console-settings/projects/repos'));
+  assert.deepEqual(choices, { repos: [{ repo: 'o/api', private: false }, { repo: 'o/web', private: false }], grant: [grant], install: null, via: 'host' });
+
+  const added = await post(port, '/api/console-settings/projects', { repo: 'o/api' });
+  assert.equal(added.status, 200);
+  assert.deepEqual(added.body.projects.map((p) => [p.name, p.removable]), [['r', false], ['api', true]], 'the answer has it at once');
+  assert.deepEqual(kept, ['o/r', 'o/api']);
+  assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/secret' }), {
+    status: 400, body: { error: 'The App may not reach o/secret.', link: { href: grant.href, text: 'Give the App access to o/secret on GitHub' } },
+  }, 'a typed repo the App cannot reach says where to give it access');
+  assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the default stays');
+  const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
+  assert.deepEqual(kept, ['o/r']);
 });
 
 test('Console settings: a repo\'s colour is picked from the palette, never one another repo has, and the rail gets it', async (t) => {

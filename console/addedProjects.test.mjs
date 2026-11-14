@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
+import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
 import { liveConfig } from './consoleSettings.mjs';
 
 const base = {
@@ -71,11 +71,11 @@ test('only an added repo is removed, and not while a session is running on it or
   const { added, config, store } = setup({ sessions: [{ id: 'aaaaaaaa', project: 'api', repo: 'acme/api', status: 'running' }] });
   await added.add({ repo: 'acme/api', by: 'a' });
   assert.equal(added.view().find((p) => p.name === 'api').sessions, 1);
-  assert.throws(() => added.remove({ name: 'api', by: 'a' }), (err) => err.shown && /1 session is still running, or listed to resume/.test(err.message));
-  assert.throws(() => added.remove({ name: 'app', by: 'a' }), /set in the installation's configuration/);
-  assert.throws(() => added.remove({ name: 'nope', by: 'a' }), /no project called nope/);
+  await assert.rejects(added.remove({ name: 'api', by: 'a' }), (err) => err.shown && /1 session is still running, or listed to resume/.test(err.message));
+  await assert.rejects(added.remove({ name: 'app', by: 'a' }), /set in the installation's configuration/);
+  await assert.rejects(added.remove({ name: 'nope', by: 'a' }), /no project called nope/);
   store.state.sessions = [{ id: 'aaaaaaaa', project: 'api', repo: 'acme/api', status: 'stopped', kept: false }];
-  added.remove({ name: 'api', by: 'a' });
+  await added.remove({ name: 'api', by: 'a' });
   assert.deepEqual(config.projects.map((p) => p.name), ['app']);
   store.state.sessions = [{ id: 'bbbbbbbb', project: 'app', repo: 'acme/app', status: 'stopped', kept: true }];
   assert.equal(added.view()[0].sessions, 1, 'a kept shared session counts too');
@@ -84,7 +84,7 @@ test('only an added repo is removed, and not while a session is running on it or
 test('the view says which repos can be removed', async () => {
   const { added } = setup();
   await added.add({ repo: 'acme/api', by: 'octocat' });
-  assert.deepEqual(added.view().map((p) => [p.name, p.default, p.removable, p.addedBy]), [['app', true, false, null], ['api', false, true, 'octocat']]);
+  assert.deepEqual(added.view().map((p) => [p.name, p.default, p.removable, p.addedBy, p.source]), [['app', true, false, null, 'installation'], ['api', false, true, 'octocat', 'added']]);
 });
 
 test('with the App, the repo must have it installed; without, gh must read the repo', async () => {
@@ -105,9 +105,9 @@ test('with the App, the repo must have it installed; without, gh must read the r
 test('a stopped My Woodshed session still on its owner\'s list holds its repo, since Resume would fall back to the default', async () => {
   const { added, store } = setup({ sessions: [{ id: 'aaaaaaaa', project: 'api', repo: 'acme/api', status: 'stopped', owner: 'bob' }] });
   await added.add({ repo: 'acme/api', by: 'a' });
-  assert.throws(() => added.remove({ name: 'api', by: 'a' }), /still running, or listed to resume/);
+  await assert.rejects(added.remove({ name: 'api', by: 'a' }), /still running, or listed to resume/);
   store.state.sessions = [];
-  added.remove({ name: 'api', by: 'a' });
+  await added.remove({ name: 'api', by: 'a' });
 });
 
 test('two adds of one repo at once keep one, and a link with a trailing slash or .git is read', async () => {
@@ -149,7 +149,7 @@ test('on a console that started with no repo, the first one added is the default
   assert.equal(store.state.addedProjects[0].default, false, 'the default is the live list\'s, not saved: a removal hands it on');
   assert.equal(store.state.addedProjects[0].clonedAtStart, undefined, 'nor is that');
   assert.deepEqual(added.view().map((p) => [p.name, p.default, p.removable]), [['api', true, true], ['web', false, true]], 'an added default can be removed like any added repo');
-  added.remove({ name: 'api', by: 'octocat' });
+  await added.remove({ name: 'api', by: 'octocat' });
   assert.deepEqual(config.projects.map((p) => [p.name, p.default]), [['web', true]]);
   assert.deepEqual(liveConfig(empty, store).projects.map((p) => [p.name, p.default, p.clonedAtStart]), [['web', true, true]], 'a restart reads it back the same');
   const named = liveConfig({ ...empty, projects: [{ name: 'app', repo: 'acme/app', default: true }] }, store);
@@ -214,4 +214,105 @@ test('with no App, the list is every repo the console\'s gh login can push to, s
   assert.match(calls[0].join(' '), /select\(\.permissions\.push\)/, 'only the repos it can push to');
   const down = ghRepoLister({ run: async () => { throw new Error('HTTP 401'); } });
   await assert.rejects(down(), (err) => err.shown && /gh did not list your repos/.test(err.message));
+});
+
+// An embedding program that keeps the repo list itself (installation.mjs, `repos`): it lists, adds and removes, and the
+// installation's projects are its list.
+function hosted({ sessions = [], projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'web', repo: 'acme/web', default: false }], host = {} } = {}) {
+  const store = { state: { sessions }, saves: 0, save() { this.saves += 1; } };
+  const hostProjects = createHostProjects();
+  const config = liveConfig({ ...base, projects }, store, { hostProjects });
+  const calls = [];
+  const repos = {
+    names: false,
+    async list() {
+      calls.push(['list']);
+      return {
+        repos: ['acme/app', 'acme/web', 'acme/api', 'not a repo', { repo: 'acme/lib', private: true }],
+        grant: [{ account: 'acme', href: 'https://github.com/organizations/acme/settings/installations/1' }, { account: 'evil', href: 'javascript:alert(1)' }],
+        install: 'http://insecure.example/install',
+      };
+    },
+    async add(args) {
+      calls.push(['add', args]);
+      if (args.repo === 'acme/secret') {
+        throw Object.assign(new Error('The App may not reach acme/secret.'), { shown: true, link: { href: 'https://github.com/organizations/acme/settings/installations/1', text: 'Give it access on GitHub' } });
+      }
+      return { name: `${args.repo.split('/')[1].toLowerCase()}-2`, repo: args.repo.toLowerCase() };
+    },
+    async remove(args) { calls.push(['remove', args]); },
+    ...host,
+  };
+  const added = createAddedProjects({
+    store, config, now: () => 0, host: repos, hostProjects,
+    check: async () => { throw new Error('the host checks, not the console'); },
+    list: async () => { throw new Error('the host lists, not the console'); },
+  });
+  return { store, config, added, calls };
+}
+
+test('with an embedder\'s repos hook, Add a repo offers its list, less the projects, with only its https links', async () => {
+  const { added } = hosted();
+  assert.deepEqual(await added.choices(), {
+    repos: [{ repo: 'acme/api', private: false }, { repo: 'acme/lib', private: true }],
+    grant: [{ account: 'acme', href: 'https://github.com/organizations/acme/settings/installations/1' }],
+    install: null,
+    via: 'host',
+  });
+  assert.equal(added.names, false, 'the page asks for no name where the embedder names each repo');
+  const down = hosted({ host: { list: async () => { throw new Error('HTTP 502'); } } }).added;
+  await assert.rejects(down.choices(), (err) => err.shown && /could not be listed\. Type the repo instead/.test(err.message));
+  const none = hosted({ host: { list: undefined } }).added;
+  assert.equal(await none.choices(), null, 'an embedder with no list: owner/name typed in');
+});
+
+test('with the hook, an add goes to the embedder, applies at once, and writes nothing to the console\'s own state', async () => {
+  const { added, config, store, calls } = hosted();
+  const project = await added.add({ repo: 'https://github.com/acme/API.git', by: 'octocat' });
+  assert.deepEqual(project, { name: 'api-2', repo: 'acme/api', default: false }, 'the embedder\'s name and spelling');
+  assert.deepEqual(calls.filter((c) => c[0] === 'add'), [['add', { repo: 'acme/API', by: 'octocat' }]]);
+  assert.deepEqual(config.projects.map((p) => p.name), ['app', 'web', 'api-2'], 'the live list has it, with no restart');
+  assert.equal(store.saves, 0);
+  assert.equal(store.state.addedProjects, undefined);
+  assert.deepEqual(added.view().map((p) => [p.name, p.source, p.removable]), [['app', 'host', false], ['web', 'host', true], ['api-2', 'host', true]],
+    'every project is the embedder\'s, and all but the default can be removed here');
+});
+
+test('with the hook, a repo it cannot reach is refused with its link, and a name or a repo already there before it is asked', async () => {
+  const { added, calls, config } = hosted();
+  await assert.rejects(added.add({ repo: 'acme/secret', by: 'a' }), (err) => err.shown && err.link?.text === 'Give it access on GitHub');
+  await assert.rejects(added.add({ repo: 'ACME/web', by: 'a' }), /already a project, named web/);
+  await assert.rejects(added.add({ repo: 'acme/x', name: 'x', by: 'a' }), /names each repo after itself: leave the name empty/);
+  await assert.rejects(added.add({ repo: 'acme', by: 'a' }), /owner\/name/);
+  assert.deepEqual(calls.filter((c) => c[0] === 'add').map((c) => c[1].repo), ['acme/secret']);
+  assert.deepEqual(config.projects.map((p) => p.name), ['app', 'web']);
+  const named = hosted({ host: { names: true, add: async (args) => ({ name: args.name, repo: args.repo }) } }).added;
+  assert.equal((await named.add({ repo: 'acme/x', name: 'tools', by: 'a' })).name, 'tools', 'an embedder that takes names gets the one typed');
+});
+
+test('with the hook, Remove takes any but the default off through it, never with sessions on it, and an added one is the console\'s', async () => {
+  const { added, config, calls, store } = hosted({ sessions: [{ id: 'aaaaaaaa', project: 'web', repo: 'acme/web', status: 'running' }] });
+  await assert.rejects(added.remove({ name: 'app', by: 'a' }), /acme\/app is the default project: it stays/);
+  await assert.rejects(added.remove({ name: 'web', by: 'a' }), /1 session is still running/);
+  await assert.rejects(added.remove({ name: 'nope', by: 'a' }), /no project called nope/);
+  assert.equal(calls.filter((c) => c[0] === 'remove').length, 0, 'the embedder is not asked to remove what the console refuses');
+  store.state.sessions = [];
+  await added.remove({ name: 'web', by: 'octocat' });
+  assert.deepEqual(calls.filter((c) => c[0] === 'remove'), [['remove', { name: 'web', repo: 'acme/web', by: 'octocat' }]]);
+  assert.deepEqual(config.projects.map((p) => p.name), ['app']);
+  await added.add({ repo: 'acme/web', by: 'a' });
+  assert.deepEqual(config.projects.map((p) => p.name), ['app', 'web-2'], 'added back, under the name the embedder gave');
+
+  // One added on this page before the embedder kept the list stays this page's to remove.
+  store.state.addedProjects = [{ name: 'old', repo: 'acme/old', default: false, addedBy: 'bo' }];
+  assert.equal(added.view().find((p) => p.name === 'old').source, 'added');
+  await added.remove({ name: 'old', by: 'a' });
+  assert.deepEqual(store.state.addedProjects, []);
+  assert.equal(calls.filter((c) => c[0] === 'remove').length, 1);
+});
+
+test('an embedder that refuses a removal leaves the list as it was', async () => {
+  const { added, config } = hosted({ host: { remove: async () => { throw Object.assign(new Error('Not now.'), { shown: true }); } } });
+  await assert.rejects(added.remove({ name: 'web', by: 'a' }), /Not now/);
+  assert.deepEqual(config.projects.map((p) => p.name), ['app', 'web']);
 });

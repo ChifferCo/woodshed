@@ -113,28 +113,36 @@ export function settingProblem(setting, value) {
  * The console's config with its limits and retention read from the page's settings each time they are used.
  * @param {object} config  from loadConfig
  * @param {{state: object}} store
+ * @param {{hostProjects?: {changes: {added: object[], removed: string[]}|null}|null}} [opts]  what an embedding
+ *   program's repos hook changed since the installation was built (addedProjects.mjs, createHostProjects)
  * @returns {object}  the same config, its `maxRunning`, `maxPrivatePerPerson`, `maxAsks`, `limits` and `retention` live
  */
-export function liveConfig(config, store) {
+export function liveConfig(config, store, { hostProjects = null } = {}) {
   const value = (key) => storedValue(store, key) ?? BY_KEY.get(key).read(config);
   let merged = null;
   return {
     ...config,
-    // The installation's repos, then the ones an admin added on the Console settings page (addedProjects.mjs).
+    // The installation's repos (with what an embedding program's hook changed of them since), then the ones an admin
+    // added on the Console settings page (addedProjects.mjs).
     get projects() {
       const added = addedProjectsOf(store);
-      if (!added.length) return config.projects;
-      // Rebuilt only when the added list changes, since every session's tick reads it. An added repo the installation
-      // has since named itself is left out, so the environment's own entry wins.
-      if (merged?.added !== added) {
-        const own = allProjects(config);
-        const taken = (p) => own.some((o) => o.name === p.name || o.repo.toLowerCase() === p.repo.toLowerCase());
-        const list = [...own, ...added.filter((p) => !taken(p))];
+      const changes = hostProjects?.changes ?? null;
+      if (!added.length && !changes) return config.projects;
+      // Rebuilt only when the added list or the hook's changes do, since every session's tick reads it. An added repo
+      // the installation has since named itself is left out, so the environment's own entry wins.
+      if (merged?.added !== added || merged.changes !== changes) {
+        const same = (a, b) => a.name === b.name || a.repo.toLowerCase() === b.repo.toLowerCase();
+        let own = allProjects(config);
+        if (changes) {
+          own = own.filter((p) => !changes.removed.includes(p.name));
+          own = [...own, ...changes.added.filter((p) => !own.some((o) => same(o, p)))];
+        }
+        const list = [...own, ...added.filter((p) => !own.some((o) => same(o, p)))];
         // A console that started with no repo of its own works on the first one added, until it is removed. No session
         // image holds its checkout (the image is the environment's repo's, or has none), so its sessions clone it at
         // start like any added repo's (fleet.mjs, PROJECT_REPO).
-        if (!own.length) list[0] = { ...list[0], default: true, clonedAtStart: true };
-        merged = { added, list };
+        if (list.length && !list.some((p) => p.default)) list[0] = { ...list[0], default: true, clonedAtStart: true };
+        merged = { added, changes, list };
       }
       return merged.list;
     },

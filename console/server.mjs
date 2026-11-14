@@ -1526,6 +1526,8 @@ export function createHandler({
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
+      // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
+      repoNames: addedProjects ? addedProjects.names !== false : null,
       palette: projectColorsShared.PALETTE,
       data: heldData ? await heldData.report() : null,
     });
@@ -1567,7 +1569,7 @@ export function createHandler({
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
         else {
-          addedProjects.remove({ name: body.name, by });
+          await addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
           // A repo added again later under the same name starts on the console's channel.
           slack?.setProjectChannel({ project: body.name, channel: '', by });
@@ -2021,8 +2023,10 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   (databases.mjs), `webhooks` hands GitHub and Slack events to webhookDispatch.mjs, and `webhookUrl` is where GitHub
  *   should post them
  *   `config` is loadConfig()'s, read again when left out
+ *   `repos` is an embedding program's repos hook, passed on to createInstallation (installation.mjs): only the dev
+ *   console's stand-in (scripts/devHostConsole.mjs) passes one here
  */
-export async function startConsole({ provider, config: given = null }) {
+export async function startConsole({ provider, config: given = null, repos = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2032,7 +2036,7 @@ export async function startConsole({ provider, config: given = null }) {
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

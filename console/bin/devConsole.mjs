@@ -33,8 +33,10 @@ const appDomain = (process.env.SESSION_APP_DOMAIN ?? '').trim().toLowerCase();
 if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so any name starting with the session id is let in');
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
 const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } : {};
-// The console as its image starts it, on the local provider (the docker launcher).
-const server = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'providers', 'console.mjs');
+// The console as its image starts it, on the local provider (the docker launcher). DEV_CONSOLE_HOST_REPOS=1 starts it as
+// an embedding program would, with a made-up repos hook, for Console settings' Repos card (scripts/devHostConsole.mjs).
+const woodshed = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const server = process.env.DEV_CONSOLE_HOST_REPOS === '1' ? path.join(woodshed, 'scripts', 'devHostConsole.mjs') : path.join(woodshed, 'providers', 'console.mjs');
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
