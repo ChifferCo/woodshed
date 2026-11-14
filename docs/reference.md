@@ -301,52 +301,7 @@ quote a number (`PORT: '9000'`).
 | `consoleLinks` | the console's GitHub comments, from the default branch; `writeRules` | `true` or `false`, default `true`. `false` keeps the installation's console address out of what is posted to the repo: the console's comments on its issues and pull requests (a session started, queued, resumed or failed, a refusal) and the session's link in the pull requests it opens (`{{VIA}}` reads `Woodshed`, unlinked). For a public repo. The console reads it with the project's other gates; when the file cannot be read, a comment on the installation's default project keeps its links and one on another project leaves them out |
 | `githubAccess` | the session API's `/github-token`, from the default branch | `full` or `repo`, default `full`. A private session acts as its owner, whose connected GitHub token it gets. `full` hands it the token as GitHub issued it, reaching every repo the GitHub App is on that the owner can write to. `repo` has GitHub scope it to this repo and the session permissions (`githubUser.scopedTokenFor`; the App's token when GitHub makes none): for a repo whose content outsiders write, such as public issues, where a prompt injection should reach no other repo. Shared sessions and questions use the App's token either way. When the file cannot be read, a session on the installation's default project gets `full` and one on another project `repo`. `repo` is only as strong as the protection on the repo's default branch: the setting lives in the repo it guards, so someone who can change that branch's project file can switch it back to `full` |
 | `rules`, `setup` | `writeRules` | The project's rules, after `prompt.md`, and its environment notes: inline in a shared session's rules, in `/tmp/woodshed-setup.md` for a private one |
-| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"). See [Pull request gates](#pull-request-gates) below |
-
-### Pull request gates
-
-`pullRequests` names what a pull request waits for before the console posts it. Each part is `null` (or `[]`) for
-none. With `pullRequests: null`, or no `review` and no `suites`, the console posts a pull request once it is out of
-draft and none of its checks is running or failed.
-
-**`review`**, the code review:
-
-- `author` and `heading`: who posts the verdict, and how its body starts. The verdict is a pull request review whose
-  body starts with `heading`.
-- `runner`: where the review runs. `actions` (the default) runs it in `workflow`. `woodshed` runs it as a console
-  session, which posts the verdict and the Merge risk check as the console's App. With `woodshed`, `author` and
-  `commentAuthor` are the App's `<slug>[bot]` login, and `workflow` may be left out.
-- `workflow`: the workflow file that runs the review, for `runner: actions`.
-- `rerun`: the tag a commit carries to run the review again. A session's rules tell it to end the last commit of each
-  push with it once its pull request is ready.
-- `commentAuthor`: who posts the PR comment the brief quotes risk areas from: the comment with the review folded under
-  `<summary>` of the heading's words (`## Code review` gives `<summary>Code review</summary>`). `null` for none.
-
-**`suites[]`**, the test suites that must pass:
-
-- `name`: what the brief shows.
-- `workflow`: the suite's workflow file. A pull request that only touches paths the workflow's `on.pull_request`
-  ignores (`paths-ignore`, or outside `paths`) is not held for it. The console reads the workflow from the default
-  branch.
-- `jobs`: the prefix of its jobs' names. A skipped matrix shows one run named after the whole expression, which counts
-  by the `jobs` name quoted in it.
-- `rerun`: its rerun tag.
-
-**`qa`**, a QA pass:
-
-- `check`: the QA check run's name. A check whose title starts with `Waiting` is not a result yet.
-- `label`: the label that asks for QA.
-- `author` and `heading`: who posts the QA comment, and how it starts. `author` may be left out with
-  `runner: woodshed`, whose report is the console's check.
-- `runner`: `actions` (the default) or `woodshed`, as for the review.
-- `after`: when a `woodshed` QA session starts. `label` (the default): once the label is on and the review approved
-  the head commit. `approval`: on every pull request the review approves, with no label, as its author. `approval`
-  needs `runner: woodshed` and a `review`.
-
-**`mergeRisk`**, the check that rates the merge:
-
-- `check`: its check run's name. It is trusted only from a run of `review.workflow` on the head commit, or from the
-  console's own App with `review.runner: woodshed`, so it needs `review`.
+| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"): its `review`, test `suites`, `qa` and `mergeRisk` check. Each field is described in `project.reference.yaml`. With none of them, the console posts a pull request once it is out of draft and no check is running or failed |
 
 ## Using it on another repo
 

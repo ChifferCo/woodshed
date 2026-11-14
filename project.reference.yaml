@@ -161,9 +161,11 @@ pullRequests:
     # console starts on the `rerun` tag, which posts the verdict and the Merge risk check as the console's App. With
     # `woodshed`, `author` and `commentAuthor` are the App's `<slug>[bot]` login and `workflow` may be left out.
     runner: actions
-  # Default: []. Test suites that must pass on the head commit.
+  # Default: []. Test suites that must pass on the head commit. A pull request touching only paths the workflow's
+  # `on.pull_request` ignores is not held for it (the console reads the workflow from the default branch).
   suites:
-    - # Required. The name shown, the workflow file, and the prefix of its jobs' names.
+    - # Required. The name shown, the workflow file, and the prefix of its jobs' names (a skipped matrix's one run counts
+      # by the `jobs` name quoted in it).
       name: e2e suite
       workflow: .github/workflows/e2e.yml
       jobs: e2e run
@@ -171,7 +173,8 @@ pullRequests:
       rerun: '[e2e]'
   # Default: null (no QA waited for).
   qa:
-    # Required. The QA check run's name, the label that asks for it, and the author and heading of its comment.
+    # Required. The QA check run's name (a title starting `Waiting` is not a result yet), the label that asks for it, and
+    # the author and heading of its comment.
     # `author` may be left out with `runner: woodshed`, whose report is the console's check, not a comment.
     check: QA
     label: qa
