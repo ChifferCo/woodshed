@@ -1,7 +1,8 @@
 # The session image
 
 One image holds everything a session needs except the databases: Node 22.16,
-`gh`, `tmux`, `ttyd`, Redis, the Claude Code CLI, the Playwright MCP with its
+`gh`, `tmux`, `ttyd`, Redis, Postgres 16's client (`psql`, `pg_dump`, from PostgreSQL's apt repository: the major
+the installations host, `PG_CLIENT_MAJOR` in the `Dockerfile`), the Claude Code CLI, the Playwright MCP with its
 Chromium, and the repo at `/work/<repo name>` with its project file's dependency installs run. What an install keeps
 under its dir is one layer; what it keeps under the home (`~/`, such as a test runner's own browser) is another, which
 SOCI fetches only when a session uses it.
@@ -196,6 +197,20 @@ once a person approves. So does any `gh pr -R` or `gh pr --repo` command, since
 a rule matches the start of a command and `gh pr -R <repo> merge` would
 otherwise get past it; a session only works on this repo and has no need for
 either.
+
+Auto mode also asks a person, once, before claude's first file read outside the
+working directories ("Read outside the working directories", Claude Code
+2.1.325), which held every private session at Needs you on its first step,
+reading its environment notes. So the same file allows a `Read` of each file
+outside the repo that Woodshed points claude at, by its path and nothing else:
+`/tmp/woodshed-setup.md` (the notes), `/tmp/woodshed-deps` (the installs'
+status, which the project's notes have claude wait for),
+`/tmp/woodshed-docker-ports.log` (`hostDocker.md`) and `/tmp/answer.md` (an
+ask's answer). `/tmp/uploads` is a working directory already (`--add-dir`). A
+rule rather than another `--add-dir`: a working directory also takes writes and
+is named to the model. Any other read outside the repo, such as an app log the
+project file puts under `~/.cache`, still asks once per session.
+`entrypoint.test.mjs` fails when Woodshed's rules name a `/tmp` file with no rule.
 
 The same file runs `session/readyGate.mjs` before each Bash command and the
 GitHub MCP's pull request calls. It refuses to open a pull request for review,

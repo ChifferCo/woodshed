@@ -274,7 +274,8 @@ checkoutBranch() {
 
 # The image ships what each install keeps for its build commit; run an install again only where its files changed
 # since (deps.sh, depsBuiltFrom). Runs in the background once claude is up, so a reinstall never delays it: the
-# project's environment notes (setup.md) have claude wait for DEPS_STATUS before it needs them.
+# project's environment notes (setup.md) have claude wait for DEPS_STATUS before it needs them. claudeHooks.json lets
+# claude read it without asking: change both together.
 DEPS_STATUS=/tmp/woodshed-deps
 refreshDeps() {
   local manifest kind dir files output command start=$SECONDS
@@ -431,7 +432,8 @@ writeRules() {
     rules=$(grep -vF '{{REVIEW_TAG}}' <<< "$rules" || true)
   fi
   # The project's environment notes. A shared session gets them inline. A private one is often just a conversation,
-  # so it gets a pointer to them instead of the whole text. Lines marked {{SHARED_ONLY}}, such as the Slack
+  # so it gets a pointer to them instead of the whole text: claudeHooks.json lets claude read that file, outside the
+  # working directories, without auto mode's one-time "Read outside the working directories" question (claudeFlags). Lines marked {{SHARED_ONLY}}, such as the Slack
   # announcement, are for shared sessions alone, and lines marked {{PRIVATE_ONLY}} for private ones.
   notes=$(project file setup) || die "the project's environment notes could not be read"
   printf '%s\n' "$notes" > /tmp/woodshed-setup.md
@@ -690,7 +692,10 @@ pullSettings() {
 claudeFlags() {
   local mode=${PERMISSION_MODE:-auto}
   # The hooks that tell statusd what claude is doing, and the session's own permission rules. Passed here, not written
-  # into settings.json, so they never travel in a saved Claude home, and they add to the owner's own settings.
+  # into settings.json, so they never travel in a saved Claude home, and they add to the owner's own settings. Among
+  # the rules, a Read allow for each file outside the repo that Woodshed points claude at (the environment notes,
+  # DEPS_STATUS, the docker ports' log, an ask's answer): auto mode asks a person before the first read outside the
+  # working directories (Claude Code 2.1.325), which held every private session at Needs you on its notes.
   printf ' --settings %s' "$SESSION_DIR/claudeHooks.json"
   printf ' --append-system-prompt-file %s' /tmp/woodshed-rules.md
   # Files attached to New session and pasted or dropped on a terminal land here, outside the repo: without this claude

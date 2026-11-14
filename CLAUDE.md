@@ -651,6 +651,15 @@ secrets.
   `frontendStillUp` or `backendStillUp`. Stop them from the terminal. A half-up
   app is a server that crashed: its logs are the project file's `app.logs` in the session, and the app's own
   status command says which port is free.
+- **A session sits at Needs you on "Read outside the working directories" (Allow this read …?).** Auto mode asks once,
+  at claude's first file read outside the repo and `/tmp/uploads`. Woodshed's own files there (the environment notes,
+  `/tmp/woodshed-deps`, the docker ports' log, an ask's answer) are `Read` rules in `session/claudeHooks.json`
+  (session/README.md, "Why permissions are off"), so a session asking about one of them is an image from before the
+  rules, or a path Woodshed names that has none: add it there, where `entrypoint.test.mjs` checks them. Any other path
+  is the project's own, such as an app log under `~/.cache` its notes point at: answer it, or have the notes keep it in
+  the repo. Its option 2, "No, and block", writes `permissions.blockReadsOutsideWorkingDirectories` to the owner's
+  `~/.claude/settings.json`, which `settingsSync.mjs` carries to every private session of theirs: those refuse such
+  reads from then on, until it is taken out of that file.
 - **A session says Waiting for input while Claude is working, or the reverse.**
   statusd logs `statusd: claude state changed` with `source`: `hook` is
   Claude's own hooks, `interrupt` an Esc read from the transcript, `silent` a
