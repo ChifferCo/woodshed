@@ -26,6 +26,8 @@
   }
 
   const MAX_ATTACH = 8;
+  // How long New session's Work on keeps a project's open pull requests before asking the console again.
+  const PULLS_FRESH_MS = 60_000;
   const MAX_ATTACH_MB = 25;
   const MAX_TOTAL_MB = 40;
 
@@ -173,6 +175,161 @@
     return menu;
   }
 
+  /**
+   * Work on as a combobox: type a number, a branch or words to narrow the project's open pull requests (GET /api/pulls),
+   * or open ▾ for all of them. Each row says enough to pick from: number, title, draft, author, branch and last update.
+   * A picked one goes in as `PR #123`, and the line under the field names it. Anything else typed is sent as typed.
+   * @param {HTMLInputElement} input
+   * @param {() => string} projectOf  the picked project, empty for the default
+   */
+  function createPullPicker(input, projectOf) {
+    const P = window.WoodshedOpenPulls;
+    const listId = 'l-on-list';
+    const menu = h('div', { class: 'skill-menu pull-menu', id: listId, role: 'listbox', 'aria-label': 'Open pull requests', hidden: true });
+    const toggle = h('button', { type: 'button', class: 'pull-toggle', tabindex: '-1', 'aria-label': 'Show the open pull requests',
+      'aria-controls': listId, 'aria-expanded': 'false' }, '▾');
+    const chosen = h('p', { class: 'pull-chosen', hidden: true });
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', listId);
+    input.setAttribute('aria-expanded', 'false');
+    const byProject = new Map();
+    let answer = null;
+    let matches = [];
+    let active = -1;
+    let all = false;
+
+    // Read again once a minute old, as the console's own copy is: the page stays open while sessions open pull requests.
+    function load() {
+      const project = projectOf();
+      const kept = byProject.get(project);
+      if (!kept || Date.now() - kept.at >= PULLS_FRESH_MS) {
+        const url = project ? `/api/pulls?project=${encodeURIComponent(project)}` : '/api/pulls';
+        const promise = W.getJson(url).then((b) => b, () => {
+          byProject.delete(project);
+          return { pulls: [], total: 0, stale: true };
+        });
+        byProject.set(project, { at: Date.now(), promise });
+      }
+      return byProject.get(project).promise;
+    }
+
+    // The pull request the field names exactly (`PR #123`, `#123`), when it is one of the listed.
+    function picked() {
+      const number = /^(?:pr\s*)?#\s*(\d+)$/i.exec(input.value.trim())?.[1];
+      return number ? answer?.pulls.find((p) => p.number === Number(number)) ?? null : null;
+    }
+
+    function showChosen() {
+      const p = picked();
+      chosen.hidden = !p;
+      if (p) chosen.replaceChildren(h('span', { class: 'pull-chosen-title' }, p.title), ` · ${[p.author && `@${p.author}`, p.branch].filter(Boolean).join(' · ')}`);
+    }
+
+    function hide() {
+      menu.hidden = true;
+      all = false;
+      matches = [];
+      active = -1;
+      input.setAttribute('aria-expanded', 'false');
+      toggle.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+
+    function pick(p) {
+      input.value = P.workOnFor(p);
+      hide();
+      showChosen();
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    function row(p, i) {
+      const meta = [p.author && `@${p.author}`, p.branch, p.updatedAt && `updated ${W.ago(p.updatedAt)}`].filter(Boolean).join(' · ');
+      return h('div', {
+        class: 'pull-row', id: `${listId}-${i}`, role: 'option', 'aria-selected': String(i === active),
+        onmousedown: (e) => { e.preventDefault(); pick(p); },
+      },
+      h('span', { class: 'pull-num' }, `#${p.number}`),
+      h('span', { class: 'pull-title', title: p.title }, p.title, p.draft ? h('span', { class: 'pull-draft' }, 'Draft') : null),
+      h('span', { class: 'pull-meta', title: meta }, meta));
+    }
+
+    function paint() {
+      const list = answer?.pulls ?? [];
+      // With a pick in the field, ▾ or a click shows the whole list, the pick marked.
+      const current = picked();
+      matches = all || current ? list : P.matchPulls(list, input.value);
+      if (current && active < 0) active = matches.indexOf(current);
+      // While typing, the first match is the one Enter picks.
+      if (active < 0 && input.value.trim() && matches.length) active = 0;
+      if (active >= matches.length) active = matches.length - 1;
+      const note = P.pullsNote({ shown: matches.length, listed: list.length, total: answer?.total ?? 0, stale: Boolean(answer?.stale) });
+      menu.replaceChildren(...matches.map(row), ...(note ? [h('p', { class: 'pull-note' }, note)] : []));
+      menu.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+      toggle.setAttribute('aria-expanded', 'true');
+      if (active >= 0) {
+        input.setAttribute('aria-activedescendant', `${listId}-${active}`);
+        menu.querySelector(`#${listId}-${active}`)?.scrollIntoView({ block: 'nearest' });
+      } else {
+        input.removeAttribute('aria-activedescendant');
+      }
+    }
+
+    async function open({ everything = false } = {}) {
+      all = everything;
+      if (!answer) menu.replaceChildren(h('p', { class: 'pull-note' }, 'Reading the open pull requests…'));
+      menu.hidden = false;
+      const project = projectOf();
+      const got = await load();
+      if (projectOf() !== project || document.activeElement !== input) return;
+      answer = got;
+      paint();
+      showChosen();
+    }
+
+    input.addEventListener('focus', () => open());
+    input.addEventListener('click', () => { if (menu.hidden) open(); });
+    input.addEventListener('input', () => { active = -1; all = false; open(); showChosen(); });
+    input.addEventListener('blur', () => setTimeout(hide, 100));
+    toggle.addEventListener('mousedown', (e) => e.preventDefault());
+    toggle.addEventListener('click', () => {
+      if (!menu.hidden && all) return hide();
+      input.focus();
+      open({ everything: true });
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' && menu.hidden) {
+        open({ everything: true });
+      } else if (menu.hidden || !matches.length) {
+        if (e.key === 'Escape' && !menu.hidden) hide();
+        else return;
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        active = (active + (e.key === 'ArrowDown' ? 1 : -1) + matches.length) % matches.length;
+        paint();
+      } else if (e.key === 'Enter' && active >= 0 && !e.metaKey && !e.ctrlKey) {
+        pick(matches[active]);
+      } else if (e.key === 'Escape') {
+        hide();
+      } else {
+        return;
+      }
+      e.preventDefault();
+    });
+
+    return {
+      el: h('div', { class: 'pull-pick' }, h('div', { class: 'pull-field' }, input, toggle, menu), chosen),
+      // The project changed, or the field was set from outside (a link's ?on=, a start that emptied it).
+      refresh() {
+        answer = null;
+        hide();
+        showChosen();
+        // Read now only to name a pull request already in the field; otherwise at the field's first focus.
+        if (input.value.trim()) load().then((got) => { answer = got; showChosen(); });
+      },
+    };
+  }
+
   function field(id, label, control, hint) {
     return h('div', { class: 'lfield' },
       h('label', { for: id, class: 'field-label' }, h('span', null, label), hint && h('span', { class: 'hint' }, hint)),
@@ -298,7 +455,12 @@
     const startWords = h('span', null, 'Start');
     const start = h('button', { type: 'submit', class: 'btn btn-open', 'data-keys': 'start' }, startWords,
       h('span', { class: 'btn-keys', 'aria-hidden': 'true' }, K.caps(K.byId.start.mod, K.isMac(window.navigator)).map((k) => h('kbd', null, k))));
-    const projects = createProjectPicker(() => { if (me) update(me); });
+    let pulls = null;
+    const projects = createProjectPicker(() => {
+      pulls?.refresh();
+      if (me) update(me);
+    });
+    pulls = createPullPicker(workOn, () => projects.value());
     const note = h('span', { class: 'sub' });
     const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
     const dictation = createDictation(prompt);
@@ -388,7 +550,7 @@
       attachments.el, attachments.chips,
       h('div', { class: 'lgrid2' },
         field('l-name', 'Name', name, 'optional: Haiku names it from the prompt otherwise'),
-        field('l-on', 'Work on', workOn, 'optional')),
+        field('l-on', 'Work on', pulls.el, 'optional: type to search the open PRs, or pick one from \u25be')),
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
@@ -411,6 +573,7 @@
       if (asked.get('on')) workOn.value = asked.get('on');
       if (asked.get('prompt')) prompt.value = asked.get('prompt');
       if (asked.get('project')) projects.ask(asked.get('project'));
+      pulls.refresh();
     }
     applyQuery();
 
@@ -439,6 +602,7 @@
         prompt.value = '';
         name.value = '';
         workOn.value = '';
+        pulls.refresh();
         attachments.clear();
         start.disabled = false;
         (W.navigate ?? ((href) => { window.location.href = href; }))(`/s/${session.id}`);

@@ -79,6 +79,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - With no PR and no branch on GitHub yet the button says why in its own words ("Invite an engineer: push the branch first"), sits at 70% and copies nothing. Never copy a dead link.
 - The link holds the PR number or branch name and nothing else. The session stays private.
 
+## Work on
+
+- New session's Work on is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
+  them, or open the quiet ▾ for all. Each row is enough to pick from without GitHub: number, title, Draft, author,
+  branch and last update. A pick writes `PR #123` and is named under the field. Anything typed still goes as typed.
+- The list is a `menu` surface with rows on `slate-tint` when picked or hovered, never a status color.
+
 ## Commands to copy
 
 - A command a person runs on their own computer is a `value-box` in mono, one argument a line, with its own **Copy**

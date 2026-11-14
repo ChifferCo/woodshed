@@ -291,7 +291,11 @@ asks for a prompt and, optionally:
   and the console asks Claude Haiku for a better one on the team's Anthropic
   key (`console/autoName.mjs`). The rail shows it a second or so later; if the
   call fails, the first line stays;
-- what to work on: `#123` for an issue or PR, `PR #123`, or a branch name;
+- what to work on: `#123` for an issue or PR, `PR #123`, or a branch name. The field lists the project's open pull
+  requests (`GET /api/pulls`, the 100 updated last, read by the console in one GraphQL call and kept a minute per
+  project): typing narrows them by number, title, branch or author, ▾ or ↓ shows them all, and a pick writes `PR #123`
+  and names it under the field. The console logs `console: open pull requests read` with the count, or `console: open
+  pull requests not readable` with gh's error, after which the list from before is shown and says so;
 - claude's model, effort and permission mode;
 - files: the paperclip, a paste or a drop, up to 8 of 25 MB each and 40 MB
   together. Each goes to the console as it is picked (`POST /api/my/uploads`,

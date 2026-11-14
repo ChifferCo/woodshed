@@ -152,3 +152,22 @@ test('who added a label is read from every page of the issue\'s events, the last
   assert.equal(await github.labeledBy(7, 'qa'), 'joel');
   assert.equal(await github.labeledBy(7, 'missing'), null);
 });
+
+test('the repo\'s open pull requests are read in one call, each with its branch and author, with how many there are', async () => {
+  let asked = null;
+  const run = async (_cmd, args) => {
+    asked = args;
+    return { stdout: JSON.stringify({ data: { repository: { pullRequests: { totalCount: 140, nodes: [
+      { number: 12, title: 'Fix login', isDraft: false, headRefName: 'fix-login', updatedAt: '2026-11-02T00:00:00Z', author: { login: 'ann' } },
+      { number: 9, title: 'Draft idea', isDraft: true, headRefName: 'idea', updatedAt: null, author: null },
+      null,
+    ] } } } }) };
+  };
+  const github = createGitHub({ repo: 'acme/api', run });
+  assert.deepEqual(await github.openPulls(), { total: 140, pulls: [
+    { number: 12, title: 'Fix login', branch: 'fix-login', author: 'ann', draft: false, updatedAt: '2026-11-02T00:00:00Z' },
+    { number: 9, title: 'Draft idea', branch: 'idea', author: null, draft: true, updatedAt: null },
+  ] });
+  assert.ok(asked.includes('owner=acme') && asked.includes('name=api'));
+  assert.match(asked.find((a) => a.startsWith('query=')), /pullRequests\(states: OPEN, first: 100, orderBy: \{field: UPDATED_AT, direction: DESC\}\)/);
+});

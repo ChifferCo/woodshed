@@ -846,7 +846,8 @@ instead of writing the pull request's comment and check.
 three made-up sessions and no AWS, GitHub, Docker or sign-in. Open `http://localhost:<port>/s/aaaa1111` in the
 Playwright browser. The rail folds its stopped zones, so run
 `localStorage['woodshed-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
-cards. Pull request chips show without their state or checks, since polling GitHub is off. `/s/dddd4444` is running,
+cards. Pull request chips show without their state or checks, since polling GitHub is off. New session's Work on lists made-up open
+pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
