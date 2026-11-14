@@ -185,10 +185,9 @@ pullRequests:
     # the console's GitHub App. With `woodshed`, the decision brief reads the report from that check and not `author`'s
     # comment; never name the App as `author`, since sessions comment as the App too.
     runner: actions
-    # Default: label. When QA starts, with `runner: woodshed`:
-    #   label     someone adds the label above, and QA starts once the review approves the latest commit
-    #   approval  QA starts on every pull request the review approves, with no label (needs a `review`)
-    after: label
+    # Default: false. With `runner: woodshed` and a `review`, true has the console add the label to each new pull request.
+    # QA still starts only once the review approves; removing the label opts a pull request out.
+    autoLabel: false
   # Default: null. The check run that rates the merge; it needs `review`, whose workflow must post it.
   mergeRisk:
     # Required.

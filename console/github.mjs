@@ -319,6 +319,9 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       }
       return null;
     },
+    async addLabel(number, label) {
+      await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/labels`, '-f', `labels[]=${label}`]);
+    },
     /** @returns {Promise<string|null>}  who last added the label to the issue or pull request */
     async labeledBy(number, label) {
       let by = null;

@@ -186,7 +186,7 @@ const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/wor
 const PULL_REQUESTS = {
   review: REVIEW,
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
-  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions', after: 'label' },
+  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions', autoLabel: false },
   mergeRisk: { check: 'Merge risk' },
 };
 
@@ -228,11 +228,11 @@ test('a wrong pullRequests section names the field', () => {
   assert.throws(() => full({ ...PULL_REQUESTS, qa: noAuthor }), /pullRequests\.qa is missing author/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed', author: '' } }), /pullRequests\.qa\.author must be a non-empty string/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'jenkins' } }), /pullRequests\.qa\.runner must be one of actions, woodshed/);
-  assert.equal(full(PULL_REQUESTS).pullRequests.qa.after, 'label', 'left out, QA waits for its label');
-  assert.equal(full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed', after: 'approval' } }).pullRequests.qa.after, 'approval');
-  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...PULL_REQUESTS.qa, after: 'always' } }), /pullRequests\.qa\.after must be one of label, approval/);
-  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, after: 'approval' } }), /after: approval needs runner: woodshed and pullRequests\.review/);
-  assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, qa: { ...noRunner, runner: 'woodshed', after: 'approval' } }), /after: approval needs/);
+  assert.equal(full(PULL_REQUESTS).pullRequests.qa.autoLabel, false, 'left out, a person adds the label');
+  assert.equal(full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }).pullRequests.qa.autoLabel, true);
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...PULL_REQUESTS.qa, autoLabel: 'yes' } }), /pullRequests\.qa\.autoLabel must be true or false/);
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, autoLabel: true } }), /autoLabel needs runner: woodshed and pullRequests\.review/);
+  assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }), /autoLabel needs/);
 });
 
 test('editor is true or false, and off when left out, so a branch from before it still starts', () => {
