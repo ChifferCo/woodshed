@@ -573,7 +573,7 @@ dialog.confirm .share-fresh-row .field { flex: 1; min-width: 0; }
 dialog.confirm .share-fresh { margin-top: 10px; }
 dialog.confirm .share-links { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
 dialog.confirm .share-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
-.launch { padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; overflow-y: auto; }
+.launch { flex: 1 1 auto; min-height: 0; padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; overflow-y: auto; }
 .launch[hidden] { display: none; }
 /* The Shared tab's page, in the pane beside the rail. */
 .home { padding: 24px; display: flex; flex-direction: column; gap: 18px; max-width: 1040px; overflow-y: auto; min-width: 0; }
@@ -620,6 +620,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
   .shell.is-launcher .rail { display: flex; flex: none; border-right: 0; border-bottom: 1px solid var(--line); }
   .launch { padding: 16px; }
   .lgrid2, .lgrid3, .lgrid4 { grid-template-columns: 1fr; }
+  .pull-meta { white-space: normal; overflow-wrap: anywhere; }
   /* On a phone the rail is the Shared page, as before: its list is already there. */
   .home { display: none; }
 }
@@ -928,6 +929,22 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .skill-row[aria-selected="true"] { background: var(--slate-tint); }
 .skill-name { color: var(--slate); font: 600 12.5px var(--mono); }
 .skill-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font-size: 12px; }
+/* New session's Work on: a combobox over the project's open pull requests (designSystem/components/PullPicker) */
+.pull-pick { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pull-field { position: relative; display: flex; flex-direction: column; }
+.pull-field .field { padding-right: 34px; }
+.pull-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 30px; border: 0; border-left: 1px solid var(--line); border-radius: 0 3px 3px 0; background: none; color: var(--meta); font-size: 13px; cursor: pointer; }
+.pull-toggle:hover, .pull-toggle[aria-expanded="true"] { color: var(--ink); background: var(--slate-tint); }
+.pull-menu { left: auto; max-height: 320px; min-width: min(460px, calc(100vw - 32px)); }
+.pull-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; align-items: baseline; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
+.pull-row[aria-selected="true"], .pull-row:hover { background: var(--slate-tint); }
+.pull-num { grid-row: span 2; color: var(--slate); font: 600 12.5px var(--mono); }
+.pull-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 13px; font-weight: 600; }
+.pull-draft { margin-left: 6px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--sub); font-size: 10.5px; font-weight: 600; text-transform: uppercase; vertical-align: 1px; }
+.pull-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font: 400 11.5px var(--mono); }
+.pull-note { margin: 0; padding: 6px 8px; color: var(--sub); font-size: 12px; }
+.pull-chosen { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font-size: 12px; }
+.pull-chosen-title { color: var(--ink); font-weight: 600; }
 
 /* ---- session info: the pull request's chip, the container's usage, the app log ---- */
 .prchip { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 5px; border: 1px solid #a8ddc0; border-radius: 4px; background: #e8f6ee; color: #1a7f4b; font: 600 10.5px/1.6 var(--mono); text-decoration: none; white-space: nowrap; }

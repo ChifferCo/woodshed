@@ -1855,6 +1855,65 @@ test('another project\'s / list is only for someone who may start sessions on it
   assert.deepEqual(asked.map(([, name]) => name), ['tools', 'app']);
 });
 
+test('Work on\'s open pull requests are the picked project\'s, each read once a minute', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const read = [];
+  const client = (repo, number) => ({ openPulls: async () => {
+    read.push(repo);
+    return { pulls: [{ number, title: repo, branch: `b${number}`, author: 'ann', draft: false, updatedAt: null }], total: 1 };
+  } });
+  const github = client('acme/app', 1);
+  const tools = client('acme/tools', 2);
+  const projectAccess = { forStart: async (_login, name) => projects.find((p) => p.name === name) ?? null };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github, githubFor: (p) => (p.name === 'tools' ? tools : null), projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const ask = async (path) => JSON.parse(await getBody(port, path));
+  assert.deepEqual(await ask('/api/pulls'), { pulls: [{ number: 1, title: 'acme/app', branch: 'b1', author: 'ann', draft: false, updatedAt: null }], total: 1, stale: false });
+  assert.deepEqual((await ask('/api/pulls?project=tools')).pulls.map((p) => p.number), [2]);
+  assert.deepEqual((await ask('/api/pulls?project=gone')).pulls.map((p) => p.number), [1], 'a project the console does not have: the default\'s');
+  assert.deepEqual(read, ['acme/app', 'acme/tools'], 'each project read once in its minute');
+});
+
+test('another project\'s open pull requests are only for someone who may start sessions on it', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const github = { openPulls: async () => ({ pulls: [{ number: 1 }], total: 1 }) };
+  const tools = { openPulls: async () => ({ pulls: [{ number: 2 }], total: 1 }) };
+  const projectAccess = { forStart: async (_login, name) => (name === 'app' ? projects[0] : null) };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github, githubFor: (p) => (p.name === 'tools' ? tools : null), projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const numbers = async (path) => JSON.parse(await getBody(port, path)).pulls.map((p) => p.number);
+  assert.deepEqual(await numbers('/api/pulls?project=tools'), [1], 'refused: the default project\'s list, never the other repo\'s');
+});
+
+test('a failed read of the open pull requests keeps the last list, marked stale', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let failing = false;
+  const github = { openPulls: async () => {
+    if (failing) throw new Error('HTTP 502');
+    return { pulls: [{ number: 1 }], total: 1 };
+  } };
+  const now = Date.now;
+  let at = now();
+  Date.now = () => at;
+  t.after(() => { Date.now = now; });
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const ask = async () => JSON.parse(await getBody(port, '/api/pulls'));
+  assert.deepEqual(await ask(), { pulls: [{ number: 1 }], total: 1, stale: false });
+  failing = true;
+  at += 61_000;
+  assert.deepEqual(await ask(), { pulls: [{ number: 1 }], total: 1, stale: true });
+});
+
 test('the rail\'s pull requests are read from each repo the person may start on, on that project\'s own client', async (t) => {
   const projects = [{ name: 'shop', repo: 'acme/shop', default: true }, { name: 'app', repo: 'acme/app' }, { name: 'ops', repo: 'acme/ops' }];
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'acme/shop', projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };

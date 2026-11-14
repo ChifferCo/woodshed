@@ -73,6 +73,14 @@ const PULLS_FOR_QUERY = `query($mine: String!, $review: String!) {
   review: search(query: $review, type: ISSUE, first: 10) { nodes { ... on PullRequest { ${PULL_ROW_FIELDS} } } }
 }`;
 
+// Every open pull request on the repo, for New session's Work on list: the 100 updated last, with how many there are.
+const OPEN_PULLS_LIMIT = 100;
+const OPEN_PULLS_QUERY = `query OpenPulls($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
+  pullRequests(states: OPEN, first: ${OPEN_PULLS_LIMIT}, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    totalCount nodes { number title isDraft headRefName updatedAt author { login } }
+  }
+} }`;
+
 const ISSUE_PROJECT_ITEMS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) { projectItems(first: 20) { nodes {
     id
@@ -359,6 +367,21 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       return [...mine.map((i) => ({ i, why: 'yours' })), ...review.map((i) => ({ i, why: 'review' }))]
         .filter(({ i }) => i?.number && !seen.has(i.number) && seen.add(i.number))
         .map(({ i, why }) => pullRow(i, why));
+    },
+    /**
+     * @returns {Promise<{pulls: {number: number, title: string, branch: string, author: string|null, draft: boolean,
+     *   updatedAt: string|null}[], total: number}>}  the repo's open pull requests, updated last first, at most 100 of
+     *   `total`
+     */
+    async openPulls() {
+      const [owner, name] = currentRepo().split('/');
+      const answer = await ghApi(['graphql', '-f', `query=${OPEN_PULLS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`]);
+      const found = answer?.data?.repository?.pullRequests;
+      const pulls = (found?.nodes ?? []).filter((p) => p?.number).map((p) => ({
+        number: p.number, title: p.title, branch: p.headRefName, author: p.author?.login ?? null,
+        draft: Boolean(p.isDraft), updatedAt: p.updatedAt ?? null,
+      }));
+      return { pulls, total: found?.totalCount ?? pulls.length };
     },
     /**
      * @param {number[]} numbers  at most 50
