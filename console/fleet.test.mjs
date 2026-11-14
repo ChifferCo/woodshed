@@ -2211,6 +2211,33 @@ test('a review starts no QA without the label, without approval, or for a projec
   assert.equal((await noReview.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' })).outcome, 'started', 'with no review, the label starts QA');
 });
 
+test('with after: approval, the review approving the head starts QA with no label, as the author, once for each commit', async () => {
+  const unlabelled = { ...QA_PULL, labels: [], user: { login: 'joel' } };
+  const t = qaSetup({ gates: { ...QA_GATES, qa: { ...QA_GATES.qa, after: 'approval' } } });
+  t.github.pull = async () => unlabelled;
+  t.github.labeledBy = async () => { throw new Error('no label to look up'); };
+  assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  const [session] = t.fleet.sessions();
+  assert.deepEqual([session.startedBy, session.qa.sha, session.qa.teamKey], ['joel', 'a'.repeat(40), undefined]);
+  session.status = 'stopped';
+  assert.deepEqual(await t.fleet.qaAfterReview({ number: 7 }), { unrecorded: true }, 'already tested at this commit');
+});
+
+test('with after: approval, an author who fails the identity checks, or a bot, gets QA on the team key; a fork gets none', async () => {
+  const approval = { ...QA_GATES, qa: { ...QA_GATES.qa, after: 'approval' } };
+  const reused = qaSetup({ gates: approval, people: { check: async () => false }, userSettings: ownTokens(), databases: madeDatabases() });
+  reused.github.pull = async () => ({ ...QA_PULL, labels: [], user: { login: 'joel' } });
+  assert.equal((await reused.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  assert.deepEqual([reused.fleet.sessions()[0].qa.teamKey, reused.fleet.sessions()[0].plan], [true, null], 'never the old person\'s plan');
+  const bot = qaSetup({ gates: approval });
+  bot.github.pull = async () => ({ ...QA_PULL, labels: [], user: { login: 'woodshed-console[bot]' } });
+  assert.equal((await bot.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  const fork = qaSetup({ gates: approval });
+  fork.github.pull = async () => ({ ...QA_PULL, labels: [], user: { login: 'joel' }, head: { ...QA_PULL.head, repo: { full_name: 'someone/fork' } } });
+  assert.equal((await fork.fleet.qaAfterReview({ number: 7 })).reason, 'the pull request is from a fork');
+  assert.equal(fork.fleet.sessions().length, 0);
+});
+
 test('the QA label on a pull request starts a QA session on its branch, read only, and says so in the QA comment', async () => {
   const { fleet, calls } = qaSetup();
   const outcome = await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });

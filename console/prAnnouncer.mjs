@@ -195,14 +195,15 @@ export function createPrAnnouncer({
     return outcomes.map((s) => (s.outcome === 'none' && never.has(s.name) ? { ...s, outcome: 'green' } : s));
   }
 
-  // The QA check runs once the review approves, on a pull request with its label, and is posted when it has a verdict.
+  // The QA check runs once the review approves, on a pull request with its label (or on any, with `after: approval`), and
+  // is posted when it has a verdict.
   // The brief waits for that check on the head commit, from when the commit was first seen approved and green.
   function qaFor(item, pull, runs, qa) {
     if (!qa) return { waiting: false, check: null, notRun: 'not configured' };
     const sha = pull.head.sha;
     const { finished, check } = qaCheckFrom(runs, qa, ownApp());
     if (finished) return { waiting: false, check, notRun: null };
-    if (!(pull.labels ?? []).some((l) => l.name === qa.label)) return { waiting: false, check: null, notRun: `no ${qa.label} label` };
+    if (qa.after !== 'approval' && !(pull.labels ?? []).some((l) => l.name === qa.label)) return { waiting: false, check: null, notRun: `no ${qa.label} label` };
     if (item.qaSha !== sha) {
       item.qaSha = sha;
       item.qaSince = new Date(now()).toISOString();

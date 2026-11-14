@@ -1531,6 +1531,8 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    whose head the review has not approved gets a neutral `Waiting` QA check instead, and a submitted review
    (`qaAfterReview`, from the webhooks' `review submitted`) starts QA on a labelled pull request once the review
    approves its head, as whoever added the label (the issue events' last `labeled`), once for each commit.
+   With `qa.after: approval` no label is needed: every same-repo pull request the review approves gets QA, as its
+   author, on the team key when the author fails the checks above (a bot author always does).
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.

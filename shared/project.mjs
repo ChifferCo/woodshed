@@ -62,7 +62,7 @@ export const PROJECT_FIELDS = Object.freeze({
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
-  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
+  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'after'],
   'pullRequests.mergeRisk': ['check'],
 });
 
@@ -275,6 +275,8 @@ function app(value, where = 'app', names = PROJECT_FIELDS.app) {
 // Where QA runs: `actions` in the repo's own CI, which posts the check (.github/actions/qa), `woodshed` in a QA session
 // the console starts when the label goes on (console/qaSessions.mjs).
 export const QA_RUNNERS = Object.freeze(['actions', 'woodshed']);
+// When a QA session starts: once its label is on and the review approved (`label`), or on every approval (`approval`).
+export const QA_AFTER = Object.freeze(['label', 'approval']);
 
 // What the console's Start app sends and statusd and the console show: short, and safe in a URL, a menu and a log line.
 const APP_NAME = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -352,14 +354,17 @@ function pullRequests(value) {
     };
   });
   const qa = nullable(p.qa, 'pullRequests.qa', (q) => {
-    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null });
+    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null, after: 'label' });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.qa.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
+    if (!QA_AFTER.includes(f.after)) fail(`pullRequests.qa.after must be one of ${QA_AFTER.join(', ')} (it is ${JSON.stringify(f.after)})`);
+    // With `approval` the console starts QA itself when the review approves, so it needs both the session runner and a review.
+    if (f.after === 'approval' && (f.runner !== 'woodshed' || !review)) fail('pullRequests.qa.after: approval needs runner: woodshed and pullRequests.review');
     // A QA session's report is the console's check, so `woodshed` has no comment author to trust (sessions comment as the App).
     if (f.runner !== 'woodshed' && !Object.hasOwn(q, 'author')) fail('pullRequests.qa is missing author');
     const author = f.runner === 'woodshed' && !Object.hasOwn(q, 'author') ? null : string(f.author, 'pullRequests.qa.author');
     return {
       check: string(f.check, 'pullRequests.qa.check'), label: string(f.label, 'pullRequests.qa.label'),
-      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner,
+      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner, after: f.after,
     };
   });
   const mergeRisk = nullable(p.mergeRisk, 'pullRequests.mergeRisk', (m) => {
