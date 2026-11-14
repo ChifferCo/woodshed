@@ -949,6 +949,22 @@ a.prchip:hover { border-color: currentColor; }
 .usage.is-warn { color: var(--needs); }
 .usage.is-hot { color: var(--bad); }
 .pane-bar .usage { color: var(--bar-sub); }
+/* The badge is a button: it opens the machine dialog (common.js, openMachine). */
+button.usage { padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; background: none; cursor: pointer; }
+button.usage:hover { border-color: var(--line); }
+.pane-bar button.usage:hover { border-color: var(--bar-well-line); background: var(--bar-well); }
+.pane-bar .usage.is-warn { color: var(--bar-amber); }
+.pane-bar .usage.is-hot { color: #f08b81; }
+dialog.machine .machine-of { margin: -8px 0 14px; font-size: 13px; color: var(--sub); }
+dialog.machine .machine-body { display: flex; flex-direction: column; gap: 14px; }
+dialog.machine .plan-meter { padding: 0; }
+dialog.machine .plan-row { font-size: 13.5px; }
+dialog.machine .plan-bar { height: 8px; border-radius: 4px; }
+dialog.machine .plan-bar i { border-radius: 4px; }
+dialog.machine .machine-meter.is-hot .plan-bar i { background: var(--bad); }
+dialog.machine .machine-meter.is-hot .plan-row b { color: var(--bad); }
+dialog.machine dl.machine-facts { margin: 0; }
+dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 /* The owner's Claude plan in the pane bar, and its detail in the bar's menu (common.js, planUsageFace and planUsageDetails). */
 .pane-bar .pplan { gap: 6px; border-color: var(--bar-well-line); font-family: var(--mono); color: var(--bar-ink); }
 .pane-bar .pplan .plan-lbl { font-family: "Red Hat Display", system-ui, sans-serif; font-weight: 600; color: var(--bar-sub); }

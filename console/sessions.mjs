@@ -359,7 +359,10 @@ function usageFrom(usage) {
     cpuPercent: number(usage.cpuPercent, 100_000),
     memoryBytes: number(usage.memoryBytes, 2 ** 50),
     memoryLimitBytes: number(usage.memoryLimitBytes, 2 ** 50),
+    memoryPeakBytes: number(usage.memoryPeakBytes, 2 ** 50),
     cores: number(usage.cores, 1024),
+    diskUsedBytes: number(usage.diskUsedBytes, 2 ** 60),
+    diskTotalBytes: number(usage.diskTotalBytes, 2 ** 60),
   };
   return Object.values(out).some((v) => v !== null) ? out : null;
 }
@@ -404,7 +407,8 @@ function withPrUrl(session, prUrl) {
  * @param {object} session
  * @param {{state: string, lastMessage?: object|null, branch?: string, head?: string, prUrl?: string|null, app?: string, appServers?: {frontend: boolean, backend: boolean, frontendPort?: number|null, backendPort?: number|null},
  *          editor?: boolean, redis?: boolean,
- *          usage?: {cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, cores: number|null},
+ *          usage?: {cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, memoryPeakBytes?: number|null,
+ *                   cores: number|null, diskUsedBytes?: number|null, diskTotalBytes?: number|null},
  *          planUsage?: object}} status
  * @param {string} nowIso
  * @returns {object}  the fields to update
