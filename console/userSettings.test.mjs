@@ -133,6 +133,31 @@ test('the files follow the installation\'s env files: each tab is a secret, labe
   await assert.rejects(settings.file('mia', 'api-env'), /no file called api-env/);
 });
 
+test('an env file the store keeps under another name, for one repo, is its own tab, and a session gets its repo\'s by the project file\'s name', async () => {
+  // As an embedding program gives them: two repos that both name api-env, each kept under a name of its own.
+  const envFiles = [
+    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
+    { secret: 'api-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/api' },
+    { secret: 'web-env', path: 'web/.env' },
+  ];
+  const secrets = fakeSecrets();
+  secrets.values.set('api-4d5e6f--api-env', 'LOG_LEVEL=info');
+  const asked = [];
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets, envFiles, appendedFor: async (name, repo) => { asked.push([name, repo]); return []; } });
+  assert.deepEqual(Object.entries(settings.view('mia').files).map(([key, f]) => [key, f.label]), [
+    ['app-1a2b3c--api-env', 'api/.env (acme/app)'], ['api-4d5e6f--api-env', 'api/.env (acme/api)'], ['web-env', 'web/.env'], ['tmux-conf', '~/.tmux.conf'],
+  ], 'two repos\' files of one path are two tabs, each naming its repo');
+  assert.equal((await settings.file('mia', 'api-4d5e6f--api-env')).sharedText, 'LOG_LEVEL=info', 'the shared text is the store\'s, under its own name');
+  assert.deepEqual(asked, [['api-env', 'acme/api']], 'what is appended is read from that repo\'s project file, by its name there');
+
+  await settings.saveFile('mia', 'api-4d5e6f--api-env', 'LOG_LEVEL=debug');
+  await settings.saveFile('mia', 'web-env', 'MINE=1');
+  assert.equal(secrets.values.get('users/mia/api-4d5e6f--api-env'), 'LOG_LEVEL=debug', 'kept apart from the other repo\'s');
+  assert.deepEqual(await settings.ownFiles('mia', { repo: 'Acme/API' }), { 'api-env': 'LOG_LEVEL=debug', 'web-env': 'MINE=1', 'tmux-conf': null });
+  assert.deepEqual(await settings.ownFiles('mia', { repo: 'acme/app' }), { 'api-env': null, 'web-env': 'MINE=1', 'tmux-conf': null }, 'not the other repo\'s lines');
+  assert.deepEqual(await settings.ownFiles('mia'), { 'web-env': 'MINE=1', 'tmux-conf': null }, 'a session of no repo gets no repo\'s file');
+});
+
 test('a Codex sign-in is an API key or a codex auth.json, kept under the person\'s login', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
