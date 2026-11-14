@@ -137,6 +137,11 @@ services:
     network_mode: host
     environment:
       - AWS_REGION=${region}
+%{ if oidc_connections != "" ~}
+      # The clouds My Woodshed sessions sign in to as their owner (the oidc_connections variable), the console their
+      # OpenID Connect issuer at its public URL. New, so it has no WOODSHED_CLOUD_ name. Quoted, and $ escaped, as PROJECTS is.
+      - ${jsonencode("WOODSHED_OIDC_CONNECTIONS=${replace(oidc_connections, "$", "$$")}")}
+%{ endif ~}
       # Each setting twice, by its name and by the WOODSHED_CLOUD_ one it had (shared/envNames.mjs): the base box can
       # take this config before the console image that reads the new names reaches it, and an older console reads only
       # the old ones. A console that reads both takes the new name and says nothing. The old names go in a later release.

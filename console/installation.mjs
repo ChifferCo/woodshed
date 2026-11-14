@@ -27,6 +27,7 @@ import { appOwnerCheck } from './appOwner.mjs';
 import { createAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
+import { createOidcIssuer } from './oidcIssuer.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
 import { createReviewSource } from './review.mjs';
@@ -199,6 +200,20 @@ async function loadAppKey(config, secrets) {
   };
 }
 
+// The console as an OpenID Connect issuer for private sessions' cloud sign-in (oidcIssuer.mjs), when WOODSHED_OIDC_CONNECTIONS
+// lists a connection. Its key is a secret where there is a secret store, and otherwise a file in the state folder.
+function createIssuer({ loaded, secrets }) {
+  if (!loaded.oidc) return null;
+  const { issuer, connections } = loaded.oidc;
+  const oidc = createOidcIssuer({ issuer, connections, secrets, keyFile: secrets ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
+  console.log('oidcIssuer: on', { issuer, connections: connections.map((c) => `${c.name} (${c.type})`), keyIn: secrets ? 'secret store' : 'state folder' });
+  // Every cloud fetches the keys over https from the issuer's own name, so another issuer works for none of them.
+  if (!issuer.startsWith('https://')) console.warn('oidcIssuer: the issuer is not https, which no cloud accepts', { issuer });
+  // Made or read now rather than at the first session's ask, so a key that cannot be saved shows at start.
+  oidc.load().catch(() => {});
+  return oidc;
+}
+
 /**
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
@@ -287,6 +302,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
+  const oidc = createIssuer({ loaded, secrets });
   const pullWebhooks = createPullWebhooks();
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
@@ -373,12 +389,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
     userMenu,
     appPorts,
     woodshedUpdate,
+    oidc,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
+    oidc,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity });
   const loops = createLoops();

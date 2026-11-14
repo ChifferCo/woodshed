@@ -54,6 +54,15 @@ resource "aws_secretsmanager_secret" "slack_bot_token" {
   recovery_window_in_days = 0
 }
 
+# Console only: the key the console signs private sessions' cloud sign-in tokens with (console/oidcIssuer.mjs). Made
+# empty here, and given its value by the console itself the first time WOODSHED_OIDC_CONNECTIONS lists a connection.
+# Never on the Secrets page and never in a session: with it, anyone could sign in to those clouds as anyone.
+resource "aws_secretsmanager_secret" "oidc_signing_key" {
+  name                    = "${local.p}/oidc-signing-key"
+  description             = "The console's OpenID Connect signing key, for My Woodshed sessions' cloud sign-in. Made by the console; only it reads it"
+  recovery_window_in_days = 0
+}
+
 # Mongo's root, made once on the base box (<name_prefix>-mongo-root in baseBoxStack.sh.tftpl), which may write it
 # but never read it. Outside the console's <name_prefix>/ prefix, like RDS's own master secret: only the db-admin
 # task's execution role reads either. Only with mongo in var.databases.

@@ -8,7 +8,8 @@
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
-//                        {"plan"} too when it runs on the Claude plan of whoever started it
+//                        {"plan"} too when it runs on the Claude plan of whoever started it. A private session's has
+//                        "cloud": [{"name", "type", "audience", ...}] too where the console lists cloud connections
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
@@ -28,6 +29,9 @@
 //   POST /qa-report      {"verdict", "report", "sha", "costUsd"}  ->  204: a QA session's result (session/qa.sh), written
 //                        into the pull request's QA comment, after which the console stops the session
 //                        (qaSessions.mjs). 404 for any other session, 409 for a second report
+//   POST /cloud-token    {"connection": "<name>"}  ->  {"token", "expiresAt"}: a short-lived OpenID Connect token that says
+//                        the session is its owner's, which a cloud trades for its own credentials (oidcIssuer.mjs). A
+//                        private session's alone: 403 for any other, 404 when the console lists no such connection
 //
 // A session's git credential helper and its `gh` wrapper call /github-token, so a
 // session only ever holds a token that expires within hours: an installation
@@ -57,6 +61,7 @@ import { parseReviewReport } from './reviewSessions.mjs';
 
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
+const MAX_CLOUD_TOKEN_BYTES = 256;
 const MAX_CODEX_AUTH_BYTES = 40_000;
 // JSON escapes can grow the text up to six-fold; past this the answer is over MAX_ANSWER_CHARS anyway.
 const MAX_ANSWER_BYTES = MAX_ANSWER_CHARS * 6;
@@ -113,7 +118,9 @@ export function sessionForToken(given, sessions) {
  *          askTokens?: {token: () => Promise<{token: string, expiresAt: number}>}|null,
  *          tokensFor?: ((session: object) => {project: string, default: boolean, sessions: object, asks: object})|null,
  *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
- *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null}} opts
+ *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null,
+ *          oidc?: ReturnType<typeof import('./oidcIssuer.mjs').createOidcIssuer>|null}} opts
+ *   `oidc` signs the tokens of /cloud-token; without it there are no cloud connections
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
@@ -121,11 +128,13 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, oidc = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
   const loggedAccess = new Map();
+  // The same for cloud tokens, which a session asks for every few minutes: the first for each connection is logged.
+  const loggedCloud = new Set();
   function logAccess(session, own, access) {
     if (loggedAccess.get(session.id) === access) return;
     if (loggedAccess.size >= 500) {
@@ -157,14 +166,15 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report', '/cloud-token'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases);
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, oidc);
+    if (pathname === '/cloud-token') return cloudTokenReply(req, res, session, oidc, loggedCloud);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
@@ -268,7 +278,7 @@ async function starterToken(session, userSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases) {
+async function settingsReply(res, session, userSettings, databases, oidc = null) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
@@ -298,7 +308,46 @@ async function settingsReply(res, session, userSettings, databases) {
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
   const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
-  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
+  // Where the session may sign in as its owner, never a credential: it asks /cloud-token for each token.
+  const cloud = oidc?.sessionConnections() ?? [];
+  return reply(res, 200, {
+    files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}), ...(cloud.length ? { cloud } : {}),
+  });
+}
+
+// A short-lived token that says the session is its owner's, for a cloud to trade for its own credentials. The token
+// itself is never logged.
+async function cloudTokenReply(req, res, session, oidc, logged) {
+  if (!oidc) {
+    req.resume();
+    return reply(res, 404, { error: 'this console lists no cloud connections' });
+  }
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > MAX_CLOUD_TOKEN_BYTES) return reply(res, 413, { error: 'too large' });
+  }
+  let name;
+  try {
+    name = JSON.parse(text).connection;
+  } catch {
+    return reply(res, 400, { error: 'give {"connection": "<name>"}' });
+  }
+  let issued;
+  try {
+    issued = await oidc.tokenFor(session, name);
+  } catch (err) {
+    if (!err.shown) throw err;
+    console.warn('sessionApi: cloud token refused', { sessionId: session.id, owner: session.owner ?? null, connection: String(name).slice(0, 40), why: err.message });
+    return reply(res, err.status ?? 403, { error: err.message });
+  }
+  const key = `${session.id}\n${name}`;
+  if (!logged.has(key)) {
+    if (logged.size >= 2000) logged.clear();
+    logged.add(key);
+    console.log('sessionApi: cloud token issued', { sessionId: session.id, connection: name, subject: issued.subject, audience: issued.audience });
+  }
+  return reply(res, 200, { token: issued.token, expiresAt: new Date(issued.expiresAt).toISOString() });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.

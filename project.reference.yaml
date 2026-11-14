@@ -129,6 +129,11 @@ app:
 # Default: false. VS Code in the browser on each session's checkout (Editor ↗).
 editor: true
 
+# Default: []. CLIs the session image adds, from aws, azure, gcloud and terraform: each a few hundred MB, so only the
+# ones this repo's sessions use. A My Woodshed session signs them in as its owner where the console lists cloud
+# connections (docs/reference.md, "Cloud sign-in"); `woodshed-cloud` in a session's terminal shows them.
+tools: [aws, terraform]
+
 # Default: true. false keeps the installation's console address out of what is posted to this repo: the console's
 # comments (a session started, resumed or failed, a refusal) and the session's link in its pull requests. For a public
 # repo, whose readers are not the installation's.

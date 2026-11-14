@@ -148,6 +148,7 @@ data "aws_iam_policy_document" "base_box" {
         aws_secretsmanager_secret.github_app_client_secret.arn, aws_secretsmanager_secret.github_reviewer_app_key.arn,
         aws_secretsmanager_secret.slack_bot_token.arn,
         aws_secretsmanager_secret.slack_signing.arn,
+        aws_secretsmanager_secret.oidc_signing_key.arn,
       ],
     )
   }
@@ -327,6 +328,7 @@ locals {
     install_secrets    = join(",", [for name, env_name in var.install_secrets : "${name}=${env_name}"])
     max_sessions       = var.max_sessions
     console_name       = var.console_name
+    oidc_connections   = length(var.oidc_connections) > 0 ? jsonencode(var.oidc_connections) : ""
     workflow_links     = join(",", [for label, file in var.console_workflow_links : "${label}=${file}"])
     homes_bucket       = aws_s3_bucket.homes.bucket
     cluster            = aws_ecs_cluster.main.name

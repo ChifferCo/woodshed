@@ -660,3 +660,52 @@ test('a person\'s own lines for one repo\'s env file reach their private session
   assert.deepEqual(onApp.files, { 'api-env': null, 'tmux-conf': null });
   assert.equal(onApp.text.includes('LOG_LEVEL=debug'), false, 'the other repo\'s session never gets them');
 });
+
+test('/cloud-token signs a private session\'s token for a listed connection, and /settings says where', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const { createOidcIssuer } = await import('./oidcIssuer.mjs');
+  const { parseConnections } = await import('../shared/oidcConnections.mjs');
+  const values = new Map();
+  const oidc = createOidcIssuer({
+    issuer: 'https://console.example',
+    connections: parseConnections([{ name: 'aws-dev', type: 'aws', roleArn: 'arn:aws:iam::123456789012:role/dev' }]),
+    secrets: { read: async (n) => values.get(n) ?? null, write: async (n, v) => { values.set(n, v); } },
+  });
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'shared-token', owner: null },
+    { id: 'bbbbbbbb', status: 'running', token: 'own-token', owner: 'octocat', repo: 'acme/app' },
+  ];
+  const userSettings = {
+    claudeToken: async () => 'sk-ant-x', ownFiles: async () => ({}), ownWholeFiles: async () => ({}), gitIdentity: () => null,
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings, oidc });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const ask = (authorization, connection) => request(port, { path: '/cloud-token', authorization, body: JSON.stringify({ connection }) });
+
+  const own = await ask('Bearer own-token', 'aws-dev');
+  assert.equal(own.status, 200);
+  const claims = JSON.parse(Buffer.from(own.body.token.split('.')[1], 'base64url'));
+  assert.equal(claims.sub, 'private:octocat');
+  assert.equal(claims.aud, 'sts.amazonaws.com');
+  assert.ok(Date.parse(own.body.expiresAt) > Date.now());
+  assert.equal((await ask('Bearer shared-token', 'aws-dev')).status, 403, 'a shared session signs in as nobody');
+  assert.equal((await ask('Bearer own-token', 'gcp')).status, 404);
+  assert.equal((await ask('Bearer old-token', 'aws-dev')).status, 401);
+  assert.equal((await request(port, { path: '/cloud-token', authorization: 'Bearer own-token', body: 'nope' })).status, 400);
+
+  const settings = await request(port, { path: '/settings', authorization: 'Bearer own-token' });
+  assert.deepEqual(settings.body.cloud, [{ name: 'aws-dev', type: 'aws', roleArn: 'arn:aws:iam::123456789012:role/dev', audience: 'sts.amazonaws.com' }]);
+  assert.ok(!JSON.stringify(settings.body.cloud).includes('PRIVATE KEY'));
+
+  const without = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const other = http.createServer((req, res) => { without(req, res); });
+  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  t.after(() => other.close());
+  const res = await request(other.address().port, { path: '/cloud-token', authorization: 'Bearer own-token', body: '{"connection":"aws-dev"}' });
+  assert.equal(res.status, 404);
+  assert.equal((await request(other.address().port, { path: '/settings', authorization: 'Bearer own-token' })).body.cloud, undefined);
+});

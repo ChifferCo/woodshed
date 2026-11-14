@@ -182,6 +182,7 @@ buildImage() {
     mkdir -p "$context/woodshed-deps"
     : >"$context/woodshed-deps.installs"
     printf 'true\n' >"$context/woodshed-deps.editor"
+    : >"$context/woodshed-deps.tools"
   else
     (cd "$repoDir" && WOODSHED_PROJECT_FILES_DIR=$projectFilesDir bash "$src/session/stageDeps.sh" "$context/woodshed-deps")
   fi

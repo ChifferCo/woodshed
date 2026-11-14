@@ -62,3 +62,10 @@ github_app_installation_id = "00000000"
 #   "Build images"       = "woodshed-images.yml"
 #   "Run infrastructure" = "woodshed-infra.yml"
 # }
+
+# Optional: the clouds My Woodshed sessions sign in to as their owner, with no key in the session: the console is their
+# OpenID Connect issuer (docs/reference.md, "Cloud sign-in" has each cloud's side). Not a role in this account that can
+# change Woodshed itself.
+# oidc_connections = [
+#   { name = "aws-dev", type = "aws", roleArn = "arn:aws:iam::210987654321:role/woodshed-dev", region = "us-east-1" },
+# ]

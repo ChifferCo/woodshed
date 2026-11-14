@@ -1,0 +1,33 @@
+#!/bin/bash
+# The session's cloud sign-in by hand (session/cloudSignIn.mjs). A My Woodshed session signs in to each cloud the
+# console lists as its owner, with a token from the console that statusd renews every 5 minutes; the AWS CLI, gcloud,
+# Terraform and the clouds' SDKs read it themselves.
+#
+#   woodshed-cloud                  each connection, where its config is, and how long its token has left
+#   woodshed-cloud refresh          new tokens now
+#   woodshed-cloud az-login [name]  signs the az CLI in with the azure connection's token (the first, without a name).
+#                                   az keeps that login for about an hour: run it again when az says it expired
+set -euo pipefail
+
+SESSION_DIR=$(cd "$(dirname "$0")/.." && pwd)
+CLOUD_DIR=/tmp/woodshed-cloud
+
+case "${1:-status}" in
+  status | refresh) exec node "$SESSION_DIR/cloudSignIn.mjs" "${1:-status}" ;;
+  az-login)
+    command -v az >/dev/null || { echo "woodshed-cloud: no az in this image: add azure to the project file's tools" >&2; exit 1; }
+    [ -f "$CLOUD_DIR/connections.json" ] || { echo "woodshed-cloud: this session has no cloud connections" >&2; exit 1; }
+    name=${2:-$(jq -r '[.[] | select(.type == "azure")][0].name // empty' "$CLOUD_DIR/connections.json")}
+    connection=$(jq -c --arg n "$name" '.[] | select(.name == $n and .type == "azure")' "$CLOUD_DIR/connections.json")
+    [ -n "$connection" ] || { echo "woodshed-cloud: no azure connection called ${name:-anything}" >&2; exit 1; }
+    node "$SESSION_DIR/cloudSignIn.mjs" refresh >/dev/null
+    # az takes the token only as an argument. It is this session's own, lasts 15 minutes, and the container has no other
+    # user to see it in ps.
+    az login --service-principal --username "$(jq -r .clientId <<< "$connection")" --tenant "$(jq -r .tenantId <<< "$connection")" \
+      --federated-token "$(cat "$CLOUD_DIR/$name.jwt")" --allow-no-subscriptions --output none
+    subscription=$(jq -r '.subscriptionId // empty' <<< "$connection")
+    [ -z "$subscription" ] || az account set --subscription "$subscription"
+    echo "az signed in as the $name connection"
+    ;;
+  *) echo "usage: woodshed-cloud [status | refresh | az-login [name]]" >&2; exit 1 ;;
+esac
