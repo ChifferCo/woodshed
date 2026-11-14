@@ -60,7 +60,7 @@ export const PROJECT_FIELDS = Object.freeze({
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
-  'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor'],
+  'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
   'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
   'pullRequests.mergeRisk': ['check'],
@@ -332,11 +332,16 @@ export function appNamed(project, name) {
 function pullRequests(value) {
   const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
-    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null });
+    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null });
+    if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.review.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
+    // With `actions` the review runs in a workflow, named here; with `woodshed` it runs as a console session and the
+    // workflow is the console's App, not a file (so the merge-risk check is trusted from the App, not a workflow run).
+    if (f.runner !== 'woodshed' && !Object.hasOwn(r, 'workflow')) fail('pullRequests.review is missing workflow');
+    const workflow = f.runner === 'woodshed' && !Object.hasOwn(r, 'workflow') ? null : repoPath(f.workflow, 'pullRequests.review.workflow');
     return {
       author: string(f.author, 'pullRequests.review.author'), heading: string(f.heading, 'pullRequests.review.heading'),
-      workflow: repoPath(f.workflow, 'pullRequests.review.workflow'), rerun: nullable(f.rerun, 'pullRequests.review.rerun', string),
-      commentAuthor: nullable(f.commentAuthor, 'pullRequests.review.commentAuthor', string),
+      workflow, rerun: nullable(f.rerun, 'pullRequests.review.rerun', string),
+      commentAuthor: nullable(f.commentAuthor, 'pullRequests.review.commentAuthor', string), runner: f.runner,
     };
   });
   const suites = list(p.suites, 'pullRequests.suites', (s, where) => {

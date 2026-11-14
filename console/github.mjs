@@ -304,6 +304,11 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
     pull(number) {
       return ghApi([`repos/${currentRepo()}/pulls/${number}`]);
     },
+    /** @returns {Promise<string|null>}  the commit's message, for the review tag the console looks for on the head */
+    async commitMessage(sha) {
+      const commit = await ghApi([`repos/${currentRepo()}/commits/${sha}`]);
+      return commit?.commit?.message ?? null;
+    },
     /** @returns {Promise<string[]|null>}  the pull request's file paths, or null when there are more than we read */
     async pullFiles(number) {
       const files = [];
@@ -411,6 +416,16 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
     },
     async comment(number, body) {
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
+      return created?.id ?? null;
+    },
+    /**
+     * Submit a formal review on the pull request, at `sha` so a push since makes GitHub refuse rather than approve the
+     * wrong commit. `event` is APPROVE, REQUEST_CHANGES or COMMENT. An APPROVE counts as the pull request's approval.
+     * @returns {Promise<number|null>}  the review's id
+     */
+    async createReview(number, { event, body, sha }) {
+      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/pulls/${number}/reviews`,
+        '-f', `commit_id=${sha}`, '-f', `event=${event}`, '-f', `body=${body.slice(0, 60_000)}`]);
       return created?.id ?? null;
     },
     /** @returns {Promise<true>}  once GitHub took the label off; a label that was not there answers 404 and throws */

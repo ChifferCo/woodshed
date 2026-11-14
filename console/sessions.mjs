@@ -26,6 +26,11 @@ export function isQa(session) {
   return Boolean(session.qa);
 }
 
+/** @returns {boolean}  whether the session reviews a pull request (review runner `woodshed`), rather than working on it */
+export function isReview(session) {
+  return Boolean(session.review);
+}
+
 /** @returns {boolean}  whether the session holds, or waits for, one of the shared slots */
 function takesSharedSlot(session) {
   return !session.owner && !isAsk(session);

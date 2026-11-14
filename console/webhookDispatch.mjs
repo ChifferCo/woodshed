@@ -104,6 +104,8 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     if (body?.source === 'github' && body.type === 'pr') {
       // A review may have approved a pull request that waits on it for QA (fleet.qaAfterReview).
       if (body.what === 'review submitted' && fleet.qaAfterReview) await qaAfterReview(body);
+      // A new commit may carry the review tag for a repo whose review runs in a session (fleet.reviewOnTag).
+      if (fleet.reviewOnTag) await reviewOnTag(body);
       if (!pulls) return true;
       return settle(body, () => pulls.handle(body), body.number ?? null, attempt);
     }
@@ -125,6 +127,17 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
         await fleet.qaAfterReview({ number, project: body.project ?? null });
       } catch (err) {
         console.warn('webhooks: QA after a review failed', { number, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
+  }
+
+  // A session review runs on the fleet; the pull request's refresh still goes on whatever the event answered.
+  async function reviewOnTag(body) {
+    for (const number of (Array.isArray(body.numbers) ? body.numbers : [body.number]).filter(Number.isInteger)) {
+      try {
+        await fleet.reviewOnTag({ number, project: body.project ?? null });
+      } catch (err) {
+        console.warn('webhooks: review on the tag failed', { number, message: String(err?.message ?? err).split('\n')[0] });
       }
     }
   }

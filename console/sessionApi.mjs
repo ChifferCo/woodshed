@@ -51,7 +51,8 @@ import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { MAX_REPORT_CHARS, parseQaReport } from './qaSessions.mjs';
-import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa } from './sessions.mjs';
+import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview } from './sessions.mjs';
+import { parseReviewReport } from './reviewSessions.mjs';
 
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
@@ -155,7 +156,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -167,6 +168,7 @@ export function createSessionApi({
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
+    if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
         res.writeHead(204).end();
@@ -183,7 +185,7 @@ export function createSessionApi({
     // A private session acts as its owner. Their own token reaches every repo the App is on that they can write to; the
     // project file's githubAccess says whether the session gets it as it is (`full`) or scoped by GitHub to the project's
     // repo (`repo`), for a repo whose content outsiders write. Read from its default branch, as the console's other gates are.
-    const readOnly = isAsk(session) || isQa(session);
+    const readOnly = isAsk(session) || isQa(session) || isReview(session);
     const access = session.owner && githubUser && !readOnly ? await accessFor(session, own) : null;
     const ownerToken = access === 'full';
     if (access === 'repo' && githubUser.scopedTokenFor) {
@@ -219,7 +221,7 @@ export function createSessionApi({
     }
     const source = readOnly ? (own?.asks ?? askTokens) : (own?.sessions ?? tokens);
     if (!source) {
-      console.warn('sessionApi: no read-only token for the session', { sessionId: session.id, qa: isQa(session) });
+      console.warn('sessionApi: no read-only token for the session', { sessionId: session.id, qa: isQa(session), review: isReview(session) });
       return reply(res, 404, { error: 'this console mints no read-only tokens' });
     }
     const { token, expiresAt } = await source.token();
@@ -266,6 +268,12 @@ async function starterToken(session, userSettings) {
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
 async function settingsReply(res, session, userSettings, databases) {
+  // A review session has no databases; it asks /settings only for the plan it runs on.
+  if (isReview(session)) {
+    const onPlan = Boolean(await starterToken(session, userSettings));
+    console.log('sessionApi: review settings handed out', { sessionId: session.id, plan: onPlan ? session.plan : null });
+    return reply(res, 200, onPlan ? { plan: session.plan } : {});
+  }
   if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings);
   const codex = session.options?.agent === 'codex';
   const claudeToken = userSettings ? await userSettings.claudeToken(session.owner) : null;
@@ -384,14 +392,27 @@ async function answerReply(req, res, session, asks) {
 }
 
 // A QA session's result, once: the console writes it into the pull request's QA comment and stops the session.
-async function qaReportReply(req, res, session, fleet) {
-  if (!isQa(session) || !fleet.qaFinished) {
+function qaReportReply(req, res, session, fleet) {
+  return reportReply(req, res, session, {
+    kind: 'QA', mine: isQa(session), sent: Boolean(session.qa?.conclusion), parse: parseQaReport, finish: fleet.qaFinished,
+  });
+}
+
+function reviewReportReply(req, res, session, fleet) {
+  return reportReply(req, res, session, {
+    kind: 'review', mine: isReview(session), sent: Boolean(session.review?.reported), parse: parseReviewReport, finish: fleet.reviewFinished,
+  });
+}
+
+// A QA or review session's one report: read whole, parsed, then handed to the fleet, which posts it and stops the session.
+async function reportReply(req, res, session, { kind, mine, sent, parse, finish }) {
+  if (!mine || !finish) {
     req.resume();
-    return reply(res, 404, { error: 'only a QA session has a report to send' });
+    return reply(res, 404, { error: `only a ${kind} session has a report to send` });
   }
-  if (session.qa.conclusion) {
+  if (sent) {
     req.resume();
-    console.warn('sessionApi: a second QA report refused', { sessionId: session.id });
+    console.warn('sessionApi: a second report refused', { sessionId: session.id, kind });
     return reply(res, 409, { error: 'this session already sent its report' });
   }
   req.setEncoding('utf8');
@@ -402,12 +423,12 @@ async function qaReportReply(req, res, session, fleet) {
   }
   let result;
   try {
-    result = parseQaReport(text);
+    result = parse(text);
   } catch (err) {
-    console.warn('sessionApi: a QA report refused', { sessionId: session.id, why: err.message });
+    console.warn('sessionApi: a report refused', { sessionId: session.id, kind, why: err.message });
     return reply(res, 400, { error: err.message });
   }
-  await fleet.qaFinished(session, result);
+  await finish(session, result);
   res.writeHead(204).end();
 }
 
