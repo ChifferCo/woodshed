@@ -323,7 +323,7 @@ export function createFleet({
   // console makes the session's databases: the entrypoint asks the session API for its plan with them, so without
   // them claude would stay on the team key while the pages said otherwise.
   async function planFor(session) {
-    if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || session.review?.teamKey || !databases?.available) return null;
+    if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || session.review?.teamKey || session.qa?.teamKey || !databases?.available) return null;
     await userSettings?.refresh?.(session.startedBy, { force: true });
     if (!userSettings?.usesOwnTokenForShared(session.startedBy)) return null;
     try {
@@ -1476,9 +1476,21 @@ export function createFleet({
       console.log('fleet: QA not started', { number, login, why, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
-    if (!(await gh.canWrite(login))) return ignored('no write access to the repo');
-    if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
-    if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
+    // A person who added the label must pass the identity checks. A label the console's own App added (qa.autoLabel)
+    // stands for the pull request's author, on a same-repo head, on the team key when the author fails the checks.
+    let teamKeyWhy = null;
+    const appLogin = ownApp()?.login ?? null;
+    if (qa.autoLabel && appLogin && login === appLogin) {
+      const autoPull = known ?? await gh.pull(number);
+      if (autoPull.head?.repo?.full_name && autoPull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
+      login = autoPull.user?.login ?? '';
+      teamKeyWhy = await teamKeyReason(login);
+      console.log('fleet: QA label added by the console, run as the author', { number, login, teamKey: Boolean(teamKeyWhy), ...projectField(project) });
+    } else {
+      if (!(await gh.canWrite(login))) return ignored('no write access to the repo');
+      if (people && !(await people.check(login))) return ignored('the GitHub name was another account\'s when last used here');
+      if (members && !members.hasGithubSessions(login)) return ignored(`${login} cannot start sessions from GitHub`);
+    }
     const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
     if (route.action === 'ignore') return ignored(route.reason);
     const pull = known ?? await gh.pull(number);
@@ -1500,11 +1512,30 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `QA: ${pull.title}`, startedBy: login, trigger: 'qa', branch: pull.head.ref, project,
-      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId },
+      qa: { base: pull.base.ref, sha: pull.head.sha, heading: qa.heading, check: qa.check, commentId, ...(teamKeyWhy ? { teamKey: true } : {}) },
     });
     await postQaComment(session, gh, runningComment({ heading: qa.heading, sessionUrl: await qaSessionUrl(session, project) }));
     console.log('fleet: QA session started', { id: session.id, number, login, why, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
+  }
+
+  /**
+   * A pull request opened or marked ready (qa.autoLabel): the console adds the QA label, once, and the label's own flow
+   * runs QA after the review approves. Someone who removes the label opts the pull request out.
+   * @param {{number: number, project?: string|null}} args
+   */
+  async function qaAutoLabel({ number, project: projectName = null }) {
+    const project = projectOfEvent(projectName);
+    const gates = project ? await pullRequests(project.name) : null;
+    const qa = gates?.qa;
+    if (!qa?.autoLabel || qa.runner !== 'woodshed') return { unrecorded: true };
+    const gh = githubOf(project);
+    const pull = await gh.pull(number);
+    if (pull.state !== 'open' || pull.draft || (pull.labels ?? []).some((l) => l.name === qa.label)) return { unrecorded: true };
+    if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return { unrecorded: true };
+    await gh.addLabel(number, qa.label);
+    console.log('fleet: QA label added', { number, label: qa.label, ...projectField(project) });
+    return { outcome: 'labelled' };
   }
 
   async function qaSessionUrl(session, project) {
@@ -1869,7 +1900,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaFinished, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

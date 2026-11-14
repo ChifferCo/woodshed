@@ -230,6 +230,7 @@ test('toMessage turns a change to a pull request, its review or a workflow run o
     { source: 'github', deliveryId: 'g', receivedAt: 't', login: 'c', repo: null, type: 'pr', kind: 'pr', number: 5, numbers: [5], what: 'pull request closed' },
   );
   assert.equal(toMessage('pull_request_review', { action: 'submitted', sender, pull_request: { number: 6 } }, meta).what, 'review submitted');
+  assert.equal(toMessage('pull_request', { action: 'opened', sender, pull_request: { number: 5 } }, meta).what, 'pull request opened', 'a new pull request may need the QA label');
   const run = toMessage('workflow_run', {
     action: 'completed', sender, workflow_run: { name: 'Claude Code Review', conclusion: 'success', pull_requests: [{ number: 7 }, { number: 8 }] },
   }, meta);

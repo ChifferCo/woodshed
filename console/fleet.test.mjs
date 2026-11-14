@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
@@ -98,7 +98,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2209,6 +2209,51 @@ test('a review starts no QA without the label, without approval, or for a projec
   const noReview = qaSetup({ gates: { ...QA_GATES, review: null } });
   assert.deepEqual(await noReview.fleet.qaAfterReview({ number: 7 }), { unrecorded: true });
   assert.equal((await noReview.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' })).outcome, 'started', 'with no review, the label starts QA');
+});
+
+const AUTO_GATES = { ...QA_GATES, qa: { ...QA_GATES.qa, autoLabel: true } };
+const APP = { slug: 'woodshed-console', login: 'woodshed-console[bot]' };
+
+test('with qa.autoLabel, a new pull request gets the QA label once, and not a draft, a fork or one already labelled', async () => {
+  const t = qaSetup({ gates: AUTO_GATES });
+  const added = [];
+  t.github.addLabel = async (number, label) => { added.push([number, label]); };
+  t.github.pull = async () => ({ ...QA_PULL, labels: [], user: { login: 'joel' } });
+  assert.equal((await t.fleet.qaAutoLabel({ number: 7 })).outcome, 'labelled');
+  for (const pull of [{ ...QA_PULL }, { ...QA_PULL, labels: [], draft: true }, { ...QA_PULL, labels: [], head: { ...QA_PULL.head, repo: { full_name: 'someone/fork' } } }]) {
+    t.github.pull = async () => pull;
+    assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
+  }
+  assert.deepEqual(added, [[7, 'qa']]);
+  const off = qaSetup();
+  off.github.addLabel = async () => { throw new Error('no label without autoLabel'); };
+  assert.deepEqual(await off.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
+});
+
+test('a QA label the console added waits for the approval, then runs as the author', async () => {
+  const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  const pull = { ...QA_PULL, user: { login: 'joel' } };
+  t.github.pull = async () => pull;
+  t.github.reviews = async () => reviewOn('b'.repeat(40));
+  assert.equal((await t.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).outcome, 'waiting', 'only after the review approves');
+  t.github.reviews = async () => reviewOn(pull.head.sha);
+  t.github.labeledBy = async () => APP.login;
+  assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  const [session] = t.fleet.sessions();
+  assert.deepEqual([session.startedBy, session.qa.teamKey], ['joel', undefined]);
+});
+
+test('a console-added QA label runs on the team key for an author who fails the identity checks, and never for a fork', async () => {
+  const reused = qaSetup({ gates: AUTO_GATES, ownApp: () => APP, people: { check: async () => false }, userSettings: ownTokens(), databases: madeDatabases() });
+  reused.github.pull = async () => ({ ...QA_PULL, user: { login: 'joel' } });
+  assert.equal((await reused.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).outcome, 'started');
+  assert.deepEqual([reused.fleet.sessions()[0].qa.teamKey, reused.fleet.sessions()[0].plan], [true, null], 'never the old person\'s plan');
+  const off = qaSetup({ ownApp: () => APP });
+  off.github.pull = async () => ({ ...QA_PULL, user: { login: 'joel' } });
+  assert.equal((await off.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).reason, 'no write access to the repo', 'without autoLabel, the App\'s label is refused as before');
+  const fork = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  fork.github.pull = async () => ({ ...QA_PULL, user: { login: 'joel' }, head: { ...QA_PULL.head, repo: { full_name: 'someone/fork' } } });
+  assert.equal((await fork.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).reason, 'the pull request is from a fork');
 });
 
 test('the QA label on a pull request starts a QA session on its branch, read only, and says so in the QA comment', async () => {

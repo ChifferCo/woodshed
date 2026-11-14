@@ -62,7 +62,7 @@ export const PROJECT_FIELDS = Object.freeze({
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
-  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
+  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
   'pullRequests.mergeRisk': ['check'],
 });
 
@@ -352,14 +352,18 @@ function pullRequests(value) {
     };
   });
   const qa = nullable(p.qa, 'pullRequests.qa', (q) => {
-    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null });
+    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null, autoLabel: false });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.qa.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
+    const autoLabel = boolean(f.autoLabel, 'pullRequests.qa.autoLabel');
+    // The console adds the label on new pull requests, and the label waits for the review's approval, so it needs both
+    // the session runner and a review to wait for.
+    if (autoLabel && (f.runner !== 'woodshed' || !review)) fail('pullRequests.qa.autoLabel needs runner: woodshed and pullRequests.review');
     // A QA session's report is the console's check, so `woodshed` has no comment author to trust (sessions comment as the App).
     if (f.runner !== 'woodshed' && !Object.hasOwn(q, 'author')) fail('pullRequests.qa is missing author');
     const author = f.runner === 'woodshed' && !Object.hasOwn(q, 'author') ? null : string(f.author, 'pullRequests.qa.author');
     return {
       check: string(f.check, 'pullRequests.qa.check'), label: string(f.label, 'pullRequests.qa.label'),
-      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner,
+      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner, autoLabel,
     };
   });
   const mergeRisk = nullable(p.mergeRisk, 'pullRequests.mergeRisk', (m) => {

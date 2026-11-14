@@ -49,6 +49,9 @@ export function messageToTrigger(message, { label }) {
  *   events log. It resolves true when the source may forget the message, false to have it come back for a retry.
  *   `alive` is called on each receive, so the fleet knows webhooks are arriving.
  */
+// The pull request events that may need the QA label added (fleet.qaAutoLabel).
+const AUTO_LABEL_EVENTS = new Set(['pull request opened', 'pull request ready_for_review']);
+
 export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null }) {
   // Every GitHub message below acts on an issue or pull request number, which means nothing without its repo: another
   // project's #12 is not the default project's #12. So a message about another project's repo carries that project's
@@ -104,6 +107,8 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     if (body?.source === 'github' && body.type === 'pr') {
       // A review may have approved a pull request that waits on it for QA (fleet.qaAfterReview).
       if (body.what === 'review submitted' && fleet.qaAfterReview) await qaAfterReview(body);
+      // A new or newly ready pull request gets the QA label where the project file asks for it (fleet.qaAutoLabel).
+      if (AUTO_LABEL_EVENTS.has(body.what) && fleet.qaAutoLabel) await perPull(body, 'QA label', (n) => fleet.qaAutoLabel({ number: n, project: body.project ?? null }));
       // A new commit may carry the review tag for a repo whose review runs in a session (fleet.reviewOnTag).
       if (fleet.reviewOnTag) await reviewOnTag(body);
       if (!pulls) return true;
@@ -127,6 +132,16 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
         await fleet.qaAfterReview({ number, project: body.project ?? null });
       } catch (err) {
         console.warn('webhooks: QA after a review failed', { number, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
+  }
+
+  async function perPull(body, what, run) {
+    for (const number of (Array.isArray(body.numbers) ? body.numbers : [body.number]).filter(Number.isInteger)) {
+      try {
+        await run(number);
+      } catch (err) {
+        console.warn('webhooks: a pull request step failed', { what, number, message: String(err?.message ?? err).split('\n')[0] });
       }
     }
   }
