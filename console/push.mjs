@@ -5,11 +5,12 @@
 //
 // Only you are notified: about your private sessions, and the shared ones assigned to you; an admin also hears of
 // someone asking to join. Never about a session you have open (the console saw you read it in the last 30 s: its
-// page, its terminals, its routes, or the page's poll while it shows it). A notification may have up to two
-// reminders, held by quiet hours on the phone's clock (pushSchedule.mjs); once what it is about is dealt with (a new
-// turn, stopped, its pull request closed, opened, seen) the reminders are dropped and the phones that showed it are
-// told to take it down. Phones, notifications and reminders are kept in state.json under `push`, so a restart loses
-// none. Best effort: a relay that fails is logged and changes nothing else, and one that says a phone is gone drops it.
+// page, its terminals, a change through its routes, or the page's poll while it shows it). A notification may have
+// up to two reminders, held by quiet hours on the phone's clock (pushSchedule.mjs); once what it is about is dealt
+// with (a new turn, stopped, its pull request closed, opened, seen) the reminders are dropped and the phones that
+// showed it are told to take it down. Phones, notifications and reminders are kept in state.json under `push`, so a
+// restart loses none. Best effort: a relay that fails is logged and changes nothing else, and one that says a phone is
+// gone drops it.
 
 import { createCipheriv, randomBytes } from 'node:crypto';
 

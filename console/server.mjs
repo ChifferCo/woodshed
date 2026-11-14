@@ -224,9 +224,11 @@ const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
 const MY_DEVICES_PATH = '/api/my/devices';
 const MY_DEVICE_RE = /^\/api\/my\/devices\/([0-9a-f]{16})(\/remove)?$/;
 const MY_NOTIFICATION_RE = /^\/api\/my\/notifications\/([0-9a-f]{16})\/(seen|snooze)$/;
-// A read that names one session, so whoever made it has that session open: its page, its routes, its terminals and
-// viewers (push.mjs's "looking").
-const SESSION_READ_RE = /^\/(?:s|api\/sessions|term|shell|redis|pg|mongo)\/([0-9a-f]{8})(?:\/|$)/;
+// A request that names one session, so whoever made it has that session open (push.mjs's "looking"): its page, its
+// terminals and viewers, and a change through its routes. A read of its routes is not: the page polls some of them from
+// a tab in the background (the App log tab's), and the page's own ?looking= poll says when it is in front.
+const SESSION_OPEN_RE = /^\/(?:s|term|shell|redis|pg|mongo)\/([0-9a-f]{8})(?:\/|$)/;
+const SESSION_ROUTE_RE = /^\/api\/sessions\/([0-9a-f]{8})(?:\/|$)/;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_FILE_BODY_BYTES = 160 * 1024;
 const DATABASES_NOT_READY = 'your own databases are not ready yet: My settings shows how far along they are';
@@ -1813,11 +1815,13 @@ export function createHandler({
     return reply(res, 404, { error: 'not found' });
   }
 
-  // The person has the session open: a read that names it, or the page's poll while it shows it (?looking=<id>).
-  // Only a session they can open counts.
-  function sawSession(url, login) {
+  // The person has the session open: its page or a terminal of it, a change through its routes, or the page's poll
+  // while it shows it (?looking=<id>). Only a session they can open counts.
+  function sawSession(req, url, login) {
     if (!push || !login) return;
-    const id = SESSION_READ_RE.exec(url.pathname)?.[1]
+    const write = req.method !== 'GET' && req.method !== 'HEAD';
+    const id = SESSION_OPEN_RE.exec(url.pathname)?.[1]
+      ?? (write ? SESSION_ROUTE_RE.exec(url.pathname)?.[1] : null)
       ?? (url.pathname === '/api/sessions' ? /^[0-9a-f]{8}$/.exec(url.searchParams.get('looking') ?? '')?.[0] : null);
     if (id && findFor(id, login)) push.saw(login, id);
   }
@@ -1857,7 +1861,7 @@ export function createHandler({
       console.log('console: Connect GitHub started', { login: user.login });
       return redirect(res, location, setCookie);
     }
-    sawSession(url, user.login);
+    sawSession(req, url, user.login);
     if (handleTerminalRequest(req, res, { targetFor: terminalTarget(fleet, user.login, access) })) return;
     if (isReviewPath(url.pathname)) return proxyReview(req, res, url, user.login);
     const { pathname } = url;

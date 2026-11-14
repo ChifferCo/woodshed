@@ -1881,7 +1881,8 @@ test('a phone registers through an allowed relay, is listed without its key, and
   const relay = 'https://relay.example/push';
   const session = { id: '0a1b2c3d', owner: 'ana', status: 'running', state: 'done', title: 't' };
   const store = { state: { sessions: [session] }, save() {} };
-  const push = createPush({ store, relays: [relay], sessions: () => [session], fetch: async () => new Response('{}', { status: 202 }) });
+  let clock = Date.now();
+  const push = createPush({ store, relays: [relay], sessions: () => [session], now: () => clock, fetch: async () => new Response('{}', { status: 202 }) });
   const fleet = { sessions: () => [session], find: (id) => (id === session.id ? session : null) };
   const config = {
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
@@ -1923,7 +1924,21 @@ test('a phone registers through an allowed relay, is listed without its key, and
   assert.deepEqual(store.state.push.notes, []);
   assert.deepEqual(await post(port, `/api/my/notifications/${note.ref}/seen`, {}), { status: 200, body: {} });
 
+  // A read of its routes is not looking: the App log tab polls its log from a tab in the background too.
+  assert.equal(push.isLooking('ana', session.id), false);
+  await new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/api/sessions/${session.id}/applog`, headers: { host: `localhost:${port}` } }, (res) => {
+      res.resume();
+      res.on('end', resolve);
+    }).on('error', reject);
+  });
+  assert.equal(push.isLooking('ana', session.id), false);
+  // A change through them is: ana did something to the session.
+  await post(port, `/api/sessions/${session.id}/pin`, { on: true });
+  assert.equal(push.isLooking('ana', session.id), true);
+
   // The session's page polling with ?looking= is ana looking at it.
+  clock += 31_000;
   assert.equal(push.isLooking('ana', session.id), false);
   assert.equal((await get(`/api/sessions?looking=${session.id}`)).status, 200);
   assert.equal(push.isLooking('ana', session.id), true);

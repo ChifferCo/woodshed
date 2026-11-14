@@ -1541,10 +1541,11 @@ from Slack, a QA run or a review run.
 | `joinRequest` | Someone asks to join the console: each admin hears it | 9:00 the next morning |
 
 - **Not while you are looking.** No notification goes out about a session you read in the last 30 seconds: its page,
-  any of its routes (`/api/sessions/<id>/…`), its terminals and viewers, a terminal websocket opening, or the page's
-  poll, which adds `?looking=<id>` while it shows that session in a tab in front. An open terminal websocket alone does
-  not count: the page keeps the last few sessions' terminals connected, hidden (`public/terminalCache.js`), and a tab
-  in the background keeps its own.
+  its terminals and viewers, a terminal websocket opening, a change through its routes (a `POST` to
+  `/api/sessions/<id>/…`, such as a message sent), or the page's poll, which adds `?looking=<id>` while it shows that
+  session in a tab in front. A read of its routes does not count, since the page makes some from a tab in the
+  background (the App log tab polls its log), and neither does an open terminal websocket alone: the page keeps the
+  last few sessions' terminals connected, hidden (`public/terminalCache.js`), and a tab in the background keeps its own.
 - **It stops once dealt with.** A new turn, the session stopping (for `waiting`), its pull request merging or closing
   (for the pull request kinds; read from a stopped session's pull request, as retention does), a start again (for
   `startFailed`), someone else having the session, opening it, `POST /api/my/notifications/<ref>/seen`, or a join
