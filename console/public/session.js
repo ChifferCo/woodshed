@@ -683,8 +683,9 @@
       const live = found && W.isLive(found);
       const checks = checksOf(p);
       const color = marked ? projectList().find((x) => x.name === project)?.color : null;
-      const isDefault = !p.project || p.project === main;
-      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${isDefault ? '' : `&project=${encodeURIComponent(project)}`}`;
+      // Always names its project: with none, New session opens on the person's own default project (Make my default),
+      // which need not be the console's, and the number would be looked up on that repo instead.
+      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${project ? `&project=${encodeURIComponent(project)}` : ''}`;
       const action = live
         ? h('a', { class: 'btn btn-sm btn-open', href: `/s/${found.id}`, title: `${found.title} is on this branch: open it` },
           h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open')
@@ -1016,7 +1017,7 @@
         e.stopPropagation();
         if (!ready) return W.shell.toast(target.state === 'checking' ? 'Still checking whether GitHub has the branch' : 'Nothing to link yet: push the branch first');
         try {
-          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null));
+          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null, s.project || null));
           W.shell.toast(`Link copied: opens New session on ${target.on}`);
         } catch (err) {
           W.shell.toast(`Not copied: ${err.message}`);

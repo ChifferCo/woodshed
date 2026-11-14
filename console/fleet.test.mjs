@@ -793,7 +793,7 @@ test('a tick still runs while the quick check waits on a slow statusd, and a hel
 });
 
 test('New session on My Woodshed starts a private session, posts nothing, and tells the container whose it is', async () => {
-  const { fleet, calls } = setup({ issues: { 77: { title: 'A PR', pull_request: {} } } });
+  const { fleet, calls, github } = setup({ issues: { 77: { title: 'A PR', pull_request: {} }, 78: { title: 'Closed', pull_request: {} } } });
   const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix the currency\nrounding too', model: 'opus', permissionMode: 'plan' });
   assert.equal(session.owner, 'joel');
   assert.equal(session.kind, 'task');
@@ -821,6 +821,11 @@ test('New session on My Woodshed starts a private session, posts nothing, and te
   const mia = await fleet.startPrivate({ owner: 'mia', prompt: 'mine', workOn: 'mia/branch' });
   assert.equal(mia.branch, 'mia/branch');
   await assert.rejects(fleet.startPrivate({ owner: 'mia', prompt: 'x', workOn: 'PR #12' }), /is an issue, not a pull request/);
+  // A merged or closed pull request is refused before a machine is asked for, naming the repo it was looked up on.
+  github.pull = async (number) => ({ head: { ref: 'gone/branch' }, state: 'closed', merged_at: number === 77 ? '2026-11-11T12:08:23Z' : null });
+  await assert.rejects(fleet.startPrivate({ owner: 'mia', prompt: 'x', workOn: 'PR #77' }), /#77 on [^ ]+ was merged: start on an open pull request/);
+  await assert.rejects(fleet.startPrivate({ owner: 'mia', prompt: 'x', workOn: 'PR #78' }), /#78 on [^ ]+ was closed/);
+  github.pull = async () => ({ head: { ref: 'joel/pr-branch' } });
   await assert.rejects(fleet.startPrivate({ owner: 'mia', prompt: '  ' }), /say what Claude should do/);
   const reviewOnly = await fleet.startPrivate({ owner: 'mia', prompt: '', workOn: '#77' });
   assert.equal(reviewOnly.kind, 'pr', 'a pull request with no prompt starts a session to review it');
