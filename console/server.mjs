@@ -2023,8 +2023,10 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   (databases.mjs), `webhooks` hands GitHub and Slack events to webhookDispatch.mjs, and `webhookUrl` is where GitHub
  *   should post them
  *   `config` is loadConfig()'s, read again when left out
+ *   `repos` is an embedding program's repos hook, passed on to createInstallation (installation.mjs): only the dev
+ *   console's stand-in (scripts/devHostConsole.mjs) passes one here
  */
-export async function startConsole({ provider, config: given = null }) {
+export async function startConsole({ provider, config: given = null, repos = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2034,7 +2036,7 @@ export async function startConsole({ provider, config: given = null }) {
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
