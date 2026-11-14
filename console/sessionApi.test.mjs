@@ -2,7 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
+import { createUserSettings } from './userSettings.mjs';
+import { writeEnvFiles } from '../shared/project.mjs';
 
 const SESSIONS = [
   { id: 'aaaaaaaa', status: 'running', token: 'live-token' },
@@ -569,4 +575,43 @@ test('a private session\'s GitHub access is logged when decided and when it chan
   assert.equal(await tokenOf(), 'ghu_mia_scoped_acme/app');
   await tokenOf();
   assert.deepEqual(logged, ['full', 'repo'], 'a changed decision is logged again, once');
+});
+
+test('a person\'s own lines for one repo\'s env file reach their private session on that repo alone, by the project file\'s name', async (t) => {
+  // Two repos that both name api-env, each kept under a store name of its own, as an embedding program gives them.
+  const envFiles = [
+    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
+    { secret: 'api-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/api' },
+  ];
+  const values = new Map();
+  const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets, envFiles });
+  await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');
+  await userSettings.saveFile('mia', 'api-4d5e6f--api-env', 'LOG_LEVEL=debug');
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'on-api', owner: 'mia', repo: 'acme/api' },
+    { id: 'bbbbbbbb', status: 'running', token: 'on-app', owner: 'mia', repo: 'acme/app' },
+  ];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  // What the session's entrypoint then writes (fetchOwnerSettings, then writeEnvFiles), from the project file's names.
+  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }] };
+  const envFileOn = async (token) => {
+    const { body } = await request(port, { path: '/settings', authorization: `Bearer ${token}` });
+    const own = Object.fromEntries(Object.entries(body.files).filter(([key, text]) => key !== 'tmux-conf' && text));
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'own-lines-'));
+    t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+    writeEnvFiles({ project, repoDir, env: { API_ENV: 'LOG_LEVEL=info', OWN_FILES: JSON.stringify(own) } });
+    return { files: body.files, text: fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8') };
+  };
+  const onApi = await envFileOn('on-api');
+  assert.deepEqual(onApi.files, { 'api-env': 'LOG_LEVEL=debug', 'tmux-conf': null });
+  assert.match(onApi.text, /^LOG_LEVEL=info\n\n# Your own lines, from My settings\nLOG_LEVEL=debug\n/, 'their lines after the shared text');
+  const onApp = await envFileOn('on-app');
+  assert.deepEqual(onApp.files, { 'api-env': null, 'tmux-conf': null });
+  assert.equal(onApp.text.includes('LOG_LEVEL=debug'), false, 'the other repo\'s session never gets them');
 });

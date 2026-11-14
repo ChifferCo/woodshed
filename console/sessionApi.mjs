@@ -2,7 +2,8 @@
 // tasks alone), on the base box's private address:
 //
 //   POST /github-token   Authorization: Bearer <SESSION_TOKEN>  ->  {"token": "...", "expiresAt": "..."}
-//   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...},
+//   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...}, by the
+//                        names the session's project file gives its env files, its own repo's alone,
 //                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
@@ -104,7 +105,7 @@ export function sessionForToken(given, sessions) {
 /**
  * @param {{fleet: {sessions: () => object[]}, tokens: {token: () => Promise<{token: string, expiresAt: number}>},
  *          userSettings?: {claudeToken: (login: string) => Promise<string|null>,
- *                          ownFiles: (login: string) => Promise<Record<string, string|null>>,
+ *                          ownFiles: (login: string, opts?: {repo?: string}) => Promise<Record<string, string|null>>,
  *                          gitIdentity: (login: string) => {name: string, email: string}|null}|null,
  *          anthropic?: ReturnType<typeof import('./anthropicProxy.mjs').createAnthropicProxy>|null,
  *          githubUser?: {tokenFor: (login: string) => Promise<{token: string, expiresAt: number}|null>}|null,
@@ -280,7 +281,8 @@ async function settingsReply(res, session, userSettings, databases) {
     return reply(res, 409, { error: `@${session.owner}'s own databases are not ready: see My settings` });
   }
   // null for a file is the console's default, which the task definition already gives every session.
-  const files = await userSettings.ownFiles(session.owner);
+  // By the names the session's project file gives its env files, and only its own repo's (userSettings.ownFiles).
+  const files = await userSettings.ownFiles(session.owner, { repo: session.repo });
   const ownFiles = await userSettings.ownWholeFiles?.(session.owner) ?? {};
   console.log('sessionApi: settings handed out', {
     sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,

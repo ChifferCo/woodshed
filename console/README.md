@@ -1246,6 +1246,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 
+- `config.envFiles` entries with `name` and `repo`, where its secret store keeps an env file's secret under another name
+  than the project file's (`secret` is the store's, `name` the project file's), for one repo's sessions alone (`repo`,
+  owner/name). My settings lists each as a tab of its own, labelled with its path and repo, and keeps a person's lines
+  under `users/<login>/<secret>`, so two repos' `api-env` never share them; the session API hands a private session the
+  lines of its own repo's files under `name`, which the session's `writeEnvFiles` reads. The shared text is the
+  launcher's to give, in `name`'s variable (`API_ENV`).
+
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 

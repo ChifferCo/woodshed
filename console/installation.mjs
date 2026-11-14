@@ -54,7 +54,7 @@ import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './ad
 import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
-import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectForRepo, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -265,7 +265,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
       : null;
   };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
-  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
+  // An env file of one repo (an embedding program's `repo`) lists what that repo's project file appends to it.
+  const appendedFor = (secret, repo) => readerOf(repo ? projectForRepo(config, repo)?.name : null).appendedFor(secret);
+  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
   const members = trusted ? null : createMembers({ store });
