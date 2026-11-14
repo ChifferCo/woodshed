@@ -159,7 +159,8 @@ pullRequests:
     commentAuthor: review-bot[bot]
     # Default: actions. Where the review runs: `actions` in the `workflow` above, or `woodshed` in a review session the
     # console starts on the `rerun` tag, which posts the verdict and the Merge risk check as the console's App. With
-    # `woodshed`, `author` and `commentAuthor` are the App's `<slug>[bot]` login and `workflow` may be left out.
+    # `woodshed`, `workflow` may be left out, `commentAuthor` is the App's `<slug>[bot]` login, and `author` is the reviewer
+    # App's (console/README.md, "The reviewer App"), since GitHub refuses an approval from the pull request's author.
     runner: actions
   # Default: []. Test suites that must pass on the head commit. A pull request touching only paths the workflow's
   # `on.pull_request` ignores is not held for it (the console reads the workflow from the default branch).

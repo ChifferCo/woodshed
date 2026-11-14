@@ -215,7 +215,7 @@ export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
-  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null,
+  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null,
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -1677,7 +1677,13 @@ export function createFleet({
       return false;
     }
     const body = `${session.review.heading} — ${conclusion}\n\n${summary}`.trim();
-    await safely('review verdict', () => gh.createReview(session.number, { event: conclusion, body, sha }));
+    // As the reviewer App when there is one: GitHub refuses an approval from the pull request's author, and a pull request
+    // a shared session opened is the console App's.
+    const asReviewer = Boolean(reviewerApp?.configured());
+    const submitted = await safely('review verdict', () => (asReviewer
+      ? reviewerApp.submitReview({ repo: projectFor(config, session).repo, number: session.number, event: conclusion, body, sha })
+      : gh.createReview(session.number, { event: conclusion, body, sha })));
+    console.log('fleet: review verdict submitted', { id: session.id, number: session.number, as: asReviewer ? 'reviewer App' : 'console App', ok: submitted !== null });
     if (session.review.check && mergeRisk?.tier) {
       await safely('Merge risk check', () => gh.createCheckRun({
         sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),

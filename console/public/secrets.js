@@ -18,6 +18,7 @@
   function effectOf(name) {
     if (name === 'slack-bot-token') return SLACK_EFFECT;
     if (name === 'slack-signing-secret') return SLACK_SIGNING_EFFECT;
+    if (name === 'github-reviewer-app-key') return 'The next review a session finishes is submitted as the reviewer App.';
     return name === 'github-app-client-secret' ? CLIENT_SECRET_EFFECT : SESSION_EFFECT;
   }
   const GROUPS = [

@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
   const alive = new Set();
@@ -98,7 +98,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2427,6 +2427,17 @@ test('reviewFinished submits the formal review and the Merge risk check as the c
   const risk = calls.checks.find((c) => c.name === 'Merge risk');
   assert.deepEqual([risk.conclusion, risk.title], ['neutral', 'Low: Only a docs page.']);
   assert.equal(fleet.sessions()[0].review.conclusion, 'APPROVE');
+});
+
+test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {
+  const submitted = [];
+  const reviewerApp = { configured: () => true, async submitReview(args) { submitted.push(args); return 1; } };
+  const { fleet, calls } = reviewSetup({ reviewerApp });
+  await fleet.reviewOnTag({ number: 7 });
+  await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
+  assert.equal(calls.reviews.length, 0, 'not as the console App');
+  assert.deepEqual(submitted.map((s) => [s.repo, s.number, s.event, s.sha]), [['o/r', 7, 'APPROVE', 'a'.repeat(40)]]);
+  assert.ok(calls.checks.some((c) => c.name === 'Merge risk'), 'the Merge risk check is still the console App\'s');
 });
 
 test('reviewFinished does not submit for a commit that is no longer the head', async () => {
