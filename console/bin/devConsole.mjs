@@ -60,6 +60,7 @@ function planReading({ minutesAgo, fiveHour, sevenDay }) {
     sevenDay: { usedPercent: sevenDay[0], resetsAt: at(sevenDay[1]) },
   };
 }
+const GB = 1024 ** 3;
 const sessions = [
   session('aaaa1111', 26325, 'Speed up Claude sessions'),
   session('bbbb2222', 26326, 'A session with no pull request yet', { prUrl: null }),
@@ -75,7 +76,8 @@ const sessions = [
   }),
   session('cccc3333', 26327, 'A failed start', { status: 'failed', error: 'The container did not start.' }),
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
-  session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true }),
+  session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true,
+    usage: { cpuPercent: 37.5, memoryBytes: 1.6 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 3.1 * GB, cores: 2, diskUsedBytes: 6.2 * GB, diskTotalBytes: 20 * GB } }),
   // Running on a project whose file has no app: Set up app in place of Start app.
   session('a0a0b1b1', 26329, 'A project with no app yet', { status: 'running', stoppedAt: null, stopReason: null, app: 'none', appServers: { frontend: false, backend: false, frontendPort: null, backendPort: null }, hasShell: true }),
   // The rail's names: one started and assigned to octocat, one handed to him, one someone else has, and a private
@@ -88,7 +90,9 @@ const sessions = [
   session('beef4242', 26631, 'Rate limit the public API', { project: 'example-api', repo: 'example-org/example-api', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   session('beef4343', 26632, 'Show the plan picker on the pricing page', { project: 'example-web', repo: 'example-org/example-web', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   // Its project uses no Redis, so Data ▾ has only the databases.
-  session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false }),
+  session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false,
+    // Near its memory limit, for the badge's red and the machine dialog's: its disk from an image before it was reported.
+    usage: { cpuPercent: 162, memoryBytes: 7.5 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 7.9 * GB, cores: 2, diskUsedBytes: null, diskTotalBytes: null } }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
   session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.

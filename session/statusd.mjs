@@ -52,7 +52,7 @@ import { classifyPane, parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
-import { readUsage, usageBetween } from './usage.mjs';
+import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
@@ -684,7 +684,7 @@ function planUsageFailed(error) {
 let usageSample = null;
 let usageAnswer = null;
 async function usage() {
-  const next = { ...(await readUsage()), at: Date.now() };
+  const next = { ...(await readUsage()), ...(await readDisk(REPO_DIR)), at: Date.now() };
   if (usageSample && next.at - usageSample.at < 2000) return usageAnswer;
   usageAnswer = usageBetween(usageSample, next);
   usageSample = next;

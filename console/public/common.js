@@ -793,9 +793,81 @@
     return { text: `${level ? '⚠ ' : ''}${parts.join(' · ')}`, level, tip };
   }
 
+  // The badge opens the machine's dialog. The page draws the badge again on each refresh, which refreshes an open dialog.
   function usageBadge(s) {
+    if (machineOpen?.id === s.id) machineOpen.draw(s);
     const u = usageOf(s);
-    return u && h('span', { class: `usage${u.level ? ` is-${u.level}` : ''}`, title: u.tip }, u.text);
+    return u && h('button', {
+      type: 'button', class: `usage${u.level ? ` is-${u.level}` : ''}`, title: `${u.tip}\nClick for more about the machine`,
+      'aria-haspopup': 'dialog', onclick: () => openMachine(s),
+    }, u.text);
+  }
+
+  // A share of what the session may use, with the badge's lines: amber past `warn`, red past `hot`.
+  function machineMeter({ label, value, share, warn, hot, sub, missing }) {
+    const known = share !== null && Number.isFinite(share);
+    const level = !known ? '' : share >= hot ? 'hot' : share >= warn ? 'warn' : '';
+    const pct = known ? Math.min(100, Math.max(0, share * 100)) : 0;
+    return h('div', { class: `plan-meter machine-meter${level ? ` is-${level}` : ''}` },
+      h('div', { class: 'plan-row' }, h('span', null, label), h('b', null, value ?? '—')),
+      h('div', { class: 'plan-bar', role: 'img', 'aria-label': known ? `${label}: ${Math.round(pct)}% of what it may use${level === 'hot' ? ', nearly all of it' : level ? ', running high' : ''}` : `${label}: ${missing}` },
+        h('i', { style: `width:${pct.toFixed(1)}%` })),
+      h('div', { class: 'plan-sub' }, known ? sub : missing));
+  }
+
+  /** What the machine dialog shows for a session: its CPU, memory and disk against their limits, and since when. */
+  function machineDetails(s) {
+    const u = s.status === 'running' ? s.usage : null;
+    if (!u) return [h('p', { class: 'sub' }, 'The session is not running, so its machine reports nothing.')];
+    const cores = u.cores || 2;
+    const fmt = (b) => (b === null || b === undefined ? null : fmtBytes(b));
+    const share = (a, b) => (a !== null && a !== undefined && b ? a / b : null);
+    const disk = u.diskTotalBytes ? u.diskTotalBytes - (u.diskUsedBytes ?? 0) : null;
+    return [
+      machineMeter({
+        label: 'CPU', value: u.cpuPercent === null ? null : `${Math.round(u.cpuPercent)}%`, share: share(u.cpuPercent, cores * 100), warn: 0.75, hot: 0.95,
+        sub: `of ${cores} core${cores === 1 ? '' : 's'} · 100% is one core busy`, missing: 'Read again in a moment: it takes two readings 2 s apart',
+      }),
+      machineMeter({
+        label: 'Memory', value: u.memoryBytes === null ? null : `${fmt(u.memoryBytes)}${u.memoryLimitBytes ? ` of ${fmt(u.memoryLimitBytes)}` : ''}`,
+        share: share(u.memoryBytes, u.memoryLimitBytes), warn: 0.7, hot: 0.9,
+        sub: `${u.memoryPeakBytes ? `Peak ${fmt(u.memoryPeakBytes)} since it started, file cache counted · ` : ''}page cache left out`,
+        missing: u.memoryBytes === null ? 'Not reported' : 'No memory limit reported',
+      }),
+      machineMeter({
+        label: 'Disk', value: u.diskTotalBytes ? `${fmt(u.diskUsedBytes)} of ${fmt(u.diskTotalBytes)}` : null,
+        share: share(u.diskUsedBytes, u.diskTotalBytes), warn: 0.8, hot: 0.95,
+        sub: `The checkout's disk · ${fmt(disk)} free`, missing: 'Not reported: the session started from an image before it was',
+      }),
+      h('dl', { class: 'machine-facts' },
+        s.startedAt && [h('dt', null, 'Running for'), h('dd', null, span(Date.now() - Date.parse(s.startedAt)))],
+        s.checkedAt && [h('dt', null, 'Read'), h('dd', null, ago(s.checkedAt))]),
+      h('p', { class: 'plan-foot machine-foot' },
+        'Read from the session\'s container, its cgroup. A bar turns amber when it runs high and red when it is nearly full: ',
+        'past its memory, the container is stopped; with no disk left, git and installs fail.'),
+    ];
+  }
+
+  let machineOpen = null;
+  function openMachine(s) {
+    const body = h('div', { class: 'machine-body' });
+    const draw = (next) => body.replaceChildren(...machineDetails(next));
+    const dialog = h('dialog', { class: 'confirm machine', 'aria-labelledby': 'machine-title' },
+      h('h2', { id: 'machine-title' }, 'The session\'s machine'),
+      h('p', { class: 'sub machine-of' }, s.title),
+      body,
+      h('div', { class: 'dialog-actions' }, h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Close')));
+    draw(s);
+    // A click on the backdrop lands on the dialog itself.
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => {
+      if (machineOpen?.dialog === dialog) machineOpen = null;
+      dialog.remove();
+    });
+    machineOpen?.dialog.close();
+    machineOpen = { id: s.id, dialog, draw };
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   // Each agent's plan is shared by the owner's private sessions on that agent. Keep readings and counts separate;
@@ -1187,6 +1259,6 @@
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();
