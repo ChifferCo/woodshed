@@ -407,13 +407,6 @@ test('a pull request without the QA label is not held for a QA run that never st
   assert.match(slack.posts[0].brief, /\nQA not run \(no qa label\)/);
 });
 
-test('with after: approval, a pull request without the label is still held for its QA check', async () => {
-  const { announcer, slack, session } = setup({ gates: { ...GATES, qa: { ...GATES.qa, after: 'approval' } } });
-  await announcer.track(session);
-  await announcer.check();
-  assert.deepEqual(slack.posts, []);
-});
-
 test('the brief is one PR comment, written once and then updated in place, and the post links it', async () => {
   const first = setup();
   await first.announcer.track(first.session);
