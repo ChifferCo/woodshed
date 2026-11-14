@@ -806,7 +806,6 @@ startClaude() {
   fi
   tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
   tmux set-option -t claude remain-on-exit on
-  tmux set-option -t claude history-limit 50000
   # woodshed-login reopens claude with the same flags once it signed in.
   [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
   if [ "${SESSION_MODE:-}" = qa ]; then
@@ -835,12 +834,15 @@ startClaude() {
   # pane around it. The pane's ground, the accent for the cursor, and the app's selection wash. No leave alert, as in the
   # shed: the page swaps terminals in and out of its frames, and every switch of session would ask "Leave site?".
   local theme='theme={"background":"#14171d","foreground":"#d6d3cd","cursor":"#E87D09","cursorAccent":"#14171d","selectionBackground":"#2c2013"}'
+  # The browser scrolls back through its own copy of what tmux scrolled off (tmux.conf): 10000 lines rather than
+  # xterm.js's 1000, and no more, since each line costs the page its width in cells. tmux keeps 50000.
+  local scrollback=scrollback=10000
   ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t disableLeaveAlert=true tmux attach -t claude >/tmp/ttyd.log 2>&1 &
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux attach -t claude >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a
   # reload or a second browser finds it as it was; -A makes a new one after someone types exit.
   ttyd --writable --port 7684 --base-path "/shell/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t disableLeaveAlert=true tmux new-session -A -s shell -c "$REPO_DIR" >/tmp/ttyd-shell.log 2>&1 &
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux new-session -A -s shell -c "$REPO_DIR" >/tmp/ttyd-shell.log 2>&1 &
   log "Claude started" "(session: $SESSION_ID, branch: $BRANCH, started_by: ${STARTED_BY:-unknown})"
 }
 

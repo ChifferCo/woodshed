@@ -29,7 +29,7 @@
 //   POST /upload?name=<file>&pane=agent|terminal   the body saved under /tmp/uploads, and its path typed at that
 //                     pane's prompt with no Enter (terminalFiles.mjs)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
-//   POST /scroll      {"steps": -3, "pane": "agent"}   a phone's swipe, as tmux's wheel would take it
+//   POST /scroll      {"steps": -3, "pane": "agent"}   a swipe or wheel the browser's own scrollback did not take
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
 //        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own

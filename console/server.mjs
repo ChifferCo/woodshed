@@ -46,7 +46,7 @@
 //                                saved in the session with its path typed at that pane's prompt (none: not typed)
 //   POST /api/sessions/<id>/send    {"text": "..."}   the phone's message box: typed into claude, then Enter
 //   GET  /api/sessions/<id>/image?path=<path>   a picture a terminal path names, from the session
-//   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a phone's swipe on a terminal
+//   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a swipe or wheel past the browser's own scrollback
 //   GET  /api/skills             the repo's skills and commands, for New session's / list
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
@@ -159,7 +159,7 @@ import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -171,6 +171,7 @@ const STATIC_FILES = {
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
   'terminalCache.js': 'text/javascript; charset=utf-8',
+  'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',

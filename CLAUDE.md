@@ -667,6 +667,15 @@ secrets.
   repo, `/tmp/uploads` and the scratchpad, or one that is not png, jpg, gif or
   webp after its symlinks. A session started from an image before
   `terminalFiles.mjs` answers 404 for all three routes: start a new one.
+- **Scrolling back in a terminal shows part of claude's answer twice, or the wheel does not scroll.** claude runs
+  inline (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in `session/bin/claude`), and Claude Code's inline renderer prints
+  its last answer again when the terminal gets narrower (anthropics/claude-code#84247): a phone and a desktop on one
+  session, a rail opened or a window made smaller. It is in tmux's history and the browser's both; nothing here can
+  take it out. For the wheel: in the terminal frame's console, `document.title` starts with the pane's state from
+  `tmux.conf` (`claude (main screen)`): `main screen` scrolls in the browser, anything else through tmux. A person's
+  own tmux lines that set `set-titles-string`, `status-position top` or `terminal-overrides` leave it to tmux, or leave
+  the browser's scrollback empty. A `tmux display -p -t claude '#{alternate_on}'` of 1 means claude or codex is full
+  screen after all, as an image from before inline mode runs it.
 - **The phone's message box says Not sent, or claude never got it.** The
   console logs `console: message typed in from the page` with the length, and
   statusd `statusd: text sent to claude`; a file from **📎** logs `statusd:
