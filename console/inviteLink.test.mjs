@@ -40,3 +40,10 @@ test('the link carries the console\'s link query, for whatever serves the consol
   assert.equal(link.searchParams.get('on'), 'PR #123');
   assert.equal(new URL(inviteUrl('https://console.example', 'PR #123', null)).search, '?new=1&on=PR%20%23123');
 });
+
+test('the link names the session\'s project, so the form does not open on the engineer\'s own default instead', () => {
+  const link = new URL(inviteUrl('https://console.example', 'PR #41', 'place=acme', 'woodshed-cloud'));
+  assert.equal(link.searchParams.get('project'), 'woodshed-cloud');
+  assert.equal(link.searchParams.get('on'), 'PR #41');
+  assert.equal(link.searchParams.get('place'), 'acme');
+});

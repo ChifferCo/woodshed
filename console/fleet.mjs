@@ -1104,7 +1104,14 @@ export function createFleet({
     }
     const isPr = Boolean(issue?.pull_request);
     if (on.pr && !isPr) throw shown(`#${on.number} is an issue, not a pull request`);
-    return { kind: isPr ? 'pr' : 'issue', number: on.number, title: issue.title, branch: isPr ? (await repoGitHub.pull(on.number)).head.ref : null };
+    if (!isPr) return { kind: 'issue', number: on.number, title: issue.title, branch: null };
+    const pull = await repoGitHub.pull(on.number);
+    // A merged or closed pull request's branch is often deleted, and the session's checkout of it then fails after it
+    // waited for a machine. Refused here instead, naming the repo: a number looked up on the wrong project reads as one.
+    if (pull.state === 'closed') {
+      throw shown(`#${on.number} on ${project.repo} was ${pull.merged_at ? 'merged' : 'closed'}: start on an open pull request, or on its branch`);
+    }
+    return { kind: 'pr', number: on.number, title: issue.title, branch: pull.head.ref };
   }
 
   // The GitHub client of a project's repo: the fleet's own for the default project.
