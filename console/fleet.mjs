@@ -1480,7 +1480,7 @@ export function createFleet({
     // stands for the pull request's author, on a same-repo head, on the team key when the author fails the checks.
     let teamKeyWhy = null;
     const appLogin = ownApp()?.login ?? null;
-    if (appLogin && login === appLogin) {
+    if (qa.autoLabel && appLogin && login === appLogin) {
       const autoPull = known ?? await gh.pull(number);
       if (autoPull.head?.repo?.full_name && autoPull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
       login = autoPull.user?.login ?? '';

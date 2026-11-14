@@ -2248,6 +2248,9 @@ test('a console-added QA label runs on the team key for an author who fails the 
   reused.github.pull = async () => ({ ...QA_PULL, user: { login: 'joel' } });
   assert.equal((await reused.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).outcome, 'started');
   assert.deepEqual([reused.fleet.sessions()[0].qa.teamKey, reused.fleet.sessions()[0].plan], [true, null], 'never the old person\'s plan');
+  const off = qaSetup({ ownApp: () => APP });
+  off.github.pull = async () => ({ ...QA_PULL, user: { login: 'joel' } });
+  assert.equal((await off.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).reason, 'no write access to the repo', 'without autoLabel, the App\'s label is refused as before');
   const fork = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
   fork.github.pull = async () => ({ ...QA_PULL, user: { login: 'joel' }, head: { ...QA_PULL.head, repo: { full_name: 'someone/fork' } } });
   assert.equal((await fork.fleet.handleQaLabel({ number: 7, label: 'qa', login: APP.login })).reason, 'the pull request is from a fork');
