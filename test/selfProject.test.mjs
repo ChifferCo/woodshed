@@ -29,25 +29,24 @@ test('Woodshed\'s project file parses, with no dependencies or databases, and it
 test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s test job and the review\'s Merge risk', () => {
   assert.deepEqual(selfProject().pullRequests, {
     review: {
-      author: 'github-actions[bot]', heading: '## Claude review', workflow: '.github/workflows/review.yml',
-      rerun: '[woodshed-review]', commentAuthor: 'github-actions[bot]', runner: 'actions',
+      author: 'woodshed-console[bot]', heading: '## Claude review', workflow: null,
+      rerun: '[woodshed-review]', commentAuthor: 'woodshed-console[bot]', runner: 'woodshed',
     },
     suites: [{ name: 'Check', workflow: '.github/workflows/check.yml', jobs: 'test', rerun: null }],
-    qa: { check: 'QA', label: 'woodshed-qa', heading: '## QA', author: null, runner: 'woodshed', after: 'label' },
+    qa: { check: 'QA', label: 'woodshed-qa', heading: '## QA', author: null, runner: 'woodshed', after: 'approval' },
     mergeRisk: { check: 'Merge risk' },
   });
 });
 
-test('the gates match what Woodshed\'s own workflows post', () => {
-  const { review, suites, mergeRisk } = selfProject().pullRequests;
-  const reviewYml = fs.readFileSync(path.join(WOODSHED, review.workflow), 'utf8');
-  assert.ok(reviewYml.includes(`default: '${review.rerun}'`), 'the rerun tag is the one review.yml looks for');
-  assert.ok(reviewYml.includes(reviewSummaryOf(review)), 'the review\'s comment is folded under the heading\'s words');
-  assert.ok(reviewYml.includes(`name: "${mergeRisk.check}"`), 'review.yml posts the Merge risk check');
-  // The verdict's first line, as review.yml's "Post the verdict" step writes it.
-  assert.ok(reviewYml.includes('echo "## Claude review — ${verdict}"'), 'review.yml writes the verdict under the heading');
-  const verdict = { user: { login: review.author }, state: 'APPROVED', body: '## Claude review — APPROVE\n\nLooks right.' };
+test('the gates match what Woodshed\'s own review session and workflows post', () => {
+  const { review, suites } = selfProject().pullRequests;
+  const prompt = fs.readFileSync(path.join(WOODSHED, 'shared/codeReview/prompt.txt'), 'utf8');
+  assert.ok(prompt.includes(reviewSummaryOf(review)), 'the review\'s comment is folded under the heading\'s words');
+  // The verdict's first line, as the console's reviewFinished writes it under the project file's heading.
+  const verdict = { user: { login: review.author }, state: 'APPROVED', body: `${review.heading} — APPROVE\n\nLooks right.` };
   assert.equal(reviewVerdict([verdict], review), verdict);
+  const reviewYml = parseYaml(fs.readFileSync(path.join(WOODSHED, '.github/workflows/review.yml'), 'utf8'));
+  assert.deepEqual(Object.keys(reviewYml.on), ['workflow_call'], 'review.yml no longer reviews Woodshed\'s own pull requests');
   const [suite] = suites;
   const checkYml = parseYaml(fs.readFileSync(path.join(WOODSHED, suite.workflow), 'utf8'));
   assert.ok(checkYml.jobs[suite.jobs], 'check.yml has the suite\'s job');
@@ -73,5 +72,5 @@ test('Woodshed\'s project file passes its own check against this checkout', () =
     encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: WOODSHED },
   });
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^pull requests: review \.github\/workflows\/review\.yml, suites 1 \(Check in \.github\/workflows\/check\.yml\)$/m);
+  assert.match(run.stdout, /^pull requests: review in a session, suites 1 \(Check in \.github\/workflows\/check\.yml\)$/m);
 });
