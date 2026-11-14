@@ -80,9 +80,10 @@ test('every variable the fleet sets for each kind of session reaches an ECS task
   await fleet.createSession({ kind: 'task', number: null, title: 'c', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', options: { agent: 'codex', model: 'gpt-6.1-sol', effort: 'high', permissionMode: 'auto' } });
   await fleet.createSession({ kind: 'task', number: null, title: 'o', startedBy: 'joel', trigger: 'my-woodshed', prompt: 'p', owner: 'joel', project: config.projects[1] });
   await fleet.createSession({ kind: 'pr', number: 9, title: 'QA', startedBy: 'joel', trigger: 'qa', branch: 'a/c', qa: { base: 'main', sha: 'a'.repeat(40), heading: '## QA', commentId: null } });
-  assert.equal(started.length, 7);
+  await fleet.createSession({ kind: 'pr', number: 10, title: 'Review', startedBy: 'joel', trigger: 'review', branch: 'a/d', review: { base: 'main', sha: 'b'.repeat(40), heading: '## Claude review', check: 'Merge risk', commentId: null } });
+  assert.equal(started.length, 8);
   const set = new Set(started.flatMap((env) => Object.keys(env)));
-  for (const name of ['SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE']) {
+  for (const name of ['SESSION_MODE', 'ASKED_BY', 'ISSUE', 'PR', 'MODEL', 'REVIEW_ONLY', 'SESSION_KIND', 'ATTACHMENTS', 'AGENT', 'PROJECT_REPO', 'SESSION_APP_DOMAIN', 'QA_BASE', 'REVIEW_BASE']) {
     assert.ok(set.has(name), `the sessions above set ${name}`);
   }
   for (const env of started) {

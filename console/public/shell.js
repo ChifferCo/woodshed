@@ -290,7 +290,7 @@
     rail: () => page.toggleRail?.(),
     new: go('/?new=1'),
   };
-  function onKey(e, inFrame) {
+  function onKey(e, inFrame, modOnly = false) {
     hideHint();
     if (e.key === 'Escape' && (!palette.hidden || !keys.el.hidden || !settings.el.hidden)) {
       if (!palette.hidden && actionsFor) return;
@@ -299,6 +299,8 @@
       return;
     }
     if (e.repeat || e.isComposing) return;
+    // A page framed in the pane (the Review) keeps its keys alone for itself: only ⌘ or Ctrl ones are the shell's.
+    if (modOnly && !e.metaKey && !e.ctrlKey) return;
     const afterG = Date.now() - gAt < SEQUENCE_MS;
     gAt = 0;
     // A key alone is for the page, never for an open palette or sheet, whose own keys come first.
@@ -316,13 +318,14 @@
   }
   document.addEventListener('keydown', (e) => onKey(e, false), true);
 
-  // A terminal frame is same-origin, so its document's keys can be read before xterm takes them.
-  function bindFrame(frame) {
+  // A terminal frame is same-origin, so its document's keys can be read before xterm takes them. Another framed page
+  // (the Review, { terminal: false }) gets the shell's ⌘ and Ctrl keys, as the page around it does, and keeps the rest.
+  function bindFrame(frame, { terminal = true } = {}) {
     try {
       const doc = frame.contentDocument;
       if (!doc || doc.__woodshedShell) return;
       doc.__woodshedShell = true;
-      doc.addEventListener('keydown', (e) => onKey(e, true), true);
+      doc.addEventListener('keydown', (e) => onKey(e, terminal, !terminal), true);
     } catch {
       // Not same-origin after all: the page's own keys still work.
     }
