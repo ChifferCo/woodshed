@@ -147,6 +147,12 @@ runs:
       run: |
         # A test plan from the diff, before the app starts, so a pull request with nothing to test costs seconds. A
         # planner stopped by its turn or spend limit exits non-zero: the next step says why, rather than the job failing.
+        # An empty key is a missing secret, which claude would only report as not logged in.
+        if [ -z "$ANTHROPIC_API_KEY" ]; then
+          echo "::error::anthropic-api-key is empty: set the repository's ANTHROPIC_API_KEY secret"
+          touch .qa/logs/no-key
+          exit 0
+        fi
         claude --model opus -p "$(cat .qa/plan-prompt.md)" \
           --max-turns 40 --max-budget-usd "$BUDGET" --allowedTools "Bash,Read,Write,Edit" \
           --output-format stream-json --verbose 2>&1 | tee .qa/logs/plan.jsonl \
@@ -161,8 +167,13 @@ runs:
           echo "The planner skipped: $(head -1 .qa/plan/SKIP.md)"
           echo "should-run=false" >> "$GITHUB_OUTPUT"
         elif [ ! -s .qa/plan/plan.md ]; then
-          end=$(grep '"type":"result"' .qa/logs/plan.jsonl | tail -1 | jq -r '.subtype // empty' 2>/dev/null || true)
+          end=$(grep '"type":"result"' .qa/logs/plan.jsonl 2>/dev/null | tail -1 | jq -r '.subtype // empty' 2>/dev/null || true)
+          if [ -f .qa/logs/no-key ]; then end=no_key
+          elif grep -q '"error":"authentication_failed"' .qa/logs/plan.jsonl 2>/dev/null; then end=auth_failed
+          fi
           case "$end" in
+            no_key) reason="no Anthropic API key: set the repository's ANTHROPIC_API_KEY secret" ;;
+            auth_failed) reason="the Anthropic API key was refused: check the repository's ANTHROPIC_API_KEY secret" ;;
             error_max_turns) reason="the planner ran out of turns before writing a test plan" ;;
             error_max_budget_usd) reason="the planner hit its spend limit before writing a test plan" ;;
             *) reason="the planner ended without writing a test plan" ;;
