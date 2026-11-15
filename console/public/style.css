@@ -599,6 +599,8 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .loptions-picked { font-family: var(--mono); font-size: 12px; color: var(--meta); }
 .loptions[open] .loptions-picked { display: none; }
 .lgrid2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* Side by side, the fields share a label row and a control row, so a hint that wraps in one does not push its control below the other's. */
+.lgrid2 > .lfield { display: grid; grid-row: span 2; grid-template-rows: subgrid; row-gap: 4px; align-content: start; }
 .lgrid3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lgrid4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .launch-actions, .set-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
