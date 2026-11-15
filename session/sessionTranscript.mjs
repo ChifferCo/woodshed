@@ -17,6 +17,9 @@ export const MAX_ENTRIES = 300;
 export const MAX_TEXT = 8000;
 // A compressed rollout is read whole, so one past this is left alone.
 const MAX_COMPRESSED_BYTES = 16 * 1024 * 1024;
+// And one that unpacks past this is left alone too: zstd packs repeated tool output many times over, and statusd
+// unpacks it in one go.
+export const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 
 /** @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, at: string|null}} Entry */
 
@@ -174,7 +177,12 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, limit
     if (newest.stat.size > MAX_COMPRESSED_BYTES || typeof zlib.zstdDecompressSync !== 'function') {
       return { agent, entries: [], partial: true, writtenAt: newest.stat.mtimeMs };
     }
-    text = zlib.zstdDecompressSync(await fs.readFile(newest.file)).toString('utf8');
+    try {
+      text = zlib.zstdDecompressSync(await fs.readFile(newest.file), { maxOutputLength: MAX_DECOMPRESSED_BYTES }).toString('utf8');
+    } catch (err) {
+      if (err?.code !== 'ERR_BUFFER_TOO_LARGE') throw err;
+      return { agent, entries: [], partial: true, writtenAt: newest.stat.mtimeMs };
+    }
   } else {
     ({ text, partial } = await tail(newest.file, newest.stat.size));
   }

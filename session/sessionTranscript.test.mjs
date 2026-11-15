@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 
-import { MAX_TEXT, parseClaudeTranscript, parseCodexRollout, readSessionTranscript } from './sessionTranscript.mjs';
+import { MAX_DECOMPRESSED_BYTES, MAX_TEXT, parseClaudeTranscript, parseCodexRollout, readSessionTranscript } from './sessionTranscript.mjs';
 
 const line = (o) => JSON.stringify(o);
 const at = '2026-11-12T10:00:00.000Z';
@@ -116,4 +116,9 @@ test("codex's newest rollout is found in its newest day folder, compressed or no
   fs.writeFileSync(path.join(newer, 'rollout-b.jsonl.zst'), zlib.zstdCompressSync(Buffer.from(CODEX)));
   read = await readSessionTranscript({ agent: 'codex', claudeDir: dir, codexHome: dir });
   assert.equal(read.entries.at(-1).text, 'Renamed in a.js.');
+  // One that unpacks past the cap is left alone, as a compressed file too large to read is.
+  const big = Buffer.alloc(MAX_DECOMPRESSED_BYTES + 1, 0x20);
+  fs.writeFileSync(path.join(newer, 'rollout-b.jsonl.zst'), zlib.zstdCompressSync(big));
+  read = await readSessionTranscript({ agent: 'codex', claudeDir: dir, codexHome: dir });
+  assert.deepEqual([read.entries, read.partial], [[], true]);
 });
