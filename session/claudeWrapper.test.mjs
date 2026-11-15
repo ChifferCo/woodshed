@@ -18,7 +18,7 @@ function fakeClaude(t) {
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const real = path.join(dir, 'claude');
   fs.writeFileSync(real, `#!/bin/bash
-node -e 'const e = process.env; console.log(JSON.stringify({ args: process.argv.slice(1), own: Object.fromEntries(${JSON.stringify(NAMES)}.map((n) => [n, e[n] ?? null])) }))' -- "$@"
+node -e 'const e = process.env; console.log(JSON.stringify({ args: process.argv.slice(1), own: Object.fromEntries(${JSON.stringify(NAMES)}.map((n) => [n, e[n] ?? null])), inline: e.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN ?? null }))' -- "$@"
 [ -z "\${CLAUDE_ENV_FILE:-}" ] || { source "$CLAUDE_ENV_FILE"; rm -f "$CLAUDE_ENV_FILE"; }
 env | grep -oE '^(${NAMES.join('|')})=' | tr -d = | sort | tr '\\n' ' '
 `, { mode: 0o755 });
@@ -64,4 +64,11 @@ test('with no proxy chosen, claude runs as it is, on the key in the environment'
   const got = await claude(t, { ...SESSION, ANTHROPIC_API_KEY: 'sk-ant-api03-docker' });
   assert.deepEqual(got.own, { ANTHROPIC_API_KEY: 'sk-ant-api03-docker', ANTHROPIC_BASE_URL: null, CLAUDE_CODE_OAUTH_TOKEN: null });
   assert.deepEqual(got.children, ['ANTHROPIC_API_KEY'], 'the docker launcher\'s key reaches everything, as before');
+});
+
+test('claude runs inline, never full screen, on every credential and with none', async (t) => {
+  for (const auth of ['key', 'plan', undefined]) {
+    const got = await claude(t, { ...SESSION, ...(auth && { WOODSHED_CLAUDE_AUTH: auth }) });
+    assert.equal(got.inline, '1', `${auth ?? 'no proxy'}: the conversation stays in tmux's history`);
+  }
 });

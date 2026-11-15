@@ -6,6 +6,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A control says what happens. Buttons are verbs or "+ New session". Errors say what went wrong and what to do: "Slack has no active user U0NOSUCH999: give a member ID or @handle."
 - Sentence case everywhere except group labels, which are uppercase `group-label`.
 - A status is always a word. "Paused", "Needs you", "Working", "Done". A dot or color never stands alone.
+- A session absent from the previous page's list shows "Loading…" until its page's lookup answers. Only a successful lookup can say there is no session; a failed lookup shows its error.
 - No emoji. Use the glyphs the console already uses: `▾ ▸ ✓ ✗ ⋯ ☆ ↗`.
 - Say "Mine" and "Everyone" for the rail's two views, "People" for the filter on Everyone, "Assigned" and "Private" for the tags.
 
@@ -23,14 +24,14 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## The rail
 
 - The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop.
-- The user menu sits in a footer and opens upward.
+- The user menu sits in a footer and opens upward. Beside it, a square quiet button with a sidebar icon hides the rail (⌘.); while it is hidden, a strip down the left edge, on `ground` with a `line` border, holds the same button at the foot to show it again. Neither shows on a phone, where the rail is its own page.
 - With more than one project, a row of filter chips sits under the head: All with its count, then one per project with its `proj-*` swatch, name and count. They are the legend of the cards' edges, and picking one shows only that project's sessions (the zone counts follow); the pick is kept in the browser.
 - A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its tooltip and its link's accessible name.
 - A whole card is the click target. A button on it must stop the click from also opening the session.
 - With several apps, Start app is **Start app ▾**, a menu of the apps' labels, and while one runs the button beside
   Open app carries its label (`Admin ▾`), which says which app runs and opens the same menu (`components/AppPicker`).
   One app: one Start app, no menu.
-- CPU and memory, the Plan chip and Start app are in the pane bar, never on a card. So is **Editor ↗**, a quiet `pbtn` link to a new tab, never filled. The Plan chip shows the private session's agent's plan (Claude or Codex); only sessions on that agent share its readings and running count, and no chip appears before that agent reports limits: `bar-amber` from 70% of a window, with the word `out` at 100%. Its detail, in the bar's menu, colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
+- CPU and memory, the Plan chip and Start app are in the pane bar, never on a card. The CPU and memory badge is a quiet button: it opens a dialog of the machine (CPU, memory with its peak, the checkout's disk), each a bar against its limit, `slate` until `amber` (with `amber-ink` for the number) as it runs high and `bad` when nearly full, the same lines the badge turns color at. So is **Editor ↗**, a quiet `pbtn` link to a new tab, never filled. The Plan chip shows the private session's agent's plan (Claude or Codex); only sessions on that agent share its readings and running count, and no chip appears before that agent reports limits: `bar-amber` from 70% of a window, with the word `out` at 100%. Its detail, in the bar's menu, colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
 - A pull request row has two lines, as a card does: its title and its checks' dot, then (`meta`) the project's name and the number, the checks in their colour and how long since it moved, with Open, Resume or Start and a `slate` ↗ to GitHub at the right end. With more than one project it has its project's 3px edge, and the name is always on line two.
 - Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions assigned to you whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups.
 - A shared session someone has carries the Assigned tag: on Mine the word Assigned, on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch: the rail head reads My sessions. **People** on Everyone filters by assignee. A resume keeps the assignee.
@@ -77,6 +78,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A quiet pane-bar button (`pbtn`) on a My Woodshed session that copies a link to New session with Work on set to its PR, or its pushed branch. It is never orange: the session's primary action stays the only filled one.
 - With no PR and no branch on GitHub yet the button says why in its own words ("Invite an engineer: push the branch first"), sits at 70% and copies nothing. Never copy a dead link.
 - The link holds the PR number or branch name and nothing else. The session stays private.
+
+## Work on
+
+- New session's Work on is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
+  them, or open the quiet ▾ for all. Each row is enough to pick from without GitHub: number, title, Draft, author,
+  branch and last update. A pick writes `PR #123` and is named under the field. Anything typed still goes as typed.
+- The list is a `menu` surface with rows on `slate-tint` when picked or hovered, never a status color.
 
 ## Commands to copy
 

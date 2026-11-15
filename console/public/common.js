@@ -109,7 +109,7 @@
       if (s.state === 'done' && s.shells > 0 && s.prUrl) return { key: 'job', word: 'waiting on a job' };
       if (s.state === 'done') return { key: 'done', word: 'done' };
       if (s.state === 'starting') return { key: 'starting', word: 'starting' };
-      return { key: 'idle', word: 'claude exited' };
+      return { key: 'idle', word: `${agentOf(s)} exited` };
     }
     if (!isLive(s) && s.kept && !s.owner) {
       if (s.prClosedAt) return { key: 'merged', word: s.prMerged ? 'merged' : 'closed' };
@@ -305,7 +305,7 @@
   // Resume on a stopped shared session: the same session again, on its branch and databases, with its conversation.
   function resumeSharedButton(s, { small = false, onDone, message = () => '' }) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again where it was: its branch, databases and claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: `Start it again where it was: its branch, databases and ${agentOf(s)}'s conversation`,
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -385,7 +385,7 @@
     ['branch', 'Checking out the branch', 'checkout'],
     ['databases', 'Getting its databases', 'databases'],
     ['env', 'Writing the env files and the prompt', 'env files'],
-    ['claude', 'Opening claude', 'opening claude'],
+    ['claude', 'Opening the agent', 'opening the agent'],
   ].filter(([, label]) => label);
 
   /** @returns {{steps: {key: string, label: string, short: string, state: 'done'|'now'|'next', seconds: number|null}[], current: object|null}} */
@@ -393,7 +393,10 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    const steps = START_STEPS.map(([key, label, short], i) => {
+    // The last step opens the session's own agent: claude, or codex.
+    const agent = agentOf(s);
+    const steps = START_STEPS.map(([key, l, sh], i) => {
+      const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
       const doneAt = at[key] ? Date.parse(at[key]) : null;
       const state = i <= last ? 'done' : i === last + 1 ? 'now' : 'next';
       const end = state === 'now' ? nowMs : doneAt;
@@ -402,6 +405,27 @@
       return { key, label, short, state, seconds: state === 'next' ? null : seconds };
     });
     return { steps, current: steps.find((step) => step.state === 'now') ?? null };
+  }
+
+  // A wait for room whose launcher says how it is going (the session's `waitProgress`, from the fleet's checkWaiting),
+  // in the start checklist's states. A step's seconds run from when it began to when the next one did, the current
+  // one's to now; the wait's clock runs from the first step's start, and stops showing once a step failed.
+  const WAIT_STATES = { done: 'done', current: 'now', pending: 'next', failed: 'failed' };
+
+  /** @returns {{steps: {label: string, note: string|null, state: 'done'|'now'|'next'|'failed', seconds: number|null}[], since: string|null}} */
+  function waitProgress(s, nowMs = Date.now()) {
+    const given = s.waitProgress?.steps ?? [];
+    const steps = given.map((step, i) => {
+      const state = WAIT_STATES[step.state] ?? 'next';
+      const from = step.at ? Date.parse(step.at) : null;
+      const next = given.slice(i + 1).find((later) => later.at)?.at;
+      const end = state === 'now' ? nowMs : state === 'done' && next ? Date.parse(next) : null;
+      const seconds = from && end ? Math.max(0, Math.round((end - from) / 1000)) : null;
+      return { label: step.label, note: step.note ?? null, state, seconds };
+    });
+    const failed = steps.some((step) => step.state === 'failed');
+    const since = failed ? null : given.map((step) => step.at).filter(Boolean).sort()[0] ?? null;
+    return { steps, since };
   }
 
   /** @returns {string}  m:ss since the ISO time */
@@ -414,6 +438,16 @@
   function ref(s) {
     if (!s.number) return '';
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
+  }
+
+  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  function agentOf(s) {
+    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+  }
+
+  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  function agentTitle(s) {
+    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
   }
 
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
@@ -574,8 +608,9 @@
     }, label);
   }
 
-  function setupAppToast(sent) {
-    return sent === 'queued' ? 'claude will be asked to set up the app when its turn ends' : 'Asked claude to set up the app';
+  function setupAppToast(sent, s) {
+    const agent = agentOf(s);
+    return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
   }
 
   /**
@@ -621,14 +656,14 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: 'This project\'s .woodshed/project.yaml has no app, so there is nothing to start. Asks claude to work out how the app runs and write it there.',
+        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
         onclick: async (e) => {
           e.preventDefault();
           e.stopPropagation();
           setup.disabled = true;
           try {
             const { sent } = await appAction(s, 'setup');
-            window.Woodshed.shell?.toast(setupAppToast(sent));
+            window.Woodshed.shell?.toast(setupAppToast(sent, s));
           } catch (err) {
             window.alert(`Could not set up the app: ${err.message}`);
           }
@@ -758,9 +793,81 @@
     return { text: `${level ? '⚠ ' : ''}${parts.join(' · ')}`, level, tip };
   }
 
+  // The badge opens the machine's dialog. The page draws the badge again on each refresh, which refreshes an open dialog.
   function usageBadge(s) {
+    if (machineOpen?.id === s.id) machineOpen.draw(s);
     const u = usageOf(s);
-    return u && h('span', { class: `usage${u.level ? ` is-${u.level}` : ''}`, title: u.tip }, u.text);
+    return u && h('button', {
+      type: 'button', class: `usage${u.level ? ` is-${u.level}` : ''}`, title: `${u.tip}\nClick for more about the machine`,
+      'aria-haspopup': 'dialog', onclick: () => openMachine(s),
+    }, u.text);
+  }
+
+  // A share of what the session may use, with the badge's lines: amber past `warn`, red past `hot`.
+  function machineMeter({ label, value, share, warn, hot, sub, missing }) {
+    const known = share !== null && Number.isFinite(share);
+    const level = !known ? '' : share >= hot ? 'hot' : share >= warn ? 'warn' : '';
+    const pct = known ? Math.min(100, Math.max(0, share * 100)) : 0;
+    return h('div', { class: `plan-meter machine-meter${level ? ` is-${level}` : ''}` },
+      h('div', { class: 'plan-row' }, h('span', null, label), h('b', null, value ?? '—')),
+      h('div', { class: 'plan-bar', role: 'img', 'aria-label': known ? `${label}: ${Math.round(pct)}% of what it may use${level === 'hot' ? ', nearly all of it' : level ? ', running high' : ''}` : `${label}: ${missing}` },
+        h('i', { style: `width:${pct.toFixed(1)}%` })),
+      h('div', { class: 'plan-sub' }, known ? sub : missing));
+  }
+
+  /** What the machine dialog shows for a session: its CPU, memory and disk against their limits, and since when. */
+  function machineDetails(s) {
+    const u = s.status === 'running' ? s.usage : null;
+    if (!u) return [h('p', { class: 'sub' }, 'The session is not running, so its machine reports nothing.')];
+    const cores = u.cores || 2;
+    const fmt = (b) => (b === null || b === undefined ? null : fmtBytes(b));
+    const share = (a, b) => (a !== null && a !== undefined && b ? a / b : null);
+    const disk = u.diskTotalBytes ? u.diskTotalBytes - (u.diskUsedBytes ?? 0) : null;
+    return [
+      machineMeter({
+        label: 'CPU', value: u.cpuPercent === null ? null : `${Math.round(u.cpuPercent)}%`, share: share(u.cpuPercent, cores * 100), warn: 0.75, hot: 0.95,
+        sub: `of ${cores} core${cores === 1 ? '' : 's'} · 100% is one core busy`, missing: 'Read again in a moment: it takes two readings 2 s apart',
+      }),
+      machineMeter({
+        label: 'Memory', value: u.memoryBytes === null ? null : `${fmt(u.memoryBytes)}${u.memoryLimitBytes ? ` of ${fmt(u.memoryLimitBytes)}` : ''}`,
+        share: share(u.memoryBytes, u.memoryLimitBytes), warn: 0.7, hot: 0.9,
+        sub: `${u.memoryPeakBytes ? `Peak ${fmt(u.memoryPeakBytes)} since it started, file cache counted · ` : ''}page cache left out`,
+        missing: u.memoryBytes === null ? 'Not reported' : 'No memory limit reported',
+      }),
+      machineMeter({
+        label: 'Disk', value: u.diskTotalBytes ? `${fmt(u.diskUsedBytes)} of ${fmt(u.diskTotalBytes)}` : null,
+        share: share(u.diskUsedBytes, u.diskTotalBytes), warn: 0.8, hot: 0.95,
+        sub: `The checkout's disk · ${fmt(disk)} free`, missing: 'Not reported: the session started from an image before it was',
+      }),
+      h('dl', { class: 'machine-facts' },
+        s.startedAt && [h('dt', null, 'Running for'), h('dd', null, span(Date.now() - Date.parse(s.startedAt)))],
+        s.checkedAt && [h('dt', null, 'Read'), h('dd', null, ago(s.checkedAt))]),
+      h('p', { class: 'plan-foot machine-foot' },
+        'Read from the session\'s container, its cgroup. A bar turns amber when it runs high and red when it is nearly full: ',
+        'past its memory, the container is stopped; with no disk left, git and installs fail.'),
+    ];
+  }
+
+  let machineOpen = null;
+  function openMachine(s) {
+    const body = h('div', { class: 'machine-body' });
+    const draw = (next) => body.replaceChildren(...machineDetails(next));
+    const dialog = h('dialog', { class: 'confirm machine', 'aria-labelledby': 'machine-title' },
+      h('h2', { id: 'machine-title' }, 'The session\'s machine'),
+      h('p', { class: 'sub machine-of' }, s.title),
+      body,
+      h('div', { class: 'dialog-actions' }, h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Close')));
+    draw(s);
+    // A click on the backdrop lands on the dialog itself.
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => {
+      if (machineOpen?.dialog === dialog) machineOpen = null;
+      dialog.remove();
+    });
+    machineOpen?.dialog.close();
+    machineOpen = { id: s.id, dialog, draw };
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   // Each agent's plan is shared by the owner's private sessions on that agent. Keep readings and counts separate;
@@ -783,8 +890,8 @@
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
-    const agent = s.options?.agent === 'codex' ? 'codex' : 'claude';
-    const agentSessions = sessions.filter((o) => o.owner === s.owner && (o.options?.agent === 'codex' ? 'codex' : 'claude') === agent);
+    const agent = agentOf(s);
+    const agentSessions = sessions.filter((o) => o.owner === s.owner && agentOf(o) === agent);
     const newest = agentSessions.filter((o) => o.planUsage && (o.planUsage.agent ?? 'claude') === agent).map((o) => o.planUsage)
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
@@ -1149,9 +1256,9 @@
 
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
-    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
+    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

@@ -39,6 +39,11 @@ ARG DOCKER_SHA256_ARM64=873b3e0207857c3b2f28392fb922f3ea6efe37620c16d4d4aaf2fef4
 ARG COMPOSE_VERSION=5.6.1
 ARG COMPOSE_SHA256_AMD64=47737f4236e6d3ccea7291995203f8f018058783b4c3a9469119811a0b5db8c0
 ARG COMPOSE_SHA256_ARM64=42cfa75f51ad0ccf290bad37899e0038a8c10a0069e85233ecc1d53e3ff1347d
+# psql, for the session's own Postgres databases (the PG* variables, docs/reference.md "Databases"): the client alone,
+# from PostgreSQL's apt repository, at the major the installations host (RDS's engine_version in providers/aws, the
+# local provider's postgres:16), as the console's is. Debian bookworm's own is 15, older than the servers; a newer one's
+# pg_dump would write dumps a 16 server cannot restore.
+ARG PG_CLIENT_MAJOR=16
 
 FROM node:22.16.0-bookworm-slim AS base
 
@@ -50,6 +55,7 @@ ARG TARGETARCH
 ARG PLAYWRIGHT_MCP_VERSION
 ARG CODEX_VERSION=0.167.0
 ARG REDIS_COMMANDER_VERSION=0.9.0
+ARG PG_CLIENT_MAJOR
 # AWS's RDS CA bundle, so Postgres connections can verify the server (PGSSLMODE=verify-full in the task
 # definition). Pinned: when AWS changes the bundle the build fails here, rather than trusting what it got.
 ARG RDS_CA_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
@@ -62,8 +68,10 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends bzip2 ca-certificates curl file g++ git gnupg iproute2 jq make openssh-client patch procps python3 redis-server tmux unzip wget xz-utils \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/keyrings/pgdg.asc \
+  && echo "deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
   && apt-get update \
-  && apt-get install -y --no-install-recommends gh \
+  && apt-get install -y --no-install-recommends gh "postgresql-client-${PG_CLIENT_MAJOR}" \
   && rm -rf /var/lib/apt/lists/*
 
 RUN case "$TARGETARCH" in \
@@ -198,6 +206,16 @@ RUN if docker --version 2>/dev/null | grep -qF "version ${DOCKER_VERSION}," \
   && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
   && echo "${compose_sha}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
   && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+
+# The base stage's psql, for a published runtime built before it was there: the same install, skipped when the runtime
+# has that major.
+ARG PG_CLIENT_MAJOR
+RUN if psql --version 2>/dev/null | grep -qE "^psql \(PostgreSQL\) ${PG_CLIENT_MAJOR}\."; then echo "psql ${PG_CLIENT_MAJOR} from the runtime"; exit 0; fi \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/keyrings/pgdg.asc \
+  && echo "deb [signed-by=/usr/share/keyrings/pgdg.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends "postgresql-client-${PG_CLIENT_MAJOR}" \
+  && rm -rf /var/lib/apt/lists/*
 
 USER node
 

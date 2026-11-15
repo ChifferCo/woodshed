@@ -1,6 +1,12 @@
 {
   "permissions": {
-    "allow": ["Bash(gh pr:*)"],
+    "allow": [
+      "Bash(gh pr:*)",
+      "Read(//tmp/woodshed-setup.md)",
+      "Read(//tmp/woodshed-deps)",
+      "Read(//tmp/woodshed-docker-ports.log)",
+      "Read(//tmp/answer.md)"
+    ],
     "ask": ["Bash(gh pr merge:*)", "Bash(gh pr -R:*)", "Bash(gh pr --repo:*)"]
   },
   "hooks": {

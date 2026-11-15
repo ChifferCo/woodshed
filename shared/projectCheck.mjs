@@ -221,7 +221,8 @@ function pullRequestProblems(project, repoDir) {
       problems.push(err.message);
     }
   };
-  if (gates.review) attempt(() => workflowText(repoDir, gates.review.workflow, 'pullRequests.review.workflow'));
+  // A review that runs as a session (runner: woodshed) has no workflow file to check; only the actions runner names one.
+  if (gates.review?.workflow) attempt(() => workflowText(repoDir, gates.review.workflow, 'pullRequests.review.workflow'));
   gates.suites.forEach((suite, i) => attempt(() => {
     const at = `pullRequests.suites[${i}]`;
     const text = workflowText(repoDir, suite.workflow, `${at}.workflow`);

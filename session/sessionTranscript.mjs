@@ -1,5 +1,5 @@
 // The conversation so far, for a phone to scroll through on its own (statusd's `GET /transcript`). The terminal is the
-// agent's screen: tmux keeps no scrollback of claude's full-screen view, and every swipe there is a round trip. The
+// agent's screen, and its scrollback holds only what came since the browser attached, as terminal output. The
 // agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl) and
 // codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl). Each is read from its end and shaped the same
 // way: what the person asked, what the agent said, and a line for each tool it ran. Thinking and tool output are left

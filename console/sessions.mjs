@@ -26,6 +26,11 @@ export function isQa(session) {
   return Boolean(session.qa);
 }
 
+/** @returns {boolean}  whether the session reviews a pull request (review runner `woodshed`), rather than working on it */
+export function isReview(session) {
+  return Boolean(session.review);
+}
+
 /** @returns {boolean}  whether the session holds, or waits for, one of the shared slots */
 function takesSharedSlot(session) {
   return !session.owner && !isAsk(session);
@@ -249,6 +254,43 @@ export function waitsForRetry(s, now = Date.now()) {
   return Boolean(s.retryAt) && Date.parse(s.retryAt) > now;
 }
 
+// What a launcher's progress (its optional `progress(sessionId)`, providers/README.md) may hold: it is shown as it
+// is, so each value is a string of a size the page lays out, and a step in a state the page does not know is dropped.
+const WAIT_STATES = new Set(['done', 'current', 'pending', 'failed']);
+const WAIT_STEPS_KEPT = 20;
+const WAIT_LABEL_CHARS = 80;
+const WAIT_NOTE_CHARS = 200;
+
+function waitText(value, chars) {
+  if (typeof value !== 'string') return null;
+  const text = value.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length > chars ? `${text.slice(0, chars - 1)}…` : text;
+}
+
+/**
+ * @param {{steps?: {label: string, state: string, note?: string|null, at?: string|null}[]}|null} progress  a
+ *   launcher's answer
+ * @returns {{steps: {label: string, state: 'done'|'current'|'pending'|'failed', note: string|null, at: string|null}[]}|null}
+ *   the steps the session page shows while the session waits, in order; null for none
+ */
+export function waitProgressFrom(progress) {
+  if (!Array.isArray(progress?.steps)) return null;
+  const steps = progress.steps
+    .filter((step) => WAIT_STATES.has(step?.state) && waitText(step.label, WAIT_LABEL_CHARS))
+    .slice(0, WAIT_STEPS_KEPT)
+    .map((step) => {
+      const at = typeof step.at === 'string' ? Date.parse(step.at) : NaN;
+      return {
+        label: waitText(step.label, WAIT_LABEL_CHARS),
+        state: step.state,
+        note: waitText(step.note, WAIT_NOTE_CHARS),
+        at: Number.isFinite(at) ? new Date(at).toISOString() : null,
+      };
+    });
+  return steps.length ? { steps } : null;
+}
+
 /** @returns {string}  when the session joined the line: only a private Resume sets `queuedAt`, to join at the back, and it lasts until the next Resume */
 function lineSince(s) {
   return s.queuedAt ?? s.createdAt;
@@ -317,7 +359,10 @@ function usageFrom(usage) {
     cpuPercent: number(usage.cpuPercent, 100_000),
     memoryBytes: number(usage.memoryBytes, 2 ** 50),
     memoryLimitBytes: number(usage.memoryLimitBytes, 2 ** 50),
+    memoryPeakBytes: number(usage.memoryPeakBytes, 2 ** 50),
     cores: number(usage.cores, 1024),
+    diskUsedBytes: number(usage.diskUsedBytes, 2 ** 60),
+    diskTotalBytes: number(usage.diskTotalBytes, 2 ** 60),
   };
   return Object.values(out).some((v) => v !== null) ? out : null;
 }
@@ -362,7 +407,8 @@ function withPrUrl(session, prUrl) {
  * @param {object} session
  * @param {{state: string, lastMessage?: object|null, branch?: string, head?: string, prUrl?: string|null, app?: string, appServers?: {frontend: boolean, backend: boolean, frontendPort?: number|null, backendPort?: number|null},
  *          editor?: boolean, redis?: boolean,
- *          usage?: {cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, cores: number|null},
+ *          usage?: {cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, memoryPeakBytes?: number|null,
+ *                   cores: number|null, diskUsedBytes?: number|null, diskTotalBytes?: number|null},
  *          planUsage?: object}} status
  * @param {string} nowIso
  * @returns {object}  the fields to update

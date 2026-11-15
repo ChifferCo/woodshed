@@ -7,11 +7,15 @@
 set -euo pipefail
 
 real=${WOODSHED_REAL_CODEX:-/usr/local/bin/codex}
+# Inline, never full screen, as session/bin/claude says for claude: codex writes each finished turn into the terminal's
+# own scrollback instead of drawing it on the alternate screen. A config override rather than --no-alt-screen, which
+# every subcommand takes too but which codex refuses twice, should someone pass it as well.
+inline=(-c 'tui.alternate_screen="never"')
 if [ "${WOODSHED_CODEX_AUTH:-}" = key ]; then
   export WOODSHED_CODEX_KEY=$SESSION_TOKEN
-  exec "$real" \
+  exec "$real" "${inline[@]}" \
     -c 'model_provider="woodshed"' \
     -c "model_providers.woodshed={name=\"Woodshed\",base_url=\"$WOODSHED_CONSOLE_URL/openai/v1\",env_key=\"WOODSHED_CODEX_KEY\",wire_api=\"responses\",supports_websockets=false}" \
     "$@"
 fi
-exec "$real" "$@"
+exec "$real" "${inline[@]}" "$@"

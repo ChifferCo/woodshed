@@ -60,9 +60,9 @@ export const PROJECT_FIELDS = Object.freeze({
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
-  'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor'],
+  'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
-  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner'],
+  'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
   'pullRequests.mergeRisk': ['check'],
 });
 
@@ -332,11 +332,16 @@ export function appNamed(project, name) {
 function pullRequests(value) {
   const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
-    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null });
+    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null });
+    if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.review.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
+    // With `actions` the review runs in a workflow, named here; with `woodshed` it runs as a console session and the
+    // workflow is the console's App, not a file (so the merge-risk check is trusted from the App, not a workflow run).
+    if (f.runner !== 'woodshed' && !Object.hasOwn(r, 'workflow')) fail('pullRequests.review is missing workflow');
+    const workflow = f.runner === 'woodshed' && !Object.hasOwn(r, 'workflow') ? null : repoPath(f.workflow, 'pullRequests.review.workflow');
     return {
       author: string(f.author, 'pullRequests.review.author'), heading: string(f.heading, 'pullRequests.review.heading'),
-      workflow: repoPath(f.workflow, 'pullRequests.review.workflow'), rerun: nullable(f.rerun, 'pullRequests.review.rerun', string),
-      commentAuthor: nullable(f.commentAuthor, 'pullRequests.review.commentAuthor', string),
+      workflow, rerun: nullable(f.rerun, 'pullRequests.review.rerun', string),
+      commentAuthor: nullable(f.commentAuthor, 'pullRequests.review.commentAuthor', string), runner: f.runner,
     };
   });
   const suites = list(p.suites, 'pullRequests.suites', (s, where) => {
@@ -347,14 +352,18 @@ function pullRequests(value) {
     };
   });
   const qa = nullable(p.qa, 'pullRequests.qa', (q) => {
-    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null });
+    const f = fields(q, 'pullRequests.qa', PROJECT_FIELDS['pullRequests.qa'], { runner: 'actions', author: null, autoLabel: false });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.qa.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
+    const autoLabel = boolean(f.autoLabel, 'pullRequests.qa.autoLabel');
+    // The console adds the label on new pull requests, and the label waits for the review's approval, so it needs both
+    // the session runner and a review to wait for.
+    if (autoLabel && (f.runner !== 'woodshed' || !review)) fail('pullRequests.qa.autoLabel needs runner: woodshed and pullRequests.review');
     // A QA session's report is the console's check, so `woodshed` has no comment author to trust (sessions comment as the App).
     if (f.runner !== 'woodshed' && !Object.hasOwn(q, 'author')) fail('pullRequests.qa is missing author');
     const author = f.runner === 'woodshed' && !Object.hasOwn(q, 'author') ? null : string(f.author, 'pullRequests.qa.author');
     return {
       check: string(f.check, 'pullRequests.qa.check'), label: string(f.label, 'pullRequests.qa.label'),
-      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner,
+      heading: string(f.heading, 'pullRequests.qa.heading'), author, runner: f.runner, autoLabel,
     };
   });
   const mergeRisk = nullable(p.mergeRisk, 'pullRequests.mergeRisk', (m) => {
@@ -512,10 +521,24 @@ export function loadProject(repoDir, { projectFilesDir = envValue(process.env, '
   try {
     return { ...readProjectText(file.text), from: file.from };
   } catch (err) {
-    // The installation's file is wrong in the same ways a repo's is, and is named by its path.
-    if (file.from === 'installation') err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file.path}`);
-    throw err;
+    if (file.from === 'installation') throw installationError(err, file.path);
+    // A repo's own file Woodshed cannot read (one written for another version, say) gives way to the installation's for
+    // the repo, where there is one, so the installation can run it until the repo's is fixed. `repoFileError` says why.
+    const of = projectFilesDir && (repo ?? repoOf(repoDir));
+    const supplied = of && installationProjectFile({ dir: projectFilesDir, repo: of });
+    if (!supplied) throw err;
+    try {
+      return { ...readProjectText(supplied.text), from: 'installation', repoFileError: err.message };
+    } catch (suppliedErr) {
+      throw installationError(suppliedErr, supplied.path);
+    }
   }
+}
+
+// The installation's file is wrong in the same ways a repo's is, and is named by its path.
+function installationError(err, file) {
+  err.message = err.message.replace(PROJECT_FILE, `the installation's project file ${file}`);
+  return err;
 }
 
 function readProjectText(text) {

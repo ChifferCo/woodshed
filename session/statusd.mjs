@@ -29,7 +29,7 @@
 //   POST /upload?name=<file>&pane=agent|terminal   the body saved under /tmp/uploads, and its path typed at that
 //                     pane's prompt with no Enter (terminalFiles.mjs)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
-//   POST /scroll      {"steps": -3, "pane": "agent"}   a phone's swipe, as tmux's wheel would take it
+//   POST /scroll      {"steps": -3, "pane": "agent"}   a swipe or wheel the browser's own scrollback did not take
 //   GET  /transcript?limit=<n>   the conversation so far from the agent's own record of it, for a phone to scroll
 //                     through by itself: what was asked, said and run (sessionTranscript.mjs)
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
@@ -54,7 +54,7 @@ import { classifyPane, parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
-import { readUsage, usageBetween } from './usage.mjs';
+import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
@@ -687,7 +687,7 @@ function planUsageFailed(error) {
 let usageSample = null;
 let usageAnswer = null;
 async function usage() {
-  const next = { ...(await readUsage()), at: Date.now() };
+  const next = { ...(await readUsage()), ...(await readDisk(REPO_DIR)), at: Date.now() };
   if (usageSample && next.at - usageSample.at < 2000) return usageAnswer;
   usageAnswer = usageBetween(usageSample, next);
   usageSample = next;

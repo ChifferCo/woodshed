@@ -34,6 +34,7 @@ export function secretSpecs({ envFiles, installSecrets = [] }) {
     { name: 'github-app-key', group: 'console', kind: 'pem', readable: false },
     { name: 'github-webhook-secret', group: 'console', kind: 'webhook', readable: true },
     { name: 'github-app-client-secret', group: 'console', kind: 'line', readable: false },
+    { name: 'github-reviewer-app-key', group: 'console', kind: 'pem', readable: false },
     { name: 'slack-bot-token', group: 'console', kind: 'line', readable: false },
     { name: 'slack-signing-secret', group: 'console', kind: 'line', readable: false },
   ];

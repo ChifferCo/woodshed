@@ -2,6 +2,12 @@
 // installation's environment names (WOODSHED_PROJECTS, console/projects.mjs). The two lists make one:
 // `liveConfig` appends the added ones to `config.projects`, so an add or a removal applies at once, with no restart.
 // The installation's own can only be changed where they are set, and the default project is always one of them.
+//
+// A program that embeds the console and keeps the repo list itself (README.md, "Embedding the console") passes `host`:
+// then every project of the installation is the program's, Add a repo offers the program's list and hands the add to
+// it, and Remove takes any of them but the default off through it. Nothing is written to `addedProjects`; the change
+// applies to this installation at once (`hostProjects`, read by liveConfig) until the program builds it again from its
+// own list.
 
 import { addedProjectsOf, allProjects, projectNameOf, validProjectName, validRepo } from './projects.mjs';
 import { execFile } from 'node:child_process';
@@ -12,16 +18,63 @@ import { ACTIVE_STATUSES } from './sessions.mjs';
 
 // `link`, when given, is {href, text}: where the page can send the admin to fix what the message says.
 const shown = (message, link = null) => Object.assign(new Error(message), { shown: true }, link && { link });
+const httpsLink = (href) => typeof href === 'string' && /^https:\/\/[^\s"'<>]+$/.test(href);
+
+/**
+ * What an embedding program's repos hook changed in this installation since it was built: the projects it added and
+ * the names it removed. liveConfig reads `changes` (null until something changed); each change replaces it whole.
+ * @returns {{changes: {added: object[], removed: string[]}|null}}
+ */
+export function createHostProjects() {
+  return { changes: null };
+}
 
 /**
  * @param {{store: {state: object, save: () => void}, config: object, check: (repo: string) => Promise<{installationId: string|null}>,
+ *          list?: (() => Promise<object>)|null, host?: object|null, hostProjects?: {changes: object|null}|null,
  *          now?: () => number}} deps
  *   `config` is the live one, whose `projects` already hold the added repos. `check` asks GitHub whether the console
  *   can work on a repo, and which App installation it is on (null where the console has no App, and uses `gh`); it
  *   throws an error with `shown` for a reason the page can say.
+ *   `host` is an embedding program's repos hook, `{list?, add, remove, names?}` (installation.mjs, `repos`), and
+ *   `hostProjects` what createHostProjects made for this installation's liveConfig: with them, `check` and `list` are
+ *   not used.
  */
-export function createAddedProjects({ store, config, check, list = null, now = Date.now }) {
+export function createAddedProjects({ store, config, check, list = null, host = null, hostProjects = null, now = Date.now }) {
   const everyProject = () => allProjects(config);
+  // Whether the page asks for a name: an embedding program may name each repo itself.
+  const names = host?.names !== false;
+
+  /** Applies an add or a removal through the host to this installation's live list (liveConfig reads it). */
+  function applyHost({ add = null, remove = null }) {
+    if (!hostProjects) return;
+    const prev = hostProjects.changes ?? { added: [], removed: [] };
+    const gone = (p) => (remove && p.name === remove) || (add && (p.name === add.name || p.repo.toLowerCase() === add.repo.toLowerCase()));
+    hostProjects.changes = {
+      added: [...prev.added.filter((p) => !gone(p)), ...(add ? [add] : [])],
+      removed: [...prev.removed.filter((n) => n !== add?.name), ...(remove ? [remove] : [])],
+    };
+  }
+
+  /** The host's list, as the page takes it: valid repos only, and only https links, since the page opens them. */
+  async function hostChoices() {
+    let found;
+    try {
+      found = await host.list();
+    } catch (err) {
+      if (err?.shown) throw err;
+      console.warn('projects: repos not listed', { via: 'host', message: firstLine(err) });
+      throw shown('The repos could not be listed. Type the repo instead, or try again; the console log says why.');
+    }
+    return {
+      repos: (Array.isArray(found?.repos) ? found.repos : [])
+        .map((r) => (typeof r === 'string' ? { repo: r, private: false } : { repo: String(r?.repo ?? ''), private: Boolean(r?.private) }))
+        .filter((r) => validRepo(r.repo)),
+      grant: (Array.isArray(found?.grant) ? found.grant : []).filter((g) => httpsLink(g?.href)).map((g) => ({ account: String(g.account ?? ''), href: g.href })),
+      install: httpsLink(found?.install) ? found.install : null,
+      via: 'host',
+    };
+  }
 
   /**
    * What Add a repo offers: the repos the App may reach that are not projects yet, and where on GitHub to give it more.
@@ -30,21 +83,34 @@ export function createAddedProjects({ store, config, check, list = null, now = D
    * @throws {Error}  with `shown`, when GitHub did not answer
    */
   async function choices() {
-    if (!list) return null;
-    const found = await list();
+    const source = host ? (host.list ? hostChoices : null) : list;
+    if (!source) return null;
+    const found = await source();
     const taken = new Set(everyProject().map((p) => p.repo.toLowerCase()));
     return { ...found, repos: found.repos.filter((r) => !taken.has(r.repo.toLowerCase())) };
   }
 
+  /**
+   * Each project, with where it is kept (`source`): `added` on this page, `installation` in the environment, or `host`,
+   * the embedding program's list, any of which but the default can be removed here.
+   */
   function view() {
     const added = new Set(addedProjectsOf(store).map((p) => p.name));
-    const live = (store.state.sessions ?? []).filter((s) => ACTIVE_STATUSES.has(s.status) || s.kept || s.owner);
-    return everyProject().map((p) => ({
-      name: p.name, repo: p.repo, default: Boolean(p.default), removable: added.has(p.name),
-      addedBy: p.addedBy ?? null, addedAt: p.addedAt ?? null,
-      sessions: live.filter((s) => s.project === p.name || (!s.project && s.repo?.toLowerCase() === p.repo.toLowerCase())).length,
-    }));
+    return everyProject().map((p) => {
+      const source = added.has(p.name) ? 'added' : host ? 'host' : 'installation';
+      return {
+        name: p.name, repo: p.repo, default: Boolean(p.default), source, removable: source === 'added' || (source === 'host' && !p.default),
+        addedBy: p.addedBy ?? null, addedAt: p.addedAt ?? null, sessions: liveSessions(p),
+      };
+    });
   }
+
+  function liveSessions(p) {
+    const live = (store.state.sessions ?? []).filter((s) => ACTIVE_STATUSES.has(s.status) || s.kept || s.owner);
+    return live.filter((s) => s.project === p.name || (!s.project && s.repo?.toLowerCase() === p.repo.toLowerCase())).length;
+  }
+
+  const stillLive = (live, repo) => shown(`${live} ${live === 1 ? 'session is' : 'sessions are'} still running, or listed to resume, on ${repo}: stop or delete ${live === 1 ? 'it' : 'them'} first.`);
 
   /**
    * @param {{repo: string, name?: string, by: string}} args
@@ -54,6 +120,7 @@ export function createAddedProjects({ store, config, check, list = null, now = D
   async function add({ repo, name, by }) {
     const wanted = String(repo ?? '').trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\/+$/, '').replace(/\.git$/, '');
     if (!validRepo(wanted)) throw shown('Give the repo as owner/name, such as acme/api.');
+    if (host) return addThroughHost({ wanted, name, by });
     const chosen = String(name ?? '').trim() || projectNameOf(wanted);
     if (!validProjectName(chosen)) throw shown('The name is lowercase letters and digits, in words joined by single dashes, at most 32 long.');
     const taken = everyProject().find((p) => p.repo.toLowerCase() === wanted.toLowerCase());
@@ -72,25 +139,54 @@ export function createAddedProjects({ store, config, check, list = null, now = D
   }
 
   /**
-   * Takes an added repo off the list. A session still running on it, or kept to resume, would fall back to the
-   * default project's repo and token, so none may be. Sessions that ended for good keep their record.
+   * The embedding program's add: it checks the repo (and says where to give access when it cannot reach it), keeps it,
+   * and names it. The name typed here is passed on only where the program takes one.
+   */
+  async function addThroughHost({ wanted, name, by }) {
+    const typedName = String(name ?? '').trim();
+    if (typedName && !names) throw shown('This console names each repo after itself: leave the name empty.');
+    if (typedName && !validProjectName(typedName)) throw shown('The name is lowercase letters and digits, in words joined by single dashes, at most 32 long.');
+    const taken = everyProject().find((p) => p.repo.toLowerCase() === wanted.toLowerCase());
+    if (taken) throw shown(`${taken.repo} is already a project, named ${taken.name}.`);
+    const named = typedName && everyProject().find((p) => p.name === typedName);
+    if (named) throw shown(`The name ${typedName} is used by ${named.repo}: choose another.`);
+    const given = await host.add({ repo: wanted, ...(typedName ? { name: typedName } : {}), by });
+    const repo = validRepo(given?.repo) ? given.repo : wanted;
+    const project = { name: validProjectName(given?.name) ? given.name : typedName || projectNameOf(repo), repo, default: false };
+    applyHost({ add: project });
+    console.log('projects: repo added', { project: project.name, repo, via: 'host', by });
+    return project;
+  }
+
+  /**
+   * Takes a repo off the list. A session still running on it, or kept to resume, would fall back to the default
+   * project's repo and token, so none may be. Sessions that ended for good keep their record. With `host`, any of the
+   * program's but the default is taken off through it; one added on this page before it kept the list is still this
+   * page's.
    * @throws {Error}  with `shown`, for the installation's own project, an unknown name, or a repo with live or resumable sessions
    */
-  function remove({ name, by }) {
+  async function remove({ name, by }) {
     const found = addedProjectsOf(store).find((p) => p.name === name);
     if (!found) {
-      throw shown(everyProject().some((p) => p.name === name)
-        ? `${name} is set in the installation's configuration: remove it there.`
-        : `There is no project called ${name}.`);
+      const project = everyProject().find((p) => p.name === name);
+      if (!project) throw shown(`There is no project called ${name}.`);
+      if (!host) throw shown(`${name} is set in the installation's configuration: remove it there.`);
+      if (project.default) throw shown(`${project.repo} is the default project: it stays.`);
+      const live = liveSessions(project);
+      if (live) throw stillLive(live, project.repo);
+      await host.remove({ name, repo: project.repo, by });
+      applyHost({ remove: name });
+      console.log('projects: repo removed', { project: name, repo: project.repo, via: 'host', by });
+      return;
     }
-    const live = view().find((p) => p.name === name)?.sessions ?? 0;
-    if (live) throw shown(`${live} ${live === 1 ? 'session is' : 'sessions are'} still running, or listed to resume, on ${found.repo}: stop or delete ${live === 1 ? 'it' : 'them'} first.`);
+    const live = liveSessions(found);
+    if (live) throw stillLive(live, found.repo);
     store.state.addedProjects = addedProjectsOf(store).filter((p) => p.name !== name);
     store.save();
     console.log('projects: repo removed', { project: name, repo: found.repo, by });
   }
 
-  return { view, add, remove, choices };
+  return { view, add, remove, choices, names };
 }
 
 /**

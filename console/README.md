@@ -209,6 +209,14 @@ begins "Getting a machine from AWS", "Waiting for AWS to start it" and "Pulling
 the session image" on AWS, and "Starting a container" and "Booting the
 container" on the local provider, which has no wait for a pull of its own.
 
+A start waiting for room shows the provider's `noRoom` title and detail. When
+the launcher can say how the wait is going (its optional `progress`,
+`providers/README.md`), the page shows its steps under them, as the start's
+checklist: each step's seconds, the current one counting, a failed one with
+what stopped it, and the wait's clock. The fleet reads it every couple of
+seconds while the session waits (`checkWaiting`), keeps it on the session as
+`waitProgress` when it changed, and drops it when the session starts.
+
 A console that restarts (each redeploy, a crash, the box rebooting) is away for a few seconds, and sessions wait for
 it: their calls to the session API that are safe to repeat (`/settings`, `/home/restore`, `/attachments`,
 `/progress`, `/github-token`, and the settings pull at start) try again for about 40 s on anything but a 4xx. `/answer`
@@ -283,7 +291,11 @@ asks for a prompt and, optionally:
   and the console asks Claude Haiku for a better one on the team's Anthropic
   key (`console/autoName.mjs`). The rail shows it a second or so later; if the
   call fails, the first line stays;
-- what to work on: `#123` for an issue or PR, `PR #123`, or a branch name;
+- what to work on: `#123` for an issue or PR, `PR #123`, or a branch name. The field lists the project's open pull
+  requests (`GET /api/pulls`, the 100 updated last, read by the console in one GraphQL call and kept a minute per
+  project): typing narrows them by number, title, branch or author, ▾ or ↓ shows them all, and a pick writes `PR #123`
+  and names it under the field. The console logs `console: open pull requests read` with the count, or `console: open
+  pull requests not readable` with gh's error, after which the list from before is shown and says so;
 - claude's model, effort and permission mode;
 - files: the paperclip, a paste or a drop, up to 8 of 25 MB each and 40 MB
   together. Each goes to the console as it is picked (`POST /api/my/uploads`,
@@ -358,8 +370,17 @@ Agent and Terminal tabs):
   terminal. Each goes through the console to `/tmp/uploads` in the session,
   and its path is typed at that terminal's prompt with no Enter. claude starts
   with `--add-dir /tmp/uploads`, so it reads them without asking.
-- **Swipe** on a phone scrolls the pane, through statusd's `POST /scroll`.
-- **The conversation so far**, for an app to scroll by itself, without a round trip for each swipe:
+- **Scrolling back** (the wheel, or a swipe on a phone) is the browser's own when
+  the pane is on the main screen: claude and codex run inline, never full screen
+  (`session/bin/claude`, `session/bin/codex`), and tmux leaves what scrolls off
+  in the browser terminal's own scrollback (`session/tmux.conf`), so the view
+  moves with no round trip. That scrollback holds what came since the terminal
+  attached: past its top, tmux's copy mode takes over where it ran out, through
+  statusd's `POST /scroll`, and scrolling back down to the bottom leaves it. A
+  pane on the alternate screen (a full-screen program), in copy mode or split
+  scrolls through tmux as before. tmux says which in the terminal's title, and
+  `public/terminalScroll.cjs` reads it.
+- **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
   tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
   session may read it, while it runs.
@@ -400,12 +421,15 @@ And what the shed shows about each session:
   (**Open**), resumes a stopped one there (**Resume**), or starts a new one.
 - **⌘K** (or **/**) opens the command palette: jump to a session (stopped ones
   once you type), go to a page, or Tab on a session for its actions. **?** (or
-  **⌘?**) lists the keys; **⌘.** hides the rail; **⇧⌘,** opens Settings, with
+  **⌘?**) lists the keys; **⌘.** hides the rail, as does the
+  button beside the user menu at its foot, and a strip down the left edge
+  shows it again; **⇧⌘,** opens Settings, with
   the theme (device, light or dark, kept in the browser); **⇧⌘O** (or **N**) is
   New session; **G** then **M**, **E** or **S** goes to My Woodshed, shared
   sessions or My settings. Ctrl works for ⌘ outside a terminal, and the pages
   write the keys as Ctrl on Windows and Linux. A key alone works only while
-  nothing takes typing, and never inside a terminal. Which key does what is
+  nothing takes typing, and never inside a terminal or the Review, whose
+  frame gets the ⌘ keys alone. Which key does what is
   `public/keys.cjs`, read by the sheet, the hints and the handler alike. A
   control with a key (New session, the user menu's and settings list's
   Keyboard shortcuts) shows a hint with it when the pointer rests on it.
@@ -657,6 +681,25 @@ console logs `console: gh not installed, GitHub calls will fail` at start. The p
 
 The page and its calls are an admin's like the Secrets page. A console with no sign-in has no admin to tell apart, which
 is why it is only for a console nobody else can reach, until the App exists and sign-in can be switched on.
+
+### The reviewer App
+
+GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
+installation's App's. So a review session (`pullRequests.review.runner: woodshed`) submits its verdict as a second App,
+the reviewer App (`reviewerApp.mjs`), which asks for pull requests (write) and nothing else. Once the console has its
+App, `/setup/github` offers it:
+
+1. **Make the reviewer App.** *Create the reviewer App on GitHub* posts its manifest (`reviewerManifest`: no webhook,
+   no sign-in). GitHub sends the browser back to `/setup/github/reviewer-created`, and the console keeps the key in the
+   secret store (`github-reviewer-app-key`) and the App's ID and slug in `state.json` under `reviewerApp`. No restart:
+   the key is read at each review.
+2. **Install it** on each repo whose review runs as a session, and set that project file's `pullRequests.review.author`
+   to its `<slug>[bot]` login. The review's PR comment and the Merge risk check stay the installation's App's.
+
+At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
+and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
+`as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
+requests.
 
 ## Webhook events, secrets and the GitHub App's webhook
 
@@ -1237,8 +1280,26 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
+- `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
+  installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
+  core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:
+  `{repos: [{repo, private}] (or owner/name strings), grant: [{account, href}], install}`, the links `https://` only,
+  less the projects (core takes those out). `add` checks the repo, keeps it, and answers the project as the program
+  named it, `{name, repo}`; `remove` takes one off. Either throws an error with `shown: true` (and `link: {href, text}`
+  where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
+  the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
+  the program names each repo itself: the page then asks for no name, and one sent is refused.
+- A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
+  such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
+
+- `config.envFiles` entries with `name` and `repo`, where its secret store keeps an env file's secret under another name
+  than the project file's (`secret` is the store's, `name` the project file's), for one repo's sessions alone (`repo`,
+  owner/name). My settings lists each as a tab of its own, labelled with its path and repo, and keeps a person's lines
+  under `users/<login>/<secret>`, so two repos' `api-env` never share them; the session API hands a private session the
+  lines of its own repo's files under `name`, which the session's `writeEnvFiles` reads. The shared text is the
+  launcher's to give, in `name`'s variable (`API_ENV`).
 
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
@@ -1525,6 +1586,9 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    whose head the review has not approved gets a neutral `Waiting` QA check instead, and a submitted review
    (`qaAfterReview`, from the webhooks' `review submitted`) starts QA on a labelled pull request once the review
    approves its head, as whoever added the label (the issue events' last `labeled`), once for each commit.
+   With `qa.autoLabel` the console adds the label itself when a same-repo pull request opens or is marked ready
+   (`qaAutoLabel`); a label its own App added stands for the pull request's author, on the team key when the author
+   fails the checks above.
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.
@@ -1595,7 +1659,8 @@ is read again on **List again** and when the tab comes back into view. On a cons
 the list is every repo that login can push to (`gh api user/repos`, `ghRepoLister`), since sessions push with it, and the
 console logs `projects: repos listed` with `via: 'gh'`. With borrowed GitHub access, or when GitHub did not list them,
 the field takes `owner/name` typed in (a `github.com`
-link works too). The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
+link works too). The list's last option, **Another repo**, swaps it for that field too (**Choose from the list** goes
+back), for a repo the list does not have: the console then checks it as below and says where to give the App access. The console logs `projects: repos listed` with how many, or `projects: repos not listed` with GitHub's error; an installation whose repos GitHub refused is left out, with `projects: an installation's repos not listed`.
 Add repo, Remove and a row's Slack channel Save apply on the click, with no typed confirm, since each is undone by doing the other. The console checks the repo first: with the GitHub App it must be able to reach
 it (`GET /repos/<repo>/installation`, as the App), and the installation's number is kept with the project when it is not
 the console's own. A repo on an account the App is installed on, but not given, is refused with a link to that
@@ -1617,6 +1682,15 @@ it is no longer dropped), in the default project's session image and databases, 
 database check staying on the default project. The
 console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`
 when GitHub did not answer.
+
+In a console embedded with a `repos` hook (below, "Embedding the console"), the program keeps the list: Add a repo
+offers the program's list with its links to give access, **Add repo** and **Remove** go to it (`via: 'host'` in
+`projects: repo added` and `removed`), and nothing is written to `addedProjects`. Every project is the program's, and any
+but the default can be removed here, on the same terms as above; one added on this page before the program kept the
+list stays in `addedProjects` and is removed from it. A program that names each repo itself (`names: false`) gets no
+name field. The change applies to the installation at once, until the program builds it again from its own list; the
+program's refusal is shown under the field with its link, and a failure that is not a refusal answers `The change failed;
+the console log says why`.
 
 Each repo on the card has a row of six colours, its colour on the rail (`public/projectColors.cjs` holds the palette and
 the rule, for the server and the pages alike). A pick is saved at once (`POST /api/console-settings/projects/color`,

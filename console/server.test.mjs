@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 
 import { CONSOLE_FAILED, createAuth } from './auth.mjs';
-import { createAddedProjects } from './addedProjects.mjs';
+import { createAddedProjects, createHostProjects } from './addedProjects.mjs';
 import { createConsoleSettings, liveConfig } from './consoleSettings.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createTunnel } from './dbTunnel.mjs';
@@ -490,6 +490,37 @@ test('the setup page\'s Restart is an admin\'s, from the console\'s own origin, 
   const ok = await post(port, '/api/setup/github/restart', {}, mia);
   assert.deepEqual([ok.status, ok.body], [202, { restarting: true }]);
   assert.deepEqual(asked, ['mia-dev']);
+});
+
+test('the reviewer App\'s setup is an admin\'s: its view and its Create, from the console\'s own origin', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const started = [];
+  const reviewerApp = {
+    view: async () => ({ available: true, appId: null, slug: null, login: null, installUrl: null }),
+    startManifest: ({ ownerType }) => { started.push(ownerType); return { url: 'https://github.com/organizations/o/settings/apps/new?state=s', manifest: {} }; },
+  };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const auth = {
+    enabled: () => true, available: () => true,
+    sessionFor: async (cookie) => {
+      const login = /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1];
+      return members.isMember(login) ? { login } : null;
+    },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, reviewerApp });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const sam = { cookie: 'woodshed_session=sam-ops' };
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+
+  assert.equal((await post(port, '/api/setup/github/reviewer/manifest', { ownerType: 'Organization' }, sam)).status, 403, 'a member who is not an admin');
+  assert.equal((await post(port, '/api/setup/github/reviewer/manifest', {}, { ...mia, origin: 'https://evil.example' })).status, 403, 'cross-origin');
+  assert.deepEqual(started, []);
+  const ok = await post(port, '/api/setup/github/reviewer/manifest', { ownerType: 'Organization' }, mia);
+  assert.deepEqual([ok.status, started], [200, ['Organization']]);
 });
 
 test('on a list with no admin yet every member is one, until the first is switched on', async (t) => {
@@ -1222,6 +1253,51 @@ test('Console settings: Add a repo\'s list is the App\'s repos less the projects
   assert.deepEqual(await ask(noApp), { status: 200, body: { repos: null, grant: [], install: null } });
 });
 
+test('Console settings: with an embedder\'s repos hook, its list is offered, an add and a removal go to it, and its refusal links to the fix', async (t) => {
+  const store = { state: { sessions: [] }, save() { throw new Error('nothing of the repo list is the console\'s to save'); } };
+  const hostProjects = createHostProjects();
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store, { hostProjects });
+  const kept = ['o/r'];
+  const grant = { account: 'o', href: 'https://github.com/organizations/o/settings/installations/9' };
+  const repos = {
+    names: false,
+    list: async () => ({ repos: ['o/r', 'o/api', 'o/web'].filter((r) => !kept.includes(r)), grant: [grant], install: null }),
+    async add({ repo }) {
+      if (repo === 'o/secret') throw Object.assign(new Error('The App may not reach o/secret.'), { shown: true, link: { href: grant.href, text: 'Give the App access to o/secret on GitHub' } });
+      kept.push(repo);
+      return { name: repo.split('/')[1], repo };
+    },
+    async remove({ repo }) { kept.splice(kept.indexOf(repo), 1); },
+  };
+  const addedProjects = createAddedProjects({ store, config, check: async () => { throw new Error('not asked'); }, host: repos, hostProjects });
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const page = JSON.parse(await getBody(port, '/api/console-settings'));
+  assert.equal(page.repoNames, false, 'the page asks for no name');
+  assert.deepEqual(page.projects.map((p) => [p.name, p.source, p.removable]), [['r', 'host', false]]);
+  const choices = JSON.parse(await getBody(port, '/api/console-settings/projects/repos'));
+  assert.deepEqual(choices, { repos: [{ repo: 'o/api', private: false }, { repo: 'o/web', private: false }], grant: [grant], install: null, via: 'host' });
+
+  const added = await post(port, '/api/console-settings/projects', { repo: 'o/api' });
+  assert.equal(added.status, 200);
+  assert.deepEqual(added.body.projects.map((p) => [p.name, p.removable]), [['r', false], ['api', true]], 'the answer has it at once');
+  assert.deepEqual(kept, ['o/r', 'o/api']);
+  assert.deepEqual(await post(port, '/api/console-settings/projects', { repo: 'o/secret' }), {
+    status: 400, body: { error: 'The App may not reach o/secret.', link: { href: grant.href, text: 'Give the App access to o/secret on GitHub' } },
+  }, 'a typed repo the App cannot reach says where to give it access');
+  assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the default stays');
+  const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(removed.status, 200);
+  assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
+  assert.deepEqual(kept, ['o/r']);
+});
+
 test('Console settings: a repo\'s colour is picked from the palette, never one another repo has, and the rail gets it', async (t) => {
   const store = { state: { sessions: [], addedProjects: [{ name: 'web', repo: 'o/web', default: false }] }, save() {} };
   const config = liveConfig({
@@ -1809,6 +1885,65 @@ test('another project\'s / list is only for someone who may start sessions on it
   assert.deepEqual(await names('/api/skills?project=tools'), ['deploy'], 'refused: the default project\'s list, never the other repo\'s');
   assert.deepEqual(await names('/api/skills?project=app'), ['deploy']);
   assert.deepEqual(asked.map(([, name]) => name), ['tools', 'app']);
+});
+
+test('Work on\'s open pull requests are the picked project\'s, each read once a minute', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const read = [];
+  const client = (repo, number) => ({ openPulls: async () => {
+    read.push(repo);
+    return { pulls: [{ number, title: repo, branch: `b${number}`, author: 'ann', draft: false, updatedAt: null }], total: 1 };
+  } });
+  const github = client('acme/app', 1);
+  const tools = client('acme/tools', 2);
+  const projectAccess = { forStart: async (_login, name) => projects.find((p) => p.name === name) ?? null };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github, githubFor: (p) => (p.name === 'tools' ? tools : null), projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const ask = async (path) => JSON.parse(await getBody(port, path));
+  assert.deepEqual(await ask('/api/pulls'), { pulls: [{ number: 1, title: 'acme/app', branch: 'b1', author: 'ann', draft: false, updatedAt: null }], total: 1, stale: false });
+  assert.deepEqual((await ask('/api/pulls?project=tools')).pulls.map((p) => p.number), [2]);
+  assert.deepEqual((await ask('/api/pulls?project=gone')).pulls.map((p) => p.number), [1], 'a project the console does not have: the default\'s');
+  assert.deepEqual(read, ['acme/app', 'acme/tools'], 'each project read once in its minute');
+});
+
+test('another project\'s open pull requests are only for someone who may start sessions on it', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const github = { openPulls: async () => ({ pulls: [{ number: 1 }], total: 1 }) };
+  const tools = { openPulls: async () => ({ pulls: [{ number: 2 }], total: 1 }) };
+  const projectAccess = { forStart: async (_login, name) => (name === 'app' ? projects[0] : null) };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github, githubFor: (p) => (p.name === 'tools' ? tools : null), projectAccess });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const numbers = async (path) => JSON.parse(await getBody(port, path)).pulls.map((p) => p.number);
+  assert.deepEqual(await numbers('/api/pulls?project=tools'), [1], 'refused: the default project\'s list, never the other repo\'s');
+});
+
+test('a failed read of the open pull requests keeps the last list, marked stale', async (t) => {
+  const projects = [{ name: 'app', repo: 'acme/app', default: true }];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  let failing = false;
+  const github = { openPulls: async () => {
+    if (failing) throw new Error('HTTP 502');
+    return { pulls: [{ number: 1 }], total: 1 };
+  } };
+  const now = Date.now;
+  let at = now();
+  Date.now = () => at;
+  t.after(() => { Date.now = now; });
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, github });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const ask = async () => JSON.parse(await getBody(port, '/api/pulls'));
+  assert.deepEqual(await ask(), { pulls: [{ number: 1 }], total: 1, stale: false });
+  failing = true;
+  at += 61_000;
+  assert.deepEqual(await ask(), { pulls: [{ number: 1 }], total: 1, stale: true });
 });
 
 test('the rail\'s pull requests are read from each repo the person may start on, on that project\'s own client', async (t) => {

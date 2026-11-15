@@ -50,6 +50,9 @@
   let me = null;
   let pulls = [];
   let loadError = null;
+  // The list belongs to the previous page (or this tab's saved snapshot) until this route's lookup answers.
+  let routePending = true;
+  let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
   // Made the first time /all shows, which may be after a move from another of these pages.
@@ -69,6 +72,9 @@
   }
   function moved() {
     readRoute();
+    routeVersion++;
+    routePending = true;
+    loadError = null;
     closeCardMenu();
     if (onMy) launcher.applyQuery();
     render();
@@ -160,10 +166,15 @@
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
   }
 
+  // What Resume does for a private session: claude picks its conversation up again; codex keeps none between runs.
+  function resumeNote(s) {
+    return W.agentOf(s) === 'codex' ? 'Start it again on its branch, in a new Codex conversation' : 'Start it again on its branch, with claude\'s conversation';
+  }
+
   // Resume, as the shed has it: a stopped private session again, on its branch, with claude's conversation.
   function resumeButton(s, small) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again on its branch, with claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: resumeNote(s),
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -252,9 +263,9 @@
     const gone = !s.owner && !live && !s.kept && s.status !== 'stopping';
     const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
     return [
-      stoppedPrivate && { label: 'Resume', note: 'Start it again on its branch, with claude\'s conversation', run: () => resumePrivate(s) },
+      stoppedPrivate && { label: 'Resume', note: resumeNote(s), run: () => resumePrivate(s) },
       W.isResumable(s) && W.group(s) !== 'merged' && {
-        label: 'Resume', note: 'Start it again where it was: its branch, databases and claude\'s conversation',
+        label: 'Resume', note: `Start it again where it was: its branch, databases and ${W.agentOf(s)}'s conversation`,
         run: async () => { await W.sharedAction(s, 'resume', { message: '' }).catch((err) => window.alert(`Could not resume: ${err.message}`)); refresh(); },
       },
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
@@ -625,8 +636,17 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot());
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
     return railUser;
+  }
+
+  // The rail's two buttons for ⌘.: one at its foot hides it, and a strip down the page's left edge, there only while
+  // it is hidden, shows it again.
+  const RAIL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/></svg>';
+  function railToggle(className, label) {
+    const btn = h('button', { type: 'button', class: className, 'aria-label': label, 'data-keys': 'rail', 'data-hint': label, onclick: () => toggleRail() });
+    btn.innerHTML = RAIL_ICON;
+    return btn;
   }
 
   // Your session on a pull request's branch in its repo, as the shed finds one: a live one first, then a stopped one.
@@ -663,8 +683,9 @@
       const live = found && W.isLive(found);
       const checks = checksOf(p);
       const color = marked ? projectList().find((x) => x.name === project)?.color : null;
-      const isDefault = !p.project || p.project === main;
-      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${isDefault ? '' : `&project=${encodeURIComponent(project)}`}`;
+      // Always names its project: with none, New session opens on the person's own default project (Make my default),
+      // which need not be the console's, and the number would be looked up on that repo instead.
+      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${project ? `&project=${encodeURIComponent(project)}` : ''}`;
       const action = live
         ? h('a', { class: 'btn btn-sm btn-open', href: `/s/${found.id}`, title: `${found.title} is on this branch: open it` },
           h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open')
@@ -814,7 +835,7 @@
     return [
       { group: 'Session', label: 'Open the agent', run: open('') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
-      s.status === 'running' && s.hasShell && W.isPrivate(s) && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
+      s.status === 'running' && s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
       s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
@@ -856,17 +877,17 @@
     const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
-      s.hasShell && W.isPrivate(s) && {
+      s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
       data.appDomain && up && {
         group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener'),
       },
       data.appDomain && none && s.kind !== 'ask' && {
-        group: 'App', label: 'Set up app', note: 'The project file has no app: ask claude to write one',
+        group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
         run: async () => {
           try {
-            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent));
+            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
           } catch (err) {
             window.alert(`Could not set up the app: ${err.message}`);
           }
@@ -929,7 +950,7 @@
     const trigger = s.trigger === 'label' ? `with the ${data.label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
-    const claude = W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+    const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
@@ -996,7 +1017,7 @@
         e.stopPropagation();
         if (!ready) return W.shell.toast(target.state === 'checking' ? 'Still checking whether GitHub has the branch' : 'Nothing to link yet: push the branch first');
         try {
-          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null));
+          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null, s.project || null));
           W.shell.toast(`Link copied: opens New session on ${target.on}`);
         } catch (err) {
           W.shell.toast(`Not copied: ${err.message}`);
@@ -1242,7 +1263,8 @@
   function showBody(s, tabPage) {
     if (termKey(s)) agentPool.show(s);
     else agentPool.hide();
-    slots.view.replaceChildren(termKey(s) ? '' : s ? terminalBody(s) : tabPage ? '' : h('p', { class: 'empty' }, 'No session you can open with that id.'));
+    slots.view.replaceChildren(termKey(s) ? '' : s ? terminalBody(s) : tabPage ? '' : h('p', { class: 'empty' },
+      loadError ? `Could not load sessions: ${loadError}` : routePending ? 'Loading…' : 'No session you can open with that id.'));
   }
 
   // A private session at its owner's limit: it has no task yet, and starts by itself when one of theirs stops.
@@ -1258,6 +1280,7 @@
   function terminalBody(s) {
     if (s.status === 'starting' && s.startedAt) return startingBody(s);
     if (W.linePlace(s, data.sessions)) return lineBody(s);
+    if (W.waitsForRetry(s) && s.waitProgress?.steps?.length) return waitingBody(s);
     const waiting = {
       queued: W.waitsForRetry(s) ? [W.providerWords.noRoom?.title ?? 'Waiting for room', W.providerWords.noRoom?.detail ?? '']
         : ['Waiting for a free slot', `All ${data.maxRunning} slots are in use. This session starts as soon as one frees up.`],
@@ -1273,13 +1296,15 @@
       ['Head', s.head || 'unknown'],
       prFact(s, 'none'),
       ['Ran', W.duration(s.startedAt, s.stoppedAt) || 'never started'],
-      s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? 'after claude opened'],
+      s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? `after ${W.agentOf(s)} opened`],
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
     ].filter(Boolean);
     return h('div', { class: 'ended' },
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
-        ? [h('p', null, 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
+        ? [h('p', null, W.agentOf(s) === 'codex'
+          ? 'Work in progress is committed and pushed to the branch before a stop. Resume starts codex again on the same branch, in a new conversation: Codex keeps none between runs.'
+          : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
           h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
@@ -1301,15 +1326,29 @@
 
   // The start as a checklist: each step's seconds once done, the current one counting, the rest to come.
   function startingBody(s) {
-    const { steps } = W.startProgress(s);
-    const mark = { done: '✓', now: '', next: '' };
     return h('div', { class: 'ended starting' },
       h('div', { class: 'start-head' }, h('h2', null, 'Starting'), h('span', { class: 'start-clock' }, W.clock(s.startedAt))),
-      h('p', null, 'The terminal appears here when claude is open.'),
-      h('ol', { class: 'start-steps' }, steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
-        h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
-        h('span', { class: 'start-label' }, step.label),
-        h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`)))));
+      h('p', null, `The terminal appears here when ${W.agentOf(s)} is open.`),
+      startSteps(W.startProgress(s).steps));
+  }
+
+  // A wait for room that its launcher reports steps for: the provider's words for the wait, then the steps, as the
+  // start shows its own.
+  function waitingBody(s) {
+    const { steps, since } = W.waitProgress(s);
+    const words = W.providerWords.noRoom ?? {};
+    return h('div', { class: 'ended starting' },
+      h('div', { class: 'start-head' }, h('h2', null, words.title ?? 'Waiting for room'), since && h('span', { class: 'start-clock' }, W.clock(since))),
+      words.detail && h('p', null, words.detail),
+      startSteps(steps));
+  }
+
+  function startSteps(steps) {
+    const mark = { done: '✓', now: '', next: '', failed: '✗' };
+    return h('ol', { class: 'start-steps' }, steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
+      h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
+      h('span', { class: 'start-label' }, step.label, step.note && h('span', { class: 'start-note' }, ` · ${step.note}`)),
+      h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`))));
   }
 
   // Every pull request the session opened, a merged or closed one its card no longer shows too, one to a line.
@@ -1332,7 +1371,7 @@
       finished: ['Finished: its pull request is in Slack', `The review approved ${pr ? `PR ${pr}` : 'it'} and the agent Playwright suite passed, so it was posted to Slack and the session stopped.`],
       merged: [s.prMerged ? 'Merged' : 'Closed without merging', `${pr ? `PR ${pr}` : 'Its pull request'} ${s.prMerged ? 'merged' : 'closed'} ${W.ago(s.prClosedAt)}. Its conversation and databases are ${W.deletedIn(s) || 'deleted soon'}. The branch stays on GitHub.`],
     }[st.key] || ['Stopped', ''];
-    const box = h('textarea', { id: `resume-${s.id}`, placeholder: 'What to tell claude when it opens (optional)', maxlength: '4000' });
+    const box = h('textarea', { id: `resume-${s.id}`, placeholder: `What to tell ${W.agentOf(s)} when it opens (optional)`, maxlength: '4000' });
     const facts = [
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
       prFact(s, 'none yet'),
@@ -1611,7 +1650,8 @@
     slots.diff = h('div', { class: 'pane-view is-diff', role: 'tabpanel', hidden: true });
     slots.launch = launcher.el;
     slots.home = h('div', { style: 'display: contents' });
-    slots.shell = h('div', { class: 'shell' }, slots.rail,
+    slots.railStrip = h('div', { class: 'rail-strip' }, railToggle('rail-show', 'Show the rail'));
+    slots.shell = h('div', { class: 'shell' }, slots.rail, slots.railStrip,
       h('main', { class: 'pane' }, slots.head, slots.keys, slots.body, messageBox.el, slots.plain, slots.review, slots.diff, slots.applog, slots.launch, slots.home));
     document.getElementById('app').replaceChildren(slots.shell);
     applyTermScale();
@@ -1639,8 +1679,10 @@
 
   // The session's own id first: moving to another session in place must rebuild its terminal.
   function bodyKey(s) {
-    if (!s) return 'missing';
+    if (!s) return `missing:${id}:${routePending}:${loadError}`;
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
+    // A wait with steps counts its seconds, as a start does.
+    if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
     return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
@@ -1735,7 +1777,11 @@
       }
       if (s.status === 'running') {
         // Made once: a refresh would drop the chat, the open asks and the scroll.
-        if (!slots.review.firstChild) slots.review.append(h('iframe', { class: 'review-frame', src: `/review?session=claude-${s.id}&embed=1`, title: `Review of ${s.title}` }));
+        if (!slots.review.firstChild) slots.review.append(h('iframe', {
+          class: 'review-frame', src: `/review?session=claude-${s.id}&embed=1`, title: `Review of ${s.title}`,
+          // ⌘. and the palette's keys still work once a click put the focus in the review.
+          onload: (e) => W.shell.bindFrame(e.target, { terminal: false }),
+        }));
       } else {
         if (!slots.review.firstChild) renderReview(s);
         loadReview(s, false);
@@ -1780,17 +1826,24 @@
   }
 
   async function refresh() {
+    const version = routeVersion;
     try {
       // My Woodshed's own answer is asked for on /, and once anywhere else, so moving to / has it already.
       // Asked again on every refresh while the setup card shows, so its databases row moves on whichever page is open.
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
-      [data, me] = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
+      const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
+      // A read started on the previous page must not confirm a session absent from its older list.
+      if (version !== routeVersion) return;
+      [data, me] = answer;
+      routePending = false;
       // The rail's pull requests are best effort: GitHub being slow must not hold the page.
       if (railMine()) W.getJson('/api/my/pulls').then((answer) => { pulls = answer.pulls; keepLast(); render(); }, () => {});
       loadError = null;
       fromLast = false;
       keepLast();
     } catch (err) {
+      if (version !== routeVersion) return;
+      routePending = false;
       loadError = err.message;
       if (fromLast) {
         ({ data, me, pulls } = { data: null, me: null, pulls: [] });

@@ -215,6 +215,35 @@ test('claude gets the rules as a system prompt on a fresh start and on a resume,
   assert.ok(run.indexOf('  writeRules\n') < run.indexOf('  startClaude\n'), 'writeRules runs before claude is started, which reads its file');
 });
 
+// Auto mode asks a person before the first read outside the working directories ("Read outside the working
+// directories", Claude Code 2.1.325), which held every private session at Needs you on its environment notes. Each
+// file outside the repo that Woodshed points claude at is allowed by name in claudeHooks.json instead: a folder given
+// with --add-dir would also take writes, and be named to the model.
+test('every file outside the repo that Woodshed points claude at is one claude reads without asking', () => {
+  const hooks = JSON.parse(fs.readFileSync(path.join(SESSION_DIR, 'claudeHooks.json'), 'utf8'));
+  const flags = fn('claudeFlags');
+  assert.match(flags, /--settings %s' "\$SESSION_DIR\/claudeHooks\.json"/);
+  const addDirs = [...flags.matchAll(/--add-dir %s' "\$\{UPLOADS_DIR:-([^}]+)\}"/g)].map((m) => m[1]);
+  assert.deepEqual(addDirs, ['/tmp/uploads']);
+  // What claude is told: Woodshed's rules for each kind of session, the notes' pointer, and the dependencies' status,
+  // which the project's notes have claude wait for.
+  const told = [
+    ...['prompt.md', 'ask.md', 'hostDocker.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
+    fn('writeRules').split('\n').find((line) => line.includes('Environment notes (')),
+  ].join('\n');
+  const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];
+  paths.push(ENTRYPOINT.match(/^DEPS_STATUS=(\S+)$/m)[1]);
+  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-setup.md']);
+  for (const p of paths) {
+    const allowed = hooks.permissions.allow.includes(`Read(/${p})`) || addDirs.some((dir) => p.startsWith(`${dir}/`));
+    assert.ok(allowed, `${p} has a Read rule in claudeHooks.json (an absolute path is written //${p.slice(1)})`);
+  }
+  // Read alone, file by file: nothing else outside the repo, and no write.
+  const reads = hooks.permissions.allow.filter((rule) => rule.startsWith('Read('));
+  assert.deepEqual(reads.sort(), paths.map((p) => `Read(/${p})`).sort());
+  assert.ok(!hooks.permissions.allow.some((rule) => /^(Edit|Write)\(/.test(rule)));
+});
+
 test('a session given this machine\'s Docker is told so, with its own id to name stacks by, and one without is told nothing', () => {
   const on = writePrompt({ attachments: false, hostDocker: '1' });
   assert.match(on.rules, /`docker` here is the Docker of the machine Woodshed runs on, not this container's own/);

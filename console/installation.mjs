@@ -50,11 +50,12 @@ import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
-import { createAddedProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
+import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
 import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
-import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
+import { createReviewerApp } from './reviewerApp.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectForRepo, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -202,17 +203,25 @@ async function loadAppKey(config, secrets) {
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
- *          userMenu?: ((headers: object) => object)|null, newId?: () => string}} args
+ *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
- *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation
+ *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation.
+ *   `repos` is where the program keeps the installation's repo list, which `config.projects` was built from, so the
+ *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
+ *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null }) {
+  if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
+    throw new Error('repos needs add and remove, and list when it has one');
+  }
+  // What the program's repos hook added or removed since this installation was built, applied to its live list.
+  const hostProjects = repos ? createHostProjects() : null;
   // The limits and retention numbers are the Console settings page's, read each time they are used.
-  const config = liveConfig(loaded, store);
+  const config = liveConfig(loaded, store, { hostProjects });
   const consoleSettings = createConsoleSettings({ store, config: loaded });
   const { secrets, homes, dbAdmin } = provider;
   const appKey = config.githubApp ? await loadAppKey(config, secrets) : null;
@@ -265,7 +274,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
       : null;
   };
   const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
-  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor: projectReader.appendedFor });
+  // An env file of one repo (an embedding program's `repo`) lists what that repo's project file appends to it.
+  const appendedFor = (secret, repo) => readerOf(repo ? projectForRepo(config, repo)?.name : null).appendedFor(secret);
+  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
   const members = trusted ? null : createMembers({ store });
@@ -281,6 +292,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   const appIdentity = createAppIdentity({ appApi });
+  const reviewerApp = createReviewerApp({ store, secrets, config });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
@@ -288,6 +300,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
     ownApp: () => appIdentity.known(),
+    reviewerApp,
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -301,9 +314,11 @@ export async function createInstallation({ config: loaded, store, provider, trus
     : undefined;
   const appSlug = async () => ((await appIdentity.login()) ? appIdentity.known()?.slug ?? null : null);
   const addedProjects = createAddedProjects({
-    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }), 
+    store, config, check: repoChecker({ appApi, read: brokerRead, appSlug }),
     // With no App, a console on its own gh login lists what that login can push to; borrowed access lists nothing.
     list: appApi ? repoLister({ appApi, appSlug }) : config.ghToken && !brokerRead ? ghRepoLister() : null,
+    // A program that keeps the repo list lists, checks, adds and removes them itself.
+    host: repos, hostProjects,
   });
   const projectColors = createProjectColors({ store, config });
   // The proxy's header is the only sign-in behind one, so GitHub's (and Connect GitHub, which rides on it) is off.
@@ -349,7 +364,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
-    prChips, members, asks, dbRestore, githubSetup, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
@@ -403,6 +418,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     loops.every(config.tickMs, 'app shares sweep', () => appShares.sweep(fleet.sessions().filter((s) => ACTIVE_STATUSES.has(s.status)).map((s) => s.id)));
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
     loops.every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
+    loops.every(config.startingCheckMs, 'wait progress', () => fleet.checkWaiting());
     loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
     if (databases.available) loops.every(databases.POLL_MS, 'databases', () => databases.poll());
     if (config.pollGitHub) {

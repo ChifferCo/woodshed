@@ -651,6 +651,15 @@ secrets.
   `frontendStillUp` or `backendStillUp`. Stop them from the terminal. A half-up
   app is a server that crashed: its logs are the project file's `app.logs` in the session, and the app's own
   status command says which port is free.
+- **A session sits at Needs you on "Read outside the working directories" (Allow this read …?).** Auto mode asks once,
+  at claude's first file read outside the repo and `/tmp/uploads`. Woodshed's own files there (the environment notes,
+  `/tmp/woodshed-deps`, the docker ports' log, an ask's answer) are `Read` rules in `session/claudeHooks.json`
+  (session/README.md, "Why permissions are off"), so a session asking about one of them is an image from before the
+  rules, or a path Woodshed names that has none: add it there, where `entrypoint.test.mjs` checks them. Any other path
+  is the project's own, such as an app log under `~/.cache` its notes point at: answer it, or have the notes keep it in
+  the repo. Its option 2, "No, and block", writes `permissions.blockReadsOutsideWorkingDirectories` to the owner's
+  `~/.claude/settings.json`, which `settingsSync.mjs` carries to every private session of theirs: those refuse such
+  reads from then on, until it is taken out of that file.
 - **A session says Waiting for input while Claude is working, or the reverse.**
   statusd logs `statusd: claude state changed` with `source`: `hook` is
   Claude's own hooks, `interrupt` an Esc read from the transcript, `silent` a
@@ -667,6 +676,15 @@ secrets.
   repo, `/tmp/uploads` and the scratchpad, or one that is not png, jpg, gif or
   webp after its symlinks. A session started from an image before
   `terminalFiles.mjs` answers 404 for all three routes: start a new one.
+- **Scrolling back in a terminal shows part of claude's answer twice, or the wheel does not scroll.** claude runs
+  inline (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in `session/bin/claude`), and Claude Code's inline renderer prints
+  its last answer again when the terminal gets narrower (anthropics/claude-code#84247): a phone and a desktop on one
+  session, a rail opened or a window made smaller. It is in tmux's history and the browser's both; nothing here can
+  take it out. For the wheel: in the terminal frame's console, `document.title` starts with the pane's state from
+  `tmux.conf` (`claude (main screen)`): `main screen` scrolls in the browser, anything else through tmux. A person's
+  own tmux lines that set `set-titles-string`, `status-position top` or `terminal-overrides` leave it to tmux, or leave
+  the browser's scrollback empty. A `tmux display -p -t claude '#{alternate_on}'` of 1 means claude or codex is full
+  screen after all, as an image from before inline mode runs it.
 - **The phone's message box says Not sent, or claude never got it.** The
   console logs `console: message typed in from the page` with the length, and
   statusd `statusd: text sent to claude`; a file from **📎** logs `statusd:
@@ -837,13 +855,17 @@ instead of writing the pull request's comment and check.
 three made-up sessions and no AWS, GitHub, Docker or sign-in. Open `http://localhost:<port>/s/aaaa1111` in the
 Playwright browser. The rail folds its stopped zones, so run
 `localStorage['woodshed-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
-cards. Pull request chips show without their state or checks, since polling GitHub is off. `/s/dddd4444` is running,
+cards. Pull request chips show without their state or checks, since polling GitHub is off. New session's Work on lists made-up open
+pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
 chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
 `devConsole.mjs` to cover another state.
+`DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
+(`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
+name, and refuses any other typed repo with a link to give the App access, as a hosted console does.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

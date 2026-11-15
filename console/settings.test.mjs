@@ -102,7 +102,7 @@ test('the view lists every secret without a value, and the webhook as GitHub and
   assert.deepEqual(view.secrets.map((s) => [s.name, s.set, s.readable]), [
     ['anthropic-api-key', true, false], ['openai-api-key', false, false], ['api-env', true, true], ['web-env', false, true], ['registry-token', true, true],
     ['github-app-key', true, false], ['github-webhook-secret', false, true], ['github-app-client-secret', false, false],
-    ['slack-bot-token', false, false], ['slack-signing-secret', false, false],
+    ['github-reviewer-app-key', false, false], ['slack-bot-token', false, false], ['slack-signing-secret', false, false],
   ]);
   assert.ok(!JSON.stringify(view).includes('sk-ant-old'));
   assert.equal(view.webhook.expectedUrl, 'https://abc.lambda-url.us-east-1.on.aws/github');

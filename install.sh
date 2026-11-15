@@ -21,7 +21,10 @@
 # WOODSHED_NO_START=1 (set up only), WOODSHED_SESSION_RUNTIME (the published runtime the session image is built on;
 # empty builds it here), WOODSHED_BUILD_ONLY=1 (fetch the repository and build its session image, nothing else: with
 # DOCKER_HOST set, on that docker host), WOODSHED_IMAGE (the session image's tag, woodshed-session:<owner>-<name>, or
-# woodshed-session:generic with no repository, otherwise; the console's Update passes its own WOODSHED_IMAGE), WOODSHED_TAILSCALE=1 (also serve the console to your
+# woodshed-session:generic with no repository, otherwise; the console's Update passes its own WOODSHED_IMAGE),
+# WOODSHED_INSTALL_ENV_FILE (a file of `NAME=value` lines, the install secrets under the variables the repository's
+# installs read, such as a private registry's token: the build's install_env secret, docs/reference.md, "Install
+# secrets"; it is never copied, and nothing of it reaches the image or the build's output), WOODSHED_TAILSCALE=1 (also serve the console to your
 # own Tailscale devices, at https://<this machine>.<tailnet>.ts.net, with each session's app on a port of that name:
 # providers/local/README.md, "From your other devices, with Tailscale"), or WOODSHED_TAILSCALE=shared for a console
 # others on the tailnet use, which signs them in once its GitHub App is made: no app ports, since sign-in keeps apps
@@ -190,8 +193,14 @@ buildImage() {
       --build-arg RUNTIME="$runtime" --build-arg REPO= --build-arg REPO_DIR="$NO_CHECKOUT_DIR" -t "$image" "$context"
     return
   fi
+  local secrets=(--secret "id=gh_token,env=GH_TOKEN")
+  # The installs' secrets, by the file's path: Docker reads it for the one step that runs them (session/Dockerfile).
+  if [ -n "${WOODSHED_INSTALL_ENV_FILE:-}" ]; then
+    [ -f "$WOODSHED_INSTALL_ENV_FILE" ] && [ -r "$WOODSHED_INSTALL_ENV_FILE" ] || fail "WOODSHED_INSTALL_ENV_FILE is not a file this user can read: $WOODSHED_INSTALL_ENV_FILE"
+    secrets+=(--secret "id=install_env,src=$WOODSHED_INSTALL_ENV_FILE")
+  fi
   say "Building the session image $image (the first build takes several minutes)"
-  GH_TOKEN=$token docker build -f "$context/woodshed/session/Dockerfile" --secret id=gh_token,env=GH_TOKEN \
+  GH_TOKEN=$token docker build -f "$context/woodshed/session/Dockerfile" "${secrets[@]}" \
     --build-arg RUNTIME="$runtime" --build-arg REPO="$repo" --build-arg REPO_DIR="/work/${repo#*/}" -t "$image" "$context"
 }
 

@@ -59,7 +59,11 @@ function cannotStart(err) {
   process.exit(1);
 }
 
-if (isMain(import.meta.url)) {
+/**
+ * Starts the console from the environment, as the image does. `repos` is for the dev console's stand-in for an
+ * embedding program (scripts/devHostConsole.mjs); the image passes none.
+ */
+export function run({ repos = null } = {}) {
   let config;
   let provider;
   // A setting that is wrong, such as a secrets folder without its key, is said in one line, not a stack trace.
@@ -79,5 +83,7 @@ if (isMain(import.meta.url)) {
     process.exit(0);
   }
   console.log('console: provider', { name: provider.name });
-  startConsole({ provider, config }).catch(cannotStart);
+  startConsole({ provider, config, repos }).catch(cannotStart);
 }
+
+if (isMain(import.meta.url)) run();

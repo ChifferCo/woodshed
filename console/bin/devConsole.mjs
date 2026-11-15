@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs';
 import { startDevAppsSession } from './devAppsSession.mjs';
+import { writeDevGh } from './devGh.mjs';
 import { startDevReview } from './devReviewSession.mjs';
 import { makeDevClone } from './devWoodshedClone.mjs';
 
@@ -33,8 +34,10 @@ const appDomain = (process.env.SESSION_APP_DOMAIN ?? '').trim().toLowerCase();
 if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so any name starting with the session id is let in');
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
 const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } : {};
-// The console as its image starts it, on the local provider (the docker launcher).
-const server = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'providers', 'console.mjs');
+// The console as its image starts it, on the local provider (the docker launcher). DEV_CONSOLE_HOST_REPOS=1 starts it as
+// an embedding program would, with a made-up repos hook, for Console settings' Repos card (scripts/devHostConsole.mjs).
+const woodshed = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const server = process.env.DEV_CONSOLE_HOST_REPOS === '1' ? path.join(woodshed, 'scripts', 'devHostConsole.mjs') : path.join(woodshed, 'providers', 'console.mjs');
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-console-'));
 
 const now = new Date().toISOString();
@@ -60,6 +63,7 @@ function planReading({ minutesAgo, fiveHour, sevenDay }) {
     sevenDay: { usedPercent: sevenDay[0], resetsAt: at(sevenDay[1]) },
   };
 }
+const GB = 1024 ** 3;
 const sessions = [
   session('aaaa1111', 26325, 'Speed up Claude sessions'),
   session('bbbb2222', 26326, 'A session with no pull request yet', { prUrl: null }),
@@ -75,7 +79,8 @@ const sessions = [
   }),
   session('cccc3333', 26327, 'A failed start', { status: 'failed', error: 'The container did not start.' }),
   // Running, for the top bar's buttons. With no container behind it the app's links and the terminal go nowhere.
-  session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true }),
+  session('dddd4444', 26328, 'Keep background shell alive for cap', { status: 'running', stoppedAt: null, stopReason: null, app: 'stopped', appServers: { frontend: false, backend: false, frontendPort: 5173, backendPort: 8080 }, hasShell: true, editor: true,
+    usage: { cpuPercent: 37.5, memoryBytes: 1.6 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 3.1 * GB, cores: 2, diskUsedBytes: 6.2 * GB, diskTotalBytes: 20 * GB } }),
   // Running on a project whose file has no app: Set up app in place of Start app.
   session('a0a0b1b1', 26329, 'A project with no app yet', { status: 'running', stoppedAt: null, stopReason: null, app: 'none', appServers: { frontend: false, backend: false, frontendPort: null, backendPort: null }, hasShell: true }),
   // The rail's names: one started and assigned to octocat, one handed to him, one someone else has, and a private
@@ -88,7 +93,9 @@ const sessions = [
   session('beef4242', 26631, 'Rate limit the public API', { project: 'example-api', repo: 'example-org/example-api', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   session('beef4343', 26632, 'Show the plan picker on the pricing page', { project: 'example-web', repo: 'example-org/example-web', status: 'running', state: 'needs-you', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat' }),
   // Its project uses no Redis, so Data ▾ has only the databases.
-  session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false }),
+  session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false,
+    // Near its memory limit, for the badge's red and the machine dialog's: its disk from an image before it was reported.
+    usage: { cpuPercent: 162, memoryBytes: 7.5 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 7.9 * GB, cores: 2, diskUsedBytes: null, diskTotalBytes: null } }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
   session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.
@@ -106,6 +113,11 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'failed', state: null, prUrl: null,
     error: '.woodshed/project.yaml: pullRequests.qa is missing author', startedAt: new Date(Date.parse(now) - 60_000).toISOString(),
   }),
+  // Private Codex sessions, owned by `local`: their pages say codex, not claude, and offer no Remote Control.
+  session('c0dec0de', null, 'Session names on Codex', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true,
+  }),
+  session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
   session('de1e7e01', 26689, 'manage_datasets convert_file keeps headers', { cleanedAt: now, stopReason: 'its pull request merged 3 days ago', prClosedAt: now, prMerged: true }),
@@ -136,6 +148,18 @@ const sessions = [
   session('5a5a5a5a', 26700, 'A session starting', {
     status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 6_000).toISOString(),
     startSteps: { machine: new Date(Date.now() - 2_000).toISOString() },
+  }),
+  // Waiting for room, with the steps its launcher says the wait is at (a launcher's `progress`, providers/README.md).
+  // Its next try is an hour away, so the docker launcher never takes it, and nothing here changes the steps.
+  session('6b6b6b6b', 26701, 'A session waiting for its machine', {
+    status: 'queued', startedAt: null, stoppedAt: null, stopReason: null, prUrl: null,
+    retryAt: new Date(Date.now() + 3_600_000).toISOString(), error: 'Capacity is unavailable: a machine is being set up',
+    waitProgress: { steps: [
+      { label: 'Creating a machine', state: 'done', note: null, at: new Date(Date.now() - 95_000).toISOString() },
+      { label: 'Installing Docker', state: 'done', note: null, at: new Date(Date.now() - 70_000).toISOString() },
+      { label: 'Building the session image', state: 'current', note: 'step 4 of 9', at: new Date(Date.now() - 22_000).toISOString() },
+      { label: 'Starting the databases', state: 'pending', note: null, at: null },
+    ] },
   }),
 ];
 fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null }));
@@ -234,14 +258,17 @@ const consolePort = sessionApp ? await freePort() : port;
 // bin/woodshed does.
 const devClone = makeDevClone(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-clone-')));
 const RESTART_EXIT_CODE = 75;
+// New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
+const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'));
 
-// GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub.
+// GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
+// from devGh.mjs's gh.
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: `${twoApps.binDir}${path.delimiter}${process.env.PATH}`, WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, twoApps.binDir, process.env.PATH].join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).

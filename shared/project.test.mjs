@@ -182,11 +182,11 @@ test('the installs\' manifest is one tab-separated line each, for session/deps.s
     'install\tapi\ta b/*\tvendor ~/.cache/tool\ta && b\n');
 });
 
-const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null };
+const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null, runner: 'actions' };
 const PULL_REQUESTS = {
   review: REVIEW,
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
-  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions' },
+  qa: { check: 'QA', label: 'qa', heading: '## QA', author: 'ci[bot]', runner: 'actions', autoLabel: false },
   mergeRisk: { check: 'Merge risk' },
 };
 
@@ -195,6 +195,17 @@ test('pullRequests names the repo\'s own review, suites, QA and Merge risk check
   assert.equal(parseProject({ ...EMPTY_PROJECT, pullRequests: null }).pullRequests, null, 'null: no gates of the repo\'s');
   const none = { review: null, suites: [], qa: null, mergeRisk: null };
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, pullRequests: none }).pullRequests, none);
+});
+
+test('review.runner: defaults to actions and needs a workflow, woodshed may leave the workflow out', () => {
+  const full = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests });
+  const { runner, ...noRunner } = REVIEW;
+  assert.equal(full({ ...PULL_REQUESTS, review: noRunner }).pullRequests.review.runner, 'actions', 'left out runs in the workflow');
+  const { workflow, ...noWorkflow } = noRunner;
+  assert.throws(() => full({ ...PULL_REQUESTS, review: noWorkflow }), /pullRequests\.review is missing workflow/);
+  const wood = full({ ...PULL_REQUESTS, review: { ...noWorkflow, runner: 'woodshed' } }).pullRequests.review;
+  assert.deepEqual([wood.runner, wood.workflow], ['woodshed', null], 'a review session needs no workflow');
+  assert.throws(() => full({ ...PULL_REQUESTS, review: { ...REVIEW, runner: 'jenkins' } }), /pullRequests\.review\.runner must be one of actions, woodshed/);
 });
 
 test('a wrong pullRequests section names the field', () => {
@@ -217,6 +228,11 @@ test('a wrong pullRequests section names the field', () => {
   assert.throws(() => full({ ...PULL_REQUESTS, qa: noAuthor }), /pullRequests\.qa is missing author/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed', author: '' } }), /pullRequests\.qa\.author must be a non-empty string/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'jenkins' } }), /pullRequests\.qa\.runner must be one of actions, woodshed/);
+  assert.equal(full(PULL_REQUESTS).pullRequests.qa.autoLabel, false, 'left out, a person adds the label');
+  assert.equal(full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }).pullRequests.qa.autoLabel, true);
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...PULL_REQUESTS.qa, autoLabel: 'yes' } }), /pullRequests\.qa\.autoLabel must be true or false/);
+  assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, autoLabel: true } }), /autoLabel needs runner: woodshed and pullRequests\.review/);
+  assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }), /autoLabel needs/);
 });
 
 test('editor is true or false, and off when left out, so a branch from before it still starts', () => {
@@ -403,6 +419,20 @@ test('the repo\'s own project file wins over the installation\'s, on its checkou
   git('update-ref', `refs/remotes/origin/${process.env.DEFAULT_BRANCH || 'main'}`, 'HEAD');
   git('rm', '-q', '.woodshed/project.yaml');
   assert.deepEqual([loadProject(checkout, { projectFilesDir: dir }).from, loadProject(checkout, { projectFilesDir: dir }).editor], ['default branch', false]);
+});
+
+test('a repo\'s own file Woodshed cannot read gives way to the installation\'s, saying why; with none, the read stops', (t) => {
+  const checkout = fixtureCheckout(scratch(t), { repo: 'acme/app' });
+  const dir = fixtureProjectFiles(scratch(t), { 'acme/app': fixtureProject({ dependencies: { installs: [API_INSTALL] } }) });
+  fs.mkdirSync(path.join(checkout, '.woodshed'), { recursive: true });
+  fs.writeFileSync(path.join(checkout, '.woodshed/project.yaml'), 'version: 1\ndatabase: null\n');
+  const project = loadProject(checkout, { projectFilesDir: dir });
+  assert.equal(project.from, 'installation');
+  assert.deepEqual(project.dependencies.installs, [API_INSTALL]);
+  assert.match(project.repoFileError, /\.woodshed\/project\.yaml: has database, which is not a field/);
+  assert.throws(() => loadProject(checkout), /\.woodshed\/project\.yaml: has database, which is not a field/);
+  fs.writeFileSync(path.join(dir, 'acme/app.yaml'), 'version: 1\nenvfiles: []\n');
+  assert.throws(() => loadProject(checkout, { projectFilesDir: dir }), /the installation's project file .*app\.yaml: has envfiles/);
 });
 
 test('a missing folder or file of the installation\'s is an empty project, as a repo with no file is', (t) => {

@@ -143,8 +143,8 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .rail-new .rail-slots { margin-left: 8px; padding-left: 8px; border-left: 1px solid currentColor; font-family: var(--mono); font-size: 11px; font-weight: 500; opacity: .85; }
 .rail-new:hover { filter: brightness(1.06); }
 /* The user menu, at the foot of the rail, opening upward. */
-.rail-user { flex: none; border-top: 1px solid var(--line-soft); padding: 8px 10px; }
-.rail-user .nav-user { width: 100%; }
+.rail-user { flex: none; display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line-soft); padding: 8px 10px; }
+.rail-user .nav-user { flex: 1 1 auto; min-width: 0; width: 100%; }
 .rail-user .user-btn { width: 100%; border-radius: 6px; padding: 4px 8px 4px 4px; }
 .rail-user .user-name { display: inline; flex: 1; text-align: left; }
 .rail-user .caret { margin-left: auto; }
@@ -289,6 +289,9 @@ h1.title { margin: 0 0 4px; font-family: Merriweather, Georgia, serif; font-size
 .start-label { flex: 1; min-width: 0; }
 .start-secs { font-family: var(--mono); font-size: 12px; color: var(--meta); }
 .is-now .start-secs { color: var(--amber-ink); }
+.start-steps li.is-failed { color: var(--bad); font-weight: 600; }
+.start-note { font-weight: 400; color: var(--sub); }
+.is-failed .start-note { color: var(--bad); }
 .kept { display: inline-flex; gap: 6px; flex-wrap: wrap; }
 .kept span { font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--idle-ink); }
 .btn-delete { border: 1px solid transparent; background: transparent; color: var(--bad); }
@@ -570,7 +573,7 @@ dialog.confirm .share-fresh-row .field { flex: 1; min-width: 0; }
 dialog.confirm .share-fresh { margin-top: 10px; }
 dialog.confirm .share-links { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
 dialog.confirm .share-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
-.launch { padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; overflow-y: auto; }
+.launch { flex: 1 1 auto; min-height: 0; padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; overflow-y: auto; }
 .launch[hidden] { display: none; }
 /* The Shared tab's page, in the pane beside the rail. */
 .home { padding: 24px; display: flex; flex-direction: column; gap: 18px; max-width: 1040px; overflow-y: auto; min-width: 0; }
@@ -617,6 +620,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
   .shell.is-launcher .rail { display: flex; flex: none; border-right: 0; border-bottom: 1px solid var(--line); }
   .launch { padding: 16px; }
   .lgrid2, .lgrid3, .lgrid4 { grid-template-columns: 1fr; }
+  .pull-meta { white-space: normal; overflow-wrap: anywhere; }
   /* On a phone the rail is the Shared page, as before: its list is already there. */
   .home { display: none; }
 }
@@ -661,7 +665,6 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .restore-steps li.has-bar { padding: 7px 0; }
 .restore-step-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .restore-current { font-weight: 400; color: var(--sub); }
-.restore-steps li.is-failed { color: var(--bad); font-weight: 600; }
 .is-failed .start-mark { background: var(--bad); color: var(--ground); }
 .is-failed .start-secs { color: var(--bad); }
 .restore-bar { margin-left: 26px; height: 4px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
@@ -839,6 +842,14 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
   .launch-actions .btn { flex: 1 1 100%; min-height: 44px; justify-content: center; font-size: 15px; }
 }
 .shell.is-railless .rail { display: none; }
+/* ⌘.'s buttons: Hide at the rail's foot, beside the user menu; while it is hidden, Show on a strip down the left edge. */
+.rail-hide, .rail-show { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--sub); cursor: pointer; }
+.rail-hide:hover, .rail-show:hover { color: var(--ink); background: var(--chip-count); }
+.rail-hide svg, .rail-show svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linejoin: round; }
+.rail-strip { display: none; }
+.shell.is-railless .rail-strip { flex: none; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; padding: 8px 5px; border-right: 1px solid var(--line); background: var(--ground); }
+@media (min-width: 900px) { .shell.is-railless .rail-strip { height: 100vh; position: sticky; top: 0; } }
+@media (max-width: 720px) { .rail-hide, .shell.is-railless .rail-strip { display: none; } }
 
 kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; background: var(--ground); color: var(--ink); font: 500 10.5px/1.5 var(--mono); text-align: center; }
 /* ---- the palette, the shortcuts and settings sheets ---- */
@@ -918,6 +929,22 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .skill-row[aria-selected="true"] { background: var(--slate-tint); }
 .skill-name { color: var(--slate); font: 600 12.5px var(--mono); }
 .skill-desc { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font-size: 12px; }
+/* New session's Work on: a combobox over the project's open pull requests (designSystem/components/PullPicker) */
+.pull-pick { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.pull-field { position: relative; display: flex; flex-direction: column; }
+.pull-field .field { padding-right: 34px; }
+.pull-toggle { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 30px; border: 0; border-left: 1px solid var(--line); border-radius: 0 3px 3px 0; background: none; color: var(--meta); font-size: 13px; cursor: pointer; }
+.pull-toggle:hover, .pull-toggle[aria-expanded="true"] { color: var(--ink); background: var(--slate-tint); }
+.pull-menu { left: auto; max-height: 320px; min-width: min(460px, calc(100vw - 32px)); }
+.pull-row { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 10px; align-items: baseline; padding: 6px 8px; border-radius: 5px; cursor: pointer; }
+.pull-row[aria-selected="true"], .pull-row:hover { background: var(--slate-tint); }
+.pull-num { grid-row: span 2; color: var(--slate); font: 600 12.5px var(--mono); }
+.pull-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 13px; font-weight: 600; }
+.pull-draft { margin-left: 6px; padding: 0 4px; border: 1px solid var(--line); border-radius: 3px; color: var(--sub); font-size: 10.5px; font-weight: 600; text-transform: uppercase; vertical-align: 1px; }
+.pull-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font: 400 11.5px var(--mono); }
+.pull-note { margin: 0; padding: 6px 8px; color: var(--sub); font-size: 12px; }
+.pull-chosen { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); font-size: 12px; }
+.pull-chosen-title { color: var(--ink); font-weight: 600; }
 
 /* ---- session info: the pull request's chip, the container's usage, the app log ---- */
 .prchip { display: inline-flex; align-items: center; gap: 4px; flex: none; padding: 0 5px; border: 1px solid #a8ddc0; border-radius: 4px; background: #e8f6ee; color: #1a7f4b; font: 600 10.5px/1.6 var(--mono); text-decoration: none; white-space: nowrap; }
@@ -939,6 +966,22 @@ a.prchip:hover { border-color: currentColor; }
 .usage.is-warn { color: var(--needs); }
 .usage.is-hot { color: var(--bad); }
 .pane-bar .usage { color: var(--bar-sub); }
+/* The badge is a button: it opens the machine dialog (common.js, openMachine). */
+button.usage { padding: 2px 4px; border: 1px solid transparent; border-radius: 4px; background: none; cursor: pointer; }
+button.usage:hover { border-color: var(--line); }
+.pane-bar button.usage:hover { border-color: var(--bar-well-line); background: var(--bar-well); }
+.pane-bar .usage.is-warn { color: var(--bar-amber); }
+.pane-bar .usage.is-hot { color: #f08b81; }
+dialog.machine .machine-of { margin: -8px 0 14px; font-size: 13px; color: var(--sub); }
+dialog.machine .machine-body { display: flex; flex-direction: column; gap: 14px; }
+dialog.machine .plan-meter { padding: 0; }
+dialog.machine .plan-row { font-size: 13.5px; }
+dialog.machine .plan-bar { height: 8px; border-radius: 4px; }
+dialog.machine .plan-bar i { border-radius: 4px; }
+dialog.machine .machine-meter.is-hot .plan-bar i { background: var(--bad); }
+dialog.machine .machine-meter.is-hot .plan-row b { color: var(--bad); }
+dialog.machine dl.machine-facts { margin: 0; }
+dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 /* The owner's Claude plan in the pane bar, and its detail in the bar's menu (common.js, planUsageFace and planUsageDetails). */
 .pane-bar .pplan { gap: 6px; border-color: var(--bar-well-line); font-family: var(--mono); color: var(--bar-ink); }
 .pane-bar .pplan .plan-lbl { font-family: "Red Hat Display", system-ui, sans-serif; font-weight: 600; color: var(--bar-sub); }

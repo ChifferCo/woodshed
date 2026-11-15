@@ -46,8 +46,9 @@
 //                                saved in the session with its path typed at that pane's prompt (none: not typed)
 //   POST /api/sessions/<id>/send    {"text": "..."}   the phone's message box: typed into claude, then Enter
 //   GET  /api/sessions/<id>/image?path=<path>   a picture a terminal path names, from the session
-//   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a phone's swipe on a terminal
+//   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a swipe or wheel past the browser's own scrollback
 //   GET  /api/skills             the repo's skills and commands, for New session's / list
+//   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
 //   GET  /api/sessions/<id>/transcript?limit=<n>  the conversation so far (what was asked, said and run), for a phone
@@ -161,18 +162,20 @@ import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
   'setupSteps.cjs': 'text/javascript; charset=utf-8',
   'inviteLink.cjs': 'text/javascript; charset=utf-8',
+  'openPulls.cjs': 'text/javascript; charset=utf-8',
   'keys.cjs': 'text/javascript; charset=utf-8',
   'projectColors.cjs': 'text/javascript; charset=utf-8',
   'common.js': 'text/javascript; charset=utf-8',
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
   'terminalCache.js': 'text/javascript; charset=utf-8',
+  'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',
@@ -225,6 +228,8 @@ const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
 const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
+// A project's open pull requests, for New session's Work on list: every launcher that opens asks.
+const OPEN_PULLS_FRESH_MS = 60_000;
 const UPLOAD_TIMEOUT_MS = 120_000;
 // The shed's mark and install details, under the console's name (config.consoleName), made once for each name.
 // Served before sign-in: a browser fetches the manifest without cookies.
@@ -242,6 +247,7 @@ const APP_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app\/(start|stop|setup)$
 const REVIEW_RE = /^\/api\/sessions\/([0-9a-f]{8})\/review$/;
 const SECRET_RE = /^\/api\/secrets\/([a-z0-9-]+)(\/reveal)?$/;
 const SETUP_WRITE_RE = /^\/api\/setup\/github\/(manifest|paste|installation|restart)$/;
+const REVIEWER_SETUP_PATH = '/api/setup/github/reviewer';
 const WEBHOOK_RE = /^\/api\/webhook\/(rotate|apply|url)$/;
 // The calls behind People, Secrets & webhooks, Webhook events and Console settings. Their pages load for anyone signed
 // in, and say what these calls answer.
@@ -375,6 +381,7 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('logins.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
+<script src="${staticUrl('openPulls.cjs')}"></script>
 <script src="${staticUrl('projectColors.cjs')}"></script>
 <script src="${staticUrl('common.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
@@ -523,7 +530,7 @@ export function createHandler({
   config, fleet, settings = null, events = { list: () => [] }, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
-  dbRestore = null, githubSetup = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
+  dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null,
 }) {
@@ -536,6 +543,9 @@ export function createHandler({
   // Each project's skills, by project name: one read of GitHub at a time for each, since every keystroke after `/` asks.
   const skillsCaches = new Map();
   const skillsReadings = new Map();
+  // Each project's open pull requests, by project name, read once at a time like the skills.
+  const openPullsCaches = new Map();
+  const openPullsReadings = new Map();
   const otherPublicNames = new Set(config.extraHosts);
   // Each person's pull requests, for a minute: every My Woodshed page asks on each refresh.
   const pullsCache = new Map();
@@ -1024,6 +1034,34 @@ export function createHandler({
     }
   }
 
+  // GitHub sends the browser back from creating the reviewer App the same way.
+  async function reviewerSetupCreated(res, url) {
+    if (!reviewerApp) return redirect(res, '/setup/github');
+    try {
+      await reviewerApp.completeManifest({ code: url.searchParams.get('code'), state: url.searchParams.get('state') });
+      return redirect(res, '/setup/github?reviewer=created');
+    } catch (err) {
+      if (!err.shown) console.error('console: reviewer App creation failed', { message: String(err?.message ?? err).split('\n')[0] });
+      return redirect(res, `/setup/github?error=${encodeURIComponent(err.shown ? err.message : 'the console could not keep the reviewer App: its log says why')}`);
+    }
+  }
+
+  async function reviewerSetupWrite(req, res) {
+    if (!reviewerApp) return reply(res, 404, { error: 'this console cannot make a reviewer App' });
+    let body;
+    try {
+      body = await readJson(req, MAX_SECRET_BODY_BYTES);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      return reply(res, 200, reviewerApp.startManifest({ ownerType: body?.ownerType }));
+    } catch (err) {
+      if (err.shown) return reply(res, 409, { error: err.message });
+      throw err;
+    }
+  }
+
   async function githubSetupWrite(req, res, pathname, login) {
     if (!githubSetup) return reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     let body;
@@ -1447,6 +1485,32 @@ export function createHandler({
     return toStatusd(req, res, session, { method: 'POST', path: '/scroll', body: { steps: body?.steps, pane: body?.pane } });
   }
 
+  // The open pull requests of the project New session has picked (`project`), or of the default project, as for the
+  // skills. A read that fails keeps the last list, marked `stale`.
+  async function openPullsReply(res, projectName = null) {
+    const project = (projectName && projectNamed(config, projectName)) || defaultProject(config);
+    const repoGitHub = project.default ? github : (githubFor?.(project) ?? null);
+    if (!repoGitHub?.openPulls) return reply(res, 200, { pulls: [], total: 0, stale: false });
+    const key = project.name;
+    const cached = openPullsCaches.get(key);
+    if (!cached || Date.now() - cached.at >= OPEN_PULLS_FRESH_MS) {
+      if (!openPullsReadings.has(key)) {
+        const extra = project.default ? {} : { project: project.name };
+        openPullsReadings.set(key, repoGitHub.openPulls().then(({ pulls, total }) => {
+          openPullsCaches.set(key, { at: Date.now(), pulls, total, stale: false });
+          console.log('console: open pull requests read', { count: pulls.length, total, ...extra });
+        }, (err) => {
+          console.warn('console: open pull requests not readable', { message: String(err?.message ?? err).split('\n')[0], ...extra });
+          const was = openPullsCaches.get(key);
+          openPullsCaches.set(key, { at: Date.now(), pulls: was?.pulls ?? [], total: was?.total ?? 0, stale: true });
+        }).finally(() => { openPullsReadings.delete(key); }));
+      }
+      await openPullsReadings.get(key);
+    }
+    const { pulls, total, stale } = openPullsCaches.get(key);
+    return reply(res, 200, { pulls, total, stale });
+  }
+
   // The skills of the project New session has picked (`project`), or of the default project when it names none or
   // one this console does not have.
   async function skillsReply(res, projectName = null) {
@@ -1499,6 +1563,8 @@ export function createHandler({
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
+      // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
+      repoNames: addedProjects ? addedProjects.names !== false : null,
       palette: projectColorsShared.PALETTE,
       data: heldData ? await heldData.report() : null,
     });
@@ -1540,7 +1606,7 @@ export function createHandler({
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
         else {
-          addedProjects.remove({ name: body.name, by });
+          await addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
           // A repo added again later under the same name starts on the console's channel.
           slack?.setProjectChannel({ project: body.name, channel: '', by });
@@ -1633,6 +1699,7 @@ export function createHandler({
     if (pathname === '/api/secrets-manager') return managerWrite(req, res, login);
     if (SECRET_RE.test(pathname) || WEBHOOK_RE.test(pathname)) return settingsWrite(req, res, pathname);
     if (SETUP_WRITE_RE.test(pathname)) return githubSetupWrite(req, res, pathname, login);
+    if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
     const terminalWrite = TERMINAL_RE.exec(pathname);
@@ -1777,6 +1844,8 @@ export function createHandler({
     if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
+    if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
+    if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
     if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
@@ -1808,6 +1877,13 @@ export function createHandler({
       const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
       if (asked && projectAccess && !allowed) console.log('console: skills of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
       return skillsReply(res, projectAccess ? allowed?.name ?? null : asked);
+    }
+    if (pathname === '/api/pulls') {
+      // Like the skills: another project's list only for someone who may start sessions on it.
+      const asked = new URL(req.url || '/', 'http://app.invalid').searchParams.get('project');
+      const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
+      if (asked && projectAccess && !allowed) console.log('console: open pull requests of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
+      return openPullsReply(res, projectAccess ? allowed?.name ?? null : asked);
     }
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
@@ -1993,8 +2069,10 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   (databases.mjs), `webhooks` hands GitHub and Slack events to webhookDispatch.mjs, and `webhookUrl` is where GitHub
  *   should post them
  *   `config` is loadConfig()'s, read again when left out
+ *   `repos` is an embedding program's repos hook, passed on to createInstallation (installation.mjs): only the dev
+ *   console's stand-in (scripts/devHostConsole.mjs) passes one here
  */
-export async function startConsole({ provider, config: given = null }) {
+export async function startConsole({ provider, config: given = null, repos = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2004,7 +2082,7 @@ export async function startConsole({ provider, config: given = null }) {
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
