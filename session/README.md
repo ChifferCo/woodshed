@@ -83,7 +83,8 @@ change to the stage by the workflow's run, about the time the build takes.
    and statusd reports `redis: false`, so Data ▾ has no Redis. A shared Redis
    would let one session's worker run another session's jobs when the app's queues
    have no key prefix. The image keeps `redis-server` either way.
-4. Starts `claude --permission-mode auto` in tmux, through `session/bin/claude`, with the task as its first message and the rules
+4. Starts `claude --permission-mode auto` in tmux, through `session/bin/claude`, inline (never Claude Code's full-screen
+   renderer, nor codex's alternate screen, so the conversation stays in tmux's history and the browser's scrollback), with the task as its first message and the rules
    in `prompt.md`, then the project's own (`.woodshed/rules.md` here), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. Auto mode runs
    routine work without asking and refuses risky actions; a session stuck on
    one shows as needing you. A shared session does not stop to ask: it follows
@@ -161,7 +162,7 @@ The console's only way into a running session besides the terminal:
 | `GET /image?path=` | A picture a terminal path names, after the shed's `terminalImages.mjs`: png, jpg, gif or webp, its real path inside the repo, `/tmp/uploads` or Claude's scratchpad, symlinks resolved first. 404 otherwise |
 | `GET`/`POST`/`PATCH`/`DELETE /shed-review/...` | The shed's own review page and server (`session/reviewShed/`), reached through the console's `/review` and `/reviews/claude-<id>/...`. |
 | `GET /applog` | `{ logs: [{ name, text, bytes }] }`: the last 48 KB of `/tmp/woodshed-app.log` (`start`, where with several apps a `# Woodshed: starting <name>` line opens each start) and of each of the running app's `logs`. The App log tab |
-| `POST /scroll` | `{"steps": -3, "pane": "agent"}`, a phone's swipe: wheel bytes to a pane that asked for the mouse (claude), copy mode for one that did not (the shell), at most 40 steps |
+| `POST /scroll` | `{"steps": -3, "pane": "agent"}`, a swipe or wheel the browser's own scrollback could not take (console/README.md, "Scrolling back"): wheel bytes, at most 40, to a full-screen program on the alternate screen that asked for the mouse; otherwise copy mode, a line a step, up to the 50000 lines tmux keeps (claude and codex inline, the shell) |
 | `*` with `x-woodshed-app: Bearer <token>` | Any path, websockets too, forwarded without that header to the app's frontend, on the running app's `frontendPort` (`APP_PORT` overrides it). The token has its own header because the app's requests carry an `Authorization` of their own |
 
 `state` comes from Claude's own hooks: `session/claudeHooks.json`, passed with

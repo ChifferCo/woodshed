@@ -370,7 +370,16 @@ Agent and Terminal tabs):
   terminal. Each goes through the console to `/tmp/uploads` in the session,
   and its path is typed at that terminal's prompt with no Enter. claude starts
   with `--add-dir /tmp/uploads`, so it reads them without asking.
-- **Swipe** on a phone scrolls the pane, through statusd's `POST /scroll`.
+- **Scrolling back** (the wheel, or a swipe on a phone) is the browser's own when
+  the pane is on the main screen: claude and codex run inline, never full screen
+  (`session/bin/claude`, `session/bin/codex`), and tmux leaves what scrolls off
+  in the browser terminal's own scrollback (`session/tmux.conf`), so the view
+  moves with no round trip. That scrollback holds what came since the terminal
+  attached: past its top, tmux's copy mode takes over where it ran out, through
+  statusd's `POST /scroll`, and scrolling back down to the bottom leaves it. A
+  pane on the alternate screen (a full-screen program), in copy mode or split
+  scrolls through tmux as before. tmux says which in the terminal's title, and
+  `public/terminalScroll.cjs` reads it.
 
 And what the shed shows about each session:
 - **The pull request's chip**, on the card and the pane bar: open, draft,

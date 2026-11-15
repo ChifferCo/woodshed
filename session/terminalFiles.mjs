@@ -17,6 +17,9 @@ import { resolveTerminalImage } from '../shared/terminalImages.mjs';
 export const UPLOADS_DIR = process.env.UPLOADS_DIR || '/tmp/uploads';
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const MAX_SCROLL_STEPS = 40;
+// Copy mode moves a line a step. The browser hands it the rest of a pane's history at once when its own scrollback runs
+// out (console/public/terminalScroll.cjs): up to tmux.conf's history-limit.
+const MAX_COPY_LINES = 50_000;
 // The two tmux sessions a page shows: claude's (the Agent tab) and the plain shell (the Terminal tab).
 const PANES = { agent: 'claude', terminal: 'shell' };
 const IMAGE_TYPES = new Map([['png', 'image/png'], ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['gif', 'image/gif'], ['webp', 'image/webp']]);
@@ -78,23 +81,27 @@ export function imageFor(requested, { repoDir, home = os.homedir(), uploadsDir =
 }
 
 /**
- * A swipe, as tmux's own wheel binding would take it: wheel bytes to a pane that asked for the mouse (claude),
- * copy mode for one that did not (a shell), and nothing at the bottom already.
+ * A swipe, or the rest of one the browser's own scrollback could not take: wheel bytes to a full-screen program that
+ * asked for the mouse (claude or codex drawn on the alternate screen), whose history is its own; copy mode over tmux's
+ * history for a pane on the main screen (claude and codex inline, a shell), whatever it asked for; and nothing at the
+ * bottom already.
  * @param {(cmd: string, args: string[]) => Promise<{stdout: string}>} run
  * @param {{steps: number, pane?: 'agent'|'terminal'}} opts  negative steps scroll up
  * @returns {Promise<'mouse'|'copy-mode'|'bottom'>}
  */
 export async function scrollPane(run, { steps, pane = 'agent' }) {
-  const count = Math.min(MAX_SCROLL_STEPS, Math.abs(Math.trunc(Number(steps))));
-  if (!count) throw shown('steps must be a number other than 0');
+  const asked = Math.abs(Math.trunc(Number(steps)));
+  if (!asked) throw shown('steps must be a number other than 0');
   const target = PANES[pane];
   if (!target) throw shown('pane must be agent or terminal');
-  const probe = (await run('tmux', ['display', '-p', '-t', target, '#{mouse_any_flag} #{pane_in_mode}'])).stdout.trim();
-  const [mouse, inMode] = probe.split(' ');
-  if (mouse === '1' && inMode !== '1') {
+  const probe = (await run('tmux', ['display', '-p', '-t', target, '#{alternate_on} #{mouse_any_flag} #{pane_in_mode}'])).stdout.trim();
+  const [alternate, mouse, inMode] = probe.split(' ');
+  if (alternate === '1' && mouse === '1' && inMode !== '1') {
+    const count = Math.min(MAX_SCROLL_STEPS, asked);
     await run('tmux', ['send-keys', '-t', target, '-l', (steps < 0 ? '\x1b[<64;1;1M' : '\x1b[<65;1;1M').repeat(count)]);
     return 'mouse';
   }
+  const count = Math.min(MAX_COPY_LINES, asked);
   if (steps < 0) {
     // -e leaves copy mode once scrolled back to the bottom.
     if (inMode !== '1') await run('tmux', ['copy-mode', '-e', '-t', target]);
