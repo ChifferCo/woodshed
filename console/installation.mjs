@@ -45,6 +45,7 @@ import { createGitHubPeople } from './githubPeople.mjs';
 import { createSlackPeople } from './slackPeople.mjs';
 import { createAssigneePings } from './assigneePings.mjs';
 import { createMembers } from './members.mjs';
+import { createPush } from './push.mjs';
 import { createAppShares } from './appShares.mjs';
 import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
@@ -290,11 +291,22 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const pullWebhooks = createPullWebhooks();
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
+  // Phones hear of the same moments and more (push.mjs). The fleet is made below; push asks it for sessions only later.
+  const push = createPush({
+    store, relays: loaded.pushRelays ?? [], sessions: () => fleet.sessions(),
+    // Who hears of someone asking to join: the admins, or everyone on a list with none yet, as server.mjs's isAdmin has it.
+    admins: () => {
+      if (!members) return [];
+      const listed = members.view().members;
+      return (members.hasAdmin() ? listed.filter((m) => m.admin) : listed).map((m) => m.login);
+    },
+  });
+  console.log('console: push notifications', { relays: (loaded.pushRelays ?? []).length });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
   const appIdentity = createAppIdentity({ appApi });
   const reviewerApp = createReviewerApp({ store, secrets, config });
   const fleet = createFleet({
-    config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
+    config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings, push,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
     pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
@@ -373,8 +385,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
     userMenu,
     appPorts,
     woodshedUpdate,
+    push,
   });
-  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
+  const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts, push });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
@@ -419,6 +432,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
     loops.every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
     loops.every(config.startingCheckMs, 'wait progress', () => fleet.checkWaiting());
+    // Reminders, plan resets and notifications whose session is gone. A minute's lateness is nothing to a reminder.
+    loops.every(30_000, 'push reminders', () => push.tick());
     loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
     if (databases.available) loops.every(databases.POLL_MS, 'databases', () => databases.poll());
     if (config.pollGitHub) {

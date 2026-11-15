@@ -252,6 +252,8 @@ export function createPrAnnouncer({
       title: pull.title, url: pull.html_url, tier, brief: brief.slack, mention: (await events.mention?.(item)) ?? null, project: projectOf(item),
     });
     if (posted?.channel) item.post = { channel: posted.channel, ts: posted.ts ?? null };
+    // For what the fleet tells its assignee's phone; the item leaves state.json as it is dropped.
+    item.title = pull.title;
     return drop(item, posted ? 'posted' : 'Slack did not take it');
   }
 

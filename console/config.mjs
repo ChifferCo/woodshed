@@ -8,6 +8,7 @@ import { currentName, envValue } from '../shared/envNames.mjs';
 import { secretEnvName } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { parseAppPorts } from './appPorts.mjs';
+import { parseRelays } from './push.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
 
@@ -384,6 +385,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     localSecretsKeyFile: env.WOODSHED_LOCAL_SECRETS_KEY_FILE || null,
     webhookFunction: envValue(env, 'WEBHOOK_FUNCTION') || (envValue(env, 'LAUNCHER') === 'ecs' ? `${OLD_AWS_PREFIX}-webhooks` : ''),
     ghToken: app || broker || !readGhToken ? null : ghToken(env),
+    // The relays a phone may register through for push notifications (push.mjs); none turns them off.
+    pushRelays: parseRelays(env.WOODSHED_PUSH_RELAYS),
     // Where sessions fetch GitHub tokens; only with an App, and only on an address sessions can reach.
     sessionApi: { host: envValue(env, 'SESSION_API_HOST') || null, port: number(envValue(env, 'SESSION_API_PORT'), 7691) },
   };

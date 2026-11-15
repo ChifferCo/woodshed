@@ -157,6 +157,10 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - **Ask a question:** mention the bot in any Slack channel it is in, e.g.
   `@woodshed how does a task decide to retry?`. A session reads the default branch and answers
   in the thread. See "Questions from Slack" in `console/README.md`.
+- **On your phone:** the Woodshed phone app registers with the console for push notifications, sealed so the relay
+  that delivers them cannot read them: when one of your sessions waits for you, its pull request is ready or stuck, it
+  failed to start, or it stopped on your plan's limit. Never for a session you have open, with reminders that stop once
+  it is dealt with. See "Push notifications" in `console/README.md`.
 - **Stop:** the Stop session button. Work in progress is pushed first.
 - **Who can:** anyone with write access to the repo. Everyone else is ignored.
 - **The console:** `https://woodshed.example.com`, with a Let's Encrypt

@@ -480,8 +480,9 @@
     return null;
   }
 
-  async function fetchSessions() {
-    const res = await fetch('/api/sessions', { cache: 'no-store' });
+  /** @param {string|null} [looking]  the session the page shows while it is in front: its push notifications stay off the phone */
+  async function fetchSessions(looking = null) {
+    const res = await fetch(looking ? `/api/sessions?looking=${encodeURIComponent(looking)}` : '/api/sessions', { cache: 'no-store' });
     if (!res.ok) throw new Error(`GET /api/sessions answered ${res.status}`);
     return withPendingApps(learnNames(await res.json()));
   }
