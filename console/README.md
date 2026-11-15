@@ -380,6 +380,10 @@ Agent and Terminal tabs):
   pane on the alternate screen (a full-screen program), in copy mode or split
   scrolls through tmux as before. tmux says which in the terminal's title, and
   `public/terminalScroll.cjs` reads it.
+- **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
+  `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
+  tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
+  session may read it, while it runs.
 
 And what the shed shows about each session:
 - **The pull request's chip**, on the card and the pane bar: open, draft,
