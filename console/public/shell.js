@@ -49,12 +49,13 @@
   // ---- toast ----
   let toastEl = null;
   let toastTimer = null;
-  function toast(text) {
+  // `ms` keeps it up longer: an error needs time to be read on a phone.
+  function toast(text, { ms = 2000 } = {}) {
     toastEl ??= document.body.appendChild(h('div', { class: 'toast', role: 'status', hidden: true }));
     toastEl.textContent = text;
     toastEl.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.hidden = true; }, 2000);
+    toastTimer = setTimeout(() => { toastEl.hidden = true; }, ms);
   }
 
   // ---- the palette ----
