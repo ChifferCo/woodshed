@@ -36,7 +36,7 @@
     const id = (key) => `${project}\n${key}`;
     const base = (name) => `/api/my/repos/${encodeURIComponent(name)}`;
     const textPath = (key) => (key === INSTRUCTIONS ? `${base(project)}/instructions` : `${base(project)}/env/${encodeURIComponent(key)}`);
-    const labelOf = (f) => f.path ?? f.key;
+    const { labelOf, pathsOf, andList } = L;
     const view = () => views.get(project) ?? null;
 
     function refusal(err) {
@@ -132,7 +132,7 @@
         summaryOf(name, answer);
         if (key === INSTRUCTIONS) return text.trim() ? 'Saved. Your next private session on this repo has them in its prompt; running ones keep theirs.' : 'Cleared. Your sessions get this installation\'s instructions and the repo\'s rules alone.';
         const f = answer.envFiles.find((x) => x.key === key);
-        if (text.trim()) return `Saved. Your next private session on ${answer.repo} writes them into ${labelOf(f ?? { key })}; running ones keep theirs.`;
+        if (text.trim()) return `Saved. Your next private session on ${answer.repo} writes them into ${f ? andList(pathsOf(f)) : key}; running ones keep theirs.`;
         return 'Cleared. Your sessions get the repo\'s defaults and this installation\'s values alone.';
       });
     }
@@ -260,6 +260,7 @@
         h('div', { class: 'layered-head' },
           h('h3', { id: `my-file-${f.key}`, class: 'mono' }, labelOf(f)),
           h('span', { class: 'data-meta' }, h('span', null, `key ${f.key}`))),
+        pathsOf(f).length > 1 && L.sharedNote(f),
         read && L.defaultsLayer(f, v.repo),
         layer('installation', 'This installation\'s values',
           h('p', { class: 'layer-meta' }, savedLine(f.installation)),

@@ -30,6 +30,12 @@ later layer wins.
 - Several env files are tabs above it (`file-tabs`), labelled by path, `•` on one with a saved value; `?file=<key>`
   opens one, so a link can point at it. On My settings the repos the person can write to are tabs above those, by
   `owner/name`, `•` on one where they keep something; `?repo=<project>` opens one.
+- Env files that name one secret share its key and its values: one tab, labelled `app-env → api/.env, worker/.env`,
+  whose head is that label, and a `cap-note` under it saying the values are written to both files and each keeps its
+  own defaults and lines. From the repo and Set by the session show each path (`meta` mono, 600) over its own
+  defaults or keys where the files differ, and once where they agree. The table has one row for a key where the files
+  agree, and one a file where they differ, the key followed by `in <path>` in `meta`. My settings has the same tab and
+  note, and the person's values are written to both files too.
 - Instructions use the same box without the table: From the repo links its `rules` and `setup` files, and the
   editable layer counts bytes against the 16 KB limit as it is typed (`meta`, `bad` once over, and Save turns off).
 - No new colours. Orange only on Save.

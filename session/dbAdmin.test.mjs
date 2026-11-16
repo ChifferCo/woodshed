@@ -465,7 +465,7 @@ test('the seed\'s env files come from the default project\'s repo settings, each
     instructions: { installation: null, personal: null }, personalFor: null,
   });
   assert.deepEqual(found.files, {}, 'no legacy secret where the repo settings have a value');
-  assert.deepEqual(found.read, [{ key: 'api-env', from: 'repo settings' }, { key: 'web-env-local', from: 'repo settings' }]);
+  assert.deepEqual(found.read, [{ key: 'api-env', paths: ['api/.env'], from: 'repo settings' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'repo settings' }]);
   assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/repos/app/env/web-env-local'],
     'only the databases\' keys, only the default project\'s, and no legacy secret');
 });
@@ -476,13 +476,27 @@ test('a key with no repo settings value falls back to its legacy secret, and one
   const found = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets });
   assert.deepEqual(found.settings.envFiles, {}, 'a blank value is none, as the session API leaves it out');
   assert.deepEqual(found.files, { API_ENV: 'API_KEY=old\n' });
-  assert.deepEqual(found.read, [{ key: 'api-env', from: 'legacy secret' }, { key: 'web-env-local', from: 'none' }]);
+  assert.deepEqual(found.read, [{ key: 'api-env', paths: ['api/.env'], from: 'legacy secret' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
   assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/api-env', 'acme/repos/app/env/web-env-local'],
     'a file with no secret has no legacy name to read');
 
   const none = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets: recordingSecrets({}) });
   assert.deepEqual([none.settings.envFiles, none.files], [{}, { API_ENV: '' }]);
   assert.deepEqual(none.read.map((r) => r.from), ['none', 'none']);
+});
+
+test('a key two env files name is read once for the seed, naming both paths, from its own project alone', async () => {
+  // Two repos that both have an api-env: the seed is the default project's, so it reads app's and never api's.
+  const project = parseProject({
+    version: 1,
+    envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }, { path: 'worker/.env', secret: 'api-env', lines: ['ROLE=worker'] }],
+    databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }],
+  });
+  const secrets = recordingSecrets({ 'acme/repos/app/env/api-env': 'FROM=app\n', 'acme/repos/api/env/api-env': 'FROM=api\n' });
+  const found = await seedEnvFiles({ flags: seedFlags(['--project', 'app', '--', 'template']), project, secrets });
+  assert.deepEqual(found.settings.envFiles, { 'api-env': { installation: 'FROM=app\n', personal: null } });
+  assert.deepEqual(found.read, [{ key: 'api-env', paths: ['api/.env', 'worker/.env'], from: 'repo settings' }]);
+  assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env']);
 });
 
 test('without --project the seed reads the legacy secrets alone, as before repo settings', async () => {

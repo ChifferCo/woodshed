@@ -380,6 +380,13 @@ Agent and Terminal tabs):
   pane on the alternate screen (a full-screen program), in copy mode or split
   scrolls through tmux as before. tmux says which in the terminal's title, and
   `public/terminalScroll.cjs` reads it.
+- **Find**: ⌘F on a Mac, Ctrl+Shift+F elsewhere (Ctrl+F is the pane's, a character forward), from the terminal or the
+  page around it, or **find** on a phone's key bar, opens a bar over the terminal's top right. xterm paints on a
+  canvas, so the browser's own find sees nothing there: the bar reads xterm's buffer (`public/terminalFind.cjs`), which
+  is the screen and the browser's scrollback, case ignored and a wrapped line read as one. Every match is marked, the
+  one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
+  marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
+  off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
 - **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
   tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
@@ -547,7 +554,10 @@ both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clea
 them. This card held each env file's own lines too until Repo settings: `GET`/`POST /api/my/files/<secret>` (and
 `/reset`) still answer, in their old shape, for a page opened before them, but read and write
 `users/<login>/repos/<default project>/env/<secret>`, with the same 403 as `/api/my/repos/<project>`, and the console
-logs `repoSettings: old own lines route, saved to repo settings`. They go when the fallback ends (`../docs/reference.md`,
+logs `repoSettings: old own lines route, saved to repo settings`. An embedding program's file of one repo (`name` and
+`repo`, "Embedding the console") is that repo's: `/api/my/files/<store name>` reads and writes
+`users/<login>/repos/<its project>/env/<name>`, refused to someone who cannot write to that repo. Its per-repo tabs
+are now each repo's tab on the Repo settings card, one a key. They go when the fallback ends (`../docs/reference.md`,
 "The env files").
 
 **Your own files**, on My settings, are whole files of your own, by their path in the repo (an
@@ -1726,7 +1736,8 @@ wiring (each env file's `lines`, the project's `env`, Woodshed's own variables),
 | `users/<login>/repos/<project>/instructions` | one person's own instructions for the repo |
 
 `<key>` is the env file's key in the project file: its `secret`, or one made from its path (`web/.env.local` is
-`web-env-local`). A value is at most 64 KB, and is kept only for an env file the repo's project file names (on its
+`web-env-local`). Env files that name one secret share its key, and so one value a layer, written to each of their
+paths (`api/.env` and `worker/.env` both from `app-env`). A value is at most 64 KB, and is kept only for an env file the repo's project file names (on its
 default branch). Instructions that look like a credential (an Anthropic, OpenAI, GitHub, Slack or AWS key, a private
 key) are refused: they go into the session's prompt. `state.json` keeps, under `repoSettings.<project>` and
 `people.<login>.repos.<project>`, when each was saved, by whom, its size and the names of the keys it sets, never a
@@ -1738,14 +1749,19 @@ An admin sets layer 2 on the repo's own page, `/console-settings/repos/<project>
 **Settings** link on its row of Console settings' Repos card opens; `?file=<key>` opens one env file's tab. For each env
 file of the project file it shows its key and path, the repo's `defaults` (read only, with a link to the file on
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
-sets itself, and a table of which layer wins each key: key names only, never a value. Then the installation's
+sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
+are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
+defaults and lines are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
+for a key the files do not agree on. Then the installation's
 Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
 A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
 for it after a typed confirm. While an env file may still be read from its Terraform secret, the page says which one
 sessions read. The page loads for anyone signed in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' **Repo settings** card (public/myRepoSettings.js, with the layers drawn by
-public/repoLayers.js, which the admin page shares), for each repo they can write to: see "My Woodshed" above.
+public/repoLayers.js, which the admin page shares), for each repo they can write to: see "My Woodshed" above. Env
+files that share a key are one tab there too (`app-env → api/.env, worker/.env`), and a person's values are written to
+each of them.
 
 On Secrets & webhooks, the env files' Terraform secrets (`WOODSHED_ENV_FILES`) are listed under **Moved to Repo
 settings**, each with a link to its repo's page and when it was copied. Once Repo settings hold a value for the file,
@@ -1757,7 +1773,7 @@ The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files (key, path, defaults, wiring: `lines`, `optional`, `env`), each layer's records, `table` (each key, the layers that set it and the one that `wins`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `lines`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
@@ -1785,23 +1801,32 @@ the keys each layer gave and whether each has instructions. The session writes t
 At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
 `repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
 `users/<login>/repos/<default project>/env/<secret>`, only where the new name has no value yet: a value already there
-is never replaced, so a second start copies nothing. Each installation name is copied once: one copied before, or
+is never replaced, so a second start copies nothing. An embedding program's `config.envFiles` entry with `repo` and
+`name` ("Embedding the console") goes to that repo's project instead, under `name`: its secret into
+`repos/<project>/env/<name>`, each person's `users/<login>/<secret>` into `users/<login>/repos/<project>/env/<name>`,
+ahead of an entry for every repo with the same name; one whose repo has no project is not copied (`repoSettings:
+legacy env files of a repo with no project, not copied`). Each installation name is copied once: one copied before, or
 cleared on its page since, is skipped at every later start (`repoSettingsMigration.files` and `.cleared` in
-`state.json`, dates by name; `repoSettings: legacy copy turned off for a cleared value`), so a Clear stays cleared
-and sessions read the Terraform secret again, with their warning. Once a person saves or clears their own values for one of those
-files, their old lines for it (`users/<login>/<secret>`) are deleted (`repoSettings: legacy own lines removed, repo
-settings hold them now`): a session would fall back to them whenever the new value is empty, and the next start would
-copy them back, so a Clear would not stay cleared. It logs `repoSettings: legacy env file copied` (`project`, `key`,
-`bytes`), `legacy own lines copied` (`login`, `key`) and `legacy copy checked` with how many were copied, kept, empty,
-done before or failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. A session
-reads a Terraform secret only for a file that has no value in Repo settings, and logs a warning when it does.
+`state.json`, dates by the legacy secret's name; `repoSettings: legacy copy turned off for a cleared value`), so a
+Clear stays cleared and sessions read the Terraform secret again, with their warning. Once a person saves or clears
+their own values for one of those files, their old lines for it (`users/<login>/<secret>`, by the store's name) are
+deleted (`repoSettings: legacy own lines removed, repo settings hold them now`): a session would fall back to them
+whenever the new value is empty, and the next start would copy them back, so a Clear would not stay cleared. It logs
+`repoSettings: legacy env file copied` (`project`, `key`, `secret`, `bytes`), `legacy own lines copied` (`login`,
+`project`, `key`, `secret`) and `legacy copy checked` with how many were copied, kept, empty, done before or failed (a
+failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. A session reads a
+Terraform secret only for a file that has no value in Repo settings, and logs a warning when it does.
 
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the
 default project's installation values the same way, layers 1, 2 and 4 (no one's own lines: the seed is no one's), and
 falls back to a file's Terraform secret, with the session's warning, while it has none. It reads them itself, as
 `repos/<project>/env/<key>` for the project its entryPoint's `--project` names, never a name a run gives; on AWS its task
 role may read that project's `repos/<project>/env/*` and no other repo's (`TheSeedsEnvFiles` in
-`providers/aws/terraform/ecs.tf`). Its log says `Seed env files read` with where each key came from, never a value.
+`providers/aws/terraform/ecs.tf`). A key that two env files name (they share a secret) is read once and written to
+both. Its log says `Seed env files read` with where each key came from and the paths that name it, never a value. The
+fallback is the Terraform secret by the project file's name (`database_env_secrets`), as before repo settings: an
+embedding program's `config.envFiles` `name` and `repo` reach the seed through repo settings alone, since the start's
+copy puts the default repo's entry into `repos/<default project>/env/<name>`, which the seed reads first.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.

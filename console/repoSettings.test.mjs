@@ -118,6 +118,71 @@ test('a save keeps the value in the store, and state.json its date, size and key
   assert.equal(store.state.people['sam-ops'].repos, undefined);
 });
 
+test('env files that name one secret are one key, with every path, one set of values and each file\'s own defaults and lines', async () => {
+  const shared = parseProject({
+    version: 1, envFiles: [
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
+      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
+      { path: 'web/.env.local', lines: ['PORT=5173'] },
+    ],
+  });
+  const { secrets, repoSettings } = setup({ files: { ...FILES, app: shared } });
+  await repoSettings.saveInstallation({ project: 'app', key: 'app-env', text: 'LOG_LEVEL=warn\nAPI_TOKEN=x\n', by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'app-env', text: 'API_TOKEN=mine\n' });
+  assert.deepEqual([...secrets.values.keys()], ['repos/app/env/app-env', 'users/sam-ops/repos/app/env/app-env'], 'one value a layer for both files');
+
+  const view = await repoSettings.view('app', { login: 'sam-ops' });
+  assert.deepEqual(view.envFiles.map((f) => [f.key, f.paths]), [['app-env', ['api/.env', 'worker/.env']], ['web-env-local', ['web/.env.local']]]);
+  const app = view.envFiles[0];
+  assert.deepEqual(app.files.map((f) => [f.path, f.defaults, f.wiring.lines]), [['api/.env', ['LOG_LEVEL=info'], ['PORT', 'SQL_URL']], ['worker/.env', [], ['ROLE', 'SQL_URL']]]);
+  assert.equal(app.installation.bytes, Buffer.byteLength('LOG_LEVEL=warn\nAPI_TOKEN=x\n'));
+  assert.deepEqual(app.table.map((row) => [row.key, row.setBy.join(' '), row.wins, row.path ?? null]), [
+    ['LOG_LEVEL', 'repo installation', 'installation', 'api/.env'], ['LOG_LEVEL', 'installation', 'installation', 'worker/.env'],
+    ['API_TOKEN', 'installation personal', 'personal', null], ['PORT', 'session', 'session', 'api/.env'], ['SQL_URL', 'session', 'session', null],
+    ['ROLE', 'session', 'session', 'worker/.env'],
+  ], 'one row where the files agree, one a file naming its path where they differ');
+  assert.deepEqual(view.envFiles[1].table.map((row) => row.path ?? null), [null], 'a key of one file names no path');
+  assert.deepEqual((await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' })).envFiles, {
+    'app-env': { installation: 'LOG_LEVEL=warn\nAPI_TOKEN=x\n', personal: 'API_TOKEN=mine\n' },
+  }, 'a session is handed the key once: it writes it to each path');
+});
+
+test('the copy at start puts an embedding program\'s legacy env file of one repo into that repo\'s settings, under its name', async () => {
+  // Two repos that both have an api-env, which the store keeps under names of its own (`config.envFiles` `name` and `repo`).
+  const envFiles = [
+    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
+    { secret: 'tools-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'Acme/Tools' },
+    { secret: 'gone-7a8b9c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/gone' },
+    { secret: 'api-env', path: 'api/.env' },
+  ];
+  const secrets = memorySecrets({
+    'app-1a2b3c--api-env': 'FROM=app\n', 'tools-4d5e6f--api-env': 'FROM=tools\n', 'gone-7a8b9c--api-env': 'FROM=gone\n', 'api-env': 'FROM=every-repo\n',
+    'users/sam-ops/tools-4d5e6f--api-env': 'MINE=tools\n', 'users/sam-ops/app-1a2b3c--api-env': 'MINE=app\n',
+  });
+  const state = { people: { 'sam-ops': { files: { 'tools-4d5e6f--api-env': '2026-10-01T00:00:00.000Z', 'app-1a2b3c--api-env': '2026-10-01T00:00:00.000Z' } } } };
+  const tools = parseProject({ version: 1, envFiles: [{ path: 'api/.env', secret: 'api-env' }] });
+  const { store, repoSettings } = setup({ state, secrets, envFiles, files: { ...FILES, tools } });
+
+  const log = await captureLog(async () => {
+    assert.deepEqual(await repoSettings.migrate(), { copied: 2, ownCopied: 2, kept: 1, none: 0, done: 0, failed: 0 });
+  });
+  assert.equal(secrets.values.get('repos/app/env/api-env'), 'FROM=app\n', 'the repo\'s own entry wins over the one for every repo');
+  assert.equal(secrets.values.get('repos/tools/env/api-env'), 'FROM=tools\n');
+  assert.equal(secrets.values.get('users/sam-ops/repos/tools/env/api-env'), 'MINE=tools\n');
+  assert.equal(secrets.values.get('users/sam-ops/repos/app/env/api-env'), 'MINE=app\n');
+  assert.deepEqual([...secrets.values.keys()].filter((name) => name.startsWith('repos/') || name.includes('/repos/')).sort(), [
+    'repos/app/env/api-env', 'repos/tools/env/api-env', 'users/sam-ops/repos/app/env/api-env', 'users/sam-ops/repos/tools/env/api-env',
+  ], 'never under the store\'s name, nor into the default project for another repo');
+  assert.deepEqual(Object.keys(store.state.repoSettingsMigration.files), ['app-1a2b3c--api-env', 'tools-4d5e6f--api-env']);
+  assert.ok(log.some((line) => line.includes('legacy env files of a repo with no project, not copied') && line.includes('gone-7a8b9c--api-env')));
+
+  assert.deepEqual((await repoSettings.view('tools')).envFiles[0].legacy, { secret: 'tools-4d5e6f--api-env', copiedAt: '2026-11-12T10:00:01.000Z' });
+  assert.equal((await repoSettings.view('app')).envFiles[0].legacy.secret, 'app-1a2b3c--api-env');
+  assert.deepEqual((await repoSettings.forSession({ id: 'a1', repo: 'acme/tools', owner: 'sam-ops' })).envFiles, { 'api-env': { installation: 'FROM=tools\n', personal: 'MINE=tools\n' } });
+  assert.deepEqual((await repoSettings.forSession({ id: 'b2', repo: 'acme/app', owner: 'sam-ops' })).envFiles, { 'api-env': { installation: 'FROM=app\n', personal: 'MINE=app\n' } },
+    'each repo\'s session is handed its own api-env');
+});
+
 test('a value is kept only for an env file the project file names, and instructions holding a credential are refused', async () => {
   const { secrets, repoSettings } = setup({ files: { ...FILES, tools: new Error('GitHub did not answer') } });
   await assert.rejects(repoSettings.saveInstallation({ project: 'app', key: 'old-env', text: 'A=1', by: 'mia-dev' }), { status: 404, message: /has no env file with the key old-env/ });
@@ -500,4 +565,51 @@ test('a person\'s own value cleared after the copy stays cleared after the next 
   await repoSettings.migrate();
   assert.equal(secrets.values.has('users/sam-ops/repos/app/env/api-env'), false);
   assert.equal((await repoSettings.forSession({ id: 's2', project: 'app', owner: 'sam-ops' })).envFiles['api-env'], undefined);
+});
+
+test('two repos that both have an api-env: the old route, the clear and the Secrets page each follow the store name to its own repo', async () => {
+  // As an embedding program gives them: each repo's api-env kept under a store name of its own.
+  const envFiles = [
+    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
+    { secret: 'tools-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/tools' },
+  ];
+  const secrets = memorySecrets({
+    'app-1a2b3c--api-env': 'FROM=app\n', 'tools-4d5e6f--api-env': 'FROM=tools\n',
+    'users/sam-ops/app-1a2b3c--api-env': 'MINE=app\n', 'users/sam-ops/tools-4d5e6f--api-env': 'MINE=tools\n',
+  });
+  const state = { people: { 'sam-ops': { files: { 'app-1a2b3c--api-env': 'x', 'tools-4d5e6f--api-env': 'x' } } } };
+  const tools = parseProject({ version: 1, envFiles: [{ path: 'api/.env', secret: 'api-env', lines: ['PORT=8080'] }] });
+  const { store, config, repoSettings } = setup({ state, secrets, envFiles, files: { ...FILES, tools } });
+  await repoSettings.migrate();
+
+  assert.deepEqual(repoSettings.legacyState('tools-4d5e6f--api-env'), {
+    secret: 'tools-4d5e6f--api-env', path: 'api/.env', project: 'tools', repo: 'acme/tools', key: 'api-env', copiedAt: '2026-11-12T10:00:01.000Z', saved: true,
+  });
+  assert.equal(legacyFileRoute('/api/my/files/tools-4d5e6f--api-env', config).key, 'tools-4d5e6f--api-env');
+
+  // The old route: the tools repo's own lines, under the project file's name, and its old lines dropped.
+  const before = await repoSettings.legacyFile({ login: 'sam-ops', key: 'tools-4d5e6f--api-env' });
+  assert.deepEqual([before.text, before.sharedText, before.appended], ['MINE=tools\n', 'FROM=tools\n', ['PORT']]);
+  await repoSettings.legacyFile({ login: 'sam-ops', key: 'tools-4d5e6f--api-env', change: { text: 'MINE=tools-new\n' } });
+  assert.equal(secrets.values.get('users/sam-ops/repos/tools/env/api-env'), 'MINE=tools-new\n');
+  assert.equal(secrets.values.get('users/sam-ops/repos/app/env/api-env'), 'MINE=app\n', 'the other repo\'s are left alone');
+  assert.equal(secrets.values.has('users/sam-ops/tools-4d5e6f--api-env'), false, 'its old lines go, by the store\'s name');
+  assert.equal(secrets.values.get('users/sam-ops/app-1a2b3c--api-env'), 'MINE=app\n');
+  assert.deepEqual(store.state.people['sam-ops'].files, { 'app-1a2b3c--api-env': 'x', 'tools-4d5e6f--api-env': null });
+
+  // A clear of the tools repo's installation value stays cleared, by the store's name, and app's is copied as before.
+  await repoSettings.saveInstallation({ project: 'tools', key: 'api-env', text: '', by: 'mia-dev' });
+  assert.deepEqual(Object.keys(store.state.repoSettingsMigration.cleared), ['tools-4d5e6f--api-env']);
+  assert.deepEqual(await repoSettings.migrate(), { copied: 0, ownCopied: 0, kept: 1, none: 0, done: 2, failed: 0 });
+  assert.equal(secrets.values.has('repos/tools/env/api-env'), false);
+  assert.equal(secrets.values.get('repos/app/env/api-env'), 'FROM=app\n');
+
+  // The old route is refused as the repo's own route is, to someone who cannot write to that repo.
+  const { createRepoSettingsApi } = await import('./repoSettings.mjs');
+  const asked = [];
+  const forStart = async (login, name) => { asked.push(name); return name === 'app' ? { name } : null; };
+  const api = createRepoSettingsApi({ repoSettings, config, projectAccess: { view: async () => ({ projects: [] }), forStart } });
+  const res = { status: 0, writeHead(code) { this.status = code; }, end() {} };
+  await api({ method: 'GET', resume() {} }, res, { route: legacyFileRoute('/api/my/files/tools-4d5e6f--api-env', config), login: 'sam-ops' });
+  assert.deepEqual([res.status, asked], [403, ['tools']], 'checked against the tools repo, not the default one');
 });

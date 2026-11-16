@@ -3,7 +3,8 @@
 // Then open http://localhost:<port>/s/aaaa1111. CLAUDE.md says how to unfold the rail's stopped zones.
 // /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
 // analysis already written (devReviewSession.mjs). /s/abbaabba is running on a project with two apps, web and admin,
-// behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs.
+// behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs. /s/c0ffee11 has
+// a live Agent terminal, where ttyd and tmux are on the PATH (devTerminalSession.mjs).
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
@@ -20,6 +21,7 @@ import { currentName, envValue, isSettingName } from '../../shared/envNames.mjs'
 import { startDevAppsSession } from './devAppsSession.mjs';
 import { writeDevGh } from './devGh.mjs';
 import { startDevReview } from './devReviewSession.mjs';
+import { startDevTerminal } from './devTerminalSession.mjs';
 import { makeDevClone } from './devWoodshedClone.mjs';
 
 const port = process.argv[2] || '7690';
@@ -45,6 +47,8 @@ const REVIEW_ID = 'beadfeed';
 const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}` });
 const APPS_ID = 'abbaabba';
 const twoApps = await startDevAppsSession({ id: APPS_ID, token: `t${APPS_ID}` });
+const TERMINAL_ID = 'c0ffee11';
+const liveTerminal = await startDevTerminal({ id: TERMINAL_ID, terminalToken: `x${TERMINAL_ID}` });
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -154,6 +158,12 @@ const sessions = [
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
     ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
   }),
+  // Running, with a live Agent terminal (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find, copy,
+  // links and scrolling back on a real xterm. Its Terminal tab, Diff and app go nowhere.
+  ...(liveTerminal ? [session(TERMINAL_ID, 26703, 'A session with a live terminal', {
+    status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
+    endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port },
+  })] : []),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
   session('5a5a5a5a', 26700, 'A session starting', {
@@ -302,6 +312,7 @@ function startConsole() {
     }
     review.close();
     twoApps.close();
+    liveTerminal?.close();
     fs.rmSync(stateDir, { recursive: true, force: true });
     fs.rmSync(path.dirname(devClone), { recursive: true, force: true });
     process.exit(code ?? 0);
