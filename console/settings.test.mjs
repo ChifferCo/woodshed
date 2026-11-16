@@ -148,7 +148,7 @@ test('a session secret can be shown; the Anthropic key and the App key cannot', 
   await assert.rejects(settings.reveal('openai-api-key'), /write-only/);
   await assert.rejects(settings.reveal('api-env'), /no secret called/, 'an env file\'s old Terraform secret is not the page\'s');
   await assert.rejects(settings.replace('api-env', 'B=2\n'), /no secret called/);
-  assert.equal(store.values['woodshed-cloud/api-env'], 'A=1\n');
+  assert.equal(Object.entries(store.values).find(([key]) => key.endsWith('/api-env'))[1], 'A=1\n', 'the old Terraform secret is unchanged');
   await assert.rejects(settings.reveal('../other'), /no secret called/);
 });
 
