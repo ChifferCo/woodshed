@@ -133,6 +133,13 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   "Press ? for every shortcut" under it. Never on a phone. It replaces the control's `title`: never both.
 - Keys are written for the computer: `⇧⌘O` on a Mac, `Ctrl` `Shift` `O` elsewhere, one cap per key.
 
+## Find in a terminal
+
+- ⌘F (Ctrl+Shift+F off a Mac) over a terminal opens a find bar at its top right (`components/TerminalFind`), dark like
+  the terminal in both themes: the image viewer's `bar` ground and outlined `bar-well` buttons, never orange.
+- Every match is washed `bar-amber-line` and the one shown `bar-amber`, with the terminal's ground as its text. The
+  count says `3 of 12`, or `No match` in words, with the field's border `bar-amber-line`. Never a red.
+
 ## Iconography
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).

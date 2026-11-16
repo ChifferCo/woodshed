@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { databaseEnv, ENGINES } from './databases/index.mjs';
-import { PROJECT_FILE, SINGLE_APP_NAME, readRepoFile, secretEnvName } from './project.mjs';
+import { PROJECT_FILE, SINGLE_APP_NAME, envFileKeys, readRepoFile, secretEnvName } from './project.mjs';
 import { envKeys } from './repoSettings.mjs';
 import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
@@ -305,6 +305,12 @@ function envFileLine(file) {
   return `${file.path}${from}${file.defaults.length ? `, ${file.defaults.length} default${file.defaults.length > 1 ? 's' : ''}` : ''}`;
 }
 
+// The keys more than one env file names, whose values each of them is written.
+function sharedKeys({ envFiles }) {
+  const shared = envFileKeys(envFiles).filter(({ paths }) => paths.length > 1);
+  return shared.map(({ key, paths }) => `; ${paths.slice(0, -1).join(', ')} and ${paths.at(-1)} share ${key}`).join('');
+}
+
 /**
  * What a session would take from the project file, one line each, for someone (or their agent) writing one: it
  * throws as a session's start would, and with every problem repoProblems finds in the checkout.
@@ -321,7 +327,7 @@ export function checkSummary(project, repoDir) {
     `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
     `install variables: ${list(installVariables(project, repoDir))}`,
     `databases: ${list(project.databases.map((d) => d.engine))}`,
-    `env files: ${list(project.envFiles.map(envFileLine))}`,
+    `env files: ${list(project.envFiles.map(envFileLine))}${sharedKeys(project)}`,
     `from the session: ${list(takenFromSession(project))}`,
     appLine(project),
     `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,

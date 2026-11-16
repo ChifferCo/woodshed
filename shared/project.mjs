@@ -180,14 +180,30 @@ function envFile(value, field) {
   return { ...read, key: envFileKey(read) };
 }
 
-// One key a file: the console keeps each env file's values under it.
+// The console keeps each key's values once. Files that name one secret share them on purpose (`api/.env` and
+// `worker/.env` both from `app-env`, as before keys); a key made from a path is one file's alone.
 function envFileList(value) {
   const all = list(value, 'envFiles', envFile);
   all.forEach((file, i) => {
     const j = all.findIndex((other) => other.key === file.key);
-    if (j < i) fail(`envFiles[${j}] (${all[j].path}) and envFiles[${i}] (${file.path}) both have the key ${file.key}: give one a secret of its own`);
+    if (j === i || (file.secret && all[j].secret === file.secret)) return;
+    fail(`envFiles[${j}] (${all[j].path}) and envFiles[${i}] (${file.path}) both have the key ${file.key}: give one a secret, or give both the same secret to share its values`);
   });
   return all;
+}
+
+/**
+ * The env files by key, in the order each key first appears: files that name one secret share its values.
+ * @param {{path: string, key: string}[]} envFiles  parseProject's
+ * @returns {{key: string, paths: string[]}[]}
+ */
+export function envFileKeys(envFiles) {
+  const byKey = new Map();
+  for (const file of envFiles) {
+    if (!byKey.has(file.key)) byKey.set(file.key, { key: file.key, paths: [] });
+    byKey.get(file.key).paths.push(file.path);
+  }
+  return [...byKey.values()];
 }
 
 // Written into SQL and into the dump commands as it is, so only a plain name, or `schema.name` where one may have a
