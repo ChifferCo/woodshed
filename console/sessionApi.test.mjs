@@ -147,6 +147,26 @@ test('a shared session gets its own databases and nothing else, waiting while th
     'where the console makes no databases, the environment names one');
 });
 
+test('a shared session gets its starter\'s plan from a console that makes no databases, and a 404 on the team key', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'starting', token: 'allen-plan', owner: null, startedBy: 'allen', plan: 'allen' },
+    { id: 'bbbbbbbb', status: 'starting', token: 'team-key', owner: null, startedBy: 'mia', plan: null },
+    { id: 'cccccccc', status: 'starting', token: 'switched-off', owner: null, startedBy: 'ana', plan: 'ana' },
+  ];
+  const tokens = { allen: 'sk-ant-oat01-allen', ana: 'sk-ant-oat01-ana' };
+  const userSettings = { claudeToken: async (login) => tokens[login] ?? null, usesOwnTokenForShared: (login) => login !== 'ana' };
+  for (const databases of [{ available: false }, null]) {
+    const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, databases, userSettings });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => server.close());
+    const settings = (token) => request(server.address().port, { path: '/settings', authorization: `Bearer ${token}` });
+    assert.deepEqual(await settings('allen-plan'), { status: 200, body: { plan: 'allen' } }, 'the plan, no database');
+    assert.equal((await settings('team-key')).status, 404, 'no plan: the 404 an older image reads as the environment\'s databases');
+    assert.equal((await settings('switched-off')).status, 404, 'switched off since the launch: the team key');
+  }
+});
+
 test('a private session whose owner connected GitHub gets their own token; anyone else the installation token', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'shared-token', owner: null },

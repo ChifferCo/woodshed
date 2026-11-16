@@ -240,10 +240,14 @@ export function createSessionApi({
 
 // A shared session's own databases, which the console starts copying as the session starts: 503 until they are made.
 // With them, whose plan it runs on, when the fleet decided at launch that it runs on its starter's.
+// A console that makes no databases still answers the plan, as for a review: its 404 is kept for a session on no plan,
+// which an image from before this read as "the environment's databases stay".
 async function sharedSettingsReply(res, session, databases, userSettings) {
   if (!databases?.available) {
-    console.warn('sessionApi: settings refused, a shared session has no owner', { sessionId: session.id });
-    return reply(res, 404, { error: 'a shared session has no personal settings' });
+    const onPlan = Boolean(await starterToken(session, userSettings));
+    console.log('sessionApi: settings handed out', { sessionId: session.id, owner: null, database: null, plan: onPlan ? session.plan : null });
+    if (onPlan) return reply(res, 200, { plan: session.plan });
+    return reply(res, 404, { error: 'a shared session has no personal settings, and this console makes it no databases' });
   }
   const { status, database, error } = await databases.sessionDatabase(session.id);
   if (status === 'working') return reply(res, 503, { error: 'its databases are still being copied' });

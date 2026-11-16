@@ -535,21 +535,34 @@ useDatabaseFrom() {
 DATABASE_WAIT_SECONDS=600
 # The console's /settings answer, between consoleCall and its reader, which deletes it: it holds a database password.
 SETTINGS_ANSWER=/tmp/woodshed-settings.json
+# The Claude plan a shared session runs on, asked once from /settings when the console makes it no databases: a review,
+# a session whose environment already names its databases (the docker launcher, a pool machine's own), or an
+# installation that hosts none. A 404 or no answer is the team key, as before.
+fetchStarterPlan() {
+  [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  local code
+  code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+  [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
+  rm -f "$SETTINGS_ANSWER"
+  [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
+  return 0
+}
+
 fetchSessionDatabases() {
   # A review session reads the diff and runs no app, so the console makes it no databases: it asks once only for the
   # Claude plan it runs on (the /settings answer's .plan), and never waits on databases.
   if [ "${SESSION_MODE:-}" = review ]; then
-    [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
-    local code
-    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
-    [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
-    rm -f "$SETTINGS_ANSWER"
-    [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
+    fetchStarterPlan
     return 0
   fi
-  [ "${SESSION_KIND:-}" != private ] && [ -z "$(databases given)" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  [ "${SESSION_KIND:-}" != private ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  if [ -n "$(databases given)" ]; then
+    fetchStarterPlan
+    return 0
+  fi
   if [ -z "$(databases hosted)" ]; then
     log "No databases to fetch" "(the installation hosts no database engine)"
+    fetchStarterPlan
     return 0
   fi
   local answer code start=$SECONDS
@@ -563,17 +576,19 @@ fetchSessionDatabases() {
     [ $((SECONDS - start)) -lt "$DATABASE_WAIT_SECONDS" ] || die "the session's databases were not ready after $DATABASE_WAIT_SECONDS s (last status $code)"
     sleep 2
   done
-  # A console that makes no databases: the environment's stay.
-  if [ "$code" = 404 ]; then
+  # A console that makes no databases: the environment's stay. It answers 200 with only the plan when the session
+  # runs on its starter's.
+  if [ "$code" = 404 ] || { [ "$code" = 200 ] && ! jq -e '.database' <<< "$answer" > /dev/null 2>&1; }; then
     log "WARNING: the console made no databases for this session, using the environment's"
-    return 0
+  else
+    [ "$code" = 200 ] || die "could not get the session's databases from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
+    useDatabaseFrom "$answer"
+    log "Session's databases fetched" "(database: $WOODSHED_DB_NAME, waited: $((SECONDS - start)) s)"
   fi
-  [ "$code" = 200 ] || die "could not get the session's databases from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
-  useDatabaseFrom "$answer"
-  log "Session's databases fetched" "(database: $WOODSHED_DB_NAME, waited: $((SECONDS - start)) s)"
   # Whoever started it switched on their own Claude for the shared sessions they start, and has a token saved.
-  STARTER_PLAN=$(jq -r '.plan // empty' <<< "$answer")
-  if [ -n "$STARTER_PLAN" ]; then log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"; fi
+  [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$answer")
+  if [ -n "${STARTER_PLAN:-}" ]; then log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"; fi
+  return 0
 }
 
 OWN_CLAUDE_TOKEN_FILE=$HOME/.config/woodshed/claude-token

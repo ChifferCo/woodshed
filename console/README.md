@@ -630,7 +630,9 @@ login as the session's `plan`, which the Shared page, the rail, the session's
 **Details ▾** and the start comment show (`◆ Mona Octocat's Claude`, the start comment
 with `@login`, or `Team key`). The
 session API's `/settings` answer tells that session its `plan`, and the
-entrypoint has claude go through the proxy on it. The token never reaches a
+entrypoint has claude go through the proxy on it. It asks whether or not the
+console makes the session databases (a console with no db-admin, or a project
+with no Postgres or Mongo, answers `{plan}` alone, and a 404 on the team key). The token never reaches a
 shared session: anyone signed in who opens it can type into it, and spends
 that person's plan while it runs, but cannot take the token away. So the
 Artifact tool does not work there, nor on the team key.
