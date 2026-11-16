@@ -81,6 +81,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Show only what a person can do or is waiting on: no "signed in" row, no step for something the console does by itself, and Connect GitHub stays on My settings.
 - The same card fills the pane when New session is pressed before a Claude token or a Codex sign-in is saved and the databases are ready.
 
+## A repo that needs setup
+
+- A repo sessions cannot start on is a blocker card (`components/BlockerCard`): the repo, the word **Needs setup**
+  (`pill is-warn`), the reason in one sentence, then the fix as numbered steps for an admin, or whom to ask and a
+  message with **Copy** for anyone else. Its links are `btn-plain`, never orange.
+- New session never opens on it while another repo can start. The repo picker is always shown, the only repo as text
+  with Add a repo (admin) or a line saying an admin can connect another; a blocked repo stays in the list with
+  `— needs setup`, and picking it puts the card in place of the prompt and Start. Nothing on the rail or the New
+  session button changes for it.
+- Console settings' Repos card says **Ready** (`pill is-ok`) or **Needs setup** on each row, with the card's reason and
+  fix under a row that needs it.
+
 ## Checklists
 
 - A job a person waits on, made of steps (a session's start, Restore a dump), is a checklist: done, now, next and

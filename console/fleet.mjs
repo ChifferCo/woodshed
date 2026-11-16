@@ -13,6 +13,7 @@ import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
+import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
@@ -226,11 +227,13 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `pullWebhooksFlowing`: pull request webhooks are arriving, so a waiting pull request is read only when one comes,
  *   or every `config.fallbackPollMs` (pullWebhooks.mjs)
  *   `pullRequests`: the repo's project file's gates for a pull request, from the default branch (projectFile.mjs)
+ *   `projectBlocker(project)`: why no session that gets databases can start on that project, a blocker, or null
+ *   (databaseGate.mjs)
  */
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
-  pullWebhooksFlowing = () => false, pullRequests = async () => null, databasesRefusal = async () => null, githubFor = null,
+  pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null,
 }) {
   const { state } = store;
@@ -440,10 +443,13 @@ export function createFleet({
   }) {
     refuseWithoutRepo(project, { kind, trigger });
     // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted.
-    const refused = kind === 'ask' || review ? null : await databasesRefusal();
-    if (refused) {
-      console.warn('fleet: session refused, its databases are not hosted', { kind, number, trigger, why: refused });
-      throw shown(`Not started: ${refused}`);
+    // A question from Slack, and a review that only reads the diff, get no databases, so they need none hosted; nor
+    // anything else of the project's start, so a blocker does not hold them back.
+    const blocked = kind === 'ask' || review ? null : await projectBlocker(project);
+    if (blocked) {
+      const why = blockerText(blocked);
+      console.warn('fleet: session refused, its project is not ready', { kind, number, trigger, why, ...projectField(project) });
+      throw shown(`Not started: ${why}`);
     }
     const id = newId();
     const attached = attach ? await attach(id) : 0;
@@ -1347,16 +1353,17 @@ export function createFleet({
       return { outcome: 'sent', sessionId: route.sessionId };
     }
     if (route.action === 'resume') return resumeFromGitHub(find(route.sessionId), trigger, gh);
-    const refused = await databasesRefusal();
-    if (refused) return refuseForDatabases(trigger, refused, gh);
+    const blocked = await projectBlocker(project);
+    if (blocked) return refuseForDatabases(trigger, blockerText(blocked), gh, project);
     const session = await startFromGitHub({ ...trigger, resumeBranch: route.resumeBranch, project });
     return { outcome: 'started', sessionId: session.id };
   }
 
-  // The project file needs a database engine this installation does not host: said once on the issue, as a refusal.
-  async function refuseForDatabases({ number, login, trigger }, why, gh = github) {
-    console.warn('fleet: trigger refused, its databases are not hosted', { number, login, trigger, why });
-    const posted = await safely('refusal comment', () => gh.comment(number, `${config.consoleName || DEFAULT_CONSOLE_NAME} cannot start a session here: ${why}.`));
+  // The project is not ready (databaseGate.mjs: an engine it needs is not hosted, or the program's hook said why):
+  // said once on the issue, as a refusal.
+  async function refuseForDatabases({ number, login, trigger }, why, gh = github, project = defaultProject(config)) {
+    console.warn('fleet: trigger refused, its project is not ready', { number, login, trigger, why, ...projectField(project) });
+    const posted = await safely('refusal comment', () => gh.comment(number, `${config.consoleName || DEFAULT_CONSOLE_NAME} cannot start a session here: ${why}`));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
       store.save();
@@ -1531,8 +1538,8 @@ export function createFleet({
         return { outcome: 'waiting', reason: 'the review has not approved the latest commit' };
       }
     }
-    const refused = await databasesRefusal();
-    if (refused) return ignored(refused);
+    const blocked = await projectBlocker(project);
+    if (blocked) return ignored(blockerText(blocked));
     // One QA comment per pull request: a later run writes over the last one's.
     const commentId = state.sessions.filter((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.commentId).at(-1)?.qa.commentId ?? null;
     const session = await createSession({

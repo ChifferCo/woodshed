@@ -303,9 +303,20 @@
       tunnelStatus);
   }
 
+  // Each repo whose sessions cannot start (databaseGate.mjs), where the console makes no databases of yours to show
+  // them beside: every other repo still starts.
+  function blockersCard() {
+    const blockers = Object.values(me.projectBlockers ?? {});
+    if (!blockers.length) return null;
+    return h('section', { class: 'set-card' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Repos that need setup')),
+      h('p', { class: 'sub' }, 'Sessions cannot start on these yet. Every other repo still starts.'),
+      ...blockers.map((blocker) => W.blockerCard(blocker)));
+  }
+
   function databasesCard() {
     const db = me.databases;
-    if (!db?.available) return null;
+    if (!db?.available) return blockersCard();
     const pill = {
       none: h('span', { class: 'pill' }, 'Not made yet'),
       working: h('span', { class: 'pill is-warn' }, DB_WORK[db.action] ?? 'Working…'),
@@ -331,7 +342,8 @@
     return h('section', { class: 'set-card' },
       h('div', { class: 'set-head' }, h('h2', null, 'Your databases'), pill),
       h('p', { class: 'sub' }, ...databasesLine(db)),
-      me.databasesRefusal && h('p', { class: 'form-error', role: 'alert' }, `No session can start: ${me.databasesRefusal}. Whoever runs this console adds the engine, or the project file drops that database.`),
+      // Each repo whose sessions cannot start, with why and its fix (databaseGate.mjs); every other repo still starts.
+      ...Object.values(me.projectBlockers ?? {}).map((blocker) => W.blockerCard(blocker)),
       db.status === 'none' && !me.claudeToken.set && h('p', { class: 'sub' }, 'They are made when you save your Claude token.'),
       db.status === 'working' && h('p', { class: 'sub' }, `Started ${W.when(db.startedAt)}. Copying takes about a minute, and New session waits for it.`),
       db.status === 'failed' && h('p', { class: 'form-note is-error' }, `The last try failed: ${db.error ?? 'no reason given'}. The db-admin task's log in CloudWatch says more.`),
