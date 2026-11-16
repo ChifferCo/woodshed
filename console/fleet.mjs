@@ -12,7 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
-import { reviewVerdict } from './pullGates.mjs';
+import { LEFT_TO_A_PERSON, reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
@@ -60,7 +60,7 @@ function needsPerson(review, tier) {
 }
 
 function personLine(tier) {
-  return `The review found nothing to change, but this is ${tier} merge risk, so a person approves it: the AI review approves up to the project's \`pullRequests.review.approvesUpTo\`.`;
+  return `The review found nothing to change, but this is ${tier} merge risk, ${LEFT_TO_A_PERSON}: the AI review approves up to the project's \`pullRequests.review.approvesUpTo\`.`;
 }
 
 const MERGE_RISK_TIERS = '**High** when it touches any of: the repo\'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests that add or strengthen checks, docs or a small tested fix. **Medium** is everything between.';
@@ -1737,7 +1737,10 @@ export function createFleet({
     // Riskier than the project lets the review approve by itself (pullRequests.review.approvesUpTo): it finds nothing to
     // change, and says so as a comment, so a person's approval is what lets it merge.
     const person = conclusion === 'APPROVE' && needsPerson(session.review, mergeRisk?.tier);
-    if (person) console.log('fleet: review approval left to a person, merge risk above approvesUpTo', { id: session.id, number: session.number, tier: mergeRisk.tier, approvesUpTo: session.review.approvesUpTo });
+    if (person) {
+      console.log('fleet: review approval left to a person, merge risk above approvesUpTo', { id: session.id, number: session.number, tier: mergeRisk.tier, approvesUpTo: session.review.approvesUpTo });
+      await dismissEarlierApprovals(session, gh, mergeRisk.tier);
+    }
     const sent = person && !hold
       ? { conclusion: 'COMMENT', summary: `${summary}\n\n${personLine(mergeRisk.tier)}`.trim() }
       : { conclusion, summary };
@@ -1759,6 +1762,22 @@ export function createFleet({
     const reason = qa?.reason ?? 'no QA session could start';
     console.warn('fleet: held approval released, QA did not start', { id: session.id, number: session.number, reason });
     await safely('held approval without QA', () => releaseHeldApproval(project, session.number, { sha, failed: false, qaLine: `QA did not start: ${reason}.` }));
+  }
+
+  // GitHub counts a reviewer's latest approval and skips a comment, so the review's approval of an earlier, less risky
+  // commit would still satisfy a required review unless the branch rule dismisses stale ones: dismiss it here.
+  async function dismissEarlierApprovals(session, gh, tier) {
+    const author = session.review.author;
+    if (!author) return;
+    const earlier = ((await safely('reviews before leaving one to a person', () => gh.reviews(session.number))) ?? [])
+      .filter((r) => r.state === 'APPROVED' && r.user?.login === author);
+    let dismissed = 0;
+    for (const r of earlier) {
+      const ok = await safely('earlier approval dismissed', () => gh.dismissReview(session.number, r.id, `A later commit is ${tier} merge risk, which a person approves.`));
+      if (ok !== null) dismissed += 1;
+    }
+    if (earlier.length) console.log('fleet: earlier review approvals dismissed', { id: session.id, number: session.number, found: earlier.length, dismissed });
+    if (dismissed < earlier.length) console.warn('fleet: an earlier review approval still counts, GitHub refused to dismiss it', { id: session.id, number: session.number });
   }
 
   // QA runs on this pull request here (pullRequests.qa.runner: woodshed, and it carries the QA label), so the review's

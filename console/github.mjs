@@ -482,6 +482,10 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
+    /** Dismisses a review: an approval then no longer counts toward a required review. */
+    async dismissReview(number, id, message) {
+      await ghApi(['--method', 'PUT', `repos/${currentRepo()}/pulls/${number}/reviews/${id}/dismissals`, '-f', `message=${message}`, '-f', 'event=DISMISS']);
+    },
     /** @returns {Promise<{id: string, isResolved: boolean, isOutdated: boolean, commentId: number|null, author: string}[]>} */
     async reviewThreads(number) {
       const [owner, name] = currentRepo().split('/');

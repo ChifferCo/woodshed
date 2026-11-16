@@ -791,6 +791,12 @@ first when it carries the QA label, and its result goes in the same comment. A r
 does. Logged as `fleet: review approval left to a person, merge risk above approvesUpTo` with the tier. A merge risk
 the review did not name approves as before. `High` turns this off.
 
+GitHub counts a reviewer's latest approval and skips its comments, so the review first dismisses its own approvals of
+earlier commits on the pull request (`fleet: earlier review approvals dismissed`; a branch rule that lets only some
+people dismiss can refuse, logged as a warning). The gates (`pullGates.mjs`, `reviewVerdict`) then take an approval of
+that commit by someone with write access as the review's verdict, so the Slack post and the decision brief go out once
+a person approves.
+
 ## Webhook events, secrets and the GitHub App's webhook
 
 In AWS the console has two more pages, under Console in the menu under your

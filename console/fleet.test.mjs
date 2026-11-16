@@ -2740,3 +2740,17 @@ test('approvesUpTo sets the line: High approves everything, Low leaves Medium to
   assert.equal(await eventFor('Low', 'Low'), 'APPROVE');
   assert.equal(await eventFor('Medium', null), 'APPROVE');
 });
+
+test('leaving a commit to a person dismisses the review\'s own earlier approvals, which GitHub would still count', async () => {
+  const t = reviewSetup();
+  const dismissed = [];
+  t.github.reviews = async () => [
+    { id: 11, user: { login: REVIEW_GATES.review.author }, state: 'APPROVED', commit_id: 'b'.repeat(40) },
+    { id: 12, user: { login: 'ada' }, state: 'APPROVED', commit_id: 'b'.repeat(40) },
+  ];
+  t.github.dismissReview = async (number, id, message) => { dismissed.push([number, id, message]); };
+  await t.fleet.reviewOnTag({ number: 7 });
+  await t.fleet.reviewFinished(t.fleet.sessions()[0], HIGH_RESULT);
+  assert.deepEqual(dismissed, [[7, 11, 'A later commit is High merge risk, which a person approves.']], 'only the review\'s own, never a person\'s');
+  assert.deepEqual(t.calls.reviews.map((r) => r.event), ['COMMENT']);
+});
