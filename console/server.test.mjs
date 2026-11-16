@@ -1052,6 +1052,31 @@ test('a person\'s own whole files are read and saved for the signed-in login onl
   assert.equal(JSON.stringify(await failed.json()).includes('AccessDenied'), false, 'the store\'s error stays in the log');
 });
 
+test('an own-files save may be as big as the secret store\'s limit allows, and a smaller store refuses a body it could not hold', async (t) => {
+  const saved = [];
+  const settingsOf = (limit) => ({
+    view: () => ({ files: {}, ownFiles: [], setUp: true, available: true }),
+    maxOwnFilesBytes: () => limit,
+    saveOwnFile: async (login, file, text) => { saved.push(text.length); return { [file]: 'kept' }; },
+  });
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'mia-dev' }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const serve = async (userSettings) => {
+    const server = http.createServer((req, res) => { createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings })(req, res); });
+    t.after(() => server.close());
+    return listen(server);
+  };
+  const text = 'x'.repeat(300_000);
+
+  const roomy = await serve(settingsOf(1_048_576));
+  assert.equal((await post(roomy, '/api/my/own-files', { path: 'a', text }, as)).status, 200);
+  assert.deepEqual(saved, [300_000]);
+  const small = await serve(settingsOf(65_536));
+  assert.notEqual((await post(small, '/api/my/own-files', { path: 'a', text }, as)).status, 200, 'over what 64 KB could hold, even escaped');
+  assert.deepEqual(saved, [300_000], 'the small store never saw it');
+});
+
 test('Connect GitHub starts a sign-in that keeps its token, and the git identity is the signed-in person\'s', async (t) => {
   const started = [];
   const done = [];

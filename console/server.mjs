@@ -133,6 +133,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
@@ -219,7 +220,7 @@ const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
-// A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
+// A whole .env file, JSON-escaped, under Secrets Manager's 64 KB; own files' limit follows the secret store's.
 const MAX_FILE_BODY_BYTES = 160 * 1024;
 const DATABASES_NOT_READY = 'your own databases are not ready yet: My settings shows how far along they are';
 const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
@@ -1228,7 +1229,7 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch || pathname === MY_OWN_FILES_PATH ? MAX_FILE_BODY_BYTES : undefined);
+      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : pathname === MY_OWN_FILES_PATH ? ownFilesBodyLimit(userSettings?.maxOwnFilesBytes?.()) : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }

@@ -553,8 +553,9 @@ each of the repo's env files (the project file's `envFiles` that have a `secret`
 **Your own files**, on My settings, are whole files of your own, by their path in the repo (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
 writes into its checkout at start:
-- All of them are one secret, `<prefix>/users/<login>/own-files` (JSON, path to text; 64 KB and 20 files at
-  most). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
+- All of them are one secret, `<prefix>/users/<login>/own-files` (JSON, path to text; 20 files at most, and the
+  secret store's `maxValueBytes` for the JSON: 64 KB in AWS, 1 MB in the local provider, 64 KB for a store that declares
+  none; My settings shows it). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
 - A path is checked as it is saved and again in the session (`shared/ownFiles.mjs`): inside the repo, no `..`, not
   under `.git`, and not one of the env files above, which take your lines instead.
 - The session writes a file only where git ignores it and does not track it, mode 600, so it cannot reach a commit
@@ -1307,6 +1308,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   under `users/<login>/<secret>`, so two repos' `api-env` never share them; the session API hands a private session the
   lines of its own repo's files under `name`, which the session's `writeEnvFiles` reads. The shared text is the
   launcher's to give, in `name`'s variable (`API_ENV`).
+
+- `maxValueBytes` on the program's secret store (`providers/README.md`, "A secret store's limit on one value"): the most
+  bytes it holds in one value. Your own files, one secret per person, are held to it (64 KB when the store declares
+  none), so a store with no such cap, such as one sealed in a database, should declare its own.
 
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).

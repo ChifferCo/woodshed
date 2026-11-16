@@ -115,6 +115,7 @@ export function createSecretSlot({ stateDir, specs, aws = awsCli }) {
   return {
     configure, describe,
     configured: () => backend !== null,
+    get maxValueBytes() { return backend?.maxValueBytes; },
     list: async () => (backend ? backend.list() : []),
     read: async (name) => (backend ? backend.read(name) : null),
     write, save,

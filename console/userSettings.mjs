@@ -19,7 +19,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
-import { MAX_OWN_FILES, MAX_OWN_FILES_BYTES, ownFilePath, ownFilePathProblem } from '../shared/ownFiles.mjs';
+import { DEFAULT_MAX_VALUE_BYTES, MAX_OWN_FILES, ownFilePath, ownFilePathProblem } from '../shared/ownFiles.mjs';
 const { loginKey } = logins;
 
 const CLAUDE_TOKEN = 'claude-token';
@@ -232,10 +232,16 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
       files,
+      ownFilesMaxBytes: maxOwnFilesBytes(),
       ownFiles: Object.entries(record?.ownFiles ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
       setUp: Boolean(record),
       available: Boolean(secrets) && secrets.configured?.() !== false,
     };
+  }
+
+  /** @returns {number}  the most bytes the secret store holds in one value; a store that declares none holds 64 KB */
+  function maxOwnFilesBytes() {
+    return secrets?.maxValueBytes ?? DEFAULT_MAX_VALUE_BYTES;
   }
 
   function requireFile(key) {
@@ -322,7 +328,11 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     else delete files[key];
     if (Object.keys(files).length > MAX_OWN_FILES) throw Object.assign(new Error(`you can keep ${MAX_OWN_FILES} files at most`), { shown: true });
     const json = JSON.stringify(files);
-    if (Buffer.byteLength(json) > MAX_OWN_FILES_BYTES) throw Object.assign(new Error('your files together are over the 64 KB a secret can hold'), { shown: true });
+    const limit = maxOwnFilesBytes();
+    if (Buffer.byteLength(json) > limit) {
+      console.warn('userSettings: own files refused, over the secret store\'s limit', { login, bytes: Buffer.byteLength(json), limit });
+      throw Object.assign(new Error(`your files together are over the ${Math.floor(limit / 1024)} KB this console's secret store holds`), { shown: true });
+    }
     if (Object.keys(files).length) await secrets.save(userSecretName(login, OWN_FILES), json, `Woodshed: @${login}'s own files, for their My Woodshed sessions only`);
     else await secrets.remove(userSecretName(login, OWN_FILES));
     const record = recordFor(login);
@@ -480,7 +490,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles, ownWholeFiles, saveOwnFile,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles, ownWholeFiles, saveOwnFile, maxOwnFilesBytes,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

@@ -142,3 +142,7 @@ test('a value saved while the sealing pass seals that secret\'s plain file is th
   await Promise.all([store.write('registry-token', 'a'), store.remove('registry-token')]);
   assert.equal(await store.read('registry-token'), null, 'a removal after a write, in that order, leaves nothing');
 });
+
+test('the store declares how much one value may hold', () => {
+  assert.equal(createSecretStore({ dir: tmpDir(), key: KEY, specs: SECRETS }).maxValueBytes, 1_048_576);
+});

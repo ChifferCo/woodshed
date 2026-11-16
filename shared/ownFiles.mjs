@@ -5,8 +5,17 @@
 
 export const MAX_OWN_FILES = 20;
 export const MAX_OWN_FILE_PATH = 200;
-// Every file in one secret, as JSON: Secrets Manager's limit on one value.
-export const MAX_OWN_FILES_BYTES = 65_536;
+// Every file in one secret, as JSON. What a store with no declared `maxValueBytes` holds: Secrets Manager's limit on one value.
+export const DEFAULT_MAX_VALUE_BYTES = 65_536;
+// A save's JSON-escaped body can be bigger than the files in it; the page's body limit is never below this.
+const MIN_BODY_BYTES = 160 * 1024;
+const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+/** @returns {number}  the most bytes a save's request body may have, for a store holding `maxValueBytes` in one value */
+export function ownFilesBodyLimit(maxValueBytes) {
+  const limit = Number.isFinite(maxValueBytes) && maxValueBytes > 0 ? maxValueBytes : DEFAULT_MAX_VALUE_BYTES;
+  return Math.min(MAX_BODY_BYTES, Math.max(MIN_BODY_BYTES, Math.ceil(limit * 2.5)));
+}
 
 /**
  * @param {unknown} value  a path in the repo, as the person typed it

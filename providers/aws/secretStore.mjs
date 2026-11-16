@@ -99,5 +99,6 @@ export function createSecretStore({ prefix, aws, specs }) {
     }
   }
 
-  return { list, read, write, save, remove };
+  // Secrets Manager's limit on one value.
+  return { list, read, write, save, remove, maxValueBytes: 65_536 };
 }
