@@ -23,6 +23,11 @@ Console settings → Repos → *repo* (`/console-settings/repos/<project>`). A l
 - While a legacy secret may still be read, a `cap-note` says which one the sessions read.
 - Several env files are tabs above it (`file-tabs`), labelled by path, `•` on one with a saved value; `?file=<key>`
   opens one, so a link can point at it.
+- Env files that name one secret share its key and its values: one tab, labelled `app-env → api/.env, worker/.env`,
+  whose head is that label, and a `cap-note` under it saying the values are written to both files and each keeps its
+  own defaults and lines. From the repo and Set by the session show each path (`meta` mono, 600) over its own
+  defaults or keys where the files differ, and once where they agree. The table has one row for a key where the files
+  agree, and one a file where they differ, the key followed by `in <path>` in `meta`.
 - Instructions use the same box without the table: From the repo links its `rules` and `setup` files, and the
   editable layer counts bytes against the 16 KB limit as it is typed (`meta`, `bad` once over, and Save turns off).
 - No new colours. Orange only on Save.

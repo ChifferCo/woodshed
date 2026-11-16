@@ -1,4 +1,4 @@
-<!-- @dsCard group="Cards" height=620 subtitle="An env file's layers on a repo's settings, and which one wins each key" -->
+<!-- @dsCard group="Cards" height=1000 subtitle="An env file's layers on a repo's settings, and which one wins each key" -->
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
 <style>
  body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font:14px/1.5 "Red Hat Display",system-ui,sans-serif}
@@ -23,6 +23,8 @@
  th{text-align:left;padding:7px 12px;background:var(--stopped);font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--label)}
  td{padding:7px 12px;border-top:1px solid var(--line-soft)} td.m{color:var(--sub);font:11.5px "JetBrains Mono",monospace}
  .tb{border:1px solid var(--line);border-radius:8px;overflow-x:auto}
+ .path{font:600 12px "JetBrains Mono",monospace;color:var(--sub)} .rp{color:var(--meta);font-weight:400}
+ .gap{height:16px}
 </style>
 <div class="box">
  <div class="head"><b>api/.env</b><span class="meta">key api-env</span></div>
@@ -42,5 +44,20 @@ API_TOKEN=…</textarea>
    <tr><td class="mono">LOG_LEVEL</td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
    <tr><td class="mono">PORT</td><td class="m"></td><td class="m">✓</td><td class="m">✓</td><td><span class="tag wins">Session</span></td></tr>
    <tr><td class="mono">ANTHROPIC_API_KEY</td><td class="m"></td><td class="m"></td><td class="m">✓ if set</td><td><span class="tag wins">Session, if set</span></td></tr>
+  </tbody></table></div></div>
+</div>
+<div class="gap"></div>
+<div class="box">
+ <div class="head"><b>app-env → api/.env, worker/.env</b><span class="meta">key app-env</span></div>
+ <div class="layer"><p class="note">These values are written to both files, <code>api/.env</code>, <code>worker/.env</code>, which name the secret app-env. Each keeps its own defaults and lines.</p></div>
+ <div class="layer"><div class="lh"><span class="tag">Repo</span><b>From the repo</b></div>
+  <p class="path">api/.env</p><pre>LOG_LEVEL=info</pre><p class="path">worker/.env</p><p class="meta">No defaults.</p></div>
+ <div class="layer"><div class="lh"><span class="tag">Session</span><b>Set by the session</b></div>
+  <p class="path">api/.env</p><p>Its lines: <code>PORT</code>, <code>SQL_URL</code>.</p><p class="path">worker/.env</p><p>Its lines: <code>ROLE</code>, <code>SQL_URL</code>.</p></div>
+ <div class="layer"><b>What a session gets</b>
+  <div class="tb"><table><thead><tr><th>Key</th><th>Repo</th><th>Installation</th><th>Session</th><th>Wins</th></tr></thead><tbody>
+   <tr><td class="mono">LOG_LEVEL <span class="rp">in api/.env</span></td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
+   <tr><td class="mono">LOG_LEVEL <span class="rp">in worker/.env</span></td><td class="m"></td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
+   <tr><td class="mono">SQL_URL</td><td class="m"></td><td class="m"></td><td class="m">✓</td><td><span class="tag wins">Session</span></td></tr>
   </tbody></table></div></div>
 </div>

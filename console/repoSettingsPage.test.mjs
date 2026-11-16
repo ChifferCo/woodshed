@@ -160,6 +160,42 @@ test('an env file shows its key and path, the repo\'s defaults, the session\'s w
   assert.ok(editorOf(app, 'env-api-env'), 'nothing saved yet: the editor is open, empty');
 });
 
+// api/.env and worker/.env both name app-env, each with lines of its own; web/.env.local is keyed by its path.
+const SHARED_FILE = parseProject({
+  version: 1, env: {},
+  envFiles: [
+    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
+    { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
+    { path: 'web/.env.local', lines: ['PORT=5173'] },
+  ],
+});
+
+test('env files that share a key are one tab naming both paths, with a note, each file\'s defaults and lines, and its rows where they differ', async () => {
+  const { app, calls, secrets } = await loadPage({ file: SHARED_FILE, envFiles: [] });
+  assert.deepEqual(walk(app).filter((e) => e.tag === 'button' && e.attrs['aria-pressed']).map((b) => textOf(b)), ['app-env → api/.env, worker/.env', 'web/.env.local']);
+  const text = textOf(app);
+  assert.match(text, /These values are written to both files, api\/\.env, worker\/\.env, which name the secret app-env\. Each keeps its own defaults and lines\./);
+  assert.match(text, /From the repoapi\/\.envLOG_LEVEL=infoworker\/\.envNo defaults\./, 'each file\'s defaults under its path');
+  assert.match(text, /api\/\.envIts lines: PORT, SQL_URL\.worker\/\.envIts lines: ROLE, SQL_URL\./);
+  assert.deepEqual(tableRows(app), [
+    ['LOG_LEVEL in api/.env', '✓', '', '', 'Repo'],
+    ['PORT in api/.env', '', '', '✓', 'Session'],
+    ['SQL_URL', '', '', '✓', 'Session'],
+    ['ROLE in worker/.env', '', '', '✓', 'Session'],
+  ]);
+
+  await type(app, 'env-app-env', 'LOG_LEVEL=warn\n');
+  button(app, 'Save').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/repos/app/env/app-env', body: { text: 'LOG_LEVEL=warn\n' } });
+  assert.deepEqual([...secrets.values.keys()], ['repos/app/env/app-env'], 'one value for both files');
+  assert.match(textOf(app), /writes them into api\/\.env and worker\/\.env;/);
+  assert.deepEqual(tableRows(app).slice(0, 2), [['LOG_LEVEL in api/.env', '✓', '✓', '', 'Installation'], ['LOG_LEVEL in worker/.env', '', '✓', '', 'Installation']]);
+
+  button(app, 'web/.env.local').listeners.click();
+  assert.doesNotMatch(textOf(app), /These values are written to/, 'a key of one file has no note');
+});
+
 test('saving a value posts it, and the table follows what the console answers', async () => {
   const { app, calls, secrets } = await loadPage();
   assert.equal(button(app, 'Save').disabled, true, 'nothing typed yet');
