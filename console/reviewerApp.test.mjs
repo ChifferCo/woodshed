@@ -19,7 +19,7 @@ function setup(fetchImpl, { state = {}, secrets = memorySecrets() } = {}) {
   return { store, secrets, reviewer: createReviewerApp({ store, secrets, config, fetchImpl, now: () => 1_000_000 }) };
 }
 
-test('the reviewer manifest asks for pull requests and nothing a session could use to push or sign people in', () => {
+test('the reviewer manifest asks for pull requests and contents, with no webhook and no sign-in', () => {
   const m = reviewerManifest({ publicUrl: config.publicUrl, repo: config.repo });
   assert.deepEqual(m.default_permissions, { contents: 'write', pull_requests: 'write', metadata: 'read' }, 'an approval counts toward a required review only from an App that can write');
   assert.equal(m.redirect_url, 'https://woodshed.example.com/setup/github/reviewer-created');
