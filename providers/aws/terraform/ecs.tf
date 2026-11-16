@@ -219,11 +219,16 @@ data "aws_iam_policy_document" "db_admin_task" {
     ]
   }
 
-  # Read here, not given as a task secret: a run's overrides could replace a variable, but not this.
+  # Read here, not given as a task secret: a run's overrides could replace a variable, but not this. The default
+  # project's repo settings alone, since only its databases are seeded and the seed is that repo's code: one repo's seed
+  # must not read another's values. Then the legacy secrets, read only while a file has no repo settings value.
   statement {
-    sid       = "TheSeedsEnvFiles"
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [for name in var.database_env_secrets : aws_secretsmanager_secret.session[local.env_file_keys[name]].arn]
+    sid     = "TheSeedsEnvFiles"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = concat(
+      ["arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/repos/${local.seed_project}/env/*"],
+      [for name in var.database_env_secrets : aws_secretsmanager_secret.session[local.env_file_keys[name]].arn],
+    )
   }
 }
 
@@ -274,6 +279,7 @@ resource "aws_ecs_task_definition" "db_admin" {
       [
         "--secret-prefix", "${local.p}/",
         "--repo", "/work/${split("/", var.github_repo)[1]}",
+        "--project", local.seed_project,
         "--",
       ],
     )
