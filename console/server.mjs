@@ -586,6 +586,15 @@ export function createHandler({
     return Boolean(trusted) || Boolean(auth?.enabled());
   }
 
+  // A console one person uses: as WOODSHED_ONE_PERSON says when it is set (hosted mode keeps no People list, so the host
+  // says it), else one nobody signs in to (loopback only: requireClosedWhenReachable) or whose People list has one
+  // member. Every shared session there is that person's, so the rail shows one list with no Mine and Everyone.
+  function onePersonConsole() {
+    if (typeof config.onePerson === 'boolean') return config.onePerson;
+    if (!signInOn()) return true;
+    return Boolean(members) && members.view().members.length === 1;
+  }
+
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
   async function consoleUser(headers) {
     if (trusted) return trusted.userFor(headers);
@@ -960,6 +969,8 @@ export function createHandler({
       assignables: members?.assignables() ?? [],
       assignable: Boolean(login && members?.isAssignable(login)),
       shared: seesShared(login),
+      // One list of every session, with no Mine and Everyone (onePersonConsole).
+      onePerson: onePersonConsole(),
       names: namesFor([login, ...(members?.assignables() ?? []), ...sessions.flatMap((s) => [s.startedBy, s.plan, s.assignee])]),
       viewPrefs: viewPrefs?.view(login, new Set(sessions.map((s) => s.id))) ?? null,
     };

@@ -279,6 +279,14 @@ export function requireRepo(config) {
   if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('WOODSHED_REPO (or WOODSHED_PROJECTS) must name a repo as owner/name, or be left unset for a console that starts with none');
 }
 
+/** @returns {boolean|null}  WOODSHED_ONE_PERSON: 1 or 0, or null when it is not set */
+function onePerson(env) {
+  const value = env.WOODSHED_ONE_PERSON;
+  if (value === undefined || value === '') return null;
+  if (value !== '1' && value !== '0') throw new Error(`WOODSHED_ONE_PERSON is 1 or 0, or not set (it is ${value})`);
+  return value === '1';
+}
+
 /**
  * @param {NodeJS.ProcessEnv} env
  * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
@@ -376,6 +384,10 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     githubBroker: broker,
     // Who a local console with no sign-in treats the person using it as, for My Woodshed (server.mjs, soloLoginOf).
     localLogin: localLogin(env),
+    // Whether one person uses this console, so the rail shows one list of every session, with no Mine and Everyone
+    // (server.mjs, onePersonConsole): true for 1, false for 0, and null to tell by itself. Hosted mode keeps no People
+    // list, so there the host says it.
+    onePerson: onePerson(env),
     // The Secrets page's store. In AWS, Secrets Manager: it needs the base box role's access to these secrets.
     secrets: envValue(env, 'LAUNCHER') === 'ecs' ? { prefix: envValue(env, 'SECRET_PREFIX') || `${OLD_AWS_PREFIX}/` } : null,
     // On the local provider, a folder only the console's user can open; none leaves it without a Secrets page.

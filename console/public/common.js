@@ -210,6 +210,16 @@
     return !s.owner && sameLogin(s.assignee, login);
   }
 
+  /**
+   * What the rail's Mine lists: your own private sessions, and the shared ones you started (a label or a /woodshed
+   * comment, which run on your Claude plan when your switch is on) or that are assigned to you.
+   * @returns {boolean}
+   */
+  function inMine(s, login) {
+    if (s.owner) return sameLogin(s.owner, login);
+    return Boolean(login) && (sameLogin(s.assignee, login) || sameLogin(s.startedBy, login));
+  }
+
   /** @returns {boolean}  a session waiting on its person, live or stopped; on Mine the Needs you zone lists only the stopped ones and Active sorts the live ones first */
   function needsYou(s) {
     if (isLive(s)) return WAITING_KEYS.has(displayStatus(s).key);
@@ -1395,7 +1405,7 @@
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();
