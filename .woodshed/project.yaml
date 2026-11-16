@@ -31,13 +31,12 @@ rules: .woodshed/rules.md
 # the Check suite's `test` job, and the review's Merge risk check, which the brief quotes.
 pullRequests:
   review:
-    # The review runs as a Woodshed session, started by the rerun tag on the head commit. The verdict is the reviewer
-    # App's, since GitHub never lets the console App approve a pull request it opened. The PR comment with its risk areas
-    # is the console App's.
+    # The review runs as a Woodshed session on each new commit of a ready pull request, with no tag. The verdict is the
+    # reviewer App's, since GitHub never lets the console App approve a pull request it opened. The PR comment with its
+    # risk areas is the console App's.
     runner: woodshed
     author: woodshed-reviewer[bot]
     heading: '## Claude review'
-    rerun: '[woodshed-review]'
     commentAuthor: woodshed-console[bot]
   suites:
     - name: Check
