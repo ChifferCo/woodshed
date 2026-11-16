@@ -176,7 +176,7 @@
   function reviewerSection() {
     if (!reviewer?.available) return null;
     const made = Boolean(reviewer.appId);
-    return h('div', { class: 'wizard-body' },
+    return h('div', { class: 'wizard-body', id: 'reviewer' },
       h('h2', null, 'Reviewer App'),
       h('p', { class: 'msg-plain' }, 'GitHub never lets a pull request\'s author approve it, and a pull request a shared session opens is the App\'s. ',
         'A review session therefore submits its verdict as a second App, which can only review pull requests.'),

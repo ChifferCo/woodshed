@@ -53,3 +53,12 @@ test('an optional GitHub App is offered on the card and never holds New session 
   assert.match(setupSteps(m)[0].label, /optional/);
   assert.equal(setupDone({ ...me({ token: true }), githubSetupOptional: true }), true);
 });
+
+test('once the App is connected, the reviewer App is offered next, and never holds New session back', () => {
+  const m = { ...me({ token: true, db: { available: true, status: 'ready' } }), reviewerSetupNeeded: true };
+  assert.deepEqual(rows(m), ['reviewer:waiting', 'token:done', 'databases:done']);
+  assert.equal(setupSteps(m)[0].optional, true);
+  assert.equal(setupDone(m), true, 'optional, as an App on a laptop is');
+  const both = { ...m, githubSetupNeeded: true };
+  assert.deepEqual(rows(both).slice(0, 2), ['github:waiting', 'reviewer:waiting'], 'the App first, then its reviewer');
+});

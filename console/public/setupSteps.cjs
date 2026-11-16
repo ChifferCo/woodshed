@@ -31,6 +31,9 @@
       ...(me.githubSetupNeeded ? [{ key: 'github', label: 'Connect a GitHub App', hint: 'Sessions push, open pull requests and sign people in through it', done: false }] : []),
       // On one person's own machine sessions push as them, with their gh token: the App is offered, never required.
       ...(me.githubSetupOptional ? [{ key: 'github', label: 'Connect a GitHub App (optional)', hint: 'Sessions push as you with your gh sign-in. An App pushes as a bot, scoped to the repo, and lets teammates sign in', done: false, optional: true }] : []),
+      // Right after the App: GitHub never lets an App approve its own pull requests, so review sessions approve through a
+      // second one. Offered, never required: sessions work without it, only their approvals do not count.
+      ...(me.reviewerSetupNeeded ? [{ key: 'reviewer', label: 'Add the reviewer App (optional)', hint: 'Review sessions approve pull requests through it, since GitHub never lets an App approve its own', done: false, optional: true }] : []),
       { key: 'token', label: 'Choose your agent', hint: 'Save a Claude token or a Codex sign-in: either one is enough', done: tokenSet },
       ...(showDb ? [{ key: 'databases', label: 'Your databases', hint: dbHint[db.status], done: db.status === 'ready', todo: db.status === 'failed' || db.status === 'none' }] : []),
     ];

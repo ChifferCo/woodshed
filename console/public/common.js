@@ -296,6 +296,7 @@
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
         : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
+        : step.key === 'reviewer' ? h('a', { class: 'btn btn-plain btn-sm', href: '/setup/github#reviewer' }, 'Set up')
         // Two equal choices, each to its own box on My settings: neither agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
