@@ -28,15 +28,19 @@ key.
 curl -fsSL https://woodshed.run/install | bash
 ```
 
-It asks which repository sessions should work on, builds the session image for it (several minutes the first time),
-starts Postgres and Mongo in Docker, and opens the console at `http://localhost:7690`. The console's first page makes
-a GitHub App for the repository, and **My settings** takes your Claude token. Then press **New session** and say what
-you want built. Everything it makes is in `~/.woodshed`, and `~/.woodshed/bin/woodshed` starts the console again.
+It asks nothing: it builds a session image for any repository (a few minutes the first time) and opens the console at
+`http://localhost:7690`. There, **Console settings**, Repos, **Add a repo** lists the repositories your `gh` login can
+push to; each session clones its repository and installs its dependencies at start. **My settings** takes your Claude
+token. Then press **New session** and say what you want built. Sessions push as you, so a GitHub App is optional on
+your own machine. Everything it makes is in `~/.woodshed`, and `~/.woodshed/bin/woodshed` starts the console again.
+`WOODSHED_TAILSCALE=1` also serves it to your own devices on your tailnet; a repository whose project file has
+`databases` needs the install run again with `WOODSHED_REPO=owner/name`, which starts Postgres or Mongo for it
+(`docs/self-host.md`, "On this machine").
 
-**With a coding agent:** clone this repository and ask it to "set Woodshed up for `owner/name` on this machine,
-following `docs/self-host.md`" (or "on our server", or "on AWS"). The runbook gives it a check after each step, writes
-your repository's project file with it, and stops for the steps that are yours: the GitHub App, your Claude token, and
-any account, DNS or firewall.
+**With a coding agent:** clone this repository and ask it to "set Woodshed up on this machine, following
+`docs/self-host.md`" (or "on our server", or "on AWS", for `owner/name`). The runbook gives it a check after each step,
+writes your repository's project file with it, and stops for the steps that are yours: picking the repository, your
+Claude token, and on a server or AWS the GitHub App and any account, DNS or firewall.
 
 ## Features
 
@@ -106,6 +110,26 @@ jobs:
 ```
 
 [Setting it up](docs/self-host.md#before-any-of-them-the-project-file) has the steps.
+
+## AI review on any repository
+
+Any GitHub repository can run Woodshed's code review, merge-risk check and QA on its pull requests with no Woodshed
+installation: the checks run in the repository's own GitHub Actions. The setup script writes the workflows, turns on the
+one required setting, and asks for an `ANTHROPIC_API_KEY`:
+
+```
+scripts/enable-review.sh <owner/repo>        # review and merge risk
+scripts/enable-review.sh <owner/repo> --qa   # also QA
+```
+
+It needs the GitHub CLI signed in with the `workflow` scope and admin on the repository. Then end a pull request's last
+commit message with `[woodshed-review]` for a review, and add the `woodshed-qa` label for QA (on pull requests from a
+branch in the repository, not forks). QA starts the app the way [the project file](docs/reference.md#the-project-file)
+says, so there is nothing in the workflow to edit. Already running a Woodshed console? `--qa-runner woodshed` runs QA as
+a [session](docs/reference.md#qa-in-a-woodshed-session) there instead of in CI.
+
+See the [review](docs/reference.md#the-review-in-another-repo) and [QA](docs/reference.md#qa-in-another-repo) in another
+repo to wire them by hand and for every option.
 
 ## Documentation
 

@@ -24,7 +24,7 @@ const NEEDS_HUMAN_PREFIX = /^\s*Needs a human:/i;
 const SLACK_MAX_AGE_SECONDS = 5 * 60;
 // What can change a pull request's chip, its review or its checks: the console reads the pull request again when it
 // is one a session opened. A workflow run lists the pull requests of its branch.
-const PULL_ACTIONS = new Set(['closed', 'reopened', 'synchronize', 'edited', 'ready_for_review', 'converted_to_draft', 'enqueued', 'dequeued']);
+const PULL_ACTIONS = new Set(['opened', 'closed', 'reopened', 'synchronize', 'edited', 'ready_for_review', 'converted_to_draft', 'enqueued', 'dequeued']);
 const REVIEW_ACTIONS = new Set(['submitted', 'dismissed']);
 const MAX_PULLS_PER_RUN = 10;
 

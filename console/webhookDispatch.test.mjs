@@ -38,6 +38,36 @@ test('another label on a pull request goes to the fleet\'s QA check, which alone
   assert.deepEqual(recorded, ['started'], 'a label that is nobody\'s stays out of the events log');
 });
 
+test('a submitted review asks the fleet whether QA waits on it, and a failure there still refreshes the pull request', async () => {
+  const asked = [];
+  const refreshed = [];
+  const fleet = {
+    async qaAfterReview({ number }) { asked.push(number); if (number === 8) throw new Error('GitHub is down'); return { outcome: 'started' }; },
+    webhooksAlive() {},
+  };
+  const pulls = { handle: async (b) => { refreshed.push(b.number); } };
+  const { dispatch } = createWebhookDispatch({ label: 'woodshed', fleet, pulls });
+  const pr = (number, what) => JSON.stringify({ source: 'github', type: 'pr', number, numbers: [number], what });
+  await dispatch({ text: pr(7, 'review submitted') });
+  await dispatch({ text: pr(8, 'review submitted') });
+  await dispatch({ text: pr(9, 'pull request synchronize') });
+  assert.deepEqual(asked, [7, 8], 'only a submitted review');
+  assert.deepEqual(refreshed, [7, 8, 9]);
+});
+
+test('an opened or newly ready pull request asks the fleet to add the QA label; other events do not', async () => {
+  const asked = [];
+  const fleet = { async qaAutoLabel({ number }) { asked.push(number); if (number === 8) throw new Error('GitHub is down'); return { outcome: 'labelled' }; }, webhooksAlive() {} };
+  const refreshed = [];
+  const { dispatch } = createWebhookDispatch({ label: 'woodshed', fleet, pulls: { handle: async (b) => { refreshed.push(b.number); } } });
+  const pr = (number, what) => JSON.stringify({ source: 'github', type: 'pr', number, numbers: [number], what });
+  await dispatch({ text: pr(7, 'pull request opened') });
+  await dispatch({ text: pr(8, 'pull request ready_for_review') });
+  await dispatch({ text: pr(9, 'pull request synchronize') });
+  assert.deepEqual(asked, [7, 8]);
+  assert.deepEqual(refreshed, [7, 8, 9], 'a failure still refreshes the pull request');
+});
+
 test('a GitHub message reaches the fleet naming the project of its repo, and one from a repo that is no project is dropped', async () => {
   const config = {
     projects: [

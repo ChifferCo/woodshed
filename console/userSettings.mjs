@@ -45,12 +45,19 @@ const TMUX_FILE = { label: '~/.tmux.conf' };
 /**
  * The files a person may add their own lines to: the repo's env files, each the console's shared secret for it (set on
  * the Secrets & webhooks page) with the file's path for its label, and tmux's, which is the session image's own
- * tmux.conf (the console image carries it too).
- * @param {{secret: string, path: string}[]} envFiles  config.mjs's
- * @returns {Record<string, {label: string, secret?: string}>}
+ * tmux.conf (the console image carries it too). An embedding program whose store keeps an env file's secret under
+ * another name than the project file's gives that as `name`, and `repo` for a file of one repo only, so two repos'
+ * `api-env` are two files here, each labelled with its repo (console/README.md, "Embedding the console").
+ * @param {{secret: string, path: string, name?: string, repo?: string}[]} envFiles  config.mjs's
+ * @returns {Record<string, {label: string, secret?: string, name?: string, repo?: string}>}
  */
 export function filesOf(envFiles) {
-  return { ...Object.fromEntries(envFiles.map(({ secret, path: file }) => [secret, { label: file, secret }])), 'tmux-conf': TMUX_FILE };
+  return {
+    ...Object.fromEntries(envFiles.map(({ secret, path: file, name, repo }) => [secret, {
+      label: repo ? `${file} (${repo})` : file, secret, name: name ?? secret, ...(repo && { repo }),
+    }])),
+    'tmux-conf': TMUX_FILE,
+  };
 }
 
 /**
@@ -145,7 +152,8 @@ export function checkIdentity({ name, email }) {
 
 /**
  * @param {{store: {state: object, save: () => void}, secrets: {read: Function, save: Function, remove: Function}|null,
- *          envFiles?: {secret: string, path: string}[], appendedFor?: (secret: string) => Promise<string[]>,
+ *          envFiles?: {secret: string, path: string, name?: string, repo?: string}[],
+ *          appendedFor?: (secret: string, repo?: string) => Promise<string[]>,
  *          now?: () => number}} deps  `secrets` is null where the console has no Secrets Manager: nothing can be saved.
  *   `appendedFor` names the variables the entrypoint always writes after an env file (writeEnvFiles in session/entrypoint.sh),
  *   shown on the page so nobody spends time setting them: they would lose
@@ -256,7 +264,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     const [own, sharedText] = await Promise.all([ownFile(login, key), sharedFile(key)]);
     return {
       key, label: FILES[key].label, text: own ?? '', custom: own !== null, sharedText, editable: Boolean(FILES[key].secret),
-      appended: FILES[key].secret ? await appendedFor(FILES[key].secret) : [],
+      appended: FILES[key].secret ? await appendedFor(FILES[key].name, FILES[key].repo) : [],
     };
   }
 
@@ -364,11 +372,24 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     touch(login, { home: bytes ? { savedAt: new Date(now()).toISOString(), bytes } : null });
   }
 
-  /** @returns {Promise<Record<string, string|null>>}  each file's own lines for a private session; null is none */
-  async function ownFiles(login) {
-    const keys = Object.keys(FILES);
+  /**
+   * Each file's own lines for a private session on `repo`, by the name its project file gives the file, which is what
+   * the session looks them up by (writeEnvFiles in shared/project.mjs); null is none. A file of another repo is left
+   * out, and one of this repo wins over one for every repo of the same name.
+   * @param {string} login
+   * @param {{repo?: string}} [opts]  the session's repo, owner/name
+   * @returns {Promise<Record<string, string|null>>}
+   */
+  async function ownFiles(login, { repo } = {}) {
+    const sameRepo = (key) => FILES[key].repo?.toLowerCase() === String(repo ?? '').toLowerCase();
+    const keys = Object.keys(FILES).filter((key) => !FILES[key].repo || sameRepo(key));
     const values = await Promise.all(keys.map((key) => ownFile(login, key)));
-    return Object.fromEntries(keys.map((key, i) => [key, values[i]]));
+    const files = {};
+    keys.forEach((key, i) => {
+      const name = FILES[key].name ?? key;
+      if (!(name in files) || FILES[key].repo) files[name] = values[i];
+    });
+    return files;
   }
 
   async function setClaudeToken(login, value) {

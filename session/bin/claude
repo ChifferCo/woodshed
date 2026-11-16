@@ -12,6 +12,12 @@
 # are not (measured on Claude Code 2.1.312).
 set -euo pipefail
 
+# Inline, never full screen: claude's classic renderer writes the conversation as ordinary lines, so tmux keeps it in
+# the pane's history and the browser's terminal in its own scrollback, and scrolling back is the terminal's, not a round
+# trip to claude. Claude Code's full-screen renderer (its default for newer accounts) draws on the alternate screen,
+# where neither keeps anything. The variable beats the `tui` setting a restored ~/.claude may carry.
+export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
+
 real=${WOODSHED_REAL_CLAUDE:-$HOME/.local/bin/claude}
 case "${WOODSHED_CLAUDE_AUTH:-}" in
   key) export ANTHROPIC_API_KEY=$SESSION_TOKEN ANTHROPIC_BASE_URL=$WOODSHED_CONSOLE_URL/anthropic ;;

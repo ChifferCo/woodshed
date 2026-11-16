@@ -33,6 +33,13 @@ resource "aws_secretsmanager_secret" "github_app_key" {
   recovery_window_in_days = 0
 }
 
+# Console only, like the App key: the reviewer App submits the review session's verdict (console/reviewerApp.mjs).
+resource "aws_secretsmanager_secret" "github_reviewer_app_key" {
+  name                    = "${local.p}/github-reviewer-app-key"
+  description             = "The Woodshed reviewer App's private key (.pem). Only the console reads it, to submit reviews"
+  recovery_window_in_days = 0
+}
+
 # Console only, like the App key: it signs people in, and sign-in stays off until it has a value.
 resource "aws_secretsmanager_secret" "github_app_client_secret" {
   name                    = "${local.p}/github-app-client-secret"

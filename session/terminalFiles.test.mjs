@@ -44,21 +44,29 @@ test('a picture is served only from the repo, the uploads or the scratchpad, and
   assert.equal(imageFor('page.html', opts), null);
 });
 
-test('a swipe sends wheel bytes to claude, copy mode to a shell, and nothing at the bottom', async () => {
+test('a swipe sends wheel bytes to a full-screen program that asked for the mouse, copy mode on the main screen', async () => {
   const calls = [];
   const tmux = (display) => async (cmd, args) => {
     calls.push(args);
     return { stdout: args[0] === 'display' ? display : '' };
   };
-  assert.equal(await scrollPane(tmux('1 0'), { steps: -2, pane: 'agent' }), 'mouse');
+  assert.equal(await scrollPane(tmux('1 1 0'), { steps: -2, pane: 'agent' }), 'mouse');
   assert.deepEqual(calls.at(-1), ['send-keys', '-t', 'claude', '-l', '\x1b[<64;1;1M\x1b[<64;1;1M']);
-  assert.equal(await scrollPane(tmux('0 0'), { steps: -3, pane: 'terminal' }), 'copy-mode');
+  assert.equal(await scrollPane(tmux('0 0 0'), { steps: -3, pane: 'terminal' }), 'copy-mode');
   assert.deepEqual(calls.slice(-2), [['copy-mode', '-e', '-t', 'shell'], ['send-keys', '-t', 'shell', '-X', '-N', '3', 'scroll-up']]);
+  // claude or codex inline: the conversation is tmux's history, whatever the program asked of the mouse.
+  assert.equal(await scrollPane(tmux('0 1 0'), { steps: -4, pane: 'agent' }), 'copy-mode');
+  assert.deepEqual(calls.at(-1), ['send-keys', '-t', 'claude', '-X', '-N', '4', 'scroll-up']);
   calls.length = 0;
-  assert.equal(await scrollPane(tmux('0 0'), { steps: 5, pane: 'terminal' }), 'bottom');
+  assert.equal(await scrollPane(tmux('0 0 0'), { steps: 5, pane: 'terminal' }), 'bottom');
   assert.equal(calls.length, 1, 'only the probe');
-  assert.equal(await scrollPane(tmux('1 0'), { steps: 900 }), 'mouse');
+  assert.equal(await scrollPane(tmux('1 1 0'), { steps: 900 }), 'mouse');
   assert.equal(calls.at(-1)[4].length, 40 * '\x1b[<65;1;1M'.length, 'capped at 40 notches');
-  await assert.rejects(scrollPane(tmux('1 0'), { steps: 0 }), /steps/);
-  await assert.rejects(scrollPane(tmux('1 0'), { steps: 1, pane: 'claude-aaaa' }), /pane must be/);
+  // The browser's scrollback ran out 3000 lines up: copy mode opens there, as far as tmux keeps.
+  assert.equal(await scrollPane(tmux('0 0 0'), { steps: -3000 }), 'copy-mode');
+  assert.deepEqual(calls.at(-1), ['send-keys', '-t', 'claude', '-X', '-N', '3000', 'scroll-up']);
+  assert.equal(await scrollPane(tmux('0 0 1'), { steps: -1e9 }), 'copy-mode');
+  assert.equal(calls.at(-1)[5], '50000', 'capped at tmux.conf\'s history-limit');
+  await assert.rejects(scrollPane(tmux('1 1 0'), { steps: 0 }), /steps/);
+  await assert.rejects(scrollPane(tmux('1 1 0'), { steps: 1, pane: 'claude-aaaa' }), /pane must be/);
 });
