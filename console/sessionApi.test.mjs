@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
+import { createUserSettings } from './userSettings.mjs';
+import { writeEnvFiles } from '../shared/project.mjs';
 
 const SESSIONS = [
   { id: 'aaaaaaaa', status: 'running', token: 'live-token' },
@@ -342,6 +347,37 @@ test('a QA session gets a read-only token, and sends its report once through /qa
   assert.deepEqual(finished, [{ id: 'aaaaaaaa', verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 }]);
 });
 
+test('a review session gets a read-only token, and sends its verdict once through /review-report', async (t) => {
+  const review = { id: 'rrrrrrrr', status: 'running', token: 'review-token', kind: 'pr', number: 7, review: { base: 'main' } };
+  const sessions = [review, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
+  const tokens = { token: async () => ({ token: 'ghs_write', expiresAt: 0 }) };
+  const askTokens = { token: async () => ({ token: 'ghs_read', expiresAt: 0 }) };
+  const finished = [];
+  const fleet = {
+    sessions: () => sessions,
+    async reviewFinished(session, result) { finished.push({ id: session.id, ...result }); session.review.reported = true; },
+  };
+  const handle = createSessionApi({ fleet, tokens, askTokens });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  assert.equal((await request(port, { authorization: 'Bearer review-token' })).body.token, 'ghs_read', 'the review session cannot push or approve as the App');
+  assert.equal((await request(port, { authorization: 'Bearer pr-token' })).body.token, 'ghs_write');
+
+  const sha = 'b'.repeat(40);
+  const send = (authorization, over) => request(port, {
+    path: '/review-report', authorization,
+    body: JSON.stringify({ conclusion: 'APPROVE', summary: 'ok', comment: '> ok', mergeRisk: { tier: 'Low', reason: 'r', summary: 'LOW' }, sha, costUsd: 0.3, ...over }),
+  });
+  assert.equal((await send('Bearer pr-token', {})).status, 404, 'only a review session has a verdict to send');
+  assert.equal((await send('Bearer review-token', { conclusion: 'LGTM' })).status, 400);
+  assert.equal((await send('Bearer review-token', {})).status, 204);
+  assert.equal((await send('Bearer review-token', {})).status, 409, 'only once');
+  assert.deepEqual(finished.map((f) => [f.id, f.conclusion, f.mergeRisk.tier]), [['rrrrrrrr', 'APPROVE', 'Low']]);
+});
+
 test('a private session syncs its owner\'s shared Claude settings; a shared one, or one whose owner removed My Woodshed, cannot', async (t) => {
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'shared-token', owner: null },
@@ -569,4 +605,58 @@ test('a private session\'s GitHub access is logged when decided and when it chan
   assert.equal(await tokenOf(), 'ghu_mia_scoped_acme/app');
   await tokenOf();
   assert.deepEqual(logged, ['full', 'repo'], 'a changed decision is logged again, once');
+});
+
+test('a review session gets the plan from /settings, no database, and the team key when the starter has none', async (t) => {
+  const sessions = [
+    { id: 'rrrrrrrr', status: 'running', token: 'review-plan', kind: 'pr', number: 7, review: { base: 'main' }, plan: 'joel', startedBy: 'joel' },
+    { id: 'tttttttt', status: 'running', token: 'review-team', kind: 'pr', number: 8, review: { base: 'main' }, plan: null, startedBy: 'joel' },
+  ];
+  const userSettings = { usesOwnTokenForShared: () => true, claudeToken: async () => 'sk-ant-joel' };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, databases: { available: true }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-plan' }), { status: 200, body: { plan: 'joel' } }, 'the plan, no database');
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-team' }), { status: 200, body: {} }, 'no plan recorded, so the team key');
+});
+
+test('a person\'s own lines for one repo\'s env file reach their private session on that repo alone, by the project file\'s name', async (t) => {
+  // Two repos that both name api-env, each kept under a store name of its own, as an embedding program gives them.
+  const envFiles = [
+    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
+    { secret: 'api-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/api' },
+  ];
+  const values = new Map();
+  const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets, envFiles });
+  await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');
+  await userSettings.saveFile('mia', 'api-4d5e6f--api-env', 'LOG_LEVEL=debug');
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'on-api', owner: 'mia', repo: 'acme/api' },
+    { id: 'bbbbbbbb', status: 'running', token: 'on-app', owner: 'mia', repo: 'acme/app' },
+  ];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  // What the session's entrypoint then writes (fetchOwnerSettings, then writeEnvFiles), from the project file's names.
+  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }] };
+  const envFileOn = async (token) => {
+    const { body } = await request(port, { path: '/settings', authorization: `Bearer ${token}` });
+    const own = Object.fromEntries(Object.entries(body.files).filter(([key, text]) => key !== 'tmux-conf' && text));
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'own-lines-'));
+    t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+    writeEnvFiles({ project, repoDir, env: { API_ENV: 'LOG_LEVEL=info', OWN_FILES: JSON.stringify(own) } });
+    return { files: body.files, text: fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8') };
+  };
+  const onApi = await envFileOn('on-api');
+  assert.deepEqual(onApi.files, { 'api-env': 'LOG_LEVEL=debug', 'tmux-conf': null });
+  assert.match(onApi.text, /^LOG_LEVEL=info\n\n# Your own lines, from My settings\nLOG_LEVEL=debug\n/, 'their lines after the shared text');
+  const onApp = await envFileOn('on-app');
+  assert.deepEqual(onApp.files, { 'api-env': null, 'tmux-conf': null });
+  assert.equal(onApp.text.includes('LOG_LEVEL=debug'), false, 'the other repo\'s session never gets them');
 });

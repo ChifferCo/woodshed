@@ -144,6 +144,28 @@ test('a malformed installation file is an unread file, as a malformed repo file 
   assert.equal(await reader.databases(), null);
 });
 
+test('a default branch\'s file that does not parse gives way to the installation\'s, saying why; with none it is unread', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (message, fields) => logs.push([message, fields]));
+  t.mock.method(console, 'warn', (message, fields) => logs.push([message, fields]));
+  const old = 'version: 1\ndatabase: null\n';
+  const supplied = { text: PROJECT, path: '/files/acme/app.yaml' };
+  const reader = createProjectReader({ github: { projectFile: async () => old }, installationFile: () => supplied });
+  assert.deepEqual(await reader.appendedFor('app-env'), ['DATABASE_HOST', 'PORT']);
+  assert.equal(await reader.pullRequests(), null, 'read, so nothing waits on it');
+  const [message, fields] = logs.at(-1);
+  assert.equal(message, 'projectFile: read');
+  assert.equal(fields.from, 'installation');
+  assert.match(fields.repoFileError, /has database, which is not a field/);
+
+  const alone = createProjectReader({ github: { projectFile: async () => old }, installationFile: () => null });
+  await assert.rejects(alone.pullRequests(), /the project file could not be read: .*has database, which is not a field/);
+  assert.equal(logs.at(-1)[0], 'projectFile: not readable');
+
+  const bothBad = createProjectReader({ github: { projectFile: async () => old }, installationFile: () => ({ text: 'version: 1\nenvfiles: []\n' }) });
+  await assert.rejects(bothBad.pullRequests(), /envfiles, which is not a field/, 'a malformed installation file is unread too');
+});
+
 test('with no repo yet the reader asks GitHub nothing, and reads the default repo again once there is one', async () => {
   const github = { repo: '', asked: 0, async projectFile() { this.asked += 1; return PROJECT; } };
   const reader = createProjectReader({ github, now: () => 0 });

@@ -295,6 +295,38 @@ secrets.
   stop reason. An empty secret shows as `ResourceInitializationError`. A
   missing image shows as `CannotPullContainerError`. Otherwise read the
   session's log stream: the entrypoint logs each step (`[woodshed …]`).
+- **A session fails at once with `the session image has no checkout and the console named no repo`.** The image was
+  built with no repo (install.sh's `woodshed-session:generic`) and the session got no `PROJECT_REPO`, which the console sets for
+  every session on a repo an admin added (`fleet.mjs`, `clonedAtStart`): a console older than its image does not. Its log otherwise starts `Cloning the
+  project's repo (repo: <repo>, image: none)`, then `Project repo cloned` with its seconds; the installs run after
+  claude starts (`/tmp/woodshed-deps`).
+- **install.sh stops with `port 7690, which the console needs, is taken by …`.** Something else listens where the
+  console would: often a console left running from another install or `WOODSHED_HOME`. The message names the process
+  and its pid, from `lsof -nP -iTCP:<port> -sTCP:LISTEN` (`ss -ltnp` on Linux); `this machine will not say by what`
+  means neither could see it, such as another user's process. The install's own console is never in the way: it is
+  told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
+  A Tailscale `serve` listener on the same port does not count.
+- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider sessions
+  use the machine's Docker on one person's console unless `WOODSHED_SESSION_DOCKER=0`, and on a console others sign in
+  to only with `WOODSHED_SESSION_DOCKER=1` (providers/local/README.md, "Docker in a session"): the console logs `local:
+  sessions use this machine's Docker` with `on` at start (`onWith` when it is off by default), then `launcher: sessions get this
+  machine's Docker` with the socket's `group` at the first session, and `launcher: session given this machine's Docker`
+  for each. A start that fails with `its socket could not be given to the session` gives docker's reason. In the
+  session's Terminal, `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists
+  the socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found`
+  is an image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions
+  never get it.
+- **A tool in a session cannot reach a container it started on `127.0.0.1:<port>`, or a dev server fails with
+  `EADDRINUSE`.** `session/dockerPorts.mjs` forwards each port the machine's containers publish to the same port on the
+  session's 127.0.0.1: `/tmp/woodshed-docker-ports.log` has `dockerPorts: port forwarded` with the container, `port
+  not forwarded` with `why` (something in the session already listens on it, or it is one of the session's own), and
+  `forward ended` when the container went. A dev server refused its port because a container on the machine (often
+  another session's stack) publishes it and the forward holds it: stop that container or move one of them. Nothing
+  forwarded on Linux for a port published on `127.0.0.1` alone: the forward reaches the machine through the gateway,
+  so that port must be published on every address.
+- **Containers from an ended session are still running.** Containers a session starts with the machine's Docker
+  carry no label of Woodshed's and outlive it: `docker ps` lists them, and `docker rm -f` or `docker compose -p
+  <project> down` removes them. Claude names a stack after its session id, so the id in a name says whose it was.
 - **A session takes a minute and a half to start.** The image has lost its
   SOCI index, so Fargate pulls it in full: `describe-tasks` shows about 85
   seconds between `pullStartedAt` and `pullStoppedAt`, against under 10 with
@@ -324,7 +356,9 @@ secrets.
   console reads the default branch's file and logs `console: project databases not hosted` with `needs` and `hosted`,
   then `fleet: session refused, its databases are not hosted` for each start it refused (`fleet: trigger refused` for a
   label or comment, which gets the reason on its issue). A session started from a branch whose own file differs stops
-  at start with the same words. The console logs `console: databases` at start with the `engines` it makes and the ones
+  at start with the same words. On a local install made with no repository, the refusal ends `run WOODSHED_REPO=<repo>
+  bash install.sh again on this machine`: that builds the repo's own image and starts its databases
+  (providers/local/README.md, "Setting it up"). The console logs `console: databases` at start with the `engines` it makes and the ones
   sessions are `hosted` on; a session in an installation with none logs `No databases to fetch`. A db-admin run logs
   `Started` with its `databases`, and refuses a project database whose engine it has no flags for.
 - **Every copy waits five minutes and fails with `there is no database template`, the log saying `Waiting for the
@@ -435,6 +469,14 @@ secrets.
   statusd `statusd: app start finished` with the script's exit code. A page that
   loads but never comes to life means the app's dev server refused the name: it must allow `*.<domain>` (the
   installation's `.woodshed/install/README.md` says where).
+- **Open app on a port (`https://<name>:7701/`, a console with `WOODSHED_APP_PORTS`) does not load, or says no app is on
+  the port.** The console logs `appPorts: listening` at start (`appPorts: could not listen` with the port when
+  something else holds it), `appPorts: port lent` when a session's app gets one, and `appPorts: no port free for the
+  session's app` when all are held. `no session's app is on this port` is a port lent to nobody, or to a session that
+  stopped: open the app from the console again. A page that never loads from another device means the proxy does not
+  serve that port: `tailscale serve status` must list it (providers/local/README.md, "From your other devices, with
+  Tailscale"). A console that will not start, saying `WOODSHED_APP_PORTS is for one person's console`, has sign-in
+  required or a host past loopback beside it: app ports are for a console nobody signs in to.
 - **Open app answers with a certificate error on a local install, or on AWS with no `domain`.** With no wildcard certificate, Caddy gets one per
   app name on demand, after asking the console (providers/local/README.md, "Session apps without a wildcard
   certificate"). No `tls: ask listening` at start means `WOODSHED_TLS_ASK_PORT` is not set. `tls: certificate
@@ -580,8 +622,10 @@ secrets.
   sets is missing from `PER_SESSION_ENV` (see Rules).
 - **The QA label on a pull request started no QA session.** Only a project whose file says
   `pullRequests.qa.runner: woodshed` starts one, and a label that is not its QA label is dropped with no log line.
-  `fleet: QA label ignored` gives the `reason` (no write access, QA already running, not open). A started one logs
-  `fleet: QA session started` with its `base`.
+  `fleet: QA not started` gives the `reason` (no write access, QA already running, not open) and `why` (`label` or
+  `review`). `fleet: QA waiting for the review` means the review has not approved the head: the review's approval
+  starts it, and `webhooks: QA after a review failed` says why one did not. A started one logs `fleet: QA session
+  started` with its `base` and `why`.
 - **A QA comment stays at Running.** The session's terminal shows the run (`[qa …]` lines). `fleet: QA finished`
   with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
   the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
@@ -607,6 +651,15 @@ secrets.
   `frontendStillUp` or `backendStillUp`. Stop them from the terminal. A half-up
   app is a server that crashed: its logs are the project file's `app.logs` in the session, and the app's own
   status command says which port is free.
+- **A session sits at Needs you on "Read outside the working directories" (Allow this read …?).** Auto mode asks once,
+  at claude's first file read outside the repo and `/tmp/uploads`. Woodshed's own files there (the environment notes,
+  `/tmp/woodshed-deps`, the docker ports' log, an ask's answer) are `Read` rules in `session/claudeHooks.json`
+  (session/README.md, "Why permissions are off"), so a session asking about one of them is an image from before the
+  rules, or a path Woodshed names that has none: add it there, where `entrypoint.test.mjs` checks them. Any other path
+  is the project's own, such as an app log under `~/.cache` its notes point at: answer it, or have the notes keep it in
+  the repo. Its option 2, "No, and block", writes `permissions.blockReadsOutsideWorkingDirectories` to the owner's
+  `~/.claude/settings.json`, which `settingsSync.mjs` carries to every private session of theirs: those refuse such
+  reads from then on, until it is taken out of that file.
 - **A session says Waiting for input while Claude is working, or the reverse.**
   statusd logs `statusd: claude state changed` with `source`: `hook` is
   Claude's own hooks, `interrupt` an Esc read from the transcript, `silent` a
@@ -623,6 +676,15 @@ secrets.
   repo, `/tmp/uploads` and the scratchpad, or one that is not png, jpg, gif or
   webp after its symlinks. A session started from an image before
   `terminalFiles.mjs` answers 404 for all three routes: start a new one.
+- **Scrolling back in a terminal shows part of claude's answer twice, or the wheel does not scroll.** claude runs
+  inline (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1` in `session/bin/claude`), and Claude Code's inline renderer prints
+  its last answer again when the terminal gets narrower (anthropics/claude-code#84247): a phone and a desktop on one
+  session, a rail opened or a window made smaller. It is in tmux's history and the browser's both; nothing here can
+  take it out. For the wheel: in the terminal frame's console, `document.title` starts with the pane's state from
+  `tmux.conf` (`claude (main screen)`): `main screen` scrolls in the browser, anything else through tmux. A person's
+  own tmux lines that set `set-titles-string`, `status-position top` or `terminal-overrides` leave it to tmux, or leave
+  the browser's scrollback empty. A `tmux display -p -t claude '#{alternate_on}'` of 1 means claude or codex is full
+  screen after all, as an image from before inline mode runs it.
 - **The phone's message box says Not sent, or claude never got it.** The
   console logs `console: message typed in from the page` with the length, and
   statusd `statusd: text sent to claude`; a file from **📎** logs `statusd:
@@ -793,13 +855,17 @@ instead of writing the pull request's comment and check.
 three made-up sessions and no AWS, GitHub, Docker or sign-in. Open `http://localhost:<port>/s/aaaa1111` in the
 Playwright browser. The rail folds its stopped zones, so run
 `localStorage['woodshed-rail-zones']='{"ended":false,"stopped":false,"merged":false}'` and reload to see the
-cards. Pull request chips show without their state or checks, since polling GitHub is off. `/s/dddd4444` is running,
+cards. Pull request chips show without their state or checks, since polling GitHub is off. New session's Work on lists made-up open
+pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
 fails it. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
 chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and app go nowhere. Add a session to
 `devConsole.mjs` to cover another state.
+`DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
+(`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
+name, and refuses any other typed repo with a link to give the App access, as a hosted console does.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

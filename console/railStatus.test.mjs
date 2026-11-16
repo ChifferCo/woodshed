@@ -106,3 +106,16 @@ test('Start app offers a pick only with more than one app, and each line says wh
     [['Web', 'Stops Admin first, then starts this one'], ['Admin', 'Running now: starts it again']]);
   assert.deepEqual(W.appChoiceItems({ ...running, app: 'stopped' }, () => {}).map((i) => i.note), ['Start it in this session', 'Start it in this session']);
 });
+
+test('a Codex session is named codex where a Claude session says claude', () => {
+  const codex = { options: { agent: 'codex' } };
+  assert.equal(W.agentOf(codex), 'codex');
+  assert.equal(W.agentOf({ options: null }), 'claude');
+  assert.equal(W.agentTitle(codex), 'Codex');
+  assert.equal(W.displayStatus(running({ ...codex, state: 'idle' })).word, 'codex exited');
+  assert.equal(W.displayStatus(running({ state: 'idle' })).word, 'claude exited');
+  assert.equal(W.setupAppToast('typed', codex), 'Asked codex to set up the app');
+  const opening = (s) => W.startProgress({ status: 'starting', startedAt: '2026-11-12T10:00:00Z', startSteps: {}, ...s }).steps.at(-1).label;
+  assert.equal(opening(codex), 'Opening codex');
+  assert.equal(opening({}), 'Opening claude');
+});

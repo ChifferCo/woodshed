@@ -70,6 +70,12 @@ than a third branch inside `prepareReview`:
   than leaving nothing: `restoreState` treats one on disk as authoritative, so
   the page would show the previous ordering and preamble against the new code —
   wrong, and confident about it.
+- **A Re-review pulls first.** The session's branch also moves on origin (a push
+  from another session or a laptop), so the `POST` fast-forwards the checkout to
+  `origin/<branch>` before taking the diff (`pullWorktreeBranch`). Only ever a
+  fast-forward: a branch that moved both here and there, or a pull that would
+  overwrite an uncommitted file, is left alone and the page says why. Opening the
+  page never pulls.
 
 `server.mjs` imports eight things from here: `handleReviewRequest`,
 `reviewStartupSweep`, `parseReviewTarget`, `createReviewSession`,

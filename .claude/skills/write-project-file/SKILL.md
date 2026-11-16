@@ -29,6 +29,15 @@ Look for, and note the file each answer came from:
   stops, its frontend and backend ports, its log files, and the folders whose change is an app change.
   A repo with more than one app (a second frontend, an admin site) writes `apps` instead of `app`: a list of the same
   fields, each with a `name` and an optional `label`, the first the default. Give each app its own log file.
+- **Services in Docker**: a `supabase/` folder (Supabase local), or a compose file of services the app needs (a queue,
+  a search engine, a Postgres the Woodshed databases do not stand in for). On the local provider, sessions use the
+  machine's Docker on one person's console (and on a shared one with `WOODSHED_SESSION_DOCKER=1`), so the app's
+  `start` can bring them up there: `supabase start`,
+  or `docker compose -p <name> up -d --wait`. Name them after the session (`$SESSION_ID`, in a compose project name or
+  Supabase's `project_id`), since every session shares that Docker, and have `stop` take them down. `start` can check
+  `WOODSHED_SESSION_DOCKER=1` and, without it, fail with what is missing (`this session has no Docker: supabase start
+  needs it`) rather than a page that never loads. AWS sessions never have Docker: say so when the installation is on
+  AWS.
 - **CI**: the workflow that runs the tests on pull requests, and its job names, for `pullRequests.suites`.
 
 If something cannot be told from the repository (which env values are secret, whether a seed needs a service it does
@@ -68,7 +77,7 @@ installation must provide, so list them for the person.
 - Offer the CI check from `docs/self-host.md`, "Before any of them: the project file", step 4: a workflow of the
   repository's own calling Woodshed's reusable `project-check.yml`.
 - List what the installation must still provide: each env file `secret` (set on the console's Secrets & webhooks
-  page), each install variable, each `from the session` variable.
+  page), each install variable, each `from the session` variable, and Docker when the app's `start` needs it.
 
 ## When a session refused the file
 

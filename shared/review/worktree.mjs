@@ -726,6 +726,72 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
   }
 }
 
+/**
+ * Bring a session's own checkout up to what origin has on its branch, before a Re-review reads it.
+ *
+ * A session's branch also moves on GitHub: a push from another session, a laptop, or a suggestion committed on the
+ * pull request. A Re-review that only re-read the tree would read the old code again and say nothing about it.
+ *
+ * Only ever a fast-forward. This is somebody's working tree, so anything else is theirs to decide: a branch that has
+ * moved both here and there, or a pull git refuses because it would overwrite an uncommitted file, is left as it was
+ * and the reason handed back for the page to say. No branch, or none on origin yet, is nothing to pull and says
+ * nothing: the review is of the tree, as before.
+ *
+ * @param {{worktreePath: string}} params
+ * @returns {Promise<{pulled: number, from?: string, to?: string, branch?: string, refused?: string}>}
+ */
+export async function pullWorktreeBranch({ worktreePath }) {
+  const named = await git(worktreePath, ['symbolic-ref', '--short', '-q', 'HEAD'], 30_000);
+  const branch = named.status === 0 ? (named.stdout || '').trim() : '';
+  if (!branch || !/^[A-Za-z0-9._/-]+$/.test(branch)) return { pulled: 0 };
+  const remoteRef = `refs/remotes/origin/${branch}`;
+  const fetched = await git(
+    worktreePath,
+    ['fetch', '--no-tags', 'origin', `+refs/heads/${branch}:${remoteRef}`],
+    FETCH_TIMEOUT_MS,
+  );
+  if (fetched.status !== 0) {
+    // Most often a branch never pushed. A fetch that failed for another reason is said, since the review then reads
+    // a tree that may be behind.
+    const stderr = (fetched.stderr || '').trim();
+    if (/couldn't find remote ref|could not find remote ref/i.test(stderr)) return { pulled: 0, branch };
+    return { pulled: 0, branch, refused: `origin could not be reached (${firstLine(stderr) || 'git fetch failed'})` };
+  }
+  const head = (await git(worktreePath, ['rev-parse', 'HEAD'], 30_000)).stdout?.trim() || '';
+  const remote = (await git(worktreePath, ['rev-parse', '--verify', '--quiet', remoteRef], 30_000)).stdout?.trim() || '';
+  if (!/^[0-9a-f]{40}$/.test(head) || !/^[0-9a-f]{40}$/.test(remote)) return { pulled: 0, branch };
+  if (head === remote) return { pulled: 0, branch };
+  // origin is behind or equal: the session has commits it has not pushed, which is not a reason to touch anything.
+  const remoteWithin = await git(worktreePath, ['merge-base', '--is-ancestor', remote, head], 30_000);
+  if (remoteWithin.status === 0) return { pulled: 0, branch };
+  const headWithin = await git(worktreePath, ['merge-base', '--is-ancestor', head, remote], 30_000);
+  if (headWithin.status !== 0) {
+    const ours = await git(worktreePath, ['rev-list', '--count', `${remote}..${head}`], 30_000);
+    const theirs = await git(worktreePath, ['rev-list', '--count', `${head}..${remote}`], 30_000);
+    const here = (ours.stdout || '?').trim();
+    return {
+      pulled: 0,
+      branch,
+      refused: `this checkout and origin/${branch} have both moved (${here} commit${here === '1' ? '' : 's'} here, `
+        + `${(theirs.stdout || '?').trim()} there): pull or rebase it in the session`,
+    };
+  }
+  const counted = await git(worktreePath, ['rev-list', '--count', `${head}..${remote}`], 30_000);
+  const merged = await git(worktreePath, ['merge', '--ff-only', '--quiet', remote]);
+  if (merged.status !== 0) {
+    return {
+      pulled: 0,
+      branch,
+      refused: `git would not fast-forward to origin/${branch} (${firstLine((merged.stderr || '').trim()) || 'merge failed'})`,
+    };
+  }
+  return { pulled: Number((counted.stdout || '').trim()) || 1, branch, from: head, to: remote };
+}
+
+function firstLine(text) {
+  return String(text || '').split('\n').find((l) => l.trim())?.replace(/^(error|fatal):\s*/i, '').trim().slice(0, 200) || '';
+}
+
 /** One-line summary of where a worktree stands, for the review header. */
 export async function worktreeState({ worktreePath, baseSha }) {
   const dirty = await git(worktreePath, ['status', '--porcelain'], 30_000);

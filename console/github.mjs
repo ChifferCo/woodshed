@@ -73,6 +73,14 @@ const PULLS_FOR_QUERY = `query($mine: String!, $review: String!) {
   review: search(query: $review, type: ISSUE, first: 10) { nodes { ... on PullRequest { ${PULL_ROW_FIELDS} } } }
 }`;
 
+// Every open pull request on the repo, for New session's Work on list: the 100 updated last, with how many there are.
+const OPEN_PULLS_LIMIT = 100;
+const OPEN_PULLS_QUERY = `query OpenPulls($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {
+  pullRequests(states: OPEN, first: ${OPEN_PULLS_LIMIT}, orderBy: {field: UPDATED_AT, direction: DESC}) {
+    totalCount nodes { number title isDraft headRefName updatedAt author { login } }
+  }
+} }`;
+
 const ISSUE_PROJECT_ITEMS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) { issue(number: $number) { projectItems(first: 20) { nodes {
     id
@@ -304,6 +312,11 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
     pull(number) {
       return ghApi([`repos/${currentRepo()}/pulls/${number}`]);
     },
+    /** @returns {Promise<string|null>}  the commit's message, for the review tag the console looks for on the head */
+    async commitMessage(sha) {
+      const commit = await ghApi([`repos/${currentRepo()}/commits/${sha}`]);
+      return commit?.commit?.message ?? null;
+    },
     /** @returns {Promise<string[]|null>}  the pull request's file paths, or null when there are more than we read */
     async pullFiles(number) {
       const files = [];
@@ -313,6 +326,19 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
         if (batch.length < PAGE_SIZE) return files;
       }
       return null;
+    },
+    async addLabel(number, label) {
+      await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/labels`, '-f', `labels[]=${label}`]);
+    },
+    /** @returns {Promise<string|null>}  who last added the label to the issue or pull request */
+    async labeledBy(number, label) {
+      let by = null;
+      for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+        const batch = (await ghApi([`repos/${currentRepo()}/issues/${number}/events?per_page=${PAGE_SIZE}&page=${page}`])) ?? [];
+        by = batch.filter((e) => e.event === 'labeled' && e.label?.name === label).at(-1)?.actor?.login ?? by;
+        if (batch.length < PAGE_SIZE) break;
+      }
+      return by;
     },
     reviews(number) {
       return ghApi([`repos/${currentRepo()}/pulls/${number}/reviews?per_page=${PAGE_SIZE}`]);
@@ -341,6 +367,21 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       return [...mine.map((i) => ({ i, why: 'yours' })), ...review.map((i) => ({ i, why: 'review' }))]
         .filter(({ i }) => i?.number && !seen.has(i.number) && seen.add(i.number))
         .map(({ i, why }) => pullRow(i, why));
+    },
+    /**
+     * @returns {Promise<{pulls: {number: number, title: string, branch: string, author: string|null, draft: boolean,
+     *   updatedAt: string|null}[], total: number}>}  the repo's open pull requests, updated last first, at most 100 of
+     *   `total`
+     */
+    async openPulls() {
+      const [owner, name] = currentRepo().split('/');
+      const answer = await ghApi(['graphql', '-f', `query=${OPEN_PULLS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`]);
+      const found = answer?.data?.repository?.pullRequests;
+      const pulls = (found?.nodes ?? []).filter((p) => p?.number).map((p) => ({
+        number: p.number, title: p.title, branch: p.headRefName, author: p.author?.login ?? null,
+        draft: Boolean(p.isDraft), updatedAt: p.updatedAt ?? null,
+      }));
+      return { pulls, total: found?.totalCount ?? pulls.length };
     },
     /**
      * @param {number[]} numbers  at most 50
@@ -401,6 +442,16 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
     },
     async comment(number, body) {
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
+      return created?.id ?? null;
+    },
+    /**
+     * Submit a formal review on the pull request, at `sha` so a push since makes GitHub refuse rather than approve the
+     * wrong commit. `event` is APPROVE, REQUEST_CHANGES or COMMENT. An APPROVE counts as the pull request's approval.
+     * @returns {Promise<number|null>}  the review's id
+     */
+    async createReview(number, { event, body, sha }) {
+      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/pulls/${number}/reviews`,
+        '-f', `commit_id=${sha}`, '-f', `event=${event}`, '-f', `body=${body.slice(0, 60_000)}`]);
       return created?.id ?? null;
     },
     /** @returns {Promise<true>}  once GitHub took the label off; a label that was not there answers 404 and throws */

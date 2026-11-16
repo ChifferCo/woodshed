@@ -491,9 +491,11 @@ async function main() {
   log('Started', { action, owner, services, databases: runDatabases(flags) });
   const secrets = flags['secrets-dir'] ? fileSecretsClient({ dir: flags['secrets-dir'] }) : secretsClient({ region: flags.region });
   log('Secrets from', { source: flags['secrets-dir'] ? 'files' : 'Secrets Manager' });
-  const { databases, from } = readProject(flags);
+  const { databases, from, repoFileError } = readProject(flags);
   const seedFiles = [...new Set(databases.flatMap((d) => d.envFiles))];
-  log('Project read', { from, databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles });
+  log('Project read', {
+    from, ...(repoFileError && { repoFileError }), databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles,
+  });
   const envFiles = async () => Object.fromEntries(await Promise.all(seedFiles.map(
     async (secret) => [secretEnvName(secret), (await secrets.get(`${flags['secret-prefix']}${secret}`)) ?? ''],
   )));
