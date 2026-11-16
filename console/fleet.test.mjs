@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -103,7 +103,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -119,17 +119,37 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   return { fleet, calls, github, alive, pulls, statuses, store, fail, launcher, advance: (ms) => { clock += ms; } };
 }
 
-// The project file needs an engine the installation does not host (databaseGate.mjs): nothing starts that would get
-// databases, and the reason reaches whoever asked.
-test('a project whose databases are not hosted starts no session: a label is told why on its issue, and the API refuses', async () => {
-  const why = 'the project file\'s databases need mongo, which this installation does not host (it hosts postgres)';
-  const { fleet, calls } = setup({ databasesRefusal: async () => why });
+// A project that is not ready (databaseGate.mjs) starts no session that would get databases, and the reason, with its
+// first fix, reaches whoever asked. Another project still starts.
+const MONGO_BLOCKER = {
+  project: 'example-repo', repo: 'example-org/example-repo',
+  reason: 'example-org/example-repo\'s project file asks for a Mongo database, and this console only runs Postgres.',
+  fix: [{ text: 'Add "mongo" to databases in the installation\'s terraform.tfvars, then run terraform plan and terraform apply.' }, { text: 'Or take the Mongo database out.' }],
+};
+const MONGO_WHY = `${MONGO_BLOCKER.reason} ${MONGO_BLOCKER.fix[0].text}`;
+
+test('a project that is not ready starts no session: a label is told why on its issue, and the API refuses', async () => {
+  const asked = [];
+  const { fleet, calls } = setup({ projectBlocker: async (project) => { asked.push(project.name); return MONGO_BLOCKER; } });
   const outcome = await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' });
-  assert.deepEqual(outcome, { outcome: 'ignored', reason: why });
-  assert.deepEqual(calls.comments.map((c) => c.body), [`Woodshed cannot start a session here: ${why}.`]);
+  assert.deepEqual(outcome, { outcome: 'ignored', reason: MONGO_WHY });
+  assert.deepEqual(calls.comments.map((c) => c.body), [`Woodshed cannot start a session here: ${MONGO_WHY}`]);
   assert.equal(fleet.sessions().length, 0);
-  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${why}` });
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${MONGO_WHY}` });
   assert.equal(calls.started.length, 0);
+  assert.equal(asked.length, 2, 'each start checks its project');
+});
+
+test('a blocked project holds back only its own sessions: another project starts', async () => {
+  const projects = [
+    { name: 'example-repo', repo: 'example-org/example-repo', default: true },
+    { name: 'web', repo: 'example-org/web', default: false },
+  ];
+  const { fleet, calls } = setup({ projects, projectBlocker: async (project) => (project.name === 'example-repo' ? MONGO_BLOCKER : null) });
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${MONGO_WHY}` });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: projects[1] });
+  assert.equal(session.project, 'web');
+  assert.equal(calls.started.length, 1);
 });
 
 test('a label from a writer starts a session and announces it on the issue', async () => {

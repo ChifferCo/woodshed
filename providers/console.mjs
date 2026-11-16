@@ -60,10 +60,10 @@ function cannotStart(err) {
 }
 
 /**
- * Starts the console from the environment, as the image does. `repos` is for the dev console's stand-in for an
- * embedding program (scripts/devHostConsole.mjs); the image passes none.
+ * Starts the console from the environment, as the image does. `repos` and `projectReadiness` are for the dev
+ * console's stand-in for an embedding program (scripts/devHostConsole.mjs); the image passes neither.
  */
-export function run({ repos = null } = {}) {
+export function run({ repos = null, projectReadiness = null } = {}) {
   let config;
   let provider;
   // A setting that is wrong, such as a secrets folder without its key, is said in one line, not a stack trace.
@@ -83,7 +83,7 @@ export function run({ repos = null } = {}) {
     process.exit(0);
   }
   console.log('console: provider', { name: provider.name });
-  startConsole({ provider, config, repos }).catch(cannotStart);
+  startConsole({ provider, config, repos, projectReadiness }).catch(cannotStart);
 }
 
 if (isMain(import.meta.url)) run();
