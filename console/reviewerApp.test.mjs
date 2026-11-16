@@ -62,6 +62,24 @@ test('a review is submitted as the reviewer App, on its installation for the rep
   assert.deepEqual(calls.at(-1).body.comments, [{ path: 'a.mjs', line: 3, side: 'RIGHT', body: 'Off by one.' }], 'inline comments ride on the review');
 });
 
+test('a reviewer App renamed on GitHub is followed from the login its next review comes back with', async () => {
+  const secrets = memorySecrets();
+  secrets.values.set(REVIEWER_KEY_SECRET, privateKey);
+  let login = 'rev[bot]';
+  const { reviewer, store } = setup(async (url) => {
+    if (url.endsWith('/repos/Acme/widgets/installation')) return json(200, { id: 55 });
+    if (url.endsWith('/app/installations/55/access_tokens')) return json(201, { token: 'ghs_reviewer', expires_at: '2030-01-01T00:00:00Z' });
+    return json(200, { id: 999, user: { login } });
+  }, { state: { reviewerApp: { appId: '88', slug: 'rev' } }, secrets });
+  const review = { repo: 'Acme/widgets', number: 7, event: 'APPROVE', body: 'x', sha: SHA };
+  await reviewer.submitReview(review);
+  assert.equal(reviewer.login(), 'rev[bot]');
+  login = 'acme-reviewer[bot]';
+  await reviewer.submitReview(review);
+  assert.equal(reviewer.login(), 'acme-reviewer[bot]', 'the gates trust the new name');
+  assert.deepEqual(store.state.reviewerApp, { appId: '88', slug: 'acme-reviewer' }, 'and it is kept across a restart');
+});
+
 test('a review is refused, not sent as anyone else, when the reviewer App has no key or is not installed on the repo', async () => {
   const noKey = setup(async () => assert.fail('nothing is asked of GitHub'), { state: { reviewerApp: { appId: '88', slug: 'rev' } } });
   await assert.rejects(noKey.reviewer.submitReview({ repo: 'Acme/widgets', number: 7, event: 'APPROVE', body: 'x', sha: SHA }), /not set up/);

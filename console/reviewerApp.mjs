@@ -2,9 +2,10 @@
 // pull request's author approve it, Apps included, and a pull request a shared session opens is the console App's. So
 // the verdict goes out as this App instead, and the author and the reviewer are never the same identity.
 //
-// It asks for pull requests (write) and nothing else. Its key is in the secret store, its App ID and slug in the
-// console's state, both saved by GitHub's App Manifest flow from the GitHub setup page. It is read at each review, so
-// it takes effect without a restart.
+// It asks for pull requests and contents (write), and submits each review with a token narrowed to pull requests. Its
+// key is in the secret store, its App ID and slug in the console's state, both saved by GitHub's App Manifest flow from
+// the GitHub setup page. It is read at each review, so it takes effect without a restart, and the slug follows a rename
+// of the App from the login each submitted review comes back with.
 
 import crypto from 'node:crypto';
 
@@ -113,6 +114,16 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     return { appId: String(made.id), slug: made.slug };
   }
 
+  /** The App was renamed on GitHub: its reviews now carry the new login, which the gates must trust instead. */
+  function followRename(login) {
+    const slug = login.endsWith('[bot]') ? login.slice(0, -'[bot]'.length) : null;
+    const found = stored();
+    if (!slug || !found || slug === found.slug) return;
+    store.state.reviewerApp = { ...found, slug };
+    store.save();
+    console.log('reviewerApp: renamed on GitHub, following it', { from: found.slug, to: slug });
+  }
+
   /**
    * Submits a formal review as the reviewer App, at `sha`, so a push since makes GitHub refuse rather than approve the
    * wrong commit.
@@ -136,6 +147,7 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     });
     const answer = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`GitHub refused the reviewer App's review: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`);
+    followRename(String(answer.user?.login ?? ''));
     return answer.id ?? null;
   }
 
