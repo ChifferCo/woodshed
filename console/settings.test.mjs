@@ -2,10 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { checkValue, secretSpecs } from './secrets.mjs';
 // The real Secrets Manager store over a fake AWS CLI: what the Secrets tab does end to end.
 import { createSecretStore } from '../providers/aws/secretStore.mjs';
+import { createSecretStore as createLocalStore } from '../providers/local/secretStore.mjs';
 import { createWebhookUrl } from '../providers/aws/webhookUrl.mjs';
 import { createSettings } from './settings.mjs';
 
@@ -140,6 +143,27 @@ test('a secret Terraform has not made yet shows as missing', async () => {
   delete store.values['woodshed-cloud/registry-token'];
   const token = (await settings.view()).secrets.find((s) => s.name === 'registry-token');
   assert.deepEqual([token.exists, token.set, token.changedAt], [false, false, null]);
+});
+
+test('a missing secret is creatable only on a store that makes it when first written', async () => {
+  const { settings, store } = setup();
+  delete store.values['woodshed-cloud/registry-token'];
+  const rows = (await settings.view()).secrets;
+  assert.ok(rows.every((s) => !s.creatable), 'AWS: Terraform makes each, so a missing one is not creatable');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-local-'));
+  const local = createSettings({
+    config: { repo: 'o/r', envFiles: ENV_FILES, installSecrets: INSTALL_SECRETS, githubApp: { appId: '1', installationId: '2' } },
+    secrets: createLocalStore({ dir, key: crypto.randomBytes(32), specs: SPECS }),
+    appKey: { current: () => null, set() {} },
+    appApi: { async hookConfig() { return {}; }, async app() { return {}; } },
+    webhookUrl: async () => null,
+  });
+  const before = (await local.view()).secrets;
+  assert.ok(before.every((s) => !s.exists && s.creatable));
+  await local.replace('openai-api-key', 'sk-test-1');
+  const after = (await local.view()).secrets.find((s) => s.name === 'openai-api-key');
+  assert.deepEqual([after.exists, after.set, after.creatable], [true, true, false]);
 });
 
 test('a session secret can be shown; the Anthropic key and the App key cannot', async () => {

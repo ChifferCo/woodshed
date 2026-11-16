@@ -44,6 +44,14 @@ a save over the limit is refused naming it (`your files together are over the 10
 holds`), and the console's request body limit for that save follows it. The other secrets (an env file, a token) stay
 at 64 KB.
 
+### A secret store that makes a secret when it is first written
+
+A `secrets` store may declare `createsOnWrite: true`: `write` makes a secret that does not exist yet. The local store
+declares it. The Secrets page then lists each secret that is not there yet with `creatable: true` and offers Set, so
+the first value can be given on the page. A store that declares none (AWS: Terraform makes every secret first) lists
+a missing secret as "Missing in AWS" with no Set, because that is a misconfiguration. An embedding program's store
+whose `write` creates a missing secret should declare it too.
+
 ### A wait's progress
 
 A launcher whose `start` throws one of the fleet's "no room" errors (`NO_ROOM_RE` in `console/fleet.mjs`) puts the
