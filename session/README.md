@@ -85,12 +85,18 @@ change to the stage by the workflow's run, about the time the build takes.
    `~/.config/woodshed/repo-settings.json`, readable by the session's user alone and outside the saved `~/.claude`,
    until the env files and the rules are written, then is deleted. A layer with no value there falls back to its legacy
    text (the env file's secret, or the owner's lines in the `/settings` answer) while the installation still has it,
-   logged as `WARNING: <path> from the legacy env file secret <secret>: …`. A console from before the route answers
+   logged as `WARNING: <path> from the legacy env file secret <secret>: …`. Under an embedding program whose
+   `config.envFiles` entries carry `name` and `repo` (console/README.md, "Embedding the console"), that legacy text is
+   the session's own repo's: the launcher gives the shared text in `name`'s variable, and `/settings` hands the owner's
+   lines of the session's repo alone, under `name`. Env files that name one secret share its key, so each of their
+   paths is written the key's values, with its own defaults and lines. A console from before the route answers
    404: the log says `Repo settings not offered by the console, using the legacy env files`, and the files are written
    from the secrets exactly as before. Any other refusal stops the start (`could not get the repo settings from the
    console (status …)`), after the retries a 503 gets. The log says `Repo settings fetched` with each layer's keys and
    sizes, and `Env files written` with each file's layers, sizes and the keys the session's wiring replaced
-   (`replaced by the session`), and a line for repo settings no env file of the checkout has a key for: never a value.
+   (`replaced by the session`; files that share a key are one entry, `api/.env, worker/.env from app-env (…)`, with the
+   values' sizes once and each path's layers), and a line for repo settings no env file of the checkout has a key for:
+   never a value.
 3. Starts its own Redis on 127.0.0.1, with redis-commander for Data ▾, when the
    project file's `env` or `envFiles` mention `REDIS_URL` (`startRedisIfUsed`), and
    logs `Redis started`; otherwise it logs `Redis not started (the project uses none…)`,
