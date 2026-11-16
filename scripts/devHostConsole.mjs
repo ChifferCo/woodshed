@@ -3,6 +3,7 @@
 // its links to give access, Add repo and Remove going to the program, its refusal with a link, and no name field.
 // console/bin/devConsole.mjs starts this instead of providers/console.mjs when DEV_CONSOLE_HOST_REPOS=1. Nothing here
 // calls GitHub: the account, its repos and its links are made up, and what is added lasts until the console stops.
+// DEV_CONSOLE_BLOCKED_REPO=<owner/name> also gives that repo a made-up blocker through the projectReadiness hook.
 import { run } from '../providers/console.mjs';
 import { isMain } from '../shared/isMain.mjs';
 
@@ -50,4 +51,21 @@ export function devHostRepos() {
   };
 }
 
-if (isMain(import.meta.url)) run({ repos: devHostRepos() });
+/**
+ * A projectReadiness hook in the shape createInstallation takes: DEV_CONSOLE_BLOCKED_REPO=acme/api says that repo's
+ * session image is not built, as a hosting program would when an install secret has no value, so New session's and
+ * Console settings' Needs setup card can be tried. No repo is blocked without it.
+ */
+export function devReadiness(blocked = process.env.DEV_CONSOLE_BLOCKED_REPO || '') {
+  if (!blocked) return null;
+  return async ({ name, repo }) => (repo.toLowerCase() !== blocked.toLowerCase() ? null : {
+    reason: `${repo}'s session image is not built: its install secret NPM_TOKEN has no value.`,
+    fix: [
+      { text: `Give NPM_TOKEN a value in ${repo}'s settings.`, href: `/console-settings/repos/${encodeURIComponent(name)}`, label: 'Open its settings' },
+      { text: 'Build the session image again. It takes a few minutes.', href: 'https://example.com/acme/builds', label: 'Open the builds' },
+    ],
+    ask: { who: ['ana-admin', 'bo-admin'] },
+  });
+}
+
+if (isMain(import.meta.url)) run({ repos: devHostRepos(), projectReadiness: devReadiness() });

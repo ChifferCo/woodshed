@@ -357,13 +357,18 @@ secrets.
   file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
   quote a password there, since an app that reads them with a stricter parser than dotenv can take a `#` for a
   comment.
-- **No session starts, saying `the project file's databases need mongo, which this installation does not host`.**
-  The project file's `databases` name an engine the installation does not host: add it to `databases` in Terraform
-  (or the local provider's `WOODSHED_LOCAL_DB_*` and session env), or take that database out of the project file. The
-  console reads the default branch's file and logs `console: project databases not hosted` with `needs` and `hosted`,
-  then `fleet: session refused, its databases are not hosted` for each start it refused (`fleet: trigger refused` for a
-  label or comment, which gets the reason on its issue). A session started from a branch whose own file differs stops
-  at start with the same words. On a local install made with no repository, the refusal ends `run WOODSHED_REPO=<repo>
+- **Sessions on one repo do not start, saying `<repo>'s project file asks for a Mongo database, and this console only
+  runs Postgres`, or New session shows that repo's Needs setup card.** That repo's own project file names an engine
+  the installation does not host: add it to `databases` in Terraform (or the local provider's `WOODSHED_LOCAL_DB_*` and
+  session env), or take that database out of the project file. Each repo is checked on its own (`console/databaseGate.mjs`),
+  so the others still start; Console settings' Repos card says Needs setup or Ready on each. The console reads each
+  repo's default branch's file and logs `console: project databases not hosted` with the `project`, `needs` and
+  `hosted`, then `fleet: session refused, its project is not ready` for each start it refused (`fleet: trigger
+  refused, its project is not ready` for a label or comment, which gets the reason and its first fix on its issue).
+  An embedding program's `projectReadiness` hook answers first: `console: project not ready` with `from: 'program'`
+  and its reason, or `console: project readiness not read` when the hook threw (nothing is blocked then). A session
+  started from a branch whose own file differs stops at start with `the project file's databases need mongo, which
+  this installation does not host`. On a local install made with no repository, the fix is `Run WOODSHED_REPO=<repo>
   bash install.sh again on this machine`: that builds the repo's own image and starts its databases
   (providers/local/README.md, "Setting it up"). The console logs `console: databases` at start with the `engines` it makes and the ones
   sessions are `hosted` on; a session in an installation with none logs `No databases to fetch`. A db-admin run logs
@@ -555,8 +560,11 @@ secrets.
   runs on` with `plan`. `fleet: the starter's Claude token is not saved` or
   `could not be read` mean it fell back to the team key; the switch also has no
   effect for someone with no token saved (`userSettings: own token for shared
-  sessions` logs each change), nor on a console that makes no shared databases
-  (the docker launcher), whose sessions never ask the session API. The session's own log says `Runs on the
+  sessions` logs each change). A console that makes no shared databases (no
+  db-admin, or a project with no Postgres or Mongo) still decides it: the session
+  asks `/settings` for the plan alone, and the console logs `sessionApi: settings
+  handed out` with `database: null`. A session image from before that never asks,
+  and stays on the team key. The session's own log says `Runs on the
   starter's Claude plan` when it does; `sessionApi: the starter's Claude token is
   gone` means it was removed between the launch and the session asking.
 - **An assignee got no Slack message.** Messages go only to the assignee of a shared session, when it starts asking
@@ -874,7 +882,11 @@ chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and 
 `devConsole.mjs` to cover another state.
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
-name, and refuses any other typed repo with a link to give the App access, as a hosted console does.
+name, and refuses any other typed repo with a link to give the App access, as a hosted console does. With
+`DEV_CONSOLE_BLOCKED_REPO=acme/api` its made-up `projectReadiness` hook says that repo's image is not built, for the
+Needs setup card on New session and the Repos card; with `WOODSHED_PROJECTS` naming the three, the default can be the
+blocked one. The dev console has no sign-in, so everyone is an admin: to see the card as anyone else, answer `/api/me`
+with `admin: false` from the Playwright browser (`page.route`).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

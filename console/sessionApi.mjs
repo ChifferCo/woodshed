@@ -170,7 +170,7 @@ export function createSessionApi({
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases);
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
@@ -240,10 +240,16 @@ export function createSessionApi({
 
 // A shared session's own databases, which the console starts copying as the session starts: 503 until they are made.
 // With them, whose plan it runs on, when the fleet decided at launch that it runs on its starter's.
-async function sharedSettingsReply(res, session, databases, userSettings) {
+// A console that makes no databases still answers the plan, as for a review, to an entrypoint that says it reads an
+// answer with no database (PLAN_ONLY_HEADER). Anyone else gets the 404 an image from before read as "the environment's
+// databases stay": given a 200 with no database, it stops with `the console sent no database user`.
+export const PLAN_ONLY_HEADER = 'x-woodshed-plan-only';
+async function sharedSettingsReply(res, session, databases, userSettings, { planOnly = false } = {}) {
   if (!databases?.available) {
-    console.warn('sessionApi: settings refused, a shared session has no owner', { sessionId: session.id });
-    return reply(res, 404, { error: 'a shared session has no personal settings' });
+    const onPlan = planOnly && Boolean(await starterToken(session, userSettings));
+    console.log('sessionApi: settings handed out', { sessionId: session.id, owner: null, database: null, plan: onPlan ? session.plan : null });
+    if (onPlan) return reply(res, 200, { plan: session.plan });
+    return reply(res, 404, { error: 'a shared session has no personal settings, and this console makes it no databases' });
   }
   const { status, database, error } = await databases.sessionDatabase(session.id);
   if (status === 'working') return reply(res, 503, { error: 'its databases are still being copied' });
@@ -290,14 +296,14 @@ async function repoSettingsReply(req, res, session, repoSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases) {
+async function settingsReply(res, session, userSettings, databases, { planOnly = false } = {}) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
     console.log('sessionApi: review settings handed out', { sessionId: session.id, plan: onPlan ? session.plan : null });
     return reply(res, 200, onPlan ? { plan: session.plan } : {});
   }
-  if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings);
+  if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings, { planOnly });
   const codex = session.options?.agent === 'codex';
   const claudeToken = userSettings ? await userSettings.claudeToken(session.owner) : null;
   if (!claudeToken && !codex) {

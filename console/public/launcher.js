@@ -338,8 +338,11 @@
 
   /**
    * The Project field: which repo the session works on, among those the person may start on (GET /api/my/projects),
-   * with their default marked and Make my default beside any other. With one project it names it as text; hidden with none.
-   * @param {() => void} changed  called when the pick or the projects change
+   * with their default marked and Make my default beside any other. With one project it names it as text, with a way
+   * to add another (an admin's link to Console settings, a line for anyone else). It never hides for a blocked repo:
+   * those stay in the list marked `needs setup`, and New session opens on the person's default only while it is not
+   * blocked, else on the first that is not (`projectBlockers` in /api/my, databaseGate.mjs).
+   * @param {() => void} changed  called when the pick, the projects or their blockers change
    */
   function createProjectPicker(changed) {
     const picker = h('select', { id: 'l-project', class: 'field' });
@@ -347,15 +350,28 @@
     const makeDefault = h('button', { type: 'button', class: 'btn btn-plain', title: 'New session opens on this project for you' }, 'Make my default');
     // With one project there is nothing to pick, but the form still says which repo the session works on.
     const only = h('div', { class: 'project-only mono', id: 'l-project-only' });
+    const more = h('p', { class: 'project-more' });
     const label = h('label', { for: 'l-project', class: 'field-label' }, h('span', null, 'Project'), h('span', { class: 'hint' }, 'the repo it works on'));
     const el = h('div', { class: 'lfield', hidden: true }, label,
       h('div', { class: 'project-pick' }, picker, makeDefault),
       only,
+      more,
       status);
     const pick = el.querySelector('.project-pick');
     let view = null;
-    // A ?project= link picks for this visit only; it waits for the list when the page opens on it.
+    let blockers = {};
+    let blockersKey = '{}';
+    // A ?project= link picks for this visit only; it waits for the list when the page opens on it. A pick the person
+    // made (or a link's) is kept even when that repo is blocked: that is when its fix card shows.
     let asked = null;
+    let chosen = false;
+    const blockerOf = (name) => blockers[name] ?? null;
+    // The project New session opens on: the person's default while it can start, else the first that can.
+    function opening(projects) {
+      const preferred = projects.find((p) => p.name === view?.defaultProject) ?? projects[0];
+      if (!preferred || !blockerOf(preferred.name)) return preferred?.name ?? '';
+      return (projects.find((p) => !blockerOf(p.name)) ?? preferred).name;
+    }
     function render() {
       const projects = view?.projects ?? [];
       el.hidden = projects.length === 0;
@@ -364,15 +380,20 @@
       only.hidden = !one;
       // With one project the select is hidden, so the label points at nothing.
       if (one) label.removeAttribute('for'); else label.setAttribute('for', 'l-project');
-      only.textContent = one ? `${projects[0].name} \u00b7 ${projects[0].repo}` : '';
-      const picked = picker.value || asked || view?.defaultProject;
+      only.textContent = one ? `${projects[0].name} \u00b7 ${projects[0].repo}${blockerOf(projects[0].name) ? ' \u2014 needs setup' : ''}` : '';
+      more.hidden = !one;
+      more.replaceChildren(...(!one ? [] : W.isAdmin()
+        ? ['The only repo on this console. ', h('a', { href: '/console-settings#card-projects' }, 'Add a repo'), ' on Console settings to start sessions on another.']
+        : ['The only repo on this console. An admin can connect another one on Console settings.']));
+      const was = picker.value;
+      const picked = (chosen && was) || asked || opening(projects);
       picker.replaceChildren(...projects.map((p) => h('option', { value: p.name },
-        `${p.name} \u00b7 ${p.repo}${p.name === view.defaultProject ? ' \u2014 your default' : ''}`)));
-      picker.value = projects.some((p) => p.name === picked) ? picked : (view?.defaultProject ?? '');
-      makeDefault.hidden = !view || picker.value === view.defaultProject;
+        `${p.name} \u00b7 ${p.repo}${p.name === view.defaultProject ? ' \u2014 your default' : ''}${blockerOf(p.name) ? ' \u2014 needs setup' : ''}`)));
+      picker.value = projects.some((p) => p.name === picked) ? picked : opening(projects);
+      makeDefault.hidden = !view || picker.value === view.defaultProject || Boolean(blockerOf(picker.value));
       changed();
     }
-    picker.addEventListener('change', () => { status.textContent = ''; render(); });
+    picker.addEventListener('change', () => { status.textContent = ''; chosen = true; render(); });
     makeDefault.addEventListener('click', async () => {
       makeDefault.disabled = true;
       try {
@@ -385,14 +406,36 @@
       render();
     });
     W.getJson('/api/my/projects').then((answer) => { view = answer; render(); }, () => {});
+    // An admin's Add a repo link shows once /api/me says who they are.
+    window.addEventListener('woodshed:me', () => { if (view) render(); });
     return {
       el,
       /** @returns {string}  the picked project, empty with one project: the server starts on the default */
       value: () => ((view?.projects.length ?? 0) < 2 ? '' : picker.value),
       /** @returns {string}  the picked project's repo, the only one's with one project */
       repo: () => view?.projects.find((p) => p.name === picker.value)?.repo ?? '',
+      /** @returns {object|null}  why the picked project cannot start sessions, or null */
+      blocker: () => (view ? blockerOf(picker.value) : null),
+      /** @returns {object[]}  the other projects' blockers, when every project is blocked */
+      othersBlocked: () => {
+        const projects = view?.projects ?? [];
+        if (projects.length < 2 || projects.some((p) => !blockerOf(p.name))) return [];
+        return projects.filter((p) => p.name !== picker.value).map((p) => blockerOf(p.name));
+      },
+      /** @returns {boolean}  whether another project could be picked */
+      hasOthers: () => (view?.projects.length ?? 0) > 1,
+      focus: () => picker.focus(),
+      /** The blockers from /api/my: drawn again only when they changed, since drawing calls `changed`. */
+      setBlockers(next) {
+        const key = JSON.stringify(next ?? {});
+        if (key === blockersKey) return;
+        blockersKey = key;
+        blockers = next ?? {};
+        if (view) render();
+      },
       ask(name) {
         asked = name;
+        chosen = false;
         if (view) { picker.value = ''; render(); }
       },
     };
@@ -544,8 +587,9 @@
     const options = h('details', { class: 'loptions', open: !window.matchMedia('(max-width: 720px)').matches },
       h('summary', null, h('span', { class: 'field-label' }, 'Agent, model, effort and permissions'), picked),
       h('div', { class: 'lgrid4' }, field('l-agent', 'Agent', agent), field('l-model', 'Model', model), field('l-effort', 'Effort', effort), field('l-mode', 'Permissions', mode)), codexNote);
-    const form = h('form', { class: 'launch-form' },
-      projects.el,
+    // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
+    const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
+    const body = h('div', { class: 'launch-body' },
       field('l-prompt', 'Prompt', promptWrap, 'optional with a PR or branch below: opens its review'),
       attachments.el, attachments.chips,
       h('div', { class: 'lgrid2' },
@@ -554,6 +598,7 @@
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
+    const form = h('form', { class: 'launch-form' }, projects.el, blockedSlot, body);
     // Until setup is done (a Claude token or a Codex sign-in, and databases ready where the console makes them), New session is the setup
     // card instead of the form: the server refuses a start until then.
     const noToken = h('div', { class: 'launch-setup', hidden: true });
@@ -583,10 +628,11 @@
       // The `/` menu's Enter picks a skill first, and only that.
       if (e.defaultPrevented || e.repeat || e.isComposing || K.match(e) !== 'start') return;
       e.preventDefault();
-      if (!start.disabled) form.requestSubmit();
+      if (!start.disabled && !body.hidden) form.requestSubmit();
     });
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (body.hidden) return projects.focus();
       dictation.finish();
       const reviewOnly = !prompt.value.trim() && workOn.value.trim();
       if (!prompt.value.trim() && !reviewOnly) return prompt.focus();
@@ -634,14 +680,18 @@
       }
       // The server refuses a start until the databases are ready too, so the form waits for the same things the card does.
       const ready = Boolean(me) && W.setupDone(me);
-      const refused = me?.databasesRefusal ?? null;
-      noToken.hidden = ready && !refused;
-      if (refused) {
-        noToken.replaceChildren(h('p', { class: 'form-error', role: 'alert' }, `No session can start: ${refused}. Whoever runs this console adds the engine, or the project file drops that database.`));
-      } else if (!ready && me) {
-        noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set || me.codexAuth?.set ? [] : [tokenHelp]));
-      }
-      form.hidden = !ready || Boolean(refused);
+      noToken.hidden = ready;
+      if (!ready && me) noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set || me.codexAuth?.set ? [] : [tokenHelp]));
+      form.hidden = !ready;
+      // A repo that cannot start sessions (databaseGate.mjs) keeps the picker, and shows its fix in place of the rest.
+      projects.setBlockers(me?.projectBlockers ?? {});
+      const blocked = projects.blocker();
+      const others = projects.othersBlocked();
+      blockedSlot.hidden = !blocked;
+      body.hidden = Boolean(blocked);
+      blockedSlot.replaceChildren(...(blocked ? [W.blockerCard(blocked, { others: projects.hasOthers() && !others.length })] : []),
+        ...(blocked && others.length ? [h('div', null, h('p', { class: 'sub' }, 'Every repo on this console needs setup:'),
+          h('ul', { class: 'blocker-others' }, others.map((b) => h('li', null, h('b', { class: 'mono' }, b.repo), ` \u2014 ${b.reason}`))))] : []));
       start.disabled = attachments.sending();
       startWords.textContent = full() ? 'Start when one frees up' : 'Start';
       note.replaceChildren(...(full()
@@ -651,6 +701,7 @@
     }
     // New session pressed on its own screen: show what is missing, or focus the prompt, so the button always answers.
     function nudge() {
+      if (!form.hidden && body.hidden) return projects.focus();
       if (!form.hidden) return prompt.focus();
       const card = noToken.querySelector('.setup-card');
       W.shell?.toast('Finish setup first: New session needs these steps.');

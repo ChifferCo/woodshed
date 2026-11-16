@@ -586,19 +586,54 @@ test('a project with no databases needs no engine to start, and one with databas
   assert.match(given.stdout, /app=app_user\/app/);
 });
 
-test('a shared session in an installation that hosts no database engine asks the console for none', (t) => {
+// A console with no db-admin (a hosted pool, or a project with no Postgres or Mongo) makes no databases, but a session
+// started from GitHub still runs on its starter's plan when the console says so: it asks /settings for that alone.
+function sharedWithoutDatabases(t, { answer, env = {}, project = {} }) {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-nodb-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(repoDir, '.woodshed'));
-  fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({}));
-  const out = spawnSync('bash', ['-c', [
+  fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject(project));
+  const calls = path.join(repoDir, 'calls');
+  return spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-    'curl() { echo "curl called"; exit 1; }', fn('fetchSessionDatabases'), 'fetchSessionDatabases', 'echo "db=${WOODSHED_DB_NAME:-none}"',
-  ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_CONSOLE_URL: 'http://console:7691', SESSION_TOKEN: 't' } });
-  assert.equal(out.status, 0, out.stdout + out.stderr);
-  assert.match(out.stdout, /No databases to fetch \(the installation hosts no database engine/);
-  assert.doesNotMatch(out.stdout, /curl called/);
+    // The console's answer, as consoleCall gives it: the status on stdout, the body in the file.
+    // It says it reads a plan alone: the console answers a 404 to anything that does not.
+    `consoleCall() { echo "$1" >> ${calls}; case " $* " in *" -H X-Woodshed-Plan-Only: 1 "*) ;; *) echo "no plan-only header: $*" >&2; exit 1 ;; esac; printf '%s' '${answer.body}' > "$2"; printf '%s' '${answer.status}'; }`,
+    `SETTINGS_ANSWER=${repoDir}/settings.json`, "PLAN_ONLY_HEADER='X-Woodshed-Plan-Only: 1'",
+    fn('useDatabaseFrom'), fn('fetchStarterPlan'), fn('fetchSessionDatabases'), 'fetchSessionDatabases',
+    'echo "db=${WOODSHED_DB_NAME:-none} plan=${STARTER_PLAN:-none} calls=$(cat ' + calls + ' 2>/dev/null | tr "\\n" " ")"',
+    `test ! -e ${repoDir}/settings.json && echo "answer removed"`,
+  ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, WOODSHED_CONSOLE_URL: 'http://console:7691', SESSION_TOKEN: 't', ...env } });
+}
+
+test('a shared session in an installation that hosts no database engine asks the console only for its plan', (t) => {
+  const team = sharedWithoutDatabases(t, { answer: { status: 404, body: '{"error":"no databases"}' } });
+  assert.equal(team.status, 0, team.stdout + team.stderr);
+  assert.match(team.stdout, /No databases to fetch \(the installation hosts no database engine/);
+  assert.match(team.stdout, /db=none plan=none calls=\/settings \n/, 'one call, and a 404 is the team key');
+  assert.match(team.stdout, /answer removed/);
+
+  const plan = sharedWithoutDatabases(t, { answer: { status: 200, body: '{"plan":"allen"}' } });
+  assert.equal(plan.status, 0, plan.stdout + plan.stderr);
+  assert.match(plan.stdout, /Runs on the starter's Claude plan \(plan: allen\)/);
+  assert.match(plan.stdout, /db=none plan=allen calls=\/settings \n/);
+  assert.match(plan.stdout, /answer removed/);
+});
+
+test('a shared session whose environment names its databases still asks the console for its plan', (t) => {
+  const given = sharedWithoutDatabases(t, { answer: { status: 200, body: '{"plan":"allen"}' }, env: { PGHOST: 'pg', PGPASSWORD: 'x' }, project: { databases: [PG] } });
+  assert.equal(given.status, 0, given.stdout + given.stderr);
+  assert.doesNotMatch(given.stdout, /No databases to fetch/);
+  assert.match(given.stdout, /db=none plan=allen calls=\/settings \n/);
+});
+
+test('a hosted engine but a console that makes no databases: the plan alone keeps the environment\'s', (t) => {
+  const hosted = sharedWithoutDatabases(t, { answer: { status: 200, body: '{"plan":"allen"}' }, env: { PGHOST: 'pg' }, project: { databases: [PG] } });
+  assert.equal(hosted.status, 0, hosted.stdout + hosted.stderr);
+  assert.match(hosted.stdout, /WARNING: the console made no databases for this session, using the environment's/);
+  assert.match(hosted.stdout, /Runs on the starter's Claude plan \(plan: allen\)/);
+  assert.match(hosted.stdout, /db=none plan=allen calls=\/settings \n/);
 });
 
 // The db-admin task's `seed` and `migrate`: every database's commands, in the list's order, each in its dir, with the

@@ -148,9 +148,10 @@ repos your `gh` login can push to. The project file comes after that, for the re
    of them: the project file", above, says (the `write-project-file` skill), and have it committed. Sessions read the
    file at start, from their branch, so nothing is rebuilt for it.
 
-   If the file has `databases`, this install hosts none yet, and the console refuses sessions with `the project file's
-   databases need postgres, which this installation does not host (it hosts none): run WOODSHED_REPO=owner/name bash
-   install.sh again on this machine`. Do that, with `WOODSHED_NO_START=1` and the same `WOODSHED_TAILSCALE`, then stop
+   If the file has `databases`, this install hosts none yet, and the console refuses sessions on that repo with
+   `owner/name's project file asks for a Postgres database, and this console runs no database. Run
+   WOODSHED_REPO=owner/name bash install.sh again on this machine, …` (New session shows it as the repo's Needs setup
+   card). Do that, with `WOODSHED_NO_START=1` and the same `WOODSHED_TAILSCALE`, then stop
    the console and start it again as in step 3: the run builds that repository's own session image (several minutes)
    and starts its databases, and keeps the rest of the install.
    Do the same when the file has env files with a `secret`, so they get their slot on **Secrets & webhooks**. Read
