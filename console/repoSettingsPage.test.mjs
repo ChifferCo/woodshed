@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 import { createRepoSettings, createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
+import { createSlack } from './slack.mjs';
 import { parseProject } from '../shared/project.mjs';
 
 const layersSource = fs.readFileSync(new URL('./public/repoLayers.js', import.meta.url), 'utf8');
@@ -30,6 +31,7 @@ function element(tag) {
     append(c) { this.children.push(c); },
     replaceChildren(...c) { this.children = c; },
     focus() {},
+    scrollIntoView(opts) { this.scrolledTo = opts; },
     get textContent() { return textOf(this); },
     set textContent(v) { this.children = [String(v)]; },
   };
@@ -72,11 +74,30 @@ async function call(api, { method, path, body, login }) {
   return answer;
 }
 
+const CHANNEL_PATH = '/api/console-settings/projects/slack-channel';
+
+// The repo's Slack channel as the server adds it to the view, and its save as the server answers it: Console settings'
+// view, the repo's channel in its row.
+function slackOf(slack) {
+  return (name) => ({ channel: slack.projectChannel(name), consoleChannel: slack.view().channel, canPost: slack.view().canPost });
+}
+
+function channelCall(slack, body) {
+  try {
+    slack.setProjectChannel({ project: body.name, channel: body.channel, by: 'mia-dev' });
+  } catch (err) {
+    if (err.shown) return Promise.reject(Object.assign(new Error(err.message), { status: 400 }));
+    throw err;
+  }
+  return Promise.resolve({ slack: slack.view(), projects: PROJECTS.map((p) => ({ ...p, slackChannel: slack.projectChannel(p.name) })) });
+}
+
 /**
  * The page for `project`, signed in as an admin unless `admin` is false (the server's ADMIN_API_RE answers 403 then).
+ * `slack` is the console's Slack settings, {consoleChannel, channels: {<project>: channel}}; left out, it has none.
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', file = APP_FILE, envFiles = [{ secret: 'api-env', path: 'api/.env' }], admin = true, before = null, confirmAnswer = true } = {}) {
+async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, envFiles = [{ secret: 'api-env', path: 'api/.env' }], admin = true, before = null, confirmAnswer = true, slack: slackSettings = null } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app', envFiles };
@@ -88,12 +109,15 @@ async function loadPage({ project = 'app', search = '', file = APP_FILE, envFile
   });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
   if (before) await before({ repoSettings, store, secrets });
-  const api = createRepoSettingsApi({ repoSettings, config });
+  store.state.settings = { slackChannel: slackSettings?.consoleChannel ?? '', projectSlackChannels: { ...slackSettings?.channels } };
+  const slack = slackSettings && createSlack({ store, secrets });
+  const api = createRepoSettingsApi({ repoSettings, config, slackOf: slack ? slackOf(slack) : null });
   const calls = [];
   const consoleCall = (method, path, body) => {
     // The page's objects are of its own realm: copied, so they compare as plain ones.
     calls.push({ method, path, ...(body !== undefined && { body: JSON.parse(JSON.stringify(body)) }) });
     if (!admin) return Promise.reject(Object.assign(new Error('only an admin can do this'), { status: 403 }));
+    if (path === CHANNEL_PATH) return slack ? channelCall(slack, body) : Promise.reject(Object.assign(new Error('this console posts nothing to Slack'), { status: 404 }));
     return call(api, { method, path, body, login: 'mia-dev' });
   };
   const app = element('div');
@@ -116,7 +140,7 @@ async function loadPage({ project = 'app', search = '', file = APP_FILE, envFile
     postJson: (path, body) => consoleCall('POST', path, body),
     confirmChange: (opts) => { confirms.push(opts); },
   };
-  const location = { pathname: `/console-settings/repos/${project}`, search, href: `http://console.test/console-settings/repos/${project}${search}` };
+  const location = { pathname: `/console-settings/repos/${project}`, search, hash, href: `http://console.test/console-settings/repos/${project}${search}${hash}` };
   const history = { urls: [], replaceState(_s, _t, url) { this.urls.push(String(url)); } };
   const context = vm.createContext({
     window: { Woodshed: W, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
@@ -130,6 +154,8 @@ async function loadPage({ project = 'app', search = '', file = APP_FILE, envFile
 
 const buttons = (app, text) => walk(app).filter((e) => e.tag === 'button' && textOf(e).trim() === text);
 const button = (app, text) => buttons(app, text)[0];
+const cardOf = (app, id) => walk(app).find((e) => e.attrs['aria-labelledby'] === `card-${id}`);
+const instructionsSave = (app) => buttons(cardOf(app, 'instructions'), 'Save')[0];
 const editorOf = (app, id) => walk(app).find((e) => e.tag === 'textarea' && e.attrs.id === id);
 // The key table's rows, as [key, repo, installation, session, wins].
 const tableRows = (app) => walk(app).filter((e) => e.tag === 'tbody').flatMap((b) => b.children.map((tr) => tr.children.map((td) => textOf(td))));
@@ -275,7 +301,7 @@ test('instructions: the repo\'s rules are linked, the size is counted, and a cre
   assert.equal(rules.attrs.href, 'https://github.com/acme/app/blob/HEAD/.woodshed/rules.md');
   await type(app, 'instructions-text', 'Run npm test before pushing.\n');
   assert.match(textOf(app), /29 of 16,384 bytes/);
-  const save = () => buttons(app, 'Save').at(-1);
+  const save = () => instructionsSave(app);
   save().listeners.click();
   await settle();
   assert.equal(secrets.values.get('repos/app/instructions'), 'Run npm test before pushing.\n');
@@ -296,7 +322,7 @@ test('instructions over 16 KB cannot be saved, and say so before Save', async ()
   await type(app, 'instructions-text', 'x'.repeat(16 * 1024 + 1));
   const count = walk(app).find((e) => e.className?.startsWith('layer-count'));
   assert.equal(count.className, 'layer-count is-over');
-  assert.equal(buttons(app, 'Save').at(-1).disabled, true);
+  assert.equal(instructionsSave(app).disabled, true);
 });
 
 test('saved instructions are read when the page opens', async () => {
@@ -388,4 +414,96 @@ test('a copied value, cleared, says sessions read the Terraform secret again, no
   });
   assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
   assert.doesNotMatch(textOf(app), /Sessions read this one now/);
+});
+
+const channelField = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel');
+
+async function typeChannel(app, text) {
+  channelField(app).value = text;
+  channelField(app).listeners.input();
+}
+
+test('the Slack card says what the channel is for, how to find its ID and to invite the bot, and where posts go now', async () => {
+  const { app } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
+  const card = cardOf(app, 'slack');
+  const text = textOf(card);
+  assert.match(text, /When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post's thread\./);
+  assert.match(text, /With no channel here, it goes to the channel on Console settings' Slack card\./);
+  assert.match(text, /the ID \(C…\) is at the bottom of its About tab/);
+  assert.match(text, /Invite the Woodshed bot to the channel first/);
+  assert.match(text, /a question asked in Slack is answered in its own thread/);
+  assert.match(text, /Posting to the console's channel, C0CONSOLE01\./);
+  assert.equal(walk(card).find((e) => e.tag === 'a' && /Slack card/.test(textOf(e))).attrs.href, '/console-settings#card-slack');
+  assert.equal(channelField(app).value, '');
+  assert.equal(channelField(app).disabled, false);
+  assert.equal(button(card, 'Save').attrs.disabled, '', 'nothing typed yet');
+  assert.equal(button(card, 'Clear').attrs.disabled, '', 'nothing saved to clear');
+});
+
+test('the Slack card saves a channel and clears it back to the console\'s, through the Repos card\'s API', async () => {
+  const { app, calls, store } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
+  await typeChannel(app, ' C0APPPRS01 ');
+  const card = () => cardOf(app, 'slack');
+  assert.equal(button(card(), 'Save').attrs.disabled, undefined);
+  button(card(), 'Save').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/projects/slack-channel', body: { name: 'app', channel: 'C0APPPRS01' } });
+  assert.deepEqual(store.state.settings.projectSlackChannels, { app: 'C0APPPRS01' });
+  assert.match(textOf(card()), /Saved\. acme\/app's next pull request goes to C0APPPRS01\. Invite the bot to it first\./);
+  assert.match(textOf(card()), /Posting to C0APPPRS01\./);
+  assert.equal(channelField(app).value, 'C0APPPRS01');
+
+  button(card(), 'Clear').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/projects/slack-channel', body: { name: 'app', channel: '' } });
+  assert.deepEqual(store.state.settings.projectSlackChannels, {});
+  assert.match(textOf(card()), /Cleared\. acme\/app's next pull request goes to the console's channel, C0CONSOLE01\./);
+  assert.equal(channelField(app).value, '');
+});
+
+test('a channel\'s name is refused before Save, and a refusal from the console shows on the card', async () => {
+  const { app, calls } = await loadPage({ slack: { consoleChannel: '', channels: { app: 'C0APPPRS01' } } });
+  const card = () => cardOf(app, 'slack');
+  assert.match(textOf(card()), /Posting to C0APPPRS01\./);
+  await typeChannel(app, '#app-prs');
+  assert.equal(channelField(app).attrs['aria-invalid'], 'true');
+  assert.match(textOf(walk(card()).find((e) => e.className === 'form-error')), /Give the channel's ID, such as C0123456789, not its name\./);
+  assert.equal(button(card(), 'Save').attrs.disabled, '');
+  assert.equal(calls.filter((c) => c.path === CHANNEL_PATH).length, 0);
+
+  button(card(), 'Clear').listeners.click();
+  await settle();
+  assert.match(textOf(card()), /Cleared\. The console has no channel either, so nothing is posted\./);
+  assert.match(textOf(card()), /Nothing is posted: neither this repo nor the console has a channel\./);
+});
+
+test('a console with no Slack says so on the card and turns the field off', async () => {
+  const { app } = await loadPage();
+  const card = cardOf(app, 'slack');
+  assert.match(textOf(card), /This console has no Slack, so it posts nothing and a channel cannot be set here\./);
+  assert.doesNotMatch(textOf(card), /Posting to/);
+  assert.equal(channelField(app).disabled, true);
+  assert.equal(button(card, 'Save').attrs.disabled, '');
+  assert.equal(button(card, 'Clear').attrs.disabled, '');
+});
+
+test('#slack brings the Slack card\'s field into view', async () => {
+  const { app } = await loadPage({ hash: '#slack', slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
+  assert.deepEqual({ ...channelField(app).scrolledTo }, { block: 'center' });
+  assert.equal(walk(app).find((e) => e.tag === 'section' && e.attrs.id === 'slack').attrs['aria-labelledby'], 'card-slack');
+});
+
+test('a repo with no env files says how to add one, with a link to its project file', async () => {
+  const { app } = await loadPage({ file: parseProject({ version: 1 }), envFiles: [] });
+  const card = cardOf(app, 'env');
+  const text = textOf(card);
+  assert.doesNotMatch(text, /The project file has no env files\./);
+  assert.match(text, /This repo has no env files yet/);
+  assert.match(text, /In a pull request, add an envFiles entry to \.woodshed\/project\.yaml ↗:/);
+  assert.equal(textOf(walk(card).find((e) => e.tag === 'pre')), 'envFiles:\n  - path: api/.env\n    defaults:        # optional\n      - LOG_LEVEL=info');
+  assert.match(text, /No secret is needed: the file's key comes from its path \(api\/\.env is api-env\)\./);
+  assert.match(text, /Once it is on the default branch, a tab for it appears here, to set this installation's values\./);
+  assert.match(text, /docs\/reference\.md, "The project file"/);
+  const link = walk(card).find((e) => e.tag === 'a');
+  assert.deepEqual([link.attrs.href, link.attrs.target], ['https://github.com/acme/app/blob/HEAD/.woodshed/project.yaml', '_blank']);
 });

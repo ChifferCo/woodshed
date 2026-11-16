@@ -1,8 +1,9 @@
 // A repo's settings on Console settings (/console-settings/repos/<project>): for each env file of its project file, the
 // repo's defaults, this installation's values, what the session sets itself, and which of them a session gets for each
-// key; then the installation's instructions. Admins only: the API refuses anyone else, and the page says so. Values
-// stay hidden until Show, as on Secrets & webhooks, and never reach the table, which names keys alone.
-// ?file=<key> opens one env file's tab, so a link can point at it.
+// key; then the installation's instructions, and the Slack channel its pull requests are posted to. Admins only: the
+// API refuses anyone else, and the page says so. Values stay hidden until Show, as on Secrets & webhooks, and never
+// reach the table, which names keys alone. ?file=<key> opens one env file's tab, and #slack the Slack card, so a link
+// can point at them.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -23,6 +24,11 @@
   const notes = new Map();
   const busy = new Set();
   const INSTRUCTIONS = '#instructions';
+  const SLACK = '#slack';
+  // As slack.mjs checks it: a channel's name would be refused by Slack as channel_not_found.
+  const CHANNEL_RE = /^[CG][A-Z0-9]{8,}$/;
+  // The Slack channel field, made once like the editors, so what is typed and the caret survive a redraw.
+  let channelInput = null;
 
   const fileOf = (key) => view.envFiles.find((f) => f.key === key) ?? null;
   const { pathsOf, labelOf, andList } = L;
@@ -233,12 +239,27 @@
       files.length > 1 && h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Env file' }, files.map((x) => h('button', {
         type: 'button', 'aria-pressed': String(x.key === fileKey), onclick: () => openFile(x.key),
       }, labelOf(x), x.installation ? ' •' : ''))),
-      f ? envFilePanel(f) : h('p', { class: 'sub' }, 'The project file has no env files.'),
+      f ? envFilePanel(f) : noEnvFiles(),
       view.unnamed.length > 0 && [
         h('div', { class: 'sub-head' }, 'No longer in the project file', h('span', { class: 'count' }, view.unnamed.length)),
         h('div', { class: 'data-list' }, view.unnamed.map(unnamedRow)),
       ],
       note('unnamed'));
+  }
+
+  // How to add an env file, where the project file has none: its key comes from its path, so it needs no secret.
+  function noEnvFiles() {
+    if (!view.projectFile.read) return h('p', { class: 'sub' }, 'No values are saved.');
+    const projectFile = h('a', { href: L.githubFile(view.repo, '.woodshed/project.yaml'), target: '_blank', rel: 'noopener' }, '.woodshed/project.yaml ↗');
+    return h('div', { class: 'layered', id: 'no-env-files' },
+      h('div', { class: 'layer' },
+        h('div', { class: 'layer-head' }, h('h3', null, 'This repo has no env files yet')),
+        h('ol', { class: 'cmd-steps' },
+          h('li', null, h('p', null, 'In a pull request, add an ', h('code', null, 'envFiles'), ' entry to ', projectFile, ':'),
+            h('pre', { class: 'layer-pre' }, 'envFiles:\n  - path: api/.env\n    defaults:        # optional\n      - LOG_LEVEL=info')),
+          h('li', null, h('p', null, 'No ', h('code', null, 'secret'), ' is needed: the file\'s key comes from its path (', h('code', null, 'api/.env'), ' is ', h('code', null, 'api-env'), ').')),
+          h('li', null, h('p', null, 'Once it is on the default branch, a tab for it appears here, to set this installation\'s values.'))),
+        h('p', { class: 'sub' }, 'Every field is in Woodshed\'s ', h('code', null, 'docs/reference.md'), ', "The project file".')));
   }
 
   function instructionsCard() {
@@ -254,6 +275,66 @@
           shownText.has(INSTRUCTIONS) && sizeLine,
           note(INSTRUCTIONS),
           h('p', { class: 'sub' }, 'At most 16 KB. It goes into the prompt of every session on this repo, so no secrets: put them in an env file\'s values.'))));
+  }
+
+  // The channel's state in words: where the next pull request goes.
+  function slackNow(slack) {
+    if (slack.channel) return `Posting to ${slack.channel}.`;
+    if (slack.consoleChannel) return `Posting to the console's channel, ${slack.consoleChannel}.`;
+    return 'Nothing is posted: neither this repo nor the console has a channel.';
+  }
+
+  function channelProblem(raw) {
+    return raw && !CHANNEL_RE.test(raw) ? 'Give the channel\'s ID, such as C0123456789, not its name.' : null;
+  }
+
+  // Saved through the Repos card's API, which answers with Console settings' view: the repo's channel is in its row.
+  function saveChannel(channel) {
+    return act(SLACK, async () => {
+      const answer = await W.postJson('/api/console-settings/projects/slack-channel', { name: view.project, channel });
+      const own = answer.projects?.find((p) => p.name === view.project)?.slackChannel ?? channel;
+      view = { ...view, slack: { ...view.slack, channel: own, consoleChannel: answer.slack?.channel ?? view.slack.consoleChannel } };
+      channelInput.value = own;
+      if (own) return `Saved. ${view.repo}'s next pull request goes to ${own}. Invite the bot to it first.`;
+      return view.slack.consoleChannel ? `Cleared. ${view.repo}'s next pull request goes to the console's channel, ${view.slack.consoleChannel}.`
+        : 'Cleared. The console has no channel either, so nothing is posted.';
+    });
+  }
+
+  function slackCard() {
+    const slack = view.slack;
+    const off = !slack?.canPost;
+    const saved = slack?.channel ?? '';
+    if (!channelInput) {
+      channelInput = h('input', {
+        id: 'slack-channel', class: 'field is-text is-channel mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'C0123456789',
+        oninput: () => render(),
+      });
+      channelInput.value = saved;
+    }
+    const field = channelInput;
+    const raw = field.value;
+    const bad = channelProblem(raw.trim());
+    field.disabled = off;
+    field.readOnly = busy.has(SLACK);
+    field.setAttribute('aria-invalid', bad ? 'true' : 'false');
+    const consoleLink = h('a', { href: '/console-settings#card-slack' }, 'Console settings\' Slack card');
+    return h('section', { class: 'settings-card', id: 'slack', 'aria-labelledby': 'card-slack' },
+      h('h2', { id: 'card-slack', class: 'label' }, 'Slack'),
+      h('p', { class: 'sub' }, 'When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post\'s thread. With no channel here, it goes to the channel on ', consoleLink, '.'),
+      off && h('p', { class: 'cap-note', role: 'status' }, 'This console has no Slack, so it posts nothing and a channel cannot be set here.'),
+      h('div', { class: 'layered' },
+        h('div', { class: 'layer' },
+          h('div', { class: 'layer-head' }, h('h3', null, h('label', { for: 'slack-channel' }, 'This repo\'s channel ID'))),
+          !off && h('p', { class: 'layer-meta' }, slackNow(slack)),
+          h('div', { class: 'value-row' }, field),
+          bad && h('p', { class: 'form-error', role: 'alert' }, bad),
+          h('div', { class: 'card-foot' },
+            h('button', { type: 'button', class: 'btn btn-open', disabled: off || Boolean(bad) || raw.trim() === saved || busy.has(SLACK), onclick: () => saveChannel(raw.trim()) }, busy.has(SLACK) ? 'Saving…' : 'Save'),
+            h('button', { type: 'button', class: 'btn btn-quiet', disabled: off || !saved || busy.has(SLACK), title: saved ? 'Back to the console\'s channel' : null, onclick: () => saveChannel('') }, 'Clear')),
+          note(SLACK),
+          h('p', { class: 'sub' }, 'The ID, not the name: in Slack, open the channel\'s name at its top, and the ID (C…) is at the bottom of its About tab. Invite the Woodshed bot to the channel first (', h('code', null, '/invite @'), ' and the bot\'s name), or Slack refuses the post.'))),
+      h('p', { class: 'sub' }, 'Nothing else uses it: a question asked in Slack is answered in its own thread, the assignee\'s other messages are direct messages, and a My Woodshed session\'s pull request is never posted.'));
   }
 
   function page(...body) {
@@ -289,9 +370,10 @@
     app.replaceChildren(page(
       !view.available && h('p', { class: 'cap-note', role: 'status' }, 'This console has no secret store, so nothing can be saved here. Choose one on Secrets & webhooks.'),
       envCard(),
-      instructionsCard()));
+      instructionsCard(),
+      slackCard()));
     for (const key of editors.keys()) updateCounts(key);
-    if (focused && [...editors.values()].includes(focused)) {
+    if (focused && ([...editors.values()].includes(focused) || focused === channelInput)) {
       focused.focus?.();
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }
     }
@@ -305,6 +387,7 @@
       loadError = err;
     }
     render();
+    if (view && location.hash === SLACK) channelInput?.scrollIntoView?.({ block: 'center' });
     if (view?.instructions.installation) await show(INSTRUCTIONS);
   }
 

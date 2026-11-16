@@ -125,6 +125,6 @@
   window.WoodshedRepoLayers = {
     INSTRUCTIONS_MAX_BYTES: 16 * 1024,
     NO_CREDENTIALS: 'No production credentials or integration tokens: sessions run unattended, and anything here can end up in a log, a commit or a pull request.',
-    LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules,
+    LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, githubFile, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules,
   };
 })();

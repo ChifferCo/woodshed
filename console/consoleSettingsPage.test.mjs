@@ -95,34 +95,20 @@ const ANSWER = {
   data: null,
 };
 
-const channelInputs = (app) => walk(app).filter((e) => e.tag === 'input' && /^Slack channel for /.test(e.attrs['aria-label'] ?? ''));
+// The fields a row had for its channel before it moved to the repo's own page.
+const channelInputs = (app) => walk(app).filter((e) => e.tag === 'input' && (/^channel-/.test(e.attrs.id ?? '') || /^Slack channel for /.test(e.attrs['aria-label'] ?? '')));
+const channelHints = (app) => walk(cardOf(app, 'projects')).filter((e) => e.tag === 'a' && /^PRs to /.test(textOf(e)));
 
-test('each repo on the Repos card has its own channel field, saying where its pull requests go', async () => {
+test('a repo\'s row on the Repos card has no channel field, and says where its pull requests go with a link to change it', async () => {
   const { app } = await loadPage(ANSWER);
-  const inputs = channelInputs(app);
-  assert.deepEqual(inputs.map((i) => [i.attrs['aria-label'], i.attrs.value]), [['Slack channel for acme/app', ''], ['Slack channel for acme/api', 'C0APIPRS01']]);
-  const text = textOf(app);
-  assert.match(text, /PRs to the Slack card's channel/);
-  assert.match(text, /PRs to C0APIPRS01/);
-});
-
-test('a channel typed into a row is saved for that repo on its Save, with no typed confirm, and a name is refused before it', async () => {
-  const { app, posted, confirms } = await loadPage(ANSWER);
-  const [own] = channelInputs(app);
-  own.listeners.input({ target: { value: '#acme-prs' } });
-  const [bad] = channelInputs(app);
-  assert.equal(bad.attrs['aria-invalid'], 'true');
-  const saveOf = () => walk(app).find((e) => e.tag === 'button' && textOf(e) === 'Save');
-  assert.equal(saveOf().attrs.disabled, '', 'Save is off for a name');
-
-  channelInputs(app)[0].listeners.input({ target: { value: ' C0ACMEPRS1 ' } });
-  assert.equal(saveOf().attrs.disabled, undefined);
-  saveOf().listeners.click();
-  await tick();
-  assert.equal(confirms.length, 0, 'a channel is changed back as easily: no typed confirm');
-  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/projects/slack-channel', body: { name: 'r', channel: 'C0ACMEPRS1' } }]);
-  assert.match(textOf(app), /PRs to C0ACMEPRS1/);
-  assert.match(textOf(app), /Its next pull request goes to C0ACMEPRS1/);
+  assert.deepEqual(channelInputs(app), []);
+  assert.deepEqual(channelHints(app).map((a) => [textOf(a), a.attrs.href]), [
+    ['PRs to the console\'s channel', '/console-settings/repos/r#slack'],
+    ['PRs to C0APIPRS01', '/console-settings/repos/api#slack'],
+  ]);
+  const card = cardOf(app, 'projects');
+  assert.deepEqual(walk(card).filter((e) => e.tag === 'button' || (e.tag === 'a' && textOf(e) === 'Settings')).map((e) => textOf(e)).filter((t) => t !== 'Add repo'),
+    ['Settings', 'Settings', 'Remove'], 'each row: Settings, and Remove where it may go');
 });
 
 test('Add repo adds on the click, and a refusal shows under the field with the page that fixes it', async () => {
@@ -142,9 +128,9 @@ test('Add repo adds on the click, and a refusal shows under the field with the p
   assert.deepEqual([a.attrs.href, a.attrs.target, textOf(a)], [link.href, '_blank', 'Install w on GitHub ↗']);
 });
 
-test('with no Slack on the console, the rows have no channel field', async () => {
+test('with no Slack on the console, the rows say nothing of a channel', async () => {
   const { app } = await loadPage({ ...ANSWER, slack: null });
-  assert.deepEqual(channelInputs(app), []);
+  assert.deepEqual(channelHints(app), []);
 });
 
 const SETTING = { key: 'maxRunning', label: 'Shared sessions at once', help: 'At most this many.', group: 'sessions', min: 1, max: 20, step: 1, unit: 'sessions', defaultValue: 4, value: 4 };
@@ -200,7 +186,7 @@ test('with the App, Add a repo is a list of the repos it may reach, and says whe
     [['', 'Choose a repo'], ['akurilin/social', 'akurilin/social (private)'], ['acme/web', 'acme/web'], [':type', 'Another repo: type owner/name']]);
   const card = cardOf(app, 'projects');
   assert.match(textOf(card), /Not listed\? Give the App access to it on GitHub: acme ↗, akurilin ↗; or install it on another account ↗\. Then List again/);
-  assert.deepEqual(walk(card).filter((e) => e.tag === 'a' && textOf(e) !== 'Settings').map((a) => [a.attrs.href, a.attrs.target]), [
+  assert.deepEqual(walk(card).filter((e) => e.tag === 'a' && textOf(e) !== 'Settings' && !/^PRs to /.test(textOf(e))).map((a) => [a.attrs.href, a.attrs.target]), [
     ['https://github.com/organizations/acme/settings/installations/1', '_blank'], ['https://github.com/settings/installations/2', '_blank'], ['https://github.com/apps/w/installations/new', '_blank'],
   ]);
 
@@ -436,7 +422,7 @@ test('each repo on the Repos card links to its own settings page, the installati
   const { app } = await loadPage(ANSWER);
   const links = walk(app).filter((e) => e.tag === 'a' && textOf(e) === 'Settings');
   assert.deepEqual(links.map((a) => [a.attrs.href, a.attrs['aria-label']]), [
-    ['/console-settings/repos/r', 'Settings of acme/app: env files and instructions'],
-    ['/console-settings/repos/api', 'Settings of acme/api: env files and instructions'],
+    ['/console-settings/repos/r', 'Settings of acme/app: env files, instructions and Slack channel'],
+    ['/console-settings/repos/api', 'Settings of acme/api: env files, instructions and Slack channel'],
   ]);
 });

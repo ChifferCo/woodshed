@@ -10,7 +10,7 @@
     { id: 'sessions', title: 'Sessions', note: 'How many shared sessions run at once, and when one stops by itself. Its work is pushed first, and Resume picks it up where it was.' },
     { id: 'questions', title: 'Questions from Slack', note: 'Sessions that answer a mention of the bot. Each reads the default branch and changes nothing, and its conversation is kept for a follow-up in its thread.' },
     { id: 'retention', title: 'Retention', note: 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.' },
-    { id: 'slack', title: 'Slack', note: 'Each pull request a shared session opens is posted once it passed what the repo\'s project file asks of it (pullRequests: its review approved and its suites passed), with its decision brief in the thread of the post once its QA check finished. It goes to its repo\'s own channel when the Repos card gives one, and to the channel below otherwise. The bot token is on Secrets & webhooks.' },
+    { id: 'slack', title: 'Slack', note: 'Each pull request a shared session opens is posted once it passed what the repo\'s project file asks of it (pullRequests: its review approved and its suites passed), with its decision brief in the thread of the post once its QA check finished. It goes to its repo\'s own channel when the repo\'s Settings (under Repos) give one, and to the channel below otherwise. The bot token is on Secrets & webhooks.' },
   ];
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
   const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -24,7 +24,7 @@
   const notices = new Map();
   // Each card or row whose save is on its way, so a second click does not send it twice.
   const saving = new Set();
-  // What the last Slack channel save or Remove on a repo's row said, by project name, until the page is drawn again.
+  // What the last Remove on a repo's row said, by project name, until the page is drawn again.
   const rowNotes = new Map();
 
   // These saves have no typed confirm: each is undone by changing it back, and is logged with who made it. The typed
@@ -87,7 +87,7 @@
     return h('div', { class: `set-row${changed ? ' is-changed' : ''}${bad ? ' is-bad' : ''}` },
       h('div', null,
         h('label', { class: 'set-name', for: 'set-channel' }, 'Channel'),
-        h('div', { class: 'set-help' }, 'Its ID, at the bottom of the channel\'s About tab. Invite the bot to it first. Empty turns the posts off.'),
+        h('div', { class: 'set-help' }, 'Its ID, at the bottom of the channel\'s About tab. Invite the bot to it first. A repo can have its own, on its Settings under Repos. Empty turns the posts off for repos without one.'),
         h('div', { class: 'set-bounds' }, data.slack.channel ? `posting to ${data.slack.channel}` : 'nothing is posted')),
       h('div', { class: 'set-value' },
         h('input', {
@@ -180,30 +180,6 @@
     document.querySelector(`input[name="color-${CSS.escape(p.name)}"]:checked`)?.focus();
   }
 
-  // A repo's own Slack channel, one field per row: empty sends its pull requests to the Slack card's channel.
-  function channelField(p) {
-    const key = `channel:${p.name}`;
-    const saved = p.slackChannel ?? '';
-    const raw = typed.has(key) ? typed.get(key) : saved;
-    const bad = channelProblem(raw);
-    const next = raw.trim();
-    return [
-      h('input', {
-        id: `channel-${p.name}`, class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', size: 13, placeholder: 'Slack channel ID', value: raw,
-        'aria-label': `Slack channel for ${p.repo}`, 'aria-invalid': bad ? 'true' : null, title: bad || 'Its pull requests go here. Empty: the Slack card\'s channel.',
-        oninput: (e) => { typed.set(key, e.target.value); render(); },
-      }),
-      h('button', {
-        type: 'button', class: 'btn btn-quiet btn-sm', disabled: Boolean(bad) || next === saved,
-        onclick: () => rowAction(p, async () => {
-          data = { ...data, ...(await W.postJson('/api/console-settings/projects/slack-channel', { name: p.name, channel: next })) };
-          typed.delete(key);
-          return `Its next pull request goes to ${next || 'the Slack card\'s channel'}. Invite the bot to the channel first.`;
-        }),
-      }, 'Save'),
-    ];
-  }
-
   function projectRow(p) {
     const live = p.sessions ? `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'} running or kept` : 'no sessions running';
     return h('div', { class: 'data-row' },
@@ -212,10 +188,10 @@
         h('div', { class: 'data-meta' },
           h('span', null, p.default ? 'default project' : p.source === 'host' ? 'added' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
           h('span', null, live),
-          data.slack && h('span', null, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the Slack card\'s channel')),
+          data.slack && h('span', null, h('a', { href: `/console-settings/repos/${encodeURIComponent(p.name)}#slack`, title: 'Change it on the repo\'s Settings' }, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the console\'s channel'))),
         data.palette && colorPicker(p)),
-      h('div', { class: 'data-actions' }, data.slack && channelField(p),
-        h('a', { class: 'btn btn-quiet btn-sm', href: `/console-settings/repos/${encodeURIComponent(p.name)}`, 'aria-label': `Settings of ${p.repo}: env files and instructions` }, 'Settings'),
+      h('div', { class: 'data-actions' },
+        h('a', { class: 'btn btn-quiet btn-sm', href: `/console-settings/repos/${encodeURIComponent(p.name)}`, 'aria-label': `Settings of ${p.repo}: env files, instructions and Slack channel` }, 'Settings'),
         p.removable && h('button', {
           type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
           onclick: () => rowAction(p, async () => {
@@ -361,7 +337,7 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel. Settings has a repo\'s env file values and instructions.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. Settings has a repo\'s env file values, instructions and the Slack channel its pull requests go to.'),
       data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
         : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },

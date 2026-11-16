@@ -1448,16 +1448,24 @@ To turn it on:
    `slack-bot-token`.
 3. The channel's ID (`C...`, at the bottom of the channel's About tab) in the
    Slack card of the Console settings page. The console keeps it in
-   `state.json`, and an empty channel turns the posts off.
+   `state.json`, and an empty channel turns the posts off. A repo can have a
+   channel of its own on its Settings page (below).
 
 Both are read for each post, so neither needs a restart.
 
 ### A channel for each project
 
-A project can have a channel of its own: the channel field on its row of the
-Console settings page's Repos card, for the installation's repos and the ones
-added there alike (`POST /api/console-settings/projects/slack-channel` with
-`{"name", "channel"}`, admins only, checked as the Slack card's channel is: a
+A project can have a channel of its own: the **Slack** card on its repo's
+Settings page (Console settings → Repos → **Settings**,
+`/console-settings/repos/<project>#slack`), for the installation's repos and the ones
+added there alike. The Repos card's row says where its pull requests go
+(`PRs to C…`, or the console's channel) and links there. The card says what
+the channel is for and where the next post goes, and Clear sends the repo's
+pull requests back to the console's channel; with no Slack (no secret store)
+it says so and its field is off. It reads the channel with the page's view
+(`slack`: `channel`, `consoleChannel`, `canPost`) and saves it with
+`POST /api/console-settings/projects/slack-channel` with
+`{"name", "channel"}` (admins only, checked as the Slack card's channel is: a
 channel ID, never a name). It is kept in `state.json` under
 `settings.projectSlackChannels`, by project name, and removing an added repo
 drops it. A project's pull requests and their decision briefs go to its own
@@ -1638,7 +1646,7 @@ card's:
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
 | Slack | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
-| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on the Repos card posts there instead | none |
+| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on its repo's Settings posts there instead | none |
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
@@ -1756,7 +1764,10 @@ for a key the files do not agree on. Then the installation's
 Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
 A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
 for it after a typed confirm. While an env file may still be read from its Terraform secret, the page says which one
-sessions read. The page loads for anyone signed in; its calls answer 403 to anyone but an admin, and it says so.
+sessions read. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
+(and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
+the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
+in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' **Repo settings** card (public/myRepoSettings.js, with the layers drawn by
 public/repoLayers.js, which the admin page shares), for each repo they can write to: see "My Woodshed" above. Env
