@@ -340,7 +340,7 @@ export function checkSummary(project, repoDir) {
     `env files: ${list(project.envFiles.map(envFileLine))}${sharedKeys(project)}`,
     `from the session: ${list(takenFromSession(project))}`,
     appLine(project),
-    `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,
+    `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow ?? 'in a session' : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,
     `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
     ...oldNameHints(project),
     ...literalLineHints(project),
