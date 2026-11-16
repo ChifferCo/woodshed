@@ -188,6 +188,11 @@ function renamedEnvFile(value, field) {
   return { value: { ...rest, overrides: lines }, old: true };
 }
 
+// An env file's overrides, also from one a caller built itself without parseProject; `lines` is their deprecated name.
+function overridesOf(file) {
+  return file.overrides ?? file.lines ?? [];
+}
+
 function envFile(raw, field) {
   const { value, old } = renamedEnvFile(raw, field);
   const name = old ? 'lines' : 'overrides';
@@ -658,8 +663,8 @@ export function expandPath(value, { repoDir, home = os.homedir() }) {
  * project's overrides (layeredEnvText in repoSettings.mjs). dotenv keeps the last value of a repeated key, so the
  * project's overrides win, then the owner's, then the secret's.
  */
-export function envFileText({ defaults = [], base, own, overrides, env }) {
-  const session = overrides.map((line) => renderLine(line, env)).filter((line) => line !== null);
+export function envFileText({ defaults = [], base, own, overrides, lines, env }) {
+  const session = overridesOf({ overrides, lines }).map((line) => renderLine(line, env)).filter((line) => line !== null);
   return layeredEnvText({ defaults, installation: base, personal: own, session });
 }
 
@@ -767,11 +772,12 @@ export function writeEnvFiles({ project, repoDir, env, settings = null }) {
     // A caller may hand over env files it built itself, without parseProject's defaults.
     const defaults = file.defaults ?? [];
     const { installation, personal, legacy } = envFileLayers({ file, settings, env, own });
-    const session = file.overrides.map((line) => renderLine(line, env)).filter((line) => line !== null);
+    const overrides = overridesOf(file);
+    const session = overrides.map((line) => renderLine(line, env)).filter((line) => line !== null);
     const target = path.join(repoDir, file.path);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, layeredEnvText({ defaults, installation, personal, session }));
-    const unset = unsetPlaceholders(file.overrides, env);
+    const unset = unsetPlaceholders(overrides, env);
     const layers = [defaults.length && 'repo', installation && 'installation', personal && 'personal', session.length && 'session'].filter(Boolean);
     return {
       path: file.path, key: file.key, baseBytes: Buffer.byteLength(installation), own: Boolean(personal), personalBytes: Buffer.byteLength(personal),
@@ -839,12 +845,12 @@ export function exportLines({ project, env }) {
 /**
  * Whether the project's env uses a variable: it exports it, writes it into an env file, or takes it from the session's
  * environment (`{{NAME}}`). A repo that never mentions Redis, say, is not given one.
- * @param {{env: Record<string, string>, envFiles: {defaults?: string[], overrides: string[]}[]}} project
+ * @param {{env: Record<string, string>, envFiles: {defaults?: string[], overrides?: string[]}[]}} project
  */
 export function usesVariable(project, name) {
   if (name in project.env) return true;
   return project.envFiles.some((f) => f.defaults?.some((line) => line.startsWith(`${name}=`))
-    || f.overrides.some((line) => line.startsWith(`${name}=`) || line.includes(`{{${name}}}`) || line.includes(`{{${name}?}}`))) ||
+    || overridesOf(f).some((line) => line.startsWith(`${name}=`) || line.includes(`{{${name}}}`) || line.includes(`{{${name}?}}`))) ||
     Object.values(project.env).some((value) => value.includes(`{{${name}}}`));
 }
 

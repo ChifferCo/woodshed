@@ -74,6 +74,23 @@ test('lines is the deprecated name of overrides: read the same, and a file with 
   assert.throws(() => read({ overrides: 'A=1' }), /envFiles\[0\]\.overrides must be a list/);
 });
 
+test('an env file a caller built itself is written from lines, the deprecated name, as from overrides', (t) => {
+  const write = (file) => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-hand-built-'));
+    t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+    const [written] = writeEnvFiles({ project: { env: {}, envFiles: [{ key: 'api-env', ...file }] }, repoDir, env: { PGHOST: 'db', API_ENV: 'A=1' } });
+    return { written, text: fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8') };
+  };
+  const lines = write({ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGHOST}}', 'STORE={{STORE_URL}}'] });
+  assert.deepEqual(lines, write({ path: 'api/.env', secret: 'api-env', overrides: ['DB={{PGHOST}}', 'STORE={{STORE_URL}}'] }));
+  assert.equal(lines.text, 'A=1\n\n# Woodshed overrides\nDB=db\nSTORE=\n');
+  assert.deepEqual(lines.written.unset, ['STORE_URL']);
+  assert.equal(write({ path: 'api/.env', secret: 'api-env' }).text, 'A=1\n\n# Woodshed overrides\n\n', 'neither is none');
+  assert.equal(envFileText({ base: 'A=1', own: '', lines: ['B={{X}}'], env: { X: '2' } }), envFileText({ base: 'A=1', own: '', overrides: ['B={{X}}'], env: { X: '2' } }));
+  assert.equal(usesVariable({ env: {}, envFiles: [{ path: 'a/.env', lines: ['R={{REDIS_URL}}'] }] }, 'REDIS_URL'), true);
+  assert.equal(usesVariable({ env: {}, envFiles: [{ path: 'a/.env' }] }, 'REDIS_URL'), false);
+});
+
 test('defaults are plain NAME=value lines: a placeholder is the session\'s, in overrides', () => {
   const read = (file) => parseProject({ version: 1, envFiles: [{ path: 'api/.env', ...file }] }).envFiles[0];
   assert.deepEqual(read({ defaults: ['FEATURE_PREVIEW=true', '# A comment'] }).defaults, ['FEATURE_PREVIEW=true', '# A comment']);
