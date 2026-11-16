@@ -628,14 +628,16 @@ export function envFileText({ defaults = [], base, own, lines, env }) {
 export function writeEnvFiles({ project, repoDir, env }) {
   const own = env.OWN_FILES ? JSON.parse(env.OWN_FILES) : {};
   return project.envFiles.map((file) => {
+    // A caller may hand over env files it built itself, without parseProject's defaults.
+    const defaults = file.defaults ?? [];
     const base = file.secret ? env[secretEnvName(file.secret)] ?? '' : '';
     const ownLines = file.secret ? own[file.secret] ?? '' : '';
     const target = path.join(repoDir, file.path);
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, envFileText({ defaults: file.defaults, base, own: ownLines, lines: file.lines, env }));
+    fs.writeFileSync(target, envFileText({ defaults, base, own: ownLines, lines: file.lines, env }));
     const unset = unsetPlaceholders(file.lines, env);
     return {
-      path: file.path, baseBytes: Buffer.byteLength(base), own: Boolean(ownLines), ...(file.defaults.length && { defaults: file.defaults.length }),
+      path: file.path, baseBytes: Buffer.byteLength(base), own: Boolean(ownLines), ...(defaults.length && { defaults: defaults.length }),
       ...(unset.length && { unset }),
     };
   });
