@@ -4,7 +4,7 @@
   'use strict';
 
   const { sameLogin, findLogin, uniqueLogins } = window.WoodshedLogins;
-  const { setupSteps, setupDone } = window.WoodshedSetup;
+  const { setupSteps, setupDone, stepsAfterSetup } = window.WoodshedSetup;
   const invite = window.WoodshedInvite;
 
   // What the pages say about where sessions run, in the provider's own words: pageShell's meta tag, from
@@ -289,8 +289,8 @@
   }
 
   /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
-  function setupCard(me, { compact = false } = {}) {
-    const steps = setupSteps(me);
+  function setupCard(me, { compact = false, steps = setupSteps(me) } = {}) {
+    const after = steps.every((step) => step.optional);
     const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
       h('span', { class: 'setup-check', 'aria-hidden': 'true' }, step.done ? '✓' : ''),
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
@@ -303,8 +303,9 @@
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
-      h('h3', null, 'Set up your Woodshed'),
-      h('p', null, steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
+      h('h3', null, after ? 'Finish setting up your Woodshed' : 'Set up your Woodshed'),
+      h('p', null, after ? 'Optional: New session works without it.'
+        : steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
       rows);
   }
 
@@ -1406,7 +1407,7 @@
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

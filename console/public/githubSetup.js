@@ -18,6 +18,7 @@
   let showPaste = false;
   let ownerType = 'Organization';
   let restarting = false;
+  let jumped = false;
   const RESTART_WAIT_MS = 120_000;
 
   async function act(fn) {
@@ -42,6 +43,11 @@
       loadError = err.message;
     }
     render();
+    // #reviewer (the setup card's link) names a section that exists only now: the browser looked for it before it did.
+    if (location.hash === '#reviewer' && !jumped) {
+      jumped = true;
+      document.getElementById('reviewer')?.scrollIntoView();
+    }
   }
 
   // GitHub takes the manifest as a form post, so the browser leaves for GitHub with it.

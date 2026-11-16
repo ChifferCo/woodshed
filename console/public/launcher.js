@@ -680,8 +680,10 @@
       }
       // The server refuses a start until the databases are ready too, so the form waits for the same things the card does.
       const ready = Boolean(me) && W.setupDone(me);
-      noToken.hidden = ready;
+      const after = ready ? W.stepsAfterSetup(me) : [];
+      noToken.hidden = ready && !after.length;
       if (!ready && me) noToken.replaceChildren(W.setupCard(me), ...(me.claudeToken?.set || me.codexAuth?.set ? [] : [tokenHelp]));
+      else if (after.length) noToken.replaceChildren(W.setupCard(me, { compact: true, steps: after }));
       form.hidden = !ready;
       // A repo that cannot start sessions (databaseGate.mjs) keeps the picker, and shows its fix in place of the rest.
       projects.setBlockers(me?.projectBlockers ?? {});

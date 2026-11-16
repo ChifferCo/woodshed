@@ -2045,4 +2045,13 @@ test('the setup card offers the reviewer App to an admin of a console with its A
   assert.equal((await me('sam-ops')).reviewerSetupNeeded, false, '/setup/github answers them 403');
   made = true;
   assert.equal((await me('mia-dev')).reviewerSetupNeeded, false, 'once it is made');
+  made = false;
+  for (const [what, options] of [['no App of its own', { config: { ...config, githubApp: null } }], ['no secret store to keep its key', { secrets: null }]]) {
+    const other = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, secrets: {}, reviewerApp, ...options });
+    const otherServer = http.createServer((req, res) => { other(req, res); });
+    const otherPort = await listen(otherServer);
+    t.after(() => otherServer.close());
+    const view = await (await fetch(`http://127.0.0.1:${otherPort}/api/my`, { headers: { cookie: 'woodshed_session=mia-dev' } })).json();
+    assert.equal(view.reviewerSetupNeeded, false, `a console with ${what}`);
+  }
 });

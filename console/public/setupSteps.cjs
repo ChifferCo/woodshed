@@ -44,5 +44,14 @@
     return !me.repoNeeded && !me.githubSetupNeeded && Boolean(me.claudeToken?.set || me.codexAuth?.set) && (!me.databases?.available || me.databases.status === 'ready');
   }
 
-  return { setupSteps, setupDone };
+  /**
+   * The optional steps still open once setup is done, which stay on New session above the form instead of in place of it:
+   * the reviewer App, offered to admins only (server.mjs, reviewerSetupNeeded), so finishing the rest never hides it.
+   * @returns {{key: string, label: string, hint: string, done: boolean, optional: true}[]}
+   */
+  function stepsAfterSetup(me) {
+    return setupSteps(me).filter((step) => step.key === 'reviewer' && !step.done);
+  }
+
+  return { setupSteps, setupDone, stepsAfterSetup };
 });
