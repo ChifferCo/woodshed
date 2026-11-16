@@ -422,13 +422,13 @@ test('sessions get their own Docker or this machine\'s with nothing set, and WOO
   assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '0', 'a run that does not set it keeps it');
 
   runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: '1' });
-  assert.deepEqual(docker(), { ownDocker: 'auto', hostDocker: true }, 'an older install\'s 1 is the default');
+  assert.deepEqual(docker(), { ownDocker: 'auto', hostDocker: true });
   const text = fs.readFileSync(file, 'utf8');
   assert.equal(text.match(/^WOODSHED_SESSION_DOCKER=/gm).length, 1);
   assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '1');
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 
-  assert.throws(() => runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: 'yes' }), (err) => /WOODSHED_SESSION_DOCKER is 0 \(sessions get no Docker\), or unset .*, not yes/.test(err.stdout));
+  assert.throws(() => runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: 'yes' }), (err) => /WOODSHED_SESSION_DOCKER is 0 \(no Docker\) or 1 .*, not yes/.test(err.stdout));
 });
 
 test('with the generic image missing, install.sh builds it with no repository and no token', () => {

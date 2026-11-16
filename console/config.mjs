@@ -152,17 +152,19 @@ function tlsAskPort(env) {
 }
 
 // Which Docker sessions get, as the docker launcher's `ownDocker` and `hostDocker` (providers/local/README.md, "Docker in
-// a session"): every session gets one, unless WOODSHED_SESSION_DOCKER=0. Its own where the machine has Sysbox: a daemon
-// inside the session's container, under `sysbox-runc`, which reaches nothing of the machine's and goes with the session.
-// The machine's otherwise: its socket, which is root on the machine for whoever can start a session. Either way, whoever
-// can start a session on a local console is trusted with the machine it runs on: it is one person's own computer, or a
-// server whose team accepts that each of them can do anything on it. Where people must be kept apart, each session runs
-// on a machine or task of its own, from a launcher of its own. `1`, from before the default, is the same as unset. Only
-// the console's own settings decide it, never a project file. A Fargate task can have neither, so both are off on AWS.
+// a session"), unless WOODSHED_SESSION_DOCKER=0. Every session gets its own where the machine has Sysbox: a daemon
+// inside the session's container, under `sysbox-runc`, which reaches nothing of the machine's and goes with the session,
+// on any console (CLAUDE.md's Rules: whoever can start a session on a local server is trusted with the other sessions
+// there). An existing team console gains it only once its admin installs Sysbox. Without Sysbox, the machine's socket,
+// which is root on the machine for whoever can start a session: by default only on one person's console, the local
+// provider on loopback with no sign-in and no hosting proxy (the rule of githubAppSetup.mjs's isOnePersonConsole),
+// where the only person who starts sessions already owns the machine. A console others sign in to has it only with
+// WOODSHED_SESSION_DOCKER=1 in its own settings, never from an Update. Only the console's own settings decide it, never
+// a project file. A Fargate task can have neither, so both are off on AWS.
 let warnedSessionDockerOnEcs = false;
-export function sessionDocker(env) {
+export function sessionDocker(env, { onePerson = true } = {}) {
   const value = String(env.WOODSHED_SESSION_DOCKER ?? '').trim();
-  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 0 (sessions get no Docker), or unset: each session gets its own Docker, under Sysbox, where the machine has it, and this machine\'s otherwise');
+  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 0 (no Docker) or 1 (this machine\'s Docker where there is no Sysbox, on any console); unset, each session gets its own under Sysbox where the machine has it, else this machine\'s on one person\'s console');
   const off = { ownDocker: false, hostDocker: false };
   if (value === '0') return off;
   if ((envValue(env, 'LAUNCHER') || 'docker') !== 'docker') {
@@ -172,8 +174,10 @@ export function sessionDocker(env) {
     }
     return off;
   }
-  return { ownDocker: 'auto', hostDocker: true };
+  return { ownDocker: 'auto', hostDocker: value === '1' || onePerson };
 }
+
+const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i;
 
 function localLogin(env) {
   const login = (envValue(env, 'LOCAL_LOGIN') || 'local').trim();
@@ -341,7 +345,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
       memory: envValue(env, 'SESSION_MEMORY') || '6g',
       cpus: envValue(env, 'SESSION_CPUS') || '2',
       // Which Docker sessions get: `ownDocker` and `hostDocker` (sessionDocker above).
-      ...sessionDocker(env),
+      ...sessionDocker(env, {
+        onePerson: LOOPBACK_HOST.test(envValue(env, 'HOST') || '127.0.0.1') && envValue(env, 'REQUIRE_SIGN_IN') !== '1' && !identitySecret,
+      }),
       ecs: {
         cluster: envValue(env, 'ECS_CLUSTER'),
         taskDefinition: envValue(env, 'ECS_TASK_DEFINITION'),

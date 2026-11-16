@@ -139,7 +139,7 @@ export function localProvider(config) {
   // Docker`), else the machine's, root on it for whoever can start a session (providers/local/README.md, "Docker in a
   // session").
   console.log('local: sessions\' Docker', ownDocker || hostDocker
-    ? { own: 'with Sysbox', machine: 'without Sysbox', off: 'WOODSHED_SESSION_DOCKER=0' }
+    ? { own: 'with Sysbox', machine: hostDocker ? 'without Sysbox' : { onWith: 'WOODSHED_SESSION_DOCKER=1' }, off: 'WOODSHED_SESSION_DOCKER=0' }
     : { off: true, onWith: 'WOODSHED_SESSION_DOCKER unset' });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);

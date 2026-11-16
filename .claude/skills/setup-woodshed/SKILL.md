@@ -38,7 +38,7 @@ then, not an install setting. For this machine, ask in the same message:
   and plainly: without Sysbox (always on a Mac), sessions use this machine's Docker (for a repo's compose services,
   Supabase local or Testcontainers), so Claude in a session can do anything on this machine; on Linux with Sysbox each
   session runs its own instead. `WOODSHED_SESSION_DOCKER=0` turns Docker off. Others too: the GitHub App and sign-in become required, and Open app needs
-  a domain of their own (`WOODSHED_TAILSCALE=shared`), and anyone who can start a session has this machine through its
+  a domain of their own (`WOODSHED_TAILSCALE=shared`), and sessions get Docker only of their own, once the machine has Sysbox, unless they add `WOODSHED_SESSION_DOCKER=1`, with which anyone who can start a session has this machine through its
   Docker, as on a server (step 1 of the briefing). `docs/self-host.md`, "From your other devices", has both.
 
 Someone who only wants to see the console needs none of this:
@@ -62,13 +62,15 @@ the like) at the prompt, so its output lands here. Never ask for a token in the 
    "Costs"), what runs afterwards and on which address, what is open to the network and what is not, and how long the
    slow part takes (the session image's first build: a few minutes on this machine, where it holds no repository;
    several on a server or AWS; longer with no published runtime). On a server, and on this machine when others use it,
-   say this plainly, once: every session gets a Docker (a repo's compose services, Supabase local, image builds). With
-   Sysbox installed (providers/local/README.md, "Their own Docker, with Sysbox"), which is the way to set it up on a
-   Linux server, each session has its own; without it, the machine's own Docker. Either way whoever can start a session
-   (a GitHub label or comment included) can reach the machine and the other sessions on it, and so every stored secret
-   and Claude token: a shared server is for a team that trusts each other with it. A team that must be kept apart runs
-   each session on a machine or task of its own instead. `WOODSHED_SESSION_DOCKER=0` in `stack.env` turns Docker off.
-   AWS sessions never get it.
+   say this plainly, once: sessions get a Docker of their own (a repo's compose services, Supabase local, image builds)
+   once the machine has Sysbox (providers/local/README.md, "Their own Docker, with Sysbox"), which is the way to offer
+   it. It reaches nothing of the machine's, but whoever can start a session can reach the other sessions' traffic and
+   tokens: a shared server is for a team that trusts each other with that, and a team that must be kept apart runs
+   each session on a machine or task of its own. They get the machine's own Docker only with `WOODSHED_SESSION_DOCKER=1` in `stack.env`, which you set when they want it without Sysbox, and with it anyone who can start a
+   session (a GitHub label or comment included) gets root on the machine. That reaches the secrets key, so every stored
+   secret and Claude token, and every other session's containers and databases. Set it only when everyone who can
+   start one is someone they would give root on the box. `WOODSHED_SESSION_DOCKER=0` turns Docker off. AWS sessions
+   never get it.
 2. **What the checks found**: what is ready, and what they must fix first.
 3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
    so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).

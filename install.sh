@@ -385,15 +385,16 @@ setStackSetting() {
   )
 }
 
-# Sessions run their own Docker where this machine has Sysbox, and otherwise use this machine's, unless stack.env says
-# WOODSHED_SESSION_DOCKER=0 (console/config.mjs, sessionDocker). Saved only when this run sets it: 0 turns it off, 1 (as
-# an older install wrote) is the default, and unset keeps what the file says.
+# Sessions run their own Docker where this machine has Sysbox, and otherwise use this machine's on one person's console,
+# unless stack.env says WOODSHED_SESSION_DOCKER=0; on a console others sign in to, this machine's only when it says 1
+# (console/config.mjs, sessionDocker). Saved only when this run sets it: 0 turns it off, 1 gives this machine's where
+# there is no Sysbox, and unset keeps what the file says.
 saveSessionDocker() {
   local file=$1
   [ -n "${WOODSHED_SESSION_DOCKER+set}" ] || return 0
   case $WOODSHED_SESSION_DOCKER in
     0|1) setStackSetting "$file" SESSION_DOCKER "$WOODSHED_SESSION_DOCKER" ;;
-    *) fail "WOODSHED_SESSION_DOCKER is 0 (sessions get no Docker), or unset (each session gets its own Docker under Sysbox where this machine has it, and this machine's otherwise), not $WOODSHED_SESSION_DOCKER" ;;
+    *) fail "WOODSHED_SESSION_DOCKER is 0 (no Docker) or 1 (this machine's Docker where there is no Sysbox, on any console), not $WOODSHED_SESSION_DOCKER" ;;
   esac
 }
 
