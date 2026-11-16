@@ -146,4 +146,9 @@ test('WOODSHED_START_CHECK=1 loads the console and its settings, then exits with
   const bad = run({ WOODSHED_PROVIDER: 'nowhere' });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /console: could not start.*unknown WOODSHED_PROVIDER "nowhere"/s);
+  // A host that writes a word for the one-person setting gets a console that stops, not one that guesses.
+  const onePerson = run({ WOODSHED_ONE_PERSON: 'yes' });
+  assert.equal(onePerson.status, 1);
+  assert.match(onePerson.stderr, /console: could not start.*WOODSHED_ONE_PERSON is 1 or 0, or not set \(it is yes\)/s);
+  assert.equal(run({ WOODSHED_ONE_PERSON: '1' }).status, 0);
 });

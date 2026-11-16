@@ -105,6 +105,10 @@ const sessions = [
   session('a11e0001', 3, 'Add a ruler to the canvas', {
     kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
   }),
+  // One the viewer started and handed to someone else: still on Mine, since it runs on the viewer's plan.
+  session('a11e0002', 4, 'Snap shapes to the grid', {
+    kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', assignee: 'ana-dev', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
+  }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
   session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.

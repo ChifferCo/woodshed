@@ -141,6 +141,17 @@ test('the person the header names sees shared sessions without a People list, an
   assert.deepEqual(ids, ['0a1b2c3d', '1a1b2c3d']);
 });
 
+test('WOODSHED_ONE_PERSON: 1 is one person\'s console, 0 never is, unset or empty tells by itself, and a word is refused', () => {
+  const base = { WOODSHED_REPO: 'acme/app', GH_TOKEN: 'x' };
+  assert.equal(loadConfig({ ...base, WOODSHED_ONE_PERSON: '1' }).onePerson, true);
+  assert.equal(loadConfig({ ...base, WOODSHED_ONE_PERSON: '0' }).onePerson, false);
+  assert.equal(loadConfig(base).onePerson, null);
+  assert.equal(loadConfig({ ...base, WOODSHED_ONE_PERSON: '' }).onePerson, null);
+  for (const word of ['yes', 'true', '2', ' 1']) {
+    assert.throws(() => loadConfig({ ...base, WOODSHED_ONE_PERSON: word }), /WOODSHED_ONE_PERSON is 1 or 0, or not set/, word);
+  }
+});
+
 test('a hosted console has one list of sessions only when its host says it is one person\'s (WOODSHED_ONE_PERSON)', async (t) => {
   // It keeps no People list to count, so it cannot tell a personal workspace from a team's by itself.
   const team = await hostedConsole(t);

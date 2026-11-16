@@ -279,11 +279,6 @@ export function requireRepo(config) {
   if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('WOODSHED_REPO (or WOODSHED_PROJECTS) must name a repo as owner/name, or be left unset for a console that starts with none');
 }
 
-/**
- * @param {NodeJS.ProcessEnv} env
- * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
- *   from here and gives the console its GitHub access another way
- */
 /** @returns {boolean|null}  WOODSHED_ONE_PERSON: 1 or 0, or null when it is not set */
 function onePerson(env) {
   const value = env.WOODSHED_ONE_PERSON;
@@ -292,6 +287,11 @@ function onePerson(env) {
   return value === '1';
 }
 
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
+ *   from here and gives the console its GitHub access another way
+ */
 export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const port = number(envValue(env, 'PORT'), 7690);
   const app = githubApp(env);

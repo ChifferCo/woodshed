@@ -492,7 +492,8 @@
       h('div', { class: 'rtop' },
         live ? h('span', { class: `status is-${st.key}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })) : h('span', { class: `dot ring is-${st.key}`, 'aria-hidden': 'true' }),
         h('a', { class: 'rname', href, title: project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
-        showOwnerTag(s) && W.ownerTag(s, { named: !railMine() }),
+        // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
+        showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
