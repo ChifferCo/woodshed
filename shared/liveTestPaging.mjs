@@ -6,6 +6,6 @@
  * @returns {unknown[]}
  */
 export function pageOf({ items, page, size }) {
-  const start = page * size;
+  const start = (page - 1) * size;
   return items.slice(start, start + size);
 }
