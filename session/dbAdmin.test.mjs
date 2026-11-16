@@ -434,9 +434,9 @@ test('parseArgs takes the default project from the entryPoint\'s --project, and 
 const SEED_PROJECT = parseProject({
   version: 1,
   envFiles: [
-    { path: 'api/.env', secret: 'api-env', lines: ['DATABASE_URL={{PG_URL}}'] },
-    { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], lines: [] },
-    { path: 'tools/.env', secret: 'tools-env', lines: [] },
+    { path: 'api/.env', secret: 'api-env', overrides: ['DATABASE_URL={{PG_URL}}'] },
+    { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], overrides: [] },
+    { path: 'tools/.env', secret: 'tools-env', overrides: [] },
   ],
   databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env', 'web-env-local'] }],
 });
@@ -489,7 +489,7 @@ test('a key two env files name is read once for the seed, naming both paths, fro
   // Two repos that both have an api-env: the seed is the default project's, so it reads app's and never api's.
   const project = parseProject({
     version: 1,
-    envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }, { path: 'worker/.env', secret: 'api-env', lines: ['ROLE=worker'] }],
+    envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }, { path: 'worker/.env', secret: 'api-env', overrides: ['ROLE=worker'] }],
     databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }],
   });
   const secrets = recordingSecrets({ 'acme/repos/app/env/api-env': 'FROM=app\n', 'acme/repos/api/env/api-env': 'FROM=api\n' });

@@ -3,7 +3,7 @@
 //   repo          the project file's `defaults` for each env file, and its `rules` and `setup`
 //   installation  the installation's values for each env file, and its instructions for the repo
 //   personal      one person's own values and instructions, in their private sessions only
-//   session       Woodshed's wiring: each env file's `lines`, the project's `env`, the session's own variables
+//   session       Woodshed's wiring: each env file's `overrides`, the project's `env`, the session's own variables
 //
 // Pure: text in, text out. Nothing here reads a file, a secret or the environment, so the console (to show which layer
 // wins each key) and the session (to write the files and the rules) compute the same answer.
@@ -51,11 +51,11 @@ export function envKeys(text) {
 
 /**
  * An env file as a session writes it: the repo's defaults, the installation's text, the person's own, then the
- * session's lines. Concatenated, never merged by key, so comments and quoted values keep their shape, and dotenv's
+ * session's overrides. Concatenated, never merged by key, so comments and quoted values keep their shape, and dotenv's
  * "the last one wins" decides. With no defaults it is byte for byte what Woodshed wrote before the layers: the
  * installation's text first and bare, `# Your own lines, from My settings`, then `# Woodshed overrides`.
  * @param {{defaults?: string[], installation?: string, personal?: string, session?: string[]}} layers
- *   `session` is the entry's `lines` already rendered, the ones `{{NAME?}}` left out dropped
+ *   `session` is the entry's `overrides` already rendered, the ones `{{NAME?}}` left out dropped
  * @returns {string}
  */
 export function layeredEnvText({ defaults = [], installation = '', personal = '', session = [] }) {
@@ -66,30 +66,30 @@ export function layeredEnvText({ defaults = [], installation = '', personal = ''
 }
 
 /**
- * What a session sets for itself, which no layer before it can change: the keys its env file's lines write (after
+ * What a session sets for itself, which no layer before it can change: the keys its env file's overrides write (after
  * rendering, so a line `{{NAME?}}` left out is not one), the project's `env` (exported, and most loaders never override
  * a variable already in the environment), and the shared services' variables (WOODSHED_SERVICES). Woodshed's own
  * session variables (`isSessionVariable`) are wiring too, by name.
- * @param {{lines?: string[], env?: Record<string, string>, services?: string[]}} args  `lines` rendered
- * @returns {{lines: string[], env: string[], services: string[]}}
+ * @param {{overrides?: string[], env?: Record<string, string>, services?: string[]}} args  `overrides` rendered
+ * @returns {{overrides: string[], env: string[], services: string[]}}
  */
-export function sessionWiring({ lines = [], env = {}, services = [] }) {
-  return { lines: envKeys(lines.join('\n')), env: Object.keys(env), services: [...services] };
+export function sessionWiring({ overrides = [], env = {}, services = [] }) {
+  return { overrides: envKeys(overrides.join('\n')), env: Object.keys(env), services: [...services] };
 }
 
 /**
  * Why the session sets a key whatever the layers before it say.
  * @param {ReturnType<typeof sessionWiring>} wiring
- * @returns {'lines'|'env'|'session'|null}  `session` for one of Woodshed's own variables or a shared service's
+ * @returns {'overrides'|'env'|'session'|null}  `session` for one of Woodshed's own variables or a shared service's
  */
 export function wiringReason(wiring, key) {
-  if (wiring.lines.includes(key)) return 'lines';
+  if (wiring.overrides.includes(key)) return 'overrides';
   if (wiring.env.includes(key)) return 'env';
   if (wiring.services.includes(key) || isSessionVariable(key)) return 'session';
   return null;
 }
 
-const NO_WIRING = Object.freeze({ lines: [], env: [], services: [] });
+const NO_WIRING = Object.freeze({ overrides: [], env: [], services: [] });
 
 /**
  * Every key any layer sets, with the layers that set it and the one whose value the app gets.

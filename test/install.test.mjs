@@ -87,12 +87,12 @@ test('projectSettings reads the env files and the seed secrets from the reposito
     'envFiles:',
     '  - path: api/.env',
     '    secret: api-env',
-    '    lines: []',
+    '    overrides: []',
     '  - path: web/.env.local',
     '    secret: web-env',
-    '    lines: []',
+    '    overrides: []',
     '  - path: tools/.env',
-    '    lines: []',
+    '    overrides: []',
     'databases:',
     '  - engine: postgres',
     '    dir: api',
@@ -224,7 +224,7 @@ test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read
   const woodshed = path.resolve(import.meta.dirname, '..');
   const clone = fixtureCheckout(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-clone-')), { repo: 'acme/app' });
   const files = fixtureProjectFiles(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-')), {
-    'acme/app': fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] }),
+    'acme/app': fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] }),
   });
   const env = { DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main' };
   assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>/dev/null`, env), 'api-env=api/.env\napi-env\npostgres\n');
@@ -477,7 +477,7 @@ test('a later run with WOODSHED_REPO gives a repo-less install that repo\'s imag
   // As a Tailscale run left it, and a line of the owner's.
   runInstallFunction(`setStackSetting "${file}" PUBLIC_URL https://mac.tail1234.ts.net`);
   fs.appendFileSync(file, 'WOODSHED_MAX_SESSIONS=3\n');
-  const project = fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] });
+  const project = fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] });
   const fetch = `fetchRepo() { mkdir -p "$2/.woodshed"; printf '%s' '${project}' >"$2/.woodshed/project.yaml"; echo "fetched $1"; }`;
   const out = runMain({ WOODSHED_HOME: home, WOODSHED_REPO: 'acme/app', GH_TOKEN: 't' }, [fetch]);
   assert.match(out, /fetched acme\/app/);

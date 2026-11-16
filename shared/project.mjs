@@ -7,9 +7,9 @@
 //                                        JSON), a missing field prints nothing
 //   node project.mjs env                 the project's `env`, as `export` lines for the entrypoint to eval
 //   node project.mjs write-env-files     each of `envFiles`: its defaults, the installation's text, the owner's own
-//                                        lines, then its lines; from the console's repo settings when
+//                                        lines, then its overrides; from the console's repo settings when
 //                                        REPO_SETTINGS_FILE names them, else from the legacy secrets as before;
-//                                        prints each file, with the variables its lines need that are unset, then a
+//                                        prints each file, with the variables its overrides need that are unset, then a
 //                                        line for each warning (writeEnvFiles)
 //   node project.mjs repo-settings       what REPO_SETTINGS_FILE holds, as keys and sizes, never a value
 //   node project.mjs add-instructions <file>  the rules file <file>, with the installation's and the owner's
@@ -60,7 +60,7 @@ export const PROJECT_FIELDS = Object.freeze({
   '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
-  envFiles: ['path', 'secret', 'defaults', 'lines'],
+  envFiles: ['path', 'secret', 'defaults', 'overrides'],
   databases: ['engine', 'dir', 'migrate', 'seed', 'envFiles', 'paths', 'migrations', 'migrationsTable', 'dump', 'user', 'name'],
   'databases.migrationsTable': ['table', 'column'],
   'databases.dump': ['skip', 'extensions'],
@@ -164,20 +164,41 @@ export function envFileKey({ path: file, secret }) {
 }
 
 // A default is the repo's value, which an installation's or a person's replaces: a placeholder is the session's, so it
-// belongs in `lines`, and the file is in git, so it is never a secret.
+// belongs in `overrides`, and the file is in git, so it is never a secret.
 function defaultLine(value, field) {
   string(value, field);
-  if (/\{\{[^{}]*\}\}/.test(value)) fail(`${field} has a {{…}} placeholder: a default is plain text, and a line the session fills in goes in lines`);
+  if (/\{\{[^{}]*\}\}/.test(value)) fail(`${field} has a {{…}} placeholder: a default is plain text, and a line the session fills in goes in overrides`);
   return value;
 }
 
-function envFile(value, field) {
-  const file = fields(value, field, PROJECT_FIELDS.envFiles, { secret: null, defaults: [], lines: [] });
+// The env files that wrote `overrides` by its old name, `lines`, for check's hint. Kept beside the parsed file rather
+// than in it, so the parsed shape is one whatever the name.
+const OLD_NAME = new WeakSet();
+
+/** Whether a parsed env file wrote its overrides as `lines`, the field's old name (accepted for now, with a hint). */
+export function usesOldOverridesName(file) {
+  return OLD_NAME.has(file);
+}
+
+// `lines` is deprecated in favour of `overrides`: kept for one release, to be removed with the other legacy cleanup.
+function renamedEnvFile(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.hasOwn(value, 'lines')) return { value, old: false };
+  if (Object.hasOwn(value, 'overrides')) fail(`${field} has both overrides and lines, its old name: keep overrides alone`);
+  const { lines, ...rest } = value;
+  return { value: { ...rest, overrides: lines }, old: true };
+}
+
+function envFile(raw, field) {
+  const { value, old } = renamedEnvFile(raw, field);
+  const name = old ? 'lines' : 'overrides';
+  const file = fields(value, field, PROJECT_FIELDS.envFiles, { secret: null, defaults: [], overrides: [] });
   const read = {
     path: repoPath(file.path, `${field}.path`), secret: nullable(file.secret, `${field}.secret`, secretName),
-    defaults: list(file.defaults, `${field}.defaults`, defaultLine), lines: list(file.lines, `${field}.lines`, string),
+    defaults: list(file.defaults, `${field}.defaults`, defaultLine), overrides: list(file.overrides, `${field}.${name}`, string),
   };
-  return { ...read, key: envFileKey(read) };
+  const parsed = { ...read, key: envFileKey(read) };
+  if (old) OLD_NAME.add(parsed);
+  return parsed;
 }
 
 // The console keeps each key's values once. Files that name one secret share them on purpose (`api/.env` and
@@ -444,7 +465,7 @@ const TOP_DEFAULTS = {
  * @param {unknown} raw  the file, parsed
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
  *   output: string[]}[]}, env: Record<string, string>,
- *   envFiles: {path: string, secret: string|null, key: string, defaults: string[], lines: string[]}[], databases: object[],
+ *   envFiles: {path: string, secret: string|null, key: string, defaults: string[], overrides: string[]}[], databases: object[],
  *   app: object|null,
  *   apps: {name: string, label: string}[],
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
@@ -634,11 +655,11 @@ export function expandPath(value, { repoDir, home = os.homedir() }) {
 
 /**
  * An env file as the session writes it: the repo's defaults, the shared secret's text, the owner's own lines, then the
- * project's lines (layeredEnvText in repoSettings.mjs). dotenv keeps the last value of a repeated key, so the project's
- * lines win, then the owner's, then the secret's.
+ * project's overrides (layeredEnvText in repoSettings.mjs). dotenv keeps the last value of a repeated key, so the
+ * project's overrides win, then the owner's, then the secret's.
  */
-export function envFileText({ defaults = [], base, own, lines, env }) {
-  const session = lines.map((line) => renderLine(line, env)).filter((line) => line !== null);
+export function envFileText({ defaults = [], base, own, overrides, env }) {
+  const session = overrides.map((line) => renderLine(line, env)).filter((line) => line !== null);
   return layeredEnvText({ defaults, installation: base, personal: own, session });
 }
 
@@ -727,7 +748,7 @@ function envFileLayers({ file, settings, env, own }) {
 // The keys a layer before the session's sets that the session's wiring replaces, for the log.
 function sessionReplaced({ defaults, installation, personal, session, project, env }) {
   const services = (env.WOODSHED_SERVICES ?? '').split(/\s+/).filter(Boolean);
-  const wiring = sessionWiring({ lines: session, env: project.env, services });
+  const wiring = sessionWiring({ overrides: session, env: project.env, services });
   const layers = { repo: defaults.join('\n'), installation, personal, session: session.join('\n') };
   return envKeyTable({ layers, wiring }).filter((row) => row.wins === 'session' && row.setBy.some((layer) => layer !== 'session')).map((row) => row.key);
 }
@@ -746,11 +767,11 @@ export function writeEnvFiles({ project, repoDir, env, settings = null }) {
     // A caller may hand over env files it built itself, without parseProject's defaults.
     const defaults = file.defaults ?? [];
     const { installation, personal, legacy } = envFileLayers({ file, settings, env, own });
-    const session = file.lines.map((line) => renderLine(line, env)).filter((line) => line !== null);
+    const session = file.overrides.map((line) => renderLine(line, env)).filter((line) => line !== null);
     const target = path.join(repoDir, file.path);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, layeredEnvText({ defaults, installation, personal, session }));
-    const unset = unsetPlaceholders(file.lines, env);
+    const unset = unsetPlaceholders(file.overrides, env);
     const layers = [defaults.length && 'repo', installation && 'installation', personal && 'personal', session.length && 'session'].filter(Boolean);
     return {
       path: file.path, key: file.key, baseBytes: Buffer.byteLength(installation), own: Boolean(personal), personalBytes: Buffer.byteLength(personal),
@@ -797,7 +818,7 @@ export function writtenLines({ written, settings, project }) {
   return [summary, ...warnings];
 }
 
-/** The variables lines need (`{{NAME}}`, not `{{NAME?}}`) that `env` leaves empty, such as a service the installation does not run. */
+/** The variables overrides need (`{{NAME}}`, not `{{NAME?}}`) that `env` leaves empty, such as a service the installation does not run. */
 export function unsetPlaceholders(lines, env) {
   const names = lines.flatMap((line) => [...line.matchAll(PLACEHOLDER)].filter(([, , optional]) => !optional).map(([, name]) => name));
   return [...new Set(names)].filter((name) => !env[name]);
@@ -818,12 +839,12 @@ export function exportLines({ project, env }) {
 /**
  * Whether the project's env uses a variable: it exports it, writes it into an env file, or takes it from the session's
  * environment (`{{NAME}}`). A repo that never mentions Redis, say, is not given one.
- * @param {{env: Record<string, string>, envFiles: {defaults?: string[], lines: string[]}[]}} project
+ * @param {{env: Record<string, string>, envFiles: {defaults?: string[], overrides: string[]}[]}} project
  */
 export function usesVariable(project, name) {
   if (name in project.env) return true;
   return project.envFiles.some((f) => f.defaults?.some((line) => line.startsWith(`${name}=`))
-    || f.lines.some((line) => line.startsWith(`${name}=`) || line.includes(`{{${name}}}`) || line.includes(`{{${name}?}}`))) ||
+    || f.overrides.some((line) => line.startsWith(`${name}=`) || line.includes(`{{${name}}}`) || line.includes(`{{${name}?}}`))) ||
     Object.values(project.env).some((value) => value.includes(`{{${name}}}`));
 }
 

@@ -17,10 +17,10 @@ const KEEP_MS = 10 * 60_000;
 const RETRY_MS = 60_000;
 
 function appendedFrom(project) {
-  return new Map((project?.envFiles ?? []).filter((f) => f.secret).map((f) => [f.secret, f.lines.map((l) => l.split('=')[0].trim()).filter(Boolean)]));
+  return new Map((project?.envFiles ?? []).filter((f) => f.secret).map((f) => [f.secret, f.overrides.map((l) => l.split('=')[0].trim()).filter(Boolean)]));
 }
 
-/** @returns {Map<string, string[]>}  each env file's secret, with the variables its `lines` write */
+/** @returns {Map<string, string[]>}  each env file's secret, with the variables its `overrides` write */
 export function appendedBySecret(text) {
   return appendedFrom(parseProject(parseYaml(text)));
 }
@@ -108,7 +108,7 @@ export function createProjectReader({ github, installationFile = () => null, now
       return project?.pullRequests ?? null;
     },
     /**
-     * What Repo settings shows of the repo's own layer (repoSettings.mjs): each env file with its key, defaults and lines,
+     * What Repo settings shows of the repo's own layer (repoSettings.mjs): each env file with its key, defaults and overrides,
      * the project's `env`, and its rules and setup files. None with no project file.
      * @returns {Promise<{envFiles: object[], env: Record<string, string>, rules: string|null, setup: string|null}>}
      * @throws {Error}  when the file could not be read or parsed

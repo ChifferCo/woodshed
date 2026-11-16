@@ -236,12 +236,12 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   // One path of a key: its own defaults and wiring, and which layer wins each key in it.
   function pathView({ file, layer, inst, own, login }) {
-    const wiring = sessionWiring({ lines: file.lines, env: layer?.env ?? {} });
-    const layers = { repo: file.defaults.join('\n'), installation: keyText(inst?.keys), ...(login && { personal: keyText(own?.keys) }), session: file.lines.join('\n') };
+    const wiring = sessionWiring({ overrides: file.overrides, env: layer?.env ?? {} });
+    const layers = { repo: file.defaults.join('\n'), installation: keyText(inst?.keys), ...(login && { personal: keyText(own?.keys) }), session: file.overrides.join('\n') };
     return {
       path: file.path, defaults: file.defaults,
       // A line `{{NAME?}}` writes only in a session that has NAME: there it is wiring, elsewhere the layers' value stays.
-      wiring: { lines: wiring.lines, optional: envKeys(file.lines.filter((l) => /\{\{[A-Za-z_][A-Za-z0-9_]*\?\}\}/.test(l)).join('\n')), env: wiring.env },
+      wiring: { overrides: wiring.overrides, optional: envKeys(file.overrides.filter((l) => /\{\{[A-Za-z_][A-Za-z0-9_]*\?\}\}/.test(l)).join('\n')), env: wiring.env },
       table: envKeyTable({ layers, wiring }),
     };
   }
@@ -249,7 +249,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   // A key's rows: one for all its paths where they agree, else one a path that sets it, naming the path.
   function sharedTable(paths) {
     if (paths.length === 1) return paths[0].table;
-    const sign = (p, row) => row && JSON.stringify([row.setBy, row.wins, ...['lines', 'optional', 'env'].map((w) => p.wiring[w].includes(row.key))]);
+    const sign = (p, row) => row && JSON.stringify([row.setBy, row.wins, ...['overrides', 'optional', 'env'].map((w) => p.wiring[w].includes(row.key))]);
     const keys = [...new Set(paths.flatMap((p) => p.table.map((row) => row.key)))];
     return keys.flatMap((key) => {
       const rows = paths.map((p) => p.table.find((row) => row.key === key) ?? null);
@@ -259,7 +259,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   // One key and every env file that names it: files that name one secret share its values, each with its own
-  // defaults and lines. `path`, `defaults` and `wiring` are the first file's, `files` each one's.
+  // defaults and overrides. `path`, `defaults` and `wiring` are the first file's, `files` each one's.
   function envFileView({ project, files, layer, login }) {
     const [first] = files;
     const inst = recordOf({ project: project.name, key: first.key });
@@ -301,7 +301,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     const named = layer?.envFiles ?? [];
     const saved = [...new Set([...Object.keys(instEnv), ...Object.keys(ownEnv)])].filter((key) => !named.some((f) => f.key === key));
     // Unread, the saved keys stand for the files: what they are for is unknown until the file is read.
-    const files = layer ? named : saved.map((key) => ({ key, path: null, secret: null, defaults: [], lines: [] }));
+    const files = layer ? named : saved.map((key) => ({ key, path: null, secret: null, defaults: [], overrides: [] }));
     return {
       project: project.name, repo: project.repo, default: Boolean(project.default),
       projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
@@ -421,10 +421,10 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     // What sessions read where the installation has no value yet: the Terraform secret.
     const sharedText = installation ?? (available() ? await secrets.read(key) : null) ?? '';
     const file = layer?.envFiles.find((f) => f.key === state.key);
-    const wiring = file ? sessionWiring({ lines: file.lines, env: layer.env ?? {} }) : null;
+    const wiring = file ? sessionWiring({ overrides: file.overrides, env: layer.env ?? {} }) : null;
     return {
       key, label: state.path, text: own ?? '', custom: own !== null, sharedText, editable: true,
-      appended: wiring ? [...new Set([...wiring.lines, ...wiring.env])] : [],
+      appended: wiring ? [...new Set([...wiring.overrides, ...wiring.env])] : [],
     };
   }
 

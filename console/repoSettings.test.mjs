@@ -30,7 +30,7 @@ const FILES = {
   app: parseProject({
     version: 1, env: { NODE_ENV: 'development' }, rules: '.woodshed/rules.md',
     envFiles: [
-      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE_X=off'], lines: ['PORT={{PORT}}', 'ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}'] },
+      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE_X=off'], overrides: ['PORT={{PORT}}', 'ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}'] },
       { path: 'web/.env.local' },
     ],
   }),
@@ -102,7 +102,7 @@ test('a save keeps the value in the store, and state.json its date, size and key
 
   const view = await repoSettings.view('app', { login: 'sam-ops' });
   const api = view.envFiles.find((f) => f.key === 'api-env');
-  assert.deepEqual(api.wiring, { lines: ['PORT', 'ANTHROPIC_API_KEY'], optional: ['ANTHROPIC_API_KEY'], env: ['NODE_ENV'] });
+  assert.deepEqual(api.wiring, { overrides: ['PORT', 'ANTHROPIC_API_KEY'], optional: ['ANTHROPIC_API_KEY'], env: ['NODE_ENV'] });
   assert.deepEqual(api.table.map((row) => [row.key, row.wins]), [
     ['LOG_LEVEL', 'personal'], ['FEATURE_X', 'repo'], ['API_URL', 'installation'], ['API_TOKEN', 'personal'], ['PORT', 'session'], ['ANTHROPIC_API_KEY', 'session'],
   ]);
@@ -118,12 +118,12 @@ test('a save keeps the value in the store, and state.json its date, size and key
   assert.equal(store.state.people['sam-ops'].repos, undefined);
 });
 
-test('env files that name one secret are one key, with every path, one set of values and each file\'s own defaults and lines', async () => {
+test('env files that name one secret are one key, with every path, one set of values and each file\'s own defaults and overrides', async () => {
   const shared = parseProject({
     version: 1, envFiles: [
-      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
-      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
-      { path: 'web/.env.local', lines: ['PORT=5173'] },
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
+      { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
+      { path: 'web/.env.local', overrides: ['PORT=5173'] },
     ],
   });
   const { secrets, repoSettings } = setup({ files: { ...FILES, app: shared } });
@@ -134,7 +134,7 @@ test('env files that name one secret are one key, with every path, one set of va
   const view = await repoSettings.view('app', { login: 'sam-ops' });
   assert.deepEqual(view.envFiles.map((f) => [f.key, f.paths]), [['app-env', ['api/.env', 'worker/.env']], ['web-env-local', ['web/.env.local']]]);
   const app = view.envFiles[0];
-  assert.deepEqual(app.files.map((f) => [f.path, f.defaults, f.wiring.lines]), [['api/.env', ['LOG_LEVEL=info'], ['PORT', 'SQL_URL']], ['worker/.env', [], ['ROLE', 'SQL_URL']]]);
+  assert.deepEqual(app.files.map((f) => [f.path, f.defaults, f.wiring.overrides]), [['api/.env', ['LOG_LEVEL=info'], ['PORT', 'SQL_URL']], ['worker/.env', [], ['ROLE', 'SQL_URL']]]);
   assert.equal(app.installation.bytes, Buffer.byteLength('LOG_LEVEL=warn\nAPI_TOKEN=x\n'));
   assert.deepEqual(app.table.map((row) => [row.key, row.setBy.join(' '), row.wins, row.path ?? null]), [
     ['LOG_LEVEL', 'repo installation', 'installation', 'api/.env'], ['LOG_LEVEL', 'installation', 'installation', 'worker/.env'],
@@ -540,7 +540,7 @@ test('an installation value the start copied, once cleared, stays cleared after 
   const settings = await repoSettings.forSession({ id: 's1', project: 'app', owner: null });
   assert.equal(settings.envFiles['api-env'], undefined);
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cleared-'));
-  const project = { envFiles: [{ path: 'api/.env', key: 'api-env', secret: 'api-env', defaults: [], lines: [] }] };
+  const project = { envFiles: [{ path: 'api/.env', key: 'api-env', secret: 'api-env', defaults: [], overrides: [] }] };
   const written = writeEnvFiles({ project, repoDir, env: { API_ENV: 'API_URL=http://legacy\n' }, settings: { ...settings, envFiles: {} } });
   assert.match(fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8'), /API_URL=http:\/\/legacy/);
   assert.ok(writtenLines({ written, settings, project }).some((l) => /WARNING: api\/\.env from the legacy env file secret api-env/.test(l)));
@@ -578,7 +578,7 @@ test('two repos that both have an api-env: the old route, the clear and the Secr
     'users/sam-ops/app-1a2b3c--api-env': 'MINE=app\n', 'users/sam-ops/tools-4d5e6f--api-env': 'MINE=tools\n',
   });
   const state = { people: { 'sam-ops': { files: { 'app-1a2b3c--api-env': 'x', 'tools-4d5e6f--api-env': 'x' } } } };
-  const tools = parseProject({ version: 1, envFiles: [{ path: 'api/.env', secret: 'api-env', lines: ['PORT=8080'] }] });
+  const tools = parseProject({ version: 1, envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: ['PORT=8080'] }] });
   const { store, config, repoSettings } = setup({ state, secrets, envFiles, files: { ...FILES, tools } });
   await repoSettings.migrate();
 

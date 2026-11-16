@@ -60,7 +60,7 @@ function bash(script, env) {
 }
 
 // A checkout whose project file has one env file with a secret, and rules of its own.
-const API_ENV_FILE = { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['DB_PASSWORD={{PGPASSWORD}}'] };
+const API_ENV_FILE = { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], overrides: ['DB_PASSWORD={{PGPASSWORD}}'] };
 
 function checkout(envFiles = [API_ENV_FILE]) {
   const dir = fixtureCheckout(fs.mkdtempSync(path.join(TMP, 'repo-')), { repo: 'acme/app' });
@@ -116,7 +116,7 @@ test('a private session writes its env files and rules from repo settings, and l
 test('two env files that name one secret are both written its repo settings, and logged as one key', async () => {
   const answer = { ...ANSWER, envFiles: { 'app-env': ANSWER.envFiles['api-env'] } };
   const fake = await fakeConsole([{ json: answer }]);
-  const run = await start({ consoleUrl: fake.url, envFiles: [{ ...API_ENV_FILE, secret: 'app-env' }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }] });
+  const run = await start({ consoleUrl: fake.url, envFiles: [{ ...API_ENV_FILE, secret: 'app-env' }, { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker'] }] });
   assert.equal(run.status, 0, run.out);
   assert.match(run.out, /\[woodshed\] Env files written \(api\/\.env, worker\/\.env from app-env \(installation: 44 bytes, personal: 20 bytes; api\/\.env layers: repo installation personal session, defaults: 1, replaced by the session: none; worker\/\.env layers: installation personal session, replaced by the session: none\)\)/);
   assert.equal(run.worker, 'AUTH_DOMAIN=installation.test\nLOG_LEVEL=warn\n\n# Your own lines, from My settings\nLOG_LEVEL=debug-mine\n\n# Woodshed overrides\nROLE=worker\n');

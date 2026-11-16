@@ -644,7 +644,7 @@ test('a person\'s own lines for one repo\'s env file reach their private session
   const { port } = server.address();
 
   // What the session's entrypoint then writes (fetchOwnerSettings, then writeEnvFiles), from the project file's names.
-  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }] };
+  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }] };
   const envFileOn = async (token) => {
     const { body } = await request(port, { path: '/settings', authorization: `Bearer ${token}` });
     const own = Object.fromEntries(Object.entries(body.files).filter(([key, text]) => key !== 'tmux-conf' && text));
@@ -725,7 +725,7 @@ test('two repos that both have an api-env: each session falls back to its own re
   const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
   const store = { state: {}, save() {} };
   const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'api', repo: 'acme/api', default: false }], envFiles };
-  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', key: 'api-env', lines: ['PORT=8080'] }], env: {} };
+  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', key: 'api-env', overrides: ['PORT=8080'] }], env: {} };
   const userSettings = createUserSettings({ store, secrets, envFiles });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf: () => ({ repoLayer: async () => project }) });
   await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');

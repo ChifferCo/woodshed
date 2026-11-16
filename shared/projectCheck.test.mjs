@@ -53,7 +53,7 @@ const DB = {
 const PROJECT = {
   dependencies: { installs: [{ dir: 'api', files: ['package.json', 'deps.lock', '.npmrc', '*.toml'], command: 'npm ci', output: ['node_modules'] }] },
   env: { PORT: '8080', DATABASE_URL: '{{PG_URL}}' },
-  envFiles: [{ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGDATABASE}}', 'STORE={{STORE_URL}}', 'KEY={{KEY?}}'] }],
+  envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: ['DB={{PGDATABASE}}', 'STORE={{STORE_URL}}', 'KEY={{KEY?}}'] }],
   databases: [DB],
   app: fixtureApp({
     start: 'PORT=9000 bash scripts/app.sh start', stop: 'bash scripts/app.sh stop', logs: { api: '~/.cache/app/{{CHECKOUT}}/api.log' }, paths: ['web/', 'api'],
@@ -154,23 +154,33 @@ test('envFiles: one entry a file and a secret, and no secret Woodshed keeps for 
   assertProblem(t, files({ ...file, secret: 'woodshed-x' }), /reaches the session as WOODSHED_X/);
 });
 
-test('check hints at each env file\'s lines with no {{…}}, the same in every session, and still passes', (t) => {
+test('check hints at each env file\'s overrides with no {{…}}, the same in every session, and still passes', (t) => {
   const dir = checkout(t, { project: { envFiles: [
-    { ...PROJECT.envFiles[0], lines: ['DB={{PGDATABASE}}', 'FEATURE_PREVIEW=true', '# A comment', 'PORT=8080', 'KEY={{KEY?}}'] },
-    { path: 'api/.env.test', defaults: ['LOG_LEVEL=info'], lines: ['DB={{PGDATABASE}}'] },
+    { ...PROJECT.envFiles[0], overrides: ['DB={{PGDATABASE}}', 'FEATURE_PREVIEW=true', '# A comment', 'PORT=8080', 'KEY={{KEY?}}'] },
+    { path: 'api/.env.test', defaults: ['LOG_LEVEL=info'], overrides: ['DB={{PGDATABASE}}'] },
   ] }, files: { '.gitignore': 'api/.env\napi/.env.test\napi/node_modules/\n' } });
   const run = cli(dir);
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /^env files: 2 \(api\/\.env from api-env, api\/\.env\.test \(key api-env-test\), 1 default\)$/m);
   const hints = run.stdout.split('\n').filter((line) => line.startsWith('hint: '));
-  assert.deepEqual(hints, ['hint: envFiles[0] (api/.env) lines set FEATURE_PREVIEW, PORT with no {{…}}: a line with none is the same in every session, so move it to defaults if a person may change it']);
+  assert.deepEqual(hints, ['hint: envFiles[0] (api/.env) overrides set FEATURE_PREVIEW, PORT with no {{…}}: an override with none is the same in every session, and always wins, so move it to defaults if a person may change it']);
   assert.doesNotMatch(cli(checkout(t)).stdout, /^hint: /m, 'every line of the passing file has a placeholder');
+});
+
+test('check reads lines, the deprecated name of overrides, with a hint to rename it, and still passes', (t) => {
+  const { overrides, ...file } = PROJECT.envFiles[0];
+  const old = checkout(t, { project: { envFiles: [{ ...file, lines: overrides }] } });
+  const run = cli(old);
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(run.stdout.split('\n').filter((line) => line.startsWith('hint: ')), ['hint: envFiles[0] (api/.env) uses lines, which is deprecated: rename it to overrides']);
+  assert.equal(run.stdout, cli(checkout(t)).stdout.replace(/\n$/, '\nhint: envFiles[0] (api/.env) uses lines, which is deprecated: rename it to overrides\n'), 'the rest of the summary is the same');
+  assertProblem(t, { project: { envFiles: [{ ...file, lines: ['just words'] }] } }, /^envFiles\[0\]\.lines\[0\] is not NAME=value: "just words"$/);
 });
 
 test('check passes two env files that name one secret, and says they share its values', (t) => {
   const dir = checkout(t, { project: { envFiles: [
-    { path: 'api/.env', secret: 'app-env', lines: ['PORT=8080'] },
-    { path: 'worker/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['ROLE=worker'] },
+    { path: 'api/.env', secret: 'app-env', overrides: ['PORT=8080'] },
+    { path: 'worker/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['ROLE=worker'] },
   ], databases: [{ ...DB, envFiles: ['app-env'] }] }, files: { '.gitignore': 'api/.env\nworker/.env\napi/node_modules/\n' } });
   const run = cli(dir);
   assert.equal(run.status, 0, run.stderr);
@@ -193,11 +203,11 @@ test('envFiles: each path is a file git ignores, never one it tracks, a folder o
 });
 
 test('envFiles and env: each line is NAME=value, and a placeholder is written in capitals in double braces', (t) => {
-  const lines = (...l) => ({ project: { envFiles: [{ ...PROJECT.envFiles[0], lines: l }] } });
+  const lines = (...l) => ({ project: { envFiles: [{ ...PROJECT.envFiles[0], overrides: l }] } });
   assert.deepEqual(problems(t, lines('export A=1', 'B.C=2', 'D=', '# A comment')), []);
-  assertProblem(t, lines('just words'), /^envFiles\[0\]\.lines\[0\] is not NAME=value: "just words"$/);
-  assertProblem(t, lines('DB={{ PGHOST }}'), /^envFiles\[0\]\.lines\[0\] has \{\{ PGHOST \}\}, which is not a placeholder: write \{\{NAME\}\} or \{\{NAME\?\}\}, in capitals$/);
-  assertProblem(t, lines('A=1', 'DB={{pgHost}}'), /^envFiles\[0\]\.lines\[1\] has \{\{pgHost\}\}/);
+  assertProblem(t, lines('just words'), /^envFiles\[0\]\.overrides\[0\] is not NAME=value: "just words"$/);
+  assertProblem(t, lines('DB={{ PGHOST }}'), /^envFiles\[0\]\.overrides\[0\] has \{\{ PGHOST \}\}, which is not a placeholder: write \{\{NAME\}\} or \{\{NAME\?\}\}, in capitals$/);
+  assertProblem(t, lines('A=1', 'DB={{pgHost}}'), /^envFiles\[0\]\.overrides\[1\] has \{\{pgHost\}\}/);
   assertProblem(t, { project: { env: { URL: 'http://{{ host }}' } } }, /^env\.URL has \{\{ host \}\}, which is not a placeholder/);
   assertProblem(t, { project: { env: { PATH: '/bin' } } }, /^env\.PATH is one of Woodshed's own session variables/);
 });

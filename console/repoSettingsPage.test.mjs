@@ -18,7 +18,7 @@ const PROJECTS = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'too
 const APP_FILE = parseProject({
   version: 1, env: { NODE_ENV: 'development' }, rules: '.woodshed/rules.md',
   envFiles: [
-    { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT={{PORT}}', 'ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}'] },
+    { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT={{PORT}}', 'ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}'] },
     { path: 'web/.env.local' },
   ],
 });
@@ -176,7 +176,7 @@ test('an env file shows its key and path, the repo\'s defaults, the session\'s w
   assert.match(text, /Change it in \.woodshed\/project\.yaml/);
   const link = walk(app).find((e) => e.tag === 'a' && textOf(e).startsWith('.woodshed/project.yaml'));
   assert.equal(link.attrs.href, 'https://github.com/acme/app/blob/HEAD/.woodshed/project.yaml');
-  assert.match(text, /Its lines: PORT\./);
+  assert.match(text, /Its overrides: PORT\./);
   assert.match(text, /Only when the session has a value for it: ANTHROPIC_API_KEY\./);
   assert.match(text, /The project file's env, set in every process: NODE_ENV\./);
   assert.deepEqual(tableRows(app), [
@@ -188,23 +188,23 @@ test('an env file shows its key and path, the repo\'s defaults, the session\'s w
   assert.ok(editorOf(app, 'env-api-env'), 'nothing saved yet: the editor is open, empty');
 });
 
-// api/.env and worker/.env both name app-env, each with lines of its own; web/.env.local is keyed by its path.
+// api/.env and worker/.env both name app-env, each with overrides of its own; web/.env.local is keyed by its path.
 const SHARED_FILE = parseProject({
   version: 1, env: {},
   envFiles: [
-    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
-    { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
-    { path: 'web/.env.local', lines: ['PORT=5173'] },
+    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
+    { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
+    { path: 'web/.env.local', overrides: ['PORT=5173'] },
   ],
 });
 
-test('env files that share a key are one tab naming both paths, with a note, each file\'s defaults and lines, and its rows where they differ', async () => {
+test('env files that share a key are one tab naming both paths, with a note, each file\'s defaults and overrides, and its rows where they differ', async () => {
   const { app, calls, secrets } = await loadPage({ file: SHARED_FILE, envFiles: [] });
   assert.deepEqual(walk(app).filter((e) => e.tag === 'button' && e.attrs['aria-pressed']).map((b) => textOf(b)), ['app-env → api/.env, worker/.env', 'web/.env.local']);
   const text = textOf(app);
-  assert.match(text, /These values are written to both files, api\/\.env, worker\/\.env, which name the secret app-env\. Each keeps its own defaults and lines\./);
+  assert.match(text, /These values are written to both files, api\/\.env, worker\/\.env, which name the secret app-env\. Each keeps its own defaults and overrides\./);
   assert.match(text, /From the repoapi\/\.envLOG_LEVEL=infoworker\/\.envNo defaults\./, 'each file\'s defaults under its path');
-  assert.match(text, /api\/\.envIts lines: PORT, SQL_URL\.worker\/\.envIts lines: ROLE, SQL_URL\./);
+  assert.match(text, /api\/\.envIts overrides: PORT, SQL_URL\.worker\/\.envIts overrides: ROLE, SQL_URL\./);
   assert.deepEqual(tableRows(app), [
     ['LOG_LEVEL in api/.env', '✓', '', '', 'Repo'],
     ['PORT in api/.env', '', '', '✓', 'Session'],
