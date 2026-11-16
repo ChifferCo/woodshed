@@ -273,7 +273,7 @@ each, naming its field:
 Beside what each part is, it prints `install variables`, the `${NAME}`s an install's `.npmrc` reads, each of which
 must be an install secret of the installation's, and `from the session`, the variables the `env` and the env files'
 lines use that neither the `env` nor the databases give, such as a shared service's URL. And a `hint:` line for each env
-file whose `lines` set a key with no `{{…}}` (`SKIP_LOGIN=true`): such a line is the same in every session, and no
+file whose `lines` set a key with no `{{…}}` (`FEATURE_PREVIEW=true`): such a line is the same in every session, and no
 installation or person can change it, so it belongs in `defaults` if they may. A hint is not a problem: the check still
 passes. A repo runs it on its pull
 requests with the reusable workflow `.github/workflows/project-check.yml` (`docs/self-host.md`, "Before any of them:

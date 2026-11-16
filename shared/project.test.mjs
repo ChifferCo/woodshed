@@ -58,7 +58,7 @@ test('an env file\'s key is its secret, or else its path as a name, and two file
 
 test('defaults are plain NAME=value lines: a placeholder is the session\'s, in lines', () => {
   const read = (file) => parseProject({ version: 1, envFiles: [{ path: 'api/.env', ...file }] }).envFiles[0];
-  assert.deepEqual(read({ defaults: ['SKIP_LOGIN=true', '# A comment'] }).defaults, ['SKIP_LOGIN=true', '# A comment']);
+  assert.deepEqual(read({ defaults: ['FEATURE_PREVIEW=true', '# A comment'] }).defaults, ['FEATURE_PREVIEW=true', '# A comment']);
   assert.deepEqual(read({}).defaults, [], 'none when left out');
   assert.throws(() => read({ defaults: ['DB={{PGHOST}}'] }), /envFiles\[0\]\.defaults\[0\] has a \{\{…\}\} placeholder: a default is plain text, and a line the session fills in goes in lines/);
   assert.throws(() => read({ defaults: ['KEY={{KEY?}}'] }), /defaults\[0\] has a \{\{…\}\} placeholder/);
@@ -385,12 +385,12 @@ test('the CLI writes an env file\'s defaults first, and counts them in what it p
   const dir = scratch(t);
   fs.mkdirSync(path.join(dir, '.woodshed'));
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
-    envFiles: [{ path: 'web/.env.local', defaults: ['SKIP_LOGIN=true'], lines: ['DB={{PGDATABASE}}'] }],
+    envFiles: [{ path: 'web/.env.local', defaults: ['FEATURE_PREVIEW=true'], lines: ['DB={{PGDATABASE}}'] }],
   }));
   const cli = (env) => execFileSync('node', [SCRIPT, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env } });
   assert.equal(cli({ PGDATABASE: 'app' }), 'web/.env.local (base: 0 bytes, defaults: 1)\n');
   assert.equal(fs.readFileSync(path.join(dir, 'web/.env.local'), 'utf8'),
-    '# From the repo (.woodshed/project.yaml)\nSKIP_LOGIN=true\n\n# Woodshed overrides\nDB=app\n');
+    '# From the repo (.woodshed/project.yaml)\nFEATURE_PREVIEW=true\n\n# Woodshed overrides\nDB=app\n');
 });
 
 test('check prints what a session takes from the project file, and fails as a start would', (t) => {
