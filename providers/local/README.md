@@ -167,17 +167,21 @@ Testcontainers or an image build runs in them. There are two kinds:
 
 - **Their own** (`WOODSHED_SESSION_DOCKER=own` in the session): each session runs a Docker daemon of its own inside its
   container, under [Sysbox](https://github.com/nestybox/sysbox)'s runtime, which runs the container as an unprivileged
-  user of the machine that is root only inside it. It reaches nothing of the machine's, so it is on for every session,
-  on any console, wherever the machine has Sysbox: install it once (below) and every new session has `docker`.
+  user of the machine that is root only inside it. It reaches nothing of the machine's. But that root has `NET_RAW`
+  and `NET_ADMIN` in the session's own network, whose `eth0` is on the bridge every session and db-admin run shares
+  (`compose.yml`'s network). So Claude in one session could pose as the gateway to the others and read their calls to
+  the console's session API, which are plain HTTP and carry their GitHub and Claude tokens and database passwords.
+  Harmless on one person's console, where every session is theirs; on a console others sign in to, it is for a team
+  whose members may see each other's tokens.
 - **The machine's** (`WOODSHED_SESSION_DOCKER=1` in the session): its socket, mounted in. Root on the machine for
-  whoever can start a session (below), so it is only the fallback where the machine has no Sysbox, and by default only
-  on one person's console: on loopback, with no sign-in and no hosting proxy, where the person starting sessions
-  already owns the machine.
+  whoever can start a session (below): the secrets key, so every stored secret and Claude token, and every other
+  session.
 
-`WOODSHED_SESSION_DOCKER` in `stack.env` (or with `install.sh`, which saves it) chooses: unset, their own where there is
-Sysbox, else the machine's on one person's console and none on a console others sign in to (a server, or
-`WOODSHED_TAILSCALE=shared`); `own`, their own or a start that fails saying why; `1`, the machine's on any console, never
-their own; `0`, none. An existing team console never gains the machine's from an Update. Only the console's settings
+`WOODSHED_SESSION_DOCKER` in `stack.env` (or with `install.sh`, which saves it) chooses: unset, on one person's console
+(on loopback, with no sign-in and no hosting proxy, where the person starting sessions already owns the machine) their
+own where there is Sysbox and the machine's otherwise, and none on a console others sign in to (a server, or
+`WOODSHED_TAILSCALE=shared`); `own`, their own on any console, or a start that fails saying why; `1`, the machine's on any
+console, never their own; `0`, none. An existing team console never gains either from an Update. Only the console's settings
 decide it, never a project file. A question from Slack never gets either, nor a db-admin run. On AWS both are off: a
 Fargate task can neither be given a Docker socket nor run Sysbox, and `WOODSHED_SESSION_DOCKER` there only logs that it
 does nothing.
@@ -200,6 +204,8 @@ docker info --format '{{json .Runtimes}}'    # lists sysbox-runc
 
 Then bring the databases and shared services back up as "Using it day to day" says, if they did not come back on their
 own. The console needs no restart: it asks Docker again at a session start ten minutes after it last found no Sysbox.
+On a console others sign in to, also set `WOODSHED_SESSION_DOCKER=own` in `stack.env` and restart the console, knowing
+what it gives (above): with nothing set, sessions there get no Docker.
 
 How it works:
 

@@ -308,9 +308,9 @@ secrets.
   told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
   A Tailscale `serve` listener on the same port does not count.
 - **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider each
-  session runs its own Docker where the machine has Sysbox, and otherwise uses the machine's on one person's console
-  unless `WOODSHED_SESSION_DOCKER=0`, and on a console others sign in to only with `WOODSHED_SESSION_DOCKER=1`
-  (providers/local/README.md, "Docker in a session"). The console logs `local: sessions' Docker` with `own` and
+  session on one person's console runs its own Docker where the machine has Sysbox, and otherwise uses the machine's,
+  unless `WOODSHED_SESSION_DOCKER=0`; on a console others sign in to, its own only with `WOODSHED_SESSION_DOCKER=own`
+  and the machine's only with `1` (providers/local/README.md, "Docker in a session"). The console logs `local: sessions' Docker` with `own` and
   `machine` at start, then at the first session `launcher: sessions get their own Docker` with `own: true`, or `own:
   false` with `why` (`no sysbox-runc runtime: install Sysbox`, or `the session image has no Docker daemon`: rebuild it)
   and what they get `instead`; a no is asked again ten minutes later. Each session logs `launcher: session given its

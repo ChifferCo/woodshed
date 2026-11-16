@@ -127,7 +127,17 @@ export function createDockerLauncher({
     // A question from Slack reads and answers, and anyone in the workspace can ask one: it never gets a Docker.
     if (env.SESSION_MODE === 'ask') return none;
     if (ownDocker) {
-      const { own, why } = await ownDockerAvailable();
+      let answer;
+      try {
+        answer = await ownDockerAvailable();
+      } catch (err) {
+        if (ownDocker === 'required') throw err;
+        // Asked for only where there is no Sysbox to want (`auto`): the start goes on as it would without it, and the
+        // next start asks again.
+        console.warn('launcher: session started without its own Docker, the machine\'s Docker did not answer', { sessionId, why: err.message });
+        answer = { own: false, why: err.message };
+      }
+      const { own, why } = answer;
       if (own) {
         console.log('launcher: session given its own Docker', { sessionId });
         // Root inside the container, which Sysbox maps to an unprivileged user of the machine, for ownDocker.sh to start

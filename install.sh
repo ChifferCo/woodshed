@@ -385,9 +385,9 @@ setStackSetting() {
   )
 }
 
-# Sessions run their own Docker where this machine has Sysbox, and otherwise use this machine's on one person's console,
-# unless stack.env says WOODSHED_SESSION_DOCKER=0; on a console others sign in to, this machine's only when it says 1
-# (console/config.mjs, sessionDocker). Saved only when this run sets it: 0 turns it off, own asks for their own alone,
+# On one person's console sessions run their own Docker where this machine has Sysbox, and otherwise use this machine's,
+# unless stack.env says WOODSHED_SESSION_DOCKER=0; on a console others sign in to, their own only when it says own and
+# this machine's only when it says 1 (console/config.mjs, sessionDocker). Saved only when this run sets it: 0 turns it off, own asks for their own alone,
 # 1 for this machine's, and unset keeps what the file says.
 saveSessionDocker() {
   local file=$1

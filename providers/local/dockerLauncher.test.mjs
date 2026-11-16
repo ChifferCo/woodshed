@@ -303,13 +303,27 @@ test('without Sysbox, or with an image that has no daemon, a session falls back 
 
 test('WOODSHED_SESSION_DOCKER=own refuses a start that cannot have its own Docker, and a docker that does not answer is asked again', async (t) => {
   t.mock.method(console, 'log', () => {});
+  const warnings = [];
+  t.mock.method(console, 'warn', (...line) => warnings.push(line));
   const { launcher } = ownDockerLauncher({ ownDocker: 'required', runtimes: { runc: {} } });
   await assert.rejects(launcher.start('a1b2c3d4', {}), /^Error: WOODSHED_SESSION_DOCKER=own, and this session cannot have its own Docker: the machine's Docker has no sysbox-runc runtime/);
 
-  const failing = ownDockerLauncher({ infoFails: true });
+  const failing = ownDockerLauncher({ ownDocker: 'required', infoFails: true });
   await assert.rejects(failing.launcher.start('a1b2c3d4', {}), /could not ask the machine's Docker whether sessions can have their own: Cannot connect to the Docker daemon$/);
   await assert.rejects(failing.launcher.start('a1b2c3d4', {}));
   assert.equal(failing.checks().length, 2, 'not kept: asked again at the next start');
+
+  // Unasked (`auto`), a docker that does not answer the question does not fail the start: it goes on as without Sysbox.
+  for (const hostDocker of [false, true]) {
+    const auto = ownDockerLauncher({ infoFails: true, hostDocker });
+    await auto.launcher.start('a1b2c3d4', {});
+    const args = auto.sessionRun().args;
+    assert.equal(args.includes('--runtime'), false);
+    assert.equal(args.includes('/var/run/docker.sock:/var/run/docker.sock'), hostDocker);
+    await auto.launcher.start('a1b2c3d4', {});
+    assert.equal(auto.checks().length, 2, 'asked again at the next start');
+  }
+  assert.deepEqual(warnings[0], ['launcher: session started without its own Docker, the machine\'s Docker did not answer', { sessionId: 'a1b2c3d4', why: 'could not ask the machine\'s Docker whether sessions can have their own: Cannot connect to the Docker daemon' }]);
 });
 
 test('a machine with no Sysbox is asked again ten minutes later, so Sysbox installed then reaches new sessions without a restart', async (t) => {

@@ -219,9 +219,9 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
   `https://<name>` opens the console on your phone.
 - **Others too**: `WOODSHED_TAILSCALE=shared`, then step 6 is not optional and comes first, before step 4, at
   `https://<name>/setup/github`; then set `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env`, restart the console
-  and sign in first. Open app needs a domain of your own for this. Sessions get their own Docker here once the
-  machine has Sysbox, and otherwise none, unless you add `WOODSHED_SESSION_DOCKER=1` to `stack.env`, with which
-  everyone who can start one has this machine, as on a server (below). **Done when** the console's log has
+  and sign in first. Open app needs a domain of your own for this. Sessions get no Docker here unless `stack.env`
+  says so, as on a server (below): `WOODSHED_SESSION_DOCKER=own` once the machine has Sysbox, or `1`, with which
+  everyone who can start one has this machine. **Done when** the console's log has
   `console: GitHub App from the setup page`, and opening it from another device asks to sign in with GitHub.
 
 ## On a server
@@ -229,11 +229,13 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
 There is no installer for a server. `providers/local/README.md`, "Setting it up" and "On a server your team reaches",
 has every step; this is the order, with the checks. Steps marked **Server** run on the machine.
 
-Sessions get a Docker of their own (for a repo's compose services, Supabase local, Testcontainers or an image build)
-once the server has Sysbox: install it as providers/local/README.md, "Their own Docker, with Sysbox", says, and every
-session has `docker`, reaching nothing of the server's. That is the way to give sessions Docker on a server. They get
-the server's own Docker instead only when `stack.env` says `WOODSHED_SESSION_DOCKER=1`: a console others sign in to
-never has it by default, nor gains it from an Update. With it, anyone who can start a session, from a GitHub label or comment too, gets root on the server:
+Sessions on a server get no Docker by default, nor gain one from an Update. The way to give them one (for a repo's
+compose services, Supabase local, Testcontainers or an image build) is their own: install Sysbox as
+providers/local/README.md, "Their own Docker, with Sysbox", says, and set `WOODSHED_SESSION_DOCKER=own` in `stack.env`.
+It reaches nothing of the server's, but a session's root can send raw frames on the network sessions share, so Claude in
+one session could read the others' calls to the console, and with them their GitHub and Claude tokens: set it where
+everyone who can start a session may see each other's. They get the server's own Docker instead only when `stack.env`
+says `WOODSHED_SESSION_DOCKER=1`. With it, anyone who can start a session, from a GitHub label or comment too, gets root on the server:
 the secrets key, so every stored secret and Claude token, and every other session's containers and databases. Only
 people you would give root on the box should be able to start sessions there; leave it out otherwise.
 
@@ -250,8 +252,9 @@ people you would give root on the box should be able to start sessions there; le
    `stack.env` and `session-env.json` (outside the checkout, mode 600), start the databases, make the secrets key and
    store the root passwords. Keep the key off the Volume: `WOODSHED_LOCAL_SECRETS_KEY_FILE=/etc/woodshed/secrets.key`.
    For a server also set `WOODSHED_PUBLIC_URL` and `WOODSHED_APP_DOMAIN` to the name from step 3, and
-   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate. Install Sysbox for sessions to have their own Docker;
-   add `WOODSHED_SESSION_DOCKER=1` only for them to use the server's, knowing what it gives (above).
+   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate. For sessions to have their own Docker, install Sysbox
+   and add `WOODSHED_SESSION_DOCKER=own`; add `WOODSHED_SESSION_DOCKER=1` only for them to use the server's. Both
+   knowing what they give (above).
 
    **Done when** `docker compose … ps` shows the databases healthy and `node <woodshed>/providers/local/bin/secret.mjs
    list` lists `db-root/postgres` (and `db-root/mongo`).

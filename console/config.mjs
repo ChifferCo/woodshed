@@ -153,19 +153,21 @@ function tlsAskPort(env) {
 
 // Which Docker sessions get, as the docker launcher's `ownDocker` and `hostDocker` (providers/local/README.md, "Docker in
 // a session"). Their own is a Docker daemon inside the session's container, run under Sysbox (`sysbox-runc`), which
-// reaches nothing of the machine's: every session gets it wherever the machine has Sysbox, unless
-// WOODSHED_SESSION_DOCKER=0. The machine's is its socket, which is root on the machine for whoever can start a session,
-// so it stays the fallback only on one person's console: the local provider, on loopback, with no sign-in and no
+// reaches nothing of the machine's. The machine's is its socket, which is root on the machine for whoever can start a
+// session. By default both are only for one person's console: the local provider, on loopback, with no sign-in and no
 // hosting proxy (the rule of githubAppSetup.mjs's isOnePersonConsole, which imports this file), where the only person
-// who starts sessions already owns the machine. A console others sign in to has it only with WOODSHED_SESSION_DOCKER=1
-// in its own settings, never by default: a shared session, started by anyone's label or comment, would otherwise reach
-// the console's secrets, and an existing team console taking Update would start handing that out unasked.
-// WOODSHED_SESSION_DOCKER=own asks for their own and nothing else: a start fails when it cannot be given. Only the
-// console's own settings decide it, never a project file. A Fargate task can have neither, so both are off on AWS.
+// who starts sessions already owns the machine. There a session gets its own where the machine has Sysbox, and the
+// machine's otherwise. A console others sign in to gives neither unasked, and an existing team console taking Update
+// never starts handing either out. Their own reaches nothing of the machine's, but its root has NET_RAW and NET_ADMIN
+// in the session's network namespace, whose eth0 is on the bridge every session shares: Claude in one session could
+// pose as the gateway to the others and read their plain-HTTP calls to the session API, which carry tokens. So on such
+// a console it takes WOODSHED_SESSION_DOCKER=own, which asks for their own and nothing else (a start fails when it
+// cannot be given), and the machine's takes WOODSHED_SESSION_DOCKER=1. Only the console's own settings decide it, never
+// a project file. A Fargate task can have neither, so both are off on AWS.
 let warnedSessionDockerOnEcs = false;
 export function sessionDocker(env, { onePerson = true } = {}) {
   const value = String(env.WOODSHED_SESSION_DOCKER ?? '').trim();
-  if (!['', '0', '1', 'own'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is own (each session runs its own Docker, under Sysbox), 1 (sessions use this machine\'s Docker) or 0 (no Docker); unset, sessions get their own where the machine has Sysbox');
+  if (!['', '0', '1', 'own'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is own (each session runs its own Docker, under Sysbox), 1 (sessions use this machine\'s Docker) or 0 (no Docker); unset, on one person\'s console sessions get their own where the machine has Sysbox and this machine\'s otherwise, and none on a console others sign in to');
   const off = { ownDocker: false, hostDocker: false };
   if (value === '0') return off;
   if ((envValue(env, 'LAUNCHER') || 'docker') !== 'docker') {
@@ -177,7 +179,7 @@ export function sessionDocker(env, { onePerson = true } = {}) {
   }
   if (value === 'own') return { ownDocker: 'required', hostDocker: false };
   if (value === '1') return { ownDocker: false, hostDocker: true };
-  return { ownDocker: 'auto', hostDocker: onePerson };
+  return onePerson ? { ownDocker: 'auto', hostDocker: true } : off;
 }
 
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i;
