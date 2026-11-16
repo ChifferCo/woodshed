@@ -30,7 +30,7 @@ test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s t
   assert.deepEqual(selfProject().pullRequests, {
     review: {
       author: 'woodshed-reviewer[bot]', heading: '## Claude review', workflow: null,
-      rerun: null, commentAuthor: 'woodshed-console[bot]', runner: 'woodshed',
+      rerun: null, commentAuthor: null, runner: 'woodshed',
     },
     suites: [{ name: 'Check', workflow: '.github/workflows/check.yml', jobs: 'test', rerun: null }],
     qa: { check: 'QA', label: 'woodshed-qa', heading: '## QA', author: null, runner: 'woodshed', autoLabel: true },

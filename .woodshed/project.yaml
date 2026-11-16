@@ -37,7 +37,6 @@ pullRequests:
     runner: woodshed
     author: woodshed-reviewer[bot]
     heading: '## Claude review'
-    commentAuthor: woodshed-console[bot]
   suites:
     - name: Check
       workflow: .github/workflows/check.yml
