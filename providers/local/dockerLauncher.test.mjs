@@ -301,12 +301,12 @@ test('without Sysbox, or with an image that has no daemon, a session falls back 
   }
 });
 
-test('WOODSHED_SESSION_DOCKER=own refuses a start that cannot have its own Docker, and a docker that does not answer is asked again', async (t) => {
+test('required (the proof\'s) refuses a start that cannot have its own Docker, and a docker that does not answer is asked again', async (t) => {
   t.mock.method(console, 'log', () => {});
   const warnings = [];
   t.mock.method(console, 'warn', (...line) => warnings.push(line));
   const { launcher } = ownDockerLauncher({ ownDocker: 'required', runtimes: { runc: {} } });
-  await assert.rejects(launcher.start('a1b2c3d4', {}), /^Error: WOODSHED_SESSION_DOCKER=own, and this session cannot have its own Docker: the machine's Docker has no sysbox-runc runtime/);
+  await assert.rejects(launcher.start('a1b2c3d4', {}), /^Error: this session was to have its own Docker, and cannot: the machine's Docker has no sysbox-runc runtime/);
 
   const failing = ownDockerLauncher({ ownDocker: 'required', infoFails: true });
   await assert.rejects(failing.launcher.start('a1b2c3d4', {}), /could not ask the machine's Docker whether sessions can have their own: Cannot connect to the Docker daemon$/);

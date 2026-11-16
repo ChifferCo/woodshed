@@ -5,8 +5,8 @@
 //
 //   node woodshed/providers/local/bin/ownDockerInImage.mjs <session image>
 //
-// The real launcher (dockerLauncher.mjs) decides and starts the container, with WOODSHED_SESSION_DOCKER=own's
-// `required`, so a machine or image that cannot give a session its own Docker fails here as the start would. One thing
+// The real launcher (dockerLauncher.mjs) decides and starts the container, with `ownDocker: 'required'`, so a machine or
+// image that cannot give a session its own Docker fails here rather than falling back to the machine's. One thing
 // is added to its `docker run`: ownDockerChecks.sh, mounted, which ownDocker.sh runs as node in the entrypoint's place
 // (WOODSHED_ENTRYPOINT), since the entrypoint needs a console. Exits 1 when any check fails.
 import { execFileSync } from 'node:child_process';

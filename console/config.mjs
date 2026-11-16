@@ -152,22 +152,17 @@ function tlsAskPort(env) {
 }
 
 // Which Docker sessions get, as the docker launcher's `ownDocker` and `hostDocker` (providers/local/README.md, "Docker in
-// a session"). Their own is a Docker daemon inside the session's container, run under Sysbox (`sysbox-runc`), which
-// reaches nothing of the machine's. The machine's is its socket, which is root on the machine for whoever can start a
-// session. By default both are only for one person's console: the local provider, on loopback, with no sign-in and no
-// hosting proxy (the rule of githubAppSetup.mjs's isOnePersonConsole, which imports this file), where the only person
-// who starts sessions already owns the machine. There a session gets its own where the machine has Sysbox, and the
-// machine's otherwise. A console others sign in to gives neither unasked, and an existing team console taking Update
-// never starts handing either out. Their own reaches nothing of the machine's, but its root has NET_RAW and NET_ADMIN
-// in the session's network namespace, whose eth0 is on the bridge every session shares: Claude in one session could
-// pose as the gateway to the others and read their plain-HTTP calls to the session API, which carry tokens. So on such
-// a console it takes WOODSHED_SESSION_DOCKER=own, which asks for their own and nothing else (a start fails when it
-// cannot be given), and the machine's takes WOODSHED_SESSION_DOCKER=1. Only the console's own settings decide it, never
-// a project file. A Fargate task can have neither, so both are off on AWS.
+// a session"): every session gets one, unless WOODSHED_SESSION_DOCKER=0. Its own where the machine has Sysbox: a daemon
+// inside the session's container, under `sysbox-runc`, which reaches nothing of the machine's and goes with the session.
+// The machine's otherwise: its socket, which is root on the machine for whoever can start a session. Either way, whoever
+// can start a session on a local console is trusted with the machine it runs on: it is one person's own computer, or a
+// server whose team accepts that each of them can do anything on it. Where people must be kept apart, each session runs
+// on a machine or task of its own, from a launcher of its own. `1`, from before the default, is the same as unset. Only
+// the console's own settings decide it, never a project file. A Fargate task can have neither, so both are off on AWS.
 let warnedSessionDockerOnEcs = false;
-export function sessionDocker(env, { onePerson = true } = {}) {
+export function sessionDocker(env) {
   const value = String(env.WOODSHED_SESSION_DOCKER ?? '').trim();
-  if (!['', '0', '1', 'own'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is own (each session runs its own Docker, under Sysbox), 1 (sessions use this machine\'s Docker) or 0 (no Docker); unset, on one person\'s console sessions get their own where the machine has Sysbox and this machine\'s otherwise, and none on a console others sign in to');
+  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 0 (sessions get no Docker), or unset: each session gets its own Docker, under Sysbox, where the machine has it, and this machine\'s otherwise');
   const off = { ownDocker: false, hostDocker: false };
   if (value === '0') return off;
   if ((envValue(env, 'LAUNCHER') || 'docker') !== 'docker') {
@@ -177,12 +172,8 @@ export function sessionDocker(env, { onePerson = true } = {}) {
     }
     return off;
   }
-  if (value === 'own') return { ownDocker: 'required', hostDocker: false };
-  if (value === '1') return { ownDocker: false, hostDocker: true };
-  return onePerson ? { ownDocker: 'auto', hostDocker: true } : off;
+  return { ownDocker: 'auto', hostDocker: true };
 }
-
-const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i;
 
 function localLogin(env) {
   const login = (envValue(env, 'LOCAL_LOGIN') || 'local').trim();
@@ -350,9 +341,7 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
       memory: envValue(env, 'SESSION_MEMORY') || '6g',
       cpus: envValue(env, 'SESSION_CPUS') || '2',
       // Which Docker sessions get: `ownDocker` and `hostDocker` (sessionDocker above).
-      ...sessionDocker(env, {
-        onePerson: LOOPBACK_HOST.test(envValue(env, 'HOST') || '127.0.0.1') && envValue(env, 'REQUIRE_SIGN_IN') !== '1' && !identitySecret,
-      }),
+      ...sessionDocker(env),
       ecs: {
         cluster: envValue(env, 'ECS_CLUSTER'),
         taskDefinition: envValue(env, 'ECS_TASK_DEFINITION'),

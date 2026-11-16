@@ -136,12 +136,11 @@ export function localProvider(config) {
     image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, ownDocker, hostDocker,
   });
   // Their own, where the machine has Sysbox, which the first start finds out (`launcher: sessions get their own
-  // Docker`); the machine's is root on it for whoever can start a session (providers/local/README.md, "Docker in a session").
-  console.log('local: sessions\' Docker', {
-    own: ownDocker || false,
-    machine: hostDocker ? (ownDocker ? 'without Sysbox' : true) : false,
-    ...(ownDocker || hostDocker ? { off: 'WOODSHED_SESSION_DOCKER=0' } : { onWith: 'WOODSHED_SESSION_DOCKER=own' }),
-  });
+  // Docker`), else the machine's, root on it for whoever can start a session (providers/local/README.md, "Docker in a
+  // session").
+  console.log('local: sessions\' Docker', ownDocker || hostDocker
+    ? { own: 'with Sysbox', machine: 'without Sysbox', off: 'WOODSHED_SESSION_DOCKER=0' }
+    : { off: true, onWith: 'WOODSHED_SESSION_DOCKER unset' });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);
   const secrets = fixed ?? createSecretSlot({ stateDir: config.stateDir, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) });

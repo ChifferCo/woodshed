@@ -307,17 +307,15 @@ secrets.
   means neither could see it, such as another user's process. The install's own console is never in the way: it is
   told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
   A Tailscale `serve` listener on the same port does not count.
-- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider each
-  session on one person's console runs its own Docker where the machine has Sysbox, and otherwise uses the machine's,
-  unless `WOODSHED_SESSION_DOCKER=0`; on a console others sign in to, its own only with `WOODSHED_SESSION_DOCKER=own`
-  and the machine's only with `1` (providers/local/README.md, "Docker in a session"). The console logs `local: sessions' Docker` with `own` and
-  `machine` at start, then at the first session `launcher: sessions get their own Docker` with `own: true`, or `own:
+- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider every
+  session runs its own Docker where the machine has Sysbox, and otherwise uses the machine's, unless
+  `WOODSHED_SESSION_DOCKER=0` (providers/local/README.md, "Docker in a session"). The console logs `local: sessions'
+  Docker` at start (`off: true` when it is off), then at the first session `launcher: sessions get their own Docker` with `own: true`, or `own:
   false` with `why` (`no sysbox-runc runtime: install Sysbox`, or `the session image has no Docker daemon`: rebuild it)
   and what they get `instead`; a no is asked again ten minutes later. Each session logs `launcher: session given its
   own Docker` or `launcher: session given this machine's Docker`. With their own, the session's log says `Own Docker
   ready`, or `WARNING: own Docker did not start` with the end of `/tmp/woodshed-dockerd.log` (in the session), and
-  `echo $WOODSHED_SESSION_DOCKER` says `own`. A start refused with `WOODSHED_SESSION_DOCKER=own, and this session cannot
-  have its own Docker` says why. With the machine's, `launcher: sessions get this machine's Docker` gives the socket's
+  `echo $WOODSHED_SESSION_DOCKER` says `own`. With the machine's, `launcher: sessions get this machine's Docker` gives the socket's
   `group`, a start that fails with `its socket could not be given to the session` gives docker's reason, and in the
   session's Terminal `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists the
   socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found` is an

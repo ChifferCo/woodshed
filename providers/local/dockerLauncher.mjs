@@ -50,9 +50,9 @@ const SESSION_DOCKER = 'WOODSHED_SESSION_DOCKER';
  *   (projectFileMounts.mjs). `dockerHost` is another machine's daemon, as DOCKER_HOST takes it (`ssh://woodshed@10.8.0.12`):
  *   every docker call goes there, and `projectFilesHostDir` is where that machine has the project files. `reachHost`
  *   is the address the console reaches the sessions' ports on (that machine's private address); they are published
- *   on it alone, and on 127.0.0.1 without it. `ownDocker` (`auto` or `required`) gives every session but a question
- *   from Slack a Docker daemon of its own, inside its container, where the machine has Sysbox; `hostDocker` gives them
- *   the machine's daemon's socket instead where they get no own one, which is root on that machine (config.mjs,
+ *   on it alone, and on 127.0.0.1 without it. `ownDocker` (`auto`, or `required` for ownDockerInImage.mjs's proof)
+ *   gives every session but a question from Slack a Docker daemon of its own, inside its container, where the machine
+ *   has Sysbox; `hostDocker` gives them the machine's daemon's socket instead where they get no own one, which is root on that machine (config.mjs,
  *   sessionDocker). `run(args, env, {dockerHost})` stands in for the docker CLI in tests
  */
 export function createDockerLauncher({
@@ -147,7 +147,7 @@ export function createDockerLauncher({
           after: ['session'],
         };
       }
-      if (ownDocker === 'required') throw new Error(`WOODSHED_SESSION_DOCKER=own, and this session cannot have its own Docker: ${why}`);
+      if (ownDocker === 'required') throw new Error(`this session was to have its own Docker, and cannot: ${why}`);
     }
     if (!hostDocker) return none;
     const group = await hostSocketGroup();
