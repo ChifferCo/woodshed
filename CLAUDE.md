@@ -881,6 +881,9 @@ name, and refuses any other typed repo with a link to give the App access, as a 
 Needs setup card on New session and the Repos card; with `WOODSHED_PROJECTS` naming the three, the default can be the
 blocked one. The dev console has no sign-in, so everyone is an admin: to see the card as anyone else, answer `/api/me`
 with `admin: false` from the Playwright browser (`page.route`).
+`DEV_CONSOLE_REPO_SETTINGS=1` gives it a local secret store and two made-up repos, `example-org/example-repo` and
+`example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
+env file values, instructions and Your files, each per repo.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

@@ -67,10 +67,11 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
   const userSettings = {
     claudeToken: async (login) => { asked.push(login); return login === 'octocat' ? 'sk-ant-joel' : null; },
     ownFiles: async (login) => ({ 'api-env': `LOG_LEVEL=debug # ${login}`, 'web-env': null, 'tmux-conf': null }),
-    ownWholeFiles: async (login) => ({ 'app/.env.production': `NOTION_TOKEN=x # ${login}` }),
     gitIdentity: (login) => (login === 'octocat' ? { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' } : null),
   };
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  // The owner's whole files are the session's own repo's (repoSettings.filesForSession), chosen by the session.
+  const repoSettings = { filesForSession: async (session) => ({ 'app/.env.production': `NOTION_TOKEN=x # ${session.owner} ${session.id}` }) };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
@@ -81,7 +82,7 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
     status: 200,
     body: {
       files: { 'api-env': 'LOG_LEVEL=debug # octocat', 'web-env': null, 'tmux-conf': null },
-      ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat' },
+      ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat bbbbbbbb' },
       git: { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' }, database: null, claudeToken: 'sk-ant-joel',
     },
   });

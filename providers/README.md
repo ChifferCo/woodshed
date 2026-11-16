@@ -39,9 +39,9 @@ it: no Secrets page, no saved Claude homes, no databases of its own, or GitHub's
 
 A `secrets` store may declare `maxValueBytes`: the most bytes it holds in one secret's value. The AWS store declares
 65,536 (Secrets Manager's own limit) and the local store 1,048,576. A store that declares none is held to 65,536, so
-the default stays safe. Today only Your own files on My settings reads it: all of a person's files are one secret, so
-a save over the limit is refused naming it (`your files together are over the 1024 KB this console's secret store
-holds`), and the console's request body limit for that save follows it. The other secrets (an env file, a token) stay
+the default stays safe. Today only Your files, on My settings' Repo settings, reads it: all of a person's files for one
+repo are one secret, so a save over the limit is refused naming it (`your files for <repo> together are over the 1024 KB
+this console's secret store holds`), and the console's request body limit for that save follows it. The other secrets (an env file, a token) stay
 at 64 KB.
 
 ### A wait's progress
