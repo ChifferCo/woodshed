@@ -132,7 +132,10 @@ from ECS: `machine` once the task has an address, and `pullStarted` when Fargate
 began pulling the image, which its tick reads up to 10 seconds late. It keeps
 their times as `startSteps`. While a
 session starts, its page shows them as a checklist with a clock, and the rail
-and the Shared page name the step it is on. The console also asks a starting
+and the Shared page name the step it is on. Its last row, Connecting to the
+session, is the console's own: the wait from claude opening until the console
+reads the session's statusd, which it can only once the launcher has answered
+with the session's address. The console also asks a starting
 session's statusd every 2 seconds, rather than every 10, so the terminal
 opens as soon as claude does.
 

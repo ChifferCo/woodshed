@@ -754,6 +754,58 @@ test('a starting session records each start step once, and opens on the quick ch
   assert.equal(session.startSteps.claude, undefined, 'a running session\'s start is over');
 });
 
+test('a start whose agent opened but whose launcher never answered is logged once, 30 s on, as not reached', async () => {
+  const { fleet, fail, advance } = setup();
+  let finish;
+  fail.startWaits = new Promise((resolve) => { finish = resolve; });
+  const starting = fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const [session] = fleet.sessions();
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (line, fields) => warned.push([line, fields]);
+  try {
+    advance(15_000);
+    fleet.startStep(session, 'claude');
+    advance(29_000);
+    await fleet.checkStarting();
+    assert.deepEqual(warned, [], 'not yet: reaching it takes a second or two');
+    advance(1_000);
+    await fleet.checkStarting();
+    await fleet.checkStarting();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(warned, [['fleet: the agent is open but the console has not reached the session', {
+    id: session.id, seconds: 30, address: false, launching: true, message: null,
+  }]], 'once for the start, saying the launcher has not answered');
+  finish();
+  await starting;
+});
+
+test('a start whose statusd does not answer after its agent opened is logged once, with the read\'s error', async () => {
+  const { fleet, advance, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  fleet.startStep(session, 'claude');
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (line, fields) => warned.push([line, fields]);
+  try {
+    advance(45_000);
+    await fleet.checkStarting();
+    await fleet.tick();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(warned, [['fleet: the agent is open but the console has not reached the session', {
+    id: session.id, seconds: 45, address: true, launching: false, message: 'connection refused',
+  }]]);
+  statuses[session.id] = { state: 'working' };
+  await fleet.checkStarting();
+  assert.equal(session.status, 'running');
+});
+
 test('the wait for AWS ends when ECS began the pull, as the tick reads it, even after the container reported', async () => {
   const { fleet, pulls, advance } = setup();
   await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });

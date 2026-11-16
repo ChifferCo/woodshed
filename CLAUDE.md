@@ -346,6 +346,12 @@ secrets.
   console restarted mid-start (an image build) has no task for the session:
   its next tick finds the task by the session id and logs `fleet: lost start
   found again`.
+- **Every step of a starting session's checklist is done, and Connecting to the session keeps counting.** claude is
+  open, but the console has not reached the session: it turns to running only once its launcher has answered with the
+  session's address and statusd answers there. 30 s after claude opened the console logs `fleet: the agent is open but
+  the console has not reached the session`, once for the start: `address: false` with `launching: true` is a launcher
+  whose start call has not come back (no `fleet: machine ready` either), and `address: true` gives the statusd read's
+  error in `message`. It stays there until the start timeout fails it.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
   file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
