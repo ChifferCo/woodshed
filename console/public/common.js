@@ -109,7 +109,7 @@
       if (s.state === 'done' && s.shells > 0 && s.prUrl) return { key: 'job', word: 'waiting on a job' };
       if (s.state === 'done') return { key: 'done', word: 'done' };
       if (s.state === 'starting') return { key: 'starting', word: 'starting' };
-      return { key: 'idle', word: 'claude exited' };
+      return { key: 'idle', word: `${agentOf(s)} exited` };
     }
     if (!isLive(s) && s.kept && !s.owner) {
       if (s.prClosedAt) return { key: 'merged', word: s.prMerged ? 'merged' : 'closed' };
@@ -241,11 +241,12 @@
 
   /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false } = {}) {
-    const rows = setupSteps(me).map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
+    const steps = setupSteps(me);
+    const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
       h('span', { class: 'setup-check', 'aria-hidden': 'true' }, step.done ? '✓' : ''),
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
-        : step.key === 'github' ? h('a', { class: 'btn btn-primary btn-sm', href: '/setup/github' }, 'Set up')
+        : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
         // Two equal choices, each to its own box on My settings: neither agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
@@ -253,7 +254,7 @@
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
       h('h3', null, 'Set up your Woodshed'),
-      h('p', null, 'New session needs these, and nothing else does.'),
+      h('p', null, steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
       rows);
   }
 
@@ -304,7 +305,7 @@
   // Resume on a stopped shared session: the same session again, on its branch and databases, with its conversation.
   function resumeSharedButton(s, { small = false, onDone, message = () => '' }) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again where it was: its branch, databases and claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: `Start it again where it was: its branch, databases and ${agentOf(s)}'s conversation`,
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -384,7 +385,7 @@
     ['branch', 'Checking out the branch', 'checkout'],
     ['databases', 'Getting its databases', 'databases'],
     ['env', 'Writing the env files and the prompt', 'env files'],
-    ['claude', 'Opening claude', 'opening claude'],
+    ['claude', 'Opening the agent', 'opening the agent'],
   ].filter(([, label]) => label);
 
   /** @returns {{steps: {key: string, label: string, short: string, state: 'done'|'now'|'next', seconds: number|null}[], current: object|null}} */
@@ -392,7 +393,10 @@
     const at = s.startSteps || {};
     const last = START_STEPS.reduce((found, [key], i) => (at[key] ? i : found), -1);
     let from = Date.parse(s.startedAt);
-    const steps = START_STEPS.map(([key, label, short], i) => {
+    // The last step opens the session's own agent: claude, or codex.
+    const agent = agentOf(s);
+    const steps = START_STEPS.map(([key, l, sh], i) => {
+      const [label, short] = key === 'claude' ? [`Opening ${agent}`, `opening ${agent}`] : [l, sh];
       const doneAt = at[key] ? Date.parse(at[key]) : null;
       const state = i <= last ? 'done' : i === last + 1 ? 'now' : 'next';
       const end = state === 'now' ? nowMs : doneAt;
@@ -401,6 +405,27 @@
       return { key, label, short, state, seconds: state === 'next' ? null : seconds };
     });
     return { steps, current: steps.find((step) => step.state === 'now') ?? null };
+  }
+
+  // A wait for room whose launcher says how it is going (the session's `waitProgress`, from the fleet's checkWaiting),
+  // in the start checklist's states. A step's seconds run from when it began to when the next one did, the current
+  // one's to now; the wait's clock runs from the first step's start, and stops showing once a step failed.
+  const WAIT_STATES = { done: 'done', current: 'now', pending: 'next', failed: 'failed' };
+
+  /** @returns {{steps: {label: string, note: string|null, state: 'done'|'now'|'next'|'failed', seconds: number|null}[], since: string|null}} */
+  function waitProgress(s, nowMs = Date.now()) {
+    const given = s.waitProgress?.steps ?? [];
+    const steps = given.map((step, i) => {
+      const state = WAIT_STATES[step.state] ?? 'next';
+      const from = step.at ? Date.parse(step.at) : null;
+      const next = given.slice(i + 1).find((later) => later.at)?.at;
+      const end = state === 'now' ? nowMs : state === 'done' && next ? Date.parse(next) : null;
+      const seconds = from && end ? Math.max(0, Math.round((end - from) / 1000)) : null;
+      return { label: step.label, note: step.note ?? null, state, seconds };
+    });
+    const failed = steps.some((step) => step.state === 'failed');
+    const since = failed ? null : given.map((step) => step.at).filter(Boolean).sort()[0] ?? null;
+    return { steps, since };
   }
 
   /** @returns {string}  m:ss since the ISO time */
@@ -413,6 +438,16 @@
   function ref(s) {
     if (!s.number) return '';
     return s.kind === 'pr' ? `PR #${s.number}` : `#${s.number}`;
+  }
+
+  /** @returns {'claude'|'codex'}  the agent the session runs, as its command is named: claude unless it was started on Codex */
+  function agentOf(s) {
+    return s?.options?.agent === 'codex' ? 'codex' : 'claude';
+  }
+
+  /** @returns {'Claude'|'Codex'}  the agent's name, as a product */
+  function agentTitle(s) {
+    return agentOf(s) === 'codex' ? 'Codex' : 'Claude';
   }
 
   /** @returns {boolean}  a session started from My Woodshed, which only its owner can see */
@@ -448,7 +483,7 @@
   async function fetchSessions() {
     const res = await fetch('/api/sessions', { cache: 'no-store' });
     if (!res.ok) throw new Error(`GET /api/sessions answered ${res.status}`);
-    return learnNames(await res.json());
+    return withPendingApps(learnNames(await res.json()));
   }
 
   async function stopSession(id) {
@@ -479,6 +514,9 @@
    *   scheme and port (a local console's `http://<id>.localhost:7690/`)
    */
   function appUrl(s, appDomain) {
+    // With app ports (WOODSHED_APP_PORTS) the console says which port of its own name each running app is on.
+    // One with none yet goes through the console, which lends it one; what follows `next=/` (the editor's path) is kept.
+    if (s.appUrl !== undefined) return s.appUrl || `/auth/app?id=${encodeURIComponent(s.id)}&next=/`;
     return `${location.protocol}//${s.id}.${appDomain}${location.port ? `:${location.port}` : ''}/`;
   }
 
@@ -501,22 +539,126 @@
     return ` Backend${port(servers.backendPort)} ${word(servers.backend)}, frontend${port(servers.frontendPort)} ${word(servers.frontend)}.`;
   }
 
-  function actionButton(s, { action, label, ariaLabel = null, title, size, onDone, cls = 'btn-plain' }) {
+  // A sentence for the person: the page's toast, or an alert on a page without the shell. `ms` keeps the toast up longer.
+  function notify(text, { ms } = {}) {
+    const toast = window.Woodshed?.shell?.toast;
+    if (toast) toast(text, ms ? { ms } : undefined);
+    else window.alert(text);
+  }
+
+  // What Start app and Stop app show the moment they are pressed, whichever button, row or menu item was: the word on
+  // the control, the app's state until the console answers, and the toast.
+  const APP_PRESS = {
+    start: { doing: 'Starting…', state: 'starting', verb: 'starting', toast: (name) => `Starting ${name}: one to three minutes` },
+    stop: { doing: 'Stopping…', state: 'stopping', verb: 'stopping', toast: (name) => `Stopping ${name}` },
+  };
+  // One app action at a time for each session, by id: its state shown until the console answers, so a refresh landing
+  // meanwhile still says Starting.
+  const pendingApps = new Map();
+
+  /** @returns {object}  the sessions answer, with each session whose app action is in flight in its pressed state */
+  function withPendingApps(body) {
+    for (const s of body?.sessions ?? []) {
+      const pending = pendingApps.get(s.id);
+      if (pending) s.app = pending.state;
+    }
+    return body;
+  }
+
+  /**
+   * Start app or Stop app, as every control runs it: shown at once (the control's own word, the app's state, a toast),
+   * then asked of the console. A second press while one waits is told so, never dropped without a word.
+   * @param {object} s  the session, whose `app` is set to the pressed state, then to the console's answer
+   * @param {'start'|'stop'} action
+   * @param {{app?: string|null, label?: string|null, control?: HTMLElement|null, onChange?: () => void, onDone?: () => void}} opts
+   *   `app` and `label` pick one of several apps; `control` is the button or row pressed, which says what it is doing;
+   *   `onChange` redraws the page with the pressed state; `onDone` runs once the console answered.
+   * @returns {Promise<boolean>}  whether the console took it
+   */
+  async function runAppAction(s, action, { app = null, label = null, control = null, onChange = null, onDone = null } = {}) {
+    const press = APP_PRESS[action];
+    const name = label ?? 'the app';
+    const pending = pendingApps.get(s.id);
+    if (pending) {
+      notify(`Still ${pending.verb} ${pending.name}: wait for the console to answer`);
+      return false;
+    }
+    const before = s.app;
+    pendingApps.set(s.id, { state: press.state, verb: press.verb, name });
+    if (control) {
+      control.disabled = true;
+      control.setAttribute('aria-busy', 'true');
+      const words = control.querySelector('b') ?? control;
+      words.replaceChildren(h('span', { class: 'spin', 'aria-hidden': 'true' }), press.doing);
+    }
+    s.app = press.state;
+    notify(press.toast(name));
+    onChange?.();
+    let ok = false;
+    try {
+      s.app = (await appAction(s, action, { app })).app || press.state;
+      ok = true;
+    } catch (err) {
+      s.app = before;
+      notify(`Could not ${action} ${name}: ${err.message}`, { ms: 6000 });
+    } finally {
+      pendingApps.delete(s.id);
+    }
+    onDone?.();
+    return ok;
+  }
+
+  // The actions a menu row runs, by session id, with the label of the one that runs: one at a time for each session.
+  const menuActing = new Map();
+
+  /**
+   * One row of the page's ⋯ menu (session.js's card menu, the phone's sheet). With `href` it is a link to a new tab,
+   * which a phone opens on a tap as it does any link, where a window.open after the tap is only as good as the browser's
+   * reading of the gesture. Otherwise a button that runs `run(row)`: with `working` the menu stays open on the row, which
+   * says what it is doing, until `run` is done; without, the menu closes first. A tap while another row's action for the
+   * same session runs is told so in a toast, and runs nothing.
+   * @param {object} s  the session
+   * @param {{label: string, note: string, href?: string, working?: boolean, danger?: boolean, run?: (row: HTMLElement) => any}} a
+   * @param {{close: () => void, hold: () => void, done: () => void}} menu  `hold` keeps the menu open, `done` ends that
+   * @returns {HTMLElement}
+   */
+  function menuItem(s, a, { close, hold, done }) {
+    const words = [h('b', null, a.label), h('span', null, a.note)];
+    if (a.href) {
+      return h('a', { role: 'menuitem', class: 'card-menu-item', href: a.href, target: '_blank', rel: 'noopener', onclick: () => close() }, words);
+    }
+    return h('button', {
+      type: 'button', role: 'menuitem', class: `card-menu-item${a.danger ? ' is-danger' : ''}`,
+      onclick: async (e) => {
+        const row = e.currentTarget;
+        if (menuActing.has(s.id)) {
+          close();
+          notify(`Still busy with ${menuActing.get(s.id)} for this session: wait for it to finish`);
+          return;
+        }
+        if (a.working) hold();
+        else close();
+        menuActing.set(s.id, a.label);
+        try {
+          await a.run(row);
+        } finally {
+          menuActing.delete(s.id);
+          if (a.working) done();
+        }
+      },
+    }, words);
+  }
+
+  function actionButton(s, { action, label, ariaLabel = null, title, size, onDone, onChange = null, cls = 'btn-plain' }) {
     const button = h('button', {
       type: 'button',
       class: `btn ${cls}${size}`,
       title,
       'aria-label': ariaLabel,
-      onclick: async (e) => {
+      onclick: (e) => {
         e.preventDefault();
         e.stopPropagation();
-        button.disabled = true;
-        try {
-          s.app = (await appAction(s, action)).app || s.app;
-        } catch (err) {
-          window.alert(`Could not ${action} the app: ${err.message}`);
-        }
-        onDone();
+        runAppAction(s, action, { control: button, onChange, onDone });
       },
     }, label);
     return button;
@@ -539,39 +681,33 @@
     return up ? `Stops ${runningAppLabel(s) ?? 'the running app'} first, then starts this one` : 'Start it in this session';
   }
 
-  /** The apps as menu items: each starts that app, after the one running stops. */
-  function appChoiceItems(s, onDone) {
+  /** The apps as menu items: each starts that app, after the one running stops. Its row says Starting… until the console answers. */
+  function appChoiceItems(s, onDone, onChange = null) {
     return (appChoices(s) ?? []).map((app) => ({
-      group: 'Start app', label: app.label, note: appChoiceNote(s, app),
-      run: async () => {
-        try {
-          s.app = (await appAction(s, 'start', { app: app.name })).app || s.app;
-        } catch (err) {
-          window.alert(`Could not start ${app.label}: ${err.message}`);
-        }
-        onDone();
-      },
+      group: 'Start app', label: app.label, note: appChoiceNote(s, app), working: true,
+      run: (row) => runAppAction(s, 'start', { app: app.name, label: app.label, control: row, onChange, onDone }),
     }));
   }
 
   // Start app with several apps: a button that opens the page's one menu (session.js's Woodshed.openMenu) with each app's
   // label. A page without that menu starts the default, as one app would.
-  function appPickButton(s, { label, ariaLabel = null, title, size, onDone }) {
+  function appPickButton(s, { label, ariaLabel = null, title, size, onDone, onChange = null }) {
     const openMenu = window.Woodshed?.openMenu;
-    if (!openMenu) return actionButton(s, { action: 'start', label: label.replace(/ ▾$/, ''), ariaLabel, title, size, onDone });
+    if (!openMenu) return actionButton(s, { action: 'start', label: label.replace(/ ▾$/, ''), ariaLabel, title, size, onDone, onChange });
     const key = `${s.id}:apps`;
     return h('button', {
       type: 'button', class: `btn btn-plain btn-app-pick${size}`, title, 'aria-label': ariaLabel, 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'data-menu-for': key,
       onclick: (e) => {
         e.preventDefault();
         e.stopPropagation();
-        openMenu(e.currentTarget, s, { items: appChoiceItems(s, onDone) });
+        openMenu(e.currentTarget, s, { items: appChoiceItems(s, onDone, onChange) });
       },
     }, label);
   }
 
-  function setupAppToast(sent) {
-    return sent === 'queued' ? 'claude will be asked to set up the app when its turn ends' : 'Asked claude to set up the app';
+  function setupAppToast(sent, s) {
+    const agent = agentOf(s);
+    return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
   }
 
   /**
@@ -579,21 +715,22 @@
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
    * is in the tooltip and the dot rather than a word, which the card's status line has no room for.
    * @param {object} s  the session
-   * @param {{appDomain: string|null, onDone: () => void, small?: boolean}} opts
+   * @param {{appDomain: string|null, onDone: () => void, onChange?: () => void, small?: boolean}} opts  `onChange` redraws
+   *   the page the moment Start app or Stop app is pressed, before the console answers
    * @returns {HTMLElement|null}
    */
-  function appButton(s, { appDomain, onDone, small = false }) {
+  function appButton(s, { appDomain, onDone, onChange = null, small = false }) {
     if (!appDomain || s.status !== 'running') return null;
     const size = small ? ' btn-sm' : '';
     const stop = actionButton(s, {
-      action: 'stop', label: small ? '■' : 'Stop app', ariaLabel: small ? 'Stop app' : null, size, onDone, cls: 'btn-plain btn-app-stop',
+      action: 'stop', label: small ? '■' : 'Stop app', ariaLabel: small ? 'Stop app' : null, size, onDone, onChange, cls: 'btn-plain btn-app-stop',
       title: `Stop the app's backend and frontend.${serversTitle(s)}`,
     });
     const group = (...children) => h('span', { class: 'app-ctl' }, ...children);
     // With several apps, the one that runs is named on the button that picks another.
     const running = runningAppLabel(s);
     const switcher = () => running && window.Woodshed?.openMenu && appPickButton(s, {
-      label: `${running} ▾`, ariaLabel: `${running} runs: start another app`, size, onDone,
+      label: `${running} ▾`, ariaLabel: `${running} runs: start another app`, size, onDone, onChange,
       title: `${running} is the app running. Pick another to start: ${running} stops first.`,
     });
     if (s.app === 'running' || s.app === 'api-down') {
@@ -617,16 +754,16 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: 'This project\'s .woodshed/project.yaml has no app, so there is nothing to start. Asks claude to work out how the app runs and write it there.',
+        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
         onclick: async (e) => {
           e.preventDefault();
           e.stopPropagation();
           setup.disabled = true;
           try {
             const { sent } = await appAction(s, 'setup');
-            window.Woodshed.shell?.toast(setupAppToast(sent));
+            notify(setupAppToast(sent, s));
           } catch (err) {
-            window.alert(`Could not set up the app: ${err.message}`);
+            notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
           }
           onDone();
         },
@@ -641,8 +778,8 @@
     const startTitle = halfUp ? `The backend is up and the frontend is not: Start app starts the frontend.${serversTitle(s)}`
       : again ? 'The last start failed: /tmp/woodshed-app.log in the terminal says why' : 'Start the app in this session';
     const start = appChoices(s)
-      ? appPickButton(s, { label: `${startLabel} ▾`, size, onDone, title: `Pick which app to start: ${appChoices(s).map((a) => a.label).join(', ')}.${halfUp || again ? ` ${startTitle}` : ''}` })
-      : actionButton(s, { action: 'start', size, onDone, label: startLabel, title: startTitle });
+      ? appPickButton(s, { label: `${startLabel} ▾`, size, onDone, onChange, title: `Pick which app to start: ${appChoices(s).map((a) => a.label).join(', ')}.${halfUp || again ? ` ${startTitle}` : ''}` })
+      : actionButton(s, { action: 'start', size, onDone, onChange, label: startLabel, title: startTitle });
     const ctl = group(start, halfUp && !small ? h('span', { class: 'app-tag' }, 'frontend down') : null, halfUp ? stop : null);
     // Nothing of the app up: the phone's rail hides it, as the shed's does, since starting one is a desk job.
     if (!halfUp) ctl.dataset.idle = 'true';
@@ -754,9 +891,81 @@
     return { text: `${level ? '⚠ ' : ''}${parts.join(' · ')}`, level, tip };
   }
 
+  // The badge opens the machine's dialog. The page draws the badge again on each refresh, which refreshes an open dialog.
   function usageBadge(s) {
+    if (machineOpen?.id === s.id) machineOpen.draw(s);
     const u = usageOf(s);
-    return u && h('span', { class: `usage${u.level ? ` is-${u.level}` : ''}`, title: u.tip }, u.text);
+    return u && h('button', {
+      type: 'button', class: `usage${u.level ? ` is-${u.level}` : ''}`, title: `${u.tip}\nClick for more about the machine`,
+      'aria-haspopup': 'dialog', onclick: () => openMachine(s),
+    }, u.text);
+  }
+
+  // A share of what the session may use, with the badge's lines: amber past `warn`, red past `hot`.
+  function machineMeter({ label, value, share, warn, hot, sub, missing }) {
+    const known = share !== null && Number.isFinite(share);
+    const level = !known ? '' : share >= hot ? 'hot' : share >= warn ? 'warn' : '';
+    const pct = known ? Math.min(100, Math.max(0, share * 100)) : 0;
+    return h('div', { class: `plan-meter machine-meter${level ? ` is-${level}` : ''}` },
+      h('div', { class: 'plan-row' }, h('span', null, label), h('b', null, value ?? '—')),
+      h('div', { class: 'plan-bar', role: 'img', 'aria-label': known ? `${label}: ${Math.round(pct)}% of what it may use${level === 'hot' ? ', nearly all of it' : level ? ', running high' : ''}` : `${label}: ${missing}` },
+        h('i', { style: `width:${pct.toFixed(1)}%` })),
+      h('div', { class: 'plan-sub' }, known ? sub : missing));
+  }
+
+  /** What the machine dialog shows for a session: its CPU, memory and disk against their limits, and since when. */
+  function machineDetails(s) {
+    const u = s.status === 'running' ? s.usage : null;
+    if (!u) return [h('p', { class: 'sub' }, 'The session is not running, so its machine reports nothing.')];
+    const cores = u.cores || 2;
+    const fmt = (b) => (b === null || b === undefined ? null : fmtBytes(b));
+    const share = (a, b) => (a !== null && a !== undefined && b ? a / b : null);
+    const disk = u.diskTotalBytes ? u.diskTotalBytes - (u.diskUsedBytes ?? 0) : null;
+    return [
+      machineMeter({
+        label: 'CPU', value: u.cpuPercent === null ? null : `${Math.round(u.cpuPercent)}%`, share: share(u.cpuPercent, cores * 100), warn: 0.75, hot: 0.95,
+        sub: `of ${cores} core${cores === 1 ? '' : 's'} · 100% is one core busy`, missing: 'Read again in a moment: it takes two readings 2 s apart',
+      }),
+      machineMeter({
+        label: 'Memory', value: u.memoryBytes === null ? null : `${fmt(u.memoryBytes)}${u.memoryLimitBytes ? ` of ${fmt(u.memoryLimitBytes)}` : ''}`,
+        share: share(u.memoryBytes, u.memoryLimitBytes), warn: 0.7, hot: 0.9,
+        sub: `${u.memoryPeakBytes ? `Peak ${fmt(u.memoryPeakBytes)} since it started, file cache counted · ` : ''}page cache left out`,
+        missing: u.memoryBytes === null ? 'Not reported' : 'No memory limit reported',
+      }),
+      machineMeter({
+        label: 'Disk', value: u.diskTotalBytes ? `${fmt(u.diskUsedBytes)} of ${fmt(u.diskTotalBytes)}` : null,
+        share: share(u.diskUsedBytes, u.diskTotalBytes), warn: 0.8, hot: 0.95,
+        sub: `The checkout's disk · ${fmt(disk)} free`, missing: 'Not reported: the session started from an image before it was',
+      }),
+      h('dl', { class: 'machine-facts' },
+        s.startedAt && [h('dt', null, 'Running for'), h('dd', null, span(Date.now() - Date.parse(s.startedAt)))],
+        s.checkedAt && [h('dt', null, 'Read'), h('dd', null, ago(s.checkedAt))]),
+      h('p', { class: 'plan-foot machine-foot' },
+        'Read from the session\'s container, its cgroup. A bar turns amber when it runs high and red when it is nearly full: ',
+        'past its memory, the container is stopped; with no disk left, git and installs fail.'),
+    ];
+  }
+
+  let machineOpen = null;
+  function openMachine(s) {
+    const body = h('div', { class: 'machine-body' });
+    const draw = (next) => body.replaceChildren(...machineDetails(next));
+    const dialog = h('dialog', { class: 'confirm machine', 'aria-labelledby': 'machine-title' },
+      h('h2', { id: 'machine-title' }, 'The session\'s machine'),
+      h('p', { class: 'sub machine-of' }, s.title),
+      body,
+      h('div', { class: 'dialog-actions' }, h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Close')));
+    draw(s);
+    // A click on the backdrop lands on the dialog itself.
+    dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+    dialog.addEventListener('close', () => {
+      if (machineOpen?.dialog === dialog) machineOpen = null;
+      dialog.remove();
+    });
+    machineOpen?.dialog.close();
+    machineOpen = { id: s.id, dialog, draw };
+    document.body.append(dialog);
+    dialog.showModal();
   }
 
   // Each agent's plan is shared by the owner's private sessions on that agent. Keep readings and counts separate;
@@ -779,8 +988,8 @@
    */
   function planUsageOf(s, sessions) {
     if (!isPrivate(s)) return null;
-    const agent = s.options?.agent === 'codex' ? 'codex' : 'claude';
-    const agentSessions = sessions.filter((o) => o.owner === s.owner && (o.options?.agent === 'codex' ? 'codex' : 'claude') === agent);
+    const agent = agentOf(s);
+    const agentSessions = sessions.filter((o) => o.owner === s.owner && agentOf(o) === agent);
     const newest = agentSessions.filter((o) => o.planUsage && (o.planUsage.agent ?? 'claude') === agent).map((o) => o.planUsage)
       .sort((a, b) => (b.asOf ?? '').localeCompare(a.asOf ?? ''))[0];
     if (!newest) return null;
@@ -1145,9 +1354,9 @@
 
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
-    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
-    startProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
+    startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

@@ -561,9 +561,11 @@ async function main() {
   const secrets = flags['secrets-dir'] ? fileSecretsClient({ dir: flags['secrets-dir'] }) : secretsClient({ region: flags.region });
   log('Secrets from', { source: flags['secrets-dir'] ? 'files' : 'Secrets Manager' });
   const project = readProject(flags);
-  const { databases, from } = project;
+  const { databases, from, repoFileError } = project;
   const seedFiles = [...new Set(databases.flatMap((d) => d.envFiles))];
-  log('Project read', { from, databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles });
+  log('Project read', {
+    from, ...(repoFileError && { repoFileError }), databases: databases.map((d) => ({ engine: d.engine, dir: d.dir, paths: d.paths })), envFiles: seedFiles,
+  });
   const envFiles = async () => {
     const found = await seedEnvFiles({ flags, project, secrets });
     // Keys and where each came from, never a value. The entrypoint warns of each legacy one, as a session does.

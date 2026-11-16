@@ -42,6 +42,38 @@ test('the dev console leaves the shell\'s console settings out, under the old na
   WOODSHED_CLOUD_GITHUB_APP_ID: '1', WOODSHED_INSTALL_SECRETS: 'REGISTRY_TOKEN', WOODSHED_PROJECT_FILES_DIR: '/nowhere',
 }));
 
+// The Repos card as on a hosted console: scripts/devHostConsole.mjs's made-up hook keeps the list, so Add a repo offers
+// the program's repos, names none, and a repo the made-up App cannot reach is refused with the link to give it access.
+test('with DEV_CONSOLE_HOST_REPOS=1 the Repos card is the made-up program\'s', async (t) => {
+  const port = await freePort();
+  const child = spawn(process.execPath, [SCRIPT, String(port)], { env: { ...SHELL, DEV_CONSOLE_HOST_REPOS: '1' }, stdio: ['ignore', 'ignore', 'pipe'] });
+  let stderr = '';
+  child.stderr.on('data', (d) => { stderr += d; });
+  t.after(() => child.kill());
+  let choices = null;
+  for (let i = 0; i < 50 && choices === null && child.exitCode === null; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    choices = await fetch(`http://127.0.0.1:${port}/api/console-settings/projects/repos`).then((r) => r.json()).catch(() => null);
+  }
+  assert.ok(choices, `the dev console answered (stderr: ${stderr.slice(0, 300)})`);
+  assert.equal(choices.via, 'host');
+  assert.deepEqual(choices.repos.map((r) => r.repo), ['acme/api', 'acme/web', 'acme/lib']);
+  const settings = await fetch(`http://127.0.0.1:${port}/api/console-settings`).then((r) => r.json());
+  assert.equal(settings.repoNames, false);
+  const post = (body) => fetch(`http://127.0.0.1:${port}/api/console-settings/projects`, {
+    method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const refused = await post({ repo: 'acme/secret' });
+  assert.equal(refused.status, 400);
+  const why = await refused.json();
+  assert.match(why.error, /may not reach acme\/secret/);
+  assert.equal(why.link.href, 'https://github.com/organizations/acme/settings/installations/1');
+  const added = await post({ repo: 'acme/web' });
+  assert.equal(added.status, 200, await added.text());
+  const after = await fetch(`http://127.0.0.1:${port}/api/console-settings/projects/repos`).then((r) => r.json());
+  assert.deepEqual(after.repos.map((r) => r.repo), ['acme/api', 'acme/lib']);
+});
+
 function get(port, { host, method = 'GET', path: urlPath = '/api/sessions', headers = {} }) {
   return new Promise((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, method, path: urlPath, headers: { host, ...headers } }, (res) => {

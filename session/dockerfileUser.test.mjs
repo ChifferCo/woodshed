@@ -62,3 +62,27 @@ test('nothing in the runtime changes daily', () => {
   assert.doesNotMatch(runtime, /CLAUDE_DAY|BUILD_SHA|claude\.ai\/install/);
   assert.match(DOCKERFILE.slice(DOCKERFILE.lastIndexOf('FROM ${RUNTIME}')), /^ARG CLAUDE_DAY=$/m);
 });
+
+// psql is Postgres's client at the major the installations host: RDS's engine_version and the local provider's image,
+// as the console's pg_restore is. An older client warns and lacks the server's features; a newer pg_dump writes dumps
+// that server cannot restore. A published runtime from before psql was in it gets the same package in the last stage.
+test('psql is the client of the Postgres major the installations host, in the runtime and for a runtime without it', () => {
+  const repo = path.join(import.meta.dirname, '..');
+  const major = DOCKERFILE.match(/^ARG PG_CLIENT_MAJOR=(\d+)$/m)?.[1];
+  assert.ok(major, 'the Dockerfile sets PG_CLIENT_MAJOR');
+  assert.match(fs.readFileSync(path.join(repo, 'providers/aws/terraform/database.tf'), 'utf8'), new RegExp(`engine_version = "${major}"`));
+  assert.match(fs.readFileSync(path.join(repo, 'providers/local/postgres.yml'), 'utf8'), new RegExp(`image: postgres:${major}\\n`));
+  assert.match(fs.readFileSync(path.join(repo, 'console/Dockerfile'), 'utf8'), new RegExp(`postgresql-client-${major} `));
+  const base = DOCKERFILE.slice(DOCKERFILE.indexOf('FROM node:'), DOCKERFILE.indexOf('FROM base AS runtime'));
+  const last = DOCKERFILE.slice(DOCKERFILE.lastIndexOf('FROM ${RUNTIME}'));
+  for (const stage of [base, last]) {
+    assert.match(stage, /^ARG PG_CLIENT_MAJOR$/m);
+    assert.match(stage, /apt-get install -y --no-install-recommends [^\n]*"postgresql-client-\$\{PG_CLIENT_MAJOR\}"/);
+    assert.match(stage, /apt\.postgresql\.org\/pub\/repos\/apt bookworm-pgdg main/);
+  }
+  assert.match(last, /if psql --version 2>\/dev\/null \| grep -qE "\^psql \\\(PostgreSQL\\\) \$\{PG_CLIENT_MAJOR\}\\\."; then [^\n]*exit 0; fi/);
+  // Root installs it: the last stage is root from the editor's step until the USER node before Claude.
+  const install = runsWithUser(DOCKERFILE).filter(({ line }) => line.includes('postgresql-client-'));
+  assert.equal(install.length, 2);
+  assert.ok(install.every(({ user }) => user === 'root'));
+});

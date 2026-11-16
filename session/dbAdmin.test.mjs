@@ -435,11 +435,16 @@ const SEED_PROJECT = parseProject({
   version: 1,
   envFiles: [
     { path: 'api/.env', secret: 'api-env', lines: ['DATABASE_URL={{PG_URL}}'] },
-    { path: 'web/.env.local', defaults: ['NEXT_PUBLIC_MODE=dev'], lines: [] },
+    { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], lines: [] },
     { path: 'tools/.env', secret: 'tools-env', lines: [] },
   ],
   databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env', 'web-env-local'] }],
 });
+
+// The seed tests' flags, on a store prefix of their own.
+function seedFlags(args) {
+  return { ...parseArgs([...FIXED.slice(0, -1), ...args]).flags, 'secret-prefix': 'acme/' };
+}
 
 // A store of secrets that says which names were asked for.
 function recordingSecrets(values) {
@@ -448,31 +453,31 @@ function recordingSecrets(values) {
 }
 
 test('the seed\'s env files come from the default project\'s repo settings, each key alone, and never anyone\'s own', async () => {
-  const flags = { ...parseArgs([...FIXED.slice(0, -1), '--project', 'app', '--', 'template']).flags };
+  const flags = seedFlags(['--project', 'app', '--', 'template']);
   const secrets = recordingSecrets({
-    'woodshed-cloud/repos/app/env/api-env': 'API_KEY=new\n', 'woodshed-cloud/repos/app/env/web-env-local': 'NEXT_PUBLIC_MODE=qa\n',
-    'woodshed-cloud/api-env': 'API_KEY=old\n', 'woodshed-cloud/repos/app/env/tools-env': 'T=1',
+    'acme/repos/app/env/api-env': 'API_KEY=new\n', 'acme/repos/app/env/web-env-local': 'PUBLIC_MODE=qa\n',
+    'acme/api-env': 'API_KEY=old\n', 'acme/repos/app/env/tools-env': 'T=1',
   });
   const found = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets });
   assert.deepEqual(found.settings, {
     project: 'app',
-    envFiles: { 'api-env': { installation: 'API_KEY=new\n', personal: null }, 'web-env-local': { installation: 'NEXT_PUBLIC_MODE=qa\n', personal: null } },
+    envFiles: { 'api-env': { installation: 'API_KEY=new\n', personal: null }, 'web-env-local': { installation: 'PUBLIC_MODE=qa\n', personal: null } },
     instructions: { installation: null, personal: null }, personalFor: null,
   });
   assert.deepEqual(found.files, {}, 'no legacy secret where the repo settings have a value');
   assert.deepEqual(found.read, [{ key: 'api-env', from: 'repo settings' }, { key: 'web-env-local', from: 'repo settings' }]);
-  assert.deepEqual(secrets.asked, ['woodshed-cloud/repos/app/env/api-env', 'woodshed-cloud/repos/app/env/web-env-local'],
+  assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/repos/app/env/web-env-local'],
     'only the databases\' keys, only the default project\'s, and no legacy secret');
 });
 
 test('a key with no repo settings value falls back to its legacy secret, and one with neither is empty', async () => {
-  const flags = parseArgs([...FIXED.slice(0, -1), '--project', 'app', '--', 'template']).flags;
-  const secrets = recordingSecrets({ 'woodshed-cloud/repos/app/env/api-env': '  \n', 'woodshed-cloud/api-env': 'API_KEY=old\n' });
+  const flags = seedFlags(['--project', 'app', '--', 'template']);
+  const secrets = recordingSecrets({ 'acme/repos/app/env/api-env': '  \n', 'acme/api-env': 'API_KEY=old\n' });
   const found = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets });
   assert.deepEqual(found.settings.envFiles, {}, 'a blank value is none, as the session API leaves it out');
   assert.deepEqual(found.files, { API_ENV: 'API_KEY=old\n' });
   assert.deepEqual(found.read, [{ key: 'api-env', from: 'legacy secret' }, { key: 'web-env-local', from: 'none' }]);
-  assert.deepEqual(secrets.asked, ['woodshed-cloud/repos/app/env/api-env', 'woodshed-cloud/api-env', 'woodshed-cloud/repos/app/env/web-env-local'],
+  assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/api-env', 'acme/repos/app/env/web-env-local'],
     'a file with no secret has no legacy name to read');
 
   const none = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets: recordingSecrets({}) });
@@ -481,11 +486,11 @@ test('a key with no repo settings value falls back to its legacy secret, and one
 });
 
 test('without --project the seed reads the legacy secrets alone, as before repo settings', async () => {
-  const secrets = recordingSecrets({ 'woodshed-cloud/api-env': 'API_KEY=old\n', 'woodshed-cloud/repos/app/env/api-env': 'API_KEY=new\n' });
-  const found = await seedEnvFiles({ flags: FLAGS, project: SEED_PROJECT, secrets });
+  const secrets = recordingSecrets({ 'acme/api-env': 'API_KEY=old\n', 'acme/repos/app/env/api-env': 'API_KEY=new\n' });
+  const found = await seedEnvFiles({ flags: seedFlags(['--', 'template']), project: SEED_PROJECT, secrets });
   assert.equal(found.settings, null);
   assert.deepEqual(found.files, { API_ENV: 'API_KEY=old\n' });
-  assert.deepEqual(secrets.asked, ['woodshed-cloud/api-env']);
+  assert.deepEqual(secrets.asked, ['acme/api-env']);
 });
 
 test('the seed is told where its repo settings are last, so no legacy secret\'s variable can stand in for it', () => {
