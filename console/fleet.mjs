@@ -44,6 +44,22 @@ const NO_ROOM_RE = /limit on the number of vCPUs|LimitExceeded|Capacity is unava
 const NO_ROOM_RETRY_MS = 60_000;
 // The triggers whose starter GitHub vouches for, so the only ones a personal Claude plan may run on.
 const GITHUB_TRIGGERS = new Set(['label', 'comment', 'qa', 'review']);
+// The merge risk labels' colours, the Actions review's.
+const MERGE_RISK_COLORS = { Low: '0e8a16', Medium: 'fbca04', High: 'd93f0b' };
+// How the tiers are decided, under every rating, so a reader can see which rule a change hit.
+const MERGE_RISK_TIERS = '**High** when it touches any of: the repo\'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests that add or strengthen checks, docs or a small tested fix. **Medium** is everything between.';
+
+// GraphQL spells a bot's login without the `[bot]` the REST API and the project file carry.
+function sameAccount(a, b) {
+  const key = (login) => String(login ?? '').toLowerCase().replace(/\[bot\]$/, '');
+  return Boolean(a && b) && key(a) === key(b);
+}
+
+// A review's inline comments as lines of its body, for when GitHub would not take them on the diff's lines.
+function withFoldedComments(body, comments) {
+  const lines = comments.map((c) => `- \`${c.path}:${c.line}\`: ${c.body.replace(/\s*\n\s*/g, ' ')}`);
+  return `${body}\n\n**Inline comments**\n\n${lines.join('\n')}`.slice(0, 60_000);
+}
 
 // What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
 // the session image, so they are named here.
@@ -306,6 +322,8 @@ export function createFleet({
       env.SESSION_MODE = 'review';
       env.PR = String(session.number);
       env.REVIEW_BASE = session.review.base;
+      // Whose earlier inline comments are the review's own, for the session to check whether the head fixes them.
+      if (session.review.author) env.REVIEW_AUTHOR = session.review.author;
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
       if (session.kind === 'issue') env.ISSUE = String(session.number);
@@ -1639,7 +1657,10 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
-      review: { base: pull.base.ref, sha: pull.head.sha, heading: review.heading, check: mergeRisk?.check ?? null, commentId, ...(teamKeyWhy ? { teamKey: true } : {}) },
+      review: {
+        base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
+        ...(teamKeyWhy ? { teamKey: true } : {}),
+      },
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
@@ -1659,10 +1680,11 @@ export function createFleet({
    * @param {{conclusion: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT'|null, summary: string, comment: string,
    *   mergeRisk: {tier: string|null, reason: string, summary: string}, sha: string, costUsd: number|null}} result
    */
-  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, sha, costUsd }) {
+  async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
-    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, sha }) : false;
+    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha }) : false;
+    if (ours && conclusion === 'APPROVE') await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
     update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours });
@@ -1672,7 +1694,7 @@ export function createFleet({
 
   // Only submits when the reviewed commit is still the head: a push since makes the review stale, so it is dropped
   // rather than approving the wrong commit. The verdict starts with the project file's heading, which the gate looks for.
-  async function submitReview(session, gh, { conclusion, summary, comment, mergeRisk, sha }) {
+  async function submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments = [], sha }) {
     if (comment) await postReviewComment(session, gh, comment);
     const pull = await safely('review pull request', () => gh.pull(session.number));
     if (!pull?.head?.sha) {
@@ -1687,17 +1709,61 @@ export function createFleet({
     // As the reviewer App when there is one: GitHub refuses an approval from the pull request's author, and a pull request
     // a shared session opened is the console App's.
     const asReviewer = Boolean(reviewerApp?.configured());
-    const submitted = await safely('review verdict', () => (asReviewer
-      ? reviewerApp.submitReview({ repo: projectFor(config, session).repo, number: session.number, event: conclusion, body, sha })
-      : gh.createReview(session.number, { event: conclusion, body, sha })));
-    console.log('fleet: review verdict submitted', { id: session.id, number: session.number, as: asReviewer ? 'reviewer App' : 'console App', ok: submitted !== null });
-    if (session.review.check && mergeRisk?.tier) {
-      await safely('Merge risk check', () => gh.createCheckRun({
-        sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
-        summary: `Set by the AI review.\n\n${mergeRisk.summary}`.trim(), externalId: session.id,
-      }));
+    const send = (review) => (asReviewer
+      ? reviewerApp.submitReview({ repo: projectFor(config, session).repo, number: session.number, event: conclusion, sha, ...review })
+      : gh.createReview(session.number, { event: conclusion, sha, ...review }));
+    let submitted = await safely('review verdict', () => send({ body, comments: inlineComments }));
+    // GitHub refuses the whole review when one comment is on a line the diff does not show: the verdict still goes in,
+    // with the comments in its body.
+    const folded = submitted === null && inlineComments.length > 0;
+    if (folded) submitted = await safely('review verdict without inline comments', () => send({ body: withFoldedComments(body, inlineComments), comments: [] }));
+    console.log('fleet: review verdict submitted', {
+      id: session.id, number: session.number, as: asReviewer ? 'reviewer App' : 'console App', ok: submitted !== null,
+      inlineComments: inlineComments.length, folded,
+    });
+    if (mergeRisk?.tier) {
+      if (session.review.check) {
+        await safely('Merge risk check', () => gh.createCheckRun({
+          sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
+          summary: `${mergeRisk.summary}\n\n${MERGE_RISK_TIERS}\n\nSet by the AI review. It does not block merging.`.trim(), externalId: session.id,
+        }));
+      }
+      await safely('merge risk label', () => setMergeRiskLabel(gh, session.number, mergeRisk.tier));
     }
+    return submitted !== null;
+  }
+
+  // The label is for people to see at a glance. Anyone who can triage can change it, so the console and any merge rule
+  // read the Merge risk check, never the label.
+  async function setMergeRiskLabel(gh, number, tier) {
+    const name = `merge risk: ${tier.toLowerCase()}`;
+    await gh.ensureLabel({ name, color: MERGE_RISK_COLORS[tier], description: 'Set by the AI review' });
+    for (const other of Object.keys(MERGE_RISK_COLORS)) {
+      if (other === tier) continue;
+      await gh.removeLabel(number, `merge risk: ${other.toLowerCase()}`).catch(() => false);
+    }
+    await gh.addLabel(number, name);
     return true;
+  }
+
+  /**
+   * After an APPROVE, resolves the review's own open threads that are outdated or that the session found fixed, as the
+   * Actions review does, so they block no merge. A person's thread, or an id the session made up, matches nothing.
+   */
+  async function resolveFixedThreads(session, gh, fixedIds) {
+    const own = session.review.author;
+    if (!own) return;
+    const threads = await safely('review threads', () => gh.reviewThreads(session.number));
+    if (!threads) return;
+    const fixed = new Set(fixedIds);
+    const mine = threads.filter((t) => !t.isResolved && sameAccount(t.author, own));
+    const picked = mine.filter((t) => t.isOutdated || fixed.has(t.commentId));
+    let resolved = 0;
+    for (const t of picked) if (await safely('resolve review thread', () => gh.resolveThread(t.id))) resolved++;
+    console.log('fleet: review threads resolved', {
+      id: session.id, number: session.number, threads: threads.length, own: mine.length, outdated: mine.filter((t) => t.isOutdated).length,
+      given: fixed.size, picked: picked.length, resolved,
+    });
   }
 
   async function postReviewComment(session, gh, body) {

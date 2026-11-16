@@ -9,6 +9,7 @@
 import crypto from 'node:crypto';
 
 import { DEFAULT_CONSOLE_NAME } from './config.mjs';
+import { reviewPayload } from './github.mjs';
 import { createAppApi, createTokenSource } from './githubApp.mjs';
 import { manifestPostUrl } from './githubAppSetup.mjs';
 import { defaultProject } from './projects.mjs';
@@ -22,8 +23,6 @@ const PERMISSIONS = { pull_requests: 'write', metadata: 'read' };
 // The manifest's code lasts an hour; the state it was started with, 15 minutes.
 const STATE_TTL_MS = 15 * 60_000;
 const MAX_PENDING = 20;
-// GitHub's limit on a review body is 65,536 characters.
-const MAX_BODY_CHARS = 60_000;
 
 function refusal(message) {
   return Object.assign(new Error(message), { shown: true });
@@ -115,10 +114,11 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
   /**
    * Submits a formal review as the reviewer App, at `sha`, so a push since makes GitHub refuse rather than approve the
    * wrong commit.
-   * @param {{repo: string, number: number, event: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT', body: string, sha: string}} args
+   * @param {{repo: string, number: number, event: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT', body: string, sha: string,
+   *          comments?: {path: string, line: number, body: string}[]}} args
    * @returns {Promise<number|null>}  the review's id
    */
-  async function submitReview({ repo, number, event, body, sha }) {
+  async function submitReview({ repo, number, event, body, sha, comments = [] }) {
     const found = stored();
     const privateKey = found?.appId ? await secrets?.read(REVIEWER_KEY_SECRET) : null;
     if (!privateKey) throw new Error('the reviewer App is not set up: its key is not saved');
@@ -130,7 +130,7 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     const res = await fetchImpl(`${GITHUB_API}/repos/${repo}/pulls/${number}/reviews`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, ...HEADERS },
-      body: JSON.stringify({ commit_id: sha, event, body: body.slice(0, MAX_BODY_CHARS) }),
+      body: JSON.stringify(reviewPayload({ event, body, sha, comments })),
     });
     const answer = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`GitHub refused the reviewer App's review: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`);

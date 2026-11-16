@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn } from './codeReview.mjs';
+import { parseYaml } from '../yamlLite.mjs';
 
 function dir(t) {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'review-'));
@@ -49,4 +50,38 @@ test('no verdict file means no conclusion, so the console submits nothing', (t) 
   const d = dir(t);
   assert.equal(verdictIn(d).conclusion, null);
   assert.deepEqual(mergeRiskIn(d), { tier: null, reason: '', summary: '' });
+});
+
+test('the session\'s inline comments and the earlier comments it found fixed are read back', (t) => {
+  const d = dir(t);
+  fs.writeFileSync(path.join(d, 'verdict.txt'), 'APPROVE\n');
+  fs.writeFileSync(path.join(d, 'inline-comments.json'), JSON.stringify([
+    { path: './console/a.mjs', line: 12, body: 'Throws on an empty list.' }, { path: 'b.mjs', line: 'x', body: 'dropped' },
+  ]));
+  fs.writeFileSync(path.join(d, 'resolved.txt'), '101\n101\nnot an id\n202\n');
+  const v = verdictIn(d);
+  assert.deepEqual(v.inlineComments, [{ path: 'console/a.mjs', line: 12, body: 'Throws on an empty list.' }]);
+  assert.deepEqual(v.resolved, [101, 202]);
+  fs.writeFileSync(path.join(d, 'inline-comments.json'), 'not json');
+  assert.deepEqual(verdictIn(d).inlineComments, []);
+});
+
+// The two runners must review the same way: the session's prompt is the Actions review's, with the session's paths, and
+// its inline comments written to a file for the console instead of posted through the action's tool.
+test('the session\'s review prompt is the Actions review\'s, apart from where things are and how inline comments go out', () => {
+  const workflow = parseYaml(fs.readFileSync(new URL('../../.github/workflows/review.yml', import.meta.url), 'utf8'));
+  const step = workflow.jobs.review.steps.find((s) => s.with?.prompt);
+  const words = (text) => text.replace(/\s+/g, ' ').trim();
+  const actions = words(step.with.prompt)
+    .replace(/5\. Inline comments \(mcp__github_inline_comment__create_inline_comment\):.*?Before you comment/, '5. INLINE Before you comment');
+  const session = words(reviewPrompt({ dir: '/D', pr: '${{ github.event.pull_request.number }}', head: '${{ github.event.pull_request.head.sha }}',
+    server: '${{ github.server_url }}', repo: '${{ github.repository }}', reviewer: 'github-actions[bot]' }))
+    .replace(/5\. Inline comments, written to .*?Before you comment/, '5. INLINE Before you comment')
+    .replaceAll('/D/context.md', '/tmp/review-context.md').replaceAll('/D/base-rules/', '/tmp/base-rules/')
+    .replaceAll('/D/instructions.md', '/tmp/review-instructions.md').replaceAll('/D/risk-areas.md', '/tmp/risk-areas.md')
+    .replaceAll('/D/review-comment.md', '/tmp/review-comment.md').replaceAll('/D/verdict.txt', '/tmp/claude-verdict.txt')
+    .replaceAll('/D/summary.md', '/tmp/review-summary.md').replaceAll('/D/merge-risk.md', '/tmp/merge-risk.md')
+    .replaceAll('/D/resolved.txt', '/tmp/claude-resolved.txt')
+    .replace('The console puts it', 'The next step puts it').replace('so the console submits them', 'so the next steps submit them');
+  assert.equal(session, actions);
 });

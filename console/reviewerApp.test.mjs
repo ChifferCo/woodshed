@@ -58,6 +58,8 @@ test('a review is submitted as the reviewer App, on its installation for the rep
   assert.equal(review.url, 'https://api.github.com/repos/Acme/widgets/pulls/7/reviews');
   assert.deepEqual(review.body, { commit_id: SHA, event: 'APPROVE', body: '## Claude review — APPROVE' });
   assert.equal(review.auth, 'Bearer ghs_reviewer');
+  await reviewer.submitReview({ repo: 'Acme/widgets', number: 7, event: 'APPROVE', body: 'x', sha: SHA, comments: [{ path: 'a.mjs', line: 3, body: 'Off by one.' }] });
+  assert.deepEqual(calls.at(-1).body.comments, [{ path: 'a.mjs', line: 3, side: 'RIGHT', body: 'Off by one.' }], 'inline comments ride on the review');
 });
 
 test('a review is refused, not sent as anyone else, when the reviewer App has no key or is not installed on the repo', async () => {
