@@ -1175,6 +1175,9 @@ export function createHandler({
       // one person's own machine with a gh token it is optional, and does not hold New session back.
       githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional?.(),
       githubSetupOptional: Boolean(githubSetup?.optional?.()),
+      // The console has its App and could make the reviewer App, but has not: the setup card offers it next, to an admin,
+      // since /setup/github is theirs alone.
+      reviewerSetupNeeded: Boolean(config.githubApp && secrets && reviewerApp && !reviewerApp.configured() && isAdmin({ login })),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.

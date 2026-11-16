@@ -722,7 +722,9 @@ is why it is only for a console nobody else can reach, until the App exists and 
 GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
 installation's App's. So a review session (`pullRequests.review.runner: woodshed`) submits its verdict as a second App,
 the reviewer App (`reviewerApp.mjs`), which asks for pull requests (write) and nothing else. Once the console has its
-App, `/setup/github` offers it:
+App, `/setup/github` offers it, and the setup card lists it right after the App, to admins (optional: sessions work
+without it, only their approvals do not count). Once the rest of setup is done it stays on New session, above the form,
+until the reviewer App is made:
 
 1. **Make the reviewer App.** *Create the reviewer App on GitHub* posts its manifest (`reviewerManifest`: no webhook,
    no sign-in). GitHub sends the browser back to `/setup/github/reviewer-created`, and the console keeps the key in the

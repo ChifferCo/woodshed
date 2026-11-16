@@ -2024,3 +2024,34 @@ test('the rail\'s pull requests are read from each repo the person may start on,
   assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
   assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
 });
+
+test('the setup card offers the reviewer App to an admin of a console with its App, never to a member who could not open the page', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, githubApp: { appId: '1' },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1] }) };
+  let made = false;
+  const reviewerApp = { configured: () => made };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, secrets: {}, reviewerApp });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const me = async (login) => (await fetch(`http://127.0.0.1:${port}/api/my`, { headers: { cookie: `woodshed_session=${login}` } })).json();
+  assert.equal((await me('mia-dev')).reviewerSetupNeeded, true);
+  assert.equal((await me('sam-ops')).reviewerSetupNeeded, false, '/setup/github answers them 403');
+  made = true;
+  assert.equal((await me('mia-dev')).reviewerSetupNeeded, false, 'once it is made');
+  made = false;
+  for (const [what, options] of [['no App of its own', { config: { ...config, githubApp: null } }], ['no secret store to keep its key', { secrets: null }]]) {
+    const other = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, secrets: {}, reviewerApp, ...options });
+    const otherServer = http.createServer((req, res) => { other(req, res); });
+    const otherPort = await listen(otherServer);
+    t.after(() => otherServer.close());
+    const view = await (await fetch(`http://127.0.0.1:${otherPort}/api/my`, { headers: { cookie: 'woodshed_session=mia-dev' } })).json();
+    assert.equal(view.reviewerSetupNeeded, false, `a console with ${what}`);
+  }
+});

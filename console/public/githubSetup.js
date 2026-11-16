@@ -18,6 +18,7 @@
   let showPaste = false;
   let ownerType = 'Organization';
   let restarting = false;
+  let jumped = false;
   const RESTART_WAIT_MS = 120_000;
 
   async function act(fn) {
@@ -42,6 +43,11 @@
       loadError = err.message;
     }
     render();
+    // #reviewer (the setup card's link) names a section that exists only now: the browser looked for it before it did.
+    if (location.hash === '#reviewer' && !jumped) {
+      jumped = true;
+      document.getElementById('reviewer')?.scrollIntoView();
+    }
   }
 
   // GitHub takes the manifest as a form post, so the browser leaves for GitHub with it.
@@ -176,7 +182,7 @@
   function reviewerSection() {
     if (!reviewer?.available) return null;
     const made = Boolean(reviewer.appId);
-    return h('div', { class: 'wizard-body' },
+    return h('div', { class: 'wizard-body', id: 'reviewer' },
       h('h2', null, 'Reviewer App'),
       h('p', { class: 'msg-plain' }, 'GitHub never lets a pull request\'s author approve it, and a pull request a shared session opens is the App\'s. ',
         'A review session therefore submits its verdict as a second App, which can only review pull requests.'),
