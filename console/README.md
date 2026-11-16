@@ -1735,7 +1735,20 @@ value; a record whose secret is gone reads as none and is dropped (`repoSettings
 On AWS the base box's role makes, reads and deletes `<prefix>/repos/*` itself (`PeoplesAndSessionsOwnSecrets` in
 `providers/aws/terraform/baseBox.tf`), so a new env file needs no Terraform.
 
-The JSON API (the pages come later):
+An admin sets layer 2 on the repo's own page, `/console-settings/repos/<project>` (public/repoSettings.js), which the
+**Settings** link on its row of Console settings' Repos card opens; `?file=<key>` opens one env file's tab. For each env
+file of the project file it shows its key and path, the repo's `defaults` (read only, with a link to the file on
+GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
+sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
+are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
+defaults and lines are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
+for a key the files do not agree on. Then the installation's
+Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
+A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
+for it after a typed confirm. While an env file may still be read from its Terraform secret, the page says which one
+sessions read. The page loads for anyone signed in; its calls answer 403 to anyone but an admin, and it says so.
+
+The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
