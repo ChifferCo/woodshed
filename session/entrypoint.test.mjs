@@ -629,7 +629,7 @@ async function seedEnvFilesWritten(t, { secretValues, project = 'app' }) {
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({
     envFiles: [
       { path: 'api/.env', secret: 'api-env', lines: ['DATABASE_URL={{PG_URL}}'] },
-      { path: 'web/.env.local', defaults: ['NEXT_PUBLIC_MODE=dev'], lines: [] },
+      { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], lines: [] },
     ],
     databases: [{ ...PG, dir: '.', migrate: null, seed: 'true', envFiles: ['api-env', 'web-env-local'] }],
   }));
@@ -653,11 +653,11 @@ const SEED_URL = 'DATABASE_URL=postgres://woodshed__seed:ab@pg:5432/next?sslmode
 
 test('the seed writes its env files from the default project\'s repo settings, after the repo\'s defaults', async (t) => {
   const seeded = await seedEnvFilesWritten(t, { secretValues: {
-    'p/repos/app/env/api-env': 'API_KEY=new\n', 'p/repos/app/env/web-env-local': 'NEXT_PUBLIC_MODE=qa\n', 'p/api-env': 'API_KEY=old\n',
+    'p/repos/app/env/api-env': 'API_KEY=new\n', 'p/repos/app/env/web-env-local': 'PUBLIC_MODE=qa\n', 'p/api-env': 'API_KEY=old\n',
   } });
   assert.equal(seeded.api, `API_KEY=new\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
-  assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nNEXT_PUBLIC_MODE=dev\n\n# From this installation\nNEXT_PUBLIC_MODE=qa\n\n\n# Woodshed overrides\n\n');
-  assert.match(seeded.log, /Env files written \(api\/\.env \(layers: installation session, installation: 12 bytes, replaced by the session: none\), web\/\.env\.local \(layers: repo installation, defaults: 1, installation: 20 bytes,/);
+  assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nPUBLIC_MODE=dev\n\n# From this installation\nPUBLIC_MODE=qa\n\n\n# Woodshed overrides\n\n');
+  assert.match(seeded.log, /Env files written \(api\/\.env \(layers: installation session, installation: 12 bytes, replaced by the session: none\), web\/\.env\.local \(layers: repo installation, defaults: 1, installation: 15 bytes,/);
   assert.doesNotMatch(seeded.log, /legacy|API_KEY|qa/, 'keys and sizes only, and no legacy warning');
   assert.match(seeded.log, /Templates ready for the swap \(mode: seed, commands: 1\)/);
 });
@@ -665,7 +665,7 @@ test('the seed writes its env files from the default project\'s repo settings, a
 test('the seed falls back to an env file\'s legacy secret with the session\'s warning, and writes one with neither from the repo alone', async (t) => {
   const seeded = await seedEnvFilesWritten(t, { secretValues: { 'p/api-env': 'API_KEY=old\n' } });
   assert.equal(seeded.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
-  assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nNEXT_PUBLIC_MODE=dev\n\n# Woodshed overrides\n\n');
+  assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nPUBLIC_MODE=dev\n\n# Woodshed overrides\n\n');
   assert.match(seeded.log, /WARNING: api\/\.env from the legacy env file secret api-env: set it on Console settings → Repos/);
   assert.match(seeded.log, /api\/\.env \(layers: installation session, installation: 12 bytes from the legacy secret,/);
   assert.deepEqual(seeded.read, [{ key: 'api-env', from: 'legacy secret' }, { key: 'web-env-local', from: 'none' }]);
