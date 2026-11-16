@@ -133,10 +133,7 @@
         }, 'Remove')),
       sharedSwitch(),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
-      status,
-      h('div', { class: 'cmd-aside' },
-        h('p', { class: 'form-note' }, 'Remote Control needs more than this token can do. In a session, type this in claude, or use Sign in for Remote Control in the session\u2019s ⋯ menu:'),
-        h('div', { class: 'value-row' }, h('code', { class: 'value-box' }, '/woodshed:remote-control'), window.WoodshedRestoreParts.copyButton('/woodshed:remote-control'))));
+      status);
   }
 
   // Whether the shared sessions you start from GitHub run on your token too. Only with a token saved: removing it
