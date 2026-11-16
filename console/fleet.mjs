@@ -1412,6 +1412,9 @@ export function createFleet({
     const route = routeTrigger({ sessions, number, trigger: trigger.trigger, kind: trigger.kind, text: trigger.text });
     console.log('fleet: trigger routed', { number, login, trigger: trigger.trigger, action: route.action, reason: route.reason, ...projectField(project) });
     if (route.action === 'ignore') return { outcome: 'ignored', reason: route.reason };
+    if (route.action === 'start' && runsElsewhere(await pullRequests(project.name), project, number, trigger.trigger)) {
+      return { outcome: 'ignored', reason: 'pullRequests.runsOn names another console' };
+    }
     if (members && !members.hasGithubSessions(login)) return refuseFromGitHub(trigger, gh, project);
     if (route.action === 'send') {
       await send(find(route.sessionId), trigger.text);
@@ -1609,6 +1612,7 @@ export function createFleet({
     }
     const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
     if (route.action === 'ignore') return ignored(route.reason);
+    if (runsElsewhere(gates, project, number, 'qa')) return ignored('pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open') return ignored('the pull request is not open');
     if (gates.review) {
@@ -1739,6 +1743,7 @@ export function createFleet({
       console.log('fleet: review not started', { number, login, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
+    if (runsElsewhere(gates, project, number, 'review')) return ignored('pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
     // The session runs on the author's Claude plan only when they pass the label trigger's identity checks: a reused
@@ -1761,6 +1766,17 @@ export function createFleet({
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
+  }
+
+  // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
+  // review, QA) in pullRequests.runsOn, by the login its App acts as. The others still start sessions by hand.
+  function runsElsewhere(gates, project, number, what) {
+    const runsOn = gates?.runsOn ?? null;
+    if (!runsOn) return false;
+    const login = ownApp()?.login ?? null;
+    if (login === runsOn) return false;
+    console.log('fleet: skipped, pullRequests.runsOn names another console', { number, what, runsOn, login, ...projectField(project) });
+    return true;
   }
 
   async function teamKeyReason(login) {

@@ -69,7 +69,7 @@ export const PROJECT_FIELDS = Object.freeze({
   'services.data': ['dir', 'keep'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
-  pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
+  pullRequests: ['review', 'suites', 'qa', 'mergeRisk', 'runsOn'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
   'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
@@ -503,7 +503,7 @@ export function appNamed(project, name) {
 // the review whose verdict counts, the suites whose jobs must pass, and the QA and Merge risk checks the brief quotes.
 // The console has no names of its own for any of them (console/prAnnouncer.mjs, decisionBrief.mjs).
 function pullRequests(value) {
-  const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null });
+  const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null, runsOn: null });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
     const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null, author: null });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.review.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
@@ -548,7 +548,9 @@ function pullRequests(value) {
     if (!review) fail('pullRequests.mergeRisk needs pullRequests.review: only the review\'s own workflow may post it');
     return { check: string(f.check, 'pullRequests.mergeRisk.check') };
   });
-  return { review, suites, qa, mergeRisk };
+  // Left out, every console the repo is connected to does its automatic work, as before.
+  const runsOn = p.runsOn === null ? null : string(p.runsOn, 'pullRequests.runsOn');
+  return { review, suites, qa, mergeRisk, ...(runsOn ? { runsOn } : {}) };
 }
 
 // Only `version` must be written: everything else left out is none.

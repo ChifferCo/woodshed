@@ -731,6 +731,15 @@ console logs `console: gh not installed, GitHub calls will fail` at start. The p
 The page and its calls are an admin's like the Secrets page. A console with no sign-in has no admin to tell apart, which
 is why it is only for a console nobody else can reach, until the App exists and sign-in can be switched on.
 
+### Which console does the automatic work
+
+A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org, and each hears
+the same GitHub events. Without more, each starts its own session from the label or a comment, and its own review and
+QA. `pullRequests.runsOn` in the project file names the one that does, by the login its GitHub App acts as
+(`woodshed-cloud[bot]`, say). Any other console logs `fleet: skipped, pullRequests.runsOn names another console` and
+starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
+act as the same App all match it, so it cannot pick between two Woodshed Cloud orgs.
+
 ### The reviewer App
 
 GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
