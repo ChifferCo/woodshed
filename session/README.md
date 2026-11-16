@@ -77,7 +77,7 @@ change to the stage by the workflow's run, about the time the build takes.
    A shared session never gets them: it holds no integration token.
 2. Writes the project file's env files in layers, later ones winning (`shared/repoSettings.mjs`): each file's
    `defaults` from the project file, the installation's values, a private session's owner's own lines, then the
-   file's `lines` with the databases' and shared services' addresses (see "The project file" in
+   file's `overrides` with the databases' and shared services' addresses (see "The project file" in
    `../docs/reference.md`). The installation's values and the owner's come from the console's repo settings
    (`POST /repo-settings`, console/README.md "Repo settings"), which every session but an ask fetches with the owner's
    settings (`fetchRepoSettings`). Only a private session's answer has an owner's layer: a shared or QA session's has
@@ -89,7 +89,7 @@ change to the stage by the workflow's run, about the time the build takes.
    `config.envFiles` entries carry `name` and `repo` (console/README.md, "Embedding the console"), that legacy text is
    the session's own repo's: the launcher gives the shared text in `name`'s variable, and `/settings` hands the owner's
    lines of the session's repo alone, under `name`. Env files that name one secret share its key, so each of their
-   paths is written the key's values, with its own defaults and lines. A console from before the route answers
+   paths is written the key's values, with its own defaults and overrides. A console from before the route answers
    404: the log says `Repo settings not offered by the console, using the legacy env files`, and the files are written
    from the secrets exactly as before. Any other refusal stops the start (`could not get the repo settings from the
    console (status …)`), after the retries a 503 gets. The log says `Repo settings fetched` with each layer's keys and

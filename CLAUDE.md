@@ -348,7 +348,7 @@ secrets.
   found again`.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
-  file's lines, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
+  file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
   quote a password there, since an app that reads them with a stricter parser than dotenv can take a `#` for a
   comment.
 - **No session starts, saying `the project file's databases need mongo, which this installation does not host`.**

@@ -26,7 +26,7 @@
 #                        Without them a session asks the console's session API for the databases it made for it: a
 #                        shared session's own, a private session's owner's. Each engine then exports its own
 #                        variables (PGHOST and the rest, PG_URL, MONGODB_URI), which the project file maps to the
-#                        app's names in its env and env file lines
+#                        app's names in its env and env file overrides
 #   WOODSHED_SERVICES    the installation's shared services' variables, space-separated, each set to its URL (the
 #                        shared_services Terraform variable, or the local provider's session env). An env file
 #                        line needing one that is not set is logged as a warning when the files are written
@@ -193,11 +193,11 @@ configureGitIdentity() {
 }
 
 # Each of the project's env files, in layers (shared/repoSettings.mjs): the repo's defaults, the installation's text, the
-# owner's own lines, then the project's lines, filled in from the variables set here. The installation's and the
+# owner's own lines, then the project's overrides, filled in from the variables set here. The installation's and the
 # owner's come from the console's repo settings (fetchRepoSettings), each falling back to its legacy secret, with a
 # warning, while it has no value there; without repo settings, from the legacy secrets as before. dotenv keeps the last
 # value of a repeated key, and the same values are exported, which wins anyway. Each database's engine exports its
-# variables first, from the console's credentials, so the project's `env` and lines can name them; a database the
+# variables first, from the console's credentials, so the project's `env` and overrides can name them; a database the
 # environment does not name takes the project file's user and name.
 writeEnvFiles() {
   local exports written from skipped line settings=

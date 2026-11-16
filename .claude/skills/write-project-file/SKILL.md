@@ -23,8 +23,9 @@ Look for, and note the file each answer came from:
   Django, Rails, Mongoose), the migration and seed commands, the migrations folder, and the table the migration tool
   records runs in. Only `postgres` and `mongo` are engines; one database an engine.
 - **Env files**: each file the app reads that git ignores, and which of its lines are secret (go in an env file's
-  `secret`, set later on the console) and which are derived (go in its `lines`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
-  and the rest, `project.reference.yaml`'s `databases` comment).
+  `secret`, set later on the console) and which are derived (go in its `overrides`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
+  and the rest, `project.reference.yaml`'s `databases` comment), which always win. A plain value a person may change
+  goes in its `defaults`. Write `overrides`, never its deprecated old name `lines`.
 - **The app**: how it starts in dev (one command that returns once it is up, or a script that backgrounds it), how it
   stops, its frontend and backend ports, its log files, and the folders whose change is an app change.
   A repo with more than one app (a second frontend, an admin site) writes `apps` instead of `app`: a list of the same

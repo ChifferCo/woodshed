@@ -38,7 +38,7 @@ API_TOKEN=…</textarea>
   <p class="err">The secret store did not answer: try again in a moment</p>
   <p class="note">Copied from the Terraform secret <code>api-env</code> on Nov 1. Sessions read this one now.</p></div>
  <div class="layer"><div class="lh"><span class="tag">Session</span><b>Set by the session</b></div>
-  <p>Its lines: <code>PORT</code>. Only when the session has a value for it: <code>ANTHROPIC_API_KEY</code>.</p></div>
+  <p>Its overrides: <code>PORT</code>. Only when the session has a value for it: <code>ANTHROPIC_API_KEY</code>.</p></div>
  <div class="layer"><b>What a session gets</b>
   <div class="tb"><table><thead><tr><th>Key</th><th>Repo</th><th>Installation</th><th>Session</th><th>Wins</th></tr></thead><tbody>
    <tr><td class="mono">LOG_LEVEL</td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>
@@ -66,11 +66,11 @@ API_URL=http://localhost:4000</pre><p class="sub">Set by your admins, for every 
 <div class="gap"></div>
 <div class="box">
  <div class="head"><b>app-env → api/.env, worker/.env</b><span class="meta">key app-env</span></div>
- <div class="layer"><p class="note">These values are written to both files, <code>api/.env</code>, <code>worker/.env</code>, which name the secret app-env. Each keeps its own defaults and lines.</p></div>
+ <div class="layer"><p class="note">These values are written to both files, <code>api/.env</code>, <code>worker/.env</code>, which name the secret app-env. Each keeps its own defaults and overrides.</p></div>
  <div class="layer"><div class="lh"><span class="tag">Repo</span><b>From the repo</b></div>
   <p class="path">api/.env</p><pre>LOG_LEVEL=info</pre><p class="path">worker/.env</p><p class="meta">No defaults.</p></div>
  <div class="layer"><div class="lh"><span class="tag">Session</span><b>Set by the session</b></div>
-  <p class="path">api/.env</p><p>Its lines: <code>PORT</code>, <code>SQL_URL</code>.</p><p class="path">worker/.env</p><p>Its lines: <code>ROLE</code>, <code>SQL_URL</code>.</p></div>
+  <p class="path">api/.env</p><p>Its overrides: <code>PORT</code>, <code>SQL_URL</code>.</p><p class="path">worker/.env</p><p>Its overrides: <code>ROLE</code>, <code>SQL_URL</code>.</p></div>
  <div class="layer"><b>What a session gets</b>
   <div class="tb"><table><thead><tr><th>Key</th><th>Repo</th><th>Installation</th><th>Session</th><th>Wins</th></tr></thead><tbody>
    <tr><td class="mono">LOG_LEVEL <span class="rp">in api/.env</span></td><td class="m">✓</td><td class="m">✓</td><td class="m"></td><td><span class="tag wins">Installation</span></td></tr>

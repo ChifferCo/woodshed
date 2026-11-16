@@ -234,7 +234,7 @@
     const f = fileKey && fileOf(fileKey);
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-env' },
       h('h2', { id: 'card-env', class: 'label' }, 'Env files'),
-      h('p', { class: 'sub' }, 'Each env file a session writes is the repo\'s defaults, then this installation\'s values, then a person\'s own (in their private sessions), then what the session sets itself. A later line wins.'),
+      h('p', { class: 'sub' }, 'Each env file a session writes is the repo\'s defaults, then this installation\'s values, then a person\'s own (in their private sessions), then the session\'s overrides, what it sets itself. A later line wins.'),
       !view.projectFile.read && h('p', { class: 'cap-note', role: 'status' }, `The project file could not be read (${view.projectFile.error}), so only the saved values are listed. They cannot be saved again until it can be read.`),
       files.length > 1 && h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Env file' }, files.map((x) => h('button', {
         type: 'button', 'aria-pressed': String(x.key === fileKey), onclick: () => openFile(x.key),

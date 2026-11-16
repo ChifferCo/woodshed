@@ -29,7 +29,7 @@ env:
 envFiles:
   - path: api/.env
     secret: api-env
-    lines:
+    overrides:
       - DB_HOST={{PGHOST}}
       # Quoted: a # in a value reads as a comment.
       - DB_PASSWD="{{PGPASSWORD}}"
@@ -38,7 +38,7 @@ envFiles:
       - ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}
   - path: web/.env.local
     secret: web-env
-    lines:
+    overrides:
       - API_URL=http://localhost:9000
 
 databases:

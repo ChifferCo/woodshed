@@ -29,8 +29,8 @@ const PROJECT = parseProject({
   version: 1,
   env: { APP_PORT: '8000' },
   envFiles: [
-    { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE=false'], lines: ['DB_PASSWORD={{PGPASSWORD}}', 'KEY={{KEY?}}'] },
-    { path: 'web/.env.local', lines: ['API_URL={{SESSION_APP_URL}}'] },
+    { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE=false'], overrides: ['DB_PASSWORD={{PGPASSWORD}}', 'KEY={{KEY?}}'] },
+    { path: 'web/.env.local', overrides: ['API_URL={{SESSION_APP_URL}}'] },
   ],
 });
 const ENV = { PGPASSWORD: 'session-password', SESSION_APP_URL: 'https://x.app.example' };
@@ -134,8 +134,8 @@ test('the log names layers, sizes and keys, never a value, and the repo settings
 const SHARED = parseProject({
   version: 1,
   envFiles: [
-    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'DB_PASSWORD={{PGPASSWORD}}'] },
-    { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'KEY={{KEY?}}'] },
+    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080', 'DB_PASSWORD={{PGPASSWORD}}'] },
+    { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker', 'KEY={{KEY?}}'] },
   ],
 });
 

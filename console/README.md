@@ -1752,7 +1752,7 @@ had since.
 Each repo has its own env file values and instructions, in layers (`shared/repoSettings.mjs` says how a session's files
 and prompt are made of them): the repo's own (`.woodshed/project.yaml`: each env file's `defaults`, and `rules`), the
 installation's (layer 2, set by admins), each person's own (layer 3, in their private sessions only) and the session's
-wiring (each env file's `lines`, the project's `env`, Woodshed's own variables), which no layer before it changes.
+wiring (each env file's `overrides`, the project's `env`, Woodshed's own variables), which no layer before it changes.
 `console/repoSettings.mjs` keeps layers 2 and 3 in the console's secret store, one value each:
 
 | Name | Holds |
@@ -1778,7 +1778,7 @@ file of the project file it shows its key and path, the repo's `defaults` (read 
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
 sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
 are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
-defaults and lines are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
+defaults and overrides are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
 for a key the files do not agree on. Then the installation's
 Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
 A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
@@ -1803,7 +1803,7 @@ The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `lines`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |

@@ -49,7 +49,7 @@ export function notHostedReason({ project, hosted }) {
 
 /**
  * Every variable the project's databases give a session: each engine's own names (PGHOST, MONGODB_URI), which its env
- * file lines and `env` map to whatever the app reads.
+ * file overrides and `env` map to whatever the app reads.
  * @param {{project: {databases: object[]}, env: Record<string, string|undefined>,
  *          credentials?: {user: string, password: string, name: string}|null}} args
  * @returns {Record<string, string>}

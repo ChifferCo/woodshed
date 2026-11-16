@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { databaseEnv, ENGINES } from './databases/index.mjs';
-import { PROJECT_FILE, SINGLE_APP_NAME, envFileKeys, readRepoFile, secretEnvName } from './project.mjs';
+import { PROJECT_FILE, SINGLE_APP_NAME, envFileKeys, readRepoFile, secretEnvName, usesOldOverridesName } from './project.mjs';
 import { envKeys } from './repoSettings.mjs';
 import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
@@ -132,9 +132,10 @@ function envFileProblems(project, repoDir) {
     file.defaults.forEach((line, j) => {
       if (!ENV_LINE.test(line)) problems.push(`${at}.defaults[${j}] is not NAME=value: ${quoted(line.slice(0, 40))}`);
     });
-    file.lines.forEach((line, j) => {
-      if (!ENV_LINE.test(line)) problems.push(`${at}.lines[${j}] is not NAME=value: ${quoted(line.slice(0, 40))}`);
-      for (const near of nearPlaceholders(line)) problems.push(`${at}.lines[${j}] has {{${near}}}, which is not a placeholder: write {{NAME}} or {{NAME?}}, in capitals`);
+    const overrides = `${at}.${usesOldOverridesName(file) ? 'lines' : 'overrides'}`;
+    file.overrides.forEach((line, j) => {
+      if (!ENV_LINE.test(line)) problems.push(`${overrides}[${j}] is not NAME=value: ${quoted(line.slice(0, 40))}`);
+      for (const near of nearPlaceholders(line)) problems.push(`${overrides}[${j}] has {{${near}}}, which is not a placeholder: write {{NAME}} or {{NAME?}}, in capitals`);
     });
   });
   return problems;
@@ -271,25 +272,34 @@ function installVariables(project, repoDir) {
     .flatMap((f) => [...fs.readFileSync(path.join(repoDir, install.dir, f), 'utf8').matchAll(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g)].map((m) => `${m[1]} in ${install.dir}/${f}`)));
 }
 
-// The variables the env and the env files' lines take from the session that neither the project's env nor its
+// The variables the env and the env files' overrides take from the session that neither the project's env nor its
 // databases give: the installation's shared services, the app's key, and the like.
 function takenFromSession(project) {
-  const texts = [...Object.values(project.env), ...project.envFiles.flatMap((f) => f.lines)];
+  const texts = [...Object.values(project.env), ...project.envFiles.flatMap((f) => f.overrides)];
   const given = new Set([...Object.keys(project.env), ...Object.keys(databaseEnv({ project, env: { PGSSLMODE: 'x' } }))]);
   return [...new Set(texts.flatMap(placeholderNames))].filter((name) => !given.has(name) && !isSessionVariable(name));
 }
 
 /**
- * The keys each env file's `lines` set with no `{{…}}`: the same in every session, and still the session's, so no
+ * The keys each env file's `overrides` set with no `{{…}}`: the same in every session, and still the session's, so no
  * installation's or person's value replaces them. Not a problem, since a file may mean "always": a hint, one an env file.
  * @returns {string[]}
  */
 export function literalLineHints(project) {
   return project.envFiles.flatMap((file, i) => {
-    const keys = envKeys(file.lines.filter((line) => !line.includes('{{')).join('\n'));
+    const keys = envKeys(file.overrides.filter((line) => !line.includes('{{')).join('\n'));
     if (!keys.length) return [];
-    return [`hint: envFiles[${i}] (${file.path}) lines set ${keys.join(', ')} with no {{…}}: a line with none is the same in every session, so move it to defaults if a person may change it`];
+    return [`hint: envFiles[${i}] (${file.path}) overrides set ${keys.join(', ')} with no {{…}}: an override with none is the same in every session, and always wins, so move it to defaults if a person may change it`];
   });
+}
+
+/**
+ * The env files that still write `overrides` by its deprecated name, `lines`: read the same, and never a problem until
+ * the old name is removed. A hint, one an env file.
+ * @returns {string[]}
+ */
+export function oldNameHints(project) {
+  return project.envFiles.flatMap((file, i) => (usesOldOverridesName(file) ? [`hint: envFiles[${i}] (${file.path}) uses lines, which is deprecated: rename it to overrides`] : []));
 }
 
 // One app as it always read; several by name, the default first.
@@ -332,6 +342,7 @@ export function checkSummary(project, repoDir) {
     appLine(project),
     `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,
     `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
+    ...oldNameHints(project),
     ...literalLineHints(project),
   ];
 }

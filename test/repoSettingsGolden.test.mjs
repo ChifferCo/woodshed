@@ -86,6 +86,20 @@ for (const [name, text] of Object.entries(PROJECTS)) {
   }
 }
 
+// `lines` is the deprecated name of `overrides`: a project file written either way writes the same bytes.
+function renamed(text, from, to) {
+  return text.replace(new RegExp(`^(\\s+)${from}:`, 'gm'), `$1${to}:`).replaceAll(`"${from}":`, `"${to}":`);
+}
+for (const [name, text] of Object.entries(PROJECTS)) {
+  const [from, to] = /^\s+lines:|"lines":/m.test(text) ? ['lines', 'overrides'] : ['overrides', 'lines'];
+  test(`${name}'s env files are written byte for byte the same with ${from} renamed ${to}`, () => {
+    assert.notEqual(renamed(text, from, to), text, `${name} has ${from} to rename`);
+    for (const [scenario, env] of Object.entries(SCENARIOS)) {
+      assert.equal(writeEnvFilesFor(renamed(text, from, to), env), fs.readFileSync(path.join(FIXTURES, `${name}.${scenario}.env.txt`), 'utf8'), scenario);
+    }
+  });
+}
+
 // A session asking a console that keeps no repo settings for the project (every key absent), or one that copied the
 // legacy values into them (what the console's start does), writes the same files, byte for byte.
 const filesOf = (written) => written.slice(written.indexOf('==> '));

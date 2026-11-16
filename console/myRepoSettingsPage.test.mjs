@@ -22,7 +22,7 @@ const FILES = {
   app: parseProject({
     version: 1, env: { NODE_ENV: 'development' }, rules: '.woodshed/rules.md',
     envFiles: [
-      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT={{PORT}}'] },
+      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT={{PORT}}'] },
       { path: 'web/.env.local' },
     ],
   }),
@@ -186,8 +186,8 @@ test('env files that share a key are one tab naming both paths, and your values 
   const shared = parseProject({
     version: 1, env: {},
     envFiles: [
-      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080'] },
-      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] },
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080'] },
+      { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker'] },
     ],
   });
   const { app, calls, secrets } = await loadCard({ files: { ...FILES, app: shared } });

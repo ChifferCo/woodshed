@@ -11,12 +11,12 @@ env: {}
 envFiles:
   - path: app/.env
     secret: app-env
-    lines:
+    overrides:
       - DATABASE_HOST={{PGHOST}}
       - PORT={{PORT}}
   - path: app/.env.local
     secret: null
-    lines: [X=1]
+    overrides: [X=1]
 databases: []
 app: null
 editor: true
@@ -25,7 +25,7 @@ setup: null
 pullRequests: null
 `;
 
-test('the variables each secret\'s env file always gets are its lines\' names; a file with no secret has none listed', () => {
+test('the variables each secret\'s env file always gets are its overrides\' names; a file with no secret has none listed', () => {
   assert.deepEqual([...appendedBySecret(PROJECT)], [['app-env', ['DATABASE_HOST', 'PORT']]]);
 });
 

@@ -363,7 +363,7 @@ test('an ask session clears the env files\' secrets and the install secrets, and
   });
   fs.mkdirSync(path.join(repoDir, '.woodshed'));
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({
-    envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }],
+    envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }],
   }));
   assert.equal(run().stdout, 'cleared\n', 'the project\'s secret, each install secret WOODSHED_INSTALL_SECRETS lists, and the fixed ones');
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), '{ not json');
@@ -489,7 +489,7 @@ test('a session starts only the services its project\'s env uses, and warns of a
   assert.equal(none.status, 0, 'a repo that uses none of them is given none');
   assert.match(none.stdout, /no-redis/);
   assert.doesNotMatch(none.stdout, /WARNING/);
-  const uses = [{ path: 'a/.env', secret: null, lines: ['STORE_URL={{STORE_URL}}', 'REDIS_URL=redis://127.0.0.1:6379'] }];
+  const uses = [{ path: 'a/.env', secret: null, overrides: ['STORE_URL={{STORE_URL}}', 'REDIS_URL=redis://127.0.0.1:6379'] }];
   const missing = run(uses);
   assert.equal(missing.status, 0, 'a service is the installation\'s, so one missing is a warning, not a stop');
   assert.match(missing.stdout, /a\/\.env \(base: 0 bytes, unset: STORE_URL\)/);
@@ -525,7 +525,7 @@ test('a session starts Redis and its viewer only when its project uses REDIS_URL
   const inEnv = run({ env: { REDIS_URL: 'redis://127.0.0.1:6379' } }, 'viewer');
   assert.deepEqual(inEnv.started, ['redis-commander', 'redis-server']);
   assert.match(inEnv.stdout, /Redis started \(viewer: yes\)/);
-  const inFile = run({ envFiles: [{ path: 'a/.env', secret: null, lines: ['REDIS_URL={{REDIS_URL}}'] }] });
+  const inFile = run({ envFiles: [{ path: 'a/.env', secret: null, overrides: ['REDIS_URL={{REDIS_URL}}'] }] });
   assert.deepEqual(inFile.started, ['redis-server'], 'the template commands need Redis, not its viewer');
   assert.match(inFile.stdout, /Redis started \(viewer: no\)/);
 });
@@ -548,8 +548,8 @@ test('a project with no databases needs no engine to start, and one with databas
       'requireDatabases', 'writeEnvFiles', 'echo "mongo=${MONGODB_URI:-none} pg=${PG_URL:-none} app=${APP_DB:-none}"', 'cat a/.env',
     ].join('\n')], { encoding: 'utf8', cwd: repoDir, env: { PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir, ...env } });
   };
-  const lines = { envFiles: [{ path: 'a/.env', secret: null, lines: ['DATABASE_HOST={{PGHOST}}', 'DB_PASSWORD="{{PGPASSWORD}}"', 'MONGO_URL={{MONGODB_URI}}'] }] };
-  const none = run({ env: { DATABASE_URL: 'postgres://postgres:postgres@db:5432/app' }, envFiles: [{ path: 'a/.env', secret: null, lines: [] }] });
+  const lines = { envFiles: [{ path: 'a/.env', secret: null, overrides: ['DATABASE_HOST={{PGHOST}}', 'DB_PASSWORD="{{PGPASSWORD}}"', 'MONGO_URL={{MONGODB_URI}}'] }] };
+  const none = run({ env: { DATABASE_URL: 'postgres://postgres:postgres@db:5432/app' }, envFiles: [{ path: 'a/.env', secret: null, overrides: [] }] });
   assert.equal(none.status, 0, none.stdout + none.stderr);
   assert.match(none.stdout, /mongo=none pg=none/);
   const missing = run({ ...lines, databases: [PG, MONGO] });
@@ -623,8 +623,8 @@ test('the template commands run each database\'s migrate, then its seed for a ne
 // dbAdmin.mjs's seedWith, but for the path: the repo settings it read for the databases' env files, in a file, and
 // the entrypoint's `seed` writing the env files from them, with the environment seedEnv gives it.
 const SEED_ENV_FILES = [
-  { path: 'api/.env', secret: 'api-env', lines: ['DATABASE_URL={{PG_URL}}'] },
-  { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], lines: [] },
+  { path: 'api/.env', secret: 'api-env', overrides: ['DATABASE_URL={{PG_URL}}'] },
+  { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], overrides: [] },
 ];
 
 async function seedEnvFilesWritten(t, { secretValues, project = 'app', envFiles = SEED_ENV_FILES, keys = ['api-env', 'web-env-local'] }) {
@@ -673,7 +673,7 @@ test('the seed falls back to an env file\'s legacy secret with the session\'s wa
 });
 
 test('the seed writes a key two env files name to both, each with its own lines', async (t) => {
-  const envFiles = [{ path: 'api/.env', secret: 'app-env', lines: ['DATABASE_URL={{PG_URL}}'] }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }];
+  const envFiles = [{ path: 'api/.env', secret: 'app-env', overrides: ['DATABASE_URL={{PG_URL}}'] }, { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker'] }];
   const seeded = await seedEnvFilesWritten(t, { secretValues: { 'p/repos/app/env/app-env': 'API_KEY=new\n' }, envFiles, keys: ['app-env'] });
   assert.equal(seeded.api, `API_KEY=new\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
   assert.equal(seeded.worker, 'API_KEY=new\n\n\n# Woodshed overrides\nROLE=worker\n');
