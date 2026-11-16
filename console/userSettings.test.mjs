@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
 
 const ENV_FILES = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }];
@@ -286,4 +287,28 @@ test('a person\'s own whole files are one secret of theirs, kept by path, and an
   await settings.saveOwnFile('octocat', 'a/.env', 'X=1');
   await settings.removeAll('octocat');
   assert.equal(secrets.values.size, 0, 'Remove My Woodshed deletes them too');
+});
+
+test('the own-files size limit is the secret store\'s maxValueBytes, 64 KB when it declares none, and the message names it', async () => {
+  const big = 'x'.repeat(70_000);
+  const make = (limit) => {
+    const secrets = fakeSecrets();
+    if (limit !== undefined) secrets.maxValueBytes = limit;
+    return createUserSettings({ store: { state: {}, save() {} }, secrets, envFiles: ENV_FILES });
+  };
+
+  await assert.rejects(make(65_536).saveOwnFile('octocat', 'big', big), (err) => err.shown && /over the 64 KB this console's secret store holds/.test(err.message));
+  await assert.rejects(make(undefined).saveOwnFile('octocat', 'big', big), /over the 64 KB this console's secret store holds/);
+  const roomy = make(1_048_576);
+  assert.equal(roomy.view('octocat').ownFilesMaxBytes, 1_048_576);
+  assert.equal(make(undefined).view('octocat').ownFilesMaxBytes, 65_536);
+  assert.equal((await roomy.saveOwnFile('octocat', 'big', big)).big.length, 70_000);
+  await assert.rejects(roomy.saveOwnFile('octocat', 'huge', 'x'.repeat(1_100_000)), /over the 1024 KB this console's secret store holds/);
+});
+
+test('the own-files request body limit follows the store\'s limit, and never drops below 160 KB', () => {
+  assert.equal(ownFilesBodyLimit(undefined), 160 * 1024);
+  assert.equal(ownFilesBodyLimit(65_536), 160 * 1024);
+  assert.equal(ownFilesBodyLimit(1_048_576), 2_621_440);
+  assert.equal(ownFilesBodyLimit(1e12), 16 * 1024 * 1024);
 });

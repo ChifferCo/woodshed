@@ -16,6 +16,7 @@ function stateDir() {
 test('until a store is chosen a read finds nothing and a write says to choose one', async () => {
   const slot = createSecretSlot({ stateDir: stateDir(), specs });
   assert.equal(slot.configured(), false);
+  assert.equal(slot.maxValueBytes, undefined, 'nothing declared until a store is chosen: the default holds');
   assert.equal(await slot.read('api-env'), null);
   await assert.rejects(slot.save('users/a/claude-token', 'x', 'd'), (err) => err.shown && /choose one/.test(err.message));
 });
@@ -24,6 +25,7 @@ test('the local store is sealed, and the choice and its secrets come back after 
   const dir = stateDir();
   const slot = createSecretSlot({ stateDir: dir, specs });
   assert.equal((await slot.configure({ kind: 'local' })).kind, 'local');
+  assert.equal(slot.maxValueBytes, 1_048_576);
   await slot.save('users/a/claude-token', 'sk-ant-oat01-secret', 'a token');
   const raw = fs.readFileSync(path.join(dir, 'secrets', 'users', 'a', 'claude-token.json'), 'utf8');
   assert.ok(!raw.includes('sk-ant-oat01-secret'), 'the file holds no plain value');
