@@ -715,7 +715,8 @@ App, `/setup/github` offers it:
    the key is read at each review.
 2. **Install it** on each repo whose review runs as a session. The project file names neither App: the console fills
    in `pullRequests.review.author` with the reviewer App's `<slug>[bot]` and `commentAuthor` with its own
-   (`reviewLogins.mjs`), so renaming either App changes nothing there. A login the file does name still wins. The
+   (`reviewLogins.mjs`), so renaming either App changes nothing there. A login the file does name still wins. With no
+   reviewer App no verdict is trusted, because sessions hold the console App's tokens and one could approve as it. The
    review's PR comment and the Merge risk check stay the installation's App's.
 
 It asks for contents (write) as well as pull requests, because GitHub counts an approval toward a branch rule's required

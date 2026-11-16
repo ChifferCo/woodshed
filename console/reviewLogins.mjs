@@ -1,6 +1,7 @@
 // Whose comments and reviews a review session's gates trust, when the project file does not name them: a review run as
 // a session (pullRequests.review.runner: woodshed) is posted by this console's own Apps, so the console knows the logins
-// and a renamed App needs no change to the file. A login the file names still wins.
+// and a renamed App needs no change to the file. A login the file names still wins. With no reviewer App no verdict is
+// trusted: sessions hold the console App's tokens, so one could submit an approval as it.
 
 /**
  * @param {object|null} gates  the project file's `pullRequests`
@@ -15,7 +16,7 @@ export function withAppLogins(gates, { reviewerLogin, ownLogin }) {
     ...gates,
     review: {
       ...review,
-      author: review.author ?? reviewerLogin ?? ownLogin,
+      author: review.author ?? reviewerLogin,
       commentAuthor: review.commentAuthor ?? ownLogin,
     },
   };

@@ -11,8 +11,8 @@ test('a review session that names no App is the reviewer App\'s verdict and the 
   assert.equal(review.commentAuthor, 'acme-console[bot]');
 });
 
-test('with no reviewer App the verdict is the console App\'s, as it is submitted', () => {
-  assert.equal(withAppLogins({ review: SESSION }, { ...LOGINS, reviewerLogin: null }).review.author, 'acme-console[bot]');
+test('with no reviewer App no verdict is trusted, since a session holds the console App\'s tokens and could approve as it', () => {
+  assert.equal(withAppLogins({ review: SESSION }, { ...LOGINS, reviewerLogin: null }).review.author, null);
 });
 
 test('a login the project file names wins', () => {
