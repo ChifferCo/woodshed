@@ -56,6 +56,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
+import { withAppLogins } from './reviewLogins.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectForRepo, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
@@ -305,7 +306,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: (name) => readerOf(name).pullRequests(), projectBlocker: databaseGate.blocker, githubFor,
+    pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp.login(), ownLogin: await appIdentity.login() }),
+    projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
     ownApp: () => appIdentity.known(),

@@ -417,14 +417,17 @@ export function appNamed(project, name) {
 function pullRequests(value) {
   const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
-    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null });
+    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null, author: null });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.review.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
     // With `actions` the review runs in a workflow, named here; with `woodshed` it runs as a console session and the
     // workflow is the console's App, not a file (so the merge-risk check is trusted from the App, not a workflow run).
     if (f.runner !== 'woodshed' && !Object.hasOwn(r, 'workflow')) fail('pullRequests.review is missing workflow');
     const workflow = f.runner === 'woodshed' && !Object.hasOwn(r, 'workflow') ? null : repoPath(f.workflow, 'pullRequests.review.workflow');
+    // A session's verdict and comment are the console's own Apps', whose logins it fills in (console/reviewLogins.mjs).
+    if (f.runner !== 'woodshed' && !Object.hasOwn(r, 'author')) fail('pullRequests.review is missing author');
+    const author = f.runner === 'woodshed' && !Object.hasOwn(r, 'author') ? null : string(f.author, 'pullRequests.review.author');
     return {
-      author: string(f.author, 'pullRequests.review.author'), heading: string(f.heading, 'pullRequests.review.heading'),
+      author, heading: string(f.heading, 'pullRequests.review.heading'),
       workflow, rerun: nullable(f.rerun, 'pullRequests.review.rerun', string),
       commentAuthor: nullable(f.commentAuthor, 'pullRequests.review.commentAuthor', string), runner: f.runner,
     };

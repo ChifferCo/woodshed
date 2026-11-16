@@ -1728,6 +1728,8 @@ export function createFleet({
       id: session.id, number: session.number, as: asReviewer ? 'reviewer App' : 'console App', ok: submitted !== null,
       inlineComments: inlineComments.length, folded,
     });
+    // With no reviewer App the gates trust no verdict (reviewLogins.mjs): say so, or a pull request waits with no reason.
+    if (!session.review.author) console.warn('fleet: review verdict not counted, no reviewer App and no review.author', { id: session.id, number: session.number });
     if (mergeRisk?.tier) {
       if (session.review.check) {
         await safely('Merge risk check', () => gh.createCheckRun({

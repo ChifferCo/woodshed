@@ -184,10 +184,9 @@
         ? step(1, 'Make the reviewer App', true, h('p', null, 'Reviewer App ', h('b', null, reviewer.slug), ' is saved, its key in the secret store.'))
         : step(1, 'Make the reviewer App', false, ownerChoice(),
           h('div', null, h('button', { type: 'button', class: 'btn btn-open', disabled: busy, onclick: () => act(() => createApp('/api/setup/github/reviewer/manifest')) }, 'Create the reviewer App on GitHub'))),
-      step(2, 'Install it and name it in the project file', false,
+      step(2, 'Install it', false,
         made
-          ? [h('p', null, 'Install it on every repo whose review runs as a session, then set the project file\'s ', h('code', null, 'pullRequests.review.author'),
-            ' to ', h('code', null, reviewer.login), '. The review\'s PR comment stays the console App\'s, so ', h('code', null, 'commentAuthor'), ' does not change.'),
+          ? [h('p', null, 'Install it on every repo whose review runs as a session. The console trusts its approvals there by itself: the project file names no App.'),
           h('p', null, h('a', { class: 'btn btn-plain', href: reviewer.installUrl, target: '_blank', rel: 'noopener' }, 'Open the installation page'))]
           : h('p', { class: 'msg-plain' }, 'After step 1.')));
   }
