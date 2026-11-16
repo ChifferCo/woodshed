@@ -18,6 +18,8 @@
   const REFRESH_MS = 5000;
   // While the open session starts, so its checklist and clock move and the terminal opens as soon as claude does.
   const STARTING_REFRESH_MS = 1000;
+  // A phone's width, where the rail and the pane are pages of their own and a menu is a sheet from the bottom.
+  const narrow = window.matchMedia('(max-width: 720px)');
   // Which page: /, /all or a session's. They are one page, so moving between them changes these, not the document
   // (navigate, below). /?new=1 is New session as a screen of its own on a phone, where / is the list alone.
   let id = null;
@@ -50,6 +52,9 @@
   let me = null;
   let pulls = [];
   let loadError = null;
+  // The list belongs to the previous page (or this tab's saved snapshot) until this route's lookup answers.
+  let routePending = true;
+  let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
   // Made the first time /all shows, which may be after a move from another of these pages.
@@ -69,6 +74,9 @@
   }
   function moved() {
     readRoute();
+    routeVersion++;
+    routePending = true;
+    loadError = null;
     closeCardMenu();
     if (onMy) launcher.applyQuery();
     render();
@@ -160,10 +168,15 @@
     if (!(await resumePrivate(s))) row.classList.remove('is-busy');
   }
 
+  // What Resume does for a private session: claude picks its conversation up again; codex keeps none between runs.
+  function resumeNote(s) {
+    return W.agentOf(s) === 'codex' ? 'Start it again on its branch, in a new Codex conversation' : 'Start it again on its branch, with claude\'s conversation';
+  }
+
   // Resume, as the shed has it: a stopped private session again, on its branch, with claude's conversation.
   function resumeButton(s, small) {
     const button = h('button', {
-      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: 'Start it again on its branch, with claude\'s conversation',
+      type: 'button', class: `btn btn-primary${small ? ' btn-sm' : ''}`, title: resumeNote(s),
       onclick: async (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -252,13 +265,13 @@
     const gone = !s.owner && !live && !s.kept && s.status !== 'stopping';
     const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
     return [
-      stoppedPrivate && { label: 'Resume', note: 'Start it again on its branch, with claude\'s conversation', run: () => resumePrivate(s) },
+      stoppedPrivate && { label: 'Resume', note: resumeNote(s), run: () => resumePrivate(s) },
       W.isResumable(s) && W.group(s) !== 'merged' && {
-        label: 'Resume', note: 'Start it again where it was: its branch, databases and claude\'s conversation',
+        label: 'Resume', note: `Start it again where it was: its branch, databases and ${W.agentOf(s)}'s conversation`,
         run: async () => { await W.sharedAction(s, 'resume', { message: '' }).catch((err) => window.alert(`Could not resume: ${err.message}`)); refresh(); },
       },
       s.branch && { label: 'Review work', note: 'Read what this session did as a review, against the default branch', run: open('review') },
-      s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', run: () => window.open(s.prUrl, '_blank', 'noopener') },
+      s.prUrl && { label: `Open PR ${W.prNumber(s.prUrl)} ↗`, note: 'Its pull request on GitHub, in a new tab', href: s.prUrl },
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
@@ -302,10 +315,11 @@
 
   // One menu for every card, on the page itself: the rail is rebuilt on each refresh, and the menu stays open through
   // it, following its session by id. A session whose state changed underneath it closes it, since its items would be
-  // stale. An action already running for a session is not started again. The top bar's Details and Data open it too,
-  // each under its own key, so one closes as the other opens.
-  const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null };
-  const acting = new Set();
+  // stale. Each row is common.js's menuItem: a link, or a button that is not run again while an action for its session
+  // still runs. The top bar's Details and Data open it too, each under its own key, so one closes as the other opens.
+  // `busy` is set while a row says what it is doing (Starting…), which keeps the menu as it is until the row is done.
+  // `opened` counts each opening, so a row that ends after its menu was closed and opened again leaves the new one be.
+  const cardMenu = { el: h('div', { class: 'card-menu', role: 'menu', tabindex: '-1', hidden: true }), id: null, key: null, state: null, busy: false, opened: 0 };
   document.body.append(cardMenu.el);
   const menuState = (s) => `${s.status}:${s.kept}:${s.prUrl}:${isPinned(s)}:${s.app}:${s.appName ?? ''}:${s.branch}:${s.assignee ?? ''}`;
   // The card's ⋯, or on a phone's session page the top bar's: whichever of the two shows.
@@ -316,6 +330,7 @@
     cardMenu.el.hidden = true;
     cardMenu.id = null;
     cardMenu.key = null;
+    cardMenu.busy = false;
   }
   function placeCardMenu(button) {
     const box = button.getBoundingClientRect();
@@ -331,6 +346,7 @@
     const key = button.dataset.menuFor;
     if (cardMenu.key === key) return closeCardMenu();
     closeCardMenu();
+    const opening = ++cardMenu.opened;
     const list = items ?? [...extra, ...cardActions(s)];
     const grouped = new Set(list.map((a) => a.group)).size > 1;
     // A line above the ending actions, between groups, and between the body and the first item.
@@ -341,19 +357,11 @@
     cardMenu.el.replaceChildren(head, ...[body].flat().filter(Boolean), ...list.map((a, i) => [
       needsSep(a, i) && h('div', { class: 'card-menu-sep', role: 'separator' }),
       grouped && a.group && a.group !== list[i - 1]?.group && h('div', { class: 'card-menu-group' }, a.group),
-      h('button', {
-        type: 'button', role: 'menuitem', class: `card-menu-item${a.danger ? ' is-danger' : ''}`,
-        onclick: async () => {
-          closeCardMenu();
-          if (acting.has(s.id)) return;
-          acting.add(s.id);
-          try {
-            await a.run();
-          } finally {
-            acting.delete(s.id);
-          }
-        },
-      }, h('b', null, a.label), h('span', null, a.note)),
+      W.menuItem(s, a, {
+        close: closeCardMenu,
+        hold: () => { cardMenu.busy = true; },
+        done: () => { if (cardMenu.opened === opening && !cardMenu.el.hidden) closeCardMenu(); },
+      }),
     ]).flat().filter(Boolean));
     cardMenu.el.hidden = false;
     placeCardMenu(button);
@@ -361,12 +369,15 @@
     cardMenu.key = key;
     cardMenu.state = menuState(s);
     button.setAttribute('aria-expanded', 'true');
-    // Details with no branch has no item, so the menu itself takes the focus.
-    (cardMenu.el.querySelector('button') ?? cardMenu.el).focus();
+    // Details with no branch has no item, so the menu itself takes the focus. The menu is one element, so a sheet
+    // scrolled the last time it was open opens at its top again, and the focus does not scroll it.
+    cardMenu.el.scrollTop = 0;
+    (cardMenu.el.querySelector('.card-menu-item') ?? cardMenu.el).focus({ preventScroll: true });
   }
   // After each refresh: the open menu sits on its session's new ⋯, or closes if that session is gone or changed.
   function syncCardMenu() {
-    if (!cardMenu.id) return;
+    // A row still saying Starting… keeps the menu as it is: its own end closes it.
+    if (!cardMenu.id || cardMenu.busy) return;
     const s = data.sessions.find((x) => x.id === cardMenu.id);
     const button = menuAnchor();
     if (!s || !button || menuState(s) !== cardMenu.state) return closeCardMenu();
@@ -387,7 +398,11 @@
     if (!e.target.closest('[data-menu-for]')) closeCardMenu();
   }, true);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !cardMenu.el.hidden) closeCardMenu(); });
-  window.addEventListener('resize', closeCardMenu);
+  // A resize moves a desktop menu's button out from under it. A phone's sheet sits on the bottom of the screen whatever its
+  // button does, and iOS resizes the window as its toolbar shows and hides: it stays, unless the screen stops being a
+  // phone's (a turn to a wide landscape), where the sheet would become a menu under a button it was not placed by.
+  window.addEventListener('resize', () => { if (!narrow.matches) closeCardMenu(); });
+  narrow.addEventListener('change', closeCardMenu);
   // A scroll that moves the card too, the rail's or the page's, which would leave the menu behind. Not the App log's
   // own scroll to its end every 3 s, which moves nothing the menu is anchored to.
   document.addEventListener('scroll', (e) => {
@@ -625,8 +640,17 @@
   // each refresh replaces, so the menu keeps its focus through a refresh.
   let railUser = null;
   function railUserFoot() {
-    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot());
+    railUser ??= h('div', { class: 'rail-user' }, W.userMenuSlot(), railToggle('rail-hide', 'Hide the rail'));
     return railUser;
+  }
+
+  // The rail's two buttons for ⌘.: one at its foot hides it, and a strip down the page's left edge, there only while
+  // it is hidden, shows it again.
+  const RAIL_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15"/></svg>';
+  function railToggle(className, label) {
+    const btn = h('button', { type: 'button', class: className, 'aria-label': label, 'data-keys': 'rail', 'data-hint': label, onclick: () => toggleRail() });
+    btn.innerHTML = RAIL_ICON;
+    return btn;
   }
 
   // Your session on a pull request's branch in its repo, as the shed finds one: a live one first, then a stopped one.
@@ -663,8 +687,9 @@
       const live = found && W.isLive(found);
       const checks = checksOf(p);
       const color = marked ? projectList().find((x) => x.name === project)?.color : null;
-      const isDefault = !p.project || p.project === main;
-      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${isDefault ? '' : `&project=${encodeURIComponent(project)}`}`;
+      // Always names its project: with none, New session opens on the person's own default project (Make my default),
+      // which need not be the console's, and the number would be looked up on that repo instead.
+      const startHref = `/?new=1&on=${encodeURIComponent(`PR #${p.number}`)}${project ? `&project=${encodeURIComponent(project)}` : ''}`;
       const action = live
         ? h('a', { class: 'btn btn-sm btn-open', href: `/s/${found.id}`, title: `${found.title} is on this branch: open it` },
           h('span', { class: 'dot app-dot', 'aria-hidden': 'true' }), 'Open')
@@ -814,8 +839,8 @@
     return [
       { group: 'Session', label: 'Open the agent', run: open('') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
-      s.status === 'running' && s.hasShell && W.isPrivate(s) && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
-      s.status === 'running' && data.appDomain && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
+      s.status === 'running' && s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
+      s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
       s.branch && { group: 'Session', label: 'Open the review', run: open('review') },
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
@@ -845,30 +870,30 @@
   // What a phone's top bar puts in its ⋯ ahead of the card's: the app, the databases, and the key bar's switch.
   function paneActions(s) {
     if (s.status !== 'running') return [];
-    const app = (action) => async () => {
-      await W.appAction(s, action).catch((err) => window.alert(`Could not ${action} the app: ${err.message}`));
-      refresh();
-    };
+    // The session as the page has it now: a refresh since the menu opened drew a new one, which the pressed state must
+    // be on for the bar to show it.
+    const current = () => data.sessions.find((x) => x.id === s.id) ?? s;
+    const app = (action) => (row) => W.runAppAction(current(), action, { control: row, onChange: render, onDone: refresh });
     const up = s.app === 'running' || s.app === 'api-down';
     const busy = s.app === 'starting' || s.app === 'stopping';
     const none = s.app === 'none';
     // Several apps: one Start item each, which also switches from the one running.
-    const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
+    const choices = data.appDomain && !busy && !none && W.appChoices(s) ? W.appChoiceItems(s, refresh, render).map((a) => ({ ...a, group: 'App', label: `Start ${a.label}` })) : [];
     const running = W.runningAppLabel(s);
     return [
-      s.hasShell && W.isPrivate(s) && {
+      s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && {
         group: 'Claude', label: 'Sign in for Remote Control', note: 'Asks claude for /woodshed:remote-control: open the link it shows and paste the code in the chat', run: () => claudeLogin(s),
       },
       data.appDomain && up && {
-        group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', run: () => window.open(W.appUrl(s, data.appDomain), '_blank', 'noopener'),
+        group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', href: W.appUrl(s, data.appDomain),
       },
       data.appDomain && none && s.kind !== 'ask' && {
-        group: 'App', label: 'Set up app', note: 'The project file has no app: ask claude to write one',
+        group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
         run: async () => {
           try {
-            W.shell?.toast(W.setupAppToast((await W.appAction(s, 'setup')).sent));
+            W.notify(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
           } catch (err) {
-            window.alert(`Could not set up the app: ${err.message}`);
+            W.notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
           }
           refresh();
         },
@@ -876,11 +901,11 @@
       ...choices,
       data.appDomain && !up && !busy && !none && !choices.length && {
         group: 'App', label: s.app === 'failed' || s.app === 'frontend-down' ? 'Start app again' : 'Start app',
-        note: 'Start the app in this session: one to three minutes', run: app('start'),
+        note: 'Start the app in this session: one to three minutes', working: true, run: app('start'),
       },
-      data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', run: app('stop') },
-      data.appDomain && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
-      data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', run: () => openEditor(s) },
+      data.appDomain && (up || s.app === 'starting' || s.app === 'frontend-down') && { group: 'App', label: 'Stop app', note: 'Stop the app\'s backend and frontend', working: true, run: app('stop') },
+      data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', note: 'Let members, or anyone with a link, open the app', run: () => W.shareApp(s) },
+      data.appDomain && s.editor && { group: 'Code', label: 'Editor ↗', note: 'Its checkout in VS Code, in a new tab', href: editorUrl(s) },
       ...dataActions(s),
       !PAGE_TABS.has(tab) && {
         label: keyBarShown ? 'Hide the key bar' : 'Show the key bar', note: 'esc, the arrows, tab and ^C above the terminal', run: toggleKeyBar,
@@ -906,20 +931,16 @@
     return `${W.appUrl(s, data.appDomain)}__woodshed/code/`;
   }
 
-  function openEditor(s) {
-    window.open(editorUrl(s), '_blank', 'noopener');
-  }
-
   // The session's databases and Redis, each in its viewer: a shared session's own, a private session's owner's. Only
   // the viewers of the databases the installation hosts (data.viewers, each engine's), and Redis only when the project
   // uses it (statusd's `redis`).
   function dataActions(s) {
     if (s.status !== 'running') return [];
     const whose = W.isPrivate(s) ? 'Your own' : 'This session\'s own';
-    const open = (path) => () => window.open(`/${path}/${s.id}/`, '_blank', 'noopener');
+    const href = (path) => `/${path}/${s.id}/`;
     return [
-      ...(data.viewers ?? []).map((v) => ({ group: 'Data', label: `${v.name} ↗`, note: `${whose} ${v.name} database, in ${v.program}`, run: open(v.route) })),
-      s.redis !== false && { group: 'Data', label: 'Redis ↗', note: `${whose} Redis, in redis-commander`, run: open('redis') },
+      ...(data.viewers ?? []).map((v) => ({ group: 'Data', label: `${v.name} ↗`, note: `${whose} ${v.name} database, in ${v.program}`, href: href(v.route) })),
+      s.redis !== false && { group: 'Data', label: 'Redis ↗', note: `${whose} Redis, in redis-commander`, href: href('redis') },
     ].filter(Boolean);
   }
 
@@ -929,7 +950,7 @@
     const trigger = s.trigger === 'label' ? `with the ${data.label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
-    const claude = W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
+    const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
     const row = (term, value) => value && [h('dt', null, term), h('dd', null, value)];
     return h('dl', { class: 'card-menu-dl' },
       row('Branch', s.branch),
@@ -996,7 +1017,7 @@
         e.stopPropagation();
         if (!ready) return W.shell.toast(target.state === 'checking' ? 'Still checking whether GitHub has the branch' : 'Nothing to link yet: push the branch first');
         try {
-          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null));
+          await navigator.clipboard.writeText(W.invite.inviteUrl(window.location.origin, target.on, document.querySelector('meta[name="woodshed-link-query"]')?.content || null, s.project || null));
           W.shell.toast(`Link copied: opens New session on ${target.on}`);
         } catch (err) {
           W.shell.toast(`Not copied: ${err.message}`);
@@ -1024,6 +1045,14 @@
     });
   }
 
+  // A phone's bar has no app button (its app is in the ⋯ sheet), so an app starting or stopping says so on the state line,
+  // as the desktop's Starting… button does: from the tap, before the console answers.
+  function phoneAppState(s) {
+    if (s.status !== 'running' || !data.appDomain || (s.app !== 'starting' && s.app !== 'stopping')) return null;
+    return h('span', { class: 'papp', title: s.app === 'starting' ? 'Usually one to three minutes' : null },
+      h('span', { class: 'spin', 'aria-hidden': 'true' }), s.app === 'starting' ? 'app starting' : 'app stopping');
+  }
+
   // After the shed's pane bar: the tabs, the name and how it is doing, what it is on, then the session's buttons. The
   // rest is under Details, and the app's button shows only when the rail card holding it does not.
   function paneBar(s) {
@@ -1046,7 +1075,7 @@
       // A phone's two rows: the name over one line of its state, its PR and its usage, with ⋯ for the rest.
       h('div', { class: 'pphone' },
         h('b', { class: 'pphone-title', title: s.title }, s.title),
-        h('span', { class: 'pphone-meta' }, W.statusBadge(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
+        h('span', { class: 'pphone-meta' }, W.statusBadge(s), phoneAppState(s), pr && W.prChips(s, { asLink: true, max: 1 }), W.usageBadge(s))),
       h('button', {
         type: 'button', class: 'pmore', 'aria-haspopup': 'menu', 'aria-expanded': String(cardMenu.key === `${s.id}:phone`), 'data-menu-for': `${s.id}:phone`,
         'aria-label': `Actions for ${s.title}`, title: 'Actions',
@@ -1080,7 +1109,7 @@
         W.isPrivate(s) && s.kind !== 'ask' && s.branch && inviteButton(s),
         plan && planButton(s, plan),
         W.usageBadge(s),
-        s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, small: true }),
+        s.kind !== 'ask' && W.appButton(s, { appDomain: data.appDomain, onDone: refresh, onChange: render, small: true }),
         tools && data.appDomain && s.editor && h('a', { class: 'pbtn', href: editorUrl(s), target: '_blank', rel: 'noopener', title: 'Open its checkout in VS Code, in a new tab' }, 'Editor ↗'),
         tools && dataActions(s).length > 0 && barMenuButton(s, {
           key: 'data', label: 'Data ▾', title: 'Open its databases or Redis in a viewer', open: () => ({ items: dataActions(s) }),
@@ -1242,7 +1271,8 @@
   function showBody(s, tabPage) {
     if (termKey(s)) agentPool.show(s);
     else agentPool.hide();
-    slots.view.replaceChildren(termKey(s) ? '' : s ? terminalBody(s) : tabPage ? '' : h('p', { class: 'empty' }, 'No session you can open with that id.'));
+    slots.view.replaceChildren(termKey(s) ? '' : s ? terminalBody(s) : tabPage ? '' : h('p', { class: 'empty' },
+      loadError ? `Could not load sessions: ${loadError}` : routePending ? 'Loading…' : 'No session you can open with that id.'));
   }
 
   // A private session at its owner's limit: it has no task yet, and starts by itself when one of theirs stops.
@@ -1258,6 +1288,7 @@
   function terminalBody(s) {
     if (s.status === 'starting' && s.startedAt) return startingBody(s);
     if (W.linePlace(s, data.sessions)) return lineBody(s);
+    if (W.waitsForRetry(s) && s.waitProgress?.steps?.length) return waitingBody(s);
     const waiting = {
       queued: W.waitsForRetry(s) ? [W.providerWords.noRoom?.title ?? 'Waiting for room', W.providerWords.noRoom?.detail ?? '']
         : ['Waiting for a free slot', `All ${data.maxRunning} slots are in use. This session starts as soon as one frees up.`],
@@ -1273,13 +1304,15 @@
       ['Head', s.head || 'unknown'],
       prFact(s, 'none'),
       ['Ran', W.duration(s.startedAt, s.stoppedAt) || 'never started'],
-      s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? 'after claude opened'],
+      s.status === 'failed' && s.startSteps && ['Stopped at', W.startProgress(s).current?.label ?? `after ${W.agentOf(s)} opened`],
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
     ].filter(Boolean);
     return h('div', { class: 'ended' },
       h('h2', null, stoppedHeading(s, paused)),
       W.isPrivate(s)
-        ? [h('p', null, 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
+        ? [h('p', null, W.agentOf(s) === 'codex'
+          ? 'Work in progress is committed and pushed to the branch before a stop. Resume starts codex again on the same branch, in a new conversation: Codex keeps none between runs.'
+          : 'Work in progress is committed and pushed to the branch before a stop, and your Claude home saved. Resume starts it again on the same branch, with claude\'s conversation.'),
           h('div', { class: 'row' }, W.canResumePrivate(s) && resumeButton(s, false), removeButton(s))]
         : s.kind === 'ask' ? h('p', null, 'Its conversation is deleted. Mention the bot in a Slack thread to ask again.')
           : s.trigger === 'qa' ? h('p', null, s.qa?.conclusion
@@ -1301,15 +1334,29 @@
 
   // The start as a checklist: each step's seconds once done, the current one counting, the rest to come.
   function startingBody(s) {
-    const { steps } = W.startProgress(s);
-    const mark = { done: '✓', now: '', next: '' };
     return h('div', { class: 'ended starting' },
       h('div', { class: 'start-head' }, h('h2', null, 'Starting'), h('span', { class: 'start-clock' }, W.clock(s.startedAt))),
-      h('p', null, 'The terminal appears here when claude is open.'),
-      h('ol', { class: 'start-steps' }, steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
-        h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
-        h('span', { class: 'start-label' }, step.label),
-        h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`)))));
+      h('p', null, `The terminal appears here when ${W.agentOf(s)} is open.`),
+      startSteps(W.startProgress(s).steps));
+  }
+
+  // A wait for room that its launcher reports steps for: the provider's words for the wait, then the steps, as the
+  // start shows its own.
+  function waitingBody(s) {
+    const { steps, since } = W.waitProgress(s);
+    const words = W.providerWords.noRoom ?? {};
+    return h('div', { class: 'ended starting' },
+      h('div', { class: 'start-head' }, h('h2', null, words.title ?? 'Waiting for room'), since && h('span', { class: 'start-clock' }, W.clock(since))),
+      words.detail && h('p', null, words.detail),
+      startSteps(steps));
+  }
+
+  function startSteps(steps) {
+    const mark = { done: '✓', now: '', next: '', failed: '✗' };
+    return h('ol', { class: 'start-steps' }, steps.map((step) => h('li', { class: `is-${step.state}`, 'aria-current': step.state === 'now' ? 'step' : null },
+      h('span', { class: 'start-mark', 'aria-hidden': 'true' }, mark[step.state]),
+      h('span', { class: 'start-label' }, step.label, step.note && h('span', { class: 'start-note' }, ` · ${step.note}`)),
+      h('span', { class: 'start-secs' }, step.seconds === null ? '' : `${step.seconds} s`))));
   }
 
   // Every pull request the session opened, a merged or closed one its card no longer shows too, one to a line.
@@ -1332,7 +1379,7 @@
       finished: ['Finished: its pull request is in Slack', `The review approved ${pr ? `PR ${pr}` : 'it'} and the agent Playwright suite passed, so it was posted to Slack and the session stopped.`],
       merged: [s.prMerged ? 'Merged' : 'Closed without merging', `${pr ? `PR ${pr}` : 'Its pull request'} ${s.prMerged ? 'merged' : 'closed'} ${W.ago(s.prClosedAt)}. Its conversation and databases are ${W.deletedIn(s) || 'deleted soon'}. The branch stays on GitHub.`],
     }[st.key] || ['Stopped', ''];
-    const box = h('textarea', { id: `resume-${s.id}`, placeholder: 'What to tell claude when it opens (optional)', maxlength: '4000' });
+    const box = h('textarea', { id: `resume-${s.id}`, placeholder: `What to tell ${W.agentOf(s)} when it opens (optional)`, maxlength: '4000' });
     const facts = [
       ['Last message', s.lastMessage ? `${s.lastMessage.role}: ${s.lastMessage.text}` : 'none'],
       prFact(s, 'none yet'),
@@ -1611,7 +1658,8 @@
     slots.diff = h('div', { class: 'pane-view is-diff', role: 'tabpanel', hidden: true });
     slots.launch = launcher.el;
     slots.home = h('div', { style: 'display: contents' });
-    slots.shell = h('div', { class: 'shell' }, slots.rail,
+    slots.railStrip = h('div', { class: 'rail-strip' }, railToggle('rail-show', 'Show the rail'));
+    slots.shell = h('div', { class: 'shell' }, slots.rail, slots.railStrip,
       h('main', { class: 'pane' }, slots.head, slots.keys, slots.body, messageBox.el, slots.plain, slots.review, slots.diff, slots.applog, slots.launch, slots.home));
     document.getElementById('app').replaceChildren(slots.shell);
     applyTermScale();
@@ -1621,7 +1669,6 @@
   // iOS lays its keyboard over the page without shrinking the layout viewport, so the prompt the keyboard was
   // raised for sits under it. The visual viewport does shrink: while it is short, the shell takes its height and
   // the terminal refits to the rows that show. A pinch zoom shrinks it too, at a scale above 1, and is left alone.
-  const narrow = window.matchMedia('(max-width: 720px)');
   function fitToKeyboard() {
     const visual = window.visualViewport;
     if (!slots.shell) return;
@@ -1639,8 +1686,10 @@
 
   // The session's own id first: moving to another session in place must rebuild its terminal.
   function bodyKey(s) {
-    if (!s) return 'missing';
+    if (!s) return `missing:${id}:${routePending}:${loadError}`;
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
+    // A wait with steps counts its seconds, as a start does.
+    if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
     return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
@@ -1735,7 +1784,11 @@
       }
       if (s.status === 'running') {
         // Made once: a refresh would drop the chat, the open asks and the scroll.
-        if (!slots.review.firstChild) slots.review.append(h('iframe', { class: 'review-frame', src: `/review?session=claude-${s.id}&embed=1`, title: `Review of ${s.title}` }));
+        if (!slots.review.firstChild) slots.review.append(h('iframe', {
+          class: 'review-frame', src: `/review?session=claude-${s.id}&embed=1`, title: `Review of ${s.title}`,
+          // ⌘. and the palette's keys still work once a click put the focus in the review.
+          onload: (e) => W.shell.bindFrame(e.target, { terminal: false }),
+        }));
       } else {
         if (!slots.review.firstChild) renderReview(s);
         loadReview(s, false);
@@ -1780,17 +1833,24 @@
   }
 
   async function refresh() {
+    const version = routeVersion;
     try {
       // My Woodshed's own answer is asked for on /, and once anywhere else, so moving to / has it already.
       // Asked again on every refresh while the setup card shows, so its databases row moves on whichever page is open.
       const askMe = onMy || !me || (railMine() && !W.setupDone(me));
-      [data, me] = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
+      const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
+      // A read started on the previous page must not confirm a session absent from its older list.
+      if (version !== routeVersion) return;
+      [data, me] = answer;
+      routePending = false;
       // The rail's pull requests are best effort: GitHub being slow must not hold the page.
       if (railMine()) W.getJson('/api/my/pulls').then((answer) => { pulls = answer.pulls; keepLast(); render(); }, () => {});
       loadError = null;
       fromLast = false;
       keepLast();
     } catch (err) {
+      if (version !== routeVersion) return;
+      routePending = false;
       loadError = err.message;
       if (fromLast) {
         ({ data, me, pulls } = { data: null, me: null, pulls: [] });

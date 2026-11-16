@@ -158,6 +158,14 @@ test('statusUpdate keeps a private session\'s plan usage, and its last one when 
   assert.equal(statusUpdate(session({}), { state: 'done', planUsage: reading }, 'now').planUsage, null);
 });
 
+test('statusUpdate keeps the machine\'s numbers in range, the peak and the disk with them', () => {
+  const usage = { cpuPercent: 42, memoryBytes: 5, memoryLimitBytes: 10, memoryPeakBytes: 8, cores: 2, diskUsedBytes: 3, diskTotalBytes: 20 };
+  assert.deepEqual(statusUpdate(session({}), { state: 'done', usage }, 'now').usage, usage);
+  const bad = statusUpdate(session({}), { state: 'done', usage: { ...usage, memoryPeakBytes: -1, diskUsedBytes: '3', diskTotalBytes: Infinity } }, 'now').usage;
+  assert.deepEqual([bad.memoryPeakBytes, bad.diskUsedBytes, bad.diskTotalBytes], [null, null, null]);
+  assert.equal(statusUpdate(session({}), { state: 'done', usage: {} }, 'now').usage, null);
+});
+
 test('planUsageFrom keeps numbers in range and real times only', () => {
   assert.deepEqual(planUsageFrom({ asOf: 'soon', fiveHour: { usedPercent: 140, resetsAt: '2026-11-05T18:53:20Z' }, sevenDay: { usedPercent: '9' } }), {
     asOf: null, fiveHour: { usedPercent: 100, resetsAt: '2026-11-05T18:53:20.000Z' }, sevenDay: null,

@@ -35,7 +35,10 @@ if [ "${WOODSHED_CLAUDE_AUTH:-}" != own ]; then
 fi
 
 signedIn() { grep -q '"claudeAiOauth"' "$CREDENTIALS" 2>/dev/null; }
-now() { date +%s%3N; }
+# Milliseconds by Node's clock, the one session/hookState.mjs stamps each hook with, and not `date +%s%3N`: uutils'
+# date (Ubuntu 26.04's coreutils) mishandles the width on %N, so its "milliseconds" can be nanoseconds or off by up to
+# a second, and every hook then reads as older than the wait it should end.
+now() { node -e 'console.log(Date.now())'; }
 # The `at` of claude's last hook, and its event, from session/hookState.mjs's file: "<at> <event>".
 lastHook() { node -e 'try { const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); console.log(`${s.at ?? 0} ${s.event ?? ""} ${s.state ?? ""}`); } catch { console.log("0  "); }' "$STATE_FILE"; }
 say() { echo "[woodshed-login $(date -u +%H:%M:%S)] $*" >> "$LOG_FILE"; }

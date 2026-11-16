@@ -28,10 +28,12 @@
    * @param {string} origin  the console's address
    * @param {string} on  what the New session form's Work on takes
    * @param {string|null} [linkQuery]  config.linkQuery as a query string (the page's woodshed-link-query), carried too
+   * @param {string|null} [project]  the session's project: always named, since with none the form opens on the
+   *   engineer's own default project, where the number or branch may be another one, or none
    * @returns {string}
    */
-  function inviteUrl(origin, on, linkQuery = null) {
-    return `${origin}/?new=1&on=${encodeURIComponent(on)}${linkQuery ? `&${linkQuery}` : ''}`;
+  function inviteUrl(origin, on, linkQuery = null, project = null) {
+    return `${origin}/?new=1&on=${encodeURIComponent(on)}${project ? `&project=${encodeURIComponent(project)}` : ''}${linkQuery ? `&${linkQuery}` : ''}`;
   }
 
   /** @returns {string} the button's words for a target */

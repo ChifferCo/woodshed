@@ -133,7 +133,7 @@ test('a value is kept only for an env file the project file names, and instructi
 
 test('a record whose secret is gone reads as none and is dropped; one the file no longer names is listed and removed for everyone', async () => {
   const { store, secrets, repoSettings } = setup();
-  await repoSettings.saveInstallation({ project: 'app', key: 'web-env-local', text: 'NEXT_PUBLIC_X=1', by: 'mia-dev' });
+  await repoSettings.saveInstallation({ project: 'app', key: 'web-env-local', text: 'PUBLIC_X=1', by: 'mia-dev' });
   secrets.values.delete('repos/app/env/web-env-local');
   assert.equal(await repoSettings.installationText({ project: 'app', key: 'web-env-local', by: 'mia-dev' }), null);
   assert.equal(store.state.repoSettings.app, undefined, 'the record follows the store');
@@ -155,13 +155,13 @@ test('a session gets its own project\'s values; only a private one its owner\'s,
   await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
   await repoSettings.saveInstallation({ project: 'app', text: INSTRUCTIONS, by: 'mia-dev' });
   await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: OWN_ENV });
-  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'web-env-local', text: 'NEXT_PUBLIC_DEBUG=1\n' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'web-env-local', text: 'PUBLIC_DEBUG=1\n' });
   await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', text: 'Answer in French.\n' });
   await repoSettings.saveInstallation({ project: 'tools', key: 'web-env-local', text: 'TOOLS=1\n', by: 'mia-dev' });
 
   assert.deepEqual(await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' }), {
     project: 'app',
-    envFiles: { 'api-env': { installation: INSTALLATION_ENV, personal: OWN_ENV }, 'web-env-local': { installation: null, personal: 'NEXT_PUBLIC_DEBUG=1\n' } },
+    envFiles: { 'api-env': { installation: INSTALLATION_ENV, personal: OWN_ENV }, 'web-env-local': { installation: null, personal: 'PUBLIC_DEBUG=1\n' } },
     instructions: { installation: INSTRUCTIONS, personal: 'Answer in French.\n' },
     personalFor: 'sam-ops',
   });
@@ -175,8 +175,8 @@ test('a session gets its own project\'s values; only a private one its owner\'s,
 
 test('the copy at start moves the legacy env files and own lines into the new names, never over a value there, and twice changes nothing', async () => {
   const secrets = memorySecrets({
-    'api-env': 'API_URL=http://legacy\n', 'web-env': 'NEXT_PUBLIC_A=1\n', 'users/sam-ops/api-env': 'LOG_LEVEL=debug\n',
-    'repos/app/env/web-env': 'NEXT_PUBLIC_A=2\n', 'users/ana-k/api-env': 'A=1\n',
+    'api-env': 'API_URL=http://legacy\n', 'web-env': 'PUBLIC_A=1\n', 'users/sam-ops/api-env': 'LOG_LEVEL=debug\n',
+    'repos/app/env/web-env': 'PUBLIC_A=2\n', 'users/ana-k/api-env': 'A=1\n',
   });
   const state = { people: { 'sam-ops': { files: { 'api-env': '2026-10-01T00:00:00.000Z', 'tmux-conf': '2026-10-01T00:00:00.000Z' } }, 'ana-k': { files: { 'api-env': null } } } };
   const envFiles = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }, { secret: 'empty-env', path: 'x/.env' }];
@@ -184,7 +184,7 @@ test('the copy at start moves the legacy env files and own lines into the new na
 
   assert.deepEqual(await repoSettings.migrate(), { copied: 1, ownCopied: 1, kept: 1, none: 1, done: 0, failed: 0 });
   assert.equal(secrets.values.get('repos/app/env/api-env'), 'API_URL=http://legacy\n');
-  assert.equal(secrets.values.get('repos/app/env/web-env'), 'NEXT_PUBLIC_A=2\n', 'the value already there stays');
+  assert.equal(secrets.values.get('repos/app/env/web-env'), 'PUBLIC_A=2\n', 'the value already there stays');
   assert.equal(secrets.values.get('users/sam-ops/repos/app/env/api-env'), 'LOG_LEVEL=debug\n');
   assert.equal(secrets.values.has('users/ana-k/repos/app/env/api-env'), false, 'lines cleared on My settings are not copied back');
   assert.equal(secrets.values.get('api-env'), 'API_URL=http://legacy\n', 'the legacy secret stays, for the fallback');

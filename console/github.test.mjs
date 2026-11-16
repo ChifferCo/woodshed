@@ -140,3 +140,34 @@ test('a client given a getter follows the repo it names, the default branch read
   await github.issue(7);
   assert.deepEqual(asked, ['repos/acme/api', 'repos/acme/web', 'repos/acme/web/issues/7']);
 });
+
+test('who added a label is read from every page of the issue\'s events, the last add winning', async () => {
+  const page = (n) => Array.from({ length: n }, (_, i) => ({ event: 'commented', id: i }));
+  const pages = [
+    [...page(99), { event: 'labeled', label: { name: 'qa' }, actor: { login: 'ann' } }],
+    [{ event: 'labeled', label: { name: 'qa' }, actor: { login: 'joel' } }, { event: 'labeled', label: { name: 'bug' }, actor: { login: 'bob' } }],
+  ];
+  const run = async (_cmd, args) => ({ stdout: JSON.stringify(pages[Number(/&page=(\d+)/.exec(args.at(-1))[1]) - 1] ?? []) });
+  const github = createGitHub({ repo: 'o/r', run });
+  assert.equal(await github.labeledBy(7, 'qa'), 'joel');
+  assert.equal(await github.labeledBy(7, 'missing'), null);
+});
+
+test('the repo\'s open pull requests are read in one call, each with its branch and author, with how many there are', async () => {
+  let asked = null;
+  const run = async (_cmd, args) => {
+    asked = args;
+    return { stdout: JSON.stringify({ data: { repository: { pullRequests: { totalCount: 140, nodes: [
+      { number: 12, title: 'Fix login', isDraft: false, headRefName: 'fix-login', updatedAt: '2026-11-02T00:00:00Z', author: { login: 'ann' } },
+      { number: 9, title: 'Draft idea', isDraft: true, headRefName: 'idea', updatedAt: null, author: null },
+      null,
+    ] } } } }) };
+  };
+  const github = createGitHub({ repo: 'acme/api', run });
+  assert.deepEqual(await github.openPulls(), { total: 140, pulls: [
+    { number: 12, title: 'Fix login', branch: 'fix-login', author: 'ann', draft: false, updatedAt: '2026-11-02T00:00:00Z' },
+    { number: 9, title: 'Draft idea', branch: 'idea', author: null, draft: true, updatedAt: null },
+  ] });
+  assert.ok(asked.includes('owner=acme') && asked.includes('name=api'));
+  assert.match(asked.find((a) => a.startsWith('query=')), /pullRequests\(states: OPEN, first: 100, orderBy: \{field: UPDATED_AT, direction: DESC\}\)/);
+});

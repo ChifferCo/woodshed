@@ -11,6 +11,11 @@ async function readOr(file, fallback = null) {
   return fs.readFile(file, 'utf8').then((s) => s.trim(), () => fallback);
 }
 
+function positive(text) {
+  const n = Number(text ?? 'NaN');
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function statField(text, key) {
   const line = String(text ?? '').split('\n').find((l) => l.startsWith(`${key} `));
   return line ? Number(line.split(' ')[1]) : null;
@@ -18,7 +23,9 @@ function statField(text, key) {
 
 /**
  * @param {string} [root]
- * @returns {Promise<{cpuUsec: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, cores: number|null}>}
+ * @returns {Promise<{cpuUsec: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, memoryPeakBytes: number|null, cores: number|null}>}
+ *   `memoryPeakBytes` is the most the container has held since it started, file cache and all: the kernel keeps no
+ *   peak without it
  */
 export async function readUsage(root = ROOT) {
   const v2 = await readOr(`${root}/cpu.stat`);
@@ -31,6 +38,7 @@ export async function readUsage(root = ROOT) {
       cpuUsec: statField(v2, 'usage_usec'),
       memoryBytes: Number.isFinite(current) ? Math.max(0, current - inactive) : null,
       memoryLimitBytes: max === 'max' ? null : Number(max),
+      memoryPeakBytes: positive(await readOr(`${root}/memory.peak`)),
       cores: quota === 'max' ? null : Number(quota) / Number(period),
     };
   }
@@ -45,14 +53,31 @@ export async function readUsage(root = ROOT) {
     memoryBytes: Number.isFinite(usage) ? Math.max(0, usage - inactive) : null,
     // v1 says "no limit" with a number near 2^63.
     memoryLimitBytes: Number.isFinite(limit) && limit < 2 ** 60 ? limit : null,
+    memoryPeakBytes: positive(await readOr(`${root}/memory/memory.max_usage_in_bytes`)),
     cores: quota > 0 ? quota / period : null,
   };
 }
 
 /**
+ * The disk the checkout is on: on Fargate the task's ephemeral storage, which a big build or a log can fill.
+ * @param {string} dir
+ * @returns {Promise<{diskUsedBytes: number|null, diskTotalBytes: number|null}>}
+ */
+export async function readDisk(dir) {
+  try {
+    const { blocks, bfree, bsize } = await fs.statfs(dir);
+    return blocks > 0 ? { diskUsedBytes: (blocks - bfree) * bsize, diskTotalBytes: blocks * bsize } : { diskUsedBytes: null, diskTotalBytes: null };
+  } catch {
+    return { diskUsedBytes: null, diskTotalBytes: null };
+  }
+}
+
+/**
  * @param {{cpuUsec: number|null, at: number}|null} prev  the last sample, or null for the first
- * @param {{cpuUsec: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, cores: number|null, at: number}} next
- * @returns {{cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, cores: number|null}}
+ * @param {{cpuUsec: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, memoryPeakBytes?: number|null, cores: number|null,
+ *          diskUsedBytes?: number|null, diskTotalBytes?: number|null, at: number}} next
+ * @returns {{cpuPercent: number|null, memoryBytes: number|null, memoryLimitBytes: number|null, memoryPeakBytes: number|null, cores: number|null,
+ *            diskUsedBytes: number|null, diskTotalBytes: number|null}}
  *   `cpuPercent` as the shed has it: 100 is one core busy, null until two samples are 2 s apart
  */
 export function usageBetween(prev, next) {
@@ -62,6 +87,9 @@ export function usageBetween(prev, next) {
     cpuPercent: busy !== null && busy >= 0 ? Math.round((busy / 1000 / elapsedMs) * 1000) / 10 : null,
     memoryBytes: next.memoryBytes,
     memoryLimitBytes: next.memoryLimitBytes,
+    memoryPeakBytes: next.memoryPeakBytes ?? null,
     cores: next.cores,
+    diskUsedBytes: next.diskUsedBytes ?? null,
+    diskTotalBytes: next.diskTotalBytes ?? null,
   };
 }

@@ -135,8 +135,11 @@
   }
 
   // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
-  // `error` is {message, link?}: the server's refusal, shown under the field with the page that fixes it.
-  const repoForm = { repo: '', name: '', error: null, notice: null, busy: false };
+  // `error` is {message, link?}: the server's refusal, shown under the field with the page that fixes it. `typing` is
+  // true once Another repo is picked from the list: the field then takes owner/name typed in.
+  const repoForm = { repo: '', name: '', error: null, notice: null, busy: false, typing: false };
+  // The list's last option, which swaps it for the field: a value no repo can have.
+  const TYPE_ONE = ':type';
   // What Add a repo offers (GET /api/console-settings/projects/repos): `repos` the App may reach and that are not
   // projects yet, `grant` each account's installation settings on GitHub, `install` the App's install page. `repos` is
   // null where the console has no App, and the whole of it null until read or when GitHub did not answer: the field
@@ -207,7 +210,7 @@
       h('div', { style: 'min-width: 0' },
         h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name)),
         h('div', { class: 'data-meta' },
-          h('span', null, p.default ? 'default project' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
+          h('span', null, p.default ? 'default project' : p.source === 'host' ? 'added' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
           h('span', null, live),
           data.slack && h('span', null, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the Slack card\'s channel')),
         data.palette && colorPicker(p)),
@@ -249,7 +252,7 @@
     const repo = repoForm.repo.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\/+$/, '').replace(/\.git$/, '');
     const name = repoForm.name.trim();
     if (!REPO_RE.test(repo)) {
-      repoForm.error = { message: picking() ? 'Choose a repo first.' : 'Give the repo as owner/name, such as acme/api.' };
+      repoForm.error = { message: listing() ? 'Choose a repo first.' : 'Give the repo as owner/name, such as acme/api.' };
       render();
       return;
     }
@@ -262,6 +265,7 @@
       data = { ...data, ...(await W.postJson('/api/console-settings/projects', { repo, name })) };
       repoForm.repo = '';
       repoForm.name = '';
+      repoForm.typing = false;
       repoForm.notice = `${repo} added: sessions can start on it now. Remove takes it off again.`;
       loadRepoChoices();
     } catch (err) {
@@ -271,20 +275,58 @@
     render();
   }
 
+  // Whether there is a list to pick from, and whether the list (not the typed field) is showing.
   const picking = () => Array.isArray(repoChoices?.repos);
+  const listing = () => picking() && !repoForm.typing;
 
+  // The repos on offer, then Another repo, for one not listed: typed in, the console checks it and says where on
+  // GitHub to give the App access when it cannot reach it.
   function repoSelect() {
     const repos = repoChoices.repos;
     return h('select', {
-      id: 'repo-new', class: 'field is-repo', 'aria-invalid': repoForm.error ? 'true' : null, disabled: repos.length === 0,
-      onchange: (e) => { repoForm.repo = e.target.value; },
+      id: 'repo-new', class: 'field is-repo', 'aria-invalid': repoForm.error ? 'true' : null,
+      onchange: (e) => {
+        if (e.target.value !== TYPE_ONE) {
+          repoForm.repo = e.target.value;
+          return;
+        }
+        repoForm.typing = true;
+        repoForm.repo = '';
+        render();
+        document.getElementById('repo-new')?.focus();
+      },
     },
-    h('option', { value: '', selected: !repoForm.repo }, repos.length ? 'Choose a repo' : 'No repo left to add'),
-    repos.map((r) => h('option', { value: r.repo, selected: r.repo === repoForm.repo }, r.private ? `${r.repo} (private)` : r.repo)));
+    h('option', { value: '', selected: !repoForm.repo }, repos.length ? 'Choose a repo' : 'No repo left in the list'),
+    repos.map((r) => h('option', { value: r.repo, selected: r.repo === repoForm.repo }, r.private ? `${r.repo} (private)` : r.repo)),
+    h('option', { value: TYPE_ONE }, 'Another repo: type owner/name'));
+  }
+
+  function repoField() {
+    return h('input', {
+      id: 'repo-new', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'owner/name', value: repoForm.repo,
+      'aria-invalid': repoForm.error ? 'true' : null,
+      oninput: (e) => { repoForm.repo = e.target.value; },
+      onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
+    });
+  }
+
+  // Back from the typed field to the list, where there is one.
+  function backToList() {
+    if (!picking() || !repoForm.typing) return null;
+    return h('button', {
+      type: 'button', class: 'btn btn-quiet btn-sm',
+      onclick: () => {
+        repoForm.typing = false;
+        repoForm.repo = '';
+        render();
+        document.getElementById('repo-new')?.focus();
+      },
+    }, 'Choose from the list');
   }
 
   // Where the App is given more repos: each account's installation settings, or the App's install page for another
   // account. A repo granted there shows here once the list is read again, on List again or when the tab comes back.
+  // Shown with the typed field too: a repo typed in that the App cannot reach is given to it there.
   function repoAccessNote() {
     const ext = (href, text) => h('a', { href, target: '_blank', rel: 'noopener' }, `${text} ↗`);
     const again = h('button', { type: 'button', class: 'btn btn-quiet btn-sm', onclick: () => loadRepoChoices() }, 'List again');
@@ -307,7 +349,7 @@
       repoChoices = got && (Array.isArray(got.repos) || got.repos === null) ? got : null;
       repoChoicesError = null;
       // The pick is kept only while it is still on offer.
-      if (picking() && repoForm.repo && !repoChoices.repos.some((r) => r.repo === repoForm.repo)) repoForm.repo = '';
+      if (listing() && repoForm.repo && !repoChoices.repos.some((r) => r.repo === repoForm.repo)) repoForm.repo = '';
     } catch (err) {
       repoChoices = null;
       repoChoicesError = err.message;
@@ -319,23 +361,20 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. The GitHub App must be given access to a repo before it is added here. An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel. Settings has a repo\'s env file values and instructions.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel. Settings has a repo\'s env file values and instructions.'),
       data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
         : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
         h('div', null,
           h('label', { class: 'set-name', for: 'repo-new' }, 'Add a repo'),
-          h('div', { class: 'set-help' }, picking()
-            ? 'One of the repos the GitHub App may reach. The name sessions show for it is the repo\'s own, unless you give one.'
-            : 'As owner/name. The name sessions show for it is the repo\'s own, unless you give one.')),
+          h('div', { class: 'set-help' }, listing()
+            ? `One of the repos ${repoChoices.via === 'gh' ? 'the console\'s gh login can push to' : 'the GitHub App may reach'}, or Another repo to type one in.`
+            : 'As owner/name.',
+          data.repoNames === false ? ' Sessions show it by the repo\'s own name.' : ' The name sessions show for it is the repo\'s own, unless you give one.')),
         h('div', { class: 'set-value' },
-          picking() ? repoSelect() : h('input', {
-            id: 'repo-new', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'owner/name', value: repoForm.repo,
-            'aria-invalid': repoForm.error ? 'true' : null,
-            oninput: (e) => { repoForm.repo = e.target.value; },
-            onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
-          }),
-          h('input', {
+          listing() ? repoSelect() : repoField(),
+          backToList(),
+          data.repoNames !== false && h('input', {
             id: 'repo-name', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'name (optional)', 'aria-label': 'Name (optional)', value: repoForm.name,
             oninput: (e) => { repoForm.name = e.target.value; },
             onkeydown: (e) => { if (e.key === 'Enter') addRepo(); },
