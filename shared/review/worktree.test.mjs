@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { removeReviewWorktree, moveReviewWorktree, defaultBranch } from './worktree.mjs';
+import { removeReviewWorktree, moveReviewWorktree, defaultBranch, pullWorktreeBranch } from './worktree.mjs';
 import { run } from './exec.mjs';
 
 const BRANCH = 'review/pr-23808-a1b2c3d4';
@@ -223,4 +223,101 @@ test('a branch review is based on the repo\'s default branch, not on master', as
   ]) await git(root, args);
   assert.equal(await defaultBranch(root, {}), 'main', 'a clone with no origin/HEAD, whose remote has main');
   assert.equal(await defaultBranch(root, { DEFAULT_BRANCH: 'trunk' }), 'trunk', 'a session\'s DEFAULT_BRANCH, asked of the remote at its start, wins');
+});
+
+// pullWorktreeBranch runs in a session's live checkout before a Re-review: it may only ever fast-forward, and says
+// why when it does not.
+async function g(dir, ...args) {
+  const r = await run('git', ['-C', dir, ...args], { timeoutMs: 30_000 });
+  if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${r.stderr}`);
+  return (r.stdout || '').trim();
+}
+
+async function originAndTwoClones() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'wt-pull-'));
+  const origin = path.join(root, 'origin.git');
+  await run('git', ['init', '-q', '--bare', '-b', 'main', origin], { timeoutMs: 30_000 });
+  const clones = [];
+  for (const name of ['session', 'elsewhere']) {
+    const dir = path.join(root, name);
+    await run('git', ['clone', '-q', origin, dir], { timeoutMs: 30_000 });
+    await g(dir, 'config', 'user.email', 't@t');
+    await g(dir, 'config', 'user.name', 't');
+    clones.push(dir);
+  }
+  const [session, elsewhere] = clones;
+  fs.writeFileSync(path.join(session, 'a.txt'), 'one\n');
+  await g(session, 'add', '.');
+  await g(session, 'commit', '-q', '-m', 'one');
+  await g(session, 'push', '-q', 'origin', 'HEAD:refs/heads/feature');
+  await g(session, 'checkout', '-q', '-b', 'feature');
+  await g(elsewhere, 'fetch', '-q', 'origin');
+  await g(elsewhere, 'checkout', '-q', '-b', 'feature', 'origin/feature');
+  return { root, session, elsewhere };
+}
+
+async function commitIn(dir, file, text) {
+  fs.writeFileSync(path.join(dir, file), text);
+  await g(dir, 'add', '.');
+  await g(dir, 'commit', '-q', '-m', `${file}: ${text.trim()}`);
+}
+
+test('pullWorktreeBranch fast-forwards a checkout behind origin', async () => {
+  const { root, session, elsewhere } = await originAndTwoClones();
+  try {
+    await commitIn(elsewhere, 'b.txt', 'two\n');
+    await commitIn(elsewhere, 'c.txt', 'three\n');
+    await g(elsewhere, 'push', '-q', 'origin', 'feature');
+    const pulled = await pullWorktreeBranch({ worktreePath: session });
+    assert.equal(pulled.pulled, 2);
+    assert.equal(pulled.branch, 'feature');
+    assert.equal(await g(session, 'rev-parse', 'HEAD'), await g(elsewhere, 'rev-parse', 'HEAD'));
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pullWorktreeBranch leaves unpushed commits and an unpushed branch alone, and says nothing', async () => {
+  const { root, session } = await originAndTwoClones();
+  try {
+    await commitIn(session, 'b.txt', 'mine\n');
+    const head = await g(session, 'rev-parse', 'HEAD');
+    assert.deepEqual(await pullWorktreeBranch({ worktreePath: session }), { pulled: 0, branch: 'feature' });
+    assert.equal(await g(session, 'rev-parse', 'HEAD'), head);
+    await g(session, 'checkout', '-q', '-b', 'never-pushed');
+    assert.deepEqual(await pullWorktreeBranch({ worktreePath: session }), { pulled: 0, branch: 'never-pushed' });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pullWorktreeBranch refuses a branch that moved both here and on origin', async () => {
+  const { root, session, elsewhere } = await originAndTwoClones();
+  try {
+    await commitIn(elsewhere, 'b.txt', 'theirs\n');
+    await g(elsewhere, 'push', '-q', 'origin', 'feature');
+    await commitIn(session, 'c.txt', 'mine\n');
+    const head = await g(session, 'rev-parse', 'HEAD');
+    const pulled = await pullWorktreeBranch({ worktreePath: session });
+    assert.equal(pulled.pulled, 0);
+    assert.match(pulled.refused, /both moved \(1 commit here, 1 there\)/);
+    assert.equal(await g(session, 'rev-parse', 'HEAD'), head);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('pullWorktreeBranch keeps an uncommitted edit the pull would overwrite', async () => {
+  const { root, session, elsewhere } = await originAndTwoClones();
+  try {
+    await commitIn(elsewhere, 'a.txt', 'theirs\n');
+    await g(elsewhere, 'push', '-q', 'origin', 'feature');
+    fs.writeFileSync(path.join(session, 'a.txt'), 'my edit\n');
+    const pulled = await pullWorktreeBranch({ worktreePath: session });
+    assert.equal(pulled.pulled, 0);
+    assert.match(pulled.refused, /would not fast-forward/);
+    assert.equal(fs.readFileSync(path.join(session, 'a.txt'), 'utf8'), 'my edit\n');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

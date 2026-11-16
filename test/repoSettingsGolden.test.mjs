@@ -42,9 +42,9 @@ const SESSION_ENV = {
 // blank line, a quoted value over several lines, and no newline at the end.
 const LEGACY = {
   API_ENV: '# The api\'s shared values\nAUTH_DOMAIN=example.test\nAUTH_CLIENT_ID=abc123\n\nPRIVATE_KEY="-----BEGIN TEST KEY-----\nnot-a-real-key\n-----END TEST KEY-----"\nPORT=8000',
-  WEB_ENV: 'NEXT_PUBLIC_AUTH_DOMAIN=example.test\nNEXT_PUBLIC_SKIP_LOGIN=false\n',
+  STORE_ENV: 'PUBLIC_AUTH_DOMAIN=example.test\nPUBLIC_FEATURE_PREVIEW=false\n',
 };
-const OWN = { 'api-env': 'AUTH_CLIENT_ID=mine\nLOG_LEVEL=debug', 'web-env': 'NEXT_PUBLIC_SKIP_LOGIN=false' };
+const OWN = { 'api-env': 'AUTH_CLIENT_ID=mine\nLOG_LEVEL=debug', 'store-env': 'PUBLIC_FEATURE_PREVIEW=false' };
 
 // No installation values at all; the installation's (a shared session); and a private session's, with its owner's
 // lines. Each is the session's environment and the console's answer, the values in its repo settings.

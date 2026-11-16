@@ -145,7 +145,8 @@ data "aws_iam_policy_document" "base_box" {
       [for s in aws_secretsmanager_secret.session : s.arn],
       [
         aws_secretsmanager_secret.github_app_key.arn, aws_secretsmanager_secret.github_webhook.arn,
-        aws_secretsmanager_secret.github_app_client_secret.arn, aws_secretsmanager_secret.slack_bot_token.arn,
+        aws_secretsmanager_secret.github_app_client_secret.arn, aws_secretsmanager_secret.github_reviewer_app_key.arn,
+        aws_secretsmanager_secret.slack_bot_token.arn,
         aws_secretsmanager_secret.slack_signing.arn,
       ],
     )

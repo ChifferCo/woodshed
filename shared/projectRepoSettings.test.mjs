@@ -41,7 +41,7 @@ const ANSWER = {
   project: 'app',
   envFiles: {
     'api-env': { installation: 'AUTH_DOMAIN=installation.test\nLOG_LEVEL=warn\nDB_PASSWORD=never', personal: 'LOG_LEVEL=debug' },
-    'web-env-local': { installation: 'NEXT_PUBLIC_FLAG=on', personal: 'NEXT_PUBLIC_FLAG=off' },
+    'web-env-local': { installation: 'PUBLIC_FLAG=on', personal: 'PUBLIC_FLAG=off' },
   },
   instructions: { installation: 'Use pnpm, never npm.', personal: 'Answer in short sentences.' },
   personalFor: 'octocat',
@@ -92,7 +92,7 @@ test('with repo settings, each env file is the repo\'s defaults, the installatio
     '# Your own lines, from My settings', 'LOG_LEVEL=debug', '',
     '# Woodshed overrides', 'DB_PASSWORD=session-password', '',
   ].join('\n'), 'the console\'s values, not the legacy secret\'s or the /settings answer\'s');
-  assert.equal(web, 'NEXT_PUBLIC_FLAG=on\n\n# Your own lines, from My settings\nNEXT_PUBLIC_FLAG=off\n\n# Woodshed overrides\nAPI_URL=https://x.app.example\n',
+  assert.equal(web, 'PUBLIC_FLAG=on\n\n# Your own lines, from My settings\nPUBLIC_FLAG=off\n\n# Woodshed overrides\nAPI_URL=https://x.app.example\n',
     'a file with no secret gets its values by the key made from its path');
   assert.deepEqual(written.map((w) => [w.layers, w.replaced]), [
     [['repo', 'installation', 'personal', 'session'], ['DB_PASSWORD']],
@@ -109,7 +109,7 @@ test('a layer the console has no value for is empty, never the old secret\'s tex
   assert.equal(empty.lines.length, 1, 'no warning');
   const shared = readRepoSettings(settingsFile(t, { ...ANSWER, personalFor: null }));
   const { api, web } = write(t, { settings: shared, env: LEGACY });
-  assert.doesNotMatch(api + web, /Your own lines|LOG_LEVEL=debug|NEXT_PUBLIC_FLAG=off|legacy/);
+  assert.doesNotMatch(api + web, /Your own lines|LOG_LEVEL=debug|PUBLIC_FLAG=off|legacy/);
   assert.match(api, /AUTH_DOMAIN=installation\.test/);
 });
 
@@ -118,13 +118,13 @@ test('the log names layers, sizes and keys, never a value, and the repo settings
   const { lines } = write(t, { settings, env: LEGACY });
   assert.deepEqual(lines, [
     'api/.env (layers: repo installation personal session, defaults: 2, installation: 62 bytes, personal: 15 bytes, replaced by the session: DB_PASSWORD), '
-      + 'web/.env.local (layers: installation personal session, installation: 19 bytes, personal: 20 bytes, replaced by the session: none)',
+      + 'web/.env.local (layers: installation personal session, installation: 14 bytes, personal: 15 bytes, replaced by the session: none)',
     'Repo settings unused: this checkout\'s project file has no env file with the key (keys: old-env)',
   ]);
   const summary = repoSettingsSummary(settings);
-  assert.equal(summary, 'project: app, installation: api-env (62 bytes) web-env-local (19 bytes) old-env (14 bytes), personal: api-env (15 bytes) web-env-local (20 bytes), '
+  assert.equal(summary, 'project: app, installation: api-env (62 bytes) web-env-local (14 bytes) old-env (14 bytes), personal: api-env (15 bytes) web-env-local (15 bytes), '
     + 'instructions: installation (20 bytes) personal (26 bytes), personal for: @octocat');
-  for (const value of ['installation.test', 'debug', 'NEXT_PUBLIC_FLAG', 'gone-value', 'pnpm', 'short sentences']) {
+  for (const value of ['installation.test', 'debug', 'PUBLIC_FLAG', 'gone-value', 'pnpm', 'short sentences']) {
     assert.ok(!lines.join('\n').includes(value) && !summary.includes(value), value);
   }
 });
@@ -188,7 +188,7 @@ test('repo-settings prints the answer\'s keys and sizes without reading the proj
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), 'version: 1\nnot-a-field: 1\n');
   const run = cli(['repo-settings'], { repoDir, settings: settingsFile(t, { ...ANSWER, personalFor: null }) });
   assert.equal(run.status, 0, run.stderr);
-  assert.equal(run.stdout, 'project: app, installation: api-env (62 bytes) web-env-local (19 bytes), personal: none, instructions: installation (20 bytes), personal for: none\n');
+  assert.equal(run.stdout, 'project: app, installation: api-env (62 bytes) web-env-local (14 bytes), personal: none, instructions: installation (20 bytes), personal for: none\n');
   const bad = cli(['repo-settings'], { repoDir, settings: settingsFile(t, 'SECRET=1') });
   assert.equal(bad.status, 1);
   assert.equal(bad.stderr, 'project: the console\'s repo settings could not be read (not JSON)\n');

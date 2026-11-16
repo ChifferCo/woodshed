@@ -129,7 +129,7 @@ test('a value is kept only for an env file the project file names, and instructi
 
 test('a record whose secret is gone reads as none and is dropped; one the file no longer names is listed and removed for everyone', async () => {
   const { store, secrets, repoSettings } = setup();
-  await repoSettings.saveInstallation({ project: 'app', key: 'web-env-local', text: 'NEXT_PUBLIC_X=1', by: 'mia-dev' });
+  await repoSettings.saveInstallation({ project: 'app', key: 'web-env-local', text: 'PUBLIC_X=1', by: 'mia-dev' });
   secrets.values.delete('repos/app/env/web-env-local');
   assert.equal(await repoSettings.installationText({ project: 'app', key: 'web-env-local', by: 'mia-dev' }), null);
   assert.equal(store.state.repoSettings.app, undefined, 'the record follows the store');
@@ -151,13 +151,13 @@ test('a session gets its own project\'s values; only a private one its owner\'s,
   await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: INSTALLATION_ENV, by: 'mia-dev' });
   await repoSettings.saveInstallation({ project: 'app', text: INSTRUCTIONS, by: 'mia-dev' });
   await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'api-env', text: OWN_ENV });
-  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'web-env-local', text: 'NEXT_PUBLIC_DEBUG=1\n' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'web-env-local', text: 'PUBLIC_DEBUG=1\n' });
   await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', text: 'Answer in French.\n' });
   await repoSettings.saveInstallation({ project: 'tools', key: 'web-env-local', text: 'TOOLS=1\n', by: 'mia-dev' });
 
   assert.deepEqual(await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' }), {
     project: 'app',
-    envFiles: { 'api-env': { installation: INSTALLATION_ENV, personal: OWN_ENV }, 'web-env-local': { installation: null, personal: 'NEXT_PUBLIC_DEBUG=1\n' } },
+    envFiles: { 'api-env': { installation: INSTALLATION_ENV, personal: OWN_ENV }, 'web-env-local': { installation: null, personal: 'PUBLIC_DEBUG=1\n' } },
     instructions: { installation: INSTRUCTIONS, personal: 'Answer in French.\n' },
     personalFor: 'sam-ops',
   });
