@@ -235,6 +235,15 @@ test('a wrong pullRequests section names the field', () => {
   assert.throws(() => full({ ...PULL_REQUESTS, review: null, mergeRisk: null, qa: { ...noRunner, runner: 'woodshed', autoLabel: true } }), /autoLabel needs/);
 });
 
+test('tools names the CLIs the image adds, none when left out', () => {
+  assert.deepEqual(parseProject({ ...EMPTY_PROJECT, tools: ['aws', 'terraform', 'aws'] }).tools, ['aws', 'terraform']);
+  const { tools, ...without } = EMPTY_PROJECT;
+  assert.deepEqual(parseProject(without).tools, []);
+  assert.deepEqual(EMPTY_PROJECT.tools, []);
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, tools: ['kubectl'] }), /tools may name aws, azure, gcloud, terraform/);
+  assert.throws(() => parseProject({ ...EMPTY_PROJECT, tools: 'aws' }), /tools must be a list/);
+});
+
 test('editor is true or false, and off when left out, so a branch from before it still starts', () => {
   assert.equal(parseProject({ ...EMPTY_PROJECT, editor: true }).editor, true);
   assert.equal(parseProject({ ...EMPTY_PROJECT, editor: false }).editor, false);

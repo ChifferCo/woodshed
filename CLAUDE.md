@@ -18,7 +18,12 @@ is applied (`docs/reference.md` here, then `console/`, `session/` and
   sessions: the default plugins (`session/defaultPlugins.mjs`, Slack's MCP)
   sign in as that person, by their own hand, and the login stays in their saved
   Claude home. A shared session never gets the default plugins or anyone's
-  login, and nothing team-wide (a bot token) goes in any session. An installation's env files set `AWS_ACCESS_KEY_ID=test`
+  login, and nothing team-wide (a bot token) goes in any session. A cloud is reached
+  only through cloud sign-in (docs/reference.md, "Cloud sign-in"): a private
+  session's 15-minute token from the console, which says who its owner is and
+  which the cloud's own policy decides what to give. Never a key in a session,
+  never a token for a shared session, and never a role that can change the
+  account Woodshed itself runs in. An installation's env files set `AWS_ACCESS_KEY_ID=test`
   on purpose when its backend uses localstack: it accepts anything.
 - **An installation's exceptions are written in its own `.woodshed/install/README.md`**, each with what has to happen to
   remove it. None is in this folder: what is here applies to every installation.
@@ -101,6 +106,7 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | `openai-api-key` | The console only: its OpenAI proxy (`console/openaiProxy.mjs`) adds it to the calls of private Codex sessions with no sign-in of their own. Write-only on the Secrets tab. Never in a session, which holds its `SESSION_TOKEN` in its place | codex says `the console has no OpenAI key` (the proxy's 503). The console logs `openaiProxy: team key read` with `set`, `openaiProxy: refused, not a Codex session`, and `credential not read` when Secrets Manager failed |
 | `github-app-key` | The console only, to mint installation tokens for itself and for sessions. Read straight from Secrets Manager, never written to disk, and write-only on the Secrets tab. Never in a session | With no value the console logs `no GitHub App key yet` at start and skips polling until one is uploaded. Otherwise it logs `GitHub refused an installation token` with GitHub's reason. A session's `gh` says `could not get a GitHub token`: check `sessionApi:` lines in the console's log, then that port 7691 is open from the sessions' security group |
 | `slack-bot-token` | The console only, to post each pull request a session opens to its project's channel on the Console settings page (or the Slack card's), and to answer questions from Slack in their threads. Write-only on the Secrets tab. Never in a session | The console logs `slack: no bot token yet, nothing sent`, or `slack: call refused` with the method and Slack's error: `not_in_channel` means the bot was not invited, `invalid_auth` a wrong token, `channel_not_found` a name where the ID belongs, `missing_scope` a scope console/README.md's "Questions from Slack" lists (`app_mentions:read`, `chat:write`, `reactions:write`, `users:read`, `users:read.email`) and the app lacks. |
+| `oidc-signing-key` | The console only, to sign private sessions' cloud sign-in tokens (`console/oidcIssuer.mjs`), when `WOODSHED_OIDC_CONNECTIONS` lists a connection. Made by the console itself the first time, not on the Secrets tab; a file in the state folder where there is no secret store. Never in a session: with it anyone could sign in to those clouds as anyone | The console logs `oidcIssuer: on` at start, then `oidcIssuer: signing key made` once or `signing key read` with its `kid`. `oidcIssuer: signing key not saved` (`AccessDeniedException` on the base box: an apply is due) or `not read` makes every `/cloud-token` and the JWKS answer 503. A key replaced by hand is read within 10 minutes; the one before stays in the JWKS 16 minutes more |
 | `slack-signing-secret` | The webhooks Lambda only, to check each Slack event (`/slack`). Set on the Secrets tab, write-only there | Every mention is refused: the Lambda logs `webhooks: bad or missing Slack signature`, and Slack's Event Subscriptions page says the Request URL failed. With no value at all the Lambda fails the read, and Slack sees a 502 |
 | `github-app-client-secret` | The console only, to sign people in with GitHub. Write-only on the Secrets tab. Never in a session | The base box's console always requires sign-in, so with no value or a wrong one nobody gets in: GitHub refuses each sign-in code and the console logs `auth: GitHub refused the sign-in code`. console/README.md, "Sign-in", sets it from a shell |
 | Each env file's secret (the project file's `envFiles` with a `secret`, such as `api-env`) | The app inside a session, whatever it reads from that file: the entrypoint writes it whole, then the project file's lines | The app does not boot, or its login fails. What each file must hold is the installation's: its `.woodshed/install/README.md` |
@@ -447,6 +453,21 @@ secrets.
   an app now` once claude wrote one, or `project file not read again, still no app` with the reason. The session log's `Project file read (from: …)` says whether it read the checkout's
   copy (`checkout`), the default branch's (`default branch`) or none. To see what it read, `cd` into the session's checkout and run
   `node /opt/woodshed/shared/project.mjs get app`.
+- **The AWS CLI, `gcloud`, `az` or Terraform in a My Woodshed session is not signed in.** `woodshed-cloud` in the
+  session's Terminal lists each connection and how long its token has left; `No cloud connections` means the console
+  lists none (`WOODSHED_OIDC_CONNECTIONS`, Terraform's `oidc_connections`), or the session is not a private one. The
+  session's log says `Cloud sign-in set up` with the connections, `no token for <name>` with the console's reason, or
+  `WARNING: cloud sign-in not set up`. The console logs `sessionApi: cloud token issued` with the `subject` and
+  `audience` once per connection and session, or `sessionApi: cloud token refused` with why; statusd logs `statusd:
+  cloud token not renewed` with the status. A token the console issued that the cloud refuses is the cloud's trust:
+  `InvalidIdentityToken` or `Couldn't retrieve verification key` from AWS means it could not fetch
+  `https://<console>/.well-known/jwks.json` (the issuer must be https and public); `AccessDenied` on
+  `AssumeRoleWithWebIdentity` that the role's trust policy names another `sub` or `aud` (`private:<login>`, lowercase);
+  Azure's `AADSTS70021` that no federated credential has that subject; Google's `invalid_grant` the pool's attribute
+  condition or mapping. `docker compose logs console | grep oidcIssuer` on the base box says whether the issuer is on.
+  `AWS_ACCESS_KEY_ID` set in the shell (an env file's `test`, say) wins over the profile: `woodshed-cloud` says so.
+- **A tool the project file's `tools` names is missing from a session.** The image was built before the list had it:
+  the deploy workflow's session job logs `stageDeps: tools` with the list, and the build `tools added:` or `no tools`.
 - **A session's dependencies are missing or old, or `/tmp/woodshed-deps` says `failed`.** At start the session's log
   says `Dependency files changed since the image was built, reinstalling` with the dir for each install it ran again,
   then `Dependencies ready` or `ERROR: the install failed`. An install runs again when its `files` differ from the

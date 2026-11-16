@@ -568,6 +568,8 @@ OWN_FILES_JSON=$HOME/.config/woodshed/own-files.json
 # The owner's own Codex sign-in, for a Codex session: written into codex's own home by configureCodex.
 OWN_CODEX_AUTH_FILE=$HOME/.config/woodshed/codex-auth
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
+# The clouds the console lists for private sessions (/settings' `cloud`), from fetchOwnerSettings to configureCloudSignIn.
+CLOUD_CONNECTIONS_JSON=$HOME/.config/woodshed/cloud-connections.json
 
 # A private session's owner's settings, before the env files are written: their own lines go after the shared
 # files from the task definition, so a key set in both is theirs, and the console's overrides still go on top in
@@ -607,6 +609,11 @@ fetchOwnerSettings() {
     mkdir -p "$(dirname "$OWN_FILES_JSON")"
     (umask 077 && jq -c '.ownFiles' <<< "$answer" > "$OWN_FILES_JSON")
   fi
+  # Where to sign in as the owner, never a credential: configureCloudSignIn asks the console for each token.
+  if jq -e '(.cloud // []) | length > 0' <<< "$answer" >/dev/null; then
+    mkdir -p "$(dirname "$CLOUD_CONNECTIONS_JSON")"
+    (umask 077 && jq -c '.cloud' <<< "$answer" > "$CLOUD_CONNECTIONS_JSON")
+  fi
   OWNER_GIT_NAME=$(jq -r '.git.name // empty' <<< "$answer")
   OWNER_GIT_EMAIL=$(jq -r '.git.email // empty' <<< "$answer")
   log "Owner's settings fetched" "(started_by: ${STARTED_BY:-unknown}, database: ${WOODSHED_DB_NAME:-none}, own lines in: ${owned:-none}, commits as owner: $([ -n "$OWNER_GIT_EMAIL" ] && echo yes || echo no))"
@@ -623,6 +630,24 @@ writeOwnFiles() {
     log "WARNING: some of the owner's own files were not written" "(${said:-the files could not be read})"
   fi
   rm -f "$OWN_FILES_JSON"
+}
+
+# The clouds a private session signs in to as its owner (session/cloudSignIn.mjs): ~/.aws/config, Google's credential
+# file, the first tokens, and the variables Azure's and Google's tools read, exported here so claude and the Terminal tab
+# have them. statusd renews the tokens from here. A failure never stops the start: the session works, without the cloud.
+configureCloudSignIn() {
+  [ "${SESSION_KIND:-}" = private ] && [ -f "$CLOUD_CONNECTIONS_JSON" ] || return 0
+  local lines name value said=/tmp/woodshed-cloud-setup.log
+  if ! lines=$(node "$SESSION_DIR/cloudSignIn.mjs" setup "$CLOUD_CONNECTIONS_JSON" 2>"$said"); then
+    log "WARNING: cloud sign-in not set up" "($(tail -n 1 "$said"))"
+    return 0
+  fi
+  # NAME=value lines, each value one cloudSignIn.mjs checked (shared/oidcConnections.mjs): set as they are, never run.
+  while IFS='=' read -r name value; do
+    [[ $name =~ ^[A-Z][A-Z0-9_]*$ ]] || continue
+    export "$name=$value"
+  done <<< "$lines"
+  log "Cloud sign-in set up" "($(tail -n 1 "$said"))"
 }
 
 # A `claude auth login` belongs to the one session that made it: Anthropic rotates the refresh token at each use, so a
@@ -949,6 +974,7 @@ runSession() {
   chooseClaudeAuth
   writeEnvFiles
   writeOwnFiles
+  configureCloudSignIn
   configureClaude
   fetchAttachments
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.

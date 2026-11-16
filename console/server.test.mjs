@@ -1966,3 +1966,38 @@ test('the rail\'s pull requests are read from each repo the person may start on,
   assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
   assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
 });
+
+test('the OpenID Connect documents answer before sign-in, and only where there are cloud connections', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { createOidcIssuer } = await import('./oidcIssuer.mjs');
+  const { parseConnections } = await import('../shared/oidcConnections.mjs');
+  const values = new Map();
+  const oidc = createOidcIssuer({
+    issuer: 'https://console.example',
+    connections: parseConnections([{ name: 'aws-dev', type: 'aws', roleArn: 'arn:aws:iam::123456789012:role/dev' }]),
+    secrets: { read: async (n) => values.get(n) ?? null, write: async (n, v) => { values.set(n, v); } },
+  });
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  // Sign-in on, and nobody signed in: everything else answers 401.
+  const trusted = { userFor: () => null };
+  const fleet = { sessions: () => [], find: () => null };
+  const serve = async (handle) => {
+    const server = http.createServer((req, res) => { handle(req, res); });
+    t.after(() => server.close());
+    return listen(server);
+  };
+  const on = await serve(createHandler({ config, fleet, trusted, oidc }));
+  const get = (port, path) => fetch(`http://127.0.0.1:${port}${path}`, { headers: { host: 'console.example' } });
+
+  const discovery = await get(on, '/.well-known/openid-configuration');
+  assert.equal(discovery.status, 200);
+  assert.equal((await discovery.json()).jwks_uri, 'https://console.example/.well-known/jwks.json');
+  const jwks = await get(on, '/.well-known/jwks.json');
+  assert.equal(jwks.status, 200);
+  assert.equal(jwks.headers.get('cache-control'), 'public, max-age=300');
+  assert.equal((await jwks.json()).keys[0].kty, 'RSA');
+  assert.equal((await get(on, '/api/sessions')).status, 401, 'the rest still needs sign-in');
+
+  const off = await serve(createHandler({ config, fleet, trusted }));
+  assert.equal((await get(off, '/.well-known/jwks.json')).status, 404);
+});

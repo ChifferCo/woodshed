@@ -199,8 +199,76 @@ requests and issues, no workflows.
   session's own, copied as it first starts and dropped once it is cleaned up, or a My Woodshed
   session's owner's (see "Databases" in `console/README.md`). Nothing one session does to its data
   reaches another. All of them share the installation's shared services, such as a fake S3.
-- **Never has:** AWS credentials (sessions run with no task role), production
+- **Signs in to, where the installation lists them:** the clouds in `WOODSHED_OIDC_CONNECTIONS`, as a My Woodshed
+  session's owner, with a 15-minute token from the console that statusd renews ("Cloud sign-in" below). What that
+  person may do there is the cloud's own policy. A shared session, a question from Slack, QA and review never do.
+- **Never has:** a cloud key of any kind (sessions run with no task role), production
   data, or production integration tokens. See `CLAUDE.md` for the rules.
+
+## Cloud sign-in
+
+A My Woodshed session can use the AWS CLI, `az`, `gcloud`, Terraform and the clouds' SDKs as the person who owns it,
+with no key in the session. The console is an OpenID Connect issuer, the way GitHub Actions is one: each cloud is told
+once to trust it, and to give each person the role their policy names. A session asks the console for a token that says
+whose session it is (`POST /cloud-token` on the session API), and the cloud's own tools trade it for that cloud's
+credentials. Tokens last 15 minutes and statusd renews them every 5; the signing key never leaves the console
+(`console/oidcIssuer.mjs`, kept in the `oidc-signing-key` secret, which the console makes itself).
+
+**What the token says.** `iss` is the console's public URL (`WOODSHED_OIDC_ISSUER` to name another). `sub` is
+`private:<login>`, the owner's GitHub login in lowercase: the one claim AWS and Azure can match besides `aud`, so a
+trust policy names people by it. `aud` is the connection's audience. It also carries `login`, `session_id`,
+`repo`, `branch` and `connection`, which Google's attribute conditions and Vault's bound claims can use.
+
+**1. List the connections.** `WOODSHED_OIDC_CONNECTIONS`, JSON (on AWS, Terraform's `oidc_connections`, a list of
+maps). `shared/oidcConnections.mjs` checks it at start and refuses a field a type does not take:
+
+```json
+[{"name": "aws-dev", "type": "aws", "roleArn": "arn:aws:iam::123456789012:role/woodshed-dev", "region": "us-east-1"},
+ {"name": "azure", "type": "azure", "clientId": "<uuid>", "tenantId": "<uuid>", "subscriptionId": "<uuid>"},
+ {"name": "gcp", "type": "gcp", "provider": "projects/<number>/locations/global/workloadIdentityPools/woodshed/providers/console",
+  "serviceAccount": "woodshed-dev@<project>.iam.gserviceaccount.com"},
+ {"name": "vault", "type": "token", "audience": "vault"}]
+```
+
+Each type's audience is its cloud's default (`sts.amazonaws.com`, `api://AzureADTokenExchange`,
+`https://iam.googleapis.com/<provider>`); `audience` replaces it. Once the console starts with one, it logs `oidcIssuer:
+on`, and `https://<console>/.well-known/openid-configuration` answers without sign-in. The issuer must be https and
+reachable from the internet, since each cloud fetches its keys from there: the AWS provider's console is; a local
+console behind Tailscale or on loopback is not.
+
+**2. Tell each cloud to trust the console.** Once per cloud, by its admin. Name one person per subject; a role many may
+use lists each.
+
+- **AWS.** IAM → Identity providers → Add provider: OpenID Connect, URL `https://<console>`, audience
+  `sts.amazonaws.com`. Then a role whose trust policy is the one below, and the permissions that person should have.
+  `<console>:aud` and `<console>:sub` are the condition keys `sts:AssumeRoleWithWebIdentity` takes for an OIDC
+  provider (no custom claim is one). Do not make a role here in the account Woodshed runs in that can change Woodshed
+  itself: a session could then reach its own security group.
+
+  ```json
+  {"Effect": "Allow", "Principal": {"Federated": "arn:aws:iam::<account>:oidc-provider/<console>"},
+   "Action": "sts:AssumeRoleWithWebIdentity",
+   "Condition": {"StringEquals": {"<console>:aud": "sts.amazonaws.com", "<console>:sub": "private:octocat"}}}
+  ```
+
+- **Azure.** On an app registration (or a user-assigned managed identity) → Certificates & secrets → Federated
+  credentials → Other issuer: issuer `https://<console>`, subject `private:octocat`, audience
+  `api://AzureADTokenExchange`. One credential per person, and Azure takes at most 20 on one app: past that, a second
+  app and a second connection. Give the app the role assignments that person should have.
+- **Google Cloud.** A workload identity pool with an OIDC provider: issuer `https://<console>`, the default audience,
+  and the attribute mapping `google.subject=assertion.sub`. Then let `principal://iam.googleapis.com/<pool>/subject/private:octocat`
+  use the service account (`roles/iam.workloadIdentityUser`), or grant that principal roles directly and leave
+  `serviceAccount` out.
+- **Vault, Kubernetes and the rest** (`type: token`): a JWT/OIDC auth method with this issuer's discovery URL, bound
+  to the audience and `sub`. The session's token is `/tmp/woodshed-cloud/<name>.jwt`.
+
+**3. Put the CLIs in the image.** The project file's `tools` (above): `aws`, `azure`, `gcloud`, `terraform`.
+
+**In a session.** `woodshed-cloud` lists each connection and how long its token has left. AWS's go in `~/.aws/config`,
+the first as the default profile and each as `--profile <name>`; Azure's first in `AZURE_*` and Terraform's `ARM_*`
+(the az CLI needs `woodshed-cloud az-login` once, and again when az says its login expired, about an hour later);
+Google's first in `GOOGLE_APPLICATION_CREDENTIALS` and gcloud's `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`. None of it
+is in the saved Claude home: each start writes it again from what the console lists.
 
 ## The project file
 
@@ -299,6 +367,7 @@ quote a number (`PORT: '9000'`).
 | `app` | statusd's Start app and Stop app, `readyGate.mjs` | `start` and `stop` commands, the `frontendPort` and `backendPort` statusd probes (the same port twice for an app that is one server, as Woodshed's own dev console is), `logs` (name to file, `~` and `{{CHECKOUT}}` filled in) for the App log tab and to tell the app was started, `paths` that count as an app change for `readyGate` (prefixes: write a folder with its `/`, as `web/`, or `web` also matches `webhooks.md`), and `howToProve`, its refusal's advice. `stop` may be `null`, and then Stop app does nothing, not even for a start still waiting on its health checks. statusd reads it once, when the session starts, so a change to it takes effect at the next start; a project with no app yet is read again at each Start app, so one written in the session starts there. `app: null`: no Start app but **Set up app**, which asks the session's claude to write one, no ports probed, and no pull request refused |
 | `apps[]` | statusd's Start app and Stop app, `readyGate.mjs`, `writeRules` | Instead of `app`, for a repo with more than one app; a file with both is refused. Each entry has every field `app` has, plus `name` (lowercase letters, digits and dashes, at most 32, each its own) and `label` (what the console's menu shows, default the name). The first is the default. One runs at a time: **Start app ▾** picks one (`POST /app/start {"app": "<name>"}`, the default without a name), and statusd stops the one running first with its own `stop`, then runs the one picked; it remembers which, and probes, proxies (Open app) and reads the logs (App log) of that one. An app claude starts itself from the shell is followed too: with the remembered app's frontend down and exactly one other app's frontend listening, statusd switches to it at the next `/status`, so Open app and the logs are its own (several listening, or a frontend port shared with the remembered app, keep it). Two apps may share a port, such as one backend behind two frontends, but then each needs a `stop`: an app with none is left running, and the next one starts beside it, where a shared port cannot bind. `readyGate` reads each app's `paths` and `logs` on their own: a change under an app's `paths` needs that app started, so give each its own log. A session's rules name each app, how it starts and its `howToProve`. `node project.mjs get app` gives the default. With one entry it behaves as `app` |
 | `editor` | `stageDeps.sh` (the deploy workflow's session job), statusd | `true` or `false`: VS Code in the browser on the checkout (**Editor ↗**). In the deploy workflow's session job, `stageDeps.sh` writes the built commit's value to `woodshed-deps.editor`, and the `Dockerfile` leaves openvscode-server out of the image when it is `false`. statusd reads the checkout's copy once, at start: `false` refuses the editor and hides the button. Optional: left out, or no project file at all, it is `false` |
+| `tools` | `stageDeps.sh` (the deploy workflow's session job) | CLIs the session image adds, from `aws`, `azure`, `gcloud` and `terraform`, each from its vendor's signed apt repository (`aws` from Debian's). `stageDeps.sh` writes the built commit's list to `woodshed-deps.tools`, and the `Dockerfile` installs them in a layer of their own. A My Woodshed session signs them in as its owner where the console lists cloud connections ("Cloud sign-in"). Optional: `[]` when left out |
 | `consoleLinks` | the console's GitHub comments, from the default branch; `writeRules` | `true` or `false`, default `true`. `false` keeps the installation's console address out of what is posted to the repo: the console's comments on its issues and pull requests (a session started, queued, resumed or failed, a refusal) and the session's link in the pull requests it opens (`{{VIA}}` reads `Woodshed`, unlinked). For a public repo. The console reads it with the project's other gates; when the file cannot be read, a comment on the installation's default project keeps its links and one on another project leaves them out |
 | `githubAccess` | the session API's `/github-token`, from the default branch | `full` or `repo`, default `full`. A private session acts as its owner, whose connected GitHub token it gets. `full` hands it the token as GitHub issued it, reaching every repo the GitHub App is on that the owner can write to. `repo` has GitHub scope it to this repo and the session permissions (`githubUser.scopedTokenFor`; the App's token when GitHub makes none): for a repo whose content outsiders write, such as public issues, where a prompt injection should reach no other repo. Shared sessions and questions use the App's token either way. When the file cannot be read, a session on the installation's default project gets `full` and one on another project `repo`. `repo` is only as strong as the protection on the repo's default branch: the setting lives in the repo it guards, so someone who can change that branch's project file can switch it back to `full` |
 | `rules`, `setup` | `writeRules` | The project's rules, after `prompt.md`, and its environment notes: inline in a shared session's rules, in `/tmp/woodshed-setup.md` for a private one, which claude reads without asking (a `Read` rule in `session/claudeHooks.json`). Notes that point claude at a file outside the repo other than `/tmp/woodshed-deps` make auto mode ask a person once, at its first read (session/README.md, "Why permissions are off") |

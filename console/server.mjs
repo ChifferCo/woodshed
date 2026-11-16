@@ -56,6 +56,8 @@
 //   GET  /review?session=claude-<id>, /reviews/claude-<id>/...   the Review tab: the shed's own review page and its calls,
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
+//   GET  /.well-known/openid-configuration, /.well-known/jwks.json   the console as an OpenID Connect issuer, for the
+//                                clouds private sessions sign in to (oidcIssuer.mjs); before sign-in, 404 with no connection
 //   POST /api/sessions/<id>/resume  {"message": "..."}  a stopped shared session again, its conversation and all
 //   POST /api/sessions/<id>/delete  a shared session's conversation and databases, deleted now (a running one is stopped first)
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
@@ -159,6 +161,7 @@ import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
+import { DISCOVERY_PATH, JWKS_PATH } from './oidcIssuer.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
@@ -532,7 +535,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null,
+  openaiTeamKey = null, oidc = null,
 }) {
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
@@ -828,6 +831,22 @@ export function createHandler({
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 401, { error: 'sign in first: open the app from the console' });
     console.log('app: sending to the console to sign in', { id });
     return redirect(res, `${config.publicUrl}/auth/app?id=${id}&next=${encodeURIComponent(url.pathname + url.search)}`);
+  }
+
+  // The issuer's discovery document and keys. A key that cannot be read answers 503, which a cloud retries; it never
+  // answers an empty key set, which would read as "trust nothing" until the cloud's cache ran out.
+  async function oidcDocument(req, res, pathname) {
+    if (!oidc) return reply(res, 404, { error: 'this console lists no cloud connections' });
+    if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
+    let body;
+    try {
+      body = pathname === DISCOVERY_PATH ? oidc.discovery() : await oidc.jwks();
+    } catch (err) {
+      if (!err.shown) throw err;
+      return reply(res, err.status ?? 503, { error: err.message });
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' });
+    return res.end(JSON.stringify(body));
   }
 
   // A request on one of WOODSHED_APP_PORTS: the app of the session the port is lent to (appPorts.mjs).
@@ -1805,6 +1824,8 @@ export function createHandler({
       return reply(res, 421, { error: 'unknown host' });
     }
     const url = new URL(req.url || '/', 'http://console.invalid');
+    // A cloud fetches these to check a session's token: public, and on whatever name the issuer is.
+    if (url.pathname === DISCOVERY_PATH || url.pathname === JWKS_PATH) return oidcDocument(req, res, url.pathname);
     // woodshed-db.mjs has no cookie: its token is its sign-in.
     if (url.pathname === CONNECTION_PATH && req.method === 'GET') {
       return tunnel ? tunnel.connection(req, res) : reply(res, 404, { error: 'this console has no tunnel to your databases' });

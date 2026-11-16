@@ -227,6 +227,17 @@ variable "console_name" {
   }
 }
 
+variable "oidc_connections" {
+  description = "The clouds My Woodshed sessions sign in to as their owner, with the console as their OpenID Connect issuer and no key in the session (docs/reference.md, \"Cloud sign-in\"). Each is an object with name and type (aws, azure, gcp or token) and that type's fields: roleArn and region for aws; clientId, tenantId and subscriptionId for azure; provider and serviceAccount for gcp; audience for token or to replace a type's own. shared/oidcConnections.mjs checks each one as the console starts. [] for none, which keeps the issuer off."
+  type        = list(map(string))
+  default     = []
+
+  validation {
+    condition     = alltrue([for c in var.oidc_connections : can(regex("^[a-z][a-z0-9-]{0,39}$", lookup(c, "name", ""))) && contains(["aws", "azure", "gcp", "token"], lookup(c, "type", ""))]) && length(distinct([for c in var.oidc_connections : lookup(c, "name", "")])) == length(var.oidc_connections)
+    error_message = "Each OIDC connection has a different name of lowercase letters, digits and dashes, and a type of aws, azure, gcp or token."
+  }
+}
+
 variable "console_workflow_links" {
   description = "The console menu's GitHub Actions links, label to workflow file in the repo (such as its deploy workflow). None leaves the group out."
   type        = map(string)

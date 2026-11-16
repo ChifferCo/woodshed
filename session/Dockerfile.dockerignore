@@ -9,4 +9,5 @@ woodshed/session/README.md
 !woodshed-deps
 !woodshed-deps/**
 !woodshed-deps.editor
+!woodshed-deps.tools
 !woodshed-deps.installs

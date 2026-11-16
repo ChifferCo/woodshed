@@ -50,7 +50,7 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'apps', 'editor', 'tools', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'lines'],
@@ -91,6 +91,17 @@ function fields(value, field, names, defaults = {}) {
 function boolean(value, field) {
   if (typeof value !== 'boolean') fail(`${field} must be true or false`);
   return value;
+}
+
+// The CLIs the session image adds for this repo's sessions, beyond the ones every session has (git, gh, docker): each a
+// few hundred MB, so only where they are named. The Dockerfile installs them from each vendor's signed apt repository,
+// or Debian's for aws. Their sign-in is the console's cloud connections (shared/oidcConnections.mjs).
+export const TOOLS = Object.freeze(['aws', 'azure', 'gcloud', 'terraform']);
+
+function tools(value) {
+  if (!Array.isArray(value)) fail('tools must be a list, as [aws, terraform] (write [] for none)');
+  for (const tool of value) if (!TOOLS.includes(tool)) fail(`tools may name ${TOOLS.join(', ')} (it has ${JSON.stringify(tool)})`);
+  return [...new Set(value)];
 }
 
 // How far a private session's GitHub token reaches: `full` is its owner's token as GitHub issued it, `repo` that token
@@ -377,7 +388,7 @@ function pullRequests(value) {
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: null, editor: false, consoleLinks: true, githubAccess: 'full',
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: null, editor: false, tools: [], consoleLinks: true, githubAccess: 'full',
   rules: null, setup: null, pullRequests: null,
 };
 
@@ -387,7 +398,8 @@ const TOP_DEFAULTS = {
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, lines: string[]}[], databases: object[], app: object|null,
  *   apps: {name: string, label: string}[],
- *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
+ *   editor: boolean, tools: string[], consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null,
+ *   pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
  */
 export function parseProject(raw) {
@@ -405,6 +417,7 @@ export function parseProject(raw) {
     databases: databases(project.databases, envFiles.map((f) => f.secret).filter(Boolean)),
     ...projectApps(project),
     editor: boolean(project.editor, 'editor'),
+    tools: tools(project.tools),
     consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
     githubAccess: githubAccess(project.githubAccess),
     rules: nullable(project.rules, 'rules', repoPath),
@@ -415,7 +428,7 @@ export function parseProject(raw) {
 
 /** What a repo with no project file gets: Woodshed's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
-  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: [], editor: false, consoleLinks: true,
+  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: [], editor: false, tools: [], consoleLinks: true,
   githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 

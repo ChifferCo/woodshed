@@ -14,7 +14,7 @@
 //                     (~/.claude and ~/.claude.json) to the console, for the session's next run
 //
 // A private session also keeps its owner's shared Claude settings in step with their other sessions, every
-// SYNC_EVERY_MS (settingsSync.mjs).
+// SYNC_EVERY_MS (settingsSync.mjs), and renews its cloud sign-in tokens every REFRESH_EVERY_MS (cloudSignIn.mjs).
 //                     An ask session (SESSION_MODE=ask) only saves its home: it is on the default branch and pushes nothing;
 //                     nor does a QA session (SESSION_MODE=qa), which tests a pull request's branch and changes nothing
 //   ANY  /redis/<id>/* forwarded to redis-commander, which listens on loopback only
@@ -53,6 +53,7 @@ import { promisify } from 'node:util';
 import { classifyPane, parseTranscriptTail } from '../shared/sessionState.mjs';
 import { STATE_FILE } from './hookState.mjs';
 import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeState } from './settingsSync.mjs';
+import { REFRESH_EVERY_MS, refreshTokens } from './cloudSignIn.mjs';
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
@@ -1157,6 +1158,21 @@ async function handle(req, res) {
   return reply(res, 404, { error: 'not found' });
 }
 
+// The cloud tokens a private session signs in with (cloudSignIn.mjs), each lasting 15 minutes. A failure is logged each
+// time, and the first success after one, so a console that was away shows where it came back.
+let cloudFailing = false;
+async function refreshCloudTokens() {
+  const results = await refreshTokens({ consoleUrl: CONSOLE_URL, token: TOKEN });
+  const failed = results.filter((r) => !r.ok);
+  if (failed.length) {
+    cloudFailing = true;
+    console.warn('statusd: cloud token not renewed', { failed: failed.map(({ name, status, error }) => ({ name, status, error })) });
+  } else if (cloudFailing && results.length) {
+    cloudFailing = false;
+    console.log('statusd: cloud tokens renewed again', { connections: results.map((r) => r.name) });
+  }
+}
+
 function main() {
   if (!TOKEN) {
     console.error('statusd: SESSION_TOKEN is not set, refusing to start');
@@ -1179,6 +1195,9 @@ function main() {
     setInterval(() => syncSettings().catch((err) => {
       console.warn('statusd: shared Claude settings not synced', { message: err?.message });
     }), SYNC_EVERY_MS);
+    setInterval(() => refreshCloudTokens().catch((err) => {
+      console.warn('statusd: cloud token not renewed', { message: err?.message });
+    }), REFRESH_EVERY_MS);
   }
   // The container's init passes the stop on as SIGTERM. Without one, statusd is PID 1, which ignores SIGTERM without
   // a handler: ECS would wait 30s to kill it.

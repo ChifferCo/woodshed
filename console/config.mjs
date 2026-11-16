@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
+import { connectionsFrom } from '../shared/oidcConnections.mjs';
 import { currentName, envValue } from '../shared/envNames.mjs';
 import { secretEnvName } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
@@ -284,8 +285,30 @@ export function requireRepo(config) {
  * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
  *   from here and gives the console its GitHub access another way
  */
+/**
+ * The clouds private sessions may sign in to as their owner (shared/oidcConnections.mjs), and the issuer their tokens
+ * name: the console's public URL unless WOODSHED_OIDC_ISSUER says otherwise, as when the discovery documents are served
+ * from another name. Null with no connection listed, which keeps the issuer off.
+ * @returns {{issuer: string, connections: object[]}|null}
+ */
+export function oidcSettings(env, publicUrl) {
+  const connections = connectionsFrom(env.WOODSHED_OIDC_CONNECTIONS);
+  if (!connections.length) return null;
+  const issuer = (env.WOODSHED_OIDC_ISSUER || publicUrl).replace(/\/+$/, '');
+  let url;
+  try {
+    url = new URL(issuer);
+  } catch {
+    throw new Error(`WOODSHED_OIDC_ISSUER is not a URL: ${issuer.slice(0, 100)}`);
+  }
+  // A cloud matches the issuer as text, so it must be the bare origin and path the discovery document says.
+  if (url.search || url.hash || !/^https?:$/.test(url.protocol)) throw new Error('WOODSHED_OIDC_ISSUER must be an http(s) URL with no query or fragment');
+  return { issuer, connections };
+}
+
 export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const port = number(envValue(env, 'PORT'), 7690);
+  const publicUrl = (envValue(env, 'PUBLIC_URL') || `http://localhost:${port}`).replace(/\/+$/, '');
   const app = githubApp(env);
   const broker = githubBroker(env);
   const identitySecret = trustedIdentitySecret(env);
@@ -295,7 +318,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     consoleName: consoleName(env),
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,
-    publicUrl: (envValue(env, 'PUBLIC_URL') || `http://localhost:${port}`).replace(/\/+$/, ''),
+    publicUrl,
+    // Private sessions' cloud sign-in, with the console as their OpenID Connect issuer (oidcIssuer.mjs); null for none.
+    oidc: oidcSettings(env, publicUrl),
     extraHosts: (envValue(env, 'HOSTS') || '').split(',').map((h) => h.trim()).filter(Boolean),
     // Session apps answer at `<id>.<appDomain>`; empty turns them off.
     appDomain: (envValue(env, 'APP_DOMAIN') || '').trim().toLowerCase(),

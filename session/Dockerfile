@@ -3,7 +3,7 @@
 # Woodshed session image: everything one Claude session needs except the
 # databases, which it reaches over the network. Build from the repo root:
 #
-#   bash woodshed/session/stageDeps.sh woodshed-deps    # also writes woodshed-deps.editor and woodshed-deps.installs
+#   bash woodshed/session/stageDeps.sh woodshed-deps    # also writes woodshed-deps.editor, .tools and .installs
 #   docker build -f woodshed/session/Dockerfile \
 #     --secret id=gh_token,env=GH_TOKEN \
 #     --secret id=install_env,src=install.env \
@@ -183,6 +183,32 @@ RUN --mount=type=bind,source=woodshed-deps.editor,target=/tmp/woodshed-editor \
   && echo "${ovs_sha}  /tmp/openvscode.tgz" | sha256sum -c - \
   && mkdir -p /opt/openvscode-server && tar -xzf /tmp/openvscode.tgz -C /opt/openvscode-server --strip-components=1 \
   && rm /tmp/openvscode.tgz
+
+# The project file's `tools` (shared/project.mjs, TOOLS), which stageDeps.sh writes beside woodshed-deps/, one a line:
+# each from its vendor's signed apt repository, as gh is, and aws from Debian's own. Mounted, like the editor's value,
+# so the layer is built again only when the list changes, and its own layer, so SOCI fetches it only in a session that
+# runs one. The sign-in is the console's cloud connections (session/cloudSignIn.mjs), never a key in the image.
+RUN --mount=type=bind,source=woodshed-deps.tools,target=/tmp/woodshed-tools \
+  if ! grep -q . /tmp/woodshed-tools; then echo "no tools: the project file names none"; exit 0; fi \
+  && arch=$(dpkg --print-architecture) && codename=$(. /etc/os-release && echo "$VERSION_CODENAME") && packages= \
+  && for tool in $(cat /tmp/woodshed-tools); do \
+    case "$tool" in \
+      aws) packages="$packages awscli" ;; \
+      azure) curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+        && echo "deb [arch=$arch signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ $codename main" > /etc/apt/sources.list.d/azure-cli.list \
+        && packages="$packages azure-cli" ;; \
+      gcloud) curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+        && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" > /etc/apt/sources.list.d/google-cloud-sdk.list \
+        && packages="$packages google-cloud-cli" ;; \
+      terraform) curl -fsSL https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp.gpg \
+        && echo "deb [arch=$arch signed-by=/usr/share/keyrings/hashicorp.gpg] https://apt.releases.hashicorp.com $codename main" > /etc/apt/sources.list.d/hashicorp.list \
+        && packages="$packages terraform" ;; \
+      *) echo "unknown tool in the project file: $tool" >&2; exit 1 ;; \
+    esac; \
+  done \
+  && apt-get update && apt-get install -y --no-install-recommends $packages \
+  && rm -rf /var/lib/apt/lists/* \
+  && echo "tools added:$packages"
 
 # The runtime stage's docker CLI and compose, for a published runtime built before they were in it (or with others):
 # the same install, skipped when the runtime has these versions.

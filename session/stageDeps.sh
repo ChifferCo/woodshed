@@ -2,8 +2,9 @@
 # Copies the files each of the project file's `dependencies.installs` depends on (its `files`, globs expanded) to the
 # folder given, in the repo's own layout: the deploy workflow's session job builds the session image with it as `woodshed-deps/`.
 # Beside it, not inside it (the image copies the folder into the checkout whole): `<folder>.installs`, the manifest
-# session/deps.sh runs the installs from, and `<folder>.editor`, the project file's `editor` (true or false), which the
-# Dockerfile reads to add VS Code or leave it out. Run from the repo's root. The project file is the repo's, or the
+# session/deps.sh runs the installs from, `<folder>.editor`, the project file's `editor` (true or false), which the
+# Dockerfile reads to add VS Code or leave it out, and `<folder>.tools`, the project file's `tools`, one a line (empty for
+# none), the CLIs it adds. Run from the repo's root. The project file is the repo's, or the
 # installation's for a repo with none when WOODSHED_PROJECT_FILES_DIR names its folder (shared/project.mjs).
 set -euo pipefail
 
@@ -14,15 +15,20 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Read on their own: a failure inside a command substitution in a for list would not stop the script.
 manifest=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" installs) || { echo "stageDeps: the project file's dependencies could not be read" >&2; exit 1; }
 editor=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get editor) || { echo "stageDeps: the project file's editor could not be read" >&2; exit 1; }
+tools=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get tools) || { echo "stageDeps: the project file's tools could not be read" >&2; exit 1; }
 from=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get from) || { echo "stageDeps: the project file could not be read" >&2; exit 1; }
 
 rm -rf "$dest"
 mkdir -p "$dest"
 printf '%s\n' "$editor" > "$dest.editor"
+# An empty file for none: the Dockerfile mounts it either way.
+: > "$dest.tools"
+[ -z "$tools" ] || printf '%s\n' "$tools" > "$dest.tools"
 echo "stageDeps: project file from $from"
 skipped=$(REPO_DIR=$PWD node "$here/../shared/project.mjs" get repoFileError) || skipped=
 [ -z "$skipped" ] || echo "stageDeps: the repo's own project file was skipped: $skipped"
 echo "stageDeps: editor $editor"
+echo "stageDeps: tools $(printf '%s\n' "${tools:-none}" | paste -sd ' ' -)"
 # An empty file when there are no installs.
 : > "$dest.installs"
 [ -z "$manifest" ] || printf '%s\n' "$manifest" > "$dest.installs"
