@@ -255,12 +255,13 @@ test('an env file\'s secret is listed as moved to Repo settings, and Replace is 
     'web-env': { secret: 'web-env', path: 'web/.env.local', project: 'app', repo: 'o/r', key: 'web-env', copiedAt: null, saved: false },
   };
   const { settings, store } = setup({ repoSettings: { legacyState: (name) => moved[name] ?? null } });
+  const terraformSecret = (name) => Object.entries(store.values).find(([key]) => key.endsWith(`/${name}`))[1];
   const view = await settings.view();
   assert.deepEqual(view.secrets.filter((s) => s.moved).map((s) => [s.name, s.moved.saved]), [['api-env', true], ['web-env', false]]);
   assert.equal(view.secrets.find((s) => s.name === 'registry-token').moved, undefined, 'an install secret has not moved');
 
   await assert.rejects(settings.replace('api-env', 'B=2\n'), (err) => err.shown && /api-env moved to Repo settings: edit it on Console settings → Repos → o\/r → Settings/.test(err.message));
-  assert.equal(store.values['woodshed-cloud/api-env'], 'A=1\n', 'the Terraform secret is not changed');
+  assert.equal(terraformSecret('api-env'), 'A=1\n', 'the Terraform secret is not changed');
   await settings.replace('web-env', 'C=3\n');
-  assert.equal(store.values['woodshed-cloud/web-env'], 'C=3\n', 'until Repo settings hold a value, the secret is what sessions read, and may be set');
+  assert.equal(terraformSecret('web-env'), 'C=3\n', 'until Repo settings hold a value, the secret is what sessions read, and may be set');
 });
