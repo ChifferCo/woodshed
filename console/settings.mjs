@@ -31,11 +31,13 @@ function firstLine(err) {
  *          appKey: {current: () => string|null, set: (pem: string) => void},
  *          appApi: ReturnType<import('./githubApp.mjs').createAppApi>,
  *          webhookUrl: () => Promise<string|null>, checkKey?: (pem: string) => Promise<void>,
- *          onReplace?: (name: string, value: string) => void}} deps
+ *          onReplace?: (name: string, value: string) => void,
+ *          repoSettings?: {legacyState: (secret: string) => object|null}|null}} deps
  *   `webhookUrl` is where the provider receives GitHub's webhooks, null where it has nowhere; `checkKey` mints a token with a new App key before it is kept; tests pass a fake.
- *   `onReplace` hears of every replaced value, for the parts of the console that hold one (sign-in)
+ *   `onReplace` hears of every replaced value, for the parts of the console that hold one (sign-in). `repoSettings`
+ *   says where each env file's secret moved: those rows are listed as moved, and refused once Repo settings hold them
  */
-export function createSettings({ config, secrets, appKey, appApi, webhookUrl, checkKey, onReplace = () => {} }) {
+export function createSettings({ config, secrets, appKey, appApi, webhookUrl, checkKey, onReplace = () => {}, repoSettings = null }) {
   // A console that borrows its GitHub access has no App: no key, no client secret, no webhook of its own to keep.
   const borrowed = Boolean(config.githubBroker);
   const specs = secretSpecs({ envFiles: config.envFiles ?? [], installSecrets: config.installSecrets ?? [] })
@@ -67,13 +69,19 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
     }
   }
 
+  // An env file's secret is legacy now: each row says whose Repo settings it moved to.
+  async function listed() {
+    const list = await secrets.list();
+    return list.map((s) => (s.kind === 'env' && repoSettings ? { ...s, moved: repoSettings.legacyState(s.name) } : s));
+  }
+
   async function view() {
     if (borrowed) {
-      const list = await secrets.list();
+      const list = await listed();
       return { repo: defaultProject(config).repo, secrets: list.filter((s) => !APP_SECRETS.includes(s.name)), webhook: null };
     }
     const [list, expectedUrl, github] = await Promise.all([
-      secrets.list(),
+      listed(),
       webhookUrl().catch((err) => {
         console.warn('settings: webhook function URL not readable', { message: firstLine(err) });
         return null;
@@ -113,6 +121,12 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
   async function replace(name, value) {
     const spec = specOrThrow(name);
     if (spec.kind === 'webhook') throw refusal('rotate the webhook secret instead: the console makes it');
+    const moved = spec.kind === 'env' ? repoSettings?.legacyState(name) : null;
+    // Two copies would drift: sessions read the Repo settings one, so an edit here would reach no session.
+    if (moved?.saved) {
+      console.log('settings: replace refused, the env file moved to repo settings', { name, project: moved.project });
+      throw refusal(`${name} moved to Repo settings: edit it on Console settings → Repos → ${moved.repo} → Settings, which sessions read now`);
+    }
     let text;
     try {
       text = checkValue(spec, value);
