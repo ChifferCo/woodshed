@@ -29,6 +29,7 @@ function withoutDefaults(text) {
 const PROJECTS = {
   multiApp: fs.readFileSync(path.join(FIXTURES, 'multiApp.project.yaml'), 'utf8'),
   reference: withoutDefaults(REFERENCE),
+  sharedSecret: fs.readFileSync(path.join(FIXTURES, 'sharedSecret.project.yaml'), 'utf8'),
 };
 
 // What the entrypoint has exported by the time it writes the env files: the databases', a shared service's and the app's.
@@ -42,8 +43,9 @@ const SESSION_ENV = {
 const LEGACY = {
   API_ENV: '# The api\'s shared values\nAUTH_DOMAIN=example.test\nAUTH_CLIENT_ID=abc123\n\nPRIVATE_KEY="-----BEGIN TEST KEY-----\nnot-a-real-key\n-----END TEST KEY-----"\nPORT=8000',
   STORE_ENV: 'PUBLIC_AUTH_DOMAIN=example.test\nPUBLIC_FEATURE_PREVIEW=false\n',
+  APP_ENV: '# Shared by the api and the worker\nLOG_LEVEL=info\nPORT=8000',
 };
-const OWN = { 'api-env': 'AUTH_CLIENT_ID=mine\nLOG_LEVEL=debug', 'store-env': 'PUBLIC_FEATURE_PREVIEW=false' };
+const OWN = { 'api-env': 'AUTH_CLIENT_ID=mine\nLOG_LEVEL=debug', 'store-env': 'PUBLIC_FEATURE_PREVIEW=false', 'app-env': 'LOG_LEVEL=debug' };
 
 // No installation values at all; the installation's (a shared session); and a private session's, with its owner's lines.
 const SCENARIOS = {
