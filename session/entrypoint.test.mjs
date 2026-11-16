@@ -230,12 +230,12 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   // What claude is told: Woodshed's rules for each kind of session, the notes' pointer, and the dependencies' status,
   // which the project's notes have claude wait for.
   const told = [
-    ...['prompt.md', 'ask.md', 'hostDocker.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
+    ...['prompt.md', 'ask.md', 'hostDocker.md', 'ownDocker.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
     fn('writeRules').split('\n').find((line) => line.includes('Environment notes (')),
   ].join('\n');
   const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];
   paths.push(ENTRYPOINT.match(/^DEPS_STATUS=(\S+)$/m)[1]);
-  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-setup.md']);
+  assert.deepEqual(paths.sort(), ['/tmp/answer.md', '/tmp/woodshed-deps', '/tmp/woodshed-docker-ports.log', '/tmp/woodshed-dockerd.log', '/tmp/woodshed-setup.md']);
   for (const p of paths) {
     const allowed = hooks.permissions.allow.includes(`Read(/${p})`) || addDirs.some((dir) => p.startsWith(`${dir}/`));
     assert.ok(allowed, `${p} has a Read rule in claudeHooks.json (an absolute path is written //${p.slice(1)})`);
@@ -255,10 +255,22 @@ test('a session given this machine\'s Docker is told so, with its own id to name
   assert.match(on.rules, /this session's id, `0a1b2c3d`/);
   assert.match(on.rules, /other ports too/);
   assert.doesNotMatch(on.rules, /\{\{/);
-  assert.match(on.out, /host docker: 1/);
+  assert.doesNotMatch(on.rules, /this session's own Docker/);
+  assert.match(on.out, /docker: 1/);
   for (const off of [writePrompt({ attachments: false }), writePrompt({ attachments: false, hostDocker: '0' })]) {
     assert.doesNotMatch(off.rules, /`docker` here/);
   }
+});
+
+test('a session with its own Docker is told it is its own, goes with the session and where its log is, and nothing of the machine\'s', () => {
+  const own = writePrompt({ attachments: false, hostDocker: 'own' });
+  assert.match(own.rules, /`docker` here is this session's own Docker, inside this container/);
+  assert.match(own.rules, /everything in it goes when the session ends/);
+  assert.match(own.rules, /on this container's 127\.0\.0\.1/);
+  assert.match(own.rules, /`\/tmp\/woodshed-dockerd\.log`/);
+  assert.doesNotMatch(own.rules, /the machine Woodshed runs on|forwarded|named volumes/);
+  assert.match(own.out, /docker: own/);
+  assert.doesNotMatch(fn('startDockerPorts'), /own/, 'its containers publish on this container already: nothing to forward');
 });
 
 test('the forwarder of the machine\'s ports starts only with the machine\'s Docker, after the session\'s Redis', () => {

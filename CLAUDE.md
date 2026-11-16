@@ -20,6 +20,13 @@ is applied (`docs/reference.md` here, then `console/`, `session/` and
   Claude home. A shared session never gets the default plugins or anyone's
   login, and nothing team-wide (a bot token) goes in any session. An installation's env files set `AWS_ACCESS_KEY_ID=test`
   on purpose when its backend uses localstack: it accepts anything.
+- **On one local server, whoever can start a session is trusted with the other sessions on it.** Where the machine has
+  Sysbox, every session runs its own Docker (providers/local/README.md, "Docker in a session"), whose root reaches
+  nothing of the machine's but can reach the network the sessions share, and so another session's calls to the
+  console and the tokens in them. That is the deal of a shared server: a team whose members must be kept apart runs
+  each session on a VM or task of its own (AWS, or a launcher that makes one), never several on one machine. The
+  machine's own Docker socket, root on the machine and every secret, is never a default where others sign in: only
+  `WOODSHED_SESSION_DOCKER=1` in that console's own `stack.env` gives it, and no Update turns either on unasked.
 - **An installation's exceptions are written in its own `.woodshed/install/README.md`**, each with what has to happen to
   remove it. None is in this folder: what is here applies to every installation.
 - **Never print a secret's value.** Check a secret by its shape, its
@@ -307,16 +314,21 @@ secrets.
   means neither could see it, such as another user's process. The install's own console is never in the way: it is
   told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
   A Tailscale `serve` listener on the same port does not count.
-- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider sessions
-  use the machine's Docker on one person's console unless `WOODSHED_SESSION_DOCKER=0`, and on a console others sign in
-  to only with `WOODSHED_SESSION_DOCKER=1` (providers/local/README.md, "Docker in a session"): the console logs `local:
-  sessions use this machine's Docker` with `on` at start (`onWith` when it is off by default), then `launcher: sessions get this
-  machine's Docker` with the socket's `group` at the first session, and `launcher: session given this machine's Docker`
-  for each. A start that fails with `its socket could not be given to the session` gives docker's reason. In the
-  session's Terminal, `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists
-  the socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found`
-  is an image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions
-  never get it.
+- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider every
+  session runs its own Docker where the machine has Sysbox, and otherwise uses the machine's on one person's console;
+  on a console others sign in to, the machine's only with `WOODSHED_SESSION_DOCKER=1`, and `0` turns both off
+  (providers/local/README.md, "Docker in a session"). The console logs `local: sessions'
+  Docker` at start (`off: true` when it is off), then at the first session `launcher: sessions get their own Docker` with `own: true`, or `own:
+  false` with `why` (`no sysbox-runc runtime: install Sysbox`, or `the session image has no Docker daemon`: rebuild it)
+  and what they get `instead`; a no is asked again ten minutes later. Each session logs `launcher: session given its
+  own Docker` or `launcher: session given this machine's Docker`. With their own, the session's log says `Own Docker
+  ready`, or `WARNING: own Docker did not start` with the end of `/tmp/woodshed-dockerd.log` (in the session), and
+  `echo $WOODSHED_SESSION_DOCKER` says `own`. With the machine's, `launcher: sessions get this machine's Docker` gives the socket's
+  `group`, a start that fails with `its socket could not be given to the session` gives docker's reason, and in the
+  session's Terminal `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists the
+  socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found` is an
+  image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions never
+  get either.
 - **A tool in a session cannot reach a container it started on `127.0.0.1:<port>`, or a dev server fails with
   `EADDRINUSE`.** `session/dockerPorts.mjs` forwards each port the machine's containers publish to the same port on the
   session's 127.0.0.1: `/tmp/woodshed-docker-ports.log` has `dockerPorts: port forwarded` with the container, `port

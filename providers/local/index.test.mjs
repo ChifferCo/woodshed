@@ -90,40 +90,53 @@ test('a secrets folder needs its key, from a file only its owner reads and kept 
   assert.equal(typeof provider.secrets.read, 'function');
 });
 
-test('sessions use this machine\'s Docker by default only on one person\'s console; a console others sign in to needs WOODSHED_SESSION_DOCKER=1', async (t) => {
+test('every session gets its own Docker where the machine has Sysbox, on any console; the machine\'s is the fallback by default only on one person\'s console, and elsewhere with WOODSHED_SESSION_DOCKER=1', async (t) => {
   const { loadConfig } = await import('../../console/config.mjs');
   const { localProvider } = await import('./index.mjs');
   const logs = [];
   t.mock.method(console, 'log', (...line) => logs.push(line));
-  const hostDocker = (env) => loadConfig({ GH_TOKEN: 'x', ...env }).launcher.hostDocker;
-  assert.equal(hostDocker({}), true, 'one person\'s laptop');
-  assert.equal(hostDocker({ WOODSHED_HOST: 'localhost' }), true);
-  assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: '1' }), true);
-  assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: '0' }), false);
-  assert.equal(hostDocker({ WOODSHED_SESSION_DOCKER: ' 0 ' }), false);
-  // Root on the machine for whoever starts a session: on a console others use, never by default, nor after an Update.
+  const docker = (env) => {
+    const { ownDocker, hostDocker } = loadConfig({ GH_TOKEN: 'x', ...env }).launcher;
+    return { ownDocker, hostDocker };
+  };
+  const both = { ownDocker: 'auto', hostDocker: true };
+  const ownOnly = { ownDocker: 'auto', hostDocker: false };
+  const off = { ownDocker: false, hostDocker: false };
+  assert.deepEqual(docker({}), both, 'one person\'s laptop');
+  assert.deepEqual(docker({ WOODSHED_SESSION_DOCKER: '1' }), both);
+  assert.deepEqual(docker({ WOODSHED_SESSION_DOCKER: '0' }), off);
+  assert.deepEqual(docker({ WOODSHED_SESSION_DOCKER: ' 0 ' }), off);
+  // The machine's socket is root on it for whoever starts a session: on a console others use, never by default, nor
+  // after an Update. Their own, under Sysbox, is on there too, once its admin installs Sysbox.
   const shared = { WOODSHED_HOST: '0.0.0.0', WOODSHED_REQUIRE_SIGN_IN: '1' };
-  assert.equal(hostDocker(shared), false, 'a server others sign in to');
-  assert.equal(hostDocker({ WOODSHED_REQUIRE_SIGN_IN: '1' }), false, 'sign-in on loopback, as behind Tailscale shared');
-  assert.equal(hostDocker({ WOODSHED_HOST: '0.0.0.0' }), false, 'a host past loopback');
-  assert.equal(hostDocker({ ...shared, WOODSHED_SESSION_DOCKER: '1' }), true, 'said in its own settings');
-  assert.throws(() => hostDocker({ WOODSHED_SESSION_DOCKER: 'yes' }), /WOODSHED_SESSION_DOCKER is 1 .* or 0/);
+  assert.deepEqual(docker(shared), ownOnly, 'a server others sign in to');
+  assert.deepEqual(docker({ WOODSHED_REQUIRE_SIGN_IN: '1' }), ownOnly, 'sign-in on loopback, as behind Tailscale shared');
+  assert.deepEqual(docker({ WOODSHED_HOST: '0.0.0.0' }), ownOnly, 'a host past loopback');
+  assert.deepEqual(docker({ ...shared, WOODSHED_SESSION_DOCKER: '1' }), both, 'the machine\'s, said in its own settings');
+  assert.deepEqual(docker({ ...shared, WOODSHED_SESSION_DOCKER: '0' }), off);
+  assert.throws(() => docker({ WOODSHED_SESSION_DOCKER: 'own' }), /WOODSHED_SESSION_DOCKER is 0 \(no Docker\) or 1/);
 
-  const line = () => logs.filter(([m]) => m === 'local: sessions use this machine\'s Docker').at(-1);
+  const line = () => logs.filter(([m]) => m === 'local: sessions\' Docker').at(-1);
   localProvider(loadConfig({ GH_TOKEN: 'x' }));
-  assert.deepEqual(line(), ['local: sessions use this machine\'s Docker', { on: true, off: 'WOODSHED_SESSION_DOCKER=0' }]);
+  assert.deepEqual(line(), ['local: sessions\' Docker', { own: 'with Sysbox', machine: 'without Sysbox', off: 'WOODSHED_SESSION_DOCKER=0' }]);
+  localProvider(loadConfig({ GH_TOKEN: 'x', ...shared }));
+  assert.deepEqual(line(), ['local: sessions\' Docker', { own: 'with Sysbox', machine: { onWith: 'WOODSHED_SESSION_DOCKER=1' }, off: 'WOODSHED_SESSION_DOCKER=0' }]);
   localProvider(loadConfig({ GH_TOKEN: 'x', WOODSHED_SESSION_DOCKER: '0' }));
-  assert.deepEqual(line(), ['local: sessions use this machine\'s Docker', { on: false, onWith: 'WOODSHED_SESSION_DOCKER=1' }]);
+  assert.deepEqual(line(), ['local: sessions\' Docker', { off: true, onWith: 'WOODSHED_SESSION_DOCKER unset' }]);
 });
 
-test('on AWS sessions never get a Docker socket, and WOODSHED_SESSION_DOCKER=1 there is said once, not refused', async (t) => {
+test('on AWS sessions get no Docker, and WOODSHED_SESSION_DOCKER=1 or own there is said once, not refused', async (t) => {
   const { loadConfig } = await import('../../console/config.mjs');
   const warnings = [];
   t.mock.method(console, 'warn', (...line) => warnings.push(line));
   const ecs = { GH_TOKEN: 'x', WOODSHED_LAUNCHER: 'ecs' };
-  assert.equal(loadConfig(ecs).launcher.hostDocker, false);
+  const off = { ownDocker: false, hostDocker: false };
+  const docker = (env) => {
+    const { ownDocker, hostDocker } = loadConfig(env).launcher;
+    return { ownDocker, hostDocker };
+  };
+  assert.deepEqual(docker(ecs), off);
   assert.equal(warnings.length, 0, 'nothing to say when it is not asked for');
-  assert.equal(loadConfig({ ...ecs, WOODSHED_SESSION_DOCKER: '1' }).launcher.hostDocker, false);
-  assert.equal(loadConfig({ ...ecs, WOODSHED_SESSION_DOCKER: '1' }).launcher.hostDocker, false);
-  assert.deepEqual(warnings, [['config: WOODSHED_SESSION_DOCKER=1 does nothing on AWS: a Fargate task cannot be given a Docker socket']]);
+  assert.deepEqual(docker({ ...ecs, WOODSHED_SESSION_DOCKER: '1' }), off);
+  assert.deepEqual(warnings, [['config: WOODSHED_SESSION_DOCKER=1 does nothing on AWS: a Fargate task can neither be given a Docker socket nor run Sysbox']]);
 });

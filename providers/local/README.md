@@ -162,19 +162,82 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
 
 ## Docker in a session
 
-Sessions use this machine's Docker, so a repo whose dev setup is a compose file of services, Supabase local
-(`supabase start`) or Testcontainers runs in them. It is on by default only on one person's console: on loopback,
-with no sign-in and no hosting proxy, where the person starting sessions already owns the machine.
-`WOODSHED_SESSION_DOCKER=0` in `stack.env` (or with `install.sh`, which saves it) turns it off there. A console others
-sign in to (a server, or `WOODSHED_TAILSCALE=shared`) has it only with `WOODSHED_SESSION_DOCKER=1`, so an existing team
-console never gains it from an Update. Only the console's settings decide it, never a project file. A question from Slack never
-gets it, nor a db-admin run. On AWS it is always off: a Fargate task cannot be given a Docker socket, and
-`WOODSHED_SESSION_DOCKER=1` there only logs that it does nothing.
+Sessions get a Docker, so a repo whose dev setup is a compose file of services, Supabase local (`supabase start`),
+Testcontainers or an image build runs in them. There are two kinds:
+
+- **Their own, where the machine has Sysbox** (`WOODSHED_SESSION_DOCKER=own` in the session), on any console: each
+  session runs a Docker daemon of its own inside its container, under [Sysbox](https://github.com/nestybox/sysbox)'s
+  runtime, which runs the container as an unprivileged user of the machine that is root only inside it. It reaches
+  nothing of the machine's, and everything in it goes with the session. Install Sysbox once (below) on a Linux machine
+  to have it.
+- **The machine's, without Sysbox** (`WOODSHED_SESSION_DOCKER=1` in the session): its socket, mounted in. Root on the
+  machine for whoever can start a session (below), so by default only on one person's console: on loopback, with no
+  sign-in and no hosting proxy, where the person starting sessions already owns the machine. Always the case on a Mac.
+
+**On a server others sign in to, whoever can start a session is trusted with the other sessions there** (CLAUDE.md's
+Rules). A session's own Docker reaches nothing of the machine's, but its root can send raw frames on the network every
+session and db-admin run shares (`compose.yml`'s network), so Claude in one session could read another's calls to the
+console and the tokens in them. A team whose members must be kept apart runs each session on a machine or task of its
+own, not on one shared server.
+
+`WOODSHED_SESSION_DOCKER` in `stack.env` (or with `install.sh`, which saves it) chooses: unset, their own where there is
+Sysbox, else the machine's on one person's console and none on a console others sign in to (a server, or
+`WOODSHED_TAILSCALE=shared`); `1`, the machine's where there is no Sysbox, on any console; `0`, none. An existing team
+console gains their own only once its admin installs Sysbox, and the machine's never from an Update. Only the
+console's settings decide it, never a project file. A question from Slack never gets one, since anyone in the
+workspace can ask, nor does a db-admin run. On AWS both are off: a Fargate task can neither be given a Docker socket nor
+run Sysbox, and `WOODSHED_SESSION_DOCKER` there only logs that it does nothing.
+
+### Their own Docker, with Sysbox
+
+Sysbox runs on Linux (Ubuntu 20.04 and later, Debian 11 and later, and others with a 5.12 kernel or newer), with Docker
+installed from Docker's packages, not the snap. Not on Docker Desktop or OrbStack: on a Mac, sessions keep the
+machine's. Install it once on the machine the sessions run on, with Sysbox's package for its architecture
+(https://github.com/nestybox/sysbox/releases). Its installer restarts Docker, which stops running sessions and the
+databases, so do it when no session is running, and remove the stopped session containers first, as it asks:
+
+```sh
+docker rm -f $(docker ps -aq --filter label=woodshed.session)
+curl -fsSLO https://github.com/nestybox/sysbox/releases/download/v0.7.1/sysbox-ce_0.7.1.linux_amd64.deb
+echo '9d6d5484f980d0a17f86c492c1262015c2afb66280bdb97215b79fde6a0261c5  sysbox-ce_0.7.1.linux_amd64.deb' | sha256sum -c -
+sudo apt-get install -y ./sysbox-ce_0.7.1.linux_amd64.deb
+docker info --format '{{json .Runtimes}}'    # lists sysbox-runc
+```
+
+Then bring the databases and shared services back up as "Using it day to day" says, if they did not come back on their
+own. The console needs no restart: it asks Docker again at a session start ten minutes after it last found no Sysbox,
+and new sessions get their own Docker from then on.
+
+How it works:
+
+- At the first session start, the docker launcher (`dockerLauncher.mjs`, `ownDocker`) asks the machine's Docker for its
+  runtimes (`docker info`) and the session image for its daemon, and logs `launcher: sessions get
+  their own Docker` with `own: true`, or `own: false` with `why` (`no sysbox-runc runtime: install Sysbox`, or `the
+  session image has no Docker daemon` for an image built before it) and what sessions get `instead`. A yes holds for
+  the console's life, a no for ten minutes.
+- It runs the session with `--runtime sysbox-runc`, as root, with `session/ownDocker.sh` as the entrypoint, and logs
+  `launcher: session given its own Docker`. Never `--privileged`, and no socket of the machine's.
+- `ownDocker.sh` starts `dockerd` with its socket in the `docker` group, waits up to 30 seconds for it, and logs `Own
+  Docker ready` or `WARNING: own Docker did not start` with the end of its log. Then it runs the entrypoint as `node`,
+  who is in that group, so claude and everything else run as `node`, as in any session. The daemon's log is
+  `/tmp/woodshed-dockerd.log` in the session.
+- The session image has the daemon, containerd and runc from Docker's static build, and iptables (`session/Dockerfile`).
+- Claude's rules say the Docker is the session's own, goes with it, and where its log is (`session/ownDocker.md`).
+
+What to know:
+
+- **Everything in it goes with the session**: its containers, images and volumes. Each session pulls its images again.
+- **It shares the session's memory and CPU** (`WOODSHED_SESSION_MEMORY`, `WOODSHED_SESSION_CPUS`).
+- **What its containers publish is on the session's own 127.0.0.1**, where the app and tests reach it; nothing is
+  forwarded, and nothing clashes with another session's.
+
+### The machine's Docker
 
 **It is root on this machine for whoever can start a session.** On your own laptop that is you, through Claude. On a
-console others use with `WOODSHED_SESSION_DOCKER=1`, anyone who can start a session, from a GitHub label or
-comment too, gets root on the machine: the secrets key, so every stored secret and Claude token, and every other
+console others use with `WOODSHED_SESSION_DOCKER=1` and no Sysbox, anyone who can start a session, from a GitHub label
+or comment too, gets root on the machine: the secrets key, so every stored secret and Claude token, and every other
 session's containers and databases. Only people you would give root on the box should be able to start sessions there.
+Install Sysbox to give sessions their own instead.
 
 How it works:
 
@@ -183,9 +246,11 @@ How it works:
   docker group's on Linux. It asks a container for that group once, with the session image and the socket mounted
   (`docker run --rm --entrypoint stat …`), and logs `launcher: sessions get this machine's Docker` with it. It also
   sets `DOCKER_HOST=unix:///var/run/docker.sock` and `WOODSHED_SESSION_DOCKER=1`, which the project file's scripts can
-  read. The console logs `local: sessions use this machine's Docker` with `on` at start.
-- The session image has the docker CLI and its compose plugin (`session/Dockerfile`). Its last stage adds them to a
-  published runtime from before they were in it.
+  read. The console logs `local: sessions' Docker` at start: `own: 'with Sysbox'`, and `machine: 'without Sysbox'`
+  or, on a console others sign in to, `machine: {onWith: 'WOODSHED_SESSION_DOCKER=1'}`; or `off: true` with `0`.
+- The session image has the docker CLI and its compose and buildx plugins (`session/Dockerfile`): buildx is what makes
+  `docker build` use BuildKit, which `RUN --mount` needs. Its last stage adds them, and the daemon, to a published
+  runtime from before they were in it.
 - Claude's rules say that the containers are the machine's and outlive the session, that a bind mount names a folder on
   the machine, and to name a stack after the session with its own ports (`session/hostDocker.md`).
 - `session/dockerPorts.mjs` forwards each TCP port the machine's containers publish to the same port on the session's
@@ -259,8 +324,9 @@ and what tripped up the first install on a plain VM (Ubuntu 24.04, for a repo wi
   admin. Let the proxy answer only your IP until the App is in, then set `WOODSHED_REQUIRE_SIGN_IN=1` and open it.
 - **Docker skips the firewall, both ways.** A published port (`-p 5432:5432`, `ports:` in a compose file) is open to
   the internet whatever ufw says: publish on `127.0.0.1` or not at all, and check the repo's own compose file too.
-  Sessions use the machine's Docker ("Docker in a session", above), so what Claude starts publishes the same way:
-  keep the provider's firewall in front of the machine, and remember that whoever starts a session has root here.
+  Sessions given the machine's Docker ("Docker in a session", above) publish the same way what Claude starts there:
+  keep the provider's firewall in front of the machine, and remember that whoever starts such a session has root here.
+  A session's own Docker, under Sysbox, publishes inside its container only.
   The other way, ufw's default deny drops the sessions' calls to the session API: allow the sessions' bridge in on
   7691 only (`ufw allow in on br-<network id> to <gateway> port 7691 proto tcp`).
 - **The repo's own services.** Without each session's own databases (the table above),
