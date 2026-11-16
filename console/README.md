@@ -719,6 +719,20 @@ and submits the review at the reviewed commit. It logs `fleet: review verdict su
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
 requests.
 
+### The review in a session, as in Actions
+
+A review session does what `review.yml` does, so a repo can move from one to the other without losing anything. Its
+prompt (`shared/codeReview/prompt.txt`) is the workflow's word for word, apart from paths, and a test fails when they
+part. The session cannot write to GitHub, so it writes files and the console posts them:
+
+- **Inline comments** (`inline-comments.json`) go on the diff's lines with the verdict. GitHub refuses a whole review
+  when one comment is on a line the diff does not show, so the console then submits the verdict with the comments in
+  its body (`folded: true` in the log).
+- **Earlier inline comments** are in the session's context, with ids. Those by `review.author` that the head fixes go
+  in `resolved.txt`, and after an APPROVE the console resolves them and the review's outdated threads, never a
+  person's (`fleet: review threads resolved`).
+- **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
+
 ## Webhook events, secrets and the GitHub App's webhook
 
 In AWS the console has two more pages, under Console in the menu under your
