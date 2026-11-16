@@ -29,8 +29,8 @@ test('Woodshed\'s project file parses, with no dependencies or databases, and it
 test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s test job and the review\'s Merge risk', () => {
   assert.deepEqual(selfProject().pullRequests, {
     review: {
-      author: null, heading: '## Claude review', workflow: null,
-      rerun: null, commentAuthor: null, runner: 'woodshed',
+      author: 'woodshed-reviewer[bot]', heading: '## Claude review', workflow: null,
+      rerun: null, commentAuthor: 'woodshed-console[bot]', runner: 'woodshed',
     },
     suites: [{ name: 'Check', workflow: '.github/workflows/check.yml', jobs: 'test', rerun: null }],
     qa: { check: 'QA', label: 'woodshed-qa', heading: '## QA', author: null, runner: 'woodshed', autoLabel: true },
@@ -43,8 +43,8 @@ test('the gates match what Woodshed\'s own review session and workflows post', (
   const prompt = fs.readFileSync(path.join(WOODSHED, 'shared/codeReview/prompt.txt'), 'utf8');
   assert.ok(prompt.includes(reviewSummaryOf(review)), 'the review\'s comment is folded under the heading\'s words');
   // The verdict's first line, as the console's reviewFinished writes it under the project file's heading.
-  const verdict = { user: { login: 'woodshed-reviewer[bot]' }, state: 'APPROVED', body: `${review.heading} — APPROVE\n\nLooks right.` };
-  assert.equal(reviewVerdict([verdict], { ...review, author: 'woodshed-reviewer[bot]' }), verdict);
+  const verdict = { user: { login: review.author }, state: 'APPROVED', body: `${review.heading} — APPROVE\n\nLooks right.` };
+  assert.equal(reviewVerdict([verdict], review), verdict);
   const reviewYml = parseYaml(fs.readFileSync(path.join(WOODSHED, '.github/workflows/review.yml'), 'utf8'));
   assert.deepEqual(Object.keys(reviewYml.on), ['workflow_call'], 'review.yml no longer reviews Woodshed\'s own pull requests');
   const [suite] = suites;
