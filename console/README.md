@@ -759,6 +759,22 @@ part. The session cannot write to GitHub, so it writes files and the console pos
   person's (`fleet: review threads resolved`).
 - **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
 
+### The approval waits for QA
+
+When QA runs here (`pullRequests.qa.runner: woodshed`) and the pull request carries the QA label, the review's APPROVE
+is held instead of submitted, so "Approved" on GitHub means reviewed and tested in any repo, with no branch rule that
+requires the QA check. The review's comment, the merge risk and the inline comments' context go out as usual; the
+console keeps the verdict on the review session (`review.held`) and starts QA on it at once (`fleet: review approval held
+until QA finishes`). When QA reports on that commit (`fleet: held approval released after QA`):
+
+- **Pass, or Not covered:** the APPROVE goes to GitHub with QA's result as its last line, and the fixed threads are
+  resolved.
+- **Fail:** the verdict goes in as REQUEST_CHANGES, saying the review approved but QA failed.
+- **The head moved meanwhile:** nothing is submitted; the new commit gets its own review.
+
+Without the label, as when someone removed it, the APPROVE goes out at once. A QA session that never reports leaves the
+approval held: removing and adding the label runs QA again, which releases it.
+
 ## Webhook events, secrets and the GitHub App's webhook
 
 In AWS the console has two more pages, under Console in the menu under your

@@ -1489,8 +1489,7 @@ export function createFleet({
     const tested = state.sessions.some((s) => isQa(s) && s.number === number && onProject(s, project) && s.qa.sha === pull.head.sha);
     if (tested) return { unrecorded: true };
     // The label already posted the Waiting check: a review that does not approve the head adds nothing.
-    const verdict = reviewVerdict(await gh.reviews(number), gates.review);
-    if (verdict?.state !== 'APPROVED' || verdict.commit_id !== pull.head.sha) return { unrecorded: true };
+    if (!(await reviewApproved({ project, gates, gh, number, sha: pull.head.sha })).approved) return { unrecorded: true };
     const login = await gh.labeledBy(number, qa.label);
     if (!login) {
       console.log('fleet: QA after review skipped, no one added the label', { number, ...projectField(project) });
@@ -1528,13 +1527,13 @@ export function createFleet({
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open') return ignored('the pull request is not open');
     if (gates.review) {
-      const verdict = reviewVerdict(await gh.reviews(number), gates.review);
-      if (verdict?.state !== 'APPROVED' || verdict.commit_id !== pull.head.sha) {
+      const verdict = await reviewApproved({ project, gates, gh, number, sha: pull.head.sha });
+      if (!verdict.approved) {
         await safely('QA waiting check', () => gh.createCheckRun({
           sha: pull.head.sha, name: qa.check, conclusion: 'neutral', title: 'Waiting for the review to approve this commit',
           summary: 'QA runs here once the review approves the pull request\'s latest commit.',
         }));
-        console.log('fleet: QA waiting for the review', { number, login, verdict: verdict?.state ?? null, ...projectField(project) });
+        console.log('fleet: QA waiting for the review', { number, login, verdict: verdict.state, ...projectField(project) });
         return { outcome: 'waiting', reason: 'the review has not approved the latest commit' };
       }
     }
@@ -1609,6 +1608,7 @@ export function createFleet({
     })) : null;
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
     console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
+    if (ours) await safely('held approval after QA', () => releaseHeldApproval(project, session.number, { sha, conclusion: verdict.conclusion, title: verdict.title }));
     // In the background: the session waits on this reply, and the stop saves its home through it first.
     stop(session, `QA finished: ${verdict.title}`)
       .catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }))
@@ -1690,18 +1690,65 @@ export function createFleet({
   async function reviewFinished(session, { conclusion, summary, comment, mergeRisk, inlineComments = [], resolved = [], sha, costUsd }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
-    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha }) : false;
-    if (ours && conclusion === 'APPROVE') await resolveFixedThreads(session, gh, resolved);
+    const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
+    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
+    if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
-    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd } });
-    console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours });
+    const held = hold && ours ? { sha, summary, inlineComments, resolved } : null;
+    update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
+    console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
+    // Nothing went to GitHub, so no review webhook comes: QA starts from the held approval here.
+    if (held) await safely('QA after a held approval', () => qaAfterReview({ number: session.number, project: project.name }));
+  }
+
+  // QA runs on this pull request here (pullRequests.qa.runner: woodshed, and it carries the QA label), so the review's
+  // APPROVE waits for it: "Approved" on GitHub then means reviewed and tested, in any repo, with no branch rule needed.
+  async function qaWillRun(project, number) {
+    const qa = (await pullRequests(project.name))?.qa;
+    if (!qa || qa.runner !== 'woodshed') return false;
+    const pull = await safely('QA label of the reviewed pull request', () => githubOf(project).pull(number));
+    return (pull?.labels ?? []).some((l) => l.name === qa.label);
+  }
+
+  // The review approved this commit: on GitHub, or held for QA (reviewFinished).
+  function heldApproval(project, number, sha) {
+    return state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.held?.sha === sha).at(-1) ?? null;
+  }
+
+  async function reviewApproved({ project, gates, gh, number, sha }) {
+    if (heldApproval(project, number, sha)) return { approved: true, state: 'held for QA' };
+    const verdict = reviewVerdict(await gh.reviews(number), gates.review);
+    return { approved: verdict?.state === 'APPROVED' && verdict.commit_id === sha, state: verdict?.state ?? null };
+  }
+
+  /**
+   * QA finished on a commit whose approval was held for it: the approval goes to GitHub with QA's result in it, or, when
+   * QA failed, the verdict becomes REQUEST_CHANGES. Not when the head moved since: that commit gets its own review.
+   */
+  async function releaseHeldApproval(project, number, { sha, conclusion, title }) {
+    const review = heldApproval(project, number, sha);
+    if (!review) return;
+    const gh = githubOf(project);
+    const { summary, inlineComments, resolved } = review.review.held;
+    update(review, { review: { ...review.review, held: null } });
+    const head = (await safely('pull request for a held approval', () => gh.pull(number)))?.head?.sha;
+    if (head !== sha) {
+      console.log('fleet: held approval dropped, the head moved since', { id: review.id, number, sha, head: head ?? null });
+      return;
+    }
+    const failed = conclusion === 'failure';
+    const verdict = failed ? 'REQUEST_CHANGES' : 'APPROVE';
+    const qaLine = failed ? `The review approved this commit, but QA failed (${title}): see the QA comment.` : `QA: ${title}.`;
+    const ok = await sendVerdict(review, gh, { conclusion: verdict, body: `${review.review.heading} — ${verdict}\n\n${summary}\n\n${qaLine}`.trim(), inlineComments, sha });
+    if (ok && !failed) await resolveFixedThreads(review, gh, resolved);
+    console.log('fleet: held approval released after QA', { id: review.id, number, qa: conclusion, verdict, ok });
   }
 
   // Only submits when the reviewed commit is still the head: a push since makes the review stale, so it is dropped
   // rather than approving the wrong commit. The verdict starts with the project file's heading, which the gate looks for.
-  async function submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments = [], sha }) {
+  async function submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments = [], sha, hold = false }) {
     if (comment) await postReviewComment(session, gh, comment);
     const pull = await safely('review pull request', () => gh.pull(session.number));
     if (!pull?.head?.sha) {
@@ -1713,6 +1760,22 @@ export function createFleet({
       return false;
     }
     const body = `${session.review.heading} — ${conclusion}\n\n${summary}`.trim();
+    const submitted = hold ? true : await sendVerdict(session, gh, { conclusion, body, inlineComments, sha });
+    if (hold) console.log('fleet: review approval held until QA finishes', { id: session.id, number: session.number, sha });
+    if (mergeRisk?.tier) {
+      if (session.review.check) {
+        await safely('Merge risk check', () => gh.createCheckRun({
+          sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
+          summary: `${mergeRisk.summary}\n\n${MERGE_RISK_TIERS}\n\nSet by the AI review. It does not block merging.`.trim(), externalId: session.id,
+        }));
+      }
+      await safely('merge risk label', () => setMergeRiskLabel(gh, session.number, mergeRisk.tier));
+    }
+    return submitted;
+  }
+
+  // The formal review, at `sha`: GitHub refuses it once a push moved the head, rather than approving the wrong commit.
+  async function sendVerdict(session, gh, { conclusion, body, inlineComments = [], sha }) {
     // As the reviewer App when there is one: GitHub refuses an approval from the pull request's author, and a pull request
     // a shared session opened is the console App's.
     const asReviewer = Boolean(reviewerApp?.configured());
@@ -1730,15 +1793,6 @@ export function createFleet({
     });
     // With no reviewer App the gates trust no verdict (reviewLogins.mjs): say so, or a pull request waits with no reason.
     if (!session.review.author) console.warn('fleet: review verdict not counted, no reviewer App and no review.author', { id: session.id, number: session.number });
-    if (mergeRisk?.tier) {
-      if (session.review.check) {
-        await safely('Merge risk check', () => gh.createCheckRun({
-          sha, name: session.review.check, conclusion: 'neutral', title: `${mergeRisk.tier}: ${mergeRisk.reason}`.slice(0, 250),
-          summary: `${mergeRisk.summary}\n\n${MERGE_RISK_TIERS}\n\nSet by the AI review. It does not block merging.`.trim(), externalId: session.id,
-        }));
-      }
-      await safely('merge risk label', () => setMergeRiskLabel(gh, session.number, mergeRisk.tier));
-    }
     return submitted !== null;
   }
 

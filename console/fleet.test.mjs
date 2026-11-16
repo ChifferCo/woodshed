@@ -2581,3 +2581,55 @@ test('a review on an author without Sessions from GitHub still runs, on the team
   assert.equal((await t.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.equal(t.fleet.sessions()[0].review.teamKey, true);
 });
+
+const HELD_GATES = { ...REVIEW_GATES, qa: QA_GATES.qa };
+const HELD_PULL = { ...REVIEW_PULL, labels: [{ name: 'qa' }] };
+function heldSetup(options = {}) {
+  const t = setup({ gates: HELD_GATES, ...options });
+  t.github.pull = async () => HELD_PULL;
+  t.github.reviews = async () => [];
+  t.github.labeledBy = async () => 'joel';
+  return t;
+}
+async function approveThenQa(t, verdict) {
+  await t.fleet.reviewOnTag({ number: 7 });
+  await t.fleet.reviewFinished(t.fleet.sessions()[0], REVIEW_RESULT);
+  const qa = t.fleet.sessions().find((s) => s.trigger === 'qa');
+  if (qa && verdict) await t.fleet.qaFinished(qa, { verdict, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  return qa;
+}
+
+test('a review\'s APPROVE waits for QA when the pull request carries the QA label, which starts on it at once', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  assert.deepEqual(t.calls.reviews, [], 'not approved on GitHub yet');
+  assert.ok(t.calls.checks.some((c) => c.name === 'Merge risk'), 'the merge risk still goes out');
+  assert.equal(qa?.qa.sha, 'a'.repeat(40), 'QA started from the held approval, with no review webhook');
+  await t.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.deepEqual(t.calls.reviews.map((r) => [r.event, r.sha]), [['APPROVE', 'a'.repeat(40)]]);
+  assert.match(t.calls.reviews[0].body, /^## Code review — APPROVE\n\nLooks good\.\n\nQA: Pass: 2 test cases passed\.$/);
+  assert.equal(t.fleet.sessions()[0].review.held, null, 'released once');
+});
+
+test('QA that fails turns the held approval into REQUEST_CHANGES; QA with nothing to test still approves', async () => {
+  const failed = heldSetup();
+  await approveThenQa(failed, { conclusion: 'failure', title: 'Fail: 1 of 2 test cases failed', status: '❌', total: 2 });
+  assert.equal(failed.calls.reviews[0].event, 'REQUEST_CHANGES');
+  assert.match(failed.calls.reviews[0].body, /but QA failed \(Fail: 1 of 2 test cases failed\): see the QA comment\./);
+  const skipped = heldSetup();
+  await approveThenQa(skipped, { conclusion: 'neutral', title: 'Not covered: nothing to test', status: '⏭️', total: 0 });
+  assert.deepEqual(skipped.calls.reviews.map((r) => r.event), ['APPROVE']);
+  assert.match(skipped.calls.reviews[0].body, /QA: Not covered: nothing to test\.$/);
+});
+
+test('without the QA label the approval goes out at once, and a held one is dropped when the head moved during QA', async () => {
+  const unlabeled = heldSetup();
+  unlabeled.github.pull = async () => ({ ...HELD_PULL, labels: [] });
+  await approveThenQa(unlabeled, null);
+  assert.deepEqual(unlabeled.calls.reviews.map((r) => r.event), ['APPROVE']);
+  const moved = heldSetup();
+  const qa = await approveThenQa(moved, null);
+  moved.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'c'.repeat(40) } });
+  await moved.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.deepEqual(moved.calls.reviews, [], 'the new commit gets its own review');
+});
