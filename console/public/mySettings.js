@@ -471,7 +471,8 @@
   }
 
   // Your own whole files (an app/.env.production), which your sessions write into the checkout where git ignores
-  // them. All of them come in one read, the first time the card is drawn; `ownPath` is the one open, '' a new one.
+  // them. All of them come in one read, the first time the card is drawn, and a save changes only the one saved here;
+  // `ownPath` is the one open, '' a new one.
   let ownFiles = null;
   let ownLoad = null;
   // A read that failed is not tried again by itself: render() would otherwise ask the console again at once, for as
@@ -516,7 +517,9 @@
     return act({
       card: 'own-files', note: ownStatus, done, call: async () => {
         const answer = await W.postJson('/api/my/own-files', { path: file, text });
-        ownFiles = answer.files;
+        const saved = file.trim();
+        if (text.trim()) ownFiles[saved] = text.replace(/\r\n/g, '\n');
+        else delete ownFiles[saved];
         me = answer.view;
         const next = ownFiles[file.trim()] !== undefined ? file.trim() : Object.keys(ownFiles).sort()[0] ?? '';
         ownPath = next;
@@ -529,7 +532,8 @@
   function ownFilesCard() {
     if (me.available && ownFiles === null && !ownLoadFailed) loadOwnFiles();
     const paths = (me.ownFiles ?? []).map((f) => f.path);
-    const savedAt = (file) => me.ownFiles?.find((f) => f.path === file)?.savedAt;
+    const kept = (file) => me.ownFiles?.find((f) => f.path === file);
+    const keptWords = (file) => [kept(file)?.savedAt && `saved ${W.when(kept(file).savedAt)}`, Number.isFinite(kept(file)?.bytes) && W.fmtBytes(kept(file).bytes)].filter(Boolean);
     const working = busy.has('own-files');
     ownPathInput.readOnly = working || Boolean(ownPath);
     ownEditor.readOnly = working;
@@ -538,13 +542,14 @@
       h('div', { class: 'set-head' }, h('h2', null, 'Your own files'),
         h('span', { class: `pill${paths.length ? ' is-ok' : ''}` }, paths.length ? `${paths.length} file${paths.length === 1 ? '' : 's'}` : 'None')),
       h('p', { class: 'sub' }, 'Whole files your sessions write into the repo at start, such as the ', h('code', null, '.env.production'),
-        ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Your next My Woodshed session picks up what you save; running ones keep theirs.'),
+        ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Your next My Woodshed session picks up what you save; running ones keep theirs.',
+        me.ownFileLimit ? ` Each file can be ${me.ownFileLimit % 1024 ** 2 ? W.fmtBytes(me.ownFileLimit) : `${me.ownFileLimit / 1024 ** 2} MB`} once compressed.` : ''),
       h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Your file' },
         paths.map((file) => h('button', { type: 'button', 'aria-pressed': String(file === ownPath), disabled: working, onclick: () => openOwnFile(file) }, file)),
         h('button', { type: 'button', 'aria-pressed': String(ownPath === ''), disabled: working || ownFiles === null, onclick: () => openOwnFile('') }, '+ Add a file')),
       h('label', { class: 'field-label', for: 'own-file-path' }, h('span', null, 'Path in the repo')),
       ownPathInput,
-      h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, ownPath ? `${ownPath}${savedAt(ownPath) ? `, saved ${W.when(savedAt(ownPath))}` : ''}` : 'Its text')),
+      h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, ownPath ? [ownPath, ...keptWords(ownPath)].join(', ') : 'Its text')),
       ownEditor,
       h('div', { class: 'set-actions' },
         ownLoadFailed && h('button', { type: 'button', class: 'btn btn-quiet', onclick: retryOwnFiles }, 'Try again'),

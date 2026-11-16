@@ -9,8 +9,11 @@
 //   users/<login>/<env secret>   their own lines for each of the repo's env files (a secret's name, as api-env) and
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
-//   users/<login>/own-files    their own whole files (an app/.env.production), as JSON {"<path>": "<text>"}, which their
-//                                sessions write into the checkout where git ignores them (session/ownFiles.mjs). Readable by them
+//   users/<login>/own-files/<key>  each of their own whole files (an app/.env.production), a secret for each, named from
+//                                its path (ownFileKey in shared/ownFiles.mjs) and gzipped where that is smaller, which their
+//                                sessions write into the checkout where git ignores them (session/ownFiles.mjs). Readable
+//                                by them. `users/<login>/own-files` itself held all of them as one JSON before: it is split
+//                                into a secret for each on a save or at the console's start (splitOldOwnFiles)
 //   users/<login>/github         their GitHub user token, from Connect GitHub (githubUser.mjs), as JSON
 //   users/<login>/database       the password of their own databases' user (databases.mjs)
 
@@ -19,13 +22,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
-import { MAX_OWN_FILES, MAX_OWN_FILES_BYTES, ownFilePath, ownFilePathProblem } from '../shared/ownFiles.mjs';
+import {
+  MAX_OWN_FILES, MAX_OWN_FILE_BYTES, ownFileKey, ownFilePath, ownFilePathProblem, packOwnFile, sizeWords, storeValueLimit, unpackOwnFile,
+} from '../shared/ownFiles.mjs';
 const { loginKey } = logins;
 
 const CLAUDE_TOKEN = 'claude-token';
 const CODEX_AUTH = 'codex-auth';
 const GITHUB = 'github';
-const OWN_FILES = 'own-files';
+// Every own file as one JSON, as they were kept before each had a secret of its own under OWN_FILES_DIR.
+const OLD_OWN_FILES = 'own-files';
+const OWN_FILES_DIR = 'own-files';
+// How many of a person's own files are read at once.
+const READS_AT_ONCE = 4;
 const MAX_IDENTITY_CHARS = 200;
 const MAX_TOKEN_CHARS = 1000;
 const MAX_CODEX_AUTH_CHARS = 20_000;
@@ -71,6 +80,17 @@ export function checkFile(text) {
   if (!file.trim()) return '';
   if (Buffer.byteLength(file) > MAX_FILE_BYTES) throw Object.assign(new Error('the file is over the 64 KB a secret can hold'), { shown: true });
   return file;
+}
+
+/**
+ * @returns {Record<string, {savedAt: string, bytes?: number}>}  each own file's record, by path: when it was saved and its
+ *   text's size. One saved before the sizes is its time alone
+ */
+function ownFileRecords(record) {
+  // No prototype: a path is any name, `__proto__` among them.
+  const kept = Object.create(null);
+  for (const [file, value] of Object.entries(record?.ownFiles ?? {})) kept[file] = typeof value === 'string' ? { savedAt: value } : { ...value };
+  return kept;
 }
 
 /** @returns {string}  the secret's name under the console's prefix */
@@ -232,7 +252,8 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
       files,
-      ownFiles: Object.entries(record?.ownFiles ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
+      ownFiles: Object.entries(ownFileRecords(record)).map(([file, kept]) => ({ path: file, ...kept })).sort((a, b) => a.path.localeCompare(b.path)),
+      ownFileLimit: storeValueLimit(secrets),
       setUp: Boolean(record),
       available: Boolean(secrets) && secrets.configured?.() !== false,
     };
@@ -288,24 +309,148 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     console.log('userSettings: own lines cleared', { login, key });
   }
 
-  /** @returns {Promise<Record<string, string>>}  the person's own whole files, by path; {} while they have none */
-  async function ownWholeFiles(login) {
-    if (!secrets || !Object.keys(recordFor(login)?.ownFiles ?? {}).length) return {};
-    const value = await secrets.read(userSecretName(login, OWN_FILES));
-    if (!value) return {};
+  const ownFileName = (login, file) => userSecretName(login, `${OWN_FILES_DIR}/${ownFileKey(file)}`);
+  const ownFileDescription = (login, file) => `Woodshed: @${login}'s ${file}, one of their own files, for their My Woodshed sessions only`;
+
+  /**
+   * @returns {Promise<{files: Record<string, string>, readable: boolean}|null>}  the old single secret's files by path, as
+   *   plain text; null when there is none, and `readable: false` for one that is not JSON, which is left for a person
+   */
+  async function oldOwnFiles(login) {
+    const value = await secrets.read(userSecretName(login, OLD_OWN_FILES));
+    if (!value) return null;
+    let files;
     try {
-      const files = JSON.parse(value);
-      return files && typeof files === 'object' && !Array.isArray(files) ? files : {};
+      files = JSON.parse(value);
     } catch {
-      console.warn('userSettings: own files not read, the secret is not JSON', { login });
-      return {};
+      files = null;
     }
+    if (!files || typeof files !== 'object' || Array.isArray(files)) {
+      console.warn('userSettings: the old own files secret is not JSON, left as it is', { login });
+      return { files: {}, readable: false };
+    }
+    return { files: Object.fromEntries(Object.entries(files).filter(([file, text]) => typeof text === 'string' && !ownFilePathProblem(file))), readable: true };
   }
 
   /**
-   * Adds, replaces or (with empty text) removes one of the person's own files. All of them are one secret, so a save
-   * writes them all.
-   * @returns {Promise<Record<string, string>>}  their files after the change
+   * The person's files as stored, by path: each one's own secret, or, until the old single secret is split, its text for
+   * a file with no secret of its own yet.
+   * @returns {Promise<Record<string, string>>}  each packed or plain, as packOwnFile left it
+   */
+  async function storedOwnFiles(login) {
+    const record = recordFor(login);
+    const paths = Object.keys(ownFileRecords(record));
+    if (!secrets || !paths.length) return {};
+    const values = [];
+    // A few at a time: on AWS each read is a CLI process of its own.
+    for (let i = 0; i < paths.length; i += READS_AT_ONCE) {
+      values.push(...await Promise.all(paths.slice(i, i + READS_AT_ONCE).map((file) => secrets.read(ownFileName(login, file)))));
+    }
+    const missing = paths.filter((_, i) => values[i] === null);
+    const old = missing.length && !record.ownFilesPerSecret ? (await oldOwnFiles(login))?.files ?? {} : {};
+    const files = {};
+    paths.forEach((file, i) => {
+      if (values[i] !== null) files[file] = values[i];
+      else if (Object.hasOwn(old, file)) files[file] = packOwnFile(old[file]);
+    });
+    const fromOld = missing.filter((file) => Object.hasOwn(old, file));
+    if (fromOld.length) console.log('userSettings: own files read from the old single secret', { login, paths: fromOld });
+    const lost = missing.filter((file) => !Object.hasOwn(old, file));
+    if (lost.length) console.warn('userSettings: own files with no secret', { login, paths: lost });
+    return files;
+  }
+
+  /** @returns {Promise<Record<string, string>>}  the person's own whole files, by path, as text; {} while they have none */
+  async function ownWholeFiles(login) {
+    const files = {};
+    for (const [file, value] of Object.entries(await storedOwnFiles(login))) {
+      try {
+        files[file] = unpackOwnFile(value);
+      } catch (err) {
+        console.warn('userSettings: own file does not unpack', { login, path: file, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
+    return files;
+  }
+
+  // One split at a time for each person: the start's and a save's must not both copy a file.
+  const splitting = new Map();
+
+  /**
+   * Splits the old single secret of a person's files into a secret for each, never over one already there (a newer
+   * save), and deletes it once every file has its own. Until then, reads fall back to it.
+   * @returns {Promise<boolean>}  true when every file of theirs is in a secret of its own
+   */
+  function splitOldOwnFiles(login) {
+    const key = loginKey(login);
+    if (!splitting.has(key)) splitting.set(key, splitNow(login).finally(() => splitting.delete(key)));
+    return splitting.get(key);
+  }
+
+  async function splitNow(login) {
+    if (!secrets) return false;
+    const record = recordFor(login);
+    if (record?.ownFilesPerSecret) return true;
+    const old = await oldOwnFiles(login);
+    if (!old) {
+      if (record) touch(login, { ownFilesPerSecret: true });
+      return true;
+    }
+    if (!old.readable) return false;
+    const limit = storeValueLimit(secrets);
+    const kept = ownFileRecords(record);
+    const at = new Date(now()).toISOString();
+    let copied = 0;
+    let there = 0;
+    const tooBig = [];
+    // A file the old secret holds but the record does not was removed, or never listed on the page.
+    const files = Object.entries(old.files).filter(([file]) => Object.hasOwn(kept, file));
+    for (const [file, text] of files) {
+      const name = ownFileName(login, file);
+      if (await secrets.read(name) !== null) {
+        there++;
+      } else {
+        const value = packOwnFile(text);
+        if (Buffer.byteLength(value) > limit) {
+          tooBig.push(file);
+          continue;
+        }
+        await secrets.save(name, value, ownFileDescription(login, file));
+        copied++;
+      }
+      kept[file] = { savedAt: kept[file]?.savedAt ?? at, bytes: kept[file]?.bytes ?? Buffer.byteLength(text) };
+    }
+    touch(login, { ownFiles: Object.keys(kept).length ? kept : null });
+    if (tooBig.length) {
+      console.warn('userSettings: old own files secret kept, some files are over the store\'s limit', { login, copied, alreadyThere: there, paths: tooBig, limit });
+      return false;
+    }
+    await secrets.remove(userSecretName(login, OLD_OWN_FILES));
+    touch(login, { ownFilesPerSecret: true });
+    console.log('userSettings: old own files secret split, a secret for each file', { login, copied, alreadyThere: there, dropped: Object.keys(old.files).length - files.length });
+    return true;
+  }
+
+  /** At the console's start: everyone whose files may still be in the old single secret. */
+  async function splitEveryonesOldOwnFiles() {
+    if (!secrets || secrets.configured?.() === false) return;
+    const logins = Object.keys(people()).filter((key) => Object.keys(people()[key]?.ownFiles ?? {}).length && !people()[key].ownFilesPerSecret);
+    let split = 0;
+    let left = 0;
+    for (const login of logins) {
+      try {
+        if (await splitOldOwnFiles(login)) split++;
+        else left++;
+      } catch (err) {
+        left++;
+        console.warn('userSettings: old own files not split', { login, message: String(err?.message ?? err).split('\n')[0] });
+      }
+    }
+    if (logins.length) console.log('userSettings: old own files secrets checked at start', { people: logins.length, split, left });
+  }
+
+  /**
+   * Adds, replaces or (with empty text) removes one of the person's own files, each a secret of its own.
    * @throws {Error}  with a message the page can show
    */
   async function saveOwnFile(login, file, text) {
@@ -317,20 +462,43 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     if (envFile) throw Object.assign(new Error(`${key} is one of the repo's env files: add your lines to it under Env files and tmux`), { shown: true });
     if (text !== undefined && typeof text !== 'string') throw Object.assign(new Error('the file must be text'), { shown: true });
     const value = String(text ?? '').replace(/\r\n/g, '\n');
-    const files = await ownWholeFiles(login);
-    if (value.trim()) files[key] = value;
-    else delete files[key];
-    if (Object.keys(files).length > MAX_OWN_FILES) throw Object.assign(new Error(`you can keep ${MAX_OWN_FILES} files at most`), { shown: true });
-    const json = JSON.stringify(files);
-    if (Buffer.byteLength(json) > MAX_OWN_FILES_BYTES) throw Object.assign(new Error('your files together are over the 64 KB a secret can hold'), { shown: true });
-    if (Object.keys(files).length) await secrets.save(userSecretName(login, OWN_FILES), json, `Woodshed: @${login}'s own files, for their My Woodshed sessions only`);
-    else await secrets.remove(userSecretName(login, OWN_FILES));
-    const record = recordFor(login);
-    const at = new Date(now()).toISOString();
-    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : record?.ownFiles?.[f] ?? at]));
-    touch(login, { ownFiles: Object.keys(kept).length ? kept : null });
-    console.log(value.trim() ? 'userSettings: own file saved' : 'userSettings: own file removed', { login, path: key, files: Object.keys(files).length, ...(value.trim() && { bytes: Buffer.byteLength(value) }) });
-    return files;
+    const bytes = Buffer.byteLength(value);
+    if (bytes > MAX_OWN_FILE_BYTES) throw Object.assign(new Error(`a file can be ${sizeWords(MAX_OWN_FILE_BYTES)} at most`), { shown: true });
+    const split = await splitOldOwnFiles(login);
+    const kept = ownFileRecords(recordFor(login));
+    const name = ownFileName(login, key);
+    if (!value.trim()) {
+      await secrets.remove(name);
+      delete kept[key];
+      touch(login, { ownFiles: Object.keys(kept).length ? kept : null });
+      console.log('userSettings: own file removed', { login, path: key, files: Object.keys(kept).length });
+      // The file the old secret could not be split for may be this one.
+      if (!split) await splitOldOwnFiles(login);
+      return;
+    }
+    if (!Object.hasOwn(kept, key) && Object.keys(kept).length >= MAX_OWN_FILES) throw Object.assign(new Error(`you can keep ${MAX_OWN_FILES} files at most`), { shown: true });
+    const stored = packOwnFile(value);
+    const storedBytes = Buffer.byteLength(stored);
+    const limit = storeValueLimit(secrets);
+    if (storedBytes > limit) {
+      console.log('userSettings: own file refused, over the store\'s limit', { login, path: key, bytes, storedBytes, limit });
+      throw Object.assign(new Error(`${key} is ${sizeWords(storedBytes)} even compressed, over the ${sizeWords(limit)} this console's secret store holds for one file`), { shown: true });
+    }
+    await secrets.save(name, stored, ownFileDescription(login, key));
+    kept[key] = { savedAt: new Date(now()).toISOString(), bytes };
+    touch(login, { ownFiles: kept });
+    console.log('userSettings: own file saved', { login, path: key, bytes, storedBytes, compressed: stored !== value, files: Object.keys(kept).length });
+  }
+
+  /** Every own file's secret, and the old single one, for Remove My Woodshed. */
+  async function removeOwnFiles(login) {
+    const paths = new Set(Object.keys(ownFileRecords(recordFor(login))));
+    for (const file of Object.keys((await oldOwnFiles(login))?.files ?? {})) paths.add(file);
+    for (const file of paths) {
+      if (!ownFilePathProblem(file)) await secrets.remove(ownFileName(login, file));
+    }
+    await secrets.remove(userSecretName(login, OLD_OWN_FILES));
+    console.log('userSettings: own files removed', { login, files: paths.size });
   }
 
   /** @returns {Promise<object|null>}  what githubUser.mjs kept from Connect GitHub, or null when not connected */
@@ -472,7 +640,8 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   /** Deletes everything this person saved, the secrets first, so a failure leaves the record to try again from. */
   async function removeAll(login) {
     if (secrets) {
-      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES)]) await secrets.remove(userSecretName(login, key));
+      await removeOwnFiles(login);
+      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, 'database', ...Object.keys(FILES)]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];
     store.save();
@@ -480,7 +649,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles, ownWholeFiles, saveOwnFile,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles, ownWholeFiles, ownFilesForSession: storedOwnFiles, saveOwnFile, splitEveryonesOldOwnFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

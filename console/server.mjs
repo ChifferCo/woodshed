@@ -24,7 +24,8 @@
 //   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
 //   POST /api/my/files/<file>/reset                clears them: the console's file alone again
 //   GET  /api/my/own-files       your own whole files, {"files": {"<path>": "<text>"}}, which your sessions write into the checkout
-//   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it
+//   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it.
+//                                Answers {"view": ...}, the page's new view, with each file's path, time and size
 //   GET  /auth/connect           Connect GitHub: sign in once more and keep the token, so your sessions push as you
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
@@ -135,6 +136,7 @@ import { fileURLToPath } from 'node:url';
 
 import { viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
+import { MAX_OWN_FILE_BYTES } from '../shared/ownFiles.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
@@ -221,6 +223,8 @@ const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
 const MY_RESTORE_RE = /^\/api\/my\/databases\/restore\/(apply|discard)$/;
 // A whole .env file, JSON-escaped, under Secrets Manager's 64 KB.
 const MAX_FILE_BODY_BYTES = 160 * 1024;
+// One own file of up to MAX_OWN_FILE_BYTES, JSON-escaped: it is stored compressed, so its text may be past the store's limit.
+const MAX_OWN_FILE_BODY_BYTES = 2 * MAX_OWN_FILE_BYTES + 4096;
 const DATABASES_NOT_READY = 'your own databases are not ready yet: My settings shows how far along they are';
 const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
@@ -1228,7 +1232,7 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch || pathname === MY_OWN_FILES_PATH ? MAX_FILE_BODY_BYTES : undefined);
+      body = await readJson(req, pathname === MY_OWN_FILES_PATH ? MAX_OWN_FILE_BODY_BYTES : fileMatch ? MAX_FILE_BODY_BYTES : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
@@ -1281,7 +1285,8 @@ export function createHandler({
       }
       if (pathname === MY_OWN_FILES_PATH) {
         if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
-        return reply(res, 200, { files: await userSettings.saveOwnFile(login, body.path, body.text), view: myView(login) });
+        await userSettings.saveOwnFile(login, body.path, body.text);
+        return reply(res, 200, { view: myView(login) });
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;

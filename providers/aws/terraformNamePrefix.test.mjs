@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { loadConfig } from '../../console/config.mjs';
+import { ownFileKey } from '../../shared/ownFiles.mjs';
 import { awsProvider } from './index.mjs';
 
 // No test here runs terraform, so these read the Terraform as text, as terraformProjects.test.mjs does, and render the
@@ -138,4 +139,15 @@ test('a console on a box whose stack passes none of them falls back to the woods
 test('the Webhooks page points at the log of the installation\'s own function', () => {
   const config = loadConfig(stackEnv('woodshed'), { readGhToken: false });
   assert.equal(awsProvider({ ...config, envFiles: [] }).words.webhookLog, 'aws logs tail /aws/lambda/woodshed-webhooks');
+});
+
+test('the console\'s role reaches each own file\'s secret, a name below users/<login>/own-files/', () => {
+  const statement = /sid = "PeoplesAndSessionsOwnSecrets"[\s\S]*?resources = \[([\s\S]*?)\]/.exec(read('baseBox.tf'))[1];
+  const arns = [...statement.matchAll(/"([^"]+)"/g)].map(([, arn]) => arn.replace('${var.region}', 'eu-west-1').replace('${local.account_id}', '123456789012').replace('${local.p}', 'woodshed'));
+  // IAM's `*` takes any characters, `/` among them; Secrets Manager adds `-` and six characters to a secret's name.
+  const allows = (name) => arns.some((arn) => new RegExp(`^${arn.split('*').map((part) => part.replace(/[.?+^$|()[\]{}\\]/g, '\\$&')).join('.*')}$`).test(name));
+  const arn = (name) => `arn:aws:secretsmanager:eu-west-1:123456789012:secret:woodshed/${name}-AbCdEf`;
+  assert.ok(allows(arn(`users/octocat/own-files/${ownFileKey('notes/design.md')}`)));
+  assert.ok(allows(arn('users/octocat/own-files')), 'and the old single one, to split and delete it');
+  assert.equal(allows(arn('github-app-key')), false);
 });

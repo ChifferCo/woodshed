@@ -410,6 +410,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
+    userSettings.splitEveryonesOldOwnFiles().catch((err) => console.error('console: old own files not split', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.
     // Every 10 seconds, so a chip a webhook marked due changes soon; only due pull requests are asked for.

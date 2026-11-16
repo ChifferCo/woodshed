@@ -4,13 +4,16 @@
 //
 //   node ownFiles.mjs write <repo dir> <json file>   the JSON is {"<path>": "<text>"}; prints what it wrote and skipped
 //
+// A text gzipped behind shared/ownFiles.mjs's marker, as the console keeps a file where that is smaller, is unpacked
+// first; one without it is written as it is.
+//
 // The JSON file is deleted once read, whatever happens next: it holds the person's secrets.
 
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
-import { ownFilePathProblem } from '../shared/ownFiles.mjs';
+import { ownFilePathProblem, unpackOwnFile } from '../shared/ownFiles.mjs';
 
 function git(repoDir, args) {
   try {
@@ -61,10 +64,17 @@ export function writeOwnFiles(repoDir, files) {
       skipped.push({ file, why });
       continue;
     }
+    let content;
+    try {
+      content = unpackOwnFile(text);
+    } catch {
+      skipped.push({ file, why: 'it does not unpack' });
+      continue;
+    }
     const target = path.join(repoDir, file);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     // Readable by this session's user alone, like the other credentials the start writes.
-    fs.writeFileSync(target, text, { mode: 0o600 });
+    fs.writeFileSync(target, content, { mode: 0o600 });
     fs.chmodSync(target, 0o600);
     written.push(file);
   }

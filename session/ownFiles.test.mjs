@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { GZIP_MARKER, packOwnFile } from '../shared/ownFiles.mjs';
 import { summary, writeOwnFiles } from './ownFiles.mjs';
 
 const SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'ownFiles.mjs');
@@ -62,4 +63,17 @@ test('the command deletes the JSON it read, says what it did, and exits 3 when i
   assert.equal(run.stdout, 'written: .env.local, skipped: README.md (git does not ignore it)');
   assert.equal(fs.existsSync(json), false, 'the person\'s secrets are not left in the JSON');
   assert.equal(fs.readFileSync(path.join(dir, '.env.local'), 'utf8'), 'A=1');
+});
+
+test('a file the console kept gzipped is unpacked before it is written, and a plain one is written as it is', (t) => {
+  const dir = repo(t);
+  const doc = `# Design\n\n${'Each session reads notes/design.md at start.\n'.repeat(5000)}`;
+  const packed = packOwnFile(doc);
+  assert.ok(packed.startsWith(GZIP_MARKER), 'the doc is one gzip shrinks');
+  const result = writeOwnFiles(dir, { '.env.design': packed, '.env.plain': 'A=1\n', '.env.broken': `${GZIP_MARKER}bm90IGd6aXA=` });
+  assert.deepEqual(result.written, ['.env.design', '.env.plain']);
+  assert.deepEqual(result.skipped, [{ file: '.env.broken', why: 'it does not unpack' }]);
+  assert.equal(fs.readFileSync(path.join(dir, '.env.design'), 'utf8'), doc);
+  assert.equal(fs.readFileSync(path.join(dir, '.env.plain'), 'utf8'), 'A=1\n');
+  assert.equal(fs.existsSync(path.join(dir, '.env.broken')), false);
 });

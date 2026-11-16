@@ -553,14 +553,26 @@ each of the repo's env files (the project file's `envFiles` that have a `secret`
 **Your own files**, on My settings, are whole files of your own, by their path in the repo (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
 writes into its checkout at start:
-- All of them are one secret, `<prefix>/users/<login>/own-files` (JSON, path to text; 64 KB and 20 files at
-  most). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
+- Each is a secret of its own, `<prefix>/users/<login>/own-files/<key>`, the key made from its path (`ownFileKey` in
+  `shared/ownFiles.mjs`: letters, digits and `.` kept, the rest escapes of `_`, such as `notes_sdesign.md` for
+  `notes/design.md`). Its text is gzipped behind a `woodshed-gzip:v1:` marker, as base64, when that is smaller; a value
+  without the marker is the text itself. 20 files at most, each up to the secret store's limit on one value as it is
+  stored (`maxValueBytes`, providers/README.md: 64 KB on AWS, 1 MB on the local provider) and 4 MB before it is
+  packed. The refusal names the store's number, and the page shows each file's own size. `state.json` keeps only each
+  path, when it was saved and its size (`people.<login>.ownFiles`).
+- Before, all of them were one JSON secret, `<prefix>/users/<login>/own-files`. The console splits it into a secret
+  for each file at its start and on the person's next save, never over a file's own secret already there, and deletes it
+  once every file listed has its own (`userSettings: old own files secret split`, with how many were copied). Until
+  then each read takes a file it has no secret for yet from the old one (`userSettings: own files read from the old
+  single secret`, with the paths); one too big for the store keeps it (`old own files secret kept`).
 - A path is checked as it is saved and again in the session (`shared/ownFiles.mjs`): inside the repo, no `..`, not
   under `.git`, and not one of the env files above, which take your lines instead.
 - The session writes a file only where git ignores it and does not track it, mode 600, so it cannot reach a commit
   (`session/ownFiles.mjs`). Its log says `Own files written`, or a `WARNING` with each file skipped and why.
-- The console logs `userSettings: own file saved` or `removed` with the path, and `sessionApi: settings handed out`
-  names them under `wholeFiles`. Remove My Woodshed deletes them.
+- The console logs `userSettings: own file saved` with the path, its size and its stored size, `removed`, or `refused,
+  over the store's limit`, and `sessionApi: settings handed out` names them under `wholeFiles`; never a file's text.
+  The session API hands each as it is stored, and the session unpacks it before writing it. Remove My Woodshed deletes
+  every file's secret and the old one.
 - A running session keeps the files it started with; an edit made in a session is not saved back.
 
 **Session timeouts**, on My settings, override the console's *Pause a session
@@ -1307,6 +1319,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   under `users/<login>/<secret>`, so two repos' `api-env` never share them; the session API hands a private session the
   lines of its own repo's files under `name`, which the session's `writeEnvFiles` reads. The shared text is the
   launcher's to give, in `name`'s variable (`API_ENV`).
+
+- `secrets.maxValueBytes`: the most its secret store keeps in one value, which each of a person's own files is held to
+  as stored; 64 KB when it does not say (providers/README.md, "A secret store's limit on one value"). Its names must
+  take the per-file ones, `users/<login>/own-files/<key>`.
 
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).

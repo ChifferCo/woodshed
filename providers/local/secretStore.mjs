@@ -13,6 +13,10 @@ import path from 'node:path';
 import { readSecretFile, secretFile } from '../../shared/fileSecrets.mjs';
 import { isSealed, open, seal } from './secretKey.mjs';
 
+// A file on the console's own disk has no limit of Secrets Manager's 64 KB: this is a sanity cap on one value, which the
+// console holds a person's own file to (shared/ownFiles.mjs).
+const MAX_VALUE_BYTES = 1024 * 1024;
+
 function isNotFound(err) {
   return err?.code === 'ENOENT';
 }
@@ -169,5 +173,5 @@ export function createSecretStore({ dir, key, specs, now = Date.now }) {
     });
   }
 
-  return { list, read, write, save, remove, sealPlainFiles };
+  return { list, read, write, save, remove, sealPlainFiles, maxValueBytes: MAX_VALUE_BYTES };
 }

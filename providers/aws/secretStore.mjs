@@ -5,6 +5,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+// Secrets Manager's limit on one value, which the console holds a person's own file to (shared/ownFiles.mjs).
+const MAX_VALUE_BYTES = 65_536;
+
 function isNotFound(err) {
   return /ResourceNotFoundException/.test(String(err?.stderr ?? err?.message ?? ''));
 }
@@ -99,5 +102,5 @@ export function createSecretStore({ prefix, aws, specs }) {
     }
   }
 
-  return { list, read, write, save, remove };
+  return { list, read, write, save, remove, maxValueBytes: MAX_VALUE_BYTES };
 }

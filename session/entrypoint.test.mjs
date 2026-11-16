@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
+import { packOwnFile } from '../shared/ownFiles.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -787,11 +788,13 @@ test('writeOwnFiles writes the owner\'s files git ignores, logs what it skipped,
   execFileSync('git', ['-C', repo, 'init', '-q']);
   fs.writeFileSync(path.join(repo, '.gitignore'), '.env*\n');
   const json = path.join(dir, 'own-files.json');
-  fs.writeFileSync(json, JSON.stringify({ 'app/.env.production': 'NOTION_TOKEN=x\n', 'notes.txt': 'not ignored' }));
+  const doc = `# Design\n\n${'Each session reads its own files at start.\n'.repeat(3000)}`;
+  fs.writeFileSync(json, JSON.stringify({ 'app/.env.production': 'EXAMPLE_TOKEN=x\n', '.env.design': packOwnFile(doc), 'notes.txt': 'not ignored' }));
   const script = ['set -euo pipefail', 'log() { echo "[woodshed] $*"; }', `SESSION_DIR=${SESSION_DIR}`, `REPO_DIR=${repo}`, `OWN_FILES_JSON=${json}`, fn('writeOwnFiles'), 'writeOwnFiles'].join('\n');
   const out = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
-  assert.equal(out, '[woodshed] WARNING: some of the owner\'s own files were not written (written: app/.env.production, skipped: notes.txt (git does not ignore it))\n');
-  assert.equal(fs.readFileSync(path.join(repo, 'app/.env.production'), 'utf8'), 'NOTION_TOKEN=x\n');
+  assert.equal(out, '[woodshed] WARNING: some of the owner\'s own files were not written (written: app/.env.production, .env.design, skipped: notes.txt (git does not ignore it))\n');
+  assert.equal(fs.readFileSync(path.join(repo, 'app/.env.production'), 'utf8'), 'EXAMPLE_TOKEN=x\n');
+  assert.equal(fs.readFileSync(path.join(repo, '.env.design'), 'utf8'), doc, 'a gzipped one is unpacked');
   assert.equal(fs.existsSync(path.join(repo, 'notes.txt')), false);
   assert.equal(fs.existsSync(json), false);
   assert.equal(execFileSync('bash', ['-c', script], { encoding: 'utf8' }), '', 'nothing to write without the JSON');

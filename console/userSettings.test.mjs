@@ -1,6 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
+import { createSecretStore as createAwsSecretStore } from '../providers/aws/secretStore.mjs';
+import { createSecretStore as createLocalSecretStore } from '../providers/local/secretStore.mjs';
+import { summary, writeOwnFiles } from '../session/ownFiles.mjs';
+import { GZIP_MARKER, MAX_OWN_FILE_BYTES, packOwnFile, unpackOwnFile } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
 
 const ENV_FILES = [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }];
@@ -255,35 +264,186 @@ test('with no token saved, page loads inside the minute ask the store once', asy
   assert.equal(reads, 4, 'and one more once the minute is up');
 });
 
-test('a person\'s own whole files are one secret of theirs, kept by path, and an env file\'s path is refused', async () => {
+// A doc that gzip shrinks well, and text it cannot: random bytes, as base64.
+function designDoc(bytes) {
+  const line = 'Each session writes notes/design.md where git ignores it, and reads it back at start.\n';
+  return `# Design\n\n${line.repeat(Math.ceil(bytes / line.length))}`.slice(0, bytes);
+}
+const noise = (bytes) => crypto.randomBytes(bytes).toString('base64').slice(0, bytes);
+
+function localStore(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-own-files-store-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return { dir, secrets: createLocalSecretStore({ dir, key: crypto.randomBytes(32), specs: [] }) };
+}
+
+test('a person\'s own files are a secret each, kept by path, listed with their size, and an env file\'s path is refused', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
   let clock = Date.parse('2026-11-11T10:00:00Z');
   const settings = createUserSettings({ store, secrets, envFiles: ENV_FILES, now: () => clock });
 
   assert.deepEqual(await settings.ownWholeFiles('octocat'), {}, 'none yet');
-  assert.deepEqual(await settings.saveOwnFile('Octocat', ' app/.env.production ', 'NOTION_TOKEN=a\r\n'), { 'app/.env.production': 'NOTION_TOKEN=a\n' });
+  await settings.saveOwnFile('Octocat', ' app/.env.production ', 'EXAMPLE_TOKEN=a\r\n');
   clock += 60_000;
   await settings.saveOwnFile('octocat', '.mcp.local.json', '{}');
-  assert.deepEqual(JSON.parse(secrets.values.get('users/octocat/own-files')), { 'app/.env.production': 'NOTION_TOKEN=a\n', '.mcp.local.json': '{}' });
+  assert.deepEqual([...secrets.values].sort(), [
+    ['users/octocat/own-files/_dmcp.local.json', '{}'],
+    ['users/octocat/own-files/app_s.env.production', 'EXAMPLE_TOKEN=a\n'],
+  ], 'one secret a file, named from its path');
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), { 'app/.env.production': 'EXAMPLE_TOKEN=a\n', '.mcp.local.json': '{}' });
   assert.deepEqual(settings.view('octocat').ownFiles, [
-    { path: '.mcp.local.json', savedAt: '2026-11-11T10:01:00.000Z' },
-    { path: 'app/.env.production', savedAt: '2026-11-11T10:00:00.000Z' },
+    { path: '.mcp.local.json', savedAt: '2026-11-11T10:01:00.000Z', bytes: 2 },
+    { path: 'app/.env.production', savedAt: '2026-11-11T10:00:00.000Z', bytes: 16 },
   ], 'a save keeps the others\' times');
-  assert.equal(JSON.stringify(store.state).includes('NOTION_TOKEN'), false, 'state.json never holds the text');
+  assert.equal(JSON.stringify(store.state).includes('EXAMPLE_TOKEN'), false, 'state.json never holds the text');
   assert.deepEqual(await settings.ownWholeFiles('mia-dev'), {}, 'nobody else\'s');
 
   for (const [file, message] of [['/etc/passwd', /leading/], ['../x', /\.\./], ['.git/config', /git's own/], ['a b', /letters/], ['api/.env', /env files/]]) {
     await assert.rejects(settings.saveOwnFile('octocat', file, 'x'), (err) => err.shown && message.test(err.message), file);
   }
-  await assert.rejects(settings.saveOwnFile('octocat', 'big', 'x'.repeat(70_000)), /64 KB/);
 
   await settings.saveOwnFile('octocat', 'app/.env.production', '  ');
+  assert.deepEqual([...secrets.values.keys()], ['users/octocat/own-files/_dmcp.local.json'], 'a removal deletes that file\'s secret alone');
   await settings.saveOwnFile('octocat', '.mcp.local.json', '');
-  assert.equal(secrets.values.has('users/octocat/own-files'), false, 'the last one removed takes the secret with it');
+  assert.equal(secrets.values.size, 0);
   assert.deepEqual(settings.view('octocat').ownFiles, []);
+});
 
+test('a person keeps 20 own files at most, each held to the store\'s limit, not all of them together', async () => {
+  const secrets = fakeSecrets();
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  for (let i = 0; i < 20; i++) await settings.saveOwnFile('octocat', `notes/part${i}.md`, noise(40_000));
+  assert.equal(secrets.values.size, 20, '800 KB in all, past the 64 KB one secret holds');
+  await assert.rejects(settings.saveOwnFile('octocat', 'notes/one-more.md', 'x'), /20 files at most/);
+  await settings.saveOwnFile('octocat', 'notes/part0.md', 'replaced');
+  assert.equal(secrets.values.get('users/octocat/own-files/notes_spart0.md'), 'replaced', 'a file already kept can still change');
+});
+
+test('each file is held to its store\'s own limit as stored: 64 KB on AWS and when undeclared, 1 MB locally', async (t) => {
+  const aws = createAwsSecretStore({ prefix: 'woodshed/', aws: async () => ({}), specs: [] });
+  const { secrets: local } = localStore(t);
+  assert.deepEqual([aws.maxValueBytes, local.maxValueBytes, fakeSecrets().maxValueBytes], [65_536, 1_048_576, undefined]);
+
+  const declared64 = { ...fakeSecrets(), maxValueBytes: aws.maxValueBytes };
+  const undeclared = fakeSecrets();
+  for (const secrets of [declared64, undeclared]) {
+    const settings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+    await assert.rejects(settings.saveOwnFile('octocat', 'notes/noise.txt', noise(100 * 1024)), (err) => err.shown
+      && err.message === 'notes/noise.txt is 100 KB even compressed, over the 64 KB this console\'s secret store holds for one file');
+    assert.equal(secrets.values.size, 0, 'nothing is stored');
+    assert.equal(settings.view('octocat').ownFileLimit, 65_536);
+    await settings.saveOwnFile('octocat', 'notes/design.md', designDoc(200 * 1024));
+    assert.ok(secrets.values.get('users/octocat/own-files/notes_sdesign.md').startsWith(GZIP_MARKER), 'a 200 KB doc fits once gzipped');
+    assert.equal(settings.view('octocat').ownFiles[0].bytes, 200 * 1024, 'the page shows its real size');
+  }
+
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: local });
+  await settings.saveOwnFile('octocat', 'notes/noise.txt', noise(100 * 1024));
+  assert.equal((await settings.ownWholeFiles('octocat'))['notes/noise.txt'].length, 100 * 1024, 'the local store keeps it');
+  await assert.rejects(settings.saveOwnFile('octocat', 'notes/big.txt', noise(1_100_000)), /is 1\.1 MB even compressed, over the 1 MB/);
+  await assert.rejects(settings.saveOwnFile('octocat', 'notes/huge.md', designDoc(MAX_OWN_FILE_BYTES + 1)), /a file can be 4 MB at most/);
+});
+
+test('a session gets each file as stored, packed or plain, and the page gets its text', async () => {
+  const secrets = fakeSecrets();
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const doc = designDoc(200 * 1024);
+  await settings.saveOwnFile('octocat', 'notes/design.md', doc);
+  await settings.saveOwnFile('octocat', 'tools/config.toml', 'port = 1\n');
+  const handed = await settings.ownFilesForSession('octocat');
+  assert.ok(handed['notes/design.md'].startsWith(GZIP_MARKER));
+  assert.ok(handed['notes/design.md'].length < 20_000);
+  assert.equal(handed['tools/config.toml'], 'port = 1\n');
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), { 'notes/design.md': doc, 'tools/config.toml': 'port = 1\n' });
+});
+
+test('the old single secret is split into a secret a file, never over a newer one, and deleted only once all are copied', async () => {
+  const secrets = fakeSecrets();
+  const old = { 'app/.env.production': 'EXAMPLE_TOKEN=old\n', 'notes/design.md': designDoc(30_000), 'tools/config.toml': 'port = 1\n' };
+  secrets.values.set('users/octocat/own-files', JSON.stringify(old));
+  // As a console before this change left it: the paths with their times.
+  const store = { state: { people: { octocat: { ownFiles: Object.fromEntries(Object.keys(old).map((f) => [f, '2026-11-01T10:00:00.000Z'])) } } }, save() {} };
+  const settings = createUserSettings({ store, secrets });
+
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), old, 'until it is split, reads fall back to it');
+  assert.equal(unpackOwnFile((await settings.ownFilesForSession('octocat'))['notes/design.md']), old['notes/design.md']);
+  assert.ok(secrets.values.has('users/octocat/own-files'), 'a read changes nothing');
+
+  // One already has a secret of its own, saved after the old one: the split keeps it.
+  secrets.values.set('users/octocat/own-files/tools_sconfig.toml', 'port = 2\n');
+  await settings.splitEveryonesOldOwnFiles();
+  assert.equal(secrets.values.has('users/octocat/own-files'), false, 'deleted once every file has its own');
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), { ...old, 'tools/config.toml': 'port = 2\n' }, 'never over the newer one');
+  assert.ok(secrets.values.get('users/octocat/own-files/notes_sdesign.md').startsWith(GZIP_MARKER), 'copied packed');
+  assert.deepEqual(settings.view('octocat').ownFiles.map((f) => [f.path, f.savedAt]), Object.keys(old).map((f) => [f, '2026-11-01T10:00:00.000Z']), 'their times are kept');
+  assert.equal(store.state.people.octocat.ownFilesPerSecret, true);
+});
+
+test('a save splits the old secret first, and one the store cannot hold a file of keeps it, read as the fallback', async () => {
+  const secrets = { ...fakeSecrets(), maxValueBytes: 10_000 };
+  const old = { 'notes/noise.txt': noise(12_000), 'tools/config.toml': 'port = 1\n' };
+  secrets.values.set('users/octocat/own-files', JSON.stringify(old));
+  const store = { state: { people: { octocat: { ownFiles: { 'notes/noise.txt': '2026-11-01T10:00:00.000Z', 'tools/config.toml': '2026-11-01T10:00:00.000Z' } } } }, save() {} };
+  const settings = createUserSettings({ store, secrets });
+
+  await settings.saveOwnFile('octocat', 'app/.env.local', 'A=1\n');
+  assert.equal(secrets.values.get('users/octocat/own-files/tools_sconfig.toml'), 'port = 1\n', 'the file that fits is copied');
+  assert.equal(secrets.values.has('users/octocat/own-files/notes_snoise.txt'), false);
+  assert.ok(secrets.values.has('users/octocat/own-files'), 'not deleted while a file is only there');
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), { ...old, 'app/.env.local': 'A=1\n' }, 'still read from it');
+
+  // Once the file that did not fit is gone, nothing is left only in the old secret.
+  await settings.saveOwnFile('octocat', 'notes/noise.txt', '');
+  assert.equal(secrets.values.has('users/octocat/own-files'), false);
+  assert.deepEqual(await settings.ownWholeFiles('octocat'), { 'tools/config.toml': 'port = 1\n', 'app/.env.local': 'A=1\n' });
+});
+
+test('Remove My Woodshed deletes every own file\'s secret and the old single one', async () => {
+  const secrets = fakeSecrets();
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets, envFiles: ENV_FILES });
   await settings.saveOwnFile('octocat', 'a/.env', 'X=1');
+  await settings.saveOwnFile('octocat', 'notes/design.md', designDoc(100_000));
+  secrets.values.set('users/octocat/own-files', JSON.stringify({ 'tools/config.toml': 'port = 1\n' }));
+  secrets.values.set('users/octocat/own-files/tools_sconfig.toml', 'port = 1\n');
+  await settings.saveOwnFile('mia-dev', 'a/.env', 'Y=1');
   await settings.removeAll('octocat');
-  assert.equal(secrets.values.size, 0, 'Remove My Woodshed deletes them too');
+  assert.deepEqual([...secrets.values.keys()], ['users/mia-dev/own-files/a_s.env'], 'only someone else\'s are left');
+});
+
+test('no log line carries a file\'s text: saves, reads, the split, the session\'s write and removal', async (t) => {
+  const lines = [];
+  for (const level of ['log', 'info', 'warn', 'error']) t.mock.method(console, level, (...args) => { lines.push(JSON.stringify(args)); });
+  const { secrets } = localStore(t);
+  const SECRET_TEXT = 'EXAMPLE_TOKEN=do-not-log-me-4d1f';
+  const secretDoc = `${designDoc(80_000)}\n${SECRET_TEXT}\n`;
+  await secrets.save('users/octocat/own-files', JSON.stringify({ 'tools/config.toml': `${SECRET_TEXT}\n`, '../outside': SECRET_TEXT }), 'old');
+  const store = { state: { people: { octocat: { ownFiles: { 'tools/config.toml': '2026-11-01T10:00:00.000Z' } } } }, save() {} };
+  const settings = createUserSettings({ store, secrets });
+
+  await settings.ownWholeFiles('octocat');
+  await settings.saveOwnFile('octocat', 'notes/design.md', secretDoc);
+  await settings.saveOwnFile('octocat', 'app/.env.production', `${SECRET_TEXT}\n`);
+  await assert.rejects(settings.saveOwnFile('octocat', 'notes/noise.txt', `${noise(1_100_000)}${SECRET_TEXT}`), /over the 1 MB/);
+  const handed = await settings.ownFilesForSession('octocat');
+
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-own-files-repo-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  execFileSync('git', ['-C', repo, 'init', '-q']);
+  fs.writeFileSync(path.join(repo, '.gitignore'), '.env*\nnotes/\n');
+  const said = summary(writeOwnFiles(repo, handed));
+  lines.push(said);
+  assert.equal(fs.readFileSync(path.join(repo, 'notes/design.md'), 'utf8'), secretDoc);
+  await settings.saveOwnFile('octocat', 'notes/design.md', '');
+  await settings.removeAll('octocat');
+
+  const packedText = packOwnFile(secretDoc).slice(GZIP_MARKER.length, GZIP_MARKER.length + 40);
+  assert.ok(lines.some((line) => line.includes('notes/design.md')), 'paths are logged');
+  assert.ok(lines.some((line) => /"storedBytes":\d+/.test(line)), 'and sizes');
+  assert.ok(lines.some((line) => line.includes('old own files secret split')), 'and the split');
+  for (const line of lines) {
+    assert.equal(line.includes('do-not-log-me'), false, line.slice(0, 300));
+    assert.equal(line.includes(packedText), false, 'nor the packed text');
+    assert.equal(line.includes('Each session writes notes/design.md'), false, 'nor the doc');
+  }
 });

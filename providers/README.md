@@ -28,12 +28,28 @@ it: no Secrets page, no saved Claude homes, no databases of its own, or GitHub's
 | `name` | `aws` or `local` | Its start log, and which kind a fixed secret store is on the Secrets page |
 | `words` | What the pages say about where a session runs: the start checklist's first steps (`null` leaves one out), the wait when there is no room, the note under the session limits, where homes and databases are kept, and the webhook receiver. `console/providerWords.mjs` lists each and has the defaults, which name no provider | Every page, through `pageShell`'s `woodshed-provider` meta tag |
 | `launcher` | `start`, `stop`, `isAlive` and the rest, for session containers, and optionally `progress` (below) | `console/fleet.mjs` |
-| `secrets` | `list`, `read`, `write`, `save`, `remove`, over the names in `console/secrets.mjs` | The Secrets page, sign-in, the GitHub App key |
+| `secrets` | `list`, `read`, `write`, `save`, `remove`, over the names in `console/secrets.mjs`, and `maxValueBytes` (below) | The Secrets page, sign-in, the GitHub App key, My settings |
 | `homes` | `put`, `get`, `copy`, `remove` and the rest, for saved Claude homes | `console/sessionApi.mjs` |
 | `dbAdmin` | `start(command)`, `stop(id)`, `outcomes(ids)`, runs of `session/dbAdmin.mjs` | `console/databases.mjs` |
 | `databases` | The databases `dbAdmin` makes a copy of for each session, `postgres` and `mongo` (which needs `postgres`): the installation's own, `[]` without `dbAdmin` | `console/databases.mjs`, the tunnel, Restore a dump and the session page's Data ▾ |
 | `webhooks` | `run(handler)`, which hands each GitHub or Slack message to `handler.dispatch` | `console/webhookDispatch.mjs` |
 | `webhookUrl` | `() => Promise<string>`, where GitHub should post | The Secrets & webhooks page |
+
+### A secret store's limit on one value
+
+`secrets.maxValueBytes` is the most the store keeps in one value, in bytes. The console holds each of a person's own
+files on My settings (`users/<login>/own-files/<key>`, one secret a file, gzipped where that is smaller) to it as it
+is stored, and its refusal names the number. A store that does not say gets 64 KB (`DEFAULT_MAX_VALUE_BYTES` in
+`shared/ownFiles.mjs`), Secrets Manager's limit, so it is safe by default; a store that keeps more says so:
+
+| Store | `maxValueBytes` |
+| --- | --- |
+| `aws/secretStore.mjs` | 65,536: Secrets Manager's limit on one value |
+| `local/secretStore.mjs` | 1,048,576: a sanity cap, since a file on the console's disk has no limit of its own |
+
+An embedding program's own store (console/README.md, "Embedding the console") declares its own the same way. Its
+names must take the per-file ones: segments of letters, digits, `.`, `_` and `-`, none starting with `.`, up to about
+180 characters with the login.
 
 ### A wait's progress
 

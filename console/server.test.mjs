@@ -1025,7 +1025,6 @@ test('a person\'s own whole files are read and saved for the signed-in login onl
     saveOwnFile: async (login, file, text) => {
       calls.push(['save', login, file, text]);
       if (file.includes('..')) throw Object.assign(new Error('a path cannot have . or .. in it'), { shown: true });
-      return { [file]: text };
     },
   };
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
@@ -1039,7 +1038,6 @@ test('a person\'s own whole files are read and saved for the signed-in login onl
   assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as })).json(), { files: { 'app/.env.production': 'A=mia-dev' } });
   const saved = await post(port, '/api/my/own-files', { path: 'app/.env.production', text: 'B=1', login: 'octocat' }, as);
   assert.equal(saved.status, 200);
-  assert.deepEqual(saved.body.files, { 'app/.env.production': 'B=1' });
   assert.equal(saved.body.view.ownFiles[0].path, 'app/.env.production', 'the page gets its new view with the answer');
   const refused = await post(port, '/api/my/own-files', { path: '../x', text: 'x' }, as);
   assert.equal(refused.status, 409);

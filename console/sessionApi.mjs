@@ -4,7 +4,8 @@
 //   POST /github-token   Authorization: Bearer <SESSION_TOKEN>  ->  {"token": "...", "expiresAt": "..."}
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...}, by the
 //                        names the session's project file gives its env files, its own repo's alone,
-//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
+//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them;
+//                        a text may be gzipped behind shared/ownFiles.mjs's marker, which the session unpacks),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
@@ -291,7 +292,7 @@ async function settingsReply(res, session, userSettings, databases) {
   // null for a file is the console's default, which the task definition already gives every session.
   // By the names the session's project file gives its env files, and only its own repo's (userSettings.ownFiles).
   const files = await userSettings.ownFiles(session.owner, { repo: session.repo });
-  const ownFiles = await userSettings.ownWholeFiles?.(session.owner) ?? {};
+  const ownFiles = await userSettings.ownFilesForSession?.(session.owner) ?? {};
   console.log('sessionApi: settings handed out', {
     sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,
   });
