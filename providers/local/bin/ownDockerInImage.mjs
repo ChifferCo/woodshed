@@ -64,9 +64,11 @@ expect(!(inspect.HostConfig.CapAdd || []).length, `no capabilities added (CapAdd
 // Sysbox maps the container's root to an unprivileged range of the machine's ids: the daemon's process is not root here.
 const dockerdUid = docker(['top', started.ref, '-eo', 'pid,uid,comm']).split('\n').find((l) => /\bdockerd$/.test(l.trim()))?.trim().split(/\s+/)[1];
 expect(dockerdUid && dockerdUid !== '0' && dockerdUid !== 'root', `the session's dockerd runs as an unprivileged uid of the machine (uid: ${dockerdUid})`);
-const machineContainers = docker(['ps', '-a', '--format', '{{.Image}} {{.Names}}']);
-expect(!/hello-world|own-docker-check|nginx|curlimages/.test(machineContainers), 'none of the session\'s containers is on the machine\'s Docker');
-expect(!/own-docker-check/.test(docker(['images', '--format', '{{.Repository}}'])), 'the image the session built is not on the machine\'s Docker');
+// The machine's own, but for the session's container (whose image is the one this was given).
+const machineContainers = docker(['ps', '-a', '--format', '{{.Image}}']).split('\n').filter((i) => i && i !== image);
+expect(!machineContainers.some((i) => /hello-world|own-docker-check|nginx|curl/.test(i)), `none of the session's containers is on the machine's Docker (others there: ${JSON.stringify(machineContainers)})`);
+const machineImages = docker(['images', '--format', '{{.Repository}}']).split('\n');
+expect(!machineImages.some((r) => /^(hello-world|own-docker-check.*|nginx|curlimages\/curl)$/.test(r)), 'none of the images the session pulled or built is on the machine\'s Docker');
 expect(/Own Docker ready/.test(logs), 'ownDocker.sh logged Own Docker ready');
 expect(/\[check\] result: pass/.test(logs), 'every check inside the session passed');
 
