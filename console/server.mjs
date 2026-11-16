@@ -1616,8 +1616,9 @@ export function createHandler({
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
         else {
           // Its env values and instructions, the installation's and everyone's own, go first: a repo added again starts
-          // with none, and when a delete fails the repo stays listed, so Remove can be tried again.
-          if (addedProjects.view().some((p) => p.name === body.name && p.removable)) await repoSettings?.forget(body.name);
+          // with none, and when a delete fails the repo stays listed, so Remove can be tried again. Only for a repo
+          // Remove would take: one refused (the installation's own, or one with live sessions) keeps its settings.
+          if (addedProjects.view().some((p) => p.name === body.name && p.removable && !p.sessions)) await repoSettings?.forget(body.name);
           await addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
           // A repo added again later under the same name starts on the console's channel.

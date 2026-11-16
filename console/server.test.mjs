@@ -1229,6 +1229,12 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
   assert.deepEqual(forgotten, [], 'a refused removal keeps the settings');
+  store.state.sessions.push({ id: 'live0001', repo: 'o/api', project: 'api', status: 'running' });
+  const busy = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(busy.status, 400);
+  assert.match(busy.body.error, /still running/);
+  assert.deepEqual(forgotten, [], 'a repo with a live session keeps its settings');
+  store.state.sessions.length = 0;
   failForget = true;
   const failed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
   assert.equal(failed.status, 502, 'a failed delete is said');
