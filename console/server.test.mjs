@@ -56,6 +56,21 @@ test('the console refuses unknown hosts and cross-origin writes', async (t) => {
   assert.deepEqual(stopped, ['0a1b2c3d']);
 });
 
+test('a console nobody signs in to is one person\'s, with one list of sessions, unless WOODSHED_ONE_PERSON=0 says otherwise', async (t) => {
+  const fleet = { sessions: () => [], find: () => null };
+  const base = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const onePerson = async (config) => {
+    const server = http.createServer(createHandler({ config, fleet }));
+    const port = await listen(server);
+    t.after(() => server.close());
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: { host: `localhost:${port}` } });
+    return (await res.json()).onePerson;
+  };
+  assert.equal(await onePerson(base), true, 'loopback with no sign-in: one person');
+  assert.equal(await onePerson({ ...base, onePerson: false }), false, 'the setting at 0: Mine and Everyone, as the dev console shows them');
+  assert.equal(await onePerson({ ...base, onePerson: true }), true);
+});
+
 function post(port, path, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -1679,6 +1694,12 @@ test('an admin turns on sessions from GitHub, then Can be assigned, and only the
 
   const listed = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: mia })).json();
   assert.deepEqual([listed.assignables, listed.assignable, listed.shared, listed.sessions.length], [['mia-dev'], true, true, 1], 'the rail learns who may be assigned, whether you are one, and that Everyone shows');
+  assert.equal(listed.onePerson, false, 'two people on the list: Mine and Everyone');
+  const sam = store.state.members['sam-ops'];
+  delete store.state.members['sam-ops'];
+  const alone = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: mia })).json();
+  assert.equal(alone.onePerson, true, 'one person on the list: one list of every session');
+  store.state.members['sam-ops'] = sam;
 
   assert.equal((await post(port, `/api/sessions/${shared.id}/assign`, { to: 'mia-dev' }, mia)).status, 200);
   assert.equal((await post(port, `/api/sessions/${shared.id}/assign`, { to: null }, mia)).status, 200, 'null unassigns');

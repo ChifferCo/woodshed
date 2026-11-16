@@ -74,6 +74,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - `WOODSHED_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
   (an HMAC-SHA256 over the person's login, role and expiry), which is then the only sign-in, and required. The host
   says who is in, so there is no People list; its `owner`s are the console's admins.
+- `WOODSHED_ONE_PERSON=1`: the console is one person's own, such as a personal workspace, so the rail shows one list
+  of every session with no Mine | Everyone switch. With no People list the console cannot tell by itself.
 
 "Hosted mode" in [console/README.md](../console/README.md) has the request, the header's format and what each changes.
 

@@ -100,6 +100,11 @@ const sessions = [
   session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false,
     // Near its memory limit, for the badge's red and the machine dialog's: its disk from an image before it was reported.
     usage: { cpuPercent: 162, memoryBytes: 7.5 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 7.9 * GB, cores: 2, diskUsedBytes: null, diskTotalBytes: null } }),
+  // A label the viewer added, on their own Claude plan, that nobody has: on Mine, since they started it, and Unassigned on
+  // Everyone.
+  session('a11e0001', 3, 'Add a ruler to the canvas', {
+    kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
+  }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
   session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.
@@ -295,6 +300,9 @@ function startConsole() {
       // through Tailscale's serve has them (appPorts.mjs).
       ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
       WOODSHED_CHECKOUT: devClone, WOODSHED_SUPERVISED: '1',
+      // Nobody signs in here, which on its own would make it a one-person console with one list of sessions: the made-up
+      // team's Mine and Everyone show unless DEV_CONSOLE_ONE_PERSON=1 asks for that one list (server.mjs, onePersonConsole).
+      WOODSHED_ONE_PERSON: process.env.DEV_CONSOLE_ONE_PERSON === '1' ? '1' : '0',
       // Its own links name the port people open, not the one behind it.
       ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
       // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new

@@ -15,8 +15,12 @@ the URL). Your avatar menu (My settings, the console's pages, Sign out) is at th
 A card shows the title and its tag (on Everyone, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. On a console with more than one project, each card's left edge is its project's colour (the name is in its tooltip), and a row of chips under the head (**All**, then each project with its colour and count) filters the rail to one project; the browser keeps the pick (`woodshed-rail-project`), and one naming a project that is gone is All. How long it ran and who started it are under its Details; the app's button and the
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
-turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones assigned
-to you: **Needs you** (stopped sessions waiting on you), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. **Take it** on
+turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones you
+started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. A console one person uses has one list of
+every session, with no switch, and its head reads **My sessions** (`/all` opens it): one nobody signs in to (it listens on
+loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
+decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
+`/api/sessions` says which in `onePerson`. **Take it** on
 an unassigned card, or **Assign to me**, **Hand over to** and **Unassign** in the card's ⋯ menu, change
 who has it; only someone who can be assigned can (`POST /api/sessions/<id>/assign`). A later comment from someone else does not move it, but
 someone who can be assigned commenting on an unassigned session takes it. Assignment is a label, not a permission: a shared session stays visible
@@ -1311,6 +1315,11 @@ signs every request a signed-in browser sends, a cross-site one too. `woodshed-d
 which is not refused when the host later lets someone go: it lasts at most 12 hours. The console logs `console:
 hosted mode` with which of the two are on at start.
 
+**One person's console** (`WOODSHED_ONE_PERSON=1`, or `config.onePerson: true` for an embedding program). With no
+People list a hosted console cannot count who uses it, so the host says when it is one person's own, such as a
+personal workspace: the rail then shows one list of every session, with no Mine | Everyone switch. Without it, Mine
+still lists the shared sessions each person started, since nobody can be assigned one here.
+
 ## Embedding the console
 
 `console/installation.mjs` is one console without its servers: `createInstallation` builds the fleet, GitHub clients,
@@ -1917,6 +1926,7 @@ Remove My Woodshed.
 | `WOODSHED_APP_DOMAIN` | none | Session apps answer at `<id>.<this>` ("Session apps"); none turns them off, unless `WOODSHED_APP_PORTS` is set |
 | `WOODSHED_APP_PORTS` | none | On one person's console only (loopback, no sign-in): ports such as `7701-7710` the console also listens on, each lent to one session's app, which answers at `<public URL's name>:<port>` (`appPorts.mjs`, "Session apps on ports"). Not beside `WOODSHED_APP_DOMAIN`. The installer sets it with `WOODSHED_TAILSCALE=1` |
 | `WOODSHED_TLS_ASK_PORT` | none | A port on `127.0.0.1` where a reverse proxy asks before getting a certificate on demand: `GET /tls-ask?domain=<name>` answers 200 for the public URL's host, `WOODSHED_HOSTS` and a session's app name, 403 otherwise (`tlsAsk.mjs`). For a console with no wildcard certificate; `providers/local/README.md` has the Caddyfile |
+| `WOODSHED_ONE_PERSON` | tells by itself | `1`: one person uses this console, so the rail shows one list of every session with no Mine \| Everyone switch; `0`: always the two views. Unset, a console nobody signs in to or with one member on People is one person's. Hosted mode has no People list, so its host sets it. See "Hosted mode" |
 | `WOODSHED_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |
 | `WOODSHED_TRUSTED_IDENTITY_SECRET` | none | Hosted mode: the secret a trusted proxy in front of the console signs each request's `X-Woodshed-Identity` header with, at least 32 characters. Set, that header is the only sign-in, and it is required; `role: owner` is an admin. See "Hosted mode" |

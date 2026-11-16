@@ -109,11 +109,17 @@
     return data?.shared !== false;
   }
 
+  // One list, with no Mine and Everyone: no shared session to show, or a console one person uses (server.mjs,
+  // onePersonConsole), where every shared session is that person's.
+  function oneList() {
+    return !sharesShown() || data?.onePerson === true;
+  }
+
   function railMine() {
-    if (!sharesShown()) return (lastRailMine = true);
+    if (oneList()) return (lastRailMine = true);
     if (onMy) lastRailMine = true;
     else if (onShared || !id) lastRailMine = false;
-    else if (currentSession) lastRailMine = W.isPrivate(currentSession) || (lastRailMine && W.assignedTo(currentSession, data?.login));
+    else if (currentSession) lastRailMine = W.isPrivate(currentSession) || (lastRailMine && W.inMine(currentSession, data?.login));
     return lastRailMine;
   }
 
@@ -422,10 +428,10 @@
     return [...list.filter(isPinned), ...list.filter((s) => !isPinned(s))];
   }
 
-  // Private is told apart only where it sits beside an assigned shared session, so a rail of one's own stays quiet.
+  // Private is told apart only where it sits beside a shared session, so a rail of one's own stays quiet.
   function showOwnerTag(s) {
     if (!W.isPrivate(s)) return Boolean(s.assignee);
-    return railMine() && data.sessions.some((o) => W.assignedTo(o, data.login));
+    return railMine() && railListing().some((o) => !W.isPrivate(o));
   }
 
   // Assign, take it, hand over and unassign are for someone who can be assigned; the console checks, the page only offers them.
@@ -608,8 +614,8 @@
       railFrame.only = h('b', { class: 'rail-only' }, 'My sessions');
       railFrame.el = h('div', { class: 'rail-head' }, railFrame.seg, railFrame.only, picker.el, railFrame.add);
     }
-    railFrame.seg.hidden = !sharesShown();
-    railFrame.only.hidden = sharesShown();
+    railFrame.seg.hidden = oneList();
+    railFrame.only.hidden = !oneList();
     // A switch's own page is marked as the one open only there; on a session's page it is the view the session belongs to.
     railFrame.everyone.setAttribute('href', `/all${W.byQuery(picked)}`);
     railFrame.everyone.setAttribute('aria-current', onShared ? 'page' : !railMine() ? 'true' : 'false');
@@ -759,10 +765,11 @@
     return me && railMine() && !W.setupDone(me) ? W.setupCard(me, { compact: true }) : null;
   }
 
-  // Mine is your private sessions and the shared ones assigned to you; Everyone is every shared session, with the ones
-  // nobody has first.
+  // Mine is your private sessions and the shared ones you started or that are assigned to you (W.inMine); Everyone is
+  // every shared session, with the ones nobody has first. A console one person uses has one list: all of them.
   function railListing() {
-    if (railMine()) return data.sessions.filter((s) => W.isPrivate(s) || W.assignedTo(s, data.login));
+    if (data.onePerson === true) return data.sessions;
+    if (railMine()) return data.sessions.filter((s) => W.inMine(s, data.login));
     return data.sessions.filter((s) => !W.isPrivate(s) && (picked.length === 0 || picked.some((l) => W.sameLogin(l, s.assignee))));
   }
 
@@ -1715,8 +1722,9 @@
       document.getElementById('app').replaceChildren(h('p', { class: 'empty' }, loadError ? `Could not load sessions: ${loadError}` : 'Loading…'));
       return;
     }
-    // Everyone has nothing to show without shared sessions, so its address opens Mine.
-    if (onShared && !sharesShown()) {
+    // Everyone has nothing to show without shared sessions, nor beside the one list of a console one person uses, so its
+    // address opens Mine.
+    if (onShared && oneList()) {
       window.history.replaceState(null, '', '/');
       readRoute();
     }
