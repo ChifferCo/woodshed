@@ -949,12 +949,13 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
     removeSessionsOf: async (login) => { done.push(`session homes ${login}`); return 0; },
   };
   const claudeSettings = { remove: async (login) => { done.push(`shared settings ${login}`); } };
+  const repoSettings = { forgetPerson: async (login) => { done.push(`repo settings ${login}`); } };
   let asked = 0;
   const github = { openPullsFor: async (login) => { asked++; return [{ number: 7, title: `${login}'s PR`, why: 'yours' }]; } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const githubUser = { disconnect: async (login) => { done.push(`github ${login}`); } };
-  const handle = createHandler({ config, fleet, auth, userSettings, github, homes, githubUser, claudeSettings });
+  const handle = createHandler({ config, fleet, auth, userSettings, github, homes, githubUser, claudeSettings, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -966,7 +967,7 @@ test('Remove My Woodshed needs your login typed, and removes only yours; the rai
   const removed = await post(port, '/api/my/remove', { confirm: 'mia-dev' }, as);
   assert.equal(removed.status, 200);
   assert.deepEqual([removed.body.stopped, removed.body.removed], [1, 2]);
-  assert.deepEqual(done, ['github mia-dev', 'settings mia-dev', 'sessions mia-dev', 'session homes mia-dev', 'home mia-dev', 'shared settings mia-dev'],
+  assert.deepEqual(done, ['github mia-dev', 'repo settings mia-dev', 'settings mia-dev', 'sessions mia-dev', 'session homes mia-dev', 'home mia-dev', 'shared settings mia-dev'],
     'GitHub is disconnected, so its token ends at GitHub, then the settings, then the sessions, and the homes last, after their stops tried to save them');
 
   done.length = 0;
@@ -1203,7 +1204,15 @@ test('Console settings: a repo is added and removed on the page, with its sessio
     return { installationId: null };
   };
   const addedProjects = createAddedProjects({ store, config, check });
-  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+  const forgotten = [];
+  let failForget = false;
+  const repoSettings = {
+    forget: async (name) => {
+      if (failForget) throw Object.assign(new Error(`1 of ${name}'s repo settings could not be deleted: the console log says why`), { shown: true, status: 502 });
+      forgotten.push(name);
+    },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -1219,9 +1228,22 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/api' })).status, 400, 'twice');
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
+  assert.deepEqual(forgotten, [], 'a refused removal keeps the settings');
+  store.state.sessions.push({ id: 'live0001', repo: 'o/api', project: 'api', status: 'running' });
+  const busy = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(busy.status, 400);
+  assert.match(busy.body.error, /still running/);
+  assert.deepEqual(forgotten, [], 'a repo with a live session keeps its settings');
+  store.state.sessions.length = 0;
+  failForget = true;
+  const failed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(failed.status, 502, 'a failed delete is said');
+  assert.deepEqual(config.projects.map((p) => p.name), ['r', 'api'], 'and the repo stays, so Remove can be tried again');
+  failForget = false;
   const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
+  assert.deepEqual(forgotten, ['api'], 'its repo settings go with it');
 });
 
 test('Console settings: Add a repo\'s list is the App\'s repos less the projects, null with no App, and a 502 when GitHub did not answer', async (t) => {
