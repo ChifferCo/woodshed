@@ -9,7 +9,8 @@
 //                        not answer
 //   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...}, by the
 //                        names the session's project file gives its env files, its own repo's alone,
-//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
+//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files for the session's repo, written
+//                        where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
@@ -119,7 +120,8 @@ export function sessionForToken(given, sessions) {
  *          tokensFor?: ((session: object) => {project: string, default: boolean, sessions: object, asks: object})|null,
  *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
  *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null,
- *          repoSettings?: {forSession: (session: object) => Promise<object|null>}|null}} opts
+ *          repoSettings?: {forSession: (session: object) => Promise<object|null>,
+ *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null}} opts
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
@@ -170,7 +172,7 @@ export function createSessionApi({
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
@@ -296,7 +298,7 @@ async function repoSettingsReply(req, res, session, repoSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases, { planOnly = false } = {}) {
+async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false } = {}) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
@@ -319,7 +321,8 @@ async function settingsReply(res, session, userSettings, databases, { planOnly =
   // null for a file is the console's default, which the task definition already gives every session.
   // By the names the session's project file gives its env files, and only its own repo's (userSettings.ownFiles).
   const files = await userSettings.ownFiles(session.owner, { repo: session.repo });
-  const ownFiles = await userSettings.ownWholeFiles?.(session.owner) ?? {};
+  // Their whole files for the session's own repo alone (repoSettings.filesForSession).
+  const ownFiles = await repoSettings?.filesForSession?.(session) ?? {};
   console.log('sessionApi: settings handed out', {
     sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,
   });
