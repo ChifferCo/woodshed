@@ -129,6 +129,39 @@ test('the log names layers, sizes and keys, never a value, and the repo settings
   }
 });
 
+// api/.env and worker/.env both name app-env: one key, so one installation and one personal value for both.
+const SHARED = parseProject({
+  version: 1,
+  envFiles: [
+    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'DB_PASSWORD={{PGPASSWORD}}'] },
+    { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'KEY={{KEY?}}'] },
+  ],
+});
+
+function writeShared(t, { settings, env = {} }) {
+  const repoDir = scratch(t);
+  const written = writeEnvFiles({ project: SHARED, repoDir, env: { ...ENV, ...env }, settings });
+  const read = (file) => fs.readFileSync(path.join(repoDir, file), 'utf8');
+  return { api: read('api/.env'), worker: read('worker/.env'), lines: writtenLines({ written, settings, project: SHARED }) };
+}
+
+test('files that share a key are each written its layered values, with their own defaults and lines, and logged as one', (t) => {
+  const settings = readRepoSettings(settingsFile(t, {
+    project: 'app', envFiles: { 'app-env': { installation: 'LOG_LEVEL=warn\nPORT=8000', personal: 'LOG_LEVEL=debug' } }, instructions: {}, personalFor: 'octocat',
+  }));
+  const { api, worker, lines } = writeShared(t, { settings });
+  assert.equal(api, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\n\n# From this installation\nLOG_LEVEL=warn\nPORT=8000\n\n'
+    + '# Your own lines, from My settings\nLOG_LEVEL=debug\n\n# Woodshed overrides\nPORT=8080\nDB_PASSWORD=session-password\n');
+  assert.equal(worker, 'LOG_LEVEL=warn\nPORT=8000\n\n# Your own lines, from My settings\nLOG_LEVEL=debug\n\n# Woodshed overrides\nROLE=worker\n');
+  assert.deepEqual(lines, ['api/.env, worker/.env from app-env (installation: 24 bytes, personal: 15 bytes; '
+    + 'api/.env layers: repo installation personal session, defaults: 1, replaced by the session: PORT; '
+    + 'worker/.env layers: installation personal session, replaced by the session: none)']);
+
+  const none = writeShared(t, { settings: readRepoSettings(settingsFile(t, { project: 'app', envFiles: {}, instructions: {}, personalFor: null })), env: { APP_ENV: 'LOG_LEVEL=warn' } });
+  assert.equal(none.worker, '\n\n# Woodshed overrides\nROLE=worker\n', 'no legacy variable is read');
+  assert.deepEqual(none.lines.slice(1), []);
+});
+
 test('without repo settings (an ask, or a console that offers none) each file is the repo\'s and the session\'s alone', (t) => {
   const none = write(t, { settings: null, env: LEGACY });
   const empty = write(t, { settings: readRepoSettings(settingsFile(t, { project: 'app', envFiles: {} })), env: LEGACY });

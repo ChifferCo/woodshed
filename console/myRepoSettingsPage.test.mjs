@@ -83,11 +83,11 @@ async function call(api, { method, path, body, login }) {
  * The card as sam-ops, who can write to app and tools but not infra (New session's check), with the person's own
  * default project `defaultProject`.
  */
-async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false } = {}) {
+async function loadCard({ search = '', before = null, defaultProject = 'app', admin = false, files = FILES } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
-  const readerOf = (name) => ({ async repoLayer() { const f = FILES[name]; return { envFiles: f.envFiles, env: f.env ?? {}, rules: f.rules ?? null, setup: null }; } });
+  const readerOf = (name) => ({ async repoLayer() { const f = files[name]; return { envFiles: f.envFiles, env: f.env ?? {}, rules: f.rules ?? null, setup: null }; } });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
   if (before) await before({ repoSettings, store, secrets });
   const writes = ['app', 'tools'];
@@ -180,6 +180,31 @@ test('saving your own values posts them to your repo settings, and the table sho
   assert.match(textOf(app), /Yours on 1 repo/);
   assert.deepEqual(buttons(app, 'acme/app •').length, 1, 'the repo\'s tab is marked');
   assert.ok(!JSON.stringify(store.state).includes(SECRET_MARK));
+});
+
+test('env files that share a key are one tab naming both paths, and your values are written to both', async () => {
+  const shared = parseProject({
+    version: 1, env: {},
+    envFiles: [
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080'] },
+      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] },
+    ],
+  });
+  const { app, calls, secrets } = await loadCard({ files: { ...FILES, app: shared } });
+  assert.match(textOf(app), /app-env → api\/\.env, worker\/\.env/);
+  assert.match(textOf(app), /These values are written to both files, api\/\.env, worker\/\.env, which name the secret app-env\./);
+  await type(app, 'my-env-app-app-env', 'LOG_LEVEL=debug\n');
+  button(app, 'Save').listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/my/repos/app/env/app-env', body: { text: 'LOG_LEVEL=debug\n' } });
+  assert.deepEqual([...secrets.values.keys()], ['users/sam-ops/repos/app/env/app-env'], 'one value for both files');
+  assert.match(textOf(app), /writes them into api\/\.env and worker\/\.env;/);
+  assert.deepEqual(tableRows(app), [
+    ['LOG_LEVEL in api/.env', '✓', '', '✓', '', 'Yours'],
+    ['LOG_LEVEL in worker/.env', '', '', '✓', '', 'Yours'],
+    ['PORT in api/.env', '', '', '', '✓', 'Session'],
+    ['ROLE in worker/.env', '', '', '', '✓', 'Session'],
+  ]);
 });
 
 test('the installation\'s values are read only, behind Show, and one read fills both layers', async () => {

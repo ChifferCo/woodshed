@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -42,15 +42,19 @@ test('an env file\'s defaults come first, so the secret\'s text, the owner\'s li
   assert.equal(envFileText({ defaults: [], base: 'A=1', own: '', lines: [], env: {} }), envFileText({ base: 'A=1', own: '', lines: [], env: {} }));
 });
 
-test('an env file\'s key is its secret, or else its path as a name, and two files cannot share one', () => {
+test('an env file\'s key is its secret, or else its path as a name, and two files share one only by naming one secret', () => {
   assert.equal(envFileKey({ path: 'web/.env.local', secret: null }), 'web-env-local');
   assert.equal(envFileKey({ path: 'API/Config/.ENV', secret: null }), 'api-config-env');
   assert.equal(envFileKey({ path: '.env', secret: null }), 'env', 'never a name starting with a dot, which the local store refuses');
   assert.equal(envFileKey({ path: 'web/.env.local', secret: 'web-env' }), 'web-env');
   const read = (envFiles) => parseProject({ version: 1, envFiles }).envFiles;
   assert.deepEqual(read([{ path: 'web/.env.local' }, { path: 'api/.env', secret: 'api-env' }]).map((f) => f.key), ['web-env-local', 'api-env']);
-  assert.throws(() => read([{ path: 'web/.env.local' }, { path: 'web.env/local' }]),
-    /envFiles\[0\] \(web\/\.env\.local\) and envFiles\[1\] \(web\.env\/local\) both have the key web-env-local: give one a secret of its own/);
+  assert.throws(() => read([{ path: 'web/.env.local' }, { path: 'web-env.local' }]),
+    /envFiles\[0\] \(web\/\.env\.local\) and envFiles\[1\] \(web-env\.local\) both have the key web-env-local: give one a secret, or give both the same secret to share its values$/);
+  const shared = read([{ path: 'api/.env', secret: 'app-env', defaults: ['PORT=8080'] }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }]);
+  assert.deepEqual(shared.map((f) => [f.path, f.key, f.defaults, f.lines]), [['api/.env', 'app-env', ['PORT=8080'], []], ['worker/.env', 'app-env', [], ['ROLE=worker']]],
+    'two files naming one secret share its key, each keeping its own defaults and lines');
+  assert.deepEqual(envFileKeys([...shared, { path: 'web/.env', key: 'web-env' }]), [{ key: 'app-env', paths: ['api/.env', 'worker/.env'] }, { key: 'web-env', paths: ['web/.env'] }]);
   assert.throws(() => read([{ path: 'api/.env' }, { path: 'web/.env', secret: 'api-env' }]), /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env/,
     'a secret and a key made from a path are one name');
   assert.throws(() => read([{ path: '---' }]), /whose path makes no key: give it a secret/);

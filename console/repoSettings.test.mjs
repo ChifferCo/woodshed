@@ -114,6 +114,35 @@ test('a save keeps the value in the store, and state.json its date, size and key
   assert.equal(store.state.people['sam-ops'].repos, undefined);
 });
 
+test('env files that name one secret are one key, with every path, one set of values and each file\'s own defaults and lines', async () => {
+  const shared = parseProject({
+    version: 1, envFiles: [
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
+      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
+      { path: 'web/.env.local', lines: ['PORT=5173'] },
+    ],
+  });
+  const { secrets, repoSettings } = setup({ files: { ...FILES, app: shared } });
+  await repoSettings.saveInstallation({ project: 'app', key: 'app-env', text: 'LOG_LEVEL=warn\nAPI_TOKEN=x\n', by: 'mia-dev' });
+  await repoSettings.saveOwn({ login: 'sam-ops', project: 'app', key: 'app-env', text: 'API_TOKEN=mine\n' });
+  assert.deepEqual([...secrets.values.keys()], ['repos/app/env/app-env', 'users/sam-ops/repos/app/env/app-env'], 'one value a layer for both files');
+
+  const view = await repoSettings.view('app', { login: 'sam-ops' });
+  assert.deepEqual(view.envFiles.map((f) => [f.key, f.paths]), [['app-env', ['api/.env', 'worker/.env']], ['web-env-local', ['web/.env.local']]]);
+  const app = view.envFiles[0];
+  assert.deepEqual(app.files.map((f) => [f.path, f.defaults, f.wiring.lines]), [['api/.env', ['LOG_LEVEL=info'], ['PORT', 'SQL_URL']], ['worker/.env', [], ['ROLE', 'SQL_URL']]]);
+  assert.equal(app.installation.bytes, Buffer.byteLength('LOG_LEVEL=warn\nAPI_TOKEN=x\n'));
+  assert.deepEqual(app.table.map((row) => [row.key, row.setBy.join(' '), row.wins, row.path ?? null]), [
+    ['LOG_LEVEL', 'repo installation', 'installation', 'api/.env'], ['LOG_LEVEL', 'installation', 'installation', 'worker/.env'],
+    ['API_TOKEN', 'installation personal', 'personal', null], ['PORT', 'session', 'session', 'api/.env'], ['SQL_URL', 'session', 'session', null],
+    ['ROLE', 'session', 'session', 'worker/.env'],
+  ], 'one row where the files agree, one a file naming its path where they differ');
+  assert.deepEqual(view.envFiles[1].table.map((row) => row.path ?? null), [null], 'a key of one file names no path');
+  assert.deepEqual((await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' })).envFiles, {
+    'app-env': { installation: 'LOG_LEVEL=warn\nAPI_TOKEN=x\n', personal: 'API_TOKEN=mine\n' },
+  }, 'a session is handed the key once: it writes it to each path');
+});
+
 test('a value is kept only for an env file the project file names, and instructions holding a credential are refused', async () => {
   const { secrets, repoSettings } = setup({ files: { ...FILES, tools: new Error('GitHub did not answer') } });
   await assert.rejects(repoSettings.saveInstallation({ project: 'app', key: 'old-env', text: 'A=1', by: 'mia-dev' }), { status: 404, message: /has no env file with the key old-env/ });

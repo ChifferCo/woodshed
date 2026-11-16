@@ -15,7 +15,7 @@
 // Values are never logged: keys, sizes and who.
 
 import logins from './public/logins.cjs';
-import { projectFor, projectNamed, defaultProject } from './projects.mjs';
+import { projectFor, projectForRepo, projectNamed, defaultProject } from './projects.mjs';
 import { isAsk, isQa } from './sessions.mjs';
 import { checkFile } from './userSettings.mjs';
 import { envKeyTable, envKeys, instructionsProblem, sessionWiring } from '../shared/repoSettings.mjs';
@@ -192,18 +192,50 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return file;
   }
 
-  function envFileView({ project, file, layer, login }) {
-    const inst = recordOf({ project: project.name, key: file.key });
-    const own = login ? recordOf({ login, project: project.name, key: file.key }) : null;
+  // One path of a key: its own defaults and wiring, and which layer wins each key in it.
+  function pathView({ file, layer, inst, own, login }) {
     const wiring = sessionWiring({ lines: file.lines, env: layer?.env ?? {} });
     const layers = { repo: file.defaults.join('\n'), installation: keyText(inst?.keys), ...(login && { personal: keyText(own?.keys) }), session: file.lines.join('\n') };
     return {
-      key: file.key, path: file.path, secret: file.secret, defaults: file.defaults,
+      path: file.path, defaults: file.defaults,
       // A line `{{NAME?}}` writes only in a session that has NAME: there it is wiring, elsewhere the layers' value stays.
       wiring: { lines: wiring.lines, optional: envKeys(file.lines.filter((l) => /\{\{[A-Za-z_][A-Za-z0-9_]*\?\}\}/.test(l)).join('\n')), env: wiring.env },
-      installation: inst, ...(login && { personal: own }),
       table: envKeyTable({ layers, wiring }),
     };
+  }
+
+  // A key's rows: one for all its paths where they agree, else one a path that sets it, naming the path.
+  function sharedTable(paths) {
+    if (paths.length === 1) return paths[0].table;
+    const sign = (p, row) => row && JSON.stringify([row.setBy, row.wins, ...['lines', 'optional', 'env'].map((w) => p.wiring[w].includes(row.key))]);
+    const keys = [...new Set(paths.flatMap((p) => p.table.map((row) => row.key)))];
+    return keys.flatMap((key) => {
+      const rows = paths.map((p) => p.table.find((row) => row.key === key) ?? null);
+      if (rows.every((row, i) => sign(paths[i], row) === sign(paths[0], rows[0]))) return [rows[0]];
+      return rows.flatMap((row, i) => (row ? [{ ...row, path: paths[i].path }] : []));
+    });
+  }
+
+  // One key and every env file that names it: files that name one secret share its values, each with its own
+  // defaults and lines. `path`, `defaults` and `wiring` are the first file's, `files` each one's.
+  function envFileView({ project, files, layer, login }) {
+    const [first] = files;
+    const inst = recordOf({ project: project.name, key: first.key });
+    const own = login ? recordOf({ login, project: project.name, key: first.key }) : null;
+    const paths = files.map((file) => pathView({ file, layer, inst, own, login }));
+    return {
+      key: first.key, path: first.path, paths: files.map((f) => f.path), secret: first.secret, defaults: first.defaults, wiring: paths[0].wiring,
+      files: paths.map(({ table, ...rest }) => rest),
+      installation: inst, ...(login && { personal: own }),
+      table: sharedTable(paths),
+    };
+  }
+
+  // The project file's env files by key, in the order each key first appears.
+  function byKey(files) {
+    const groups = new Map();
+    for (const file of files) groups.set(file.key, [...(groups.get(file.key) ?? []), file]);
+    return [...groups.values()];
   }
 
   /**
@@ -231,7 +263,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return {
       project: project.name, repo: project.repo, default: Boolean(project.default),
       projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
-      envFiles: files.map((file) => envFileView({ project, file, layer, login })),
+      envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login })),
       // Saved for a key the project file no longer names: kept until someone deletes it.
       unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],
       instructions: { installation: recordOf({ project: project.name }), ...(login && { personal: recordOf({ login, project: project.name }) }) },

@@ -211,7 +211,8 @@
 
   // A shortcut's keys as key caps: its combo, then its key alone. A sequence (G M) is its keys one after the other.
   function keyCaps(shortcut) {
-    const combo = shortcut.mod && K.caps(shortcut.mod, MAC).map((k) => h('kbd', null, k));
+    const mod = MAC ? shortcut.mod : shortcut.modOther || shortcut.mod;
+    const combo = mod && K.caps(mod, MAC).map((k) => h('kbd', null, k));
     const bare = shortcut.bare && shortcut.bare.split(' ').map((k) => h('kbd', null, k));
     return [combo, combo && bare && h('span', { class: 'kor' }, 'or'), bare].filter(Boolean);
   }

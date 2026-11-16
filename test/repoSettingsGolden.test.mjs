@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { loadProject } from '../shared/project.mjs';
 import { instructionsText } from '../shared/repoSettings.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 
@@ -30,6 +31,7 @@ function withoutDefaults(text) {
 const PROJECTS = {
   multiApp: fs.readFileSync(path.join(FIXTURES, 'multiApp.project.yaml'), 'utf8'),
   reference: withoutDefaults(REFERENCE),
+  sharedSecret: fs.readFileSync(path.join(FIXTURES, 'sharedSecret.project.yaml'), 'utf8'),
 };
 
 // What the entrypoint has exported by the time it writes the env files: the databases', a shared service's and the app's.
@@ -45,6 +47,9 @@ const LEGACY = {
   STORE_ENV: 'PUBLIC_AUTH_DOMAIN=example.test\nPUBLIC_FEATURE_PREVIEW=false\n',
 };
 const OWN = { 'api-env': 'AUTH_CLIENT_ID=mine\nLOG_LEVEL=debug', 'store-env': 'PUBLIC_FEATURE_PREVIEW=false' };
+// The shared-secret fixture's: one value a layer for both of its files.
+const SHARED_LEGACY = { APP_ENV: '# Shared by the api and the worker\nLOG_LEVEL=info\nPORT=8000' };
+const SHARED_OWN = { 'app-env': 'LOG_LEVEL=debug' };
 
 // No installation values at all; the installation's (a shared session); and a private session's, with its owner's
 // lines. Each is the session's environment and the console's answer, the values in its repo settings.
@@ -53,6 +58,12 @@ const SCENARIOS = {
   shared: { env: { ...SESSION_ENV, S3_ENDPOINT: 'http://10.0.1.7:4566' }, settings: answer(LEGACY, {}, null) },
   private: { env: SESSION_ENV, settings: answer(LEGACY, OWN, 'octocat') },
 };
+const SHARED_SCENARIOS = {
+  bare: SCENARIOS.bare,
+  shared: { ...SCENARIOS.shared, settings: answer(SHARED_LEGACY, {}, null) },
+  private: { ...SCENARIOS.private, settings: answer(SHARED_LEGACY, SHARED_OWN, 'octocat') },
+};
+const scenariosOf = (name) => (name === 'sharedSecret' ? SHARED_SCENARIOS : SCENARIOS);
 
 // The console's answer holding the legacy values under their keys (an env file's secret is its key).
 function answer(installation, own, personalFor) {
@@ -79,12 +90,13 @@ function writeEnvFilesFor(text, env, settings = null) {
   const file = path.join(dir, 'repo-settings.json');
   if (settings) fs.writeFileSync(file, JSON.stringify(settings));
   const printed = execFileSync('node', [PROJECT_MJS, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env, ...(settings && { REPO_SETTINGS_FILE: file }) } });
-  const files = printed.split('\n')[0].split(/, (?=[^ ]+ \((?:base|layers))/).map((entry) => entry.split(' (')[0]);
+  // Each file the project file names, in its order: what the line prints, without parsing it.
+  const files = loadProject(dir).envFiles.map((f) => f.path);
   return [`printed: ${printed}`, ...files.map((file) => `==> ${file} <==\n${fs.readFileSync(path.join(dir, file), 'utf8')}`)].join('');
 }
 
 for (const [name, text] of Object.entries(PROJECTS)) {
-  for (const [scenario, { env, settings }] of Object.entries(SCENARIOS)) {
+  for (const [scenario, { env, settings }] of Object.entries(scenariosOf(name))) {
     test(`${name}'s env files, ${scenario}, are written from repo settings byte for byte as before them`, () => {
       const golden = path.join(FIXTURES, `${name}.${scenario}.env.txt`);
       const written = writeEnvFilesFor(text, env, settings);

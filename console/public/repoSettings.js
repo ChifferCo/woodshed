@@ -25,7 +25,7 @@
   const INSTRUCTIONS = '#instructions';
 
   const fileOf = (key) => view.envFiles.find((f) => f.key === key) ?? null;
-  const labelOf = (f) => f.path ?? f.key;
+  const { pathsOf, labelOf, andList } = L;
 
   function editorFor(key) {
     if (!editors.has(key)) {
@@ -122,7 +122,7 @@
       shownText.set(key, text);
       if (key === INSTRUCTIONS) return text.trim() ? 'Saved. The next session on this repo has them in its prompt; running ones keep theirs.' : 'Cleared. Sessions on this repo get the repo\'s own rules alone.';
       const f = fileOf(key);
-      if (text.trim()) return `Saved. The next session on ${view.repo} writes them into ${labelOf(f ?? { key })}; running ones keep theirs.`;
+      if (text.trim()) return `Saved. The next session on ${view.repo} writes them into ${f ? andList(pathsOf(f)) : key}; running ones keep theirs.`;
       return 'Cleared. Sessions get the repo\'s defaults alone.';
     });
   }
@@ -166,6 +166,7 @@
       h('div', { class: 'layered-head' },
         h('h3', { id: `file-${f.key}`, class: 'mono' }, labelOf(f)),
         h('span', { class: 'data-meta' }, h('span', null, `key ${f.key}`))),
+      pathsOf(f).length > 1 && L.sharedNote(f),
       read && L.defaultsLayer(f, view.repo),
       layer('installation', 'This installation\'s values',
         h('p', { class: 'layer-meta' }, savedLine(f.installation)),

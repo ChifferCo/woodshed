@@ -85,12 +85,15 @@ change to the stage by the workflow's run, about the time the build takes.
    `~/.config/woodshed/repo-settings.json`, readable by the session's user alone and outside the saved `~/.claude`,
    until the env files and the rules are written, then is deleted. A layer with no value there is empty: nothing else
    holds an env file's values, and a variable or `/settings` field an older installation still sets for one is not
-   read. A console from before the route answers 404: the log says `WARNING: repo settings not offered by the console,
-   so the env files have no installation or own values`, and the files have the repo's defaults and the session's
-   lines alone. Any other refusal stops the start (`could not get the repo settings from the
+   read. Env files that name one secret share its key, so each of their paths is written the key's values, with its
+   own defaults and lines. A console from before the route answers 404: the log says `WARNING: repo settings not
+   offered by the console, so the env files have no installation or own values`, and the files have the repo's
+   defaults and the session's lines alone. Any other refusal stops the start (`could not get the repo settings from the
    console (status …)`), after the retries a 503 gets. The log says `Repo settings fetched` with each layer's keys and
    sizes, and `Env files written` with each file's layers, sizes and the keys the session's wiring replaced
-   (`replaced by the session`), and a line for repo settings no env file of the checkout has a key for: never a value.
+   (`replaced by the session`; files that share a key are one entry, `api/.env, worker/.env from app-env (…)`, with the
+   values' sizes once and each path's layers), and a line for repo settings no env file of the checkout has a key for:
+   never a value.
 3. Starts its own Redis on 127.0.0.1, with redis-commander for Data ▾, when the
    project file's `env` or `envFiles` mention `REDIS_URL` (`startRedisIfUsed`), and
    logs `Redis started`; otherwise it logs `Redis not started (the project uses none…)`,

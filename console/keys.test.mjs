@@ -79,3 +79,10 @@ test('⌘↵ or Ctrl+Enter is Start on New session, written Ctrl+Enter off a Mac
   assert.deepEqual(caps(byId.start.mod, false), ['Ctrl', 'Enter']);
   assert.equal(byId.start.where, 'New session');
 });
+
+test('find is written ⌘F on a Mac and Ctrl+Shift+F elsewhere, and left to the terminal', () => {
+  assert.deepEqual(caps(byId.find.mod, true), ['⌘', 'F']);
+  assert.deepEqual(caps(byId.find.modOther, false), ['Ctrl', 'Shift', 'F']);
+  assert.equal(match({ key: 'f', code: 'KeyF', metaKey: true }, { inFrame: true }), null, 'terminal.js reads it');
+  assert.ok(byId.find.where);
+});

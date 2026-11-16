@@ -1,0 +1,16 @@
+<!-- @dsCard group="Overlays" height=120 subtitle="Find in a terminal, over its top right corner" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500&display=swap">
+<style>
+ body{margin:0;padding:16px;background:#14171f;color:#d6d3cd;font:12px "JetBrains Mono",ui-monospace,monospace}
+ .tfind{display:inline-flex;align-items:center;gap:4px;padding:4px 4px 4px 6px;background:#0b0e14;border:1px solid #262b36;border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+ .tfind input{width:200px;padding:4px 8px;border:1px solid #9fb2dd;border-radius:4px;background:#12161f;color:#d6d3cd;font:inherit;outline:none}
+ .tfind.none input{border-color:#6b4a17}
+ .count{min-width:5.5em;padding:0 4px;color:#7f8698;font-size:11px;text-align:right}
+ button{padding:3px 8px;border:1px solid #333a48;border-radius:4px;background:#12161f;color:#d6d3cd;font:12px system-ui,sans-serif}
+ p{margin:0 0 8px}
+ mark{background:#6b4a17;color:inherit}
+ mark.on{background:#f0b45f;color:#14171d}
+</style>
+<p>⏺ The <mark>retry</mark> waits 2 s, then the next <mark class="on">retry</mark> 4 s.</p>
+<div class="tfind"><input value="retry"><span class="count">3 of 12</span><button>↑</button><button>↓</button><button>✕</button></div>
+<div class="tfind none" style="margin-left:8px"><input value="rollback"><span class="count">No match</span><button>↑</button><button>↓</button><button>✕</button></div>

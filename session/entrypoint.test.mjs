@@ -619,16 +619,17 @@ test('the template commands run each database\'s migrate, then its seed for a ne
 
 // dbAdmin.mjs's seedWith, but for the path: the repo settings it read for the databases' env files, in a file, and
 // the entrypoint's `seed` writing the env files from them, with the environment seedEnv gives it.
-async function seedEnvFilesWritten(t, { secretValues, project = 'app' }) {
+const SEED_ENV_FILES = [
+  { path: 'api/.env', secret: 'api-env', lines: ['DATABASE_URL={{PG_URL}}'] },
+  { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], lines: [] },
+];
+
+async function seedEnvFilesWritten(t, { secretValues, project = 'app', envFiles = SEED_ENV_FILES, keys = ['api-env', 'web-env-local'] }) {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-seed-env-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(repoDir, '.woodshed'));
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({
-    envFiles: [
-      { path: 'api/.env', secret: 'api-env', lines: ['DATABASE_URL={{PG_URL}}'] },
-      { path: 'web/.env.local', defaults: ['PUBLIC_MODE=dev'], lines: [] },
-    ],
-    databases: [{ ...PG, dir: '.', migrate: null, seed: 'true', envFiles: ['api-env', 'web-env-local'] }],
+    envFiles, databases: [{ ...PG, dir: '.', migrate: null, seed: 'true', envFiles: keys }],
   }));
   const flags = { 'secret-prefix': 'p/', 'pg-host': 'pg', 'pg-root-user': 'root', 'pg-ca': 'none', repo: repoDir, ...(project && { project }) };
   const found = await seedEnvFiles({ flags, project: loadProject(repoDir), secrets: { get: async (name) => secretValues[name] ?? null } });
@@ -642,8 +643,8 @@ async function seedEnvFilesWritten(t, { secretValues, project = 'app' }) {
     'runTemplateCommands seed',
   ].join('\n')], { encoding: 'utf8', env: { ...env, PATH: process.env.PATH, SHARED_DIR, REPO_DIR: repoDir } });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  const file = (name) => fs.readFileSync(path.join(repoDir, name), 'utf8');
-  return { log: result.stdout, api: file('api/.env'), web: file('web/.env.local'), read: found.read };
+  const file = (name) => (fs.existsSync(path.join(repoDir, name)) ? fs.readFileSync(path.join(repoDir, name), 'utf8') : null);
+  return { log: result.stdout, api: file('api/.env'), web: file('web/.env.local'), worker: file('worker/.env'), read: found.read };
 }
 
 const SEED_URL = 'DATABASE_URL=postgres://woodshed__seed:ab@pg:5432/next?sslmode=disable';
@@ -665,7 +666,16 @@ test('the seed writes a file with no repo settings value from the repo alone, an
   assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nPUBLIC_MODE=dev\n\n# Woodshed overrides\n\n');
   assert.doesNotMatch(seeded.log, /legacy|WARNING/);
   assert.match(seeded.log, /api\/\.env \(layers: session, installation: 0 bytes,/);
-  assert.deepEqual(seeded.read, [{ key: 'api-env', from: 'none' }, { key: 'web-env-local', from: 'none' }]);
+  assert.deepEqual(seeded.read, [{ key: 'api-env', paths: ['api/.env'], from: 'none' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
+});
+
+test('the seed writes a key two env files name to both, each with its own lines', async (t) => {
+  const envFiles = [{ path: 'api/.env', secret: 'app-env', lines: ['DATABASE_URL={{PG_URL}}'] }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }];
+  const seeded = await seedEnvFilesWritten(t, { secretValues: { 'p/repos/app/env/app-env': 'API_KEY=new\n' }, envFiles, keys: ['app-env'] });
+  assert.equal(seeded.api, `API_KEY=new\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.equal(seeded.worker, 'API_KEY=new\n\n\n# Woodshed overrides\nROLE=worker\n');
+  assert.match(seeded.log, /Env files written \(api\/\.env, worker\/\.env from app-env \(installation: 12 bytes; api\/\.env layers: installation session, replaced by the session: none; worker\/\.env layers: installation session, replaced by the session: none\)\)/);
+  assert.deepEqual(seeded.read, [{ key: 'app-env', paths: ['api/.env', 'worker/.env'], from: 'repo settings' }]);
 });
 
 test('a seed with no --project writes the env files from the repo and the session alone', async (t) => {

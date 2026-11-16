@@ -486,9 +486,9 @@ export function seedEnv({ flags, env, databases, user, name, password, settingsF
  *          secrets: {get: (name: string) => Promise<string|null>}}} args
  * @returns {Promise<{settings: {project: string, envFiles: Record<string, {installation: string, personal: null}>,
  *   instructions: {installation: null, personal: null}, personalFor: null}|null,
- *   read: {key: string, from: 'repo settings'|'none'}[]}>}
+ *   read: {key: string, paths: string[], from: 'repo settings'|'none'}[]}>}
  *   `settings` shaped like the session API's answer (shared/project.mjs, readRepoSettings), null without `--project`;
- *   `read` where each key came from
+ *   `read` where each key came from, with the paths of the env files that name it
  */
 export async function seedEnvFiles({ flags, project, secrets }) {
   const prefix = flags['secret-prefix'];
@@ -496,9 +496,11 @@ export async function seedEnvFiles({ flags, project, secrets }) {
   const envFiles = {};
   const read = [];
   for (const key of keys) {
+    // Files that name one secret share its key: the entrypoint writes its value to each of them.
+    const paths = (project.envFiles ?? []).filter((f) => f.key === key).map((f) => f.path);
     const installation = flags.project ? await secrets.get(installationEnvSecretName(prefix, flags.project, key)) : null;
     if (installation?.trim()) envFiles[key] = { installation, personal: null };
-    read.push({ key, from: installation?.trim() ? 'repo settings' : 'none' });
+    read.push({ key, paths, from: installation?.trim() ? 'repo settings' : 'none' });
   }
   const settings = flags.project
     ? { project: flags.project, envFiles, instructions: { installation: null, personal: null }, personalFor: null }
