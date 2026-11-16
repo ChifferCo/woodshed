@@ -1148,8 +1148,23 @@
     }
   }
 
+  // The terminal frame the pane shows now, if any.
+  function shownTerminal() {
+    return (tab === 'terminal' ? shellPool : agentPool).frameOf(currentSession);
+  }
+
+  // ⌘F with focus on the page around the terminal (its pane bar, say) finds in the terminal, as it does inside it
+  // (terminal.js). Off the Agent and Terminal tabs it is the browser's own find.
+  document.addEventListener('keydown', (e) => {
+    if (!W.terminal.isFindKey(e) || PAGE_TABS.has(tab)) return;
+    const frame = shownTerminal();
+    if (!frame || frame.hidden) return;
+    e.preventDefault();
+    W.terminal.openFind(frame);
+  });
+
   function sendKey(seq, arrow) {
-    const frame = (tab === 'terminal' ? shellPool : agentPool).frameOf(currentSession);
+    const frame = shownTerminal();
     const term = frame?.contentWindow?.term;
     if (!term) return;
     // An arrow is ESC O A once the program has asked for application cursor keys, as claude's TUI does.
@@ -1182,6 +1197,7 @@
     const key = (label, onclick, title, disabled) => h('button', { type: 'button', title, disabled, onclick }, label);
     slots.keys.replaceChildren(
       ...KEYS.map(([label, seq, arrow]) => key(label, () => sendKey(seq, arrow))),
+      key('find', () => W.terminal.openFind(shownTerminal()), 'Find in the terminal'),
       key('A−', () => zoom(-0.1), 'Smaller type, more columns', termScale <= TERM_SCALE_MIN),
       key('A+', () => zoom(0.1), 'Larger type, fewer columns', termScale >= TERM_SCALE_MAX));
   }
