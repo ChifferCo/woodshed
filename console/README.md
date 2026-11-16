@@ -1966,6 +1966,20 @@ My Woodshed sessions never show there, nor the homes they keep under
 `<login>/sessions/`: those go only with the session's Remove, Forget it or
 Remove My Woodshed.
 
+### One console per event
+
+A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org. Each console
+hears the same GitHub events, so before a session an event starts (the label or a comment on an issue, a review, QA) it
+claims the issue or pull request: it reacts 👀, waits `WOODSHED_CLAIM_SECONDS`, and starts the session only if the
+earliest 👀 a bot left is its own. The rest log `fleet: skipped, another console owns this` and start nothing. The
+claim sticks: later events on that issue or pull request go to the same console without waiting, and a pull request a
+console's own App opened is that console's at once. Sessions started from the console page are not claimed.
+
+When the check itself fails (GitHub is down, say), the console starts the session anyway, as before the check
+(`fleet: claim check failed, starting anyway`). To move a pull request to another console, remove the owner's 👀.
+Consoles that share one App login, like two Woodshed Cloud orgs, cannot tell their reactions apart, so this does not
+separate them.
+
 ## Settings
 
 | Variable | Default | |
@@ -1991,6 +2005,7 @@ Remove My Woodshed.
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |
 | `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |
 | `WOODSHED_FALLBACK_POLL_SECONDS` | `300` | How often the poll runs while webhooks arrive, and how often a pull request is read on its own while pull request webhooks arrive |
+| `WOODSHED_CLAIM_SECONDS` | `5` | How long a console waits after reacting 👀 before reading the others', when it claims an event-started session on a repo several consoles share ("One console per event") |
 | `WOODSHED_CHECKOUT` | the console's own folder | The Woodshed git clone the Console settings page's Woodshed card follows and Update pulls. The dev console points it at a made-up one |
 | `WOODSHED_ACTIONS_WORKFLOWS` | none | The avatar menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the repo's workflows that build the images and apply the infrastructure. None leaves the group out. Set on the base box from Terraform's `console_workflow_links` |
 | `WOODSHED_MAX_SESSIONS` | `5` | Shared sessions at once, until the Console settings page says otherwise. Set on the base box from Terraform's `max_sessions` |

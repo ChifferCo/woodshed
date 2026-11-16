@@ -13,6 +13,7 @@ import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
+import { claimEvent } from './claim.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
@@ -238,6 +239,7 @@ export function createFleet({
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null,
+  wait = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
 }) {
   const { state } = store;
   const nowIso = () => new Date(now()).toISOString();
@@ -1370,6 +1372,9 @@ export function createFleet({
     const route = routeTrigger({ sessions, number, trigger: trigger.trigger, kind: trigger.kind, text: trigger.text });
     console.log('fleet: trigger routed', { number, login, trigger: trigger.trigger, action: route.action, reason: route.reason, ...projectField(project) });
     if (route.action === 'ignore') return { outcome: 'ignored', reason: route.reason };
+    if (route.action === 'start' && !(await claimed({ project, gh, number, what: trigger.trigger }))) {
+      return { outcome: 'ignored', reason: 'another console owns it' };
+    }
     if (members && !members.hasGithubSessions(login)) return refuseFromGitHub(trigger, gh, project);
     if (route.action === 'send') {
       await send(find(route.sessionId), trigger.text);
@@ -1551,6 +1556,7 @@ export function createFleet({
     if (route.action === 'ignore') return ignored(route.reason);
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open') return ignored('the pull request is not open');
+    if (!(await claimed({ project, gh, number, what: 'qa', pull }))) return ignored('another console owns it');
     if (gates.review) {
       const verdict = await reviewApproved({ project, gates, gh, number, sha: pull.head.sha });
       if (!verdict.approved) {
@@ -1691,6 +1697,7 @@ export function createFleet({
     if (state.sessions.some((s) => isReview(s) && s.number === number && onProject(s, project) && ACTIVE_STATUSES.has(s.status))) {
       return ignored('a review session is already running on it');
     }
+    if (!(await claimed({ project, gh, number, what: 'review', pull }))) return ignored('another console owns it');
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
     const session = await createSession({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
@@ -1701,6 +1708,21 @@ export function createFleet({
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
+  }
+
+  // A repo connected to several consoles gets each event-started session from one of them (claim.mjs). A failed check
+  // starts it anyway, as before the check: a duplicate is better than a session nobody runs.
+  async function claimed({ project, gh, number, what, pull = null }) {
+    const login = ownApp()?.login ?? null;
+    try {
+      const result = await claimEvent({ gh, number, login, authoredByUs: Boolean(login && pull?.user?.login === login), waitMs: config.claimMs ?? 5000, wait });
+      if (!result.claimed) console.log('fleet: skipped, another console owns this', { number, what, owner: result.owner, ...projectField(project) });
+      else if (result.owner) console.log('fleet: claimed', { number, what, reason: result.reason, ...projectField(project) });
+      return result.claimed;
+    } catch (err) {
+      console.warn('fleet: claim check failed, starting anyway', { number, what, message: firstLine(err), ...projectField(project) });
+      return true;
+    }
   }
 
   async function teamKeyReason(login) {
