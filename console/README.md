@@ -1338,6 +1338,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   bytes it holds in one value. Your own files, one secret per person, are held to it (64 KB when the store declares
   none), so a store with no such cap, such as one sealed in a database, should declare its own.
 
+- `createsOnWrite: true` on the program's secret store when its `write` makes a secret that does not exist yet
+  (`providers/README.md`, "A secret store that makes a secret when it is first written"): the Secrets page then
+  offers Set on a secret nobody has written. Without it, such a secret shows no Set.
+
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 
