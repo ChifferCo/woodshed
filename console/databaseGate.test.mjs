@@ -20,6 +20,16 @@ test('the gate refuses while the default branch\'s project file needs an engine 
   assert.equal(gate.last(), null);
 });
 
+test('where the installation can say how to host them, the refusal says it too', async () => {
+  let fix = 'run WOODSHED_REPO=acme/api bash install.sh again on this machine';
+  const gate = createDatabaseGate({ projectDatabases: async () => [{ engine: 'postgres' }], hosted: [], fix: () => fix });
+  assert.equal(await gate.refusal(), 'the project file\'s databases need postgres, which this installation does not host (it hosts none): run WOODSHED_REPO=acme/api bash install.sh again on this machine');
+  fix = null;
+  assert.equal(await gate.refusal(), 'the project file\'s databases need postgres, which this installation does not host (it hosts none)');
+  const hosted = createDatabaseGate({ projectDatabases: async () => [{ engine: 'postgres' }], hosted: ['postgres'], fix: () => 'never said' });
+  assert.equal(await hosted.refusal(), null);
+});
+
 test('a project file that cannot be read, or that is not there, refuses nothing: the session checks its own copy', async () => {
   const unreadable = createDatabaseGate({ projectDatabases: createProjectReader({ github: { projectFile: async () => 'version: [' } }).databases, hosted: [] });
   assert.equal(await unreadable.refusal(), null);

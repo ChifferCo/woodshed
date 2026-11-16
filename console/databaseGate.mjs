@@ -6,16 +6,19 @@
 import { notHostedReason } from '../shared/databases/index.mjs';
 
 /**
- * @param {{projectDatabases: () => Promise<{engine: string}[]|null>, hosted: string[]}} deps  `projectDatabases` null
- *   when the file could not be read, which refuses nothing; `hosted` the engines the installation hosts
+ * @param {{projectDatabases: () => Promise<{engine: string}[]|null>, hosted: string[], fix?: () => string|null}} deps
+ *   `projectDatabases` null when the file could not be read, which refuses nothing; `hosted` the engines the
+ *   installation hosts; `fix`, when it says something, what to run to host them, added to the reason
  */
-export function createDatabaseGate({ projectDatabases, hosted }) {
+export function createDatabaseGate({ projectDatabases, hosted, fix = () => null }) {
   let last = null;
 
   /** @returns {Promise<string|null>}  why no session can start here, or null */
   async function refusal() {
     const databases = await projectDatabases();
-    const reason = databases === null ? null : notHostedReason({ project: { databases }, hosted });
+    const missing = databases === null ? null : notHostedReason({ project: { databases }, hosted });
+    const howTo = missing && fix();
+    const reason = howTo ? `${missing}: ${howTo}` : missing;
     if (reason !== last) {
       if (reason) console.warn('console: project databases not hosted', { needs: databases.map((d) => d.engine), hosted });
       else if (databases === null) console.warn('console: project file not read, its databases not checked', { hosted });
