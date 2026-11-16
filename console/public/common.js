@@ -412,8 +412,10 @@
 
   // A session's start, step by step: the machine and the wait for the pull are the console's own steps, from the
   // launcher, and named by the provider, which leaves out one it never reaches. The rest are what its entrypoint
-  // reports (START_STEPS in sessions.mjs). A step reported after a later one is done too, as is any step a session
-  // started from an older image never reports.
+  // reports (START_STEPS in sessions.mjs), and last the console reaching the session once its agent is open: until its
+  // launcher answers with the address and statusd answers there, it is still starting. That one is never done here: once
+  // it is, the page shows the terminal. A step reported after a later one is done too, as is any step a session started
+  // from an older image never reports.
   const PROVIDER_STEPS = PROVIDER_WORDS.startSteps ?? {};
   const START_STEPS = [
     ['machine', ...(PROVIDER_STEPS.machine ?? [])],
@@ -425,6 +427,7 @@
     ['databases', 'Getting its databases', 'databases'],
     ['env', 'Writing the env files and the prompt', 'env files'],
     ['claude', 'Opening the agent', 'opening the agent'],
+    ['connect', 'Connecting to the session', 'connecting'],
   ].filter(([, label]) => label);
 
   /** @returns {{steps: {key: string, label: string, short: string, state: 'done'|'now'|'next', seconds: number|null}[], current: object|null}} */

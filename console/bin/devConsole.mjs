@@ -170,6 +170,12 @@ const sessions = [
     status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 6_000).toISOString(),
     startSteps: { machine: new Date(Date.now() - 2_000).toISOString() },
   }),
+  // Its agent open 2 min ago, every step done, and no address from its launcher: Connecting to the session counts.
+  session('7c7c7c7c', 26710, 'A session with claude open, not reached yet', {
+    status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 135_000).toISOString(),
+    startSteps: Object.fromEntries([['container', 122], ['settings', 121], ['home', 121], ['branch', 121], ['databases', 121], ['env', 120], ['claude', 120]]
+      .map(([step, secondsAgo]) => [step, new Date(Date.now() - secondsAgo * 1000).toISOString()])),
+  }),
   // Waiting for room, with the steps its launcher says the wait is at (a launcher's `progress`, providers/README.md).
   // Its next try is an hour away, so the docker launcher never takes it, and nothing here changes the steps.
   session('6b6b6b6b', 26701, 'A session waiting for its machine', {

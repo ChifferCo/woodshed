@@ -27,6 +27,9 @@ const CHECKPOINT_TIMEOUT_MS = 90_000;
 const STATUS_TIMEOUT_MS = 5_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
 const STARTING_STATUS_TIMEOUT_MS = 1_500;
+// After the agent opened, a start the console has not reached in this long is logged (noteUnreached): it takes a second
+// or two.
+const UNREACHED_AFTER_MS = 30_000;
 // Comments are re-read from a minute before the last poll: GitHub's `since`
 // filters on updated_at, which can trail the moment a comment shows up.
 const COMMENT_OVERLAP_MS = 60_000;
@@ -258,6 +261,8 @@ export function createFleet({
   // Sessions whose statusd is being read, by the tick or the quick check: one read at a time, so a held message is
   // never typed in twice.
   const readingStatus = new Set();
+  // The start each session last logged as unreached for (noteUnreached), so each start logs it once.
+  const unreachedStarts = new Map();
   // Stops in flight in this process. A session left `stopping` by a restart has none, and tick finishes it.
   const stopsInFlight = new Set();
   // Launches in flight in this process. A session left `starting` with no task by a restart has none, and tick
@@ -642,6 +647,7 @@ export function createFleet({
       } catch (err) {
         // statusd is the last thing a container starts, so a starting session has none yet.
         if (session.status === 'running') console.warn('fleet: status check failed', { id: session.id, message: firstLine(err) });
+        else noteUnreached(session, firstLine(err));
         return;
       }
       const wasStarting = session.status === 'starting';
@@ -684,12 +690,31 @@ export function createFleet({
     console.log('fleet: start step', { id: session.id, step, seconds: Math.round((Date.parse(at) - Date.parse(session.startedAt)) / 1000) });
   }
 
+  /**
+   * A start whose agent opened a while ago, and which the console has still not reached: its launcher has not answered
+   * with the session's address (`address: false`, `launching` while its start call is still out), or statusd does not
+   * answer there (`message`, the read's error). The page shows it as Connecting to the session and its clock, and a
+   * person sees nothing else, so it is logged once each start.
+   * @param {object} session
+   * @param {string|null} [message]
+   */
+  function noteUnreached(session, message = null) {
+    const opened = session.startSteps?.claude;
+    if (session.status !== 'starting' || !opened || now() - Date.parse(opened) < UNREACHED_AFTER_MS) return;
+    if (unreachedStarts.get(session.id) === session.startedAt) return;
+    unreachedStarts.set(session.id, session.startedAt);
+    console.warn('fleet: the agent is open but the console has not reached the session', {
+      id: session.id, seconds: secondsSince(opened), address: Boolean(session.endpoint), launching: launchesInFlight.has(session.id), message,
+    });
+  }
+
   // Every couple of seconds, a starting session's statusd alone, so its page turns to the terminal as soon as claude
   // opens rather than on the next tick. Whether the task is alive is left to the tick: that is an aws call.
   async function checkStarting() {
     if (checkingStarts) return;
     checkingStarts = true;
     try {
+      for (const session of state.sessions) if (session.status === 'starting' && !session.endpoint) noteUnreached(session);
       const starting = state.sessions.filter((s) => s.status === 'starting' && s.endpoint);
       await Promise.all(starting.map(async (session) => {
         try {
