@@ -1213,7 +1213,13 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   };
   const addedProjects = createAddedProjects({ store, config, check });
   const forgotten = [];
-  const repoSettings = { forget: async (name) => { forgotten.push(name); } };
+  let failForget = false;
+  const repoSettings = {
+    forget: async (name) => {
+      if (failForget) throw Object.assign(new Error(`1 of ${name}'s repo settings could not be deleted: the console log says why`), { shown: true, status: 502 });
+      forgotten.push(name);
+    },
+  };
   const handle = createHandler({ config, fleet: { sessions: () => [] }, consoleSettings: createConsoleSettings({ store, config }), addedProjects, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
@@ -1231,6 +1237,17 @@ test('Console settings: a repo is added and removed on the page, with its sessio
   assert.equal((await post(port, '/api/console-settings/projects', { repo: 'o/x' }, { origin: 'https://evil.example' })).status, 403);
   assert.equal((await post(port, '/api/console-settings/projects/remove', { name: 'r' })).status, 400, 'the installation\'s own stays');
   assert.deepEqual(forgotten, [], 'a refused removal keeps the settings');
+  store.state.sessions.push({ id: 'live0001', repo: 'o/api', project: 'api', status: 'running' });
+  const busy = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(busy.status, 400);
+  assert.match(busy.body.error, /still running/);
+  assert.deepEqual(forgotten, [], 'a repo with a live session keeps its settings');
+  store.state.sessions.length = 0;
+  failForget = true;
+  const failed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
+  assert.equal(failed.status, 502, 'a failed delete is said');
+  assert.deepEqual(config.projects.map((p) => p.name), ['r', 'api'], 'and the repo stays, so Remove can be tried again');
+  failForget = false;
   const removed = await post(port, '/api/console-settings/projects/remove', { name: 'api' });
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body.projects.map((p) => p.name), ['r']);
