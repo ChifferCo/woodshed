@@ -1,7 +1,7 @@
 // The shed's terminal, around a session's ttyd frame (same-origin, so its window's `term` is xterm's): copy out by
 // OSC 52, tap a link on a phone, a picture's path opens it (a thumbnail on hover, a viewer on click), a file pasted or
 // dropped is saved in the session and its path typed at the prompt, and the wheel or a swipe scrolls the browser's own
-// history of the pane, or tmux's (terminalScroll.cjs says whose). Copy is a
+// history of the pane, or tmux's (terminalScroll.cjs says whose), and ⌘F finds text in it (terminalFind.cjs). Copy is a
 // chain this page does not own: with tmux's mouse on, claude copies through `tmux load-buffer -w`, tmux writes an OSC 52
 // sequence to the client, and the handler on the frame's `term` takes it; a browser that allows the clipboard write
 // only inside a key press gets the text held and a toast asking for the copy key. Files go through the console to the
@@ -11,6 +11,8 @@
   const W = window.Woodshed;
   const { h } = W;
   const SCROLL = window.WoodshedTerminalScroll;
+  const FIND = window.WoodshedTerminalFind;
+  const MAC = /Mac|iPhone|iPad/.test(window.navigator.platform || window.navigator.userAgent);
   const TERM_POLL_MS = 250;
   // ttyd sets window.term after its token fetch, which the proxy gives 30 s.
   const TERM_WAIT_MS = 60_000;
@@ -541,6 +543,137 @@
     }, { capture: true, passive: false });
   }
 
+  // ---- find: ⌘F (Ctrl+Shift+F off a Mac) searches the terminal's buffer, as the browser's find cannot ----
+  // The buffer is the screen and what the browser kept since the terminal attached (10000 lines, session/entrypoint.sh).
+  // Matches are painted with xterm's decorations, not its selection: ttyd copies every selection to the clipboard, so
+  // stepping through matches would overwrite it. Enter goes to an older match, Shift+Enter a newer one.
+  const FIND_WATCH_MS = 400;
+  // The design system's bar-amber-line under every match, and bar-amber under the one shown, with the terminal's ground
+  // as its text.
+  const FIND_WASH = '#6b4a17';
+  const FIND_CURRENT = { backgroundColor: '#f0b45f', foregroundColor: '#14171d' };
+  // Matches painted at once, around the one shown: past a few hundred, more add nothing but work.
+  const FIND_PAINTED = 400;
+  const finder = {
+    frame: null, matches: [], index: -1, at: null, timer: null, painted: [],
+    input: h('input', { type: 'search', class: 'tfind-input', placeholder: 'Find in the terminal', 'aria-label': 'Find in the terminal', spellcheck: 'false', autocomplete: 'off' }),
+    count: h('span', { class: 'tfind-count', 'aria-live': 'polite' }),
+  };
+  const findButton = (label, title, onclick) => h('button', { type: 'button', class: 'tfind-btn', title, 'aria-label': title, onclick }, label);
+  finder.el = h('div', { class: 'tfind', role: 'search', hidden: true },
+    finder.input, finder.count,
+    findButton('↑', 'Older match (Enter)', () => findStep(-1)),
+    findButton('↓', 'Newer match (Shift+Enter)', () => findStep(1)),
+    findButton('✕', 'Close (Esc)', () => closeFind()));
+  finder.input.addEventListener('input', () => findStep(0));
+  finder.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeFind();
+    else if (e.key === 'Enter') findStep(e.shiftKey ? 1 : -1);
+    else if (FIND.isFindKey(e, MAC)) finder.input.select();
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
+  const shown = (frame) => Boolean(frame && frame.isConnected && !frame.hidden && frame.getClientRects().length);
+
+  function placeFind() {
+    const box = finder.frame.getBoundingClientRect();
+    finder.el.style.top = `${Math.max(8, box.top + 8)}px`;
+    finder.el.style.right = `${Math.max(8, window.innerWidth - box.right + 8)}px`;
+  }
+
+  /** Opens find over a terminal frame, with what is selected in it as the query when that is one line. */
+  function openFind(frame) {
+    const term = frame?.contentWindow?.term;
+    if (!term || !shown(frame)) return;
+    if (finder.frame !== frame) {
+      closeFind({ focus: false });
+      finder.frame = frame;
+      finder.at = null;
+    }
+    const picked = term.hasSelection() ? term.getSelection() : '';
+    if (picked && !picked.includes('\n') && picked.length <= 200) finder.input.value = picked;
+    finder.el.hidden = false;
+    placeFind();
+    finder.input.focus();
+    finder.input.select();
+    findStep(0);
+    // Switching tab or session hides the frame under it: find goes with it.
+    clearInterval(finder.timer);
+    finder.timer = setInterval(() => (shown(finder.frame) ? placeFind() : closeFind({ focus: false })), FIND_WATCH_MS);
+  }
+
+  function closeFind({ focus = true } = {}) {
+    if (finder.el.hidden) return;
+    finder.el.hidden = true;
+    clearInterval(finder.timer);
+    unpaint();
+    const term = finder.frame?.contentWindow?.term;
+    if (term && focus) term.focus();
+  }
+
+  function unpaint() {
+    for (const d of finder.painted) d.dispose();
+    finder.painted = [];
+  }
+
+  // A match a row at a time, as it wraps: a decoration covers cells of one row.
+  function paint(term, buf, m, colors) {
+    let { row, col } = m;
+    let left = m.cells;
+    while (left > 0) {
+      const width = Math.min(left, term.cols - col);
+      const marker = term.registerMarker(row - (buf.baseY + buf.cursorY));
+      const d = marker && term.registerDecoration({ marker, x: col, width, ...colors });
+      if (d) {
+        d.onDispose(() => marker.dispose());
+        finder.painted.push(d);
+      } else marker?.dispose();
+      left -= width;
+      row++;
+      col = 0;
+    }
+  }
+
+  /** Reads the matches again (the terminal keeps printing) and shows the one `dir` from the last: see terminalFind.cjs. */
+  function findStep(dir) {
+    const term = finder.frame?.contentWindow?.term;
+    if (!term) return closeFind({ focus: false });
+    const query = finder.input.value;
+    const buf = term.buffer.active;
+    finder.matches = FIND.findAll(buf, query, term.cols);
+    finder.index = FIND.step(finder.matches, finder.at, dir);
+    const m = finder.matches[finder.index];
+    finder.el.classList.toggle('is-none', Boolean(query) && !m);
+    finder.count.textContent = !query ? '' : m ? `${finder.index + 1} of ${finder.matches.length}` : 'No match';
+    finder.count.title = query && !m ? 'Find reads what this terminal showed since it opened. For older lines, scroll up past its top into tmux\'s history and press ? to search there.' : '';
+    unpaint();
+    if (!m) {
+      finder.at = null;
+      return;
+    }
+    finder.at = { row: m.row, col: m.col };
+    try {
+      const from = Math.max(0, finder.index - FIND_PAINTED / 2);
+      finder.matches.slice(from, from + FIND_PAINTED).forEach((other) => other !== m && paint(term, buf, other, { backgroundColor: FIND_WASH }));
+      paint(term, buf, m, FIND_CURRENT);
+    } catch {
+      // An xterm without decorations: the match is shown as its selection instead, which ttyd also copies.
+      term.select(m.col, m.row, m.cells);
+    }
+    if (m.row < buf.viewportY || m.row >= buf.viewportY + term.rows) term.scrollToLine(Math.max(0, m.row - Math.floor(term.rows / 3)));
+  }
+
+  function bindFind(frame, doc) {
+    doc.addEventListener('keydown', (e) => {
+      if (!FIND.isFindKey(e, MAC)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openFind(frame);
+    }, true);
+  }
+
   // ---- a dropped connection: ttyd's "Press ⏎ to Reconnect", pressed for you ----
   // A phone closes the terminal's websocket while the page is in the background, and ttyd then waits for a key. Its
   // overlay is a bare div on the terminal; an Enter on xterm's textarea is the key it waits for, and with the socket
@@ -607,11 +740,12 @@
       bindClipboard(frame);
       bindImages(frame, doc, session);
       bindReconnect(frame, session);
+      bindFind(frame, doc);
     } catch {
       // Not same-origin after all: the terminal works, without these.
     }
   }
 
-  document.body.append(peek.el, viewer.el);
-  W.terminal = { bind };
+  document.body.append(peek.el, viewer.el, finder.el);
+  W.terminal = { bind, openFind, closeFind, isFindKey: (e) => FIND.isFindKey(e, MAC) };
 })();
