@@ -25,10 +25,11 @@
 //   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
 //   POST /api/my/files/<file>/reset                clears them: the console's file alone again. For an env file these
 //                                                  three are the default project's repo settings (repoSettings.mjs, legacyFileRoute)
-//   GET  /api/my/own-files       your own whole files, {"files": {"<path>": "<text>"}}, which your sessions write into the checkout
-//   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it
-//   GET  /api/my/repos[/<project>[/env/<key>|/instructions]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
+//   GET  /api/my/repos[/<project>[/env/<key>|/instructions|/files]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
 //   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
+//   POST /api/my/repos/<project>/files   {"path": "app/.env.production", "text": "..."}   one of your own whole files, which your
+//                                        sessions on that repo write into the checkout; empty text removes it
+//   GET  /api/my/own-files, POST /api/my/own-files   the same, from before they were per repo: the default project's
 //   GET  /auth/connect           Connect GitHub: sign in once more and keep the token, so your sessions push as you
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
@@ -139,7 +140,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
@@ -227,7 +227,6 @@ const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
-const MY_OWN_FILES_PATH = '/api/my/own-files';
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
@@ -548,7 +547,7 @@ export function createHandler({
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null,
 }) {
-  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack }) : null;
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -1188,17 +1187,6 @@ export function createHandler({
     }
   }
 
-  async function ownFilesReply(res, login) {
-    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
-    if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
-    try {
-      return reply(res, 200, { files: await userSettings.ownWholeFiles(login) });
-    } catch (err) {
-      console.error('console: own files not readable', { login, message: String(err?.message ?? err).split('\n')[0] });
-      return reply(res, 502, { error: 'The secret store did not answer: try again in a moment' });
-    }
-  }
-
   function databasesReady(login) {
     return !databases?.available || databases.view(login).status === 'ready';
   }
@@ -1244,7 +1232,7 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : pathname === MY_OWN_FILES_PATH ? ownFilesBodyLimit(userSettings?.maxOwnFilesBytes?.()) : undefined);
+      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
@@ -1294,10 +1282,6 @@ export function createHandler({
         if (reset) await userSettings.resetFile(login, key);
         else await userSettings.saveFile(login, key, body.text);
         return reply(res, 200, await userSettings.file(login, key));
-      }
-      if (pathname === MY_OWN_FILES_PATH) {
-        if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
-        return reply(res, 200, { files: await userSettings.saveOwnFile(login, body.path, body.text), view: myView(login) });
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
@@ -1737,7 +1721,7 @@ export function createHandler({
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
-    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname) || pathname === MY_OWN_FILES_PATH
+    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
       || MY_TUNNEL_RE.test(pathname) || MY_RESTORE_RE.test(pathname)) {
       return myWrite(req, res, pathname, login);
@@ -1936,7 +1920,6 @@ export function createHandler({
     }
     const fileRead = MY_FILE_RE.exec(pathname);
     if (fileRead && !fileRead[2]) return fileReply(res, user.login, fileRead[1]);
-    if (pathname === MY_OWN_FILES_PATH) return ownFilesReply(res, user.login);
     const reviewMatch = REVIEW_RE.exec(pathname);
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
     if (pathname === '/api/webhook-events') {

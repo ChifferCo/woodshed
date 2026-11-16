@@ -869,6 +869,9 @@ chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and 
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
 name, and refuses any other typed repo with a link to give the App access, as a hosted console does.
+`DEV_CONSOLE_REPO_SETTINGS=1` gives it a local secret store and two made-up repos, `example-org/example-repo` and
+`example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
+env file values, instructions and Your files, each per repo.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

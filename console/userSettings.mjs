@@ -10,8 +10,8 @@
 //                                hold them now, and saving there deletes these (repoSettings.mjs); and
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
-//   users/<login>/own-files    their own whole files (an app/.env.production), as JSON {"<path>": "<text>"}, which their
-//                                sessions write into the checkout where git ignores them (session/ownFiles.mjs). Readable by them
+//   users/<login>/own-files      legacy: their own whole files from before they were per repo, which repoSettings.mjs moves
+//                                into the default project's (moveOwnFiles); deleted here with the rest by Remove My Woodshed
 //   users/<login>/github         their GitHub user token, from Connect GitHub (githubUser.mjs), as JSON
 //   users/<login>/database       the password of their own databases' user (databases.mjs)
 
@@ -20,7 +20,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
-import { DEFAULT_MAX_VALUE_BYTES, MAX_OWN_FILES, ownFilePath, ownFilePathProblem } from '../shared/ownFiles.mjs';
 const { loginKey } = logins;
 
 const CLAUDE_TOKEN = 'claude-token';
@@ -233,16 +232,9 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
       files,
-      ownFilesMaxBytes: maxOwnFilesBytes(),
-      ownFiles: Object.entries(record?.ownFiles ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
       setUp: Boolean(record),
       available: Boolean(secrets) && secrets.configured?.() !== false,
     };
-  }
-
-  /** @returns {number}  the most bytes the secret store holds in one value; a store that declares none holds 64 KB */
-  function maxOwnFilesBytes() {
-    return secrets?.maxValueBytes ?? DEFAULT_MAX_VALUE_BYTES;
   }
 
   function requireFile(key) {
@@ -293,55 +285,6 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     const record = recordFor(login);
     touch(login, { files: { ...record?.files, [key]: null } });
     console.log('userSettings: own lines cleared', { login, key });
-  }
-
-  /** @returns {Promise<Record<string, string>>}  the person's own whole files, by path; {} while they have none */
-  async function ownWholeFiles(login) {
-    if (!secrets || !Object.keys(recordFor(login)?.ownFiles ?? {}).length) return {};
-    const value = await secrets.read(userSecretName(login, OWN_FILES));
-    if (!value) return {};
-    try {
-      const files = JSON.parse(value);
-      return files && typeof files === 'object' && !Array.isArray(files) ? files : {};
-    } catch {
-      console.warn('userSettings: own files not read, the secret is not JSON', { login });
-      return {};
-    }
-  }
-
-  /**
-   * Adds, replaces or (with empty text) removes one of the person's own files. All of them are one secret, so a save
-   * writes them all.
-   * @returns {Promise<Record<string, string>>}  their files after the change
-   * @throws {Error}  with a message the page can show
-   */
-  async function saveOwnFile(login, file, text) {
-    requireSecrets();
-    const problem = ownFilePathProblem(file);
-    if (problem) throw Object.assign(new Error(problem), { shown: true });
-    const key = ownFilePath(file);
-    const envFile = envFiles.find((f) => f.path === key);
-    if (envFile) throw Object.assign(new Error(`${key} is one of the repo's env files: set your values for it under Repo settings`), { shown: true });
-    if (text !== undefined && typeof text !== 'string') throw Object.assign(new Error('the file must be text'), { shown: true });
-    const value = String(text ?? '').replace(/\r\n/g, '\n');
-    const files = await ownWholeFiles(login);
-    if (value.trim()) files[key] = value;
-    else delete files[key];
-    if (Object.keys(files).length > MAX_OWN_FILES) throw Object.assign(new Error(`you can keep ${MAX_OWN_FILES} files at most`), { shown: true });
-    const json = JSON.stringify(files);
-    const limit = maxOwnFilesBytes();
-    if (Buffer.byteLength(json) > limit) {
-      console.warn('userSettings: own files refused, over the secret store\'s limit', { login, bytes: Buffer.byteLength(json), limit });
-      throw Object.assign(new Error(`your files together are over the ${Math.floor(limit / 1024)} KB this console's secret store holds`), { shown: true });
-    }
-    if (Object.keys(files).length) await secrets.save(userSecretName(login, OWN_FILES), json, `Woodshed: @${login}'s own files, for their My Woodshed sessions only`);
-    else await secrets.remove(userSecretName(login, OWN_FILES));
-    const record = recordFor(login);
-    const at = new Date(now()).toISOString();
-    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : record?.ownFiles?.[f] ?? at]));
-    touch(login, { ownFiles: Object.keys(kept).length ? kept : null });
-    console.log(value.trim() ? 'userSettings: own file saved' : 'userSettings: own file removed', { login, path: key, files: Object.keys(files).length, ...(value.trim() && { bytes: Buffer.byteLength(value) }) });
-    return files;
   }
 
   /** @returns {Promise<object|null>}  what githubUser.mjs kept from Connect GitHub, or null when not connected */
@@ -491,7 +434,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles, ownWholeFiles, saveOwnFile, maxOwnFilesBytes,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }
