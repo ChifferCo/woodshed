@@ -184,7 +184,9 @@
     const live = p.sessions ? `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'} running or kept` : 'no sessions running';
     return h('div', { class: 'data-row' },
       h('div', { style: 'min-width: 0' },
-        h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name)),
+        h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name),
+          // Whether sessions can start on it (databaseGate.mjs): a word, never a colour alone.
+          p.blocker ? h('span', { class: 'pill is-warn' }, 'Needs setup') : p.blocker === null && h('span', { class: 'pill is-ok' }, 'Ready')),
         h('div', { class: 'data-meta' },
           h('span', null, p.default ? 'default project' : p.source === 'host' ? 'added' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
           h('span', null, live),
@@ -202,6 +204,7 @@
             return null;
           }),
         }, 'Remove')),
+      p.blocker && h('div', { style: 'grid-column: 1 / -1' }, W.blockerCard(p.blocker, { head: false, admin: true })),
       rowNotes.get(p.name) && h('p', { class: rowNotes.get(p.name).bad ? 'form-error' : 'sub', role: rowNotes.get(p.name).bad ? 'alert' : 'status', style: 'grid-column: 1 / -1; margin: 0' }, rowNotes.get(p.name).text));
   }
 
@@ -337,7 +340,7 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. Settings has a repo\'s env file values, instructions and the Slack channel its pull requests go to.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack use. Each repo\'s own project file says which databases its sessions need, so each is checked on its own: one that cannot start sessions says Needs setup, with why and how to fix it. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. Settings has a repo\'s env file values, instructions and the Slack channel its pull requests go to.'),
       data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
         : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },

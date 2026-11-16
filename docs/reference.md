@@ -524,8 +524,9 @@ variables set. A copy waits until each engine's template is ready.
 
 The installation says which engines it hosts: `databases` in Terraform (`WOODSHED_DATABASES` for the console), or
 the local provider's `WOODSHED_LOCAL_DB_*`. A project file whose `databases` need an engine it does not host starts no
-session: the console reads the default branch's file (`console/databaseGate.mjs`), says why on New session and My
-settings, refuses the API's starts with the reason, and answers a label or `/woodshed` comment with it. A session started
+session on that repo, and every other repo still starts: the console reads each repo's default branch's file
+(`console/databaseGate.mjs`), says why and how to fix it on New session, My settings and Console settings' Repos card,
+refuses the API's starts with the reason, and answers a label or `/woodshed` comment with it. A session started
 from a branch whose own file differs stops at start with the same reason (`requireDatabases` in the entrypoint).
 
 ## Renamed variables

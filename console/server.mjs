@@ -9,7 +9,8 @@
 //   GET  /                       My Woodshed: your private sessions, and New session
 //   GET  /settings               My settings: your Claude token
 //   GET  /api/sessions           every shared session and your own private ones, without their tokens
-//   GET  /api/my                 your settings' state (never a value), your running count and limit
+//   GET  /api/my                 your settings' state (never a value), your running count and limit, and each of your
+//                                projects that cannot start sessions with why and how to fix it (`projectBlockers`)
 //   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
@@ -1138,12 +1139,24 @@ export function createHandler({
     return teamOpenAiKey;
   }
 
+  // The blockers each person's projects had at their last look at /api/my, for the answers that cannot wait for a read.
+  const blockersSeen = new Map();
+  async function readProjectBlockers(login) {
+    if (!databaseGate) return {};
+    const { projects } = await projectsView(login);
+    const found = await databaseGate.blockers(projects.map((p) => projectNamed(config, p.name) ?? p));
+    blockersSeen.set(login, found);
+    return found;
+  }
+
   function myView(login) {
     const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: false, available: false };
     return {
       login, ...view,
       // The agents New session offers: each only with something to run it on.
-      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
+      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
+      // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
+      projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
@@ -1567,10 +1580,12 @@ export function createHandler({
   async function consoleSettingsReply(res) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
     const colors = new Map(projectsWithColors().map((p) => [p.name, p.color]));
+    // Each repo's readiness, so an admin sees which one cannot start sessions and how to fix it.
+    const blockers = databaseGate ? await databaseGate.blockers(allProjects(config)) : {};
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
-      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
+      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '', blocker: blockers[p.name] ?? null })) ?? null,
       // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
       repoNames: addedProjects ? addedProjects.names !== false : null,
       palette: projectColorsShared.PALETTE,
@@ -1881,7 +1896,7 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([databaseGate?.refusal(), first ? looking : null, readTeamOpenAiKey()]);
+      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey()]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
@@ -2085,10 +2100,10 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   (databases.mjs), `webhooks` hands GitHub and Slack events to webhookDispatch.mjs, and `webhookUrl` is where GitHub
  *   should post them
  *   `config` is loadConfig()'s, read again when left out
- *   `repos` is an embedding program's repos hook, passed on to createInstallation (installation.mjs): only the dev
- *   console's stand-in (scripts/devHostConsole.mjs) passes one here
+ *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
+ *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2098,7 +2113,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

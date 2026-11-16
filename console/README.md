@@ -641,7 +641,9 @@ login as the session's `plan`, which the Shared page, the rail, the session's
 **Details ▾** and the start comment show (`◆ Mona Octocat's Claude`, the start comment
 with `@login`, or `Team key`). The
 session API's `/settings` answer tells that session its `plan`, and the
-entrypoint has claude go through the proxy on it. The token never reaches a
+entrypoint has claude go through the proxy on it. It asks whether or not the
+console makes the session databases (a console with no db-admin, or a project
+with no Postgres or Mongo, answers `{plan}` alone, and a 404 on the team key). The token never reaches a
 shared session: anyone signed in who opens it can type into it, and spends
 that person's plan while it runs, but cannot take the token away. So the
 Artifact tool does not work there, nor on the team key.
@@ -794,12 +796,26 @@ there is no db-admin task, Data ▾ has Redis alone, and My settings has no Your
 databases` once at start, with `made`, the `engines` it makes a copy on, the ones sessions are `hosted` on and the ones
 its `tunnel` reaches.
 
-When the default branch's project file names a database on an engine the installation does not host, no session that
-would get databases starts (`databaseGate.mjs`): New session and My settings say why, the API answers the start with
-the reason (`Not started: the project file's databases need mongo, which this installation does not host (it hosts
-postgres)`), and a label or `/woodshed` comment gets it on its issue. The console logs `console: project databases not
-hosted` with what the file `needs` and what is `hosted`, `fleet: session refused, its databases are not hosted` or
-`fleet: trigger refused, its databases are not hosted`. A question from Slack, which gets no database, still starts.
+Each repo is checked on its own (`databaseGate.mjs`): when a repo's project file, read from its default branch, names a
+database on an engine the installation does not host, no session on that repo that would get databases starts, and
+every other repo still does. That repo is a **blocker**: one sentence naming the repo (`acme/api's project file asks
+for a Mongo database, and this console only runs Postgres.`), the fix's steps in order (on AWS, add the engine to
+`databases` in Terraform and apply; on the local provider, its `WOODSHED_LOCAL_DB_*`, or `install.sh` again with
+`WOODSHED_REPO` where the install named no repo; then "Or take the Mongo database out of acme/api's project file",
+linked to the file on GitHub), and the People list's admins to ask. `GET /api/my` has `projectBlockers`, each blocked
+project you may start on by name (and `databasesRefusal`, the default project's as a sentence, for older pages);
+Console settings' Repos card says Needs setup or Ready on each repo, with the blocker under it.
+
+New session opens on your default repo only while it can start, else on the first that can, so a blocked repo never
+shows up front while another works. The repo picker is always there, the only repo named as text with a way to add
+another (Add a repo for an admin), and a blocked repo is listed with `needs setup`: picking it puts its card where the
+prompt and Start were, with the numbered fix for an admin, and for anyone else "Only an admin can fix this", whom to
+ask and a message to send them with Copy. My settings' Your databases lists the same cards. The API answers a start
+with the reason and the first step (`Not started: acme/api's project file asks for … Add "mongo" to databases …`), and
+a label, `/woodshed` comment or QA label gets the same on its issue. The console logs `console: project databases not
+hosted` with the `project`, what the file `needs` and what is `hosted`, `console: project ready again`, and `fleet:
+session refused, its project is not ready` or `fleet: trigger refused, its project is not ready`. A question from
+Slack, which gets no database, still starts.
 
 Every session's databases are a copy of one **template** on each engine, migrated and seeded
 from the default branch, and every database has a user of its own, with its own password, the same on
@@ -1333,6 +1349,16 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
   the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
   the program names each repo itself: the page then asks for no name, and one sent is refused.
+- `projectReadiness({name, repo})`: why sessions cannot start on a project, where the program knows something core
+  does not (its session image is not built, an install secret has no value). Async; it answers `null` when the
+  project is ready, or a blocker without `project` and `repo`, which core fills in:
+  `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}`. `reason` is one plain sentence naming the repo;
+  `fix` the steps someone who can fix it takes, in order, each with an optional link (`href`, https or a console path
+  such as `/console-settings`) and its button text (`label`); `ask` whom someone who cannot should ask (GitHub logins)
+  and an optional message, ready to send. Core asks it before its own database check, on each look at New session, My
+  settings and Console settings and at each start (an answer is kept 10 seconds), and shows and refuses with it as
+  with its own (above, "Databases"); a link that is neither https nor a path, or a step with no text, is dropped. A
+  hook that throws blocks nothing: core logs `console: project readiness not read` and runs its own check.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
@@ -1734,8 +1760,9 @@ or listed to resume (a shared one kept, or any of a person's My Woodshed session
 the default among them, are read-only here: they change where `WOODSHED_PROJECTS` is set. Each row, theirs too, has a
 Slack channel field for that repo's pull requests ("A channel for each project" under Slack). An added repo is on the
 same terms as any other project: My Woodshed sessions, and labels and `/woodshed` comments on its issues (a webhook about
-it is no longer dropped), in the default project's session image and databases, with Slack questions and the
-database check staying on the default project. The
+it is no longer dropped), in the default project's session image and databases, with Slack questions staying on the
+default project. Its own project file's databases are checked on their own: a repo whose file needs an engine the
+installation does not host shows Needs setup on its row, with why and the fix, and Ready otherwise. The
 console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`
 when GitHub did not answer.
 
@@ -1909,7 +1936,7 @@ Remove My Woodshed.
 | `WOODSHED_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
 | `WOODSHED_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
 | `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on. Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer sets it only when given `WOODSHED_REPO`, and then builds the session image from it; without, the console starts with no repo, on `woodshed-session:generic`, an image with no checkout, and every session clones its repo at start |
-| `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack and the database check still run on the default project. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
+| `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack still run on the default project; each project's own file is checked for its databases. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
 | `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | The repo's env files as `secret=path` pairs (`api-env=api/.env,web-env=web/.env.local`): each is a secret on the Secrets page and a tab on My settings. The second lists which of those secrets the databases' commands read (every `envFiles` of the project file's `databases`). Terraform sets both from `env_files` and `database_env_secrets`; the project file's own `envFiles` must name the same secrets |
 | `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) or an env file's stops the start. Terraform sets it from `install_secrets` |
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |

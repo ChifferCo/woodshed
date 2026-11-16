@@ -577,6 +577,18 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .launch { flex: 1 1 auto; min-height: 0; padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; overflow-y: auto; }
 .launch[hidden] { display: none; }
 /* The Shared tab's page, in the pane beside the rail. */
+/* A repo sessions cannot start on: why, and the fix for an admin or whom to ask (designSystem/components/BlockerCard). */
+.blocker-card { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); display: grid; gap: 10px; max-width: 560px; }
+.blocker-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.blocker-card p { margin: 0; }
+.blocker-reason { font-size: 14px; color: var(--ink); line-height: 1.45; }
+.blocker-card .cmd-steps { font-size: 13.5px; }
+.blocker-link { margin-top: 6px; }
+.blocker-ask { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.blocker-others { margin: 0; padding-left: 18px; font-size: 13px; color: var(--sub); display: grid; gap: 4px; }
+.project-more { margin: 0; font-size: 12.5px; color: var(--sub); }
+.launch-body { display: flex; flex-direction: column; gap: 12px; }
+.launch-body[hidden] { display: none; }
 .home { padding: 24px; display: flex; flex-direction: column; gap: 18px; max-width: 1040px; overflow-y: auto; min-width: 0; }
 .home[hidden] { display: none; }
 .launch-title { margin: 0 0 4px; font: 700 22px/1.25 Merriweather, Georgia, serif; }

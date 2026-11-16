@@ -204,18 +204,22 @@ async function loadAppKey(config, secrets) {
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
- *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null}} args
+ *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
+ *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
  *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation.
  *   `repos` is where the program keeps the installation's repo list, which `config.projects` was built from, so the
  *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
- *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`
+ *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`. `projectReadiness` says why
+ *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
+ *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console")
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null }) {
+  if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
     throw new Error('repos needs add and remove, and list when it has one');
   }
@@ -268,13 +272,16 @@ export async function createInstallation({ config: loaded, store, provider, trus
     return projectReaders.get(key);
   };
   // A local install that named no repo hosts no database: install.sh, given the repo, builds its image and starts them.
-  const databasesFix = () => {
-    const project = defaultProject(config);
-    return provider.name === 'local' && project.clonedAtStart
-      ? `run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases`
-      : null;
-  };
-  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
+  const databasesFix = (project) => (provider.name === 'local' && project.clonedAtStart
+    ? [{ text: `Run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases.` }]
+    : null);
+  // Whom someone who cannot fix a project asks: the People list's admins. Behind a hosting proxy there is no list, and
+  // the program's own hook names them.
+  const admins = () => (members ? members.view().members.filter((m) => m.admin).map((m) => m.login) : null);
+  const databaseGate = createDatabaseGate({
+    projectDatabases: (project) => readerOf(project.name).databases(), hosted, provider: provider.name ?? null, fix: databasesFix, admins,
+    readiness: projectReadiness,
+  });
   // An env file of one repo (an embedding program's `repo`) lists what that repo's project file appends to it.
   const appendedFor = (secret, repo) => readerOf(repo ? projectForRepo(config, repo)?.name : null).appendedFor(secret);
   const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor });
@@ -298,7 +305,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
+    pullRequests: (name) => readerOf(name).pullRequests(), projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
     ownApp: () => appIdentity.known(),

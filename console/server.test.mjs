@@ -1769,6 +1769,45 @@ test('New session lists the projects you can write to, saves your default, and r
   assert.equal(started[1].project.name, 'app', 'a page from before projects starts on the installation\'s default');
 });
 
+test('/api/my names each of your projects that cannot start sessions, and only yours, with why and how to fix it', async (t) => {
+  const { createProjectAccess } = await import('./projectAccess.mjs');
+  const { createViewPrefs } = await import('./viewPrefs.mjs');
+  const { createDatabaseGate } = await import('./databaseGate.mjs');
+  t.mock.method(console, 'warn', () => {});
+  const userSettings = { view: () => ({ claudeToken: { set: true, savedAt: null }, setUp: true, available: true }) };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'mia-dev' }) };
+  const projects = [
+    { name: 'app', repo: 'acme/app', default: true },
+    { name: 'tools', repo: 'acme/tools', default: false },
+    { name: 'secret', repo: 'acme/secret', default: false },
+  ];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const githubFor = (project) => ({ canWrite: async () => project.name !== 'secret' });
+  const viewPrefs = createViewPrefs({ state: {}, save() {} });
+  // The default needs Mongo, which is not hosted; secret, which Mia cannot see, is blocked by the program's hook.
+  const files = { app: [{ engine: 'mongo' }], tools: [{ engine: 'postgres' }], secret: [] };
+  const databaseGate = createDatabaseGate({
+    projectDatabases: async (p) => files[p.name], hosted: ['postgres'], provider: 'aws', admins: () => ['ana'],
+    readiness: async (p) => (p.name === 'secret' ? { reason: 'acme/secret is not built.', fix: [] } : null),
+  });
+  const consoleSettings = { view: () => ({}) };
+  const addedProjects = { view: () => projects.map((p) => ({ ...p, sessions: 0 })), names: true };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings, viewPrefs, databaseGate, consoleSettings, addedProjects, projectAccess: createProjectAccess({ config, githubFor, viewPrefs }) });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const me = JSON.parse(await getBody(port, '/api/my', { cookie: 'woodshed_session=mia-dev' }));
+  assert.deepEqual(Object.keys(me.projectBlockers), ['app'], 'tools starts; secret is not hers to see');
+  assert.equal(me.projectBlockers.app.reason, 'acme/app\'s project file asks for a Mongo database, and this console only runs Postgres.');
+  assert.equal(me.projectBlockers.app.fix.at(-1).href, 'https://github.com/acme/app/blob/HEAD/.woodshed/project.yaml');
+  assert.deepEqual(me.projectBlockers.app.ask.who, ['ana']);
+  assert.match(me.databasesRefusal, /^acme\/app's project file asks for a Mongo database/, 'older pages still get the default project\'s');
+  const settings = JSON.parse(await getBody(port, '/api/console-settings', { cookie: 'woodshed_session=mia-dev' }));
+  assert.deepEqual(settings.projects.map((p) => [p.name, p.blocker?.reason ?? null]), [
+    ['app', me.projectBlockers.app.reason], ['tools', null], ['secret', 'acme/secret is not built.'],
+  ], 'Console settings shows each repo\'s readiness');
+});
+
 test('Resume asks again whether the person may start on the session\'s project', async (t) => {
   const { createProjectAccess } = await import('./projectAccess.mjs');
   const { createViewPrefs } = await import('./viewPrefs.mjs');

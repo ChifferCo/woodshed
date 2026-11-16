@@ -45,6 +45,8 @@ test('the gates match what Woodshed\'s own review session and workflows post', (
   // The verdict's first line, as the console's reviewFinished writes it under the project file's heading.
   const verdict = { user: { login: review.author }, state: 'APPROVED', body: `${review.heading} — APPROVE\n\nLooks right.` };
   assert.equal(reviewVerdict([verdict], review), verdict);
+  const reviewYml = parseYaml(fs.readFileSync(path.join(WOODSHED, '.github/workflows/review.yml'), 'utf8'));
+  assert.deepEqual(Object.keys(reviewYml.on), ['workflow_call'], 'review.yml no longer reviews Woodshed\'s own pull requests');
   const [suite] = suites;
   const checkYml = parseYaml(fs.readFileSync(path.join(WOODSHED, suite.workflow), 'utf8'));
   assert.ok(checkYml.jobs[suite.jobs], 'check.yml has the suite\'s job');

@@ -239,6 +239,45 @@
     return null;
   }
 
+  /**
+   * Why sessions cannot start on a repo, and how to fix it (`projectBlockers` in /api/my, databaseGate.mjs). An admin
+   * gets the fix's numbered steps with their links; anyone else who to ask, and a message to send them with Copy.
+   * @param {{repo: string, reason: string, fix?: {text: string, href?: string, label?: string}[], ask?: {who: string[], text?: string}}} blocker
+   * @param {{admin?: boolean, others?: boolean, head?: boolean}} [o]  others: another repo can be picked above;
+   *   head: false leaves out the repo and its Needs setup word, where the row around it says them
+   */
+  function blockerCard(blocker, { admin = isAdmin(), others = false, head = true } = {}) {
+    const link = (step) => {
+      const away = /^https:/.test(step.href);
+      return h('a', { class: 'btn btn-plain btn-sm', href: step.href, ...(away ? { target: '_blank', rel: 'noopener' } : {}) },
+        `${step.label || (away ? 'Open' : 'Go there')}${away ? ' \u2197' : ''}`);
+    };
+    const steps = blocker.fix ?? [];
+    const who = blocker.ask?.who ?? [];
+    const message = blocker.ask?.text || `${blocker.reason} Could you fix it, so sessions can start on ${blocker.repo}?`;
+    let copied = false;
+    const copy = h('button', { type: 'button', class: 'btn btn-plain btn-sm' }, 'Copy');
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(message);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+      copy.textContent = copied ? 'Copied' : 'Copy';
+    });
+    return h('section', { class: 'blocker-card', role: 'status' },
+      head && h('div', { class: 'blocker-head' }, h('b', { class: 'mono' }, blocker.repo), h('span', { class: 'pill is-warn' }, 'Needs setup')),
+      h('p', { class: 'blocker-reason' }, blocker.reason),
+      admin
+        ? (steps.length ? h('ol', { class: 'cmd-steps' }, steps.map((step) => h('li', null, h('p', null, step.text), step.href && h('div', { class: 'blocker-link' }, link(step))))) : null)
+        : [
+          h('p', { class: 'sub' }, 'Only an admin can fix this.', who.length ? [' Ask ', who.map((login, i) => [i ? (i === who.length - 1 ? ' or ' : ', ') : '', h('b', null, `@${login}`)]), '.'] : ' Ask an admin of this console.'),
+          h('div', { class: 'blocker-ask' }, h('div', { class: 'value-box' }, message), copy),
+        ],
+      others && h('p', { class: 'sub' }, 'Pick another repo above to start a session now.'));
+  }
+
   /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
   function setupCard(me, { compact = false } = {}) {
     const steps = setupSteps(me);
@@ -1356,7 +1395,7 @@
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();
