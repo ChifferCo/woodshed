@@ -911,6 +911,13 @@ kbd { display: inline-block; min-width: 1.5em; padding: 0 4px; margin-right: 4px
 .imgpeek { position: fixed; z-index: 44; width: 320px; height: 240px; display: flex; flex-direction: column; padding: 6px; pointer-events: none; background: var(--bar); border: 1px solid var(--bar-line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
 .imgpeek img { flex: 1; min-height: 0; object-fit: contain; }
 .imgpeek-name { margin-top: 4px; color: var(--bar-sub); font: 10.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tfind { position: fixed; z-index: 43; display: flex; align-items: center; gap: 4px; padding: 4px 4px 4px 6px; max-width: calc(100vw - 16px); background: var(--bar); border: 1px solid var(--bar-line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); color: var(--bar-ink); }
+.tfind-input { width: 220px; min-width: 0; flex: 1 1 auto; padding: 4px 8px; border: 1px solid var(--bar-well-line); border-radius: 4px; background: var(--bar-well); color: var(--bar-ink); font: 12px var(--mono); outline: none; }
+.tfind-input:focus { border-color: var(--bar-slate); }
+.tfind.is-none .tfind-input { border-color: var(--bar-amber-line); }
+.tfind-count { min-width: 5.5em; padding: 0 4px; color: var(--bar-sub); font: 11px var(--mono); white-space: nowrap; text-align: right; }
+.tfind-btn { padding: 3px 8px; border: 1px solid var(--bar-well-line); border-radius: 4px; background: var(--bar-well); color: var(--bar-ink); font: inherit; font-size: 12px; cursor: pointer; }
+.tfind-btn:hover { background: var(--bar-hover); }
 .imgview { position: fixed; inset: 0; z-index: 45; display: flex; flex-direction: column; background: rgba(8, 10, 14, 0.94); outline: none; }
 .imgview-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; color: var(--bar-ink); font-size: 13px; }
 .imgview-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }

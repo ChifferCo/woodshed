@@ -147,8 +147,8 @@ test('envFiles: one entry a file and a secret, and no secret Woodshed keeps for 
   const file = PROJECT.envFiles[0];
   const files = (...list) => ({ project: { envFiles: list, databases: [] } });
   assertProblem(t, files(file, { ...file, secret: 'web-env' }), /^envFiles has api\/\.env more than once: one entry a file$/);
-  assert.throws(() => problems(t, { project: { envFiles: [file, { ...file, path: 'web/.env' }] }, files: { '.gitignore': 'api/.env\nweb/.env\n' } }),
-    /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env: give one a secret of its own$/, 'one key a file, as a start reads it');
+  assert.throws(() => problems(t, { project: { envFiles: [{ ...file, secret: null }, { ...file, path: 'web/.env' }], databases: [] }, files: { '.gitignore': 'api/.env\nweb/.env\n' } }),
+    /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env: give one a secret, or give both the same secret to share its values$/, 'a key made from a path is one file\'s, as a start reads it');
   assertProblem(t, files({ ...file, secret: 'github-app-key' }), /^envFiles\[0\]\.secret is github-app-key, one of the console's own secrets, which no session is handed$/);
   assertProblem(t, files({ ...file, secret: 'gh-token' }), /^envFiles\[0\]\.secret gh-token reaches the session as GH_TOKEN, one of Woodshed's own session variables/);
   assertProblem(t, files({ ...file, secret: 'woodshed-x' }), /reaches the session as WOODSHED_X/);
@@ -165,6 +165,16 @@ test('check hints at each env file\'s lines with no {{…}}, the same in every s
   const hints = run.stdout.split('\n').filter((line) => line.startsWith('hint: '));
   assert.deepEqual(hints, ['hint: envFiles[0] (api/.env) lines set FEATURE_PREVIEW, PORT with no {{…}}: a line with none is the same in every session, so move it to defaults if a person may change it']);
   assert.doesNotMatch(cli(checkout(t)).stdout, /^hint: /m, 'every line of the passing file has a placeholder');
+});
+
+test('check passes two env files that name one secret, and says they share its values', (t) => {
+  const dir = checkout(t, { project: { envFiles: [
+    { path: 'api/.env', secret: 'app-env', lines: ['PORT=8080'] },
+    { path: 'worker/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['ROLE=worker'] },
+  ], databases: [{ ...DB, envFiles: ['app-env'] }] }, files: { '.gitignore': 'api/.env\nworker/.env\napi/node_modules/\n' } });
+  const run = cli(dir);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^env files: 2 \(api\/\.env from app-env, worker\/\.env from app-env, 1 default\); api\/\.env and worker\/\.env share app-env$/m);
 });
 
 test('envFiles: each default is NAME=value or a comment', (t) => {

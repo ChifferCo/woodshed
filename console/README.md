@@ -380,6 +380,13 @@ Agent and Terminal tabs):
   pane on the alternate screen (a full-screen program), in copy mode or split
   scrolls through tmux as before. tmux says which in the terminal's title, and
   `public/terminalScroll.cjs` reads it.
+- **Find**: ⌘F on a Mac, Ctrl+Shift+F elsewhere (Ctrl+F is the pane's, a character forward), from the terminal or the
+  page around it, or **find** on a phone's key bar, opens a bar over the terminal's top right. xterm paints on a
+  canvas, so the browser's own find sees nothing there: the bar reads xterm's buffer (`public/terminalFind.cjs`), which
+  is the screen and the browser's scrollback, case ignored and a wrapped line read as one. Every match is marked, the
+  one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
+  marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
+  off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
 - **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
   tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
