@@ -1387,13 +1387,19 @@ test('Console settings: a repo\'s own Slack channel, for the installation\'s rep
       return members.isMember(login) ? { login } : null;
     },
   };
-  const handle = createHandler({ config, fleet: { sessions: () => [] }, auth, members, slack, consoleSettings: createConsoleSettings({ store, config }), addedProjects });
+  // The repo's settings page reads its channel from its view; its records are not what this test is about.
+  const repoSettings = { view: async (project) => ({ project, envFiles: [] }), forget: async () => {} };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, auth, members, slack, consoleSettings: createConsoleSettings({ store, config }), addedProjects, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
   const mia = { cookie: 'woodshed_session=mia-dev' };
   const sam = { cookie: 'woodshed_session=sam-ops' };
   const path = '/api/console-settings/projects/slack-channel';
+  const repoView = async (name, who = mia) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/console-settings/repos/${name}`, { headers: { host: `localhost:${port}`, ...who } });
+    return { status: res.status, body: await res.json() };
+  };
 
   assert.equal((await post(port, path, { name: 'api', channel: 'C0APIPRS01' }, sam)).status, 403, 'not an admin');
   assert.equal(store.state.settings?.projectSlackChannels, undefined, 'nothing kept from a refused call');
@@ -1407,6 +1413,8 @@ test('Console settings: a repo\'s own Slack channel, for the installation\'s rep
   assert.match(name.body.error, /channel's ID/, 'a name is refused as the console\'s channel is');
   assert.deepEqual(await post(port, path, { name: 'nope', channel: 'C0APIPRS01' }, mia), { status: 400, body: { error: 'There is no project called nope.' } });
   assert.equal((await post(port, path, { name: 'api', channel: 'C0APIPRS01' }, { ...mia, origin: 'https://evil.example' })).status, 403);
+  assert.deepEqual((await repoView('api')).body.slack, { channel: 'C0APIPRS01', consoleChannel: '', canPost: true }, 'the repo\'s settings page reads it with its view');
+  assert.equal((await repoView('api', sam)).status, 403);
   const cleared = await post(port, path, { name: 'r', channel: '' }, mia);
   assert.deepEqual(cleared.body.projects.map((p) => p.slackChannel), ['', 'C0APIPRS01'], 'empty goes back to the console\'s channel');
   await post(port, '/api/console-settings/projects/remove', { name: 'api' }, mia);

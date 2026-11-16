@@ -88,7 +88,7 @@
 //   GET  /api/console-settings/repos/<project>[/env/<key>|/instructions]   a repo's settings, the installation's values (repoSettings.mjs)
 //   POST /api/console-settings/repos/<project>/env/<key>[/remove]|/instructions   {"text": "..."}   the installation's; empty clears
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
-//   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel
+//   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel, from its settings page
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
 //   GET  /api/console-settings/updates         the Woodshed commit this console runs, the newer ones on the branch its
 //                                git clone follows, and an update's steps (woodshedUpdate.mjs)
@@ -547,7 +547,7 @@ export function createHandler({
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null,
 }) {
-  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess }) : null;
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -1570,6 +1570,13 @@ export function createHandler({
       if (err.shown) return reply(res, 400, { error: err.message });
       throw err;
     }
+  }
+
+  // A repo's Slack channel for its settings page: none where PROJECT_CHANNEL_PATH would refuse to set one.
+  function repoSlack(project) {
+    if (!slack || !addedProjects) return null;
+    const { channel, canPost } = slack.view();
+    return { channel: slack.projectChannel(project), consoleChannel: channel, canPost };
   }
 
   async function consoleSettingsReply(res) {

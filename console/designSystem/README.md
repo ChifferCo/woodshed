@@ -123,10 +123,19 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 - A repo's settings are their own page, `/console-settings/repos/<project>`, reached by a quiet **Settings** link on its
   row of the Repos card. The heading is the repo (`title`), with a `‹ Console settings · Repos` link above it.
-- Two cards: **Env files** (a tab per env file, by path) and **Instructions**. Each is a layered file
+- A row of the Repos card is the repo's name, where it was set, its sessions and, with Slack, where its pull requests go
+  (`PRs to C…` or `PRs to the console's channel`, a link to the Slack card), then **Settings** and, for an added repo,
+  **Remove**. No field: the channel is set on the repo's page.
+- Three cards: **Env files** (a tab per env file, by path), **Instructions** and **Slack**. The first two are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
   own layer's field, behind **Show and edit** once saved.
+- With no env files, the Env files card is a short how-to in the same box: numbered steps (`cmd-steps`), the YAML in a
+  mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
+- **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull
+  request goes, Save and a quiet Clear (back to the console's channel), then a `sub` line on finding the ID and inviting
+  the bot. What the channel is for, and what does not use it, are `sub` lines around the box. With no Slack, a
+  `cap-note` says so and the field and buttons are off. `#slack` opens the page on it.
 - Save is the card's one `btn-open`; Clear and Hide are quiet. A refusal is a `form-error` under the buttons, in the
   console's words, and the typed text stays.
 - A non-admin gets the page's frame with one `cap-note` saying it is an admin's: no field, no value.

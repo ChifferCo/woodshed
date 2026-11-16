@@ -631,7 +631,8 @@ async function readText(req) {
  * The JSON API behind the Repo settings pages. The server has already checked the host, and for a write the origin and
  * `x-woodshed`, and that an admin calls `/api/console-settings/...`.
  *
- *   GET  /api/console-settings/repos/<project>                   the repo's env files and instructions, records only
+ *   GET  /api/console-settings/repos/<project>                   the repo's env files and instructions, records only, and
+ *                                                                its Slack channel (`slack`, null where the console has none)
  *   GET  /api/console-settings/repos/<project>/env/<key>         {"text"}: the installation's values, logged as shown
  *   POST /api/console-settings/repos/<project>/env/<key>         {"text"}; "" clears
  *   POST /api/console-settings/repos/<project>/env/<key>/remove  a key the project file no longer names, everyone's
@@ -650,9 +651,12 @@ async function readText(req) {
  * Every /api/my/repos/<project> route, and the old one for the default project, is refused (403) to someone who cannot write to the repo: they cannot start
  * sessions on it, so they keep nothing for it and read nothing of it.
  * @param {{repoSettings: ReturnType<typeof createRepoSettings>, config: object,
- *          projectAccess?: {view: Function, forStart: (login: string, name: string) => Promise<object|null>}|null}} deps
+ *          projectAccess?: {view: Function, forStart: (login: string, name: string) => Promise<object|null>}|null,
+ *          slackOf?: ((project: string) => {channel: string, consoleChannel: string, canPost: boolean}|null)|null}} deps
+ *   `slackOf` is the repo's own Slack channel and the console's, for the admin's page; it is saved through
+ *   `POST /api/console-settings/projects/slack-channel`, as the Repos card saved it
  */
-export function createRepoSettingsApi({ repoSettings, config, projectAccess = null }) {
+export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null }) {
   async function canWrite(login, name) {
     if (projectAccess) return Boolean(await projectAccess.forStart(login, name));
     return projectNamed(config, name)?.default === true;
@@ -664,12 +668,16 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return { projects: main.repo ? [main] : [], defaultProject: main.repo ? main.name : null };
   }
 
+  async function adminView(project) {
+    return { ...(await repoSettings.view(project)), slack: slackOf?.(project) ?? null };
+  }
+
   async function admin(req, res, { project, key, remove, instructions }, by) {
-    if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await repoSettings.view(project));
+    if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await adminView(project));
     if (req.method === 'GET') return reply(res, 200, { text: (await repoSettings.installationText({ project, key, by })) ?? '' });
     if (remove) await repoSettings.removeUnnamed({ project, key, by });
     else await repoSettings.saveInstallation({ project, key, text: await readText(req), by });
-    return reply(res, 200, await repoSettings.view(project));
+    return reply(res, 200, await adminView(project));
   }
 
   async function mine(req, res, { project, key, instructions }, login) {

@@ -791,6 +791,9 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
 .layer-count { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--meta); }
 .layer-count.is-over { color: var(--bad); }
 .layer .value-row { margin: 0; }
+.layer .field.is-channel { width: 180px; max-width: 100%; font-family: var(--mono); }
+.layer .cmd-steps { font-size: 13px; }
+.cmd-steps .layer-pre { margin-top: 6px; }
 table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; font-size: 13px; }
 .layer-table th { text-align: left; padding: 7px 12px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .layer-table td { padding: 7px 12px; border-top: 1px solid var(--line-soft); vertical-align: middle; }
