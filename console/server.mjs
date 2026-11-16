@@ -1615,10 +1615,11 @@ export function createHandler({
         const by = login ?? 'console';
         if (pathname === PROJECTS_PATH) await addedProjects.add({ repo: body.repo, name: body.name, by });
         else {
+          // Its env values and instructions, the installation's and everyone's own, go first: a repo added again starts
+          // with none, and when a delete fails the repo stays listed, so Remove can be tried again.
+          if (addedProjects.view().some((p) => p.name === body.name && p.removable)) await repoSettings?.forget(body.name);
           await addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
-          // Its env values and instructions, the installation's and everyone's own: a repo added again starts with none.
-          await repoSettings?.forget(body.name);
           // A repo added again later under the same name starts on the console's channel.
           slack?.setProjectChannel({ project: body.name, channel: '', by });
         }
@@ -1639,7 +1640,7 @@ export function createHandler({
         await heldData.clean({ kind: body.kind, id: body.id, by: login ?? 'console' });
       }
     } catch (err) {
-      if (err.shown) return reply(res, pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409, { error: err.message, ...(err.link && { link: err.link }) });
+      if (err.shown) return reply(res, err.status ?? (pathname === '/api/console-settings' || pathname.startsWith(PROJECTS_PATH) ? 400 : 409), { error: err.message, ...(err.link && { link: err.link }) });
       console.error('console: console settings change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The change failed; the console log says why' });
     }
