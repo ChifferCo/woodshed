@@ -19,7 +19,9 @@ export const REVIEWER_KEY_SECRET = 'github-reviewer-app-key';
 const GITHUB = 'https://github.com';
 const GITHUB_API = 'https://api.github.com';
 const HEADERS = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' };
-const PERMISSIONS = { pull_requests: 'write', metadata: 'read' };
+// GitHub counts an App's approval toward a branch rule's required review only when the App can write to the repo, so it
+// asks for contents too. The token each review is submitted with is still narrowed to pull requests (submitReview).
+const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
 // The manifest's code lasts an hour; the state it was started with, 15 minutes.
 const STATE_TTL_MS = 15 * 60_000;
 const MAX_PENDING = 20;
@@ -28,7 +30,7 @@ function refusal(message) {
   return Object.assign(new Error(message), { shown: true });
 }
 
-/** @returns {object}  the manifest GitHub makes the reviewer App from: pull requests only, no webhook, no sign-in */
+/** @returns {object}  the manifest GitHub makes the reviewer App from: no webhook, no sign-in */
 export function reviewerManifest({ publicUrl, repo, consoleName = DEFAULT_CONSOLE_NAME }) {
   const [owner] = repo.split('/');
   return {
@@ -53,7 +55,7 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     return store.state.reviewerApp ?? null;
   }
 
-  /** @returns {string|null}  the login its reviews carry, `<slug>[bot]`, which the project file names as review.author */
+  /** @returns {string|null}  the login its reviews carry, `<slug>[bot]`: a review session's review.author (reviewLogins.mjs) */
   function login() {
     return stored()?.slug ? `${stored().slug}[bot]` : null;
   }

@@ -21,7 +21,7 @@ function setup(fetchImpl, { state = {}, secrets = memorySecrets() } = {}) {
 
 test('the reviewer manifest asks for pull requests and nothing a session could use to push or sign people in', () => {
   const m = reviewerManifest({ publicUrl: config.publicUrl, repo: config.repo });
-  assert.deepEqual(m.default_permissions, { pull_requests: 'write', metadata: 'read' });
+  assert.deepEqual(m.default_permissions, { contents: 'write', pull_requests: 'write', metadata: 'read' }, 'an approval counts toward a required review only from an App that can write');
   assert.equal(m.redirect_url, 'https://woodshed.example.com/setup/github/reviewer-created');
   assert.equal(m.callback_urls, undefined, 'no sign-in');
   assert.ok(m.name.length <= 34);

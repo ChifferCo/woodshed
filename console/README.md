@@ -713,8 +713,15 @@ App, `/setup/github` offers it:
    no sign-in). GitHub sends the browser back to `/setup/github/reviewer-created`, and the console keeps the key in the
    secret store (`github-reviewer-app-key`) and the App's ID and slug in `state.json` under `reviewerApp`. No restart:
    the key is read at each review.
-2. **Install it** on each repo whose review runs as a session, and set that project file's `pullRequests.review.author`
-   to its `<slug>[bot]` login. The review's PR comment and the Merge risk check stay the installation's App's.
+2. **Install it** on each repo whose review runs as a session. The project file names neither App: the console fills
+   in `pullRequests.review.author` with the reviewer App's `<slug>[bot]` and `commentAuthor` with its own
+   (`reviewLogins.mjs`), so renaming either App changes nothing there. A login the file does name still wins. The
+   review's PR comment and the Merge risk check stay the installation's App's.
+
+It asks for contents (write) as well as pull requests, because GitHub counts an approval toward a branch rule's required
+review only from an App that can write to the repo. Each review still goes out with a token narrowed to pull requests.
+A reviewer App made before it asked for contents needs it added in its settings on GitHub, then accepted on each
+installation.
 
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
