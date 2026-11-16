@@ -16,7 +16,7 @@ const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ nam
 
 function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
-  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [] };
+  const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
   // When ECS began pulling each task's image, by ref.
   const pulls = {};
@@ -72,6 +72,11 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     async createReview(number, review) { calls.reviews.push({ number, ...review }); return 1; },
     async commitMessage() { return 'feat: do the thing [woodshed-review]'; },
     async removeLabel(number, label) { calls.unlabeled.push({ number, label }); return true; },
+    async addLabel(number, label) { calls.labeled.push({ number, label }); },
+    async ensureLabel(label) { calls.labelsMade.push(label); return true; },
+    threads: [],
+    async reviewThreads() { return this.threads; },
+    async resolveThread(id) { calls.resolvedThreads.push(id); return true; },
     async reactToIssue(number) { calls.reactions.push({ issue: number }); },
     async reactToComment(id) { calls.reactions.push({ comment: id }); },
     projectItems: {},
@@ -2443,6 +2448,56 @@ test('with a reviewer App, the verdict is submitted as it and not as the console
   assert.equal(calls.reviews.length, 0, 'not as the console App');
   assert.deepEqual(submitted.map((s) => [s.repo, s.number, s.event, s.sha]), [['o/r', 7, 'APPROVE', 'a'.repeat(40)]]);
   assert.ok(calls.checks.some((c) => c.name === 'Merge risk'), 'the Merge risk check is still the console App\'s');
+});
+
+test('the inline comments go on the diff\'s lines with the verdict, and into its body when GitHub refuses a line', async () => {
+  const comments = [{ path: 'console/a.mjs', line: 12, body: 'Throws on an empty list.' }];
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  await fleet.reviewFinished(fleet.sessions()[0], { ...REVIEW_RESULT, inlineComments: comments });
+  assert.deepEqual(calls.reviews[0].comments, comments);
+
+  const refused = reviewSetup();
+  refused.github.createReview = async (number, review) => {
+    if (review.comments.length) throw new Error('HTTP 422: Line could not be resolved');
+    refused.calls.reviews.push({ number, ...review });
+    return 2;
+  };
+  await refused.fleet.reviewOnTag({ number: 7 });
+  await refused.fleet.reviewFinished(refused.fleet.sessions()[0], { ...REVIEW_RESULT, inlineComments: comments });
+  assert.equal(refused.calls.reviews.length, 1, 'the verdict still went in');
+  assert.match(refused.calls.reviews[0].body, /`console\/a\.mjs:12`: Throws on an empty list\./);
+});
+
+test('the merge risk is a label too, the other tiers taken off', async () => {
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  await fleet.reviewFinished(fleet.sessions()[0], { ...REVIEW_RESULT, mergeRisk: { tier: 'High', reason: 'Touches sign-in.', summary: 'HIGH' } });
+  assert.deepEqual(calls.labelsMade, [{ name: 'merge risk: high', color: 'd93f0b', description: 'Set by the AI review' }]);
+  assert.deepEqual(calls.labeled, [{ number: 7, label: 'merge risk: high' }]);
+  assert.deepEqual(calls.unlabeled.map((u) => u.label).sort(), ['merge risk: low', 'merge risk: medium']);
+});
+
+test('after an APPROVE the review\'s own outdated threads and those it found fixed are resolved, and no one else\'s', async () => {
+  const gates = { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, author: 'woodshed-reviewer[bot]' } };
+  const { fleet, calls, github } = reviewSetup({ gates });
+  github.threads = [
+    { id: 'T1', isResolved: false, isOutdated: true, commentId: 1, author: 'woodshed-reviewer' },
+    { id: 'T2', isResolved: false, isOutdated: false, commentId: 2, author: 'woodshed-reviewer' },
+    { id: 'T3', isResolved: false, isOutdated: false, commentId: 3, author: 'woodshed-reviewer' },
+    { id: 'T4', isResolved: false, isOutdated: true, commentId: 4, author: 'joel' },
+    { id: 'T5', isResolved: true, isOutdated: true, commentId: 5, author: 'woodshed-reviewer' },
+  ];
+  await fleet.reviewOnTag({ number: 7 });
+  assert.equal(fleet.sessions()[0].review.author, 'woodshed-reviewer[bot]', 'the session knows whose comments are its own');
+  await fleet.reviewFinished(fleet.sessions()[0], { ...REVIEW_RESULT, resolved: [2, 4] });
+  assert.deepEqual(calls.resolvedThreads, ['T1', 'T2']);
+
+  const changes = reviewSetup({ gates });
+  changes.github.threads = github.threads;
+  await changes.fleet.reviewOnTag({ number: 7 });
+  await changes.fleet.reviewFinished(changes.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: 'REQUEST_CHANGES', resolved: [2] });
+  assert.deepEqual(changes.calls.resolvedThreads, [], 'only after an approval');
 });
 
 test('reviewFinished does not submit for a commit that is no longer the head', async () => {
