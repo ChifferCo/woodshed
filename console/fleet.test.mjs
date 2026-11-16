@@ -2707,3 +2707,36 @@ test('a QA report for a commit other than the one the session started on release
   await other.fleet.qaFinished(started, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'd'.repeat(40), costUsd: 1 });
   assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
 });
+
+const HIGH_RESULT = { ...REVIEW_RESULT, mergeRisk: { tier: 'High', reason: 'Changes who can merge.', summary: 'Touches access.' } };
+
+test('a review that approves High merge risk leaves the approval to a person, as a comment, after QA when QA runs', async () => {
+  const plain = reviewSetup();
+  await plain.fleet.reviewOnTag({ number: 7 });
+  await plain.fleet.reviewFinished(plain.fleet.sessions()[0], HIGH_RESULT);
+  assert.deepEqual(plain.calls.reviews.map((r) => r.event), ['COMMENT'], 'no approval from the review');
+  assert.match(plain.calls.reviews[0].body, /^## Code review — COMMENT\n\nLooks good\.\n\nThe review found nothing to change, but this is High merge risk, so a person approves it/);
+  assert.equal(plain.fleet.sessions()[0].review.conclusion, 'APPROVE', 'the review itself approved');
+
+  const held = heldSetup();
+  await held.fleet.reviewOnTag({ number: 7 });
+  await held.fleet.reviewFinished(held.fleet.sessions()[0], HIGH_RESULT);
+  const qa = held.fleet.sessions().find((s) => s.trigger === 'qa');
+  assert.ok(qa, 'QA still runs on it');
+  await held.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.deepEqual(held.calls.reviews.map((r) => r.event), ['COMMENT']);
+  assert.match(held.calls.reviews[0].body, /QA: Pass: 2 test cases passed\.\n\nThe review found nothing to change, but this is High merge risk/);
+});
+
+test('approvesUpTo sets the line: High approves everything, Low leaves Medium to a person, and an unknown tier approves', async () => {
+  async function eventFor(approvesUpTo, tier) {
+    const t = reviewSetup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, approvesUpTo } } });
+    await t.fleet.reviewOnTag({ number: 7 });
+    await t.fleet.reviewFinished(t.fleet.sessions()[0], { ...REVIEW_RESULT, mergeRisk: { tier, reason: 'r', summary: 's' } });
+    return t.calls.reviews[0].event;
+  }
+  assert.equal(await eventFor('High', 'High'), 'APPROVE');
+  assert.equal(await eventFor('Low', 'Medium'), 'COMMENT');
+  assert.equal(await eventFor('Low', 'Low'), 'APPROVE');
+  assert.equal(await eventFor('Medium', null), 'APPROVE');
+});

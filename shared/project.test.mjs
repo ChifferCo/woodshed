@@ -258,7 +258,7 @@ test('the installs\' manifest is one tab-separated line each, for session/deps.s
     'install\tapi\ta b/*\tvendor ~/.cache/tool\ta && b\n');
 });
 
-const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null, runner: 'actions' };
+const REVIEW = { author: 'ci[bot]', heading: '## Review', workflow: '.github/workflows/review.yml', rerun: '[review]', commentAuthor: null, runner: 'actions', approvesUpTo: 'Medium' };
 const PULL_REQUESTS = {
   review: REVIEW,
   suites: [{ name: 'e2e suite', workflow: '.github/workflows/e2e.yml', jobs: 'e2e run', rerun: null }],
@@ -288,8 +288,10 @@ test('a wrong pullRequests section names the field', () => {
   const full = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests });
   const { suites, ...noSuites } = PULL_REQUESTS;
   assert.deepEqual(full(noSuites).pullRequests.suites, [], 'left out is none');
-  const { commentAuthor, rerun, ...lean } = REVIEW;
-  assert.deepEqual(full({ ...PULL_REQUESTS, review: lean }).pullRequests.review, { ...lean, rerun: null, commentAuthor: null });
+  const { commentAuthor, rerun, approvesUpTo, ...lean } = REVIEW;
+  assert.deepEqual(full({ ...PULL_REQUESTS, review: lean }).pullRequests.review, { ...lean, rerun: null, commentAuthor: null, approvesUpTo: 'Medium' });
+  assert.equal(full({ ...PULL_REQUESTS, review: { ...REVIEW, approvesUpTo: 'High' } }).pullRequests.review.approvesUpTo, 'High');
+  assert.throws(() => full({ ...PULL_REQUESTS, review: { ...REVIEW, approvesUpTo: 'high' } }), /pullRequests\.review\.approvesUpTo must be one of Low, Medium, High/);
   const { heading, ...noHeading } = REVIEW;
   assert.throws(() => full({ ...PULL_REQUESTS, review: noHeading }), /pullRequests\.review is missing heading/);
   assert.throws(() => full({ ...PULL_REQUESTS, review: { ...REVIEW, workflow: '../x.yml' } }), /pullRequests\.review\.workflow must be a path inside the repo/);
