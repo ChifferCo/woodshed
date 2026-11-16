@@ -554,8 +554,11 @@ secrets.
   runs on` with `plan`. `fleet: the starter's Claude token is not saved` or
   `could not be read` mean it fell back to the team key; the switch also has no
   effect for someone with no token saved (`userSettings: own token for shared
-  sessions` logs each change), nor on a console that makes no shared databases
-  (the docker launcher), whose sessions never ask the session API. The session's own log says `Runs on the
+  sessions` logs each change). A console that makes no shared databases (no
+  db-admin, or a project with no Postgres or Mongo) still decides it: the session
+  asks `/settings` for the plan alone, and the console logs `sessionApi: settings
+  handed out` with `database: null`. A session image from before that never asks,
+  and stays on the team key. The session's own log says `Runs on the
   starter's Claude plan` when it does; `sessionApi: the starter's Claude token is
   gone` means it was removed between the launch and the session asking.
 - **An assignee got no Slack message.** Messages go only to the assignee of a shared session, when it starts asking

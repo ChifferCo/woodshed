@@ -50,7 +50,7 @@ async function fakeConsole({ away = 'drop', awayMs = 2_000, answer }) {
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
       const dropped = Date.now() - startedAt < awayMs;
-      calls.push({ url: req.url, auth: req.headers.authorization, body, dropped });
+      calls.push({ url: req.url, auth: req.headers.authorization, planOnly: req.headers['x-woodshed-plan-only'] ?? null, body, dropped });
       if (dropped) return req.socket.destroy();
       const { status = 200, json } = answer(req);
       res.writeHead(status, { 'content-type': 'application/json' });
@@ -134,13 +134,14 @@ test('a 503 is tried again: a shared session\'s databases arrive once they are c
   const script = [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'databases() { case "$1" in hosted) echo postgres ;; *) : ;; esac; }',
-    `SETTINGS_ANSWER=${home}/settings.json DATABASE_WAIT_SECONDS=60`,
+    `SETTINGS_ANSWER=${home}/settings.json DATABASE_WAIT_SECONDS=60`, "PLAN_ONLY_HEADER='X-Woodshed-Plan-Only: 1'",
     fast(fn('consoleCall')), fn('useDatabaseFrom'), fn('fetchSessionDatabases'), 'fetchSessionDatabases',
   ].join('\n');
   const run = await bash(script, { HOME: home, SESSION_KIND: 'shared', SESSION_TOKEN: 't', WOODSHED_CONSOLE_URL: fake.url });
   assert.equal(run.status, 0, run.out);
   assert.match(run.out, /Session's databases fetched \(database: woodshed__ab12cd34/);
   assert.equal(fake.calls.length, 3);
+  assert.deepEqual(fake.calls.map((c) => c.planOnly), ['1', '1', '1'], 'each call says it reads a plan with no database');
 });
 
 // git's credential helper and gh's wrapper, so a push made during a redeploy waits for the console too.

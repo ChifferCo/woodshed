@@ -340,11 +340,11 @@ export function createFleet({
 
   // Decided at each start and resume, from whoever started the session: its token itself never leaves the console,
   // whose Anthropic proxy adds it to this session's calls alone.
-  // Only a label or a /woodshed comment: GitHub says who that was, and checked their write access. And only where the
-  // console makes the session's databases: the entrypoint asks the session API for its plan with them, so without
-  // them claude would stay on the team key while the pages said otherwise.
+  // Only a label or a /woodshed comment: GitHub says who that was, and checked their write access. Whether or not the
+  // console makes the session's databases: the entrypoint asks the session API's /settings for the plan either way, so
+  // a console with no db-admin (or a project with no database) is no reason to fall back to a team key it may not have.
   async function planFor(session) {
-    if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || session.review?.teamKey || session.qa?.teamKey || !databases?.available) return null;
+    if (session.owner || !GITHUB_TRIGGERS.has(session.trigger) || session.review?.teamKey || session.qa?.teamKey) return null;
     await userSettings?.refresh?.(session.startedBy, { force: true });
     if (!userSettings?.usesOwnTokenForShared(session.startedBy)) return null;
     try {

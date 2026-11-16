@@ -25,9 +25,9 @@ test('sessionForAuthorization accepts only an active session\'s own token', () =
   assert.equal(sessionForAuthorization('Bearer x', [{ id: 'dddddddd', status: 'running' }]), null, 'a session without a token never matches');
 });
 
-function request(port, { method = 'POST', path = '/github-token', authorization, body }) {
+function request(port, { method = 'POST', path = '/github-token', authorization, body, headers: extra = {} }) {
   return new Promise((resolve, reject) => {
-    const headers = authorization ? { authorization } : {};
+    const headers = { ...(authorization ? { authorization } : {}), ...extra };
     const req = http.request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
@@ -145,6 +145,28 @@ test('a shared session gets its own databases and nothing else, waiting while th
   t.after(() => plain.close());
   assert.equal((await request(plain.address().port, { path: '/settings', authorization: 'Bearer ready-token' })).status, 404,
     'where the console makes no databases, the environment names one');
+});
+
+test('a shared session gets its starter\'s plan from a console that makes no databases, and a 404 on the team key', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'starting', token: 'allen-plan', owner: null, startedBy: 'allen', plan: 'allen' },
+    { id: 'bbbbbbbb', status: 'starting', token: 'team-key', owner: null, startedBy: 'mia', plan: null },
+    { id: 'cccccccc', status: 'starting', token: 'switched-off', owner: null, startedBy: 'ana', plan: 'ana' },
+  ];
+  const tokens = { allen: 'sk-ant-oat01-allen', ana: 'sk-ant-oat01-ana' };
+  const userSettings = { claudeToken: async (login) => tokens[login] ?? null, usesOwnTokenForShared: (login) => login !== 'ana' };
+  for (const databases of [{ available: false }, null]) {
+    const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, databases, userSettings });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => server.close());
+    const settings = (token, headers = { 'x-woodshed-plan-only': '1' }) => request(server.address().port, { path: '/settings', authorization: `Bearer ${token}`, headers });
+    assert.deepEqual(await settings('allen-plan'), { status: 200, body: { plan: 'allen' } }, 'the plan, no database');
+    assert.equal((await settings('team-key')).status, 404, 'no plan: the 404 an older image reads as the environment\'s databases');
+    assert.equal((await settings('switched-off')).status, 404, 'switched off since the launch: the team key');
+    // An image from before the header stops on a 200 with no database (`the console sent no database user`).
+    assert.equal((await settings('allen-plan', {})).status, 404, 'an entrypoint that does not say it reads a plan alone gets the 404 it knows');
+  }
 });
 
 test('a private session whose owner connected GitHub gets their own token; anyone else the installation token', async (t) => {

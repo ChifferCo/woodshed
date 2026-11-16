@@ -1640,11 +1640,17 @@ test('a session started from the console\'s API never runs on a personal plan, w
   assert.equal(session.plan, null, 'GitHub did not vouch for this starter');
 });
 
-test('a console that makes no shared databases runs every shared session on the team key, switch or not', async () => {
-  const ctx = setup({ userSettings: ownTokens() });
-  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
-  assert.equal(ctx.fleet.sessions()[0].plan, null, 'its entrypoint never asks the session API, so the token would never arrive');
-  assert.doesNotMatch(ctx.calls.comments[0].body, /Claude plan/);
+test('a console that makes no shared databases still runs a session from GitHub on its starter\'s plan', async () => {
+  // A hosted pool's console has no db-admin, and a project with no Postgres or Mongo gets none: the entrypoint asks
+  // /settings for the plan alone, so neither may send it to a team key the console may not have.
+  for (const databases of [undefined, { available: false, async createForSession() { throw new Error('none made'); }, async sweep() {} }]) {
+    const ctx = setup({ userSettings: ownTokens(), databases });
+    await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+    const [session] = ctx.fleet.sessions();
+    assert.equal(session.plan, 'joel');
+    assert.equal(session.status, 'starting', 'no databases asked for');
+    assert.match(ctx.calls.comments[0].body, /on @joel's own Claude plan\.$/m);
+  }
 });
 
 test('a My Woodshed session is untouched: it runs on its owner\'s token as before, and has no plan', async () => {
