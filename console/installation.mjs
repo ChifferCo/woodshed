@@ -24,7 +24,7 @@ import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
 import { appOwnerCheck } from './appOwner.mjs';
-import { createAppIdentity } from './appIdentity.mjs';
+import { createAppIdentity, hostAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
@@ -219,8 +219,11 @@ async function loadAppKey(config, secrets) {
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null }) {
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
+  if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
+    throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
+  }
   if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
     throw new Error('repos needs add and remove, and list when it has one');
   }
@@ -301,12 +304,16 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
-  const appIdentity = createAppIdentity({ appApi });
-  const reviewerApp = createReviewerApp({ store, secrets, config });
+  // A host that lends its GitHub access (hosted.mjs) also says who its App is, and lends its reviewer App: the
+  // console has neither of its own, and without them no review or console-added QA label is trusted.
+  const appIdentity = hostApp ? hostAppIdentity(hostApp.login) : createAppIdentity({ appApi });
+  const ownReviewer = hostApp ? null : createReviewerApp({ store, secrets, config });
+  const reviewerApp = hostApp ? hostApp.reviewer ?? null : ownReviewer;
+  if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp.login(), ownLogin: await appIdentity.login() }),
+    pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() }),
     projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
@@ -375,7 +382,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),

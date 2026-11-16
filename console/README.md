@@ -1398,6 +1398,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   settings and Console settings and at each start (an answer is kept 10 seconds), and shows and refuses with it as
   with its own (above, "Databases"); a link that is neither https nor a path, or a step with no text, is dropped. A
   hook that throws blocks nothing: core logs `console: project readiness not read` and runs its own check.
+- `hostApp: {login(), reviewer?}`: the App whose GitHub access the program lends (`githubBroker`), which the console
+  cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
+  console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.
+  `reviewer` is the program's reviewer App: `{login(), configured(), submitReview({repo, number, event, body, sha,
+  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
+  no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
+  `console: GitHub App from the host`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
