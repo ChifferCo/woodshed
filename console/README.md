@@ -1782,7 +1782,11 @@ default project's installation values the same way, layers 1, 2 and 4 (no one's 
 falls back to a file's Terraform secret, with the session's warning, while it has none. It reads them itself, as
 `repos/<project>/env/<key>` for the project its entryPoint's `--project` names, never a name a run gives; on AWS its task
 role may read that project's `repos/<project>/env/*` and no other repo's (`TheSeedsEnvFiles` in
-`providers/aws/terraform/ecs.tf`). Its log says `Seed env files read` with where each key came from, never a value.
+`providers/aws/terraform/ecs.tf`). A key that two env files name (they share a secret) is read once and written to
+both. Its log says `Seed env files read` with where each key came from and the paths that name it, never a value. The
+fallback is the Terraform secret by the project file's name (`database_env_secrets`), as before repo settings: an
+embedding program's `config.envFiles` `name` and `repo` reach the seed through repo settings alone, since the start's
+copy puts the default repo's entry into `repos/<default project>/env/<name>`, which the seed reads first.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
