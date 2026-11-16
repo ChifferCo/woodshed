@@ -240,8 +240,9 @@ How it works:
   sets `DOCKER_HOST=unix:///var/run/docker.sock` and `WOODSHED_SESSION_DOCKER=1`, which the project file's scripts can
   read. The console logs `local: sessions' Docker` at start, with `own` and `machine` (`without Sysbox` when the
   machine's is the fallback).
-- The session image has the docker CLI and its compose plugin (`session/Dockerfile`). Its last stage adds them, and the
-  daemon, to a published runtime from before they were in it.
+- The session image has the docker CLI and its compose and buildx plugins (`session/Dockerfile`): buildx is what makes
+  `docker build` use BuildKit, which `RUN --mount` needs. Its last stage adds them, and the daemon, to a published
+  runtime from before they were in it.
 - Claude's rules say that the containers are the machine's and outlive the session, that a bind mount names a folder on
   the machine, and to name a stack after the session with its own ports (`session/hostDocker.md`).
 - `session/dockerPorts.mjs` forwards each TCP port the machine's containers publish to the same port on the session's

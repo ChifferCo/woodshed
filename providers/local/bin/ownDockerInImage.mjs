@@ -62,7 +62,7 @@ expect(inspect.HostConfig.Privileged === false, 'not --privileged');
 expect(!inspect.Mounts.some((m) => m.Destination === DOCKER_SOCKET || m.Source === DOCKER_SOCKET), 'the machine\'s Docker socket is not mounted');
 expect(!(inspect.HostConfig.CapAdd || []).length, `no capabilities added (CapAdd: ${JSON.stringify(inspect.HostConfig.CapAdd)})`);
 // Sysbox maps the container's root to an unprivileged range of the machine's ids: the daemon's process is not root here.
-const dockerdUid = docker(['top', started.ref, '-eo', 'uid,comm']).split('\n').find((l) => /\bdockerd$/.test(l.trim()))?.trim().split(/\s+/)[0];
+const dockerdUid = docker(['top', started.ref, '-eo', 'pid,uid,comm']).split('\n').find((l) => /\bdockerd$/.test(l.trim()))?.trim().split(/\s+/)[1];
 expect(dockerdUid && dockerdUid !== '0' && dockerdUid !== 'root', `the session's dockerd runs as an unprivileged uid of the machine (uid: ${dockerdUid})`);
 const machineContainers = docker(['ps', '-a', '--format', '{{.Image}} {{.Names}}']);
 expect(!/hello-world|own-docker-check|nginx|curlimages/.test(machineContainers), 'none of the session\'s containers is on the machine\'s Docker');

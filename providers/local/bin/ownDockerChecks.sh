@@ -33,7 +33,14 @@ FROM busybox:1.37
 RUN echo built inside the session > /built
 CMD ["cat", "/built"]
 EOF
+check 'docker build uses BuildKit (buildx)' docker buildx version
 check 'docker build' docker build -q -t own-docker-check /tmp/own-docker-check
+cat >/tmp/own-docker-check/Dockerfile.mount <<'EOF'
+# syntax=docker/dockerfile:1
+FROM busybox:1.37
+RUN --mount=type=cache,target=/cache echo a cache mount, which only BuildKit has > /cache/x && cat /cache/x
+EOF
+check 'RUN --mount, as the session image'"'"'s own Dockerfile has' docker build -q -f /tmp/own-docker-check/Dockerfile.mount -t own-docker-check-mount /tmp/own-docker-check
 check 'the built image runs' sh -c 'docker run --rm own-docker-check | grep -q "built inside the session"'
 cat >/tmp/own-docker-check/compose.yml <<'EOF'
 services:
