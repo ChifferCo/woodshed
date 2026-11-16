@@ -535,13 +535,16 @@ useDatabaseFrom() {
 DATABASE_WAIT_SECONDS=600
 # The console's /settings answer, between consoleCall and its reader, which deletes it: it holds a database password.
 SETTINGS_ANSWER=/tmp/woodshed-settings.json
+# Tells the console this entrypoint reads a /settings answer that has a plan and no database (sessionApi.mjs's
+# PLAN_ONLY_HEADER): an image from before it stops on one, so the console sends those a 404 instead.
+PLAN_ONLY_HEADER='X-Woodshed-Plan-Only: 1'
 # The Claude plan a shared session runs on, asked once from /settings when the console makes it no databases: a review,
 # a session whose environment already names its databases (the docker launcher, a pool machine's own), or an
 # installation that hosts none. A 404 or no answer is the team key, as before.
 fetchStarterPlan() {
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   local code
-  code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+  code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15 -H "$PLAN_ONLY_HEADER")
   [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
   rm -f "$SETTINGS_ANSWER"
   [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
@@ -567,7 +570,7 @@ fetchSessionDatabases() {
   fi
   local answer code start=$SECONDS
   while :; do
-    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15 -H "$PLAN_ONLY_HEADER")
     answer=$(cat "$SETTINGS_ANSWER" 2>/dev/null || true)
     rm -f "$SETTINGS_ANSWER"
     # 503 while the copy runs, which consoleCall tries again for its 40 s; no answer, 502 or 504 while the console

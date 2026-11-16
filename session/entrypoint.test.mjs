@@ -586,8 +586,9 @@ function sharedWithoutDatabases(t, { answer, env = {}, project = {} }) {
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
     // The console's answer, as consoleCall gives it: the status on stdout, the body in the file.
-    `consoleCall() { echo "$1" >> ${calls}; printf '%s' '${answer.body}' > "$2"; printf '%s' '${answer.status}'; }`,
-    `SETTINGS_ANSWER=${repoDir}/settings.json`,
+    // It says it reads a plan alone: the console answers a 404 to anything that does not.
+    `consoleCall() { echo "$1" >> ${calls}; case " $* " in *" -H X-Woodshed-Plan-Only: 1 "*) ;; *) echo "no plan-only header: $*" >&2; exit 1 ;; esac; printf '%s' '${answer.body}' > "$2"; printf '%s' '${answer.status}'; }`,
+    `SETTINGS_ANSWER=${repoDir}/settings.json`, "PLAN_ONLY_HEADER='X-Woodshed-Plan-Only: 1'",
     fn('useDatabaseFrom'), fn('fetchStarterPlan'), fn('fetchSessionDatabases'), 'fetchSessionDatabases',
     'echo "db=${WOODSHED_DB_NAME:-none} plan=${STARTER_PLAN:-none} calls=$(cat ' + calls + ' 2>/dev/null | tr "\\n" " ")"',
     `test ! -e ${repoDir}/settings.json && echo "answer removed"`,
