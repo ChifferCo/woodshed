@@ -38,7 +38,8 @@
 #                        there read-only
 #   PROJECT_REPO         owner/name: a session on a project other than the installation's default. Every project runs
 #                        in the default project's image for now, so its repo is cloned at start, next to the image's
-#                        checkout, and used as REPO_DIR (useProjectRepo)
+#                        checkout, and used as REPO_DIR (useProjectRepo). An image built with no repo has no checkout,
+#                        so the console names the repo for every session, the default project's too
 #   ISSUE | PR | PROMPT, STARTED_BY, BRANCH                         what to work on
 #   REVIEW_ONLY          1: claude opens with no prompt, for a session started only to read a PR or branch's review
 #   ATTACHMENTS          how many files were attached to New session: fetched from the console into /tmp/uploads
@@ -47,6 +48,9 @@
 #                        the project file says `consoleLinks: false`)
 #   SESSION_APP_DOMAIN   the domain session apps are served under, so this session's app is <SESSION_ID>.<it>;
 #                        unset when the console has session apps off (Woodshed's own app reads it, devConsole.mjs)
+#   WOODSHED_SESSION_DOCKER=1  the machine's Docker socket is mounted and DOCKER_HOST names it (the docker launcher's
+#                        hostDocker): claude's rules say so (hostDocker.md), and dockerPorts.mjs forwards what its
+#                        containers publish to 127.0.0.1 here
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -140,15 +144,21 @@ configureGitCredentials() {
 # A session on another project than the image's repo works in a clone of that project's repo, made at start next to
 # the image's checkout. The image's installs are its own repo's: the project's run on their own, as any install whose
 # record is missing (refreshDeps). The clone authenticates through the credential helper, so no token is in its URL.
+# An image built with no repo (session/Dockerfile, REPO empty) has no checkout at all: every session clones its own,
+# and keeps the secrets the console handed it, since there is no image repo they could belong to instead.
 useProjectRepo() {
-  [ -n "${PROJECT_REPO:-}" ] || return 0
   local origin dir start=$SECONDS
-  origin=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#^https://([^/@]*@)?github\.com/##; s#\.git$##' || true)
-  if [ "${origin,,}" = "${PROJECT_REPO,,}" ]; then
-    log "Project repo is the image's checkout" "(repo: $PROJECT_REPO)"
-    return 0
+  if [ ! -e "$REPO_DIR/.git" ]; then
+    [ -n "${PROJECT_REPO:-}" ] || die "the session image has no checkout and the console named no repo (PROJECT_REPO): a console older than its image?"
+  else
+    [ -n "${PROJECT_REPO:-}" ] || return 0
+    origin=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#^https://([^/@]*@)?github\.com/##; s#\.git$##' || true)
+    if [ "${origin,,}" = "${PROJECT_REPO,,}" ]; then
+      log "Project repo is the image's checkout" "(repo: $PROJECT_REPO)"
+      return 0
+    fi
+    withholdInstallationSecrets
   fi
-  withholdInstallationSecrets
   dir="$(dirname "$REPO_DIR")/${PROJECT_REPO##*/}"
   local base=$dir n=1
   [ ! -e "$dir" ] || dir="$base-project"
@@ -184,10 +194,13 @@ configureGitIdentity() {
 # anyway. Each database's engine exports its variables first, from the console's credentials, so the project's `env`
 # and lines can name them; a database the environment does not name takes the project file's user and name.
 writeEnvFiles() {
-  local exports written from
+  local exports written from skipped
   # The first read of the project file: one that does not parse stops the start here, naming the field.
   from=$(project get from) || die "the project file could not be read"
   log "Project file read" "(from: $from)"
+  # The installation's file stood in for a repo's own that does not parse: say why, or it reads as a repo with none.
+  skipped=$(project get repoFileError) || skipped=
+  [ -z "$skipped" ] || log "WARNING: the repo's own project file was skipped: $skipped"
   exports=$(WOODSHED_DB_USER=${WOODSHED_DB_USER:-} WOODSHED_DB_PASSWORD=${WOODSHED_DB_PASSWORD:-} WOODSHED_DB_NAME=${WOODSHED_DB_NAME:-} \
     databases env) || die "the databases' variables could not be made"
   eval "$exports"
@@ -261,7 +274,8 @@ checkoutBranch() {
 
 # The image ships what each install keeps for its build commit; run an install again only where its files changed
 # since (deps.sh, depsBuiltFrom). Runs in the background once claude is up, so a reinstall never delays it: the
-# project's environment notes (setup.md) have claude wait for DEPS_STATUS before it needs them.
+# project's environment notes (setup.md) have claude wait for DEPS_STATUS before it needs them. claudeHooks.json lets
+# claude read it without asking: change both together.
 DEPS_STATUS=/tmp/woodshed-deps
 refreshDeps() {
   local manifest kind dir files output command start=$SECONDS
@@ -418,7 +432,8 @@ writeRules() {
     rules=$(grep -vF '{{REVIEW_TAG}}' <<< "$rules" || true)
   fi
   # The project's environment notes. A shared session gets them inline. A private one is often just a conversation,
-  # so it gets a pointer to them instead of the whole text. Lines marked {{SHARED_ONLY}}, such as the Slack
+  # so it gets a pointer to them instead of the whole text: claudeHooks.json lets claude read that file, outside the
+  # working directories, without auto mode's one-time "Read outside the working directories" question (claudeFlags). Lines marked {{SHARED_ONLY}}, such as the Slack
   # announcement, are for shared sessions alone, and lines marked {{PRIVATE_ONLY}} for private ones.
   notes=$(project file setup) || die "the project's environment notes could not be read"
   printf '%s\n' "$notes" > /tmp/woodshed-setup.md
@@ -438,8 +453,23 @@ writeRules() {
   # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
   apps=$(project apps-rules) || die "the project's apps could not be read"
   [ -z "$apps" ] || rules+=$'\n'"$apps"
+  # This machine's Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file.
+  if [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ]; then
+    local docker
+    docker=$(cat "$SESSION_DIR/hostDocker.md")
+    docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"}
+    rules+=$'\n'"$docker"
+  fi
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, host docker: ${WOODSHED_SESSION_DOCKER:-0}, apps: $(project get apps | grep -c . || true))"
+}
+
+# With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where
+# tools such as Supabase's CLI dial them (dockerPorts.mjs). After Redis, so a container publishing 6379 never takes it.
+startDockerPorts() {
+  [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ] || return 0
+  node "$SESSION_DIR/dockerPorts.mjs" >/tmp/woodshed-docker-ports.log 2>&1 &
+  log "Forwarding the ports this machine's containers publish" "(log: /tmp/woodshed-docker-ports.log)"
 }
 
 # Each container has its own throwaway Redis, for whatever of the app connects to it. A shared Redis would let one
@@ -492,6 +522,17 @@ DATABASE_WAIT_SECONDS=600
 # The console's /settings answer, between consoleCall and its reader, which deletes it: it holds a database password.
 SETTINGS_ANSWER=/tmp/woodshed-settings.json
 fetchSessionDatabases() {
+  # A review session reads the diff and runs no app, so the console makes it no databases: it asks once only for the
+  # Claude plan it runs on (the /settings answer's .plan), and never waits on databases.
+  if [ "${SESSION_MODE:-}" = review ]; then
+    [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+    local code
+    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+    [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
+    rm -f "$SETTINGS_ANSWER"
+    [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
+    return 0
+  fi
   [ "${SESSION_KIND:-}" != private ] && [ -z "$(databases given)" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
   if [ -z "$(databases hosted)" ]; then
     log "No databases to fetch" "(the installation hosts no database engine)"
@@ -651,7 +692,10 @@ pullSettings() {
 claudeFlags() {
   local mode=${PERMISSION_MODE:-auto}
   # The hooks that tell statusd what claude is doing, and the session's own permission rules. Passed here, not written
-  # into settings.json, so they never travel in a saved Claude home, and they add to the owner's own settings.
+  # into settings.json, so they never travel in a saved Claude home, and they add to the owner's own settings. Among
+  # the rules, a Read allow for each file outside the repo that Woodshed points claude at (the environment notes,
+  # DEPS_STATUS, the docker ports' log, an ask's answer): auto mode asks a person before the first read outside the
+  # working directories (Claude Code 2.1.325), which held every private session at Needs you on its notes.
   printf ' --settings %s' "$SESSION_DIR/claudeHooks.json"
   printf ' --append-system-prompt-file %s' /tmp/woodshed-rules.md
   # Files attached to New session and pasted or dropped on a terminal land here, outside the repo: without this claude
@@ -763,16 +807,20 @@ startClaude() {
   if [ "${SESSION_MODE:-}" != ask ]; then
     startRedisIfUsed viewer
     startDbViewers
+    startDockerPorts
   fi
   tmux new-session -d -s claude -x 200 -y 50 -c "$REPO_DIR"
   tmux set-option -t claude remain-on-exit on
-  tmux set-option -t claude history-limit 50000
   # woodshed-login reopens claude with the same flags once it signed in.
   [ "${AGENT:-claude}" = codex ] || claudeFlags > /tmp/woodshed-claude-flags
   if [ "${SESSION_MODE:-}" = qa ]; then
     # After statusd's port is open: the run asks it for the app's port and to start the app. Working from the start.
     touch /tmp/qa-running
     tmux send-keys -t claude "until curl -s -o /dev/null http://127.0.0.1:\${STATUSD_PORT:-7682}/; do sleep 1; done; SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/qa.sh" Enter
+  elif [ "${SESSION_MODE:-}" = review ]; then
+    # The review reads the diff and sends its verdict to the console; no app, so it does not wait on statusd.
+    touch /tmp/review-running
+    tmux send-keys -t claude "SESSION_DIR=$SESSION_DIR bash $SESSION_DIR/review.sh" Enter
   elif [ "${AGENT:-claude}" = codex ]; then
     # A Codex conversation is not kept between runs, so a resume starts the prompt again.
     if [ "${REVIEW_ONLY:-}" = 1 ]; then
@@ -791,12 +839,15 @@ startClaude() {
   # pane around it. The pane's ground, the accent for the cursor, and the app's selection wash. No leave alert, as in the
   # shed: the page swaps terminals in and out of its frames, and every switch of session would ask "Leave site?".
   local theme='theme={"background":"#14171d","foreground":"#d6d3cd","cursor":"#E87D09","cursorAccent":"#14171d","selectionBackground":"#2c2013"}'
+  # The browser scrolls back through its own copy of what tmux scrolled off (tmux.conf): 10000 lines rather than
+  # xterm.js's 1000, and no more, since each line costs the page its width in cells. tmux keeps 50000.
+  local scrollback=scrollback=10000
   ttyd --writable --port 7681 --base-path "/term/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t disableLeaveAlert=true tmux attach -t claude >/tmp/ttyd.log 2>&1 &
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux attach -t claude >/tmp/ttyd.log 2>&1 &
   # The Terminal tab: a shell beside claude in the repo, with the same environment. Its own tmux session, so a
   # reload or a second browser finds it as it was; -A makes a new one after someone types exit.
   ttyd --writable --port 7684 --base-path "/shell/$SESSION_ID" --credential "woodshed:${TERMINAL_TOKEN:-$SESSION_TOKEN}" \
-    -t "$theme" -t disableLeaveAlert=true tmux new-session -A -s shell -c "$REPO_DIR" >/tmp/ttyd-shell.log 2>&1 &
+    -t "$theme" -t "$scrollback" -t disableLeaveAlert=true tmux new-session -A -s shell -c "$REPO_DIR" >/tmp/ttyd-shell.log 2>&1 &
   log "Claude started" "(session: $SESSION_ID, branch: $BRANCH, started_by: ${STARTED_BY:-unknown})"
 }
 
@@ -819,6 +870,8 @@ writeAskPrompt() {
 # reads only (sessionApi.mjs). The start steps are all reported, so the page's checklist reads as for any session.
 runAsk() {
   requireEnv SESSION_ID SESSION_TOKEN WOODSHED_CONSOLE_URL PROMPT
+  # On an image with no checkout, the question's repo is cloned first, as for any session.
+  useProjectRepo
   log "Container started" "(session: $SESSION_ID, mode: ask)"
   progress container
   configureGitCredentials
@@ -901,6 +954,8 @@ runSession() {
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.
   if [ "${SESSION_MODE:-}" = qa ]; then
     log "Prompt skipped" "(QA: session/qa.sh runs the QA prompts)"
+  elif [ "${SESSION_MODE:-}" = review ]; then
+    log "Prompt skipped" "(review: session/review.sh runs the review prompt)"
   elif [ "${AGENT:-claude}" != codex ] && resumable; then
     log "Resuming claude's conversation" "(id: $RESUME_SESSION)"
   else

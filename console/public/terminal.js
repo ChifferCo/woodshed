@@ -1,6 +1,7 @@
 // The shed's terminal, around a session's ttyd frame (same-origin, so its window's `term` is xterm's): copy out by
 // OSC 52, tap a link on a phone, a picture's path opens it (a thumbnail on hover, a viewer on click), a file pasted or
-// dropped is saved in the session and its path typed at the prompt, and a swipe on a phone scrolls tmux. Copy is a
+// dropped is saved in the session and its path typed at the prompt, and the wheel or a swipe scrolls the browser's own
+// history of the pane, or tmux's (terminalScroll.cjs says whose). Copy is a
 // chain this page does not own: with tmux's mouse on, claude copies through `tmux load-buffer -w`, tmux writes an OSC 52
 // sequence to the client, and the handler on the frame's `term` takes it; a browser that allows the clipboard write
 // only inside a key press gets the text held and a toast asking for the copy key. Files go through the console to the
@@ -9,6 +10,7 @@
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
+  const SCROLL = window.WoodshedTerminalScroll;
   const TERM_POLL_MS = 250;
   // ttyd sets window.term after its token fetch, which the proxy gives 30 s.
   const TERM_WAIT_MS = 60_000;
@@ -415,7 +417,54 @@
     doc.addEventListener('drop', (e) => take(e, e.dataTransfer?.files), true);
   }
 
-  // ---- a phone: a swipe scrolls tmux, a tap opens a link or a picture ----
+  // ---- scrolling back: the browser's own history of the pane, or tmux's ----
+  // After handing the view to tmux's copy mode, the title says so within tmux's status-interval: until then, the rest
+  // of the gesture is tmux's too.
+  const HANDOFF_MS = 1500;
+
+  /** @returns {object|null}  the frame's xterm, when its scrolling is the browser's own (terminalScroll.cjs) */
+  function ownScroller(frame, handoff) {
+    const win = frame.contentWindow;
+    const term = win && win.term;
+    if (!term || Date.now() < handoff.until || !SCROLL.scrollsItself(win.document.title)) return null;
+    return term;
+  }
+
+  /** The view moved `lines` (negative: up) in the browser's history, or, past its top, tmux's copy mode taking over. */
+  function scrollOwn(term, sessionId, pane, lines, handoff) {
+    const to = SCROLL.plan(term.buffer.active, lines);
+    if ('own' in to) return term.scrollLines(to.own);
+    // tmux redraws the screen, so that is what has to be in view.
+    term.scrollToBottom();
+    handoff.until = Date.now() + HANDOFF_MS;
+    queueScroll(sessionId, pane, to.tmux);
+  }
+
+  /** @returns {number}  the height of one row, in the frame's pixels */
+  function rowPx(term) {
+    return (term.element && term.element.clientHeight / term.rows) || 16;
+  }
+
+  // A wheel over a pane on the main screen scrolls the browser's history. Taken before xterm sees it: with tmux's mouse
+  // on, xterm sends every wheel to tmux. Anything else (Ctrl for zoom, a full-screen program, copy mode) goes on to
+  // tmux as before.
+  function bindWheel(frame, doc, sessionId, pane, handoff) {
+    let carry = 0;
+    doc.addEventListener('wheel', (e) => {
+      const term = !e.ctrlKey && !e.metaKey && ownScroller(frame, handoff);
+      if (!term) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const px = rowPx(term);
+      carry += e.deltaMode === 1 ? e.deltaY * px : e.deltaMode === 2 ? e.deltaY * term.rows * px : e.deltaY;
+      const lines = Math.trunc(carry / px);
+      if (!lines) return;
+      carry -= lines * px;
+      scrollOwn(term, sessionId, pane, lines, handoff);
+    }, { capture: true, passive: false });
+  }
+
+  // ---- a phone: a swipe scrolls the pane, a tap opens a link or a picture ----
   const scrolls = new Map();
   function queueScroll(sessionId, pane, notches) {
     const key = `${sessionId}|${pane}`;
@@ -437,10 +486,13 @@
     if (entry.pending) flushScroll(sessionId, pane, key);
   }
 
-  function bindTouch(frame, doc, sessionId, pane) {
+  function bindTouch(frame, doc, sessionId, pane, handoff) {
     let lastY = null;
     let carry = 0;
     let tap = null;
+    // Whose this swipe is, decided as it starts: a row at a time under the finger in the browser's history, a step
+    // per SWIPE_PX through tmux.
+    let own = null;
     const opts = { capture: true, passive: true };
     // The swipe is tmux's alone: left to the browser, a swipe down at the top of the page is a pull to refresh.
     doc.documentElement.style.overscrollBehavior = 'none';
@@ -452,6 +504,7 @@
       }
       lastY = e.touches[0].clientY;
       carry = 0;
+      own = ownScroller(frame, handoff);
       tap = { x: e.touches[0].clientX, y: lastY, at: Date.now() };
     }, opts);
     doc.addEventListener('touchmove', (e) => {
@@ -461,10 +514,13 @@
       if (tap && (Math.abs(e.touches[0].clientX - tap.x) > TAP_PX || Math.abs(y - tap.y) > TAP_PX)) tap = null;
       carry += lastY - y;
       lastY = y;
-      const notches = Math.trunc(carry / SWIPE_PX);
+      if (own && Date.now() < handoff.until) own = null;
+      const step = own ? rowPx(own) : SWIPE_PX;
+      const notches = Math.trunc(carry / step);
       if (!notches) return;
-      carry -= notches * SWIPE_PX;
-      queueScroll(sessionId, pane, notches);
+      carry -= notches * step;
+      if (own) scrollOwn(own, sessionId, pane, notches, handoff);
+      else queueScroll(sessionId, pane, notches);
     }, { capture: true, passive: false });
     doc.addEventListener('touchend', (e) => {
       lastY = null;
@@ -545,7 +601,9 @@
       if (!doc || doc.__woodshedTerminal) return;
       doc.__woodshedTerminal = true;
       bindFiles(doc, session, pane);
-      bindTouch(frame, doc, session, pane);
+      const handoff = { until: 0 };
+      bindWheel(frame, doc, session, pane, handoff);
+      bindTouch(frame, doc, session, pane, handoff);
       bindClipboard(frame);
       bindImages(frame, doc, session);
       bindReconnect(frame, session);

@@ -156,14 +156,14 @@ test('envFiles: one entry a file and a secret, and no secret Woodshed keeps for 
 
 test('check hints at each env file\'s lines with no {{…}}, the same in every session, and still passes', (t) => {
   const dir = checkout(t, { project: { envFiles: [
-    { ...PROJECT.envFiles[0], lines: ['DB={{PGDATABASE}}', 'SKIP_LOGIN=true', '# A comment', 'PORT=9000', 'KEY={{KEY?}}'] },
+    { ...PROJECT.envFiles[0], lines: ['DB={{PGDATABASE}}', 'FEATURE_PREVIEW=true', '# A comment', 'PORT=8080', 'KEY={{KEY?}}'] },
     { path: 'api/.env.test', defaults: ['LOG_LEVEL=info'], lines: ['DB={{PGDATABASE}}'] },
   ] }, files: { '.gitignore': 'api/.env\napi/.env.test\napi/node_modules/\n' } });
   const run = cli(dir);
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stdout, /^env files: 2 \(api\/\.env from api-env, api\/\.env\.test \(key api-env-test\), 1 default\)$/m);
   const hints = run.stdout.split('\n').filter((line) => line.startsWith('hint: '));
-  assert.deepEqual(hints, ['hint: envFiles[0] (api/.env) lines set SKIP_LOGIN, PORT with no {{…}}: a line with none is the same in every session, so move it to defaults if a person may change it']);
+  assert.deepEqual(hints, ['hint: envFiles[0] (api/.env) lines set FEATURE_PREVIEW, PORT with no {{…}}: a line with none is the same in every session, so move it to defaults if a person may change it']);
   assert.doesNotMatch(cli(checkout(t)).stdout, /^hint: /m, 'every line of the passing file has a placeholder');
 });
 

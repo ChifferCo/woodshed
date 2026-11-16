@@ -32,7 +32,7 @@ import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './tar
 import {
   createReviewWorktree, removeReviewWorktree, defaultBranch, branchDiff, commitSubject,
   legacyReviewRefs, deleteLegacyRef, worktreeDiff, worktreeState,
-  fetchTargetHead, dropStagingRef, moveReviewWorktree,
+  fetchTargetHead, dropStagingRef, moveReviewWorktree, pullWorktreeBranch,
 } from './worktree.mjs';
 import { REVIEW_HTML } from './page.mjs';
 import {
@@ -359,9 +359,12 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
  *     goes stale the moment the next edit lands. Calling this again replaces
  *     the diff and re-runs the analysis.
  *
+ * `pull` is a Re-review's: first fast-forward the checkout to what origin has on its branch (pullWorktreeBranch), so
+ * commits pushed from elsewhere are read too. Opening the page never pulls.
+ *
  * @returns {Promise<{ok: true, review: object} | {ok: false, status: number, error: string, stderr?: string}>}
  */
-async function createWorktreeReview({ ctx, sessionName, worktreePath }) {
+async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = false }) {
   const { log, repoRoot, reqId } = ctx;
   if (DISABLED) return { ok: false, status: 503, error: 'the review feature is disabled in this instance' };
   if (!isSessionName(sessionName)) return { ok: false, status: 400, error: 'not a session name' };
@@ -380,6 +383,13 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath }) {
   }
 
   const baseRef = await defaultBranch(repoRoot);
+  const pulled = pull && fs.existsSync(worktreePath) ? await pullWorktreeBranch({ worktreePath }) : null;
+  if (pulled && (pulled.pulled || pulled.refused)) {
+    log('review.worktree_pulled', {
+      reqId, session: sessionName, branch: pulled.branch, commits: pulled.pulled,
+      from: pulled.from?.slice(0, 8), to: pulled.to?.slice(0, 8), refused: pulled.refused ?? null,
+    });
+  }
   // Unique per call, not per session. Two overlapping reviews of the same
   // session are reachable — nothing serialises them, and a double-click is
   // enough — and a shared scratch index means one `add -A` lands in the other's
@@ -418,6 +428,10 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath }) {
     worktree: worktreePath,
     meta,
     dirtyFiles: state.dirtyFiles,
+    // What the Re-review that took it pulled from origin first, or why it did not: the page says so beside the button.
+    pull: pulled && (pulled.pulled || pulled.refused)
+      ? { commits: pulled.pulled, branch: pulled.branch, refused: pulled.refused ?? null }
+      : null,
     createdAt: new Date().toISOString(),
   };
 
@@ -1297,7 +1311,7 @@ async function handleWorktreeReview(res, ctx, session) {
   // 409 and a sentence rather than a bare 404.
   const worktreePath = ctx.worktreePathFor(session);
 
-  const made = await createWorktreeReview({ ctx, sessionName: session, worktreePath });
+  const made = await createWorktreeReview({ ctx, sessionName: session, worktreePath, pull: true });
   if (!made.ok) {
     log('review.worktree_failed', { reqId, session, status: made.status, error: made.error });
     return json(res, made.status, { ok: false, error: made.error, stderr: made.stderr });
@@ -1498,6 +1512,7 @@ function statusPayload(session) {
     branch: review.branch,
     baseRef: review.baseRef,
     headSha: review.headSha,
+    pull: review.pull ?? null,
     reviewBranch: review.reviewBranch,
     meta: onTheWire(review.meta),
     // When the diff was taken — at launch, or at the last Re-review. Every kind

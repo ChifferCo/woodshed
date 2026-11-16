@@ -156,7 +156,7 @@ variable "install_secrets" {
 
   validation {
     condition = alltrue([for name, env_name in var.install_secrets : can(regex("^[a-z0-9-]+$", name)) && !contains(
-      ["anthropic-api-key", "openai-api-key", "github-app-key", "github-app-client-secret", "github-webhook-secret", "slack-bot-token", "slack-signing-secret"],
+      ["anthropic-api-key", "openai-api-key", "github-app-key", "github-app-client-secret", "github-reviewer-app-key", "github-webhook-secret", "slack-bot-token", "slack-signing-secret"],
     name) && !contains(keys(var.env_files), name)])
     error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets or an env file's."
   }
