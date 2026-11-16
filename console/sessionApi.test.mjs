@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
-import { writeEnvFiles } from '../shared/project.mjs';
+import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
 
 const SESSIONS = [
   { id: 'aaaaaaaa', status: 'running', token: 'live-token' },
@@ -712,4 +712,54 @@ test('/repo-settings answers for the calling session\'s own project, a private o
 
   secrets.read = async () => { throw new Error('ThrottlingException'); };
   assert.equal((await ask('private')).status, 503, 'the entrypoint tries again');
+});
+
+test('two repos that both have an api-env: each session falls back to its own repo\'s legacy lines until repo settings hold a value', async (t) => {
+  const { createRepoSettings } = await import('./repoSettings.mjs');
+  // As an embedding program gives them: each repo's api-env kept under a store name of its own.
+  const envFiles = [
+    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
+    { secret: 'api-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/api' },
+  ];
+  const values = new Map();
+  const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
+  const store = { state: {}, save() {} };
+  const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'api', repo: 'acme/api', default: false }], envFiles };
+  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', key: 'api-env', lines: ['PORT=8080'] }], env: {} };
+  const userSettings = createUserSettings({ store, secrets, envFiles });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf: () => ({ repoLayer: async () => project }) });
+  await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');
+  await userSettings.saveFile('mia', 'app-1a2b3c--api-env', 'MINE=app');
+  await userSettings.saveFile('mia', 'api-4d5e6f--api-env', 'MINE=api');
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', repo: 'acme/app', project: 'app' },
+    { id: 'bbbbbbbb', status: 'running', token: 'on-api', owner: 'mia', repo: 'acme/api', project: 'api' },
+  ];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings, repoSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  // What the entrypoint does: /settings and /repo-settings, then writeEnvFiles, with the launcher's API_ENV for the repo.
+  const envFileOn = async (token, shared) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'two-repos-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const { body: own } = await request(port, { path: '/settings', authorization: `Bearer ${token}` });
+    const { body: answer } = await request(port, { path: '/repo-settings', authorization: `Bearer ${token}` });
+    fs.writeFileSync(path.join(dir, 'answer.json'), JSON.stringify(answer));
+    const settings = readRepoSettings(path.join(dir, 'answer.json'));
+    const ownLines = Object.fromEntries(Object.entries(own.files).filter(([key, text]) => key !== 'tmux-conf' && text));
+    const [written] = writeEnvFiles({ project, repoDir: dir, env: { API_ENV: shared, OWN_FILES: JSON.stringify(ownLines) }, settings });
+    return { text: fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'), legacy: written.legacy };
+  };
+  const before = { app: await envFileOn('on-app', 'FROM=app-legacy'), api: await envFileOn('on-api', 'FROM=api-legacy') };
+  assert.deepEqual(before.app, { text: 'FROM=app-legacy\n\n# Your own lines, from My settings\nMINE=app\n\n# Woodshed overrides\nPORT=8080\n', legacy: ['installation', 'personal'] });
+  assert.deepEqual(before.api, { text: 'FROM=api-legacy\n\n# Your own lines, from My settings\nMINE=api\n\n# Woodshed overrides\nPORT=8080\n', legacy: ['installation', 'personal'] });
+
+  await repoSettings.saveInstallation({ project: 'api', key: 'api-env', text: 'FROM=api-settings', by: 'mia' });
+  await repoSettings.saveOwn({ login: 'mia', project: 'api', key: 'api-env', text: 'MINE=api-settings' });
+  const after = { app: await envFileOn('on-app', 'FROM=app-legacy'), api: await envFileOn('on-api', 'FROM=api-legacy') };
+  assert.deepEqual(after.app, before.app, 'the other repo\'s api-env still falls back to its own');
+  assert.deepEqual(after.api, { text: 'FROM=api-settings\n\n# Your own lines, from My settings\nMINE=api-settings\n\n# Woodshed overrides\nPORT=8080\n', legacy: [] });
 });

@@ -1760,7 +1760,8 @@ by what it asks for: `{"project", "envFiles": {"<key>": {"installation", "person
 "personal"}, "personalFor"}`, every key the console keeps for the project (null where a layer has none). `personal` is
 filled only in a private session, from its owner's names; a shared or QA session gets the installation's alone, an ask session
 404, and 503 while the store does not answer. The console logs `repoSettings: handed out` with the session, the project,
-the keys each layer gave and whether each has instructions. Nothing in a session reads it yet.
+the keys each layer gave and whether each has instructions. The session writes them into its env files and rules
+(session/README.md, "What a container does").
 
 At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
 `repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
@@ -1770,9 +1771,10 @@ is never replaced, so a second start copies nothing. An embedding program's `con
 `repos/<project>/env/<name>`, each person's `users/<login>/<secret>` into `users/<login>/repos/<project>/env/<name>`,
 ahead of an entry for every repo with the same name; one whose repo has no project is not copied (`repoSettings:
 legacy env files of a repo with no project, not copied`). It logs `repoSettings: legacy env file copied` (`project`,
-`key`, `secret`, `bytes`), `legacy own lines copied` (`login`, `project`, `key`, `secret`) and `legacy copy checked` with how many were copied, kept, empty or
-failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. Sessions
-still read the Terraform secrets until they read Repo settings.
+`key`, `secret`, `bytes`), `legacy own lines copied` (`login`, `project`, `key`, `secret`) and `legacy copy checked`
+with how many were copied, kept, empty or failed (a failed one is tried at the next start), and keeps when under
+`repoSettingsMigration` in `state.json`. A session reads a Terraform secret only for a file that has no value in Repo
+settings, and logs a warning when it does.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
