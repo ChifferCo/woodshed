@@ -35,7 +35,9 @@ pullRequests:
     # reviewer App's, since GitHub never lets the console App approve a pull request it opened. The PR comment with its
     # risk areas is the console App's.
     runner: woodshed
+    author: woodshed-reviewer[bot]
     heading: '## Claude review'
+    commentAuthor: woodshed-console[bot]
   suites:
     - name: Check
       workflow: .github/workflows/check.yml
