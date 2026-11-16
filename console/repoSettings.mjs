@@ -650,12 +650,41 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return counts;
   }
 
+  // One person's old files into the default project's. Where they keep some there already (saved on the page before
+  // the move ran), the old paths those lack are added and theirs win; when the two together would not fit, theirs are
+  // kept alone and the log names the old paths left out.
+  async function moveOne(login, person, main) {
+    const value = await secrets.read(legacyOwnFilesName(login));
+    let old = {};
+    if (value) {
+      old = JSON.parse(value);
+      if (!old || typeof old !== 'object' || Array.isArray(old)) throw new Error('the old own files are not a JSON object');
+    }
+    const current = await readFiles(login, main.name);
+    const added = Object.keys(old).filter((file) => !(file in current));
+    const merged = { ...current, ...Object.fromEntries(added.map((file) => [file, old[file]])) };
+    const fits = Object.keys(merged).length <= MAX_OWN_FILES && Buffer.byteLength(JSON.stringify(merged)) <= maxFilesBytes();
+    const moving = added.length && fits;
+    if (moving) {
+      await secrets.save(personalFilesName(login, main.name), JSON.stringify(merged), `Woodshed: @${login}'s own files for ${main.name}, for their private sessions only`);
+      const at = new Date(now()).toISOString();
+      writeFilesRecord(login, main.name, { ...filesRecordOf(login, main.name), ...Object.fromEntries(added.map((file) => [file, person.ownFiles[file] ?? at])) });
+    }
+    if (value) await secrets.remove(legacyOwnFilesName(login));
+    delete person.ownFiles;
+    store.save();
+    console.log('repoSettings: own files moved to the default project', {
+      login, project: main.name, added: moving ? added : [], kept: Object.keys(current), ...(added.length && !fits && { leftOut: added, why: 'over the limit together' }),
+    });
+    return moving ? 'moved' : 'kept';
+  }
+
   /**
    * At each start: each person's own whole files from before they were per repo (`users/<login>/own-files`, with
-   * `people.<login>.ownFiles` in state.json) into the default project's, where My settings shows them now. Copied only
-   * where the person keeps none for it yet, then the old value is deleted, so a second run finds nothing to move. One
-   * that fails stays, to be moved at the next start; until then no session gets it.
-   * @returns {Promise<{moved: number, kept: number, failed: number}>}  `kept`: theirs for the project were already there
+   * `people.<login>.ownFiles` in state.json) into the default project's, where My settings shows them now, beside any
+   * they keep there already (moveOne), then the old value is deleted, so a second run finds nothing to move. One that
+   * fails stays, to be moved at the next start; until then no session gets it.
+   * @returns {Promise<{moved: number, kept: number, failed: number}>}  `kept`: nothing of the old was added
    */
   async function moveOwnFiles() {
     const counts = { moved: 0, kept: 0, failed: 0 };
@@ -667,19 +696,9 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       return counts;
     }
     for (const [login, person] of people) {
-      const files = Object.keys(person.ownFiles).length;
       try {
-        const old = await secrets.read(legacyOwnFilesName(login));
-        const there = Object.keys(filesRecordOf(login, main.name) ?? {}).length > 0;
-        if (old && !there) {
-          await secrets.save(personalFilesName(login, main.name), old, `Woodshed: @${login}'s own files for ${main.name}, for their private sessions only`);
-          writeFilesRecord(login, main.name, person.ownFiles);
-        }
-        if (old) await secrets.remove(legacyOwnFilesName(login));
-        delete person.ownFiles;
-        store.save();
-        counts[old && !there ? 'moved' : 'kept'] += 1;
-        console.log('repoSettings: own files moved to the default project', { login, project: main.name, moved: Boolean(old && !there), files });
+        const result = await moveOne(login, person, main);
+        counts[result] += 1;
       } catch (err) {
         counts.failed += 1;
         console.warn('repoSettings: own files not moved, tried again at the next start', { login, project: main.name, message: firstLine(err) });

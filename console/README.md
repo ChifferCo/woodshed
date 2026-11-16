@@ -579,10 +579,11 @@ for each repo:
   handed out` names them under `wholeFiles`. Taking the repo off the console, or Remove My Woodshed, deletes them.
 - A running session keeps the files it started with; an edit made in a session is not saved back.
 - Before they were per repo, all of a person's files were one secret for every repo, `<prefix>/users/<login>/own-files`
-  (`people.<login>.ownFiles`). At each start the console moves those into the default project's
-  (`repoSettings: own files moved to the default project`, with `moved: false` where the person already kept files for
-  it, which win), then deletes the old secret; one that fails (`own files not moved`) is tried again at the next start
-  and reaches no session meanwhile. `/api/my/own-files` still answers a page opened before, on the default project's.
+  (`people.<login>.ownFiles`). At each start the console moves those into the default project's, beside any the person
+  already keeps there, which win for a path in both (`repoSettings: own files moved to the default project`, with the
+  paths `added` and `kept`, and `leftOut` when the two together would be over the limit, which keeps theirs alone), then
+  deletes the old secret; one that fails (`own files not moved`) is tried again at the next start and reaches no
+  session meanwhile. `/api/my/own-files` still answers a page opened before, on the default project's.
 
 **Session timeouts**, on My settings, override the console's *Pause a session
 waiting for input after* (0.25 to 24 hours) and *Stop a working session after*
