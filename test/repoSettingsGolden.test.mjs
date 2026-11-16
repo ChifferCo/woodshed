@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { loadProject } from '../shared/project.mjs';
 import { instructionsText } from '../shared/repoSettings.mjs';
 import { parseYaml } from '../shared/yamlLite.mjs';
 
@@ -69,7 +70,8 @@ function writeEnvFilesFor(text, env, settings = null) {
   const file = path.join(dir, 'repo-settings.json');
   if (settings) fs.writeFileSync(file, JSON.stringify(settings));
   const printed = execFileSync('node', [PROJECT_MJS, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env, ...(settings && { REPO_SETTINGS_FILE: file }) } });
-  const files = printed.split('\n')[0].split(/, (?=[^ ]+ \((?:base|layers))/).map((entry) => entry.split(' (')[0]);
+  // Each file the project file names, in its order: what the line prints, without parsing it.
+  const files = loadProject(dir).envFiles.map((f) => f.path);
   return [`printed: ${printed}`, ...files.map((file) => `==> ${file} <==\n${fs.readFileSync(path.join(dir, file), 'utf8')}`)].join('');
 }
 
