@@ -18,7 +18,7 @@ import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
-  parseWorkOn, pullNumber, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
+  parseWorkOn, pullNumber, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
 } from './sessions.mjs';
 import logins from './public/logins.cjs';
 const { findLogin, sameLogin } = logins;
@@ -1608,7 +1608,12 @@ export function createFleet({
     })) : null;
     update(session, { qa: { ...session.qa, conclusion: verdict.conclusion, title: verdict.title, testedSha: sha, costUsd } });
     console.log('fleet: QA finished', { id: session.id, number: session.number, conclusion: verdict.conclusion, total: verdict.total, costUsd, checkPosted: Boolean(checkUrl) });
-    if (ours) await safely('held approval after QA', () => releaseHeldApproval(project, session.number, { sha, conclusion: verdict.conclusion, title: verdict.title }));
+    // Only the commit this session was started on: a report naming another sha did not test what that approval waits for.
+    if (sha === session.qa.sha) {
+      const failed = verdict.conclusion === 'failure';
+      const qaLine = failed ? `The review approved this commit, but QA failed (${verdict.title}): see the QA comment.` : `QA: ${verdict.title}.`;
+      await safely('held approval after QA', () => releaseHeldApproval(project, session.number, { sha, failed, qaLine }));
+    }
     // In the background: the session waits on this reply, and the stop saves its home through it first.
     stop(session, `QA finished: ${verdict.title}`)
       .catch((err) => console.warn('fleet: stopping a finished QA session failed', { id: session.id, message: firstLine(err) }))
@@ -1699,8 +1704,16 @@ export function createFleet({
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
       .catch((err) => console.warn('fleet: stopping a finished review session failed', { id: session.id, message: firstLine(err) }));
-    // Nothing went to GitHub, so no review webhook comes: QA starts from the held approval here.
-    if (held) await safely('QA after a held approval', () => qaAfterReview({ number: session.number, project: project.name }));
+    // Nothing went to GitHub, so no review webhook comes: QA starts from the held approval here. When it cannot start,
+    // the approval goes out now with the reason, or the pull request would wait for an approval that never comes. A QA
+    // run already going on it picks this commit up when it finishes (qaFinished).
+    if (!held) return;
+    const qa = await safely('QA after a held approval', () => qaAfterReview({ number: session.number, project: project.name }));
+    const pending = qa?.outcome === 'started' || (qa?.outcome === 'ignored' && qa.reason === QA_ALREADY_RUNNING);
+    if (pending) return;
+    const reason = qa?.reason ?? 'no QA session could start';
+    console.warn('fleet: held approval released, QA did not start', { id: session.id, number: session.number, reason });
+    await safely('held approval without QA', () => releaseHeldApproval(project, session.number, { sha, failed: false, qaLine: `QA did not start: ${reason}.` }));
   }
 
   // QA runs on this pull request here (pullRequests.qa.runner: woodshed, and it carries the QA label), so the review's
@@ -1727,7 +1740,7 @@ export function createFleet({
    * QA finished on a commit whose approval was held for it: the approval goes to GitHub with QA's result in it, or, when
    * QA failed, the verdict becomes REQUEST_CHANGES. Not when the head moved since: that commit gets its own review.
    */
-  async function releaseHeldApproval(project, number, { sha, conclusion, title }) {
+  async function releaseHeldApproval(project, number, { sha, failed, qaLine }) {
     const review = heldApproval(project, number, sha);
     if (!review) return;
     const gh = githubOf(project);
@@ -1738,12 +1751,10 @@ export function createFleet({
       console.log('fleet: held approval dropped, the head moved since', { id: review.id, number, sha, head: head ?? null });
       return;
     }
-    const failed = conclusion === 'failure';
     const verdict = failed ? 'REQUEST_CHANGES' : 'APPROVE';
-    const qaLine = failed ? `The review approved this commit, but QA failed (${title}): see the QA comment.` : `QA: ${title}.`;
     const ok = await sendVerdict(review, gh, { conclusion: verdict, body: `${review.review.heading} — ${verdict}\n\n${summary}\n\n${qaLine}`.trim(), inlineComments, sha });
     if (ok && !failed) await resolveFixedThreads(review, gh, resolved);
-    console.log('fleet: held approval released after QA', { id: review.id, number, qa: conclusion, verdict, ok });
+    console.log('fleet: held approval released', { id: review.id, number, verdict, ok });
   }
 
   // Only submits when the reviewed commit is still the head: a push since makes the review stale, so it is dropped

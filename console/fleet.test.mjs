@@ -2633,3 +2633,25 @@ test('without the QA label the approval goes out at once, and a held one is drop
   await moved.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
   assert.deepEqual(moved.calls.reviews, [], 'the new commit gets its own review');
 });
+
+test('a held approval goes out at once, saying why, when QA cannot start on it', async () => {
+  const t = heldSetup();
+  t.github.canWrite = async () => false;
+  await approveThenQa(t, null);
+  assert.equal(t.fleet.sessions().filter((s) => s.trigger === 'qa').length, 0, 'the labeler has no write access');
+  assert.deepEqual(t.calls.reviews.map((r) => r.event), ['APPROVE']);
+  assert.match(t.calls.reviews[0].body, /QA did not start: no write access to the repo\.$/);
+  assert.equal(t.fleet.sessions()[0].review.held, null);
+});
+
+test('a QA report for a commit other than the one the session started on releases nothing', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  await t.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.equal(t.calls.reviews.length, 1);
+  const other = heldSetup();
+  const started = await approveThenQa(other, null);
+  other.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'd'.repeat(40) } });
+  await other.fleet.qaFinished(started, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'd'.repeat(40), costUsd: 1 });
+  assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
+});

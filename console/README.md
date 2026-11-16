@@ -771,6 +771,11 @@ until QA finishes`). When QA reports on that commit (`fleet: held approval relea
   resolved.
 - **Fail:** the verdict goes in as REQUEST_CHANGES, saying the review approved but QA failed.
 - **The head moved meanwhile:** nothing is submitted; the new commit gets its own review.
+- **QA could not start** (the labeler has no write access, the project is not ready): the APPROVE goes out at once, its
+  last line saying why (`fleet: held approval released, QA did not start`).
+
+Only a report on the commit the QA session started on releases an approval: a report naming another commit did not
+test it.
 
 Without the label, as when someone removed it, the APPROVE goes out at once. A QA session that never reports leaves the
 approval held: removing and adding the label runs QA again, which releases it.
