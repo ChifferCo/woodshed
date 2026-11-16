@@ -8,8 +8,8 @@
 })(typeof globalThis === 'undefined' ? this : globalThis, function () {
   'use strict';
 
-  // `mod` is written the Mac way and shown as Ctrl elsewhere. `bare` is a key alone, read only while nothing takes
-  // typing; a space in it is a sequence (G, then M).
+  // `mod` is written the Mac way and shown as Ctrl elsewhere, or as `modOther` is when it has one. `bare` is a key
+  // alone, read only while nothing takes typing; a space in it is a sequence (G, then M).
   const SHORTCUTS = [
     { id: 'palette', mod: '⌘K', bare: '/', what: 'Jump to a session, or run a command' },
     { id: 'new', mod: '⇧⌘O', bare: 'N', what: 'New session' },
@@ -17,6 +17,8 @@
     { id: 'settings', mod: '⇧⌘,', what: 'Settings' },
     // Read by the New session form itself (launcher.js), from any of its fields: `where` says so on the sheet.
     { id: 'start', mod: '⌘↵', what: 'Start the session', where: 'New session' },
+    // Read by terminal.js (terminalFind.cjs's isFindKey). Off a Mac, `modOther`: Ctrl+F in a terminal is the pane's.
+    { id: 'find', mod: '⌘F', modOther: '⇧⌘F', what: 'Find in the terminal', where: 'Agent and Terminal tabs' },
     // ⌘? opens it too (match, below), and is left off the list: it is ? with ⌘ held, which says nothing more.
     { id: 'keys', bare: '?', what: 'Keyboard shortcuts' },
     { id: 'mine', bare: 'G M', what: 'Go to My Woodshed', href: '/' },

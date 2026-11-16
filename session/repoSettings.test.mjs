@@ -60,13 +60,12 @@ function bash(script, env) {
 }
 
 // A checkout whose project file has one env file with a secret, and rules of its own.
-function checkout() {
+const API_ENV_FILE = { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['DB_PASSWORD={{PGPASSWORD}}'] };
+
+function checkout(envFiles = [API_ENV_FILE]) {
   const dir = fixtureCheckout(fs.mkdtempSync(path.join(TMP, 'repo-')), { repo: 'acme/app' });
   fs.mkdirSync(path.join(dir, '.woodshed'));
-  fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
-    rules: '.woodshed/rules.md',
-    envFiles: [{ path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['DB_PASSWORD={{PGPASSWORD}}'] }],
-  }));
+  fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({ rules: '.woodshed/rules.md', envFiles }));
   fs.writeFileSync(path.join(dir, '.woodshed/rules.md'), '- Run `make check` before every push.\n');
   return dir;
 }
@@ -75,10 +74,10 @@ function checkout() {
  * fetchRepoSettings, then writeEnvFiles and writeRules as runSession calls them, then the file's removal. Prints what
  * each wrote, and whether the answer's file was there and readable by its user alone between them.
  */
-async function start({ consoleUrl, kind = 'private', mode = '', env = {} }) {
+async function start({ consoleUrl, kind = 'private', mode = '', env = {}, envFiles }) {
   const home = fs.mkdtempSync(path.join(TMP, 'home-'));
   const tmp = fs.mkdtempSync(path.join(TMP, 'tmp-'));
-  const repoDir = checkout();
+  const repoDir = checkout(envFiles);
   const script = [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
@@ -94,7 +93,7 @@ async function start({ consoleUrl, kind = 'private', mode = '', env = {} }) {
     WOODSHED_CONSOLE_URL: consoleUrl ?? '', BRANCH: 'woodshed/x', DEFAULT_BRANCH: 'main', STARTED_BY: 'octocat', PGPASSWORD: 'session-password', ...env,
   });
   const read = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null);
-  return { ...run, env: read(path.join(repoDir, 'api/.env')), rules: read(path.join(tmp, 'woodshed-rules.md')), left: fs.existsSync(path.join(home, '.config/woodshed/repo-settings.json')) };
+  return { ...run, env: read(path.join(repoDir, 'api/.env')), worker: read(path.join(repoDir, 'worker/.env')), rules: read(path.join(tmp, 'woodshed-rules.md')), left: fs.existsSync(path.join(home, '.config/woodshed/repo-settings.json')) };
 }
 
 test('a private session writes its env files and rules from repo settings, and logs keys and sizes, never a value', async () => {
@@ -112,6 +111,17 @@ test('a private session writes its env files and rules from repo settings, and l
   assert.ok(run.rules.endsWith('Where they do not disagree, follow all of them.\n'));
   for (const value of VALUES) assert.ok(!run.out.includes(value), `${value} is not in the log`);
   assert.equal(run.left, false);
+});
+
+test('two env files that name one secret are both written its repo settings, and logged as one key', async () => {
+  const answer = { ...ANSWER, envFiles: { 'app-env': ANSWER.envFiles['api-env'] } };
+  const fake = await fakeConsole([{ json: answer }]);
+  const run = await start({ consoleUrl: fake.url, envFiles: [{ ...API_ENV_FILE, secret: 'app-env' }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }] });
+  assert.equal(run.status, 0, run.out);
+  assert.match(run.out, /\[woodshed\] Env files written \(api\/\.env, worker\/\.env from app-env \(installation: 44 bytes, personal: 20 bytes; api\/\.env layers: repo installation personal session, defaults: 1, replaced by the session: none; worker\/\.env layers: installation personal session, replaced by the session: none\)\)/);
+  assert.equal(run.worker, 'AUTH_DOMAIN=installation.test\nLOG_LEVEL=warn\n\n# Your own lines, from My settings\nLOG_LEVEL=debug-mine\n\n# Woodshed overrides\nROLE=worker\n');
+  assert.match(run.env, /^# From the repo[\s\S]*AUTH_DOMAIN=installation\.test[\s\S]*LOG_LEVEL=debug-mine\n\n# Woodshed overrides\nDB_PASSWORD=session-password\n$/);
+  for (const value of VALUES) assert.ok(!run.out.includes(value), `${value} is not in the log`);
 });
 
 test('a shared session gets the installation\'s layer alone, whatever the answer says', async () => {

@@ -490,9 +490,10 @@ export function seedEnv({ flags, env, databases, user, name, password, files, se
  *          secrets: {get: (name: string) => Promise<string|null>}}} args
  * @returns {Promise<{settings: {project: string, envFiles: Record<string, {installation: string, personal: null}>,
  *   instructions: {installation: null, personal: null}, personalFor: null}|null, files: Record<string, string>,
- *   read: {key: string, from: 'repo settings'|'legacy secret'|'none'}[]}>}
+ *   read: {key: string, paths: string[], from: 'repo settings'|'legacy secret'|'none'}[]}>}
  *   `settings` shaped like the session API's answer (shared/project.mjs, readRepoSettings), null without `--project`;
- *   `files` each legacy secret read, by the variable it arrives in (secretEnvName); `read` where each key came from
+ *   `files` each legacy secret read, by the variable it arrives in (secretEnvName); `read` where each key came from,
+ *   with the paths of the env files that name it
  */
 export async function seedEnvFiles({ flags, project, secrets }) {
   const prefix = flags['secret-prefix'];
@@ -501,16 +502,19 @@ export async function seedEnvFiles({ flags, project, secrets }) {
   const files = {};
   const read = [];
   for (const key of keys) {
-    const { secret } = project.envFiles.find((f) => f.key === key);
+    // Files that name one secret share its key: the entrypoint writes its value to each of them.
+    const named = project.envFiles.filter((f) => f.key === key);
+    const { secret } = named[0];
+    const paths = named.map((f) => f.path);
     const installation = flags.project ? await secrets.get(installationEnvSecretName(prefix, flags.project, key)) : null;
     if (installation?.trim()) {
       envFiles[key] = { installation, personal: null };
-      read.push({ key, from: 'repo settings' });
+      read.push({ key, paths, from: 'repo settings' });
       continue;
     }
     const legacy = secret ? await secrets.get(`${prefix}${secret}`) : null;
     if (secret) files[secretEnvName(secret)] = legacy ?? '';
-    read.push({ key, from: legacy?.trim() ? 'legacy secret' : 'none' });
+    read.push({ key, paths, from: legacy?.trim() ? 'legacy secret' : 'none' });
   }
   const settings = flags.project
     ? { project: flags.project, envFiles, instructions: { installation: null, personal: null }, personalFor: null }

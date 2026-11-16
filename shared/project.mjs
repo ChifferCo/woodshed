@@ -180,14 +180,30 @@ function envFile(value, field) {
   return { ...read, key: envFileKey(read) };
 }
 
-// One key a file: the console keeps each env file's values under it.
+// The console keeps each key's values once. Files that name one secret share them on purpose (`api/.env` and
+// `worker/.env` both from `app-env`, as before keys); a key made from a path is one file's alone.
 function envFileList(value) {
   const all = list(value, 'envFiles', envFile);
   all.forEach((file, i) => {
     const j = all.findIndex((other) => other.key === file.key);
-    if (j < i) fail(`envFiles[${j}] (${all[j].path}) and envFiles[${i}] (${file.path}) both have the key ${file.key}: give one a secret of its own`);
+    if (j === i || (file.secret && all[j].secret === file.secret)) return;
+    fail(`envFiles[${j}] (${all[j].path}) and envFiles[${i}] (${file.path}) both have the key ${file.key}: give one a secret, or give both the same secret to share its values`);
   });
   return all;
+}
+
+/**
+ * The env files by key, in the order each key first appears: files that name one secret share its values.
+ * @param {{path: string, key: string}[]} envFiles  parseProject's
+ * @returns {{key: string, paths: string[]}[]}
+ */
+export function envFileKeys(envFiles) {
+  const byKey = new Map();
+  for (const file of envFiles) {
+    if (!byKey.has(file.key)) byKey.set(file.key, { key: file.key, paths: [] });
+    byKey.get(file.key).paths.push(file.path);
+  }
+  return [...byKey.values()];
 }
 
 // Written into SQL and into the dump commands as it is, so only a plain name, or `schema.name` where one may have a
@@ -747,8 +763,9 @@ export function writeEnvFiles({ project, repoDir, env, settings = null }) {
 /**
  * What `write-env-files` prints: one line naming each file, then a line for each warning. Without repo settings, the
  * line Woodshed printed before them, byte for byte. With them, each file's layers and sizes, and the keys the session
- * replaced; each value taken from a legacy secret, and each key the answer holds that this checkout's project file
- * has no env file for, has a line of its own. Keys and sizes only, never a value.
+ * replaced; files that share a key (they name one secret) are one entry, `api/.env, worker/.env from app-env (…)`, its
+ * values' sizes once and each path's layers after them. Each value taken from a legacy secret, and each key the answer
+ * holds that this checkout's project file has no env file for, has a line of its own. Keys and sizes only, never a value.
  * @param {{written: ReturnType<typeof writeEnvFiles>, settings: ReturnType<typeof readRepoSettings>, project: ReturnType<typeof parseProject>}} args
  * @returns {string[]}
  */
@@ -757,13 +774,23 @@ export function writtenLines({ written, settings, project }) {
   const defaults = (w) => (w.defaults ? `, defaults: ${w.defaults}` : '');
   if (!settings) return [written.map((w) => `${w.path} (base: ${w.baseBytes} bytes${defaults(w)}${w.own ? ', own lines' : ''}${unset(w)})`).join(', ') || 'none'];
   const legacy = (w, layer) => (w.legacy.includes(layer) ? ' from the legacy secret' : '');
-  const summary = written.map((w) => `${w.path} (layers: ${w.layers.join(' ') || 'none'}${defaults(w)}, installation: ${w.baseBytes} bytes${legacy(w, 'installation')}`
-    + `${w.own ? `, personal: ${w.personalBytes} bytes${legacy(w, 'personal')}` : ''}, replaced by the session: ${w.replaced.join(' ') || 'none'}${unset(w)})`).join(', ') || 'none';
-  const secretOf = (w) => project.envFiles.find((f) => f.key === w.key)?.secret;
-  const warnings = written.flatMap((w) => [
-    w.legacy.includes('installation') && `WARNING: ${w.path} from the legacy env file secret ${secretOf(w)}: set it on Console settings → Repos`,
-    w.legacy.includes('personal') && `WARNING: ${w.path}'s own lines from the legacy env file lines (${secretOf(w)}) of My settings: save them on its Repo settings`,
-  ]).filter(Boolean);
+  const values = (w) => `installation: ${w.baseBytes} bytes${legacy(w, 'installation')}${w.own ? `, personal: ${w.personalBytes} bytes${legacy(w, 'personal')}` : ''}`;
+  const replaced = (w) => `replaced by the session: ${w.replaced.join(' ') || 'none'}${unset(w)}`;
+  const groups = envFileKeys(written).map(({ key, paths }) => ({ key, files: paths.map((p) => written.find((w) => w.path === p)) }));
+  const entry = ({ key, files: [w, ...more] }) => {
+    if (!more.length) return `${w.path} (layers: ${w.layers.join(' ') || 'none'}${defaults(w)}, ${values(w)}, ${replaced(w)})`;
+    const each = [w, ...more].map((f) => `${f.path} layers: ${f.layers.join(' ') || 'none'}${defaults(f)}, ${replaced(f)}`);
+    return `${[w, ...more].map((f) => f.path).join(', ')} from ${key} (${values(w)}; ${each.join('; ')})`;
+  };
+  const summary = groups.map(entry).join(', ') || 'none';
+  const secretOf = (key) => project.envFiles.find((f) => f.key === key)?.secret;
+  const warnings = groups.flatMap(({ key, files: [w, ...more] }) => {
+    const paths = [w, ...more].map((f) => f.path).join(', ');
+    return [
+      w.legacy.includes('installation') && `WARNING: ${paths} from the legacy env file secret ${secretOf(key)}: set it on Console settings → Repos`,
+      w.legacy.includes('personal') && `WARNING: ${paths}'s own lines from the legacy env file lines (${secretOf(key)}) of My settings: save them on its Repo settings`,
+    ];
+  }).filter(Boolean);
   const known = new Set(project.envFiles.map((f) => f.key));
   const unused = Object.entries(settings.envFiles).filter(([key, layers]) => !known.has(key) && (layers.installation || layers.personal)).map(([key]) => key);
   if (unused.length) warnings.push(`Repo settings unused: this checkout's project file has no env file with the key (keys: ${unused.join(' ')})`);

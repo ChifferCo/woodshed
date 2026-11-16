@@ -130,6 +130,40 @@ test('the log names layers, sizes and keys, never a value, and the repo settings
   }
 });
 
+// api/.env and worker/.env both name app-env: one key, so one installation and one personal value for both.
+const SHARED = parseProject({
+  version: 1,
+  envFiles: [
+    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'DB_PASSWORD={{PGPASSWORD}}'] },
+    { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'KEY={{KEY?}}'] },
+  ],
+});
+
+function writeShared(t, { settings, env = {} }) {
+  const repoDir = scratch(t);
+  const written = writeEnvFiles({ project: SHARED, repoDir, env: { ...ENV, ...env }, settings });
+  const read = (file) => fs.readFileSync(path.join(repoDir, file), 'utf8');
+  return { api: read('api/.env'), worker: read('worker/.env'), lines: writtenLines({ written, settings, project: SHARED }) };
+}
+
+test('files that share a key are each written its layered values, with their own defaults and lines, and logged as one', (t) => {
+  const settings = readRepoSettings(settingsFile(t, {
+    project: 'app', envFiles: { 'app-env': { installation: 'LOG_LEVEL=warn\nPORT=8000', personal: 'LOG_LEVEL=debug' } }, instructions: {}, personalFor: 'octocat',
+  }));
+  const { api, worker, lines } = writeShared(t, { settings });
+  assert.equal(api, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\n\n# From this installation\nLOG_LEVEL=warn\nPORT=8000\n\n'
+    + '# Your own lines, from My settings\nLOG_LEVEL=debug\n\n# Woodshed overrides\nPORT=8080\nDB_PASSWORD=session-password\n');
+  assert.equal(worker, 'LOG_LEVEL=warn\nPORT=8000\n\n# Your own lines, from My settings\nLOG_LEVEL=debug\n\n# Woodshed overrides\nROLE=worker\n');
+  assert.deepEqual(lines, ['api/.env, worker/.env from app-env (installation: 24 bytes, personal: 15 bytes; '
+    + 'api/.env layers: repo installation personal session, defaults: 1, replaced by the session: PORT; '
+    + 'worker/.env layers: installation personal session, replaced by the session: none)']);
+
+  const legacy = writeShared(t, { settings: readRepoSettings(settingsFile(t, { project: 'app', envFiles: {}, instructions: {}, personalFor: null })), env: { APP_ENV: 'LOG_LEVEL=warn' } });
+  assert.match(legacy.api, /\n# From this installation\nLOG_LEVEL=warn\n/);
+  assert.match(legacy.worker, /^LOG_LEVEL=warn\n\n# Woodshed overrides\n/);
+  assert.deepEqual(legacy.lines.slice(1), ['WARNING: api/.env, worker/.env from the legacy env file secret app-env: set it on Console settings → Repos'], 'one warning for the key');
+});
+
 test('without repo settings the log line is the one Woodshed printed before them', (t) => {
   assert.deepEqual(write(t, { settings: null, env: LEGACY }).lines, [
     'api/.env (base: 38 bytes, defaults: 2, own lines), web/.env.local (base: 0 bytes)',
