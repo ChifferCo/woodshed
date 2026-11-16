@@ -1725,7 +1725,8 @@ wiring (each env file's `lines`, the project's `env`, Woodshed's own variables),
 | `users/<login>/repos/<project>/instructions` | one person's own instructions for the repo |
 
 `<key>` is the env file's key in the project file: its `secret`, or one made from its path (`web/.env.local` is
-`web-env-local`). A value is at most 64 KB, and is kept only for an env file the repo's project file names (on its
+`web-env-local`). Env files that name one secret share its key, and so one value a layer, written to each of their
+paths (`api/.env` and `worker/.env` both from `app-env`). A value is at most 64 KB, and is kept only for an env file the repo's project file names (on its
 default branch). Instructions that look like a credential (an Anthropic, OpenAI, GitHub, Slack or AWS key, a private
 key) are refused: they go into the session's prompt. `state.json` keeps, under `repoSettings.<project>` and
 `people.<login>.repos.<project>`, when each was saved, by whom, its size and the names of the keys it sets, never a
@@ -1737,7 +1738,7 @@ The JSON API (the pages come later):
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files (key, path, defaults, wiring: `lines`, `optional`, `env`), each layer's records, `table` (each key, the layers that set it and the one that `wins`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `lines`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
@@ -1764,8 +1765,12 @@ the keys each layer gave and whether each has instructions. Nothing in a session
 At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
 `repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
 `users/<login>/repos/<default project>/env/<secret>`, only where the new name has no value yet: a value already there
-is never replaced, so a second start copies nothing. It logs `repoSettings: legacy env file copied` (`project`, `key`,
-`bytes`), `legacy own lines copied` (`login`, `key`) and `legacy copy checked` with how many were copied, kept, empty or
+is never replaced, so a second start copies nothing. An embedding program's `config.envFiles` entry with `repo` and
+`name` ("Embedding the console") goes to that repo's project instead, under `name`: its secret into
+`repos/<project>/env/<name>`, each person's `users/<login>/<secret>` into `users/<login>/repos/<project>/env/<name>`,
+ahead of an entry for every repo with the same name; one whose repo has no project is not copied (`repoSettings:
+legacy env files of a repo with no project, not copied`). It logs `repoSettings: legacy env file copied` (`project`,
+`key`, `secret`, `bytes`), `legacy own lines copied` (`login`, `project`, `key`, `secret`) and `legacy copy checked` with how many were copied, kept, empty or
 failed (a failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. Sessions
 still read the Terraform secrets until they read Repo settings.
 

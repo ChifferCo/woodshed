@@ -15,7 +15,7 @@
 // Values are never logged: keys, sizes and who.
 
 import logins from './public/logins.cjs';
-import { projectFor, projectNamed, defaultProject } from './projects.mjs';
+import { projectFor, projectForRepo, projectNamed, defaultProject } from './projects.mjs';
 import { isAsk, isQa } from './sessions.mjs';
 import { checkFile } from './userSettings.mjs';
 import { envKeyTable, envKeys, instructionsProblem, sessionWiring } from '../shared/repoSettings.mjs';
@@ -30,6 +30,24 @@ const MAX_BODY_BYTES = 160 * 1024;
 
 const shown = (message, status = 400) => Object.assign(new Error(message), { shown: true, status });
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
+
+/**
+ * The env file secrets from before repo settings (`config.envFiles`, WOODSHED_ENV_FILES), each with the project and key
+ * repo settings keep its values under. An entry with `repo` (an embedding program's, for one repo's sessions alone) is
+ * that repo's project's, keyed by `name`, the project file's secret, where the store keeps it under another; one
+ * without is the default project's, keyed by its secret. An entry of a repo the console has no project for has none.
+ * Entries of one repo come first, so they win over one for every repo with the same key, as they do on My settings.
+ * @param {{envFiles?: {secret: string, path: string, name?: string, repo?: string}[]}} config
+ * @returns {{secret: string, key: string, path: string, project: string|null, repo: string|null}[]}
+ */
+export function legacyEnvFiles(config) {
+  const main = defaultProject(config);
+  const all = (config.envFiles ?? []).map((f) => ({
+    secret: f.secret, key: f.name ?? f.secret, path: f.path, repo: f.repo ?? null,
+    project: (f.repo ? projectForRepo(config, f.repo)?.name : main.repo ? main.name : null) ?? null,
+  }));
+  return [...all.filter((f) => f.repo), ...all.filter((f) => !f.repo)];
+}
 
 /** @returns {string}  the installation's value for one env file of a project, under the console's prefix */
 export function installationEnvName(project, key) {
@@ -193,24 +211,57 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return file;
   }
 
-  // The Terraform secret an env file of the default project was read from before repo settings (WOODSHED_ENV_FILES).
+  // The legacy secret an env file of the project was read from before repo settings (legacyEnvFiles), by its store name.
   function legacyFor(project, file) {
-    if (!project.default || !file.secret || !(config.envFiles ?? []).some((f) => f.secret === file.secret)) return null;
-    return { secret: file.secret, copiedAt: store.state.repoSettingsMigration?.files?.[file.key] ?? null };
+    if (!file.secret) return null;
+    const legacy = legacyEnvFiles(config).find((f) => f.project === project.name && f.key === file.secret);
+    return legacy ? { secret: legacy.secret, copiedAt: store.state.repoSettingsMigration?.files?.[legacy.secret] ?? null } : null;
   }
 
-  function envFileView({ project, file, layer, login }) {
-    const inst = recordOf({ project: project.name, key: file.key });
-    const own = login ? recordOf({ login, project: project.name, key: file.key }) : null;
+  // One path of a key: its own defaults and wiring, and which layer wins each key in it.
+  function pathView({ file, layer, inst, own, login }) {
     const wiring = sessionWiring({ lines: file.lines, env: layer?.env ?? {} });
     const layers = { repo: file.defaults.join('\n'), installation: keyText(inst?.keys), ...(login && { personal: keyText(own?.keys) }), session: file.lines.join('\n') };
     return {
-      key: file.key, path: file.path, secret: file.secret, defaults: file.defaults,
+      path: file.path, defaults: file.defaults,
       // A line `{{NAME?}}` writes only in a session that has NAME: there it is wiring, elsewhere the layers' value stays.
       wiring: { lines: wiring.lines, optional: envKeys(file.lines.filter((l) => /\{\{[A-Za-z_][A-Za-z0-9_]*\?\}\}/.test(l)).join('\n')), env: wiring.env },
-      installation: inst, ...(login && { personal: own }), legacy: legacyFor(project, file),
       table: envKeyTable({ layers, wiring }),
     };
+  }
+
+  // A key's rows: one for all its paths where they agree, else one a path that sets it, naming the path.
+  function sharedTable(paths) {
+    if (paths.length === 1) return paths[0].table;
+    const sign = (p, row) => row && JSON.stringify([row.setBy, row.wins, ...['lines', 'optional', 'env'].map((w) => p.wiring[w].includes(row.key))]);
+    const keys = [...new Set(paths.flatMap((p) => p.table.map((row) => row.key)))];
+    return keys.flatMap((key) => {
+      const rows = paths.map((p) => p.table.find((row) => row.key === key) ?? null);
+      if (rows.every((row, i) => sign(paths[i], row) === sign(paths[0], rows[0]))) return [rows[0]];
+      return rows.flatMap((row, i) => (row ? [{ ...row, path: paths[i].path }] : []));
+    });
+  }
+
+  // One key and every env file that names it: files that name one secret share its values, each with its own
+  // defaults and lines. `path`, `defaults` and `wiring` are the first file's, `files` each one's.
+  function envFileView({ project, files, layer, login }) {
+    const [first] = files;
+    const inst = recordOf({ project: project.name, key: first.key });
+    const own = login ? recordOf({ login, project: project.name, key: first.key }) : null;
+    const paths = files.map((file) => pathView({ file, layer, inst, own, login }));
+    return {
+      key: first.key, path: first.path, paths: files.map((f) => f.path), secret: first.secret, defaults: first.defaults, wiring: paths[0].wiring,
+      files: paths.map(({ table, ...rest }) => rest),
+      installation: inst, ...(login && { personal: own }), legacy: legacyFor(project, first),
+      table: sharedTable(paths),
+    };
+  }
+
+  // The project file's env files by key, in the order each key first appears.
+  function byKey(files) {
+    const groups = new Map();
+    for (const file of files) groups.set(file.key, [...(groups.get(file.key) ?? []), file]);
+    return [...groups.values()];
   }
 
   /**
@@ -238,7 +289,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return {
       project: project.name, repo: project.repo, default: Boolean(project.default),
       projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
-      envFiles: files.map((file) => envFileView({ project, file, layer, login })),
+      envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login })),
       // Saved for a key the project file no longer names: kept until someone deletes it.
       unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],
       instructions: { installation: recordOf({ project: project.name }), ...(login && { personal: recordOf({ login, project: project.name }) }) },
@@ -336,15 +387,18 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   /**
-   * At each start: the Terraform env file secrets (WOODSHED_ENV_FILES) and each person's own lines for them into the
-   * default project's new names. A name that has a value already is left as it is, so a second run copies nothing.
+   * At each start: the Terraform env file secrets (WOODSHED_ENV_FILES) and each person's own lines for them into their
+   * project's new names (legacyEnvFiles): the default project's, or with `repo` that repo's, under `name`. A name that
+   * has a value already is left as it is, so a second run copies nothing.
    * @returns {Promise<{copied: number, ownCopied: number, kept: number, none: number, failed: number}>}
    */
   async function migrate() {
     const counts = { copied: 0, ownCopied: 0, kept: 0, none: 0, failed: 0 };
-    const legacy = config.envFiles ?? [];
-    const main = defaultProject(config);
-    if (!legacy.length || !main.repo) return counts;
+    const all = legacyEnvFiles(config);
+    const legacy = all.filter((f) => f.project);
+    const orphans = all.filter((f) => !f.project && f.repo).map((f) => f.secret);
+    if (orphans.length) console.warn('repoSettings: legacy env files of a repo with no project, not copied', { secrets: orphans });
+    if (!legacy.length) return counts;
     if (!available()) {
       console.log('repoSettings: legacy copy skipped, no secret store');
       return counts;
@@ -361,20 +415,20 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
         return 'failed';
       }
     };
-    for (const { secret } of legacy) {
-      const to = { project: main.name, key: secret };
-      const result = await attempt({ project: main.name, key: secret }, { from: secret, to, record: { savedAt: at, by: MIGRATED_FROM } }, () => {
-        console.log('repoSettings: legacy env file copied', { project: main.name, key: secret, bytes: recordOf(to).bytes });
+    for (const { secret, project, key } of legacy) {
+      const to = { project, key };
+      const result = await attempt({ project, key, secret }, { from: secret, to, record: { savedAt: at, by: MIGRATED_FROM } }, () => {
+        console.log('repoSettings: legacy env file copied', { project, key, secret, bytes: recordOf(to).bytes });
       });
       if (result === 'copied') files[secret] = at;
       counts[result === 'copied' ? 'copied' : result] += 1;
     }
     for (const [login, person] of Object.entries(store.state.people ?? {})) {
-      for (const { secret } of legacy) {
+      for (const { secret, project, key } of legacy) {
         if (!person?.files?.[secret]) continue;
-        const to = { login, project: main.name, key: secret };
-        const result = await attempt({ login, key: secret }, { from: `users/${login}/${secret}`, to, record: { savedAt: at } }, () => {
-          console.log('repoSettings: legacy own lines copied', { login, key: secret });
+        const to = { login, project, key };
+        const result = await attempt({ login, project, key, secret }, { from: `users/${login}/${secret}`, to, record: { savedAt: at } }, () => {
+          console.log('repoSettings: legacy own lines copied', { login, project, key, secret });
         });
         counts[result === 'copied' ? 'ownCopied' : result] += 1;
       }
@@ -384,7 +438,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       store.state.repoSettingsMigration = { copiedAt: at, from: MIGRATED_FROM, files: { ...before?.files, ...files } };
       store.save();
     }
-    console.log('repoSettings: legacy copy checked', { project: main.name, ...counts });
+    console.log('repoSettings: legacy copy checked', { projects: [...new Set(legacy.map((f) => f.project))], ...counts });
     return counts;
   }
 
