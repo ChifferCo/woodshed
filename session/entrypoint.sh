@@ -54,6 +54,8 @@
 #   WOODSHED_SESSION_DOCKER=1  the machine's Docker socket is mounted and DOCKER_HOST names it (the docker launcher's
 #                        hostDocker): claude's rules say so (hostDocker.md), and dockerPorts.mjs forwards what its
 #                        containers publish to 127.0.0.1 here
+#   WOODSHED_SESSION_DOCKER=own  the session runs its own Docker daemon, under Sysbox, which ownDocker.sh started before
+#                        this (the docker launcher's ownDocker): claude's rules say so (ownDocker.md)
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -462,20 +464,21 @@ writeRules() {
   # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
   apps=$(project apps-rules) || die "the project's apps could not be read"
   [ -z "$apps" ] || rules+=$'\n'"$apps"
-  # This machine's Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file.
-  if [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ]; then
-    local docker
-    docker=$(cat "$SESSION_DIR/hostDocker.md")
-    docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"}
-    rules+=$'\n'"$docker"
-  fi
+  # A Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file: the machine's
+  # (1) or the session's own (own).
+  local docker=
+  case "${WOODSHED_SESSION_DOCKER:-}" in
+    1) docker=$(cat "$SESSION_DIR/hostDocker.md"); docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"} ;;
+    own) docker=$(cat "$SESSION_DIR/ownDocker.md") ;;
+  esac
+  [ -z "$docker" ] || rules+=$'\n'"$docker"
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
   # The installation's instructions for the repo and the owner's own go after all of it, with which of them win.
   if [ -f "${REPO_SETTINGS_JSON:-}" ]; then
     added=$(REPO_SETTINGS_FILE=$REPO_SETTINGS_JSON project add-instructions /tmp/woodshed-rules.md) || die "the repo's instructions could not be added to the rules"
     [ -z "$added" ] || log "Instructions added to the rules" "($added)"
   fi
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, host docker: ${WOODSHED_SESSION_DOCKER:-0}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, docker: ${WOODSHED_SESSION_DOCKER:-none}, apps: $(project get apps | grep -c . || true))"
 }
 
 # With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where

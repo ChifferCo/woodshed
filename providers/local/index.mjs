@@ -131,12 +131,17 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
  *          localDatabases: object|null, localWebhooks: object|null, sessionEnv: Record<string, string>}} config  loadConfig()'s
  */
 export function localProvider(config) {
-  const { image, memory, cpus, hostDocker = false } = config.launcher;
+  const { image, memory, cpus, ownDocker = false, hostDocker = false } = config.launcher;
   const docker = createDockerLauncher({
-    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, hostDocker,
+    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, ownDocker, hostDocker,
   });
-  // Root on this machine for whoever can start a session (providers/local/README.md, "Docker in a session").
-  console.log('local: sessions use this machine\'s Docker', { on: hostDocker, ...(hostDocker ? { off: 'WOODSHED_SESSION_DOCKER=0' } : { onWith: 'WOODSHED_SESSION_DOCKER=1' }) });
+  // Their own, where the machine has Sysbox, which the first start finds out (`launcher: sessions get their own
+  // Docker`); the machine's is root on it for whoever can start a session (providers/local/README.md, "Docker in a session").
+  console.log('local: sessions\' Docker', {
+    own: ownDocker || false,
+    machine: hostDocker ? (ownDocker ? 'without Sysbox' : true) : false,
+    ...(ownDocker || hostDocker ? { off: 'WOODSHED_SESSION_DOCKER=0' } : { onWith: 'WOODSHED_SESSION_DOCKER=own' }),
+  });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);
   const secrets = fixed ?? createSecretSlot({ stateDir: config.stateDir, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) });

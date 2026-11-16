@@ -33,7 +33,12 @@ const DOCKER_SETTINGS = new Set(['DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG
 // The daemon's socket, where `docker run -v` finds it on the machine (Docker Desktop and OrbStack give this path to every
 // container for their VM's daemon) and where a session finds it.
 export const DOCKER_SOCKET = '/var/run/docker.sock';
-// What says a session has it, to claude's rules (writeRules in session/entrypoint.sh) and the project file's scripts.
+// Sysbox's runtime, under which a container can run a Docker daemon of its own without being privileged
+// (https://github.com/nestybox/sysbox), and the image's script that starts that daemon before the entrypoint.
+export const SYSBOX_RUNTIME = 'sysbox-runc';
+export const OWN_DOCKER_START = '/opt/woodshed/session/ownDocker.sh';
+const OWN_DOCKER_RECHECK_MS = 10 * 60_000;
+// What says a session has it (`1` the machine's, `own` its own), to claude's rules (writeRules in session/entrypoint.sh) and the project file's scripts.
 // Only the launcher sets it: one from the session env file is left out.
 const SESSION_DOCKER = 'WOODSHED_SESSION_DOCKER';
 
@@ -45,13 +50,14 @@ const SESSION_DOCKER = 'WOODSHED_SESSION_DOCKER';
  *   (projectFileMounts.mjs). `dockerHost` is another machine's daemon, as DOCKER_HOST takes it (`ssh://woodshed@10.8.0.12`):
  *   every docker call goes there, and `projectFilesHostDir` is where that machine has the project files. `reachHost`
  *   is the address the console reaches the sessions' ports on (that machine's private address); they are published
- *   on it alone, and on 127.0.0.1 without it. `hostDocker` gives every session but a question from Slack the daemon's
- *   socket, which is root on that machine (config.mjs, sessionDocker). `run(args, env, {dockerHost})` stands in for the
- *   docker CLI in tests
+ *   on it alone, and on 127.0.0.1 without it. `ownDocker` (`auto` or `required`) gives every session but a question
+ *   from Slack a Docker daemon of its own, inside its container, where the machine has Sysbox; `hostDocker` gives them
+ *   the machine's daemon's socket instead where they get no own one, which is root on that machine (config.mjs,
+ *   sessionDocker). `run(args, env, {dockerHost})` stands in for the docker CLI in tests
  */
 export function createDockerLauncher({
   image, memory, cpus, network = null, projectFilesDir = null, projectFilesHostDir = null, repo = null, dockerHost = null, reachHost = null,
-  hostDocker = false, run = null,
+  ownDocker = false, hostDocker = false, run = null,
 }) {
   const bind = reachHost || '127.0.0.1';
   const cliEnv = (env) => ({ ...process.env, ...env, ...(dockerHost ? { DOCKER_HOST: dockerHost } : {}) });
@@ -81,13 +87,62 @@ export function createDockerLauncher({
     return socketGroup;
   }
 
-  /** @returns {Promise<string[]>}  `docker run`'s arguments that give the session the daemon, or none */
-  async function hostDockerArgs(sessionId, env) {
-    // A question from Slack reads and answers, and anyone in the workspace can ask one: it never gets the machine.
-    if (!hostDocker || env.SESSION_MODE === 'ask') return [];
+  // Whether sessions can run a Docker daemon of their own: the daemon has Sysbox's runtime, which runs the session's
+  // container as an unprivileged user of the machine that is root only inside it, and the image has the daemon and
+  // ownDocker.sh, which starts it (an image built before them has neither). A yes is kept for the console's life; a
+  // no is asked again after OWN_DOCKER_RECHECK_MS, so Sysbox installed later reaches new sessions without a restart,
+  // and a failure to ask at the next start. The answer is `{own: true}` or `{own: false, why}`.
+  let ownDockerCheck = null;
+  let ownDockerNoAt = 0;
+  function ownDockerAvailable() {
+    if (ownDockerNoAt && Date.now() - ownDockerNoAt >= OWN_DOCKER_RECHECK_MS) {
+      ownDockerCheck = null;
+      ownDockerNoAt = 0;
+    }
+    ownDockerCheck ??= (async () => {
+      const runtimes = JSON.parse(await docker(['info', '--format', '{{json .Runtimes}}']) || '{}');
+      if (!runtimes || !Object.hasOwn(runtimes, SYSBOX_RUNTIME)) return { own: false, why: `the machine's Docker has no ${SYSBOX_RUNTIME} runtime: install Sysbox (providers/local/README.md, "Docker in a session")` };
+      const found = await docker(['run', '--rm', '--network', 'none', '--entrypoint', 'sh', image, '-c', `command -v dockerd >/dev/null && test -x ${OWN_DOCKER_START} && echo yes || echo no`]);
+      if (String(found).trim() !== 'yes') return { own: false, why: 'the session image has no Docker daemon: an image built before it, build it again' };
+      return { own: true };
+    })().then(
+      (answer) => {
+        if (!answer.own) ownDockerNoAt = Date.now();
+        console.log('launcher: sessions get their own Docker', answer.own
+          ? { own: true, runtime: SYSBOX_RUNTIME }
+          : { own: false, why: answer.why, instead: hostDocker ? 'this machine\'s Docker' : (ownDocker === 'required' ? 'no start' : 'no Docker') });
+        return answer;
+      },
+      (err) => {
+        ownDockerCheck = null;
+        throw new Error(`could not ask the machine's Docker whether sessions can have their own: ${String(err?.stderr || err?.message || err).trim().split('\n')[0]}`);
+      },
+    );
+    return ownDockerCheck;
+  }
+
+  /** @returns {Promise<{before: string[], after: string[]}>}  `docker run`'s arguments that give the session a Docker, before the image and after it */
+  async function dockerArgs(sessionId, env) {
+    const none = { before: [], after: [] };
+    // A question from Slack reads and answers, and anyone in the workspace can ask one: it never gets a Docker.
+    if (env.SESSION_MODE === 'ask') return none;
+    if (ownDocker) {
+      const { own, why } = await ownDockerAvailable();
+      if (own) {
+        console.log('launcher: session given its own Docker', { sessionId });
+        // Root inside the container, which Sysbox maps to an unprivileged user of the machine, for ownDocker.sh to start
+        // the daemon; it then runs the entrypoint as node. Naming the entrypoint drops the image's CMD, so it is given again.
+        return {
+          before: ['--runtime', SYSBOX_RUNTIME, '--user', '0', '--entrypoint', OWN_DOCKER_START, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=own`],
+          after: ['session'],
+        };
+      }
+      if (ownDocker === 'required') throw new Error(`WOODSHED_SESSION_DOCKER=own, and this session cannot have its own Docker: ${why}`);
+    }
+    if (!hostDocker) return none;
     const group = await hostSocketGroup();
     console.log('launcher: session given this machine\'s Docker', { sessionId });
-    return ['-v', `${DOCKER_SOCKET}:${DOCKER_SOCKET}`, '--group-add', group, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=1`];
+    return { before: ['-v', `${DOCKER_SOCKET}:${DOCKER_SOCKET}`, '--group-add', group, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=1`], after: [] };
   }
 
   return {
@@ -108,7 +163,7 @@ export function createDockerLauncher({
       if (projectFilesDir) console.log('launcher: installation project files', { sessionId, mounted: mounts.repos });
       const named = Object.fromEntries(Object.entries(given).filter(([key]) => !DOCKER_SETTINGS.has(key) && key !== SESSION_DOCKER));
       if (Object.keys(named).length !== Object.keys(given).length) console.warn('launcher: docker\'s own settings left out of the session\'s environment', { sessionId });
-      const withDocker = await hostDockerArgs(sessionId, given);
+      const withDocker = await dockerArgs(sessionId, given);
       // Both names while a session image older than shared/envNames.mjs, which reads only the old one, may be running;
       // the old name goes in a later release.
       const env = mounts.repos.length ? { ...named, ...bothNames('PROJECT_FILES_DIR', PROJECT_FILES_MOUNT) } : named;
@@ -119,10 +174,10 @@ export function createDockerLauncher({
         '--label', `${SESSION_LABEL}=${sessionId}`,
         ...(network ? ['--network', network] : []),
         ...mounts.args,
-        ...withDocker,
+        ...withDocker.before,
       ];
       for (const key of Object.keys(env)) args.push('-e', key);
-      args.push(image);
+      args.push(image, ...withDocker.after);
       try {
         await docker(args, env);
         const termPort = parseDockerPort(await docker(['port', ref, '7681']));

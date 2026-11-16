@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fixtureProject, fixtureProjectFiles } from '../../shared/projectFixture.mjs';
-import { DOCKER_SOCKET, OLD_SESSION_LABEL, SESSION_LABEL, createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
+import { DOCKER_SOCKET, OLD_SESSION_LABEL, OWN_DOCKER_START, SESSION_LABEL, createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 test('parseDockerPort reads the host port docker published', () => {
@@ -217,4 +217,116 @@ test('a socket that cannot be given stops the start and says how to turn it off,
   await assert.rejects(launcher.start('a1b2c3d4', {}), /WOODSHED_SESSION_DOCKER=0 turns that off\), and its socket could not be given to the session: docker: Error response from daemon: invalid mount config$/);
   fail = false;
   await launcher.start('a1b2c3d4', {});
+});
+
+// A launcher whose docker has the runtimes `runtimes` and an image that has its own daemon or not, recording every call.
+function ownDockerLauncher({ ownDocker = 'auto', hostDocker = false, runtimes = { runc: {}, 'sysbox-runc': {} }, imageHasDaemon = true, infoFails = false }) {
+  const calls = [];
+  const launcher = createDockerLauncher({
+    image: 'woodshed-session', memory: '6g', cpus: '2', ownDocker, hostDocker,
+    run: async (args, env) => {
+      calls.push({ args, env });
+      if (args[0] === 'info') {
+        if (infoFails) throw Object.assign(new Error('exit 1'), { stderr: 'Cannot connect to the Docker daemon\n' });
+        return JSON.stringify(runtimes);
+      }
+      if (args.includes('--rm') && args.includes('sh')) return imageHasDaemon ? 'yes\n' : 'no\n';
+      if (args.includes('--rm') && args.includes('stat')) return '988\n';
+      return args[0] === 'port' ? '127.0.0.1:49153' : '';
+    },
+  });
+  const sessionRun = () => calls.filter((c) => c.args[0] === 'run' && c.args.includes('--name')).at(-1);
+  const checks = () => calls.filter((c) => c.args[0] === 'info' || (c.args.includes('--rm') && c.args.includes('sh')));
+  return { launcher, sessionRun, checks };
+}
+
+test('where the machine has Sysbox, a session runs its own Docker: under sysbox-runc, as root for ownDocker.sh, which is given the image\'s command, and with no socket of the machine\'s', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (...line) => logs.push(line));
+  for (const hostDocker of [false, true]) {
+    const { launcher, sessionRun, checks } = ownDockerLauncher({ hostDocker });
+    await launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4' });
+    const { args } = sessionRun();
+    const image = args.indexOf('woodshed-session');
+    assert.deepEqual(args.slice(image), ['woodshed-session', 'session'], 'the image\'s CMD, which naming the entrypoint drops');
+    const before = args.slice(0, image);
+    assert.equal(before[before.indexOf('--runtime') + 1], 'sysbox-runc');
+    assert.equal(before[before.indexOf('--user') + 1], '0');
+    assert.equal(before[before.indexOf('--entrypoint') + 1], OWN_DOCKER_START);
+    assert.ok(before.includes('WOODSHED_SESSION_DOCKER=own'));
+    assert.ok(before.includes('DOCKER_HOST=unix:///var/run/docker.sock'));
+    assert.equal(before.includes('-v'), false, 'never the machine\'s socket');
+    assert.equal(before.includes('--group-add'), false);
+    assert.equal(before.includes('--privileged'), false);
+
+    await launcher.start('b1b2c3d4', { SESSION_ID: 'b1b2c3d4', SESSION_KIND: 'private' });
+    assert.ok(sessionRun().args.includes('WOODSHED_SESSION_DOCKER=own'));
+    assert.deepEqual(checks().map((c) => c.args[0]), ['info', 'run'], 'asked once per console');
+    assert.deepEqual(checks()[1].args, ['run', '--rm', '--network', 'none', '--entrypoint', 'sh', 'woodshed-session', '-c', `command -v dockerd >/dev/null && test -x ${OWN_DOCKER_START} && echo yes || echo no`]);
+  }
+  assert.deepEqual(logs.find(([m]) => m === 'launcher: sessions get their own Docker'), ['launcher: sessions get their own Docker', { own: true, runtime: 'sysbox-runc' }]);
+});
+
+test('a question from Slack gets no Docker of its own either', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { launcher, sessionRun, checks } = ownDockerLauncher({});
+  await launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4', SESSION_MODE: 'ask' });
+  assert.equal(sessionRun().args.some((a) => a === '--runtime' || a.startsWith('WOODSHED_SESSION_DOCKER')), false);
+  assert.equal(checks().length, 0);
+});
+
+test('without Sysbox, or with an image that has no daemon, a session falls back to the machine\'s Docker where that is on, and to none elsewhere, saying why once', async (t) => {
+  const logs = [];
+  t.mock.method(console, 'log', (...line) => logs.push(line));
+  const cases = [
+    [{ runtimes: { runc: {} }, hostDocker: true }, '1', /no sysbox-runc runtime: install Sysbox/, 'this machine\'s Docker'],
+    [{ runtimes: { runc: {} }, hostDocker: false }, null, /no sysbox-runc runtime/, 'no Docker'],
+    [{ imageHasDaemon: false, hostDocker: false }, null, /the session image has no Docker daemon: an image built before it, build it again/, 'no Docker'],
+  ];
+  for (const [opts, given, why, instead] of cases) {
+    logs.length = 0;
+    const { launcher, sessionRun, checks } = ownDockerLauncher(opts);
+    await launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4' });
+    await launcher.start('b1b2c3d4', { SESSION_ID: 'b1b2c3d4' });
+    const { args } = sessionRun();
+    assert.equal(args.includes('--runtime'), false);
+    assert.equal(args.find((a) => a.startsWith('WOODSHED_SESSION_DOCKER=')) ?? null, given && `WOODSHED_SESSION_DOCKER=${given}`);
+    assert.equal(args.at(-1), 'woodshed-session', 'the image\'s own entrypoint and command');
+    const said = logs.filter(([m]) => m === 'launcher: sessions get their own Docker');
+    assert.equal(said.length, 1);
+    assert.equal(said[0][1].own, false);
+    assert.match(said[0][1].why, why);
+    assert.equal(said[0][1].instead, instead);
+    assert.equal(checks().filter((c) => c.args[0] === 'info').length, 1);
+  }
+});
+
+test('WOODSHED_SESSION_DOCKER=own refuses a start that cannot have its own Docker, and a docker that does not answer is asked again', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const { launcher } = ownDockerLauncher({ ownDocker: 'required', runtimes: { runc: {} } });
+  await assert.rejects(launcher.start('a1b2c3d4', {}), /^Error: WOODSHED_SESSION_DOCKER=own, and this session cannot have its own Docker: the machine's Docker has no sysbox-runc runtime/);
+
+  const failing = ownDockerLauncher({ infoFails: true });
+  await assert.rejects(failing.launcher.start('a1b2c3d4', {}), /could not ask the machine's Docker whether sessions can have their own: Cannot connect to the Docker daemon$/);
+  await assert.rejects(failing.launcher.start('a1b2c3d4', {}));
+  assert.equal(failing.checks().length, 2, 'not kept: asked again at the next start');
+});
+
+test('a machine with no Sysbox is asked again ten minutes later, so Sysbox installed then reaches new sessions without a restart', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  const runtimes = { runc: {} };
+  const { launcher, sessionRun, checks } = ownDockerLauncher({ runtimes });
+  await launcher.start('a1b2c3d4', {});
+  runtimes['sysbox-runc'] = {};
+  t.mock.timers.tick(9 * 60_000);
+  await launcher.start('a1b2c3d4', {});
+  assert.equal(sessionRun().args.includes('--runtime'), false, 'the no is kept for a while');
+  assert.equal(checks().length, 1);
+  t.mock.timers.tick(60_000);
+  await launcher.start('a1b2c3d4', {});
+  assert.ok(sessionRun().args.includes('--runtime'));
+  t.mock.timers.tick(60 * 60_000);
+  await launcher.start('a1b2c3d4', {});
+  assert.deepEqual(checks().map((c) => c.args[0]), ['info', 'info', 'run'], 'a yes is kept');
 });
