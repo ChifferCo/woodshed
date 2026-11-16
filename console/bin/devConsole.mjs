@@ -10,6 +10,7 @@
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -279,8 +280,29 @@ const consolePort = sessionApp ? await freePort() : port;
 // bin/woodshed does.
 const devClone = makeDevClone(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-clone-')));
 const RESTART_EXIT_CODE = 75;
+// DEV_CONSOLE_REPO_SETTINGS=1 gives My settings' Repo settings what it needs to save: a local secret store, and two
+// made-up repos whose project files this gh answers, the first the sessions' own.
+const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoSettings(stateDir) : null;
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
-const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'));
+const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), { projectFiles: repoSettingsDev?.projectFiles });
+
+function devRepoSettings(dir) {
+  const secretsDir = path.join(dir, 'secrets');
+  const keyFile = path.join(dir, 'secrets.key');
+  fs.mkdirSync(secretsDir);
+  fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('base64'), { mode: 0o600 });
+  const file = (envPath) => `version: 1\nenvFiles:\n  - path: ${envPath}\n    defaults:\n      - LOG_LEVEL=info\n`;
+  return {
+    env: {
+      WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile,
+      WOODSHED_PROJECTS: JSON.stringify([
+        { name: 'example-repo', repo: 'example-org/example-repo', default: true },
+        { name: 'example-tools', repo: 'example-org/example-tools' },
+      ]),
+    },
+    projectFiles: { 'example-org/example-repo': file('api/.env'), 'example-org/example-tools': file('tools/.env') },
+  };
+}
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
@@ -301,6 +323,7 @@ function startConsole() {
       // installation that adds its repos on the Console settings page does.
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
+      ...repoSettingsDev?.env,
       ...tlsAskPort,
     },
   });

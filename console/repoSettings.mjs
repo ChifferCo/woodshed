@@ -6,10 +6,12 @@
 //   repos/<project>/instructions                 the installation's instructions for the repo
 //   users/<login>/repos/<project>/env/<key>      one person's own lines for that env file
 //   users/<login>/repos/<project>/instructions   one person's own instructions for the repo
+//   users/<login>/repos/<project>/files          one person's own whole files for the repo (an app/.env.production), as
+//                                                JSON {"<path>": "<text>"}, written where git ignores them (session/ownFiles.mjs)
 //
 // `<key>` is the env file's key in the project file (`secret`, or one made from its path). state.json keeps, under
 // `repoSettings.<project>` and `people.<login>.repos.<project>`, when each was saved, by whom, its size and the names of
-// the keys it sets, never a value, so the pages need no secret read. The store is the truth: a record whose secret is
+// the keys it sets (for whole files, each path and when it was saved), never a value, so the pages need no secret read. The store is the truth: a record whose secret is
 // gone reads as none and is dropped. Nobody reads another person's layer, admins included. A session is handed its own
 // project's values alone, and a person's only in their own private sessions (sessionApi.mjs, `POST /repo-settings`).
 // Values are never logged: keys, sizes and who.
@@ -19,6 +21,7 @@ import { projectFor, projectForRepo, projectNamed, defaultProject } from './proj
 import { isAsk, isQa } from './sessions.mjs';
 import { checkFile } from './userSettings.mjs';
 import { envKeyTable, envKeys, instructionsProblem, sessionWiring } from '../shared/repoSettings.mjs';
+import { DEFAULT_MAX_VALUE_BYTES, MAX_OWN_FILES, ownFilePath, ownFilePathProblem, ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 const { loginKey } = logins;
 
 // An env file's key: the project file's `secret` syntax, or a key made from its path (shared/project.mjs, envFileKey).
@@ -66,6 +69,15 @@ export function personalEnvName(login, project, key) {
 export function personalInstructionsName(login, project) {
   return `users/${loginKey(login)}/repos/${project}/instructions`;
 }
+
+/** @returns {string}  one person's own whole files for a project, all in one value */
+export function personalFilesName(login, project) {
+  return `users/${loginKey(login)}/repos/${project}/files`;
+}
+
+// Where own whole files were kept before they were per repo: one value a person, for every repo. migrate() moves it
+// into the default project's.
+const legacyOwnFilesName = (login) => `users/${loginKey(login)}/own-files`;
 
 function nameOf({ login, project, key }) {
   if (login) return key ? personalEnvName(login, project, key) : personalInstructionsName(login, project);
@@ -309,14 +321,18 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       // Saved for a key the project file no longer names: kept until someone deletes it.
       unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],
       instructions: { installation: recordOf({ project: project.name }), ...(login && { personal: recordOf({ login, project: project.name }) }) },
+      ...(login && {
+        files: Object.entries(filesRecordOf(login, project.name) ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
+        filesMaxBytes: maxFilesBytes(), filesMax: MAX_OWN_FILES,
+      }),
       available: available(),
     };
   }
 
-  /** @returns {{project: string, repo: string, envFiles: string[], instructions: boolean}}  a person's own records for a project */
+  /** @returns {{project: string, repo: string, envFiles: string[], instructions: boolean, files: number}}  a person's own records for a project */
   function summary(login, project) {
     const own = rootFor(login)?.[project.name];
-    return { project: project.name, repo: project.repo, envFiles: Object.keys(own?.env ?? {}), instructions: Boolean(own?.instructions) };
+    return { project: project.name, repo: project.repo, envFiles: Object.keys(own?.env ?? {}), instructions: Boolean(own?.instructions), files: Object.keys(own?.files ?? {}).length };
   }
 
   async function installationText({ project: name, key = null, by, on = 'console settings' }) {
@@ -357,6 +373,106 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     const file = key ? await requireEnvFile(project, key) : null;
     await saveValue({ login, project: project.name, key, text, by: login });
     if (file) await dropLegacyOwn({ login, project, file, cleared: !String(text ?? '').trim() });
+  }
+
+  /** @returns {number}  the most bytes the secret store holds in one value; a store that declares none holds 64 KB */
+  function maxFilesBytes() {
+    return secrets?.maxValueBytes ?? DEFAULT_MAX_VALUE_BYTES;
+  }
+
+  // A person's own whole files for a project, by path, and when each was saved: state.json's record of them.
+  const filesRecordOf = (login, project) => rootFor(login)?.[project]?.files ?? null;
+
+  function writeFilesRecord(login, project, files) {
+    if (!files && !filesRecordOf(login, project)) return;
+    const root = rootFor(login, true);
+    const repo = { ...root[project] };
+    if (files) repo.files = files;
+    else delete repo.files;
+    if (Object.keys(repo).length) root[project] = repo;
+    else delete root[project];
+    if (!Object.keys(root).length) delete store.state.people[loginKey(login)].repos;
+    store.save();
+  }
+
+  // The value of a person's whole files: {} while they keep none, or its secret is gone, or it is not JSON.
+  async function readFiles(login, project) {
+    if (!available() || !Object.keys(filesRecordOf(login, project) ?? {}).length) return {};
+    const value = await secrets.read(personalFilesName(login, project));
+    if (value === null) {
+      writeFilesRecord(login, project, null);
+      console.log('repoSettings: record dropped, its secret is gone', { layer: 'personal', project, files: true, login });
+      return {};
+    }
+    try {
+      const files = JSON.parse(value);
+      return files && typeof files === 'object' && !Array.isArray(files) ? files : {};
+    } catch {
+      console.warn('repoSettings: own files not read, the value is not JSON', { project, login });
+      return {};
+    }
+  }
+
+  /** @returns {Promise<Record<string, string>>}  a person's own whole files for a project they can write to, by path */
+  async function ownFiles({ login, project: name }) {
+    return readFiles(login, requireProject(name).name);
+  }
+
+  /**
+   * Adds, replaces or (with empty text) removes one of a person's own whole files for a project. All of a project's
+   * are one value, so a save writes them all. A path one of the project file's env files writes is refused: the
+   * person's values for it are its env file's, which the session would write over.
+   * @returns {Promise<Record<string, string>>}  their files for the project after the change
+   * @throws {Error}  with a message the page can show, never the text
+   */
+  async function saveOwnFile({ login, project: name, path: file, text }) {
+    requireSecrets();
+    const project = requireProject(name);
+    const problem = ownFilePathProblem(file);
+    if (problem) throw shown(problem);
+    const key = ownFilePath(file);
+    if (text !== undefined && typeof text !== 'string') throw shown('the file must be text');
+    const value = String(text ?? '').replace(/\r\n/g, '\n');
+    if (value.trim()) {
+      let layer;
+      try {
+        layer = await repoLayer(project);
+      } catch (err) {
+        console.warn('repoSettings: project file not read, own file refused', { project: project.name, login, message: firstLine(err) });
+        throw shown(`${project.repo}'s project file could not be read, so ${key} cannot be checked against its env files: try again in a moment`, 409);
+      }
+      if (layer.envFiles.some((f) => f.path === key)) throw shown(`${key} is one of ${project.repo}'s env files: set your values for it above`);
+    }
+    const files = await readFiles(login, project.name);
+    if (value.trim()) files[key] = value;
+    else delete files[key];
+    if (Object.keys(files).length > MAX_OWN_FILES) throw shown(`you can keep ${MAX_OWN_FILES} files a repo at most`);
+    const json = JSON.stringify(files);
+    const limit = maxFilesBytes();
+    if (Buffer.byteLength(json) > limit) {
+      console.warn('repoSettings: own files refused, over the secret store\'s limit', { project: project.name, login, bytes: Buffer.byteLength(json), limit });
+      throw shown(`your files for ${project.repo} together are over the ${Math.floor(limit / 1024)} KB this console's secret store holds`);
+    }
+    if (Object.keys(files).length) await secrets.save(personalFilesName(login, project.name), json, `Woodshed: @${login}'s own files for ${project.name}, for their private sessions only`);
+    else await secrets.remove(personalFilesName(login, project.name));
+    const before = filesRecordOf(login, project.name);
+    const at = new Date(now()).toISOString();
+    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : before?.[f] ?? at]));
+    writeFilesRecord(login, project.name, Object.keys(kept).length ? kept : null);
+    console.log(value.trim() ? 'repoSettings: own file saved' : 'repoSettings: own file removed', {
+      project: project.name, login, path: key, files: Object.keys(files).length, ...(value.trim() && { bytes: Buffer.byteLength(value) }),
+    });
+    return files;
+  }
+
+  /**
+   * The owner's whole files for the session's own project, written into its checkout: a private session's alone, as
+   * the personal layer is (forSession). Another repo's never reach it.
+   * @returns {Promise<Record<string, string>>}
+   */
+  async function filesForSession(session) {
+    if (!session.owner || isAsk(session) || isQa(session)) return {};
+    return readFiles(session.owner, projectFor(config, session).name);
   }
 
   /**
@@ -534,6 +650,63 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return counts;
   }
 
+  // One person's old files into the default project's. Where they keep some there already (saved on the page before
+  // the move ran), the old paths those lack are added and theirs win; when the two together would not fit, theirs are
+  // kept alone and the log names the old paths left out.
+  async function moveOne(login, person, main) {
+    const value = await secrets.read(legacyOwnFilesName(login));
+    let old = {};
+    if (value) {
+      old = JSON.parse(value);
+      if (!old || typeof old !== 'object' || Array.isArray(old)) throw new Error('the old own files are not a JSON object');
+    }
+    const current = await readFiles(login, main.name);
+    const added = Object.keys(old).filter((file) => !(file in current));
+    const merged = { ...current, ...Object.fromEntries(added.map((file) => [file, old[file]])) };
+    const fits = Object.keys(merged).length <= MAX_OWN_FILES && Buffer.byteLength(JSON.stringify(merged)) <= maxFilesBytes();
+    const moving = added.length && fits;
+    if (moving) {
+      await secrets.save(personalFilesName(login, main.name), JSON.stringify(merged), `Woodshed: @${login}'s own files for ${main.name}, for their private sessions only`);
+      const at = new Date(now()).toISOString();
+      writeFilesRecord(login, main.name, { ...filesRecordOf(login, main.name), ...Object.fromEntries(added.map((file) => [file, person.ownFiles[file] ?? at])) });
+    }
+    if (value) await secrets.remove(legacyOwnFilesName(login));
+    delete person.ownFiles;
+    store.save();
+    console.log('repoSettings: own files moved to the default project', {
+      login, project: main.name, added: moving ? added : [], kept: Object.keys(current), ...(added.length && !fits && { leftOut: added, why: 'over the limit together' }),
+    });
+    return moving ? 'moved' : 'kept';
+  }
+
+  /**
+   * At each start: each person's own whole files from before they were per repo (`users/<login>/own-files`, with
+   * `people.<login>.ownFiles` in state.json) into the default project's, where My settings shows them now, beside any
+   * they keep there already (moveOne), then the old value is deleted, so a second run finds nothing to move. One that
+   * fails stays, to be moved at the next start; until then no session gets it.
+   * @returns {Promise<{moved: number, kept: number, failed: number}>}  `kept`: nothing of the old was added
+   */
+  async function moveOwnFiles() {
+    const counts = { moved: 0, kept: 0, failed: 0 };
+    const people = Object.entries(store.state.people ?? {}).filter(([, person]) => Object.keys(person?.ownFiles ?? {}).length);
+    if (!people.length) return counts;
+    const main = defaultProject(config);
+    if (!main.repo || !available()) {
+      console.log('repoSettings: own files not moved', { why: main.repo ? 'no secret store' : 'no default repo', people: people.length });
+      return counts;
+    }
+    for (const [login, person] of people) {
+      try {
+        const result = await moveOne(login, person, main);
+        counts[result] += 1;
+      } catch (err) {
+        counts.failed += 1;
+        console.warn('repoSettings: own files not moved, tried again at the next start', { login, project: main.name, message: firstLine(err) });
+      }
+    }
+    return counts;
+  }
+
   // Each record of a project in one layer, deleted secret first: one that fails is kept, to be deleted again.
   async function forgetLayer(login, project) {
     const repo = rootFor(login)?.[project];
@@ -541,14 +714,20 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     let deleted = 0;
     let failed = 0;
     const targets = [...Object.keys(repo.env ?? {}).map((key) => ({ login, project, key })), ...(repo.instructions ? [{ login, project, key: null }] : [])];
+    if (login && repo.files) targets.push({ login, project, files: true });
     for (const target of targets) {
       try {
-        if (secrets) await secrets.remove(nameOf(target));
-        writeRecord({ ...target, record: null });
+        if (target.files) {
+          if (secrets) await secrets.remove(personalFilesName(login, project));
+          writeFilesRecord(login, project, null);
+        } else {
+          if (secrets) await secrets.remove(nameOf(target));
+          writeRecord({ ...target, record: null });
+        }
         deleted += 1;
       } catch (err) {
         failed += 1;
-        console.warn('repoSettings: value not deleted', { project, key: target.key, ...(login && { login }), message: firstLine(err) });
+        console.warn('repoSettings: value not deleted', { project, ...(target.files ? { files: true } : { key: target.key }), ...(login && { login }), message: firstLine(err) });
       }
     }
     return { deleted, failed };
@@ -573,8 +752,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   return {
-    view, summary, installationText, saveInstallation, removeUnnamed, ownText, saveOwn, forSession, migrate, forget, forgetPerson,
-    legacyState, legacyFile, available,
+    view, summary, installationText, saveInstallation, removeUnnamed, ownText, saveOwn, ownFiles, saveOwnFile, filesForSession,
+    maxFilesBytes, forSession, migrate, moveOwnFiles, forget, forgetPerson, legacyState, legacyFile, available,
   };
 }
 
@@ -592,17 +771,20 @@ export function legacyFileRoute(pathname, config) {
 }
 
 const ADMIN_RE = /^\/api\/console-settings\/repos\/([^/]+)(?:\/env\/([^/]+)(\/remove)?|\/(instructions))?$/;
-const MY_RE = /^\/api\/my\/repos(?:\/([^/]+)(?:\/env\/([^/]+)|\/(instructions))?)?$/;
+const MY_RE = /^\/api\/my\/repos(?:\/([^/]+)(?:\/env\/([^/]+)|\/(instructions)|\/(files))?)?$/;
+// Own whole files' route from before they were per repo: the default project's now.
+const OLD_OWN_FILES_PATH = '/api/my/own-files';
 
 /**
- * @returns {{scope: 'admin'|'my', project: string|null, key: string|null, instructions: boolean, remove: boolean}|null}
- *   the repo settings route a path names, or null for none
+ * @returns {{scope: 'admin'|'my', project: string|null, key: string|null, instructions: boolean, remove: boolean,
+ *   files?: boolean, oldFiles?: boolean}|null}  the repo settings route a path names, or null for none
  */
 export function repoSettingsRoute(pathname) {
   const admin = ADMIN_RE.exec(pathname);
   if (admin) return { scope: 'admin', project: admin[1], key: admin[2] ?? null, remove: Boolean(admin[3]), instructions: Boolean(admin[4]) };
   const my = MY_RE.exec(pathname);
-  if (my) return { scope: 'my', project: my[1] ?? null, key: my[2] ?? null, remove: false, instructions: Boolean(my[3]) };
+  if (my) return { scope: 'my', project: my[1] ?? null, key: my[2] ?? null, remove: false, instructions: Boolean(my[3]), files: Boolean(my[4]) };
+  if (pathname === OLD_OWN_FILES_PATH) return { scope: 'my', project: null, key: null, remove: false, instructions: false, files: true, oldFiles: true };
   return null;
 }
 
@@ -612,10 +794,15 @@ function reply(res, code, body) {
 }
 
 async function readText(req) {
+  return (await readBody(req)).text;
+}
+
+/** @returns {Promise<object>}  the request's JSON object, refused past `limit` bytes */
+async function readBody(req, limit = MAX_BODY_BYTES) {
   let raw = '';
   for await (const chunk of req) {
     raw += chunk;
-    if (raw.length > MAX_BODY_BYTES) throw shown('the text is over the 64 KB a value can hold', 413);
+    if (raw.length > limit) throw shown(limit > MAX_BODY_BYTES ? 'the file is over what this console\'s secret store holds' : 'the text is over the 64 KB a value can hold', 413);
   }
   let body;
   try {
@@ -624,7 +811,7 @@ async function readText(req) {
     throw shown('body must be JSON');
   }
   if (typeof body !== 'object' || body === null || Array.isArray(body)) throw shown('body must be a JSON object');
-  return body.text;
+  return body;
 }
 
 /**
@@ -645,6 +832,11 @@ async function readText(req) {
  *   POST /api/my/repos/<project>/env/<key>                       {"text"}; "" clears yours
  *   GET  /api/my/repos/<project>/instructions                    {"text": yours, "installation"}
  *   POST /api/my/repos/<project>/instructions                    {"text"}; "" clears yours
+ *   GET  /api/my/repos/<project>/files                           {"files": {"<path>": "<text>"}}: your own whole files for it
+ *   POST /api/my/repos/<project>/files                           {"path", "text"}: adds or replaces one; "" removes it.
+ *                                                                Answers {"files", "view"}
+ *   GET  /api/my/own-files, POST /api/my/own-files               the old route of your own whole files, on the default
+ *                                                                project's, for a page from before they were per repo
  *   GET  /api/my/files/<secret>                                  the old route of a Terraform env file's own lines, on the
  *   POST /api/my/files/<secret>[/reset]                          default project's repo settings (legacyFile), in its old shape
  *
@@ -654,9 +846,10 @@ async function readText(req) {
  *          projectAccess?: {view: Function, forStart: (login: string, name: string) => Promise<object|null>}|null,
  *          slackOf?: ((project: string) => {channel: string, consoleChannel: string, canPost: boolean}|null)|null}} deps
  *   `slackOf` is the repo's own Slack channel and the console's, for the admin's page; it is saved through
- *   `POST /api/console-settings/projects/slack-channel`, as the Repos card saved it
+ *   `POST /api/console-settings/projects/slack-channel`, as the Repos card saved it. `myView` is My settings' view of a
+ *   person (userSettings.mjs), which the old own files route answers with
  */
-export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null }) {
+export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null, myView = null }) {
   async function canWrite(login, name) {
     if (projectAccess) return Boolean(await projectAccess.forStart(login, name));
     return projectNamed(config, name)?.default === true;
@@ -680,12 +873,15 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return reply(res, 200, await adminView(project));
   }
 
-  async function mine(req, res, { project, key, instructions }, login) {
+  async function mine(req, res, { project: named, key, instructions, files, oldFiles }, login) {
+    // The old route's files went to the console's default project (moveOwnFiles), whichever one the person starts on.
+    const project = oldFiles ? defaultProject(config).name : named;
     if (!project) {
       const { projects, defaultProject: own } = await writable(login);
       return reply(res, 200, { repos: projects.map((p) => repoSettings.summary(login, projectNamed(config, p.name) ?? p)), defaultProject: own });
     }
     if (!(await refuseUnwritable(req, res, login, project))) return undefined;
+    if (files) return ownFilesReply(req, res, project, login, oldFiles);
     if (req.method === 'GET' && !key && !instructions) return reply(res, 200, await repoSettings.view(project, { login }));
     if (req.method === 'GET') {
       const [text, installation] = await Promise.all([
@@ -696,6 +892,15 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     }
     await repoSettings.saveOwn({ login, project, key, text: await readText(req) });
     return reply(res, 200, await repoSettings.view(project, { login }));
+  }
+
+  // The old route answers with My settings' own view, as it did, for the page that sent it.
+  async function ownFilesReply(req, res, project, login, old) {
+    if (req.method === 'GET') return reply(res, 200, { files: await repoSettings.ownFiles({ login, project }) });
+    const body = await readBody(req, ownFilesBodyLimit(repoSettings.maxFilesBytes()));
+    const saved = await repoSettings.saveOwnFile({ login, project, path: body.path, text: body.text });
+    if (old) console.log('repoSettings: old own files route, saved to the default project', { login, project });
+    return reply(res, 200, { files: saved, view: old ? myView?.(login) ?? null : await repoSettings.view(project, { login }) });
   }
 
   // The old /api/my/files/<secret>, on the repo settings it is copied into, refused as /api/my/repos/<project> is.

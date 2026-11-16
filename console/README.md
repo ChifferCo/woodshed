@@ -537,8 +537,9 @@ what was forgotten. Forget it is refused while one of your sessions runs, since
 that session would save its home again within 5 minutes; Remove My Woodshed
 stops them first.
 
-**Repo settings**, on My settings, hold your own values for each repo's env files and your own instructions, for your
-private sessions on that repo ("Repo settings" below says how they are kept and handed out):
+**Repo settings**, on My settings, hold your own values for each repo's env files, your own instructions and your own
+files ("Your files" below), for your private sessions on that repo ("Repo settings" below says how they are kept and
+handed out):
 - The repos you can write to are tabs (New session's check), on your default project; `?repo=<project>` opens one and
   `&file=<key>` one of its env files. A repo you cannot write to is not listed, and its routes answer 403.
 - Each env file shows its layers as a session writes them: the repo's `defaults`, this installation's values (read only,
@@ -560,19 +561,29 @@ logs `repoSettings: old own lines route, saved to repo settings`. An embedding p
 are now each repo's tab on the Repo settings card, one a key. They go when the fallback ends (`../docs/reference.md`,
 "The env files").
 
-**Your own files**, on My settings, are whole files of your own, by their path in the repo (an
-`app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
-writes into its checkout at start:
-- All of them are one secret, `<prefix>/users/<login>/own-files` (JSON, path to text; 20 files at most, and the
+**Your files**, in each repo's tab on Repo settings, are whole files of your own for that repo, by their path in it (an
+`app/.env.production` that your MCP servers read, a tool's local config), which every private session of yours on that
+repo writes into its checkout at start. Another repo's sessions never get them, so one path can hold a different text
+for each repo:
+- A repo's are one secret, `<prefix>/users/<login>/repos/<project>/files` (JSON, path to text; 20 files at most, and the
   secret store's `maxValueBytes` for the JSON: 64 KB in AWS, 1 MB in the local provider, 64 KB for a store that declares
-  none; My settings shows it). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
+  none; the panel shows it). `state.json` keeps only each path and when it was saved
+  (`people.<login>.repos.<project>.files`). `GET`/`POST /api/my/repos/<project>/files` read and save them, refused (403)
+  for a repo you cannot write to, as the rest of Repo settings is.
 - A path is checked as it is saved and again in the session (`shared/ownFiles.mjs`): inside the repo, no `..`, not
-  under `.git`, and not one of the env files above, which take your lines instead.
+  under `.git`, and not one of that repo's env files (from its project file on the default branch: a save waits until it
+  can be read), which take your values instead.
 - The session writes a file only where git ignores it and does not track it, mode 600, so it cannot reach a commit
   (`session/ownFiles.mjs`). Its log says `Own files written`, or a `WARNING` with each file skipped and why.
-- The console logs `userSettings: own file saved` or `removed` with the path, and `sessionApi: settings handed out`
-  names them under `wholeFiles`. Remove My Woodshed deletes them.
+- The console logs `repoSettings: own file saved` or `removed` with the project and path, and `sessionApi: settings
+  handed out` names them under `wholeFiles`. Taking the repo off the console, or Remove My Woodshed, deletes them.
 - A running session keeps the files it started with; an edit made in a session is not saved back.
+- Before they were per repo, all of a person's files were one secret for every repo, `<prefix>/users/<login>/own-files`
+  (`people.<login>.ownFiles`). At each start the console moves those into the default project's, beside any the person
+  already keeps there, which win for a path in both (`repoSettings: own files moved to the default project`, with the
+  paths `added` and `kept`, and `leftOut` when the two together would be over the limit, which keeps theirs alone), then
+  deletes the old secret; one that fails (`own files not moved`) is tried again at the next start and reaches no
+  session meanwhile. `/api/my/own-files` still answers a page opened before, on the default project's.
 
 **Session timeouts**, on My settings, override the console's *Pause a session
 waiting for input after* (0.25 to 24 hours) and *Stop a working session after*
@@ -1361,7 +1372,7 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   launcher's to give, in `name`'s variable (`API_ENV`).
 
 - `maxValueBytes` on the program's secret store (`providers/README.md`, "A secret store's limit on one value"): the most
-  bytes it holds in one value. Your own files, one secret per person, are held to it (64 KB when the store declares
+  bytes it holds in one value. Your files on Repo settings, one secret per person and repo, are held to it (64 KB when the store declares
   none), so a store with no such cap, such as one sealed in a database, should declare its own.
 
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
@@ -1788,6 +1799,7 @@ wiring (each env file's `overrides`, the project's `env`, Woodshed's own variabl
 | `repos/<project>/instructions` | the installation's instructions for the repo, at most 16 KB |
 | `users/<login>/repos/<project>/env/<key>` | one person's own lines for that env file |
 | `users/<login>/repos/<project>/instructions` | one person's own instructions for the repo |
+| `users/<login>/repos/<project>/files` | one person's own whole files for the repo (My settings, "Your files" above) |
 
 `<key>` is the env file's key in the project file: its `secret`, or one made from its path (`web/.env.local` is
 `web-env-local`). Env files that name one secret share its key, and so one value a layer, written to each of their
