@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 
-import { createAnthropicProxy, proxyCredential } from './anthropicProxy.mjs';
+import { createAnthropicProxy, noTeamKeyMessage, proxyCredential } from './anthropicProxy.mjs';
 import { createSessionApi } from './sessionApi.mjs';
 
 const SESSIONS = [
@@ -12,6 +12,7 @@ const SESSIONS = [
   { id: 'dddddddd', status: 'running', token: 'mismatch', owner: null, startedBy: 'mia', plan: 'joel' },
   { id: 'eeeeeeee', status: 'stopped', token: 'stopped', owner: 'joel' },
   { id: 'ffffffff', status: 'running', token: 'sam-private', owner: 'sam' },
+  { id: 'abababab', status: 'running', token: 'allen-label', owner: null, startedBy: 'allen', trigger: 'label', plan: null },
 ];
 
 function listen(server) {
@@ -141,9 +142,32 @@ test('a stopped session, an unknown token or none at all reach nothing; the conn
 test('no team key, or Secrets Manager failing, fails the call and not the console', async (t) => {
   const missing = await setup(t, { userSettings: fakeUserSettings({ tokens: {} }), secrets: { read: async () => null } });
   assert.equal((await missing.call({ 'x-api-key': 'shared-team' })).status, 503);
+  // What claude shows: the admin's fix, and the starter's own plan where one could carry the session.
+  const label = await missing.call({ 'x-api-key': 'allen-label' });
+  assert.equal(label.status, 503);
+  const { error } = await label.json();
+  assert.match(error.message, /an admin can set anthropic-api-key on the Secrets page, or @allen can save their Claude token on My settings and turn on "Also use it for shared sessions I start from GitHub"/);
+  const team = await (await missing.call({ 'x-api-key': 'shared-team' })).json();
+  assert.equal(team.error.message, 'the console has no Anthropic key: an admin can set anthropic-api-key on the Secrets page', 'mia started it with no trigger from GitHub: the admin\'s fix alone');
   const failing = await setup(t, { userSettings: fakeUserSettings({ tokens: {} }), secrets: { read: async () => { throw new Error('AccessDenied'); } } });
   assert.equal((await failing.call({ 'x-api-key': 'shared-team' })).status, 502);
   assert.equal(missing.seen.length + failing.seen.length, 0);
+});
+
+test('the no-key message names the starter only where their own plan could carry the session', () => {
+  const ADMIN = 'the console has no Anthropic key: an admin can set anthropic-api-key on the Secrets page';
+  const label = noTeamKeyMessage({ owner: null, trigger: 'label', startedBy: 'allen' });
+  assert.ok(label.startsWith(`${ADMIN}, or @allen can save their Claude token on My settings`), label);
+  assert.match(label, /then stop and resume this session/);
+  assert.match(noTeamKeyMessage({ owner: null, trigger: 'comment', startedBy: 'Allen-W' }), /or @Allen-W can save/);
+  for (const [session, why] of [
+    [{ owner: null, trigger: 'slack', startedBy: 'slack:U0DEV' }, 'a question from Slack'],
+    [{ owner: null, trigger: 'console', startedBy: 'allen' }, 'started from the console\'s API: never a plan'],
+    [{ owner: null, trigger: 'review', startedBy: 'woodshed-cloud[bot]' }, 'a bot'],
+    [{ owner: null, trigger: 'review', startedBy: 'allen', review: { teamKey: true } }, 'a review held to the team key'],
+    [{ owner: null, trigger: 'qa', startedBy: 'allen', qa: { teamKey: true } }, 'a QA held to the team key'],
+    [null, 'no session'],
+  ]) assert.equal(noTeamKeyMessage(session), ADMIN, why);
 });
 
 test('calls during a team key read share it, and a failed read is tried again on the next call', async () => {

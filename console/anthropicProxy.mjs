@@ -34,6 +34,25 @@ function refuse(res, code, message) {
   res.end(JSON.stringify({ type: 'error', error: { type: code === 401 ? 'authentication_error' : 'permission_error', message } }));
 }
 
+// The triggers whose sessions may run on their starter's Claude plan (fleet.mjs's GITHUB_TRIGGERS, planFor).
+const PLAN_TRIGGERS = new Set(['label', 'comment', 'qa', 'review']);
+
+/**
+ * What claude shows when a call needs the team key and there is none: what an admin can do and, for a session its
+ * starter could run on their own Claude plan, what that person can. The plan is decided at each launch (fleet.mjs,
+ * planFor), so it takes a stop and a Resume. A bot, a question from Slack, or a review or QA held to the team key has
+ * no plan to turn on.
+ * @returns {string}
+ */
+export function noTeamKeyMessage(session) {
+  const admin = 'the console has no Anthropic key: an admin can set anthropic-api-key on the Secrets page';
+  const starter = session?.startedBy;
+  const ownPlan = !session?.owner && PLAN_TRIGGERS.has(session?.trigger) && typeof starter === 'string' && /^[A-Za-z0-9-]+$/.test(starter)
+    && !session.review?.teamKey && !session.qa?.teamKey;
+  if (!ownPlan) return admin;
+  return `${admin}, or @${starter} can save their Claude token on My settings and turn on "Also use it for shared sessions I start from GitHub", then stop and resume this session to run on their plan`;
+}
+
 /** @returns {{token: string, via: 'apiKey'|'plan'}|null}  the session token a request carries, and how */
 export function proxyCredential(headers) {
   const apiKey = headers['x-api-key'];
@@ -151,7 +170,7 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
     if (!key) {
       req.resume();
       console.warn('anthropicProxy: no team key saved', { sessionId: session.id });
-      return refuse(res, 503, 'the console has no Anthropic key: set anthropic-api-key on the Secrets page');
+      return refuse(res, 503, noTeamKeyMessage(session));
     }
     noteFirstCall(req, session, 'teamKey');
     return forward(req, res, { 'x-api-key': key });
