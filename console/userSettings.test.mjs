@@ -94,6 +94,18 @@ test('tmux is the image\'s file plus the person\'s own lines, kept apart by logi
   assert.equal(secrets.values.size, 0, 'Remove deletes the files too');
 });
 
+test('Remove My Woodshed deletes own lines left from the env file tabs before Repo settings, which only the record names', async () => {
+  const secrets = fakeSecrets();
+  const store = { state: { people: { octocat: { files: { 'api-env': '2026-10-01T00:00:00.000Z', 'web-env': null } } } }, save() {} };
+  await secrets.save('users/octocat/api-env', 'OWN_KEY=1', '');
+  await secrets.save('users/mia-dev/api-env', 'HERS=1', '');
+  const settings = createUserSettings({ store, secrets });
+  await settings.removeAll('octocat');
+  assert.equal(secrets.values.has('users/octocat/api-env'), false, 'the old lines go with the record that named them');
+  assert.equal(secrets.values.has('users/mia-dev/api-env'), true, 'nobody else\'s');
+  assert.equal(store.state.people.octocat, undefined);
+});
+
 test('the switch for shared sessions is on by default, needs a token, is in effect only while one is saved, and goes with Remove', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };

@@ -392,7 +392,10 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   /** Deletes everything this person saved, the secrets first, so a failure leaves the record to try again from. */
   async function removeAll(login) {
     if (secrets) {
-      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES)]) await secrets.remove(userSecretName(login, key));
+      // Own lines saved on My settings' env file tabs before Repo settings (`users/<login>/<env secret>`) are known only
+      // by this record's `files`, which goes below: they go first, or nothing would know of them again.
+      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !FILES[key] && /^[a-z0-9-]+$/.test(key));
+      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES), ...old]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];
     store.save();
