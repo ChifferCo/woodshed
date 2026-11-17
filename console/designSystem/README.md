@@ -139,10 +139,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   A thin `line` rule sets the feature columns apart from Admin. A switch that needs another is a disabled checkbox at
   45% with a title saying what it needs. Checkboxes take `slate` as their accent. The table scrolls sideways on a phone.
 
+## Settings
+
+- The console's own settings are one entry, **Settings**, first in the Console group of the avatar menu and the
+  settings list. Its pages are tabs under the title, **General** (`/console-settings`) and **Secrets & webhooks**
+  (`/secrets`): the rail's segmented control (`rail-seg`, `rail-seg-link`), links with `aria-current="page"` on the
+  open one, never orange. The title says Settings on every tab; the tab's own note sits under the tabs.
+- People and Webhook events stay entries of their own: one is who is in, the other a log, not settings.
+
 ## Repo settings
 
 - A repo's settings are their own page, `/console-settings/repos/<project>`, reached by a quiet **Settings** link on its
-  row of the Repos card. The heading is the repo (`title`), with a `‹ Console settings · Repos` link above it.
+  row of the Repos card. The heading is the repo (`title`), with a `‹ Settings · Repos` link above it.
 - A row of the Repos card is the repo's name, where it was set, its sessions and, with Slack, where its pull requests go
   (`PRs to C…` or `PRs to the console's channel`, a link to the Slack card), then **Settings** and, for an added repo,
   **Remove**. No field: the channel is set on the repo's page.

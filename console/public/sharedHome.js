@@ -84,7 +84,7 @@
           data.repo
             ? h('p', { class: 'sub' }, `Sessions started from GitHub on ${data.repo}. Add the `, h('code', null, data.label),
               ' label to an issue, or comment ', h('code', null, '/woodshed …'), ' on an issue or PR. Everyone signed in sees these.')
-            : h('p', { class: 'sub' }, 'Sessions started from GitHub. The console has no repo yet: an admin adds one on Console settings, then a ',
+            : h('p', { class: 'sub' }, 'Sessions started from GitHub. The console has no repo yet: an admin adds one in Settings, then a ',
               h('code', null, data.label), ' label or a ', h('code', null, '/woodshed …'), ' comment on its issues starts one.')),
         h('div', { class: 'stats' },
           h('span', null, 'running ', h('b', null, `${data.running}/${data.maxRunning}`)),
@@ -93,7 +93,7 @@
         h('button', { type: 'button', 'aria-pressed': String(t.id === status), onclick: () => setStatus(t.id) }, t.label, h('span', { class: 'n' }, tabCounts[t.id]))));
       const none = shared.length ? 'No sessions match these filters.' : W.sharedEmptyText(picked);
       list.replaceChildren(visible.length ? h('div', { class: 'cards' }, visible.map((s) => card(s, data))) : h('p', { class: 'empty' }, none));
-      foot.replaceChildren(h('p', { class: 'foot' }, `At most ${data.maxRunning} run at once and the rest wait in line. A session waiting for input pauses after ${data.idleHours} ${data.idleHours === 1 ? 'hour' : 'hours'}, and one that works stops at ${data.lifetimeHours} hours. Either way its work is pushed first, and Resume picks it up where it was. A finished session is deleted ${data.afterCloseDays} ${data.afterCloseDays === 1 ? 'day' : 'days'} after its pull request merges or closes. Console settings has these numbers.`));
+      foot.replaceChildren(h('p', { class: 'foot' }, `At most ${data.maxRunning} run at once and the rest wait in line. A session waiting for input pauses after ${data.idleHours} ${data.idleHours === 1 ? 'hour' : 'hours'}, and one that works stops at ${data.lifetimeHours} hours. Either way its work is pushed first, and Resume picks it up where it was. A finished session is deleted ${data.afterCloseDays} ${data.afterCloseDays === 1 ? 'day' : 'days'} after its pull request merges or closes. Settings has these numbers.`));
     }
 
     return { el, update };

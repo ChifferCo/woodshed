@@ -37,8 +37,8 @@ from the bottom, and **+ New session** is a screen of its own (`/?new=1`).
 while it has none and GitHub has it). Whoever opens it signs in first (`/login?next=` keeps the address) and lands on
 New session with Work on filled in, to start their own private session on their own Claude. The link holds the PR or
 branch alone, so the session stays private. With nothing pushed the button says so and copies nothing.
-The settings pages (My settings, Secrets & webhooks, Webhook events and
-Console settings) keep the same frame: a list of them takes the rail's place,
+The settings pages (My settings, Settings with its General and Secrets &
+webhooks tabs, People and Webhook events) keep the same frame: a list of them takes the rail's place,
 with **‹ Back to sessions** and the avatar menu above it.
 - **Agent** is claude's tmux, through ttyd on 7681.
 - **Terminal** is a plain shell in the repo, beside claude, with the same
@@ -832,7 +832,7 @@ you out.
   first delivery it drops, and at start `console: GitHub webhooks are switched
   off on Console settings, polling` or `console: Slack questions are switched
   off on Console settings`.
-- **Secrets & webhooks** (`/secrets`): each secret's state and when it last
+- **Secrets & webhooks** (`/secrets`, the second tab of Settings): each secret's state and when it last
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
@@ -1204,8 +1204,8 @@ once an admin accepts. Admins see a dot on their avatar while someone is
 asking.
 
 **Admins.** Each member on People has an *Admin* switch, off for a new member.
-Only an admin sees the Console group in the avatar menu (People, Secrets &
-webhooks, Webhook events, Console settings), and the console answers 403 to
+Only an admin sees the Console group in the avatar menu (Settings, whose tabs
+are General and Secrets & webhooks, then People and Webhook events), and the console answers 403 to
 anyone else's call behind those pages (`ADMIN_API_RE` in `console/server.mjs`;
 it logs `console: admin call refused`). The pages themselves still load and say
 so. Only an admin turns the switch on or off, and the last admin cannot turn
@@ -1774,8 +1774,8 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 
 ## Console settings
 
-The Console settings page (`/console-settings`, under Console in the avatar
-menu, beside Secrets & webhooks) holds the numbers above. Only an admin can
+The Settings page (`/console-settings`, first under Console in the avatar
+menu; its General tab, beside the Secrets & webhooks tab) holds the numbers above. Only an admin can
 open it and change them. Each card saves its own values together with its Save
 button, with no typed confirm since changing a value back undoes it (the typed
 confirm is kept for what cannot be undone: Stalled's fixes below, secrets, a

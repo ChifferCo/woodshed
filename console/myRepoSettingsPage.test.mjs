@@ -292,7 +292,7 @@ test('an env file still read from its Terraform secret says so on the installati
 
 test('an admin is pointed at the repo\'s page on Console settings for the installation\'s values', async () => {
   const { app } = await loadCard({ admin: true });
-  const link = walk(app).find((e) => e.tag === 'a' && textOf(e) === 'change it on Console settings');
+  const link = walk(app).find((e) => e.tag === 'a' && textOf(e) === 'change it in Settings');
   assert.equal(link.attrs.href, '/console-settings/repos/app');
 });
 
