@@ -220,7 +220,7 @@ export function installSecrets(env) {
 
 // The console menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the workflows in the repo that
 // build the images and apply the infrastructure. Each installation names its own; with none, the menu has no such
-// group.
+// group. The default project's file names them now (`workflowLinks`), and wins: this is for a file that leaves them out.
 export function actionsWorkflows(value) {
   return String(value ?? '').split(',').map((pair) => pair.trim()).filter(Boolean).map((pair) => {
     const at = pair.lastIndexOf('=');

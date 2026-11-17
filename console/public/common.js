@@ -1173,8 +1173,8 @@
     return me?.hosted ? CONSOLE_LINKS.filter((link) => link.href !== '/people') : CONSOLE_LINKS;
   }
 
-  // The workflows that build the images and apply the infrastructure, in the installation's repo, as its
-  // WOODSHED_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
+  // The workflows that build the images and apply the infrastructure, in the installation's repo, as its project file's
+  // workflowLinks (or else its WOODSHED_ACTIONS_WORKFLOWS) names them; each has a Run workflow button.
   function workflowLinks(me) {
     if (!me.repo) return [];
     return (me.workflows ?? []).map(({ label, file }) => ({ href: `https://github.com/${me.repo}/actions/workflows/${encodeURIComponent(file)}`, label: `${label} ↗` }));

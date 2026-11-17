@@ -181,6 +181,15 @@ editor: true
 # repo, whose readers are not the installation's.
 consoleLinks: false
 
+# Default: null (the installation's WOODSHED_ACTIONS_WORKFLOWS, which named them before this field; write [] for none).
+# The console's avatar menu links to these workflows of the repo, each with its Run workflow button, such as the deploy
+# workflow. Read from the default branch of the installation's default repo.
+workflowLinks:
+  - # Required. What the menu calls it: 1 to 40 printable characters.
+    label: Deploy
+    # Required. The workflow file, directly in .github/workflows/, on the default branch.
+    workflow: .github/workflows/deploy.yml
+
 # Default: full. How far a private session's GitHub token reaches; a private session acts as its owner either way.
 # full is the owner's token as GitHub issued it, reaching every repo they can write to that the GitHub App is on. repo
 # has GitHub scope it to this repo and the permissions sessions get, for a repo whose content outsiders write, such as

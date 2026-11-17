@@ -549,7 +549,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -618,6 +618,13 @@ export function createHandler({
     res.end();
   }
 
+  // The menu's workflow links, for the default project's repo: its project file's (`workflowLinks`, read from the default
+  // branch), or the installation's WOODSHED_ACTIONS_WORKFLOWS where the file leaves them out or cannot be read, so a
+  // console set up before the field keeps its links.
+  async function menuWorkflows() {
+    return (await workflowLinks?.()) ?? config.actionsWorkflows ?? [];
+  }
+
   // The sign-in routes, open to anyone who reaches the console. Answers and returns true for its own paths.
   async function authRoute(req, res, url) {
     const { pathname } = url;
@@ -631,7 +638,7 @@ export function createHandler({
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
         ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
-        repo: user ? defaultProject(config).repo : null, workflows: user ? (config.actionsWorkflows ?? []) : [],
+        repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
       return true;
@@ -651,7 +658,7 @@ export function createHandler({
         names: namesFor([user?.login ?? visitor?.login]),
         // The menu's workflow links. A signed-out browser is not told which repo this is: it may be private.
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
-        workflows: user || !auth?.enabled() ? (config.actionsWorkflows ?? []) : [],
+        workflows: user || !auth?.enabled() ? await menuWorkflows() : [],
         ...((user || !auth?.enabled()) && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
       return true;
