@@ -3032,6 +3032,10 @@ test('a review comments that it started, and that comment becomes the review\'s 
   await bare.fleet.reviewOnTag({ number: 7 });
   await bare.fleet.reviewFinished(bare.fleet.sessions()[0], { ...REVIEW_RESULT, comment: '' });
   assert.equal(bare.calls.comments.at(-1).body, '**Review finished**: approved, merge risk Low. Details in the review.\n', 'a verdict with no comment still ends the spinner');
+  const commented = reviewSetup();
+  await commented.fleet.reviewOnTag({ number: 7 });
+  await commented.fleet.reviewFinished(commented.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: 'COMMENT', comment: '' });
+  assert.match(commented.calls.comments.at(-1).body, /commented, no verdict/);
 
   const died = reviewSetup();
   await died.fleet.reviewOnTag({ number: 7 });

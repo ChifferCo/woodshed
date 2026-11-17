@@ -54,7 +54,7 @@ export function reviewEndedComment({ reason, sessionUrl }) {
  * @returns {string}  the review's comment when it reported a verdict but wrote no comment of its own
  */
 export function reviewDoneComment({ conclusion, tier }) {
-  const verdict = conclusion === 'APPROVE' ? 'approved' : 'changes requested';
+  const verdict = { APPROVE: 'approved', REQUEST_CHANGES: 'changes requested', COMMENT: 'commented, no verdict' }[conclusion] ?? 'finished';
   return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
 }
 

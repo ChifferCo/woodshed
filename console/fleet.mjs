@@ -1769,8 +1769,8 @@ export function createFleet({
       },
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
-    await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project) }));
     update(session, { review: { ...session.review, runningPosted: true } });
+    await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project) }));
     return { outcome: 'started', sessionId: session.id };
   }
 
