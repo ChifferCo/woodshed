@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sharedHomeName } from './homes.mjs';
 
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
@@ -2559,6 +2560,45 @@ test('a finished review session ends: it is not kept, so it never shows Resume a
   assert.equal(session.status, 'stopped');
   assert.match(session.stopReason, /^Review finished: APPROVE/);
   assert.equal(session.kept, undefined, 'a review is never resumed: the next commit gets a review of its own');
+});
+
+test('a finished review or QA run deletes the conversation it saved at its stop, which nothing would resume', async () => {
+  const removed = [];
+  const homes = { async remove(name) { removed.push(name); } };
+  const review = reviewSetup({ homes });
+  await review.fleet.reviewOnTag({ number: 7 });
+  const [reviewed] = review.fleet.sessions();
+  review.statuses[reviewed.id] = { state: 'working' };
+  await review.fleet.tick();
+  await review.fleet.reviewFinished(reviewed, REVIEW_RESULT);
+  await settle();
+  await review.fleet.tick();
+  assert.deepEqual(removed, [sharedHomeName(reviewed.id)], 'the review\'s saved conversation');
+  assert.equal(reviewed.homeDeletePending, false);
+
+  const qa = qaSetup({ homes });
+  await qa.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [tested] = qa.fleet.sessions();
+  qa.statuses[tested.id] = { state: 'working' };
+  await qa.fleet.tick();
+  await qa.fleet.qaFinished(tested, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  await qa.fleet.tick();
+  assert.deepEqual(removed.slice(1), [sharedHomeName(tested.id)], 'the QA run\'s saved conversation');
+});
+
+test('a QA run that stopped before its conversation was deleted at its stop has it deleted on the next tick, once', async () => {
+  const removed = [];
+  const { fleet, store } = setup({ homes: { async remove(name) { removed.push(name); } } });
+  const old = (id, extra) => ({
+    id, repo: 'o/r', kind: 'pr', number: 7, title: 'QA: x', startedBy: 'joel', trigger: 'qa', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T10:00:00.000Z', pendingMessages: [], qa: { sha: 'a' }, ...extra,
+  });
+  store.state.sessions.push(old('0a0a0a0a', {}), old('0c0c0c0c', { qa: undefined }), old('0b0b0b0b', { trigger: 'label', qa: undefined, kept: false, cleanedAt: '2026-10-22T10:00:00.000Z', homeDeletePending: false }));
+  await fleet.tick();
+  assert.deepEqual(removed, [sharedHomeName('0a0a0a0a'), sharedHomeName('0c0c0c0c')], 'each QA run\'s, by its trigger too, never a session already cleaned up');
+  await fleet.tick();
+  assert.equal(removed.length, 2, 'deleted once');
 });
 
 test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {

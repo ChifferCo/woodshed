@@ -568,9 +568,21 @@ export function createFleet({
   }
 
   // A shared session that ran keeps its conversation and databases once stopped, however it stopped. A QA or review
-  // run is never resumed: the next commit gets a run of its own, so it ends when it stops.
+  // run is never resumed: the next commit gets a run of its own, so it ends when it stops, and the conversation its
+  // stop saved is deleted on the next tick.
   function keptFields(session) {
-    return session.owner || isQa(session) || isReview(session) ? {} : { kept: true };
+    if (session.owner) return {};
+    return isQa(session) || isReview(session) ? { homeDeletePending: Boolean(homes) } : { kept: true };
+  }
+
+  // A QA run that stopped before its stop deleted its conversation left it saved, with nothing to delete it: its
+  // homeDeletePending was never set. Marked once, so the delete is tried as for any other. Its trigger names it too,
+  // for a run whose qa or review fields are missing.
+  function endedRunHome(session) {
+    const run = isQa(session) || isReview(session) || session.trigger === 'qa' || session.trigger === 'review';
+    if (session.owner || session.kept || session.homeDeletePending !== undefined || !run) return;
+    if (ACTIVE_STATUSES.has(session.status) || session.status === 'stopping') return;
+    update(session, { homeDeletePending: Boolean(homes) });
   }
 
   async function finishInterruptedStop(session) {
@@ -830,6 +842,7 @@ export function createFleet({
   }
 
   async function retain(session) {
+    endedRunHome(session);
     if (session.homeDeletePending) await deleteHome(session);
     if (isGone(session)) return dropIfDue(session);
     if (session.owner || !session.kept || ACTIVE_STATUSES.has(session.status)) return;

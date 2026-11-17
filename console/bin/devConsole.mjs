@@ -355,6 +355,9 @@ function startConsole() {
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
+      // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
+      // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data.
+      ...(process.env.DEV_CONSOLE_HOMES_DIR ? { WOODSHED_LOCAL_HOMES_DIR: process.env.DEV_CONSOLE_HOMES_DIR } : {}),
       ...tlsAskPort,
     },
   });
