@@ -49,6 +49,17 @@ test('routeTrigger sends a comment to the active session', () => {
   assert.equal(routeTrigger({ sessions, number: 7, trigger: 'comment', text: '' }).action, 'ignore');
 });
 
+test('routeTrigger never sends a comment to a review session on the pull request, nor resumes one', () => {
+  const review = session({ id: 'rrrrrrrr', kind: 'pr', number: 7, trigger: 'review', review: { sha: 'a' } });
+  assert.deepEqual(routeTrigger({ sessions: [review], number: 7, trigger: 'comment', kind: 'pr', text: 'rename the flag' }),
+    { action: 'start', resumeBranch: null }, 'a running review reviews: the work starts a session of its own');
+  const working = session({ id: 'wwwwwwww', kind: 'issue', number: 3, prUrl: 'https://github.com/o/r/pull/7' });
+  assert.deepEqual(routeTrigger({ sessions: [working, review], number: 7, trigger: 'comment', kind: 'pr', text: 'rename the flag' }),
+    { action: 'send', sessionId: 'wwwwwwww' }, 'the session that opened the pull request gets it, the review beside it does not');
+  const kept = { ...review, status: 'stopped', kept: true };
+  assert.equal(routeTrigger({ sessions: [kept], number: 7, trigger: 'comment', kind: 'pr', text: 'x' }).action, 'start', 'a kept review is not resumed with work');
+});
+
 test('routeTrigger ignores triggers while a session is stopping', () => {
   const sessions = [session({ number: 7, status: 'stopping' })];
   assert.equal(routeTrigger({ sessions, number: 7, trigger: 'comment', text: 'hello' }).action, 'ignore');
