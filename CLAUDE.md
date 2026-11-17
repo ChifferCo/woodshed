@@ -162,7 +162,10 @@ secrets.
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
   console` on the base box. Check it has no `GitHub refused an installation
   token` lines, and that the person is a collaborator with write access: the console ignores
-  anyone else.
+  anyone else. The repo's settings page (Console settings → Repos → Settings, Sessions from GitHub) may turn its label
+  or `/woodshed` comments off, or name its label otherwise than `woodshed`: the console logs `fleet: trigger ignored,
+  the repo turns it off`, and `repoTriggers: changed` with who changed it. A label of another name is not this repo's
+  and starts nothing.
 - **A shared session is Unassigned, or has the wrong person.** The console logs `fleet: session starts unassigned, its
   starter cannot be assigned` when the label or comment came from someone with Can be assigned off (People page), and `fleet:
   session assigned` with `from`, `to`, `by` and `how` (`label`, `comment`, `console`, `take it`, `hand over`, `unassign`) on every

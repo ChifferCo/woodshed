@@ -103,8 +103,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
                                        RDS Postgres (shared by every session)
 ```
 
-1. Someone with write access adds the `woodshed` label to an issue, or comments
-   `/woodshed <request>`.
+1. Someone with write access adds the `woodshed` label to an issue (or the label the repo's settings name), or
+   comments `/woodshed <request>`.
 2. Within 30 seconds the console sees it, reacts with 👀, and starts a Fargate
    task from the session image.
 3. The session checks out its branch (`woodshed/<issue>-<id>`, or the PR's
@@ -128,7 +128,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
 
 ## Using it
 
-- **Start:** the `woodshed` label on an issue, or `/woodshed <what to do>` on any issue or PR.
+- **Start:** the `woodshed` label on an issue, or `/woodshed <what to do>` on any issue or PR. Each repo can name its
+  own label, or turn either off, on its settings page (Console settings → Repos → Settings).
   These are **shared** sessions: everyone signed in sees and opens them.
 - **Start one of your own:** **New session** on **My Woodshed** (`/`). It is
   **private**: nobody else can list it or open it, it runs on your own Claude

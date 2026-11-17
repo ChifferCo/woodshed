@@ -156,8 +156,8 @@ export function commentConsoleUrl({ publicUrl, project, consoleLinks }) {
  *   leaves out every link; `consoleName` is config.consoleName, which every comment here calls the console
  * @returns {string}  the comment posted on the issue or PR when a session is created
  */
-export function startComment({ session, publicUrl, maxRunning, appDomain = '', linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME }) {
-  if (session.status === 'failed') return failedComment({ session, publicUrl, linkQuery, consoleName });
+export function startComment({ session, publicUrl, maxRunning, appDomain = '', linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME, label = 'woodshed' }) {
+  if (session.status === 'failed') return failedComment({ session, publicUrl, linkQuery, consoleName, label });
   const head = session.status === 'queued'
     ? `Queued a session on ${consoleName} for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
     : `Started a session on ${consoleName} for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
@@ -209,14 +209,15 @@ export function refusalComment({ login, label, unlabeled, member, publicUrl, con
 
 /**
  * The error itself stays in the console: a launch error can carry the session's tokens.
- * @param {{session: object, publicUrl: string|null}} args  `publicUrl`: null leaves out the link
+ * @param {{session: object, publicUrl: string|null, label?: string}} args  `publicUrl`: null leaves out the link;
+ *   `label` is the repo's own (repoTriggers.mjs)
  * @returns {string}
  */
-export function failedComment({ session, publicUrl, linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME }) {
+export function failedComment({ session, publicUrl, linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME, label = 'woodshed' }) {
   return [
     `The ${consoleName} session for @${session.startedBy} failed to start. The console shows why${publicUrl ? `: ${sessionLink(publicUrl, session.id, linkQuery)}` : '.'}`,
     '',
-    `Add the \`woodshed\` label again, or comment \`/woodshed <message>\`, to try again.`,
+    `Add the \`${label}\` label again, or comment \`/woodshed <message>\`, to try again.`,
   ].join('\n');
 }
 
@@ -235,14 +236,18 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `pullRequests`: the repo's project file's gates for a pull request, from the default branch (projectFile.mjs)
  *   `projectBlocker(project)`: why no session that gets databases can start on that project, a blocker, or null
  *   (databaseGate.mjs)
+ *   `repoTriggers`: each repo's label and its switches for labels and /woodshed comments (repoTriggers.mjs); without
+ *   it, every repo has the console's label and both on
  */
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
-  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null,
+  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null,
 }) {
   const { state } = store;
+  // Each repo's label and whether its label and /woodshed comments start anything (repoTriggers.mjs).
+  const triggersOf = (project) => repoTriggers?.of(project?.name ?? null) ?? { label: config.label, labels: true, comments: true };
   const nowIso = () => new Date(now()).toISOString();
   const secondsSince = (iso) => (iso ? Math.round((now() - Date.parse(iso)) / 1000) : null);
   const retention = () => config.retention ?? DEFAULT_RETENTION;
@@ -597,7 +602,7 @@ export function createFleet({
   async function announceFailure(session) {
     if (!session.commentId) return;
     const project = projectFor(config, session);
-    const body = failedComment({ session, publicUrl: await consoleUrlOf(project), linkQuery: config.linkQuery, consoleName: config.consoleName });
+    const body = failedComment({ session, publicUrl: await consoleUrlOf(project), linkQuery: config.linkQuery, consoleName: config.consoleName, label: triggersOf(project).label });
     const posted = await safely('failure comment', () => githubOf(project).comment(session.number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -1129,6 +1134,7 @@ export function createFleet({
     const publicUrl = await consoleUrlOf(project);
     const posted = await safely('start comment', () => gh.comment(number, startComment({
       session, publicUrl, maxRunning: config.maxRunning, appDomain: config.appDomain, linkQuery: config.linkQuery, consoleName: config.consoleName,
+      label: triggersOf(project).label,
     })));
     if (posted) {
       update(session, { commentId: posted });
@@ -1417,8 +1423,9 @@ export function createFleet({
   async function refuseFromGitHub({ number, login, trigger }, gh = github, project = defaultProject(config)) {
     const member = Boolean(members?.isMember?.(login));
     console.log('fleet: trigger ignored, no sessions from GitHub', { number, login, trigger, member });
-    const unlabeled = trigger === 'label' ? await safely('label removal', () => gh.removeLabel(number, config.label)) : null;
-    const body = refusalComment({ login, label: config.label, unlabeled: Boolean(unlabeled), member, publicUrl: await consoleUrlOf(project), consoleName: config.consoleName });
+    const { label } = triggersOf(project);
+    const unlabeled = trigger === 'label' ? await safely('label removal', () => gh.removeLabel(number, label)) : null;
+    const body = refusalComment({ login, label, unlabeled: Boolean(unlabeled), member, publicUrl: await consoleUrlOf(project), consoleName: config.consoleName });
     const posted = await safely('refusal comment', () => gh.comment(number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -1429,7 +1436,7 @@ export function createFleet({
 
   // A resume leaves who has the session as it was, assigned or not.
   async function resumeFromGitHub(session, { number, login, trigger, text, commentId }, gh = github) {
-    const message = text || `Carry on with ${session.kind === 'pr' ? 'PR ' : ''}#${session.number}: the ${config.label} label was added again.`;
+    const message = text || `Carry on with ${session.kind === 'pr' ? 'PR ' : ''}#${session.number}: the ${triggersOf(projectFor(config, session)).label} label was added again.`;
     await resumeShared(session, { text: message, by: login, why: trigger });
     await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
     const publicUrl = await consoleUrlOf(projectFor(config, session));
@@ -1451,6 +1458,21 @@ export function createFleet({
     state.recentLabels = [...recent, { number, at, ...(project ? { project } : {}) }].slice(-RECENT_LABELS_KEPT);
     store.save();
     return true;
+  }
+
+  /**
+   * Why a label or /woodshed comment is not acted on because its repo's settings turn it off, or null. Logged; nothing
+   * is posted on the issue, since the repo was turned off on purpose.
+   * @returns {string|null}
+   */
+  function switchedOff({ trigger, number, login, project: name = null }) {
+    const project = projectOfEvent(name);
+    if (!project) return null;
+    const t = triggersOf(project);
+    const off = trigger === 'label' ? !t.labels : trigger === 'comment' ? !t.comments : false;
+    if (!off) return null;
+    console.log('fleet: trigger ignored, the repo turns it off', { number, login, trigger, ...projectField(project) });
+    return trigger === 'label' ? `${project.repo}'s settings turn its label off` : `${project.repo}'s settings turn /woodshed comments off`;
   }
 
   function claimComment(commentId) {
@@ -1479,6 +1501,8 @@ export function createFleet({
    * @returns {Promise<{outcome: 'started'|'sent'|'resumed'|'ignored'|'duplicate', sessionId?: string, reason?: string}>}
    */
   async function handleWebhookTrigger(trigger) {
+    const off = switchedOff(trigger);
+    if (off) return { outcome: 'ignored', reason: off };
     const claimed = trigger.trigger === 'comment' ? claimComment(trigger.commentId) : claimLabel(trigger.number, trigger.at, trigger.project ?? null);
     if (!claimed) {
       console.log('fleet: webhook trigger already handled', { number: trigger.number, trigger: trigger.trigger });
@@ -2019,9 +2043,11 @@ export function createFleet({
 
     const { events, complete } = await gh.issueEventsSince(cursors.lastEventId);
     if (!complete) console.warn('fleet: more issue events than one poll reads, older ones skipped', { count: events.length, ...on });
-    for (const t of labelTriggers(events, { label: config.label, afterId: cursors.lastEventId })) {
+    const own = triggersOf(project);
+    for (const t of labelTriggers(events, { label: own.label, afterId: cursors.lastEventId })) {
       cursors.lastEventId = t.id;
       store.save();
+      if (switchedOff({ trigger: 'label', number: t.number, login: t.login, ...on })) continue;
       if (!claimLabel(t.number, t.at, on.project ?? null)) {
         console.log('fleet: polled label already handled by a webhook', { number: t.number, ...on });
         continue;
@@ -2039,6 +2065,7 @@ export function createFleet({
       // Marked before handling, so a trigger that throws is logged once and not retried every 30 seconds.
       state.github.seenComments = rememberSeen(state.github.seenComments, [t.id]);
       store.save();
+      if (switchedOff({ trigger: 'comment', number: t.number, login: t.login, ...on })) continue;
       await handleTrigger({ number: t.number, login: t.login, text: t.text, commentId: t.id, trigger: 'comment', ...on });
     }
     cursors.commentsSince = full

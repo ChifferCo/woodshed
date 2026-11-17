@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -103,7 +103,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2735,4 +2735,56 @@ test('a QA report for a commit other than the one the session started on release
   other.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'd'.repeat(40) } });
   await other.fleet.qaFinished(started, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'd'.repeat(40), costUsd: 1 });
   assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
+});
+
+// Each repo's own label and switches (repoTriggers.mjs), set on its settings page.
+test('the poll starts sessions from each repo\'s own label, and skips a label or comment its repo turns off', async () => {
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const repoTriggers = createRepoTriggers({ store: { state: {}, save() {} }, config: { label: 'woodshed' } });
+  await repoTriggers.set({ project: 'tools', label: 'Agent', by: 'mia' });
+  await repoTriggers.set({ project: 'r', comments: false, by: 'mia' });
+  const { fleet, github, tools, toolCalls, calls } = twoProjects({ repoTriggers });
+  pollableTools(tools);
+  await fleet.pollGitHub();
+
+  tools.events = [{ ...toolsLabel(502, 13), label: { name: 'agent' } }, toolsLabel(501, 12)];
+  github.events = [{ id: 101, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 4, title: 'x' } }];
+  github.comments = [{ id: 88, created_at: '2026-10-21T10:00:05Z', updated_at: '2026-10-21T10:00:05Z', body: '/woodshed go', user: { login: 'joel' }, issue_url: 'https://api.github.com/repos/o/r/issues/5' }];
+  await fleet.pollGitHub();
+  assert.deepEqual(fleet.sessions().map((s) => [s.project, s.number]), [['r', 4], ['tools', 13]],
+    'tools starts from its own label, whatever its case, not from woodshed; the default repo\'s comment is off');
+  assert.ok(!calls.comments.some((c) => c.number === 5), 'nothing is posted on an issue whose comment was turned off');
+  assert.equal(toolCalls.comments.length, 1);
+
+  await repoTriggers.set({ project: 'r', labels: false, by: 'mia' });
+  github.events = [{ id: 102, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 6, title: 'y' } }];
+  github.comments = [];
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 2, 'the default repo\'s label is off now');
+});
+
+test('a webhook trigger on a repo that turns it off is ignored with the reason, and claims nothing', async () => {
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const repoTriggers = createRepoTriggers({ store: { state: {}, save() {} }, config: { label: 'woodshed' } });
+  await repoTriggers.set({ project: 'tools', labels: false, comments: false, by: 'mia' });
+  const { fleet, toolCalls } = twoProjects({ repoTriggers });
+  const label = await fleet.handleWebhookTrigger({ number: 9, login: 'joel', trigger: 'label', title: 'x', kind: 'issue', at: LABELED_AT, project: 'tools' });
+  const comment = await fleet.handleWebhookTrigger({ number: 9, login: 'joel', trigger: 'comment', text: 'go', commentId: 66, project: 'tools' });
+  assert.deepEqual(label, { outcome: 'ignored', reason: 'o/tools\'s settings turn its label off' });
+  assert.deepEqual(comment, { outcome: 'ignored', reason: 'o/tools\'s settings turn /woodshed comments off' });
+  assert.deepEqual(toolCalls.comments, []);
+  await repoTriggers.set({ project: 'tools', labels: true, by: 'mia' });
+  const after = await fleet.handleWebhookTrigger({ number: 9, login: 'joel', trigger: 'label', title: 'x', kind: 'issue', at: LABELED_AT, project: 'tools' });
+  assert.equal(after.outcome, 'started', 'the ignored label claimed nothing');
+});
+
+test('the refusal and failure comments name the repo\'s own label', async () => {
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const repoTriggers = createRepoTriggers({ store: { state: {}, save() {} }, config: { label: 'woodshed' } });
+  await repoTriggers.set({ project: 'r', label: 'agent', by: 'mia' });
+  const { fleet, calls } = setup({ repoTriggers, writers: ['joel', 'sam'], githubSessions: ['joel'], projects: [{ name: 'r', repo: 'o/r', default: true }] });
+  await fleet.handleTrigger({ number: 3, login: 'sam', trigger: 'label', title: 'x', kind: 'issue' });
+  assert.deepEqual(calls.unlabeled, [{ number: 3, label: 'agent' }]);
+  assert.match(calls.comments[0].body, /the `agent` label was taken off/);
+  assert.match(failedComment({ session: { startedBy: 'joel', id: 'aaaa1111' }, publicUrl: null, label: 'agent' }), /Add the `agent` label again/);
 });
