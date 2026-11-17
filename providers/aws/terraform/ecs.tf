@@ -54,7 +54,10 @@ resource "aws_iam_role_policy_attachment" "session_execution" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
+# The install secrets, the only task secrets a session has: none without them, since a policy needs a resource.
 data "aws_iam_policy_document" "session_secrets" {
+  count = length(var.install_secrets) > 0 ? 1 : 0
+
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [for k, s in aws_secretsmanager_secret.session : s.arn if k != "anthropic_api_key"]
@@ -62,9 +65,17 @@ data "aws_iam_policy_document" "session_secrets" {
 }
 
 resource "aws_iam_role_policy" "session_secrets" {
+  count = length(var.install_secrets) > 0 ? 1 : 0
+
   name   = "read-session-secrets"
   role   = aws_iam_role.session_execution.id
-  policy = data.aws_iam_policy_document.session_secrets.json
+  policy = data.aws_iam_policy_document.session_secrets[0].json
+}
+
+# From before the count: an installation with install secrets keeps its policy rather than replacing it.
+moved {
+  from = aws_iam_role_policy.session_secrets
+  to   = aws_iam_role_policy.session_secrets[0]
 }
 
 locals {
@@ -93,11 +104,9 @@ locals {
   install_secret_env = { WOODSHED_INSTALL_SECRETS = join(" ", sort(values(var.install_secrets))) }
   # No Anthropic key: a session reaches Anthropic through the console's proxy, which adds it (console/anthropicProxy.mjs).
   # A task secret is in the environment of the container's PID 1 for the whole session, where its terminal reads it.
-  session_secrets = merge(
-    # Each install secret under the variable the installation names for it: the entrypoint renames nothing. A repo's
-    # env files are not task secrets: the session asks the console for them (its repo settings).
-    { for env_name, key in local.install_secret_keys : env_name => aws_secretsmanager_secret.session[key].arn },
-  )
+  # Each install secret under the variable the installation names for it: the entrypoint renames nothing. The env files'
+  # values are the console's repo settings, which a session fetches at start (console/repoSettings.mjs).
+  session_secrets = { for env_name, key in local.install_secret_keys : env_name => aws_secretsmanager_secret.session[key].arn }
   # A session holds no database user or password from here: its entrypoint asks the console's session API for the
   # databases the console made for it, a shared session's own or a private session's owner's.
   session_container = {
@@ -197,7 +206,7 @@ resource "aws_iam_role_policy" "db_admin_execution" {
   policy = data.aws_iam_policy_document.db_admin_execution[0].json
 }
 
-# What the task's own code may do: read each database user's password, and the default project's repo settings for the seed.
+# What the task's own code may do: read each database user's password, and the repo settings of the seed's env files.
 resource "aws_iam_role" "db_admin_task" {
   count = local.db_admin ? 1 : 0
 

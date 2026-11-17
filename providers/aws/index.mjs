@@ -53,7 +53,7 @@ export function awsDatabases({ dbAdminTaskDefinition = null, databases = null })
 
 /**
  * @param {{launcher: {ecs: {dbAdminTaskDefinition?: string|null, databases?: string[]|null}}, secrets: {prefix: string}|null,
- *          homesBucket: string|null, webhookQueue: string, webhookFunction: string, envFiles: {secret: string}[]}} config
+ *          homesBucket: string|null, webhookQueue: string, webhookFunction: string}} config
  *   loadConfig()'s
  */
 export function awsProvider(config) {

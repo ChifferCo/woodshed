@@ -2,10 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { checkValue, secretSpecs } from './secrets.mjs';
 // The real Secrets Manager store over a fake AWS CLI: what the Secrets tab does end to end.
 import { createSecretStore } from '../providers/aws/secretStore.mjs';
+import { createSecretStore as createLocalStore } from '../providers/local/secretStore.mjs';
 import { createWebhookUrl } from '../providers/aws/webhookUrl.mjs';
 import { createSettings } from './settings.mjs';
 
@@ -16,7 +19,7 @@ const findSecret = (name) => SPECS.find((s) => s.name === name);
 const PEM = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey.export({ type: 'pkcs1', format: 'pem' });
 const LAMBDA_URL = 'https://abc.lambda-url.us-east-1.on.aws/';
 
-test('checkValue trims one-line values, checks a PEM key and refuses anything else', () => {
+test('checkValue trims one-line values and refuses anything else', () => {
   assert.equal(checkValue(findSecret('anthropic-api-key'), '  sk-ant-x\n'), 'sk-ant-x');
   assert.throws(() => checkValue(findSecret('anthropic-api-key'), 'two words'), /one line/);
   assert.throws(() => checkValue(findSecret('registry-token'), '   '), /empty/);
@@ -64,8 +67,6 @@ function fakeAws(values = {}) {
 function setup({ values, keyRefused = false, githubFails = false, githubOff = false } = {}) {
   const store = fakeAws({
     'woodshed-cloud/anthropic-api-key': 'sk-ant-old',
-    // A Terraform env file secret from before Repo settings, still in the account: not one of the page's.
-    'woodshed-cloud/api-env': 'A=1\n',
     'woodshed-cloud/registry-token': 'npm_x',
     'woodshed-cloud/github-app-key': PEM,
     'woodshed-cloud/github-webhook-secret': null,
@@ -139,16 +140,34 @@ test('a secret Terraform has not made yet shows as missing', async () => {
   assert.deepEqual([token.exists, token.set, token.changedAt], [false, false, null]);
 });
 
+test('a missing secret is creatable only on a store that makes it when first written', async () => {
+  const { settings, store } = setup();
+  delete store.values['woodshed-cloud/registry-token'];
+  const rows = (await settings.view()).secrets;
+  assert.ok(rows.every((s) => !s.creatable), 'AWS: Terraform makes each, so a missing one is not creatable');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'settings-local-'));
+  const local = createSettings({
+    config: { repo: 'o/r', installSecrets: INSTALL_SECRETS, githubApp: { appId: '1', installationId: '2' } },
+    secrets: createLocalStore({ dir, key: crypto.randomBytes(32), specs: SPECS }),
+    appKey: { current: () => null, set() {} },
+    appApi: { async hookConfig() { return {}; }, async app() { return {}; } },
+    webhookUrl: async () => null,
+  });
+  const before = (await local.view()).secrets;
+  assert.ok(before.every((s) => !s.exists && s.creatable));
+  await local.replace('openai-api-key', 'sk-test-1');
+  const after = (await local.view()).secrets.find((s) => s.name === 'openai-api-key');
+  assert.deepEqual([after.exists, after.set, after.creatable], [true, true, false]);
+});
+
 test('a session secret can be shown; the Anthropic key and the App key cannot', async () => {
   const { settings, store } = setup();
   store.values['woodshed-cloud/registry-token'] = 'npm-x';
   assert.equal(await settings.reveal('registry-token'), 'npm-x');
   await assert.rejects(settings.reveal('anthropic-api-key'), (err) => err.shown && /write-only/.test(err.message));
   await assert.rejects(settings.reveal('github-app-key'), (err) => err.shown && /write-only/.test(err.message));
-  await assert.rejects(settings.reveal('openai-api-key'), /write-only/);
-  await assert.rejects(settings.reveal('api-env'), /no secret called/, 'an env file\'s old Terraform secret is not the page\'s');
-  await assert.rejects(settings.replace('api-env', 'B=2\n'), /no secret called/);
-  assert.equal(Object.entries(store.values).find(([key]) => key.endsWith('/api-env'))[1], 'A=1\n', 'the old Terraform secret is unchanged');
+  await assert.rejects(settings.reveal('github-webhook-secret'), /no value yet/);
   await assert.rejects(settings.reveal('../other'), /no secret called/);
 });
 
@@ -237,12 +256,18 @@ test('a secret the console makes is named and tagged after the installation\'s p
   assert.equal(args[args.indexOf('--tags') + 1], 'Key=project,Value=woodshed');
 });
 
-test('the Secrets page lists one secret for each install secret the installation names, and no env file\'s', () => {
+test('the Secrets page lists one secret for each install secret the installation names, and none for an env file', () => {
   const names = (opts) => secretSpecs(opts).map((s) => s.name);
   assert.deepEqual(names({ installSecrets: INSTALL_SECRETS }).slice(0, 3), ['anthropic-api-key', 'openai-api-key', 'registry-token']);
   assert.ok(!names().includes('registry-token'), 'no install secret the installation does not name');
-  // A repo's env files are its Repo settings: an old caller that still passes them gets none.
-  assert.ok(!names({ envFiles: [{ secret: 'app-env' }] }).includes('app-env'));
-  assert.ok(secretSpecs().every((spec) => spec.kind !== 'env'));
+  assert.ok(!secretSpecs({ installSecrets: INSTALL_SECRETS }).some((s) => s.kind === 'env'), 'the env files are Repo settings, not secrets');
   assert.deepEqual(secretSpecs({ installSecrets: INSTALL_SECRETS }).find((s) => s.name === 'registry-token'), { name: 'registry-token', group: 'session', kind: 'line', readable: true });
+});
+
+test('an env file\'s old Terraform secret left in the store is not listed, and cannot be set', async () => {
+  const { settings, store } = setup({ values: { 'woodshed-cloud/api-env': 'A=1\n' } });
+  const view = await settings.view();
+  assert.equal(view.secrets.find((s) => s.name === 'api-env'), undefined);
+  await assert.rejects(settings.replace('api-env', 'B=2\n'), (err) => err.shown && /no secret called api-env/.test(err.message));
+  assert.equal(store.values['woodshed-cloud/api-env'], 'A=1\n');
 });

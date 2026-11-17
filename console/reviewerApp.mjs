@@ -2,13 +2,15 @@
 // pull request's author approve it, Apps included, and a pull request a shared session opens is the console App's. So
 // the verdict goes out as this App instead, and the author and the reviewer are never the same identity.
 //
-// It asks for pull requests (write) and nothing else. Its key is in the secret store, its App ID and slug in the
-// console's state, both saved by GitHub's App Manifest flow from the GitHub setup page. It is read at each review, so
-// it takes effect without a restart.
+// It asks for pull requests and contents (write), and submits each review with a token narrowed to pull requests. Its
+// key is in the secret store, its App ID and slug in the console's state, both saved by GitHub's App Manifest flow from
+// the GitHub setup page. It is read at each review, so it takes effect without a restart, and the slug follows a rename
+// of the App from the login each submitted review comes back with.
 
 import crypto from 'node:crypto';
 
 import { DEFAULT_CONSOLE_NAME } from './config.mjs';
+import { reviewPayload } from './github.mjs';
 import { createAppApi, createTokenSource } from './githubApp.mjs';
 import { manifestPostUrl } from './githubAppSetup.mjs';
 import { defaultProject } from './projects.mjs';
@@ -18,18 +20,18 @@ export const REVIEWER_KEY_SECRET = 'github-reviewer-app-key';
 const GITHUB = 'https://github.com';
 const GITHUB_API = 'https://api.github.com';
 const HEADERS = { accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'content-type': 'application/json' };
-const PERMISSIONS = { pull_requests: 'write', metadata: 'read' };
+// GitHub counts an App's approval toward a branch rule's required review only when the App can write to the repo, so it
+// asks for contents too. The token each review is submitted with is still narrowed to pull requests (submitReview).
+const PERMISSIONS = { contents: 'write', pull_requests: 'write', metadata: 'read' };
 // The manifest's code lasts an hour; the state it was started with, 15 minutes.
 const STATE_TTL_MS = 15 * 60_000;
 const MAX_PENDING = 20;
-// GitHub's limit on a review body is 65,536 characters.
-const MAX_BODY_CHARS = 60_000;
 
 function refusal(message) {
   return Object.assign(new Error(message), { shown: true });
 }
 
-/** @returns {object}  the manifest GitHub makes the reviewer App from: pull requests only, no webhook, no sign-in */
+/** @returns {object}  the manifest GitHub makes the reviewer App from: no webhook, no sign-in */
 export function reviewerManifest({ publicUrl, repo, consoleName = DEFAULT_CONSOLE_NAME }) {
   const [owner] = repo.split('/');
   return {
@@ -54,7 +56,7 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     return store.state.reviewerApp ?? null;
   }
 
-  /** @returns {string|null}  the login its reviews carry, `<slug>[bot]`, which the project file names as review.author */
+  /** @returns {string|null}  the login its reviews carry, `<slug>[bot]`: a review session's review.author (reviewLogins.mjs) */
   function login() {
     return stored()?.slug ? `${stored().slug}[bot]` : null;
   }
@@ -104,7 +106,7 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
       console.warn('reviewerApp: manifest conversion refused', { status: res.status });
       throw refusal(`GitHub would not hand over the reviewer App (HTTP ${res.status}): the code is single use and lasts an hour, so start again`);
     }
-    const spec = secretSpecs({ envFiles: [] }).find((s) => s.name === REVIEWER_KEY_SECRET);
+    const spec = secretSpecs().find((s) => s.name === REVIEWER_KEY_SECRET);
     await secrets.save(REVIEWER_KEY_SECRET, checkValue(spec, made.pem), 'The Woodshed reviewer App\'s private key (.pem). Only the console reads it, to submit reviews');
     store.state.reviewerApp = { appId: String(made.id), slug: made.slug };
     store.save();
@@ -112,13 +114,24 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     return { appId: String(made.id), slug: made.slug };
   }
 
+  /** The App was renamed on GitHub: its reviews now carry the new login, which the gates must trust instead. */
+  function followRename(login) {
+    const slug = login.endsWith('[bot]') ? login.slice(0, -'[bot]'.length) : null;
+    const found = stored();
+    if (!slug || !found || slug === found.slug) return;
+    store.state.reviewerApp = { ...found, slug };
+    store.save();
+    console.log('reviewerApp: renamed on GitHub, following it', { from: found.slug, to: slug });
+  }
+
   /**
    * Submits a formal review as the reviewer App, at `sha`, so a push since makes GitHub refuse rather than approve the
    * wrong commit.
-   * @param {{repo: string, number: number, event: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT', body: string, sha: string}} args
+   * @param {{repo: string, number: number, event: 'APPROVE'|'REQUEST_CHANGES'|'COMMENT', body: string, sha: string,
+   *          comments?: {path: string, line: number, body: string}[]}} args
    * @returns {Promise<number|null>}  the review's id
    */
-  async function submitReview({ repo, number, event, body, sha }) {
+  async function submitReview({ repo, number, event, body, sha, comments = [] }) {
     const found = stored();
     const privateKey = found?.appId ? await secrets?.read(REVIEWER_KEY_SECRET) : null;
     if (!privateKey) throw new Error('the reviewer App is not set up: its key is not saved');
@@ -130,10 +143,11 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
     const res = await fetchImpl(`${GITHUB_API}/repos/${repo}/pulls/${number}/reviews`, {
       method: 'POST',
       headers: { authorization: `Bearer ${token}`, ...HEADERS },
-      body: JSON.stringify({ commit_id: sha, event, body: body.slice(0, MAX_BODY_CHARS) }),
+      body: JSON.stringify(reviewPayload({ event, body, sha, comments })),
     });
     const answer = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(`GitHub refused the reviewer App's review: HTTP ${res.status} ${String(answer.message ?? '').slice(0, 200)}`);
+    followRename(String(answer.user?.login ?? ''));
     return answer.id ?? null;
   }
 

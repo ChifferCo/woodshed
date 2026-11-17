@@ -7,7 +7,7 @@
 
   let me = null;
   let loadError = null;
-  // Your own tmux config: a repo's env files are under Repo settings (myRepoSettings.js).
+  // Your own tmux config. Your own lines for the repo's env files are Repo settings (myRepoSettings.js).
   const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => key === 'tmux-conf');
   const files = {};
   let fileKey = null;
@@ -132,10 +132,7 @@
         }, 'Remove')),
       sharedSwitch(),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
-      status,
-      h('div', { class: 'cmd-aside' },
-        h('p', { class: 'form-note' }, 'Remote Control needs more than this token can do. In a session, type this in claude, or use Sign in for Remote Control in the session\u2019s ⋯ menu:'),
-        h('div', { class: 'value-row' }, h('code', { class: 'value-box' }, '/woodshed:remote-control'), window.WoodshedRestoreParts.copyButton('/woodshed:remote-control'))));
+      status);
   }
 
   // Whether the shared sessions you start from GitHub run on your token too. Only with a token saved: removing it
@@ -302,9 +299,20 @@
       tunnelStatus);
   }
 
+  // Each repo whose sessions cannot start (databaseGate.mjs), where the console makes no databases of yours to show
+  // them beside: every other repo still starts.
+  function blockersCard() {
+    const blockers = Object.values(me.projectBlockers ?? {});
+    if (!blockers.length) return null;
+    return h('section', { class: 'set-card' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Repos that need setup')),
+      h('p', { class: 'sub' }, 'Sessions cannot start on these yet. Every other repo still starts.'),
+      ...blockers.map((blocker) => W.blockerCard(blocker)));
+  }
+
   function databasesCard() {
     const db = me.databases;
-    if (!db?.available) return null;
+    if (!db?.available) return blockersCard();
     const pill = {
       none: h('span', { class: 'pill' }, 'Not made yet'),
       working: h('span', { class: 'pill is-warn' }, DB_WORK[db.action] ?? 'Working…'),
@@ -330,7 +338,8 @@
     return h('section', { class: 'set-card' },
       h('div', { class: 'set-head' }, h('h2', null, 'Your databases'), pill),
       h('p', { class: 'sub' }, ...databasesLine(db)),
-      me.databasesRefusal && h('p', { class: 'form-error', role: 'alert' }, `No session can start: ${me.databasesRefusal}. Whoever runs this console adds the engine, or the project file drops that database.`),
+      // Each repo whose sessions cannot start, with why and its fix (databaseGate.mjs); every other repo still starts.
+      ...Object.values(me.projectBlockers ?? {}).map((blocker) => W.blockerCard(blocker)),
       db.status === 'none' && !me.claudeToken.set && h('p', { class: 'sub' }, 'They are made when you save your Claude token.'),
       db.status === 'working' && h('p', { class: 'sub' }, `Started ${W.when(db.startedAt)}. Copying takes about a minute, and New session waits for it.`),
       db.status === 'failed' && h('p', { class: 'form-note is-error' }, `The last try failed: ${db.error ?? 'no reason given'}. The db-admin task's log in CloudWatch says more.`),
@@ -444,106 +453,6 @@
       fileStatus);
   }
 
-  // Your own whole files (an app/.env.production), which your sessions write into the checkout where git ignores
-  // them. All of them come in one read, the first time the card is drawn; `ownPath` is the one open, '' a new one.
-  let ownFiles = null;
-  let ownLoad = null;
-  // A read that failed is not tried again by itself: render() would otherwise ask the console again at once, for as
-  // long as the secret store is down. Try again asks.
-  let ownLoadFailed = false;
-  let ownPath = null;
-  const ownPathInput = h('input', { id: 'own-file-path', class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' });
-  const ownEditor = h('textarea', { id: 'own-file-text', class: 'field mono file-text', rows: '10', spellcheck: 'false', placeholder: 'NOTION_TOKEN=…' });
-  const ownStatus = h('p', { class: 'form-note', role: 'status' });
-
-  function loadOwnFiles() {
-    ownLoad ??= W.getJson('/api/my/own-files').then((answer) => {
-      ownFiles = answer.files ?? {};
-      openOwnFile(Object.keys(ownFiles).sort()[0] ?? '');
-    }, (err) => {
-      ownStatus.textContent = err.message;
-      ownStatus.classList.add('is-error');
-      ownLoad = null;
-      ownLoadFailed = true;
-      render();
-    });
-  }
-
-  function retryOwnFiles() {
-    ownLoadFailed = false;
-    ownStatus.textContent = 'Reading your files…';
-    ownStatus.classList.remove('is-error');
-    loadOwnFiles();
-    render();
-  }
-
-  function openOwnFile(file) {
-    ownPath = file;
-    ownPathInput.value = file;
-    ownEditor.value = file ? ownFiles?.[file] ?? '' : '';
-    ownStatus.textContent = '';
-    ownStatus.classList.remove('is-error');
-    render();
-  }
-
-  function saveOwnFile(file, text, done) {
-    return act({
-      card: 'own-files', note: ownStatus, done, call: async () => {
-        const answer = await W.postJson('/api/my/own-files', { path: file, text });
-        ownFiles = answer.files;
-        me = answer.view;
-        const next = ownFiles[file.trim()] !== undefined ? file.trim() : Object.keys(ownFiles).sort()[0] ?? '';
-        ownPath = next;
-        ownPathInput.value = next;
-        ownEditor.value = next ? ownFiles[next] : '';
-      },
-    });
-  }
-
-  function ownFilesCard() {
-    if (me.available && ownFiles === null && !ownLoadFailed) loadOwnFiles();
-    const paths = (me.ownFiles ?? []).map((f) => f.path);
-    const savedAt = (file) => me.ownFiles?.find((f) => f.path === file)?.savedAt;
-    const working = busy.has('own-files');
-    ownPathInput.readOnly = working || Boolean(ownPath);
-    ownEditor.readOnly = working;
-    ownPathInput.disabled = ownEditor.disabled = !me.available || ownFiles === null;
-    return h('section', { class: 'set-card is-wide' },
-      h('div', { class: 'set-head' }, h('h2', null, 'Your own files'),
-        h('span', { class: `pill${paths.length ? ' is-ok' : ''}` }, paths.length ? `${paths.length} file${paths.length === 1 ? '' : 's'}` : 'None')),
-      h('p', { class: 'sub' }, 'Whole files your sessions write into the repo at start, such as the ', h('code', null, '.env.production'),
-        ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Your next My Woodshed session picks up what you save; running ones keep theirs.'),
-      h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Your file' },
-        paths.map((file) => h('button', { type: 'button', 'aria-pressed': String(file === ownPath), disabled: working, onclick: () => openOwnFile(file) }, file)),
-        h('button', { type: 'button', 'aria-pressed': String(ownPath === ''), disabled: working || ownFiles === null, onclick: () => openOwnFile('') }, '+ Add a file')),
-      h('label', { class: 'field-label', for: 'own-file-path' }, h('span', null, 'Path in the repo')),
-      ownPathInput,
-      h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, ownPath ? `${ownPath}${savedAt(ownPath) ? `, saved ${W.when(savedAt(ownPath))}` : ''}` : 'Its text')),
-      ownEditor,
-      h('div', { class: 'set-actions' },
-        ownLoadFailed && h('button', { type: 'button', class: 'btn btn-quiet', onclick: retryOwnFiles }, 'Try again'),
-        h('button', {
-          type: 'button', class: 'btn btn-open', disabled: !me.available || ownFiles === null || working,
-          onclick: () => {
-            const file = ownPathInput.value.trim();
-            if (!ownEditor.value.trim()) {
-              ownStatus.textContent = 'Write the file\'s text first. To delete a file, use Remove.';
-              ownStatus.classList.add('is-error');
-              return;
-            }
-            saveOwnFile(file, ownEditor.value, `Saved ${file}. Your next session writes it.`);
-          },
-        }, 'Save'),
-        ownPath && h('button', {
-          type: 'button', class: 'btn btn-quiet', disabled: working,
-          onclick: () => {
-            if (!window.confirm(`Remove ${ownPath}? Your next sessions no longer write it.`)) return;
-            saveOwnFile(ownPath, '', `Removed ${ownPath}.`);
-          },
-        }, 'Remove')),
-      ownStatus);
-  }
-
   // Your own pause and stop times, for your My Woodshed sessions. Empty is the console's number.
   const limitInputs = {
     idleHours: h('input', { id: 'limit-idle', class: 'field mono', type: 'number', min: '0.25', max: '24', step: '0.25', inputmode: 'decimal' }),
@@ -621,9 +530,6 @@
             const answer = await W.postJson('/api/my/remove', { confirm: me.login });
             me = answer;
             for (const key of fileKeys()) delete files[key];
-            ownFiles = null;
-            ownLoad = null;
-            ownLoadFailed = false;
             repoSettings.reload();
             editor.dataset.key = '';
             openFile(fileKey);
@@ -656,7 +562,6 @@
       homeCard(),
       repoSettings.card(),
       filesCard(),
-      ownFilesCard(),
       removeCard()));
     if (focused?.id && focused !== document.activeElement && focused.isConnected) focused.focus({ preventScroll: true });
     watchDatabases();

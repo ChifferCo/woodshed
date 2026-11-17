@@ -2,8 +2,7 @@
 // (../terraform/ecs.tf), so a start can be tried before it ships.
 /**
  * @param {{installSecrets?: {variable: string}[]}} opts  the installation's install secrets (config.mjs's installSecrets)
- * @returns {string[]}  the task definition's secrets, by the variable each arrives in (ecs.tf's session_secrets): the
- *   install secrets'. A repo's env files are not among them: a session gets those from the console (repo settings)
+ * @returns {string[]}  the task definition's secrets, by the variable each arrives in (ecs.tf's session_secrets)
  */
 export function taskDefinitionSecrets({ installSecrets = [] }) {
   return installSecrets.map(({ variable }) => variable);

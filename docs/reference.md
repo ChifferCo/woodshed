@@ -74,6 +74,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
 - `WOODSHED_TRUSTED_IDENTITY_SECRET`: a proxy in front signs every request with an `X-Woodshed-Identity` header
   (an HMAC-SHA256 over the person's login, role and expiry), which is then the only sign-in, and required. The host
   says who is in, so there is no People list; its `owner`s are the console's admins.
+- `WOODSHED_ONE_PERSON=1`: the console is one person's own, such as a personal workspace, so the rail shows one list
+  of every session with no Mine | Everyone switch. With no People list the console cannot tell by itself.
 
 "Hosted mode" in [console/README.md](../console/README.md) has the request, the header's format and what each changes.
 
@@ -101,8 +103,8 @@ sign-in in front, hands both to the console with two settings, each off unless s
                                        RDS Postgres (shared by every session)
 ```
 
-1. Someone with write access adds the `woodshed` label to an issue, or comments
-   `/woodshed <request>`.
+1. Someone with write access adds the `woodshed` label to an issue (or the label the repo's settings name), or
+   comments `/woodshed <request>`.
 2. Within 30 seconds the console sees it, reacts with 👀, and starts a Fargate
    task from the session image.
 3. The session checks out its branch (`woodshed/<issue>-<id>`, or the PR's
@@ -118,15 +120,16 @@ sign-in in front, hands both to the console with two settings, each off unless s
    session. Open its terminal in the console to watch or take over.
 6. A session pauses after an hour waiting for input, stops at 8 hours in all
    (both on the Console settings page),
-   and stops once its pull request is posted to Slack (its project's channel from the Repos card of
-   Console settings, else the Slack card's channel), or when someone presses
+   and stops once its pull request is posted to Slack (its project's channel from the repo's Settings,
+   under Repos on Console settings, else the Slack card's channel), or when someone presses
    Stop. It commits and pushes work in progress first and keeps its
    conversation and databases, so a later label or comment resumes it where it
    was. See "Session states" in `console/README.md`.
 
 ## Using it
 
-- **Start:** the `woodshed` label on an issue, or `/woodshed <what to do>` on any issue or PR.
+- **Start:** the `woodshed` label on an issue, or `/woodshed <what to do>` on any issue or PR. Each repo can name its
+  own label, or turn either off, on its settings page (Console settings → Repos → Settings).
   These are **shared** sessions: everyone signed in sees and opens them.
 - **Start one of your own:** **New session** on **My Woodshed** (`/`). It is
   **private**: nobody else can list it or open it, it runs on your own Claude
@@ -189,7 +192,7 @@ requests and issues, no workflows.
 ## What a session can reach
 
 - **Has:** what the repo's env files hold (its own Anthropic key, for one, in
-  the installation's repo settings or the owner's own), hour-long GitHub tokens from
+  the installation's Repo settings or the owner's own), hour-long GitHub tokens from
   the console, and the installation's install secrets (such as a package registry's token), if it has any. A My Woodshed
   session also has its owner's own Claude token, for claude alone. Never the
   team key, and a shared session never has anyone's Claude token: its claude
@@ -273,10 +276,11 @@ each, naming its field:
 
 Beside what each part is, it prints `install variables`, the `${NAME}`s an install's `.npmrc` reads, each of which
 must be an install secret of the installation's, and `from the session`, the variables the `env` and the env files'
-lines use that neither the `env` nor the databases give, such as a shared service's URL. And a `hint:` line for each env
-file whose `lines` set a key with no `{{…}}` (`FEATURE_PREVIEW=true`): such a line is the same in every session, and no
-installation or person can change it, so it belongs in `defaults` if they may. A hint is not a problem: the check still
-passes. A repo runs it on its pull
+overrides use that neither the `env` nor the databases give, such as a shared service's URL. And a `hint:` line for each
+env file whose `overrides` set a key with no `{{…}}` (`FEATURE_PREVIEW=true`): such a line is the same in every session,
+and no installation or person can change it, so it belongs in `defaults` if they may; and one for each env file that
+still writes `overrides` by its deprecated name, `lines` (`envFiles[0] (api/.env) uses lines, which is deprecated:
+rename it to overrides`). A hint is not a problem: the check still passes. A repo runs it on its pull
 requests with the reusable workflow `.github/workflows/project-check.yml` (`docs/self-host.md`, "Before any of them:
 the project file"), whose inputs are `ref`, the Woodshed branch, tag or commit to take the check from (default `main`),
 `repository` (default `ChifferCo/woodshed`) and `node-version` (default `22.16.0`).
@@ -299,7 +303,7 @@ quote a number (`PORT: '9000'`).
 | `version` | `project.mjs` | `1`, the format this version of Woodshed reads |
 | `dependencies` | `stageDeps.sh` and the `Dockerfile` (the deploy workflow's session job), `refreshDeps` (entrypoint), `session/deps.sh` | `installs[]`: each a `dir` in the repo; its `files` there, globs allowed within one folder (`packages/*/package.json`), which the deploy workflow's session job stages for the build and whose change reinstalls at a session's start; the `command` that installs, one line run with bash in the dir; and its `output`, at least one folder it makes that the image keeps, under the dir or under the home as `~/...` (`[node_modules, ~/.cache/ms-playwright]`). Nothing else an install writes reaches the image. A secret an install reads, such as a registry's token, is not here: it is the installation's install secret, in the variable the repo's own tools read (below). Left out, or `{installs: []}`: nothing to install |
 | `env` | `writeEnvFiles` | Variables exported for everything the session runs, after the databases' own (below), so a value can map one to the app's name: `DATABASE_HOST: '{{PGHOST}}'` |
-| `envFiles[]` | `writeEnvFiles`, the db-admin task | Each env file a session writes, in layers, later ones winning (dotenv keeps a repeated key's last value; the layers are concatenated, never merged): `path` in the repo; `defaults`, the repo's own `NAME=value` lines, written first under `# From the repo`, so the installation's text and each person's own lines replace them (plain text: a `{{…}}` is refused, since a line the session fills in belongs in `lines`; and never a secret, since the file is in git); `secret`, the file's key (below; before Repo settings it named a Terraform secret, and it is only the key now); and `lines`, the session's wiring, written last, so nothing before them replaces them. `{{NAME}}` is the variable's value; a line with `{{NAME?}}` is left out when it is empty. Each file has a key, its name among the installation's repo settings: its `secret`, or with none its path lowercased with each run of other characters a dash (`web/.env.local` is `web-env-local`). Files that name one `secret` share its key on purpose, and so one set of the installation's and each person's values, written to each of their paths (`api/.env` and `worker/.env` both from `app-env`); each keeps its own `defaults` and `lines`. Two files whose one key is made from a path are refused: give one a secret, or both the same. A session gets the installation's values and, in a private one, its owner's for each key from the console at start (session/README.md, "What a container does"), and writes them after the `defaults`: the installation's text first, then the owner's lines. With no `defaults`, the file is byte for byte what it was before the field (`test/repoSettingsGolden.test.mjs`). An installation's Woodshed must read `defaults` before a repo writes it: an older one refuses the field. Repo settings list the variables the `lines` write, read from this file on GitHub (`console/projectFile.mjs`) |
+| `envFiles[]` | `writeEnvFiles`, the db-admin task | Each env file a session writes, in layers, later ones winning (dotenv keeps a repeated key's last value; the layers are concatenated, never merged): `path` in the repo; `defaults`, the repo's own `NAME=value` lines, written first under `# From the repo`, so the installation's text and each person's own lines replace them (plain text: a `{{…}}` is refused, since a line the session fills in belongs in `overrides`; and never a secret, since the file is in git); `secret`, the file's key among the repo settings (below), a name of lowercase letters, digits and dashes that files may share; and `overrides`, the session's wiring, written last under `# Woodshed overrides`, so nothing before them replaces them (`lines` is its deprecated old name, read the same for one release with a hint from `check`, to be removed with the other legacy names; a file with both is refused). `{{NAME}}` is the variable's value; a line with `{{NAME?}}` is left out when it is empty. Each file has a key, its name among the installation's repo settings: its `secret`, or with none its path lowercased with each run of other characters a dash (`web/.env.local` is `web-env-local`). Files that name one `secret` share its key on purpose, and so one set of the installation's and each person's values, written to each of their paths (`api/.env` and `worker/.env` both from `app-env`); each keeps its own `defaults` and `overrides`. Two files whose one key is made from a path are refused: give one a secret, or both the same. A session gets the installation's values and, in a private one, its owner's for each key from the console at start (session/README.md, "What a container does"), and writes them after the `defaults`: the installation's text first, then the owner's lines. With no `defaults`, the file is byte for byte what it was before the field (`test/repoSettingsGolden.test.mjs`). An installation's Woodshed must read `defaults` before a repo writes it: an older one refuses the field. The same goes for `overrides`: a repo keeps `lines` until its installation's Woodshed reads the new name. My settings lists the variables the `overrides` write, read from this file on GitHub (`console/projectFile.mjs`) |
 | `databases[]` | `writeEnvFiles`, `seed`/`migrate`, `dbAdmin.mjs`, the console, the deploy workflow's session job | The databases each session gets its own copy of (see "Databases" below). Each names its `engine` (`postgres` or `mongo`, one database an engine) and the `dir` its commands run in; `migrate` and `seed` (`null` for none); `envFiles`, the env files its commands need, each one an `envFiles` entry's key (its `secret`, or with none the key its path makes), which the db-admin task writes for the seed from the default project's repo settings (`seedEnvFiles` in `session/dbAdmin.mjs`); `paths`, what its template is built from, and `migrations`, the folder under them where a new file only migrates a copy (`null` for none); for `postgres`, `migrationsTable`, the `table` (or `schema.table`) and `column` where its migration tool records each migration it ran, which Restore a dump reads (`null` for none: nothing is said of a dump's migrations); `dump`, what Restore a dump's commands leave out: `skip`, tables whose rows (postgres) or collections (mongo), and for `postgres` the `extensions` the dump keeps (`null`: nothing left out); `user` and `name`, for a database the environment does not name (the docker launcher). `[]`: the db-admin task refuses to run, and sessions get none. The deploy workflow's session job builds the templates again when `paths` changed since the last session build |
 | `app` | statusd's Start app and Stop app, `readyGate.mjs` | `start` and `stop` commands, the `frontendPort` and `backendPort` statusd probes (the same port twice for an app that is one server, as Woodshed's own dev console is), `logs` (name to file, `~` and `{{CHECKOUT}}` filled in) for the App log tab and to tell the app was started, `paths` that count as an app change for `readyGate` (prefixes: write a folder with its `/`, as `web/`, or `web` also matches `webhooks.md`), and `howToProve`, its refusal's advice. `stop` may be `null`, and then Stop app does nothing, not even for a start still waiting on its health checks. statusd reads it once, when the session starts, so a change to it takes effect at the next start; a project with no app yet is read again at each Start app, so one written in the session starts there. `app: null`: no Start app but **Set up app**, which asks the session's claude to write one, no ports probed, and no pull request refused |
 | `apps[]` | statusd's Start app and Stop app, `readyGate.mjs`, `writeRules` | Instead of `app`, for a repo with more than one app; a file with both is refused. Each entry has every field `app` has, plus `name` (lowercase letters, digits and dashes, at most 32, each its own) and `label` (what the console's menu shows, default the name). The first is the default. One runs at a time: **Start app ▾** picks one (`POST /app/start {"app": "<name>"}`, the default without a name), and statusd stops the one running first with its own `stop`, then runs the one picked; it remembers which, and probes, proxies (Open app) and reads the logs (App log) of that one. An app claude starts itself from the shell is followed too: with the remembered app's frontend down and exactly one other app's frontend listening, statusd switches to it at the next `/status`, so Open app and the logs are its own (several listening, or a frontend port shared with the remembered app, keep it). Two apps may share a port, such as one backend behind two frontends, but then each needs a `stop`: an app with none is left running, and the next one starts beside it, where a shared port cannot bind. `readyGate` reads each app's `paths` and `logs` on their own: a change under an app's `paths` needs that app started, so give each its own log. A session's rules name each app, how it starts and its `howToProve`. `node project.mjs get app` gives the default. With one entry it behaves as `app` |
@@ -330,15 +334,14 @@ An installation works on one repo, and nothing in this folder names one. To set 
   `WOODSHED_INSTALL_SECRETS`, the list of those variables, which an ask session unsets. A variable cannot be one of
   Woodshed's own (`WOODSHED_*`, `SESSION_ID`, `GH_TOKEN`, `PGHOST` and the rest, `SESSION_VARIABLES` in
   `shared/reservedNames.mjs`).
-- **The env files:** none in Terraform. Each repo's env files are its Repo settings (console/README.md, "Repo
-  settings"): the installation's values on Console settings → Repos → the repo → Settings, each person's own on My
-  settings, which the console keeps under `<prefix>/repos/` and `<prefix>/users/` and hands each session at start, so
-  a new env file needs no apply. The db-admin task reads the default project's values,
-  `<prefix>/repos/<project>/env/*`, which its entryPoint names (`--project`), and Terraform names the default project
-  as the console does: the `projects` entry that is the default, else `github_repo`'s name made plain. `env_files` and
-  `database_env_secrets`, which made a Terraform secret of each env file before Repo settings, are still declared and
-  refuse any value, so a tfvars that still sets them fails the plan with the reason: providers/aws/README.md, "Env
-  files leaving Terraform", says how to drop them.
+- **The env files:** their values are Repo settings (console/README.md, "Repo settings"): the installation's on
+  Console settings and each person's own on My settings, kept by the console under `<prefix>/repos/<project>/env/<key>`
+  and `<prefix>/users/<login>/repos/<project>/env/<key>`. Terraform makes no secret for them and a task definition
+  passes none. The db-admin task reads the default project's values, `<prefix>/repos/<project>/env/*`, which its
+  entryPoint names (`--project`), and Terraform names the default project as the console does: the `projects` entry
+  that is the default, else `github_repo`'s name made plain. `env_files` and `database_env_secrets`, from before Repo
+  settings, are read no more: take them out of the tfvars. An apply then deletes their Secrets Manager secrets at
+  once, so check first that Console settings → Repos shows a value for each env file.
 - **The databases:** `databases` in Terraform names the engines the installation hosts, each on its own:
   `["postgres"]`, `["mongo"]`, `["postgres", "mongo"]` or `[]`. Each of the project file's `databases` needs its engine
   there ("Databases" below). An engine left out has no resources at all (RDS, Mongo on the base box, their secrets and
@@ -504,7 +507,7 @@ is a module there with its entry in `ENGINES`, and its server in each provider (
   comment, Mongo in a collection of its own), and its upkeep after each run (Postgres closes databases every user could
   connect to; Mongo gives people's users their restore roles). Its driver comes from the database's `dir`.
 - **The session's variables** (`sessionEnv`, and `seedEnv` for the template's commands), in the engine's own names,
-  which a session exports and the project file maps to the app's in its `env` and env file lines: postgres gives
+  which a session exports and the project file maps to the app's in its `env` and env file overrides: postgres gives
   libpq's `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE` and `PGSSLMODE` (so the image's `psql`, Postgres
   16's, connects with no setup) and `PG_URL`; mongo gives `MONGODB_URI`. Woodshed names no app's variable.
 - **Its viewers** (pgweb at `/pg/<id>/`; mongo-express at `/mongo/<id>/`, and on a private session's restore copy at
@@ -518,8 +521,9 @@ variables set. A copy waits until each engine's template is ready.
 
 The installation says which engines it hosts: `databases` in Terraform (`WOODSHED_DATABASES` for the console), or
 the local provider's `WOODSHED_LOCAL_DB_*`. A project file whose `databases` need an engine it does not host starts no
-session: the console reads the default branch's file (`console/databaseGate.mjs`), says why on New session and My
-settings, refuses the API's starts with the reason, and answers a label or `/woodshed` comment with it. A session started
+session on that repo, and every other repo still starts: the console reads each repo's default branch's file
+(`console/databaseGate.mjs`), says why and how to fix it on New session, My settings and Console settings' Repos card,
+refuses the API's starts with the reason, and answers a label or `/woodshed` comment with it. A session started
 from a branch whose own file differs stops at start with the same reason (`requireDatabases` in the entrypoint).
 
 ## Renamed variables

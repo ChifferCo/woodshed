@@ -29,8 +29,8 @@
 //
 // `--project` is the default project's name, whose repo settings the seed's env files are written from (seedEnvFiles):
 // the installation's values for each of the databases' `envFiles`, at `repos/<project>/env/<key>`. A flag for the same
-// reason: a run's overrides must not be able to point the seed at another repo's values. Without it, the seed's env
-// files get the repo's defaults and the project file's lines alone.
+// reason: a run's overrides must not be able to point the seed at another repo's values. Without it, the env files hold
+// the repo's defaults and the overrides alone.
 
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -481,8 +481,9 @@ export function seedEnv({ flags, env, databases, user, name, password, settingsF
 
 /**
  * The installation's text of each env file the project's databases name, as a shared session gets it: the repo
- * settings' value (`repos/<project>/env/<key>`, `--project`). No personal layer: the seed is no one's.
- * @param {{flags: Record<string, string>, project: {databases: {envFiles: string[]}[]},
+ * settings' value (`repos/<project>/env/<key>`, `--project`). No personal layer: the seed is no one's. Without
+ * `--project`, none.
+ * @param {{flags: Record<string, string>, project: {envFiles: {key: string, path: string}[], databases: {envFiles: string[]}[]},
  *          secrets: {get: (name: string) => Promise<string|null>}}} args
  * @returns {Promise<{settings: {project: string, envFiles: Record<string, {installation: string, personal: null}>,
  *   instructions: {installation: null, personal: null}, personalFor: null}|null,
@@ -497,7 +498,7 @@ export async function seedEnvFiles({ flags, project, secrets }) {
   const read = [];
   for (const key of keys) {
     // Files that name one secret share its key: the entrypoint writes its value to each of them.
-    const paths = (project.envFiles ?? []).filter((f) => f.key === key).map((f) => f.path);
+    const paths = project.envFiles.filter((f) => f.key === key).map((f) => f.path);
     const installation = flags.project ? await secrets.get(installationEnvSecretName(prefix, flags.project, key)) : null;
     if (installation?.trim()) envFiles[key] = { installation, personal: null };
     read.push({ key, paths, from: installation?.trim() ? 'repo settings' : 'none' });
@@ -560,7 +561,6 @@ async function main() {
     const found = await seedEnvFiles({ flags, project, secrets });
     // Keys and where each came from, never a value.
     log('Seed env files read', { project: flags.project ?? null, files: found.read });
-    if (!flags.project && found.read.length) log('WARNING: no --project, so the seed\'s env files have no installation values', { files: found.read.length });
     return found;
   };
   const buildSha = fs.existsSync(BUILD_SHA_FILE) ? fs.readFileSync(BUILD_SHA_FILE, 'utf8').trim() || null : null;

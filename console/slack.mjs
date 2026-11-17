@@ -1,7 +1,7 @@
 // Posts each pull request a session opens to Slack, with its decision brief in the post's thread, as the bot whose token is the console's
 // slack-bot-token secret. Console only, like the GitHub App key: a session never sees the token. The channel is a
 // setting on the Console settings page, kept in state.json as `settings.slackChannel`; a project may have its own,
-// from the page's Repos card, under `settings.projectSlackChannels` by project name.
+// from its repo's Settings page (Console settings → Repos), under `settings.projectSlackChannels` by project name.
 
 export const SLACK_TOKEN_SECRET = 'slack-bot-token';
 const POST_TIMEOUT_MS = 10_000;

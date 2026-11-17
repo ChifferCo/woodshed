@@ -7,8 +7,9 @@
 //                        "personalFor": "<login>"|null}: the session's own project's repo settings (repoSettings.mjs),
 //                        the owner's own in a private session alone; 404 for an ask session, 503 while the store does
 //                        not answer
-//   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...},
-//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files, written where git ignores them),
+//   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"tmux-conf": "..."|null},
+//                        "ownFiles": {"<path>": "<text>"} (the owner's whole files for the session's repo, written
+//                        where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
 //                        console makes no databases; claudeToken is the owner's own, for claude in their session;
 //                        a shared session gets {"database"}, its own, and 503 while they are still being copied, with
@@ -110,7 +111,7 @@ export function sessionForToken(given, sessions) {
 /**
  * @param {{fleet: {sessions: () => object[]}, tokens: {token: () => Promise<{token: string, expiresAt: number}>},
  *          userSettings?: {claudeToken: (login: string) => Promise<string|null>,
- *                          ownFiles: (login: string) => Promise<Record<string, string|null>>,
+ *                          ownFiles: (login: string, opts?: {repo?: string}) => Promise<Record<string, string|null>>,
  *                          gitIdentity: (login: string) => {name: string, email: string}|null}|null,
  *          anthropic?: ReturnType<typeof import('./anthropicProxy.mjs').createAnthropicProxy>|null,
  *          githubUser?: {tokenFor: (login: string) => Promise<{token: string, expiresAt: number}|null>}|null,
@@ -118,7 +119,8 @@ export function sessionForToken(given, sessions) {
  *          tokensFor?: ((session: object) => {project: string, default: boolean, sessions: object, asks: object})|null,
  *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
  *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null,
- *          repoSettings?: {forSession: (session: object) => Promise<object|null>}|null}} opts
+ *          repoSettings?: {forSession: (session: object) => Promise<object|null>,
+ *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null}} opts
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
@@ -169,7 +171,7 @@ export function createSessionApi({
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases);
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
@@ -239,10 +241,16 @@ export function createSessionApi({
 
 // A shared session's own databases, which the console starts copying as the session starts: 503 until they are made.
 // With them, whose plan it runs on, when the fleet decided at launch that it runs on its starter's.
-async function sharedSettingsReply(res, session, databases, userSettings) {
+// A console that makes no databases still answers the plan, as for a review, to an entrypoint that says it reads an
+// answer with no database (PLAN_ONLY_HEADER). Anyone else gets the 404 an image from before read as "the environment's
+// databases stay": given a 200 with no database, it stops with `the console sent no database user`.
+export const PLAN_ONLY_HEADER = 'x-woodshed-plan-only';
+async function sharedSettingsReply(res, session, databases, userSettings, { planOnly = false } = {}) {
   if (!databases?.available) {
-    console.warn('sessionApi: settings refused, a shared session has no owner', { sessionId: session.id });
-    return reply(res, 404, { error: 'a shared session has no personal settings' });
+    const onPlan = planOnly && Boolean(await starterToken(session, userSettings));
+    console.log('sessionApi: settings handed out', { sessionId: session.id, owner: null, database: null, plan: onPlan ? session.plan : null });
+    if (onPlan) return reply(res, 200, { plan: session.plan });
+    return reply(res, 404, { error: 'a shared session has no personal settings, and this console makes it no databases' });
   }
   const { status, database, error } = await databases.sessionDatabase(session.id);
   if (status === 'working') return reply(res, 503, { error: 'its databases are still being copied' });
@@ -289,14 +297,14 @@ async function repoSettingsReply(req, res, session, repoSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases) {
+async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false } = {}) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
     console.log('sessionApi: review settings handed out', { sessionId: session.id, plan: onPlan ? session.plan : null });
     return reply(res, 200, onPlan ? { plan: session.plan } : {});
   }
-  if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings);
+  if (!session.owner) return sharedSettingsReply(res, session, databases, userSettings, { planOnly });
   const codex = session.options?.agent === 'codex';
   const claudeToken = userSettings ? await userSettings.claudeToken(session.owner) : null;
   if (!claudeToken && !codex) {
@@ -309,10 +317,10 @@ async function settingsReply(res, session, userSettings, databases) {
     console.warn('sessionApi: the owner\'s databases are not ready', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner}'s own databases are not ready: see My settings` });
   }
-  // null for a file is the console's default, which the task definition already gives every session.
-  // By the names the session's project file gives its env files, and only its own repo's (userSettings.ownFiles).
+  // Their own lines for tmux-conf, null for none (userSettings.ownFiles). Their env file values are /repo-settings'.
   const files = await userSettings.ownFiles(session.owner);
-  const ownFiles = await userSettings.ownWholeFiles?.(session.owner) ?? {};
+  // Their whole files for the session's own repo alone (repoSettings.filesForSession).
+  const ownFiles = await repoSettings?.filesForSession?.(session) ?? {};
   console.log('sessionApi: settings handed out', {
     sessionId: session.id, owner: session.owner, ownFiles: Object.keys(files).filter((k) => files[k] !== null), wholeFiles: Object.keys(ownFiles), database: database?.name ?? null,
   });

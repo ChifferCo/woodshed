@@ -1,6 +1,7 @@
 // The Console settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
-// typed confirm; then the sessions holding data, and anything stalled, with what fixes it. The data list is read
-// again every minute; the cards are left alone, so a half-typed change survives.
+// typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
+// stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
+// change survives.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -10,7 +11,7 @@
     { id: 'sessions', title: 'Sessions', note: 'How many shared sessions run at once, and when one stops by itself. Its work is pushed first, and Resume picks it up where it was.' },
     { id: 'questions', title: 'Questions from Slack', note: 'Sessions that answer a mention of the bot. Each reads the default branch and changes nothing, and its conversation is kept for a follow-up in its thread.' },
     { id: 'retention', title: 'Retention', note: 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.' },
-    { id: 'slack', title: 'Slack', note: 'Each pull request a shared session opens is posted once it passed what the repo\'s project file asks of it (pullRequests: its review approved and its suites passed), with its decision brief in the thread of the post once its QA check finished. It goes to its repo\'s own channel when the Repos card gives one, and to the channel below otherwise. The bot token is on Secrets & webhooks.' },
+    { id: 'slack', title: 'Slack', note: 'Each pull request a shared session opens is posted once it passed what the repo\'s project file asks of it (pullRequests: its review approved and its suites passed), with its decision brief in the thread of the post once its QA check finished. It goes to its repo\'s own channel when the repo\'s Settings (under Repos) give one, and to the channel below otherwise. The bot token is on Secrets & webhooks.' },
   ];
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
   const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
@@ -24,7 +25,7 @@
   const notices = new Map();
   // Each card or row whose save is on its way, so a second click does not send it twice.
   const saving = new Set();
-  // What the last Slack channel save or Remove on a repo's row said, by project name, until the page is drawn again.
+  // What the last Remove on a repo's row said, by project name, until the page is drawn again.
   const rowNotes = new Map();
 
   // These saves have no typed confirm: each is undone by changing it back, and is logged with who made it. The typed
@@ -87,7 +88,7 @@
     return h('div', { class: `set-row${changed ? ' is-changed' : ''}${bad ? ' is-bad' : ''}` },
       h('div', null,
         h('label', { class: 'set-name', for: 'set-channel' }, 'Channel'),
-        h('div', { class: 'set-help' }, 'Its ID, at the bottom of the channel\'s About tab. Invite the bot to it first. Empty turns the posts off.'),
+        h('div', { class: 'set-help' }, 'Its ID, at the bottom of the channel\'s About tab. Invite the bot to it first. A repo can have its own, on its Settings under Repos. Empty turns the posts off for repos without one.'),
         h('div', { class: 'set-bounds' }, data.slack.channel ? `posting to ${data.slack.channel}` : 'nothing is posted')),
       h('div', { class: 'set-value' },
         h('input', {
@@ -180,42 +181,20 @@
     document.querySelector(`input[name="color-${CSS.escape(p.name)}"]:checked`)?.focus();
   }
 
-  // A repo's own Slack channel, one field per row: empty sends its pull requests to the Slack card's channel.
-  function channelField(p) {
-    const key = `channel:${p.name}`;
-    const saved = p.slackChannel ?? '';
-    const raw = typed.has(key) ? typed.get(key) : saved;
-    const bad = channelProblem(raw);
-    const next = raw.trim();
-    return [
-      h('input', {
-        id: `channel-${p.name}`, class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', size: 13, placeholder: 'Slack channel ID', value: raw,
-        'aria-label': `Slack channel for ${p.repo}`, 'aria-invalid': bad ? 'true' : null, title: bad || 'Its pull requests go here. Empty: the Slack card\'s channel.',
-        oninput: (e) => { typed.set(key, e.target.value); render(); },
-      }),
-      h('button', {
-        type: 'button', class: 'btn btn-quiet btn-sm', disabled: Boolean(bad) || next === saved,
-        onclick: () => rowAction(p, async () => {
-          data = { ...data, ...(await W.postJson('/api/console-settings/projects/slack-channel', { name: p.name, channel: next })) };
-          typed.delete(key);
-          return `Its next pull request goes to ${next || 'the Slack card\'s channel'}. Invite the bot to the channel first.`;
-        }),
-      }, 'Save'),
-    ];
-  }
-
   function projectRow(p) {
     const live = p.sessions ? `${p.sessions} ${p.sessions === 1 ? 'session' : 'sessions'} running or kept` : 'no sessions running';
     return h('div', { class: 'data-row' },
       h('div', { style: 'min-width: 0' },
-        h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name)),
+        h('div', { class: 'data-title' }, h('b', null, p.repo), h('span', { class: 'rref' }, p.name),
+          // Whether sessions can start on it (databaseGate.mjs): a word, never a colour alone.
+          p.blocker ? h('span', { class: 'pill is-warn' }, 'Needs setup') : p.blocker === null && h('span', { class: 'pill is-ok' }, 'Ready')),
         h('div', { class: 'data-meta' },
           h('span', null, p.default ? 'default project' : p.source === 'host' ? 'added' : p.removable ? `added by @${p.addedBy || 'unknown'}` : 'set in the installation\'s configuration'),
           h('span', null, live),
-          data.slack && h('span', null, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the Slack card\'s channel')),
+          data.slack && h('span', null, h('a', { href: `/console-settings/repos/${encodeURIComponent(p.name)}#slack`, title: 'Change it on the repo\'s Settings' }, p.slackChannel ? `PRs to ${p.slackChannel}` : 'PRs to the console\'s channel'))),
         data.palette && colorPicker(p)),
-      h('div', { class: 'data-actions' }, data.slack && channelField(p),
-        h('a', { class: 'btn btn-quiet btn-sm', href: `/console-settings/repos/${encodeURIComponent(p.name)}`, 'aria-label': `Settings of ${p.repo}: env files and instructions` }, 'Settings'),
+      h('div', { class: 'data-actions' },
+        h('a', { class: 'btn btn-quiet btn-sm', href: `/console-settings/repos/${encodeURIComponent(p.name)}`, 'aria-label': `Settings of ${p.repo}: env files, instructions and Slack channel` }, 'Settings'),
         p.removable && h('button', {
           type: 'button', class: 'btn btn-quiet btn-sm', disabled: p.sessions > 0, title: p.sessions ? 'Stop or delete its sessions first' : null,
           onclick: () => rowAction(p, async () => {
@@ -226,6 +205,7 @@
             return null;
           }),
         }, 'Remove')),
+      p.blocker && h('div', { style: 'grid-column: 1 / -1' }, W.blockerCard(p.blocker, { head: false, admin: true })),
       rowNotes.get(p.name) && h('p', { class: rowNotes.get(p.name).bad ? 'form-error' : 'sub', role: rowNotes.get(p.name).bad ? 'alert' : 'status', style: 'grid-column: 1 / -1; margin: 0' }, rowNotes.get(p.name).text));
   }
 
@@ -361,7 +341,7 @@
     if (!data.projects) return null;
     return h('section', { class: 'settings-card', 'aria-labelledby': 'card-projects' },
       h('h2', { id: 'card-projects', class: 'label' }, 'Repos'),
-      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack, the poll and the database check use. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. A repo\'s Slack channel takes its pull requests; empty sends them to the Slack card\'s channel. Settings has a repo\'s env file values and instructions.'),
+      h('p', { class: 'sub' }, 'The repos sessions can start on. The default one is what questions from Slack use. Each repo\'s own project file says which databases its sessions need, so each is checked on its own: one that cannot start sessions says Needs setup, with why and how to fix it. ', repoChoices?.via === 'gh' ? 'Sessions push with the console\'s gh login, so it must be able to push to a repo added here.' : 'The GitHub App must be given access to a repo before it is added here.', ' An added repo applies at once, with no restart. With more than one, each repo\'s colour marks its sessions on the rail: pick one and it is saved at once. Settings has a repo\'s env file values, instructions and the Slack channel its pull requests go to.'),
       data.projects.length ? h('div', { class: 'data-list' }, data.projects.map(projectRow))
         : h('p', { class: 'cap-note' }, 'No repo yet, so no session can start. The first one added becomes the default.'),
       h('div', { class: `set-row${repoForm.error ? ' is-bad' : ''}`, style: 'margin-top: 8px' },
@@ -676,6 +656,64 @@
       h('p', { class: 'sub', style: 'font-size: 12.5px' }, totalsLine(d)));
   }
 
+  // Each source of webhooks, switched off on its own (webhookSwitch.mjs). No typed confirm: a switch is undone by
+  // turning it back, and is logged with who turned it. Only where webhooks reach the console at all, or while one is off.
+  // What only a GitHub webhook starts: the poll finds none of it (webhookDispatch.pollMisses).
+  const WEBHOOK_ONLY = 'QA labels, QA after a review, the automatic QA label, reviews started by a commit\'s tag and Needs a human messages to the assignee';
+  const WEBHOOK_SWITCHES = [
+    {
+      source: 'github', label: 'GitHub webhooks',
+      on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
+      off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
+    },
+    {
+      source: 'slack', label: 'Slack questions',
+      on: 'On: the console answers each mention of its Slack bot in a session of its own. Off, it drops them.',
+      off: (dropped) => `the console drops each mention of its Slack bot${dropped}, so questions in Slack go unanswered. Webhook events lists them as ignored.`,
+    },
+  ];
+  let switching = null;
+  let switchError = null;
+
+  async function flipWebhooks(source, off) {
+    switching = source;
+    switchError = null;
+    render();
+    try {
+      data = { ...data, ...(await W.postJson('/api/console-settings/webhooks', { source, off })) };
+    } catch (err) {
+      switchError = { source, text: err.message };
+    }
+    switching = null;
+    render();
+  }
+
+  function webhookSwitchRow(s) {
+    const state = data.webhooks?.[s.source];
+    if (!state || (!data.webhooks.receiving && !state.off)) return null;
+    const on = !state.off;
+    const since = state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : '';
+    const labelId = `webhooks-switch-${s.source}`;
+    return h('div', { class: `toggle-row webhook-switch${on ? '' : ' is-off'}` },
+      h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': labelId, disabled: Boolean(switching),
+        onclick: () => flipWebhooks(s.source, on),
+      }),
+      h('span', { class: 'toggle-label', id: labelId }, s.label),
+      h('p', { class: 'sub' }, on ? s.on : `Off${since}: ${s.off(state.dropped ? ` (${state.dropped} so far)` : '')}`),
+      switchError?.source === s.source ? h('p', { class: 'form-error', role: 'alert' }, switchError.text) : null);
+  }
+
+  function webhooksCard() {
+    const rows = WEBHOOK_SWITCHES.map(webhookSwitchRow).filter(Boolean);
+    if (!rows.length) return null;
+    return h('section', { class: 'settings-card', id: 'webhooks', 'aria-labelledby': 'card-webhooks' },
+      h('h2', { id: 'card-webhooks', class: 'label' }, 'Webhooks'),
+      h('p', { class: 'sub' }, 'What reaches the console from GitHub and Slack as it happens. Each change applies at once, and is logged with who made it. ',
+        h('a', { href: '/events' }, 'Webhook events'), ' lists what came in.'),
+      h('div', { class: 'webhook-switches' }, rows));
+  }
+
   // Fields render as they are typed in, so a Save turns on before the field loses focus: the page is drawn again with
   // the same field focused, its caret where it was. A render that starts inside another (a blur the swap fired) is
   // skipped, since the outer one draws the same state.
@@ -708,7 +746,7 @@
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
   }
 
   async function load() {

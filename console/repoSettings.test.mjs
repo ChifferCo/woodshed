@@ -26,7 +26,7 @@ const FILES = {
   app: parseProject({
     version: 1, env: { NODE_ENV: 'development' }, rules: '.woodshed/rules.md',
     envFiles: [
-      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE_X=off'], lines: ['PORT={{PORT}}', 'ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}'] },
+      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE_X=off'], overrides: ['PORT={{PORT}}', 'ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}}'] },
       { path: 'web/.env.local' },
     ],
   }),
@@ -98,7 +98,7 @@ test('a save keeps the value in the store, and state.json its date, size and key
 
   const view = await repoSettings.view('app', { login: 'sam-ops' });
   const api = view.envFiles.find((f) => f.key === 'api-env');
-  assert.deepEqual(api.wiring, { lines: ['PORT', 'ANTHROPIC_API_KEY'], optional: ['ANTHROPIC_API_KEY'], env: ['NODE_ENV'] });
+  assert.deepEqual(api.wiring, { overrides: ['PORT', 'ANTHROPIC_API_KEY'], optional: ['ANTHROPIC_API_KEY'], env: ['NODE_ENV'] });
   assert.deepEqual(api.table.map((row) => [row.key, row.wins]), [
     ['LOG_LEVEL', 'personal'], ['FEATURE_X', 'repo'], ['API_URL', 'installation'], ['API_TOKEN', 'personal'], ['PORT', 'session'], ['ANTHROPIC_API_KEY', 'session'],
   ]);
@@ -114,12 +114,12 @@ test('a save keeps the value in the store, and state.json its date, size and key
   assert.equal(store.state.people['sam-ops'].repos, undefined);
 });
 
-test('env files that name one secret are one key, with every path, one set of values and each file\'s own defaults and lines', async () => {
+test('env files that name one secret are one key, with every path, one set of values and each file\'s own defaults and overrides', async () => {
   const shared = parseProject({
     version: 1, envFiles: [
-      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
-      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
-      { path: 'web/.env.local', lines: ['PORT=5173'] },
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080', 'SQL_URL={{PG_URL}}'] },
+      { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker', 'SQL_URL={{PG_URL}}'] },
+      { path: 'web/.env.local', overrides: ['PORT=5173'] },
     ],
   });
   const { secrets, repoSettings } = setup({ files: { ...FILES, app: shared } });
@@ -130,7 +130,7 @@ test('env files that name one secret are one key, with every path, one set of va
   const view = await repoSettings.view('app', { login: 'sam-ops' });
   assert.deepEqual(view.envFiles.map((f) => [f.key, f.paths]), [['app-env', ['api/.env', 'worker/.env']], ['web-env-local', ['web/.env.local']]]);
   const app = view.envFiles[0];
-  assert.deepEqual(app.files.map((f) => [f.path, f.defaults, f.wiring.lines]), [['api/.env', ['LOG_LEVEL=info'], ['PORT', 'SQL_URL']], ['worker/.env', [], ['ROLE', 'SQL_URL']]]);
+  assert.deepEqual(app.files.map((f) => [f.path, f.defaults, f.wiring.overrides]), [['api/.env', ['LOG_LEVEL=info'], ['PORT', 'SQL_URL']], ['worker/.env', [], ['ROLE', 'SQL_URL']]]);
   assert.equal(app.installation.bytes, Buffer.byteLength('LOG_LEVEL=warn\nAPI_TOKEN=x\n'));
   assert.deepEqual(app.table.map((row) => [row.key, row.setBy.join(' '), row.wins, row.path ?? null]), [
     ['LOG_LEVEL', 'repo installation', 'installation', 'api/.env'], ['LOG_LEVEL', 'installation', 'installation', 'worker/.env'],
@@ -300,8 +300,8 @@ test('Console settings → a repo\'s settings are an admin\'s; My settings\' a w
   assert.deepEqual(results.ownRead, { status: 200, body: { text: OWN_ENV, installation: INSTALLATION_ENV } }, 'a writer reads the installation\'s values');
   assert.equal(results.ownView.body.instructions.personal.bytes, Buffer.byteLength(INSTRUCTIONS));
   assert.deepEqual(results.list.body.repos, [
-    { project: 'app', repo: 'acme/app', envFiles: [], instructions: false },
-    { project: 'tools', repo: 'acme/tools', envFiles: ['web-env-local'], instructions: true },
+    { project: 'app', repo: 'acme/app', envFiles: [], instructions: false, files: 0 },
+    { project: 'tools', repo: 'acme/tools', envFiles: ['web-env-local'], instructions: true, files: 0 },
   ]);
   assert.deepEqual(results.adminOwnRead, { status: 200, body: { text: '', installation: INSTALLATION_ENV } }, 'an admin reads their own layer, never sam\'s');
   for (const name of ['cannotRead', 'cannotView', 'cannotWrite']) assert.equal(results[name].status, 403, name);
@@ -334,40 +334,151 @@ test('the session hand-out logs keys and layers, never a value', async () => {
 
 test('the routes: each path names one, and nothing else is one', () => {
   assert.deepEqual(repoSettingsRoute('/api/console-settings/repos/app/env/api-env/remove'), { scope: 'admin', project: 'app', key: 'api-env', remove: true, instructions: false });
-  assert.deepEqual(repoSettingsRoute('/api/my/repos/app/instructions'), { scope: 'my', project: 'app', key: null, remove: false, instructions: true });
-  assert.deepEqual(repoSettingsRoute('/api/my/repos'), { scope: 'my', project: null, key: null, remove: false, instructions: false });
-  for (const path of ['/api/console-settings/projects/repos', '/api/my/repos/app/env', '/api/my/repos/app/env/a/remove', '/api/my/reposx']) assert.equal(repoSettingsRoute(path), null, path);
+  assert.deepEqual(repoSettingsRoute('/api/my/repos/app/instructions'), { scope: 'my', project: 'app', key: null, remove: false, instructions: true, files: false });
+  assert.deepEqual(repoSettingsRoute('/api/my/repos'), { scope: 'my', project: null, key: null, remove: false, instructions: false, files: false });
+  assert.deepEqual(repoSettingsRoute('/api/my/repos/app/files'), { scope: 'my', project: 'app', key: null, remove: false, instructions: false, files: true });
+  assert.deepEqual(repoSettingsRoute('/api/my/own-files'), { scope: 'my', project: null, key: null, remove: false, instructions: false, files: true, oldFiles: true });
+  for (const path of ['/api/console-settings/projects/repos', '/api/my/repos/app/env', '/api/my/repos/app/env/a/remove', '/api/my/reposx', '/api/my/repos/app/files/x', '/api/my/own-filesx']) assert.equal(repoSettingsRoute(path), null, path);
 });
 
-test('state from before this release reads as nothing: no copy, no fallback, no old route', async (t) => {
-  // What a console that ran the fallback release left: its copy's record, a value it copied, and a person's old own
-  // lines, all still in the store next to the old Terraform secret.
-  const secrets = memorySecrets({
-    'api-env': `API_URL=http://legacy\nLEGACY=${SECRET_MARK}\n`, 'users/sam-ops/api-env': `OLD=${SECRET_MARK}\n`,
-    'repos/app/env/api-env': INSTALLATION_ENV,
+
+test('the old route of an env file\'s own lines is gone: /api/my/files names tmux-conf alone, and an old own-lines secret is never read', async (t) => {
+  const secrets = memorySecrets({ 'api-env': 'API_URL=http://legacy\n', 'users/sam-ops/api-env': `OLD=${SECRET_MARK}\n` });
+  const { call } = await startConsole(t, { secrets, people: { 'sam-ops': { files: { 'api-env': '2026-10-01T00:00:00.000Z' } } } });
+  const old = await call('sam-ops', 'GET', '/api/my/files/api-env');
+  assert.notEqual(old.status, 200);
+  assert.ok(!JSON.stringify(old.body).includes(SECRET_MARK));
+  const saved = await call('sam-ops', 'POST', '/api/my/files/api-env', { text: 'X=1\n' });
+  assert.notEqual(saved.status, 200);
+  assert.equal(secrets.values.has('users/sam-ops/repos/app/env/api-env'), false, 'nothing lands in repo settings the old way');
+  assert.equal((await call('sam-ops', 'POST', '/api/my/files/tmux-conf', { text: 'set -g mouse on\n' })).status, 200, 'tmux-conf stays My settings\' own');
+});
+
+test('a session is handed repo settings alone: an old Terraform env file secret in the store is never copied in', async () => {
+  const secrets = memorySecrets({ 'api-env': 'API_URL=http://legacy\n' });
+  const { repoSettings } = setup({ secrets });
+  assert.deepEqual((await repoSettings.forSession({ id: 's1', project: 'app', owner: null })).envFiles, {});
+  assert.equal(secrets.values.has('repos/app/env/api-env'), false);
+  assert.equal((await repoSettings.view('app')).envFiles[0].legacy, undefined, 'the view names no Terraform secret');
+});
+
+test('a person\'s own whole files are kept for each repo apart, by path, and a session gets its own repo\'s alone', async () => {
+  const { repoSettings, secrets, store } = setup();
+  const lines = await captureLog(async () => {
+    assert.deepEqual(await repoSettings.ownFiles({ login: 'sam-ops', project: 'app' }), {}, 'none yet');
+    assert.deepEqual(await repoSettings.saveOwnFile({ login: 'Sam-Ops', project: 'app', path: ' app/.env.production ', text: `NOTION_TOKEN=${SECRET_MARK}\r\n` }),
+      { 'app/.env.production': `NOTION_TOKEN=${SECRET_MARK}\n` });
+    await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: '.mcp.local.json', text: '{}' });
+    await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'tools', path: 'app/.env.production', text: `TOOLS=${SECRET_MARK}` });
   });
-  const people = { 'sam-ops': { files: { 'api-env': '2026-10-01T00:00:00.000Z' } } };
-  const { call, store, secrets: held } = await startConsole(t, { secrets, people });
-  store.state.repoSettingsMigration = { copiedAt: '2026-10-01T00:00:00.000Z', from: 'terraform env_files', files: { 'api-env': '2026-10-01T00:00:00.000Z' } };
-  store.state.repoSettings = { app: { env: { 'api-env': { savedAt: '2026-10-01T00:00:00.000Z', by: 'terraform env_files', bytes: 10, keys: ['API_URL'] } } } };
+  assert.deepEqual(JSON.parse(secrets.values.get('users/sam-ops/repos/app/files')), { 'app/.env.production': `NOTION_TOKEN=${SECRET_MARK}\n`, '.mcp.local.json': '{}' });
+  assert.deepEqual(JSON.parse(secrets.values.get('users/sam-ops/repos/tools/files')), { 'app/.env.production': `TOOLS=${SECRET_MARK}` }, 'one path, a different text a repo');
+  assert.deepEqual((await repoSettings.view('app', { login: 'sam-ops' })).files, [
+    { path: '.mcp.local.json', savedAt: '2026-11-12T10:00:02.000Z' },
+    { path: 'app/.env.production', savedAt: '2026-11-12T10:00:01.000Z' },
+  ], 'a save keeps the others\' times');
+  assert.equal((await repoSettings.view('app')).files, undefined, 'the admin\'s page has no one\'s files');
+  assert.equal(repoSettings.summary('sam-ops', { name: 'app', repo: 'acme/app' }).files, 2);
+  assert.equal(JSON.stringify(store.state).includes(SECRET_MARK), false, 'state.json never holds the text');
+  assert.deepEqual(lines.filter((l) => l.includes(SECRET_MARK)), [], 'nor does the log');
+  assert.ok(lines.some((l) => l.includes('repoSettings: own file saved') && l.includes("'app/.env.production'")));
 
-  const view = (await call('sam-ops', 'GET', '/api/my/repos/app')).body;
-  const api = view.envFiles.find((f) => f.key === 'api-env');
-  assert.equal(api.installation.by, 'terraform env_files', 'a value the copy made stays the installation\'s');
-  assert.equal('legacy' in api, false, 'no file says it is read from a Terraform secret');
-  assert.equal(api.personal, null, 'the old own lines are not this person\'s repo settings');
-
-  const { repoSettings } = setup({ state: store.state, secrets: held });
-  assert.equal('migrate' in repoSettings, false, 'nothing is copied at start');
-  const handed = await repoSettings.forSession({ id: 'a1', project: 'app', owner: 'sam-ops' });
-  assert.deepEqual(handed.envFiles, { 'api-env': { installation: INSTALLATION_ENV, personal: null } }, 'neither old secret is handed out');
-
-  for (const [method, path] of [['GET', '/api/my/files/api-env'], ['POST', '/api/my/files/api-env'], ['POST', '/api/my/files/api-env/reset']]) {
-    const answer = await call('sam-ops', method, path, method === 'POST' ? { text: 'X=1\n' } : undefined);
-    // What My settings answers for a file it does not keep: only tmux-conf is one now.
-    assert.equal(answer.status, method === 'GET' ? 404 : 409, `${method} ${path}: the old route is gone`);
-    assert.match(answer.body.error, /no file called api-env/);
+  assert.deepEqual(await repoSettings.filesForSession({ id: 'a1', project: 'tools', owner: 'sam-ops' }), { 'app/.env.production': `TOOLS=${SECRET_MARK}` });
+  assert.deepEqual(Object.keys(await repoSettings.filesForSession({ id: 'a2', repo: 'acme/app', owner: 'sam-ops' })), ['app/.env.production', '.mcp.local.json']);
+  for (const session of [{ id: 's', project: 'app' }, { id: 'q', project: 'app', owner: 'sam-ops', qa: { pr: 1 } }, { id: 'k', project: 'app', owner: 'sam-ops', kind: 'ask' }, { id: 'm', project: 'app', owner: 'mia-dev' }]) {
+    assert.deepEqual(await repoSettings.filesForSession(session), {}, session.id);
   }
-  assert.equal(held.values.get('users/sam-ops/api-env'), `OLD=${SECRET_MARK}\n`, 'and wrote nothing');
-  assert.equal(held.values.has('users/sam-ops/repos/app/env/api-env'), false);
+
+  await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'tools', path: 'app/.env.production', text: '  ' });
+  assert.equal(secrets.values.has('users/sam-ops/repos/tools/files'), false, 'the last one removed takes the value with it');
+  assert.equal(store.state.people['sam-ops'].repos.tools, undefined);
+  await repoSettings.forgetPerson('sam-ops');
+  assert.deepEqual([...secrets.values.keys()], [], 'Remove My Woodshed deletes them');
+});
+
+test('an own file is refused for a bad path, an env file of its own repo, an unread project file or past the store\'s limit', async () => {
+  const unread = Object.assign(new Error('GitHub did not answer'), {});
+  const { repoSettings } = setup({ files: { ...FILES, tools: unread } });
+  for (const [file, message] of [['/etc/passwd', /leading/], ['../x', /\.\./], ['.git/config', /git's own/], ['a b', /letters/], ['api/.env', /one of acme\/app's env files/]]) {
+    await assert.rejects(repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: file, text: 'x' }), (err) => err.shown && message.test(err.message), file);
+  }
+  await assert.rejects(repoSettings.saveOwnFile({ login: 'sam-ops', project: 'tools', path: 'api/.env', text: 'x' }), (err) => err.status === 409 && /could not be read/.test(err.message), 'not checked, so not kept');
+  await assert.rejects(repoSettings.saveOwnFile({ login: 'sam-ops', project: 'nope', path: 'a', text: 'x' }), (err) => err.status === 404);
+  await assert.rejects(repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: 'big', text: 'x'.repeat(70_000) }), /over the 64 KB this console's secret store holds/);
+  for (let i = 0; i < 20; i += 1) await repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: `f${i}`, text: 'x' });
+  await assert.rejects(repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: 'f20', text: 'x' }), /20 files a repo at most/);
+
+  const roomy = memorySecrets();
+  roomy.maxValueBytes = 1_048_576;
+  const big = setup({ secrets: roomy }).repoSettings;
+  assert.equal((await big.view('app', { login: 'sam-ops' })).filesMaxBytes, 1_048_576);
+  assert.equal((await big.saveOwnFile({ login: 'sam-ops', project: 'app', path: 'big', text: 'x'.repeat(70_000) })).big.length, 70_000);
+});
+
+test('own files from before they were per repo move into the default project once, and never over files already there', async () => {
+  const at = '2026-10-01T00:00:00.000Z';
+  const secrets = memorySecrets({
+    'users/sam-ops/own-files': JSON.stringify({ 'app/.env.production': `A=${SECRET_MARK}` }),
+    'users/mia-dev/own-files': JSON.stringify({ old: 'x', both: 'old' }),
+    'users/mia-dev/repos/app/files': JSON.stringify({ new: 'y', both: 'new' }),
+    'users/ana-k/own-files': JSON.stringify({ big: 'x'.repeat(40_000) }),
+    'users/ana-k/repos/app/files': JSON.stringify({ mine: 'y'.repeat(40_000) }),
+  });
+  const people = {
+    'sam-ops': { ownFiles: { 'app/.env.production': at } },
+    'mia-dev': { ownFiles: { old: at, both: at }, repos: { app: { files: { new: at, both: at } } } },
+    'ana-k': { ownFiles: { big: at }, repos: { app: { files: { mine: at } } } },
+  };
+  const { repoSettings, store } = setup({ state: { people }, secrets });
+
+  const lines = await captureLog(async () => assert.deepEqual(await repoSettings.moveOwnFiles(), { moved: 2, kept: 1, failed: 0 }));
+  assert.deepEqual(await repoSettings.ownFiles({ login: 'sam-ops', project: 'app' }), { 'app/.env.production': `A=${SECRET_MARK}` });
+  assert.deepEqual((await repoSettings.view('app', { login: 'sam-ops' })).files, [{ path: 'app/.env.production', savedAt: at }]);
+  assert.deepEqual(await repoSettings.ownFiles({ login: 'mia-dev', project: 'app' }), { new: 'y', both: 'new', old: 'x' }, 'the old paths are added, theirs win');
+  assert.deepEqual((await repoSettings.view('app', { login: 'mia-dev' })).files.map((f) => f.path), ['both', 'new', 'old']);
+  assert.deepEqual(Object.keys(await repoSettings.ownFiles({ login: 'ana-k', project: 'app' })), ['mine'], 'together over 64 KB: theirs alone');
+  assert.ok(lines.some((l) => l.includes('ana-k') && l.includes("leftOut: [ 'big' ]")), 'and the log names what was left out');
+  assert.deepEqual([...secrets.values.keys()].filter((k) => k.endsWith('/own-files')), [], 'the old values are deleted');
+  assert.equal(store.state.people['sam-ops'].ownFiles, undefined);
+  assert.deepEqual(await repoSettings.ownFiles({ login: 'sam-ops', project: 'tools' }), {}, 'never another repo\'s');
+  assert.deepEqual(lines.filter((l) => l.includes(SECRET_MARK)), []);
+  assert.deepEqual(await repoSettings.moveOwnFiles(), { moved: 0, kept: 0, failed: 0 }, 'a second start finds nothing');
+
+  const failing = memorySecrets({ 'users/sam-ops/own-files': '{"a":"b"}' });
+  failing.save = async () => { throw new Error('AccessDeniedException'); };
+  const second = setup({ state: { people: { 'sam-ops': { ownFiles: { a: at } } } }, secrets: failing });
+  await captureLog(async () => assert.deepEqual(await second.repoSettings.moveOwnFiles(), { moved: 0, kept: 0, failed: 1 }));
+  assert.equal(failing.values.has('users/sam-ops/own-files'), true, 'kept, for the next start');
+  assert.deepEqual(second.store.state.people['sam-ops'].ownFiles, { a: at });
+});
+
+test('My settings reads and saves own files for a repo the person can write to, and the old route is the default project\'s', async (t) => {
+  const { call, secrets } = await startConsole(t);
+  const results = {};
+  const lines = await captureLog(async () => {
+    results.save = await call('sam-ops', 'POST', '/api/my/repos/tools/files', { path: 'app/.env.production', text: `T=${SECRET_MARK}`, login: 'ana-k' });
+    results.read = await call('sam-ops', 'GET', '/api/my/repos/tools/files');
+    results.other = await call('sam-ops', 'GET', '/api/my/repos/app/files');
+    results.cannotRead = await call('ana-k', 'GET', '/api/my/repos/tools/files');
+    results.cannotWrite = await call('ana-k', 'POST', '/api/my/repos/tools/files', { path: 'a', text: 'x' });
+    results.crossOrigin = await call('sam-ops', 'POST', '/api/my/repos/tools/files', { path: 'a', text: 'x' }, { origin: 'https://evil.example' });
+    results.badPath = await call('sam-ops', 'POST', '/api/my/repos/tools/files', { path: '../x', text: 'x' });
+    results.oldSave = await call('sam-ops', 'POST', '/api/my/own-files', { path: '.mcp.local.json', text: '{}' });
+    results.oldRead = await call('sam-ops', 'GET', '/api/my/own-files');
+    results.tooBig = await call('sam-ops', 'POST', '/api/my/repos/app/files', { path: 'big', text: 'x'.repeat(300_000) });
+  });
+  assert.equal(results.save.status, 200);
+  assert.deepEqual(results.save.body.files, { 'app/.env.production': `T=${SECRET_MARK}` });
+  assert.deepEqual(results.save.body.view.files.map((f) => f.path), ['app/.env.production'], 'the repo\'s view comes with the answer');
+  assert.deepEqual(results.read.body, { files: { 'app/.env.production': `T=${SECRET_MARK}` } });
+  assert.deepEqual(results.other.body, { files: {} }, 'the other repo has none');
+  assert.equal(secrets.values.has('users/ana-k/repos/tools/files'), false, 'never the login a body names');
+  for (const name of ['cannotRead', 'cannotWrite', 'crossOrigin']) assert.equal(results[name].status, 403, name);
+  assert.equal(results.badPath.status, 400);
+  assert.equal(results.oldSave.status, 200);
+  assert.equal(results.oldSave.body.view.login, 'sam-ops', 'the old page gets My settings\' view, as it did');
+  assert.deepEqual(JSON.parse(secrets.values.get('users/sam-ops/repos/app/files')), { '.mcp.local.json': '{}' });
+  assert.deepEqual(results.oldRead.body, { files: { '.mcp.local.json': '{}' } });
+  assert.equal(results.tooBig.status, 413, 'past what the store could hold, even escaped');
+  assert.deepEqual(lines.filter((l) => l.includes(SECRET_MARK)), []);
 });

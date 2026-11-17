@@ -1,0 +1,83 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync, spawn } from 'node:child_process';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+
+const HERE = import.meta.dirname;
+const REVIEW_SH = path.join(HERE, 'review.sh');
+const REVIEW_MJS = path.join(HERE, '../shared/codeReview/codeReview.mjs');
+
+// A fake claude that reviews only when it is given a prompt naming the repo, as the real one needs a prompt at all.
+const FAKE_CLAUDE = `#!/bin/bash
+prompt=$4
+if [ -z "$prompt" ]; then echo '{"type":"result","subtype":"error_during_execution","is_error":true}'; exit 1; fi
+case "$prompt" in *Acme/widgets/blob/*) ;; *) echo '{"type":"result","subtype":"wrong_repo","is_error":true}'; exit 1 ;; esac
+dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
+echo APPROVE > "$dir/verdict.txt"
+echo 'Looks right.' > "$dir/summary.md"
+printf 'LOW\\nOnly a docs page.\\n' > "$dir/merge-risk.md"
+echo '[{"path":"README.md","line":1,"body":"Say what it is for."}]' > "$dir/inline-comments.json"
+echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.25}'
+`;
+
+function listen(handler) {
+  const server = http.createServer(handler);
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+}
+
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git' } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const sessionDir = path.join(dir, 'session');
+  const bin = path.join(dir, 'fakebin');
+  const repo = path.join(dir, 'repo');
+  fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
+  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -qm base ${origin ? `&& git remote add origin "${origin}"` : ''}`]);
+  const reports = [];
+  const consoleServer = await listen((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      reports.push({ path: req.url, body: JSON.parse(body) });
+      res.writeHead(204).end();
+    });
+  });
+  t.after(() => consoleServer.close());
+  const env = {
+    ...process.env, PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', REVIEW_BASE: 'main',
+    SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, REVIEW_SCRIPT: REVIEW_MJS,
+    REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
+  };
+  delete env.GITHUB_REPOSITORY;
+  let output = '';
+  await new Promise((resolve) => {
+    const child = spawn('bash', [REVIEW_SH], { env });
+    child.stdout.on('data', (c) => { output += c; });
+    child.stderr.on('data', (c) => { output += c; });
+    child.on('close', resolve);
+  });
+  return { reports, output };
+}
+
+test('a review in a session, where GitHub Actions\' variables are not set, finds its repo from the checkout and reports the verdict', async (t) => {
+  const { reports, output } = await runReview(t);
+  assert.match(output, /Reviewing the diff of Acme\/widgets/);
+  assert.match(output, /Claude ended \(subtype=success is_error=false turns=3\)/);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].path, '/review-report');
+  assert.equal(reports[0].body.conclusion, 'APPROVE');
+  assert.deepEqual(reports[0].body.inlineComments, [{ path: 'README.md', line: 1, body: 'Say what it is for.' }]);
+});
+
+test('a review that cannot name its repo says so and reports no verdict, rather than starting claude with no prompt', async (t) => {
+  const { reports, output } = await runReview(t, { origin: null });
+  assert.match(output, /Could not write the review prompt/);
+  assert.equal(reports[0].body.conclusion, null);
+});

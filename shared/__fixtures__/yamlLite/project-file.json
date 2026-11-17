@@ -41,7 +41,7 @@
     {
       "path": "api/.env",
       "secret": "api-env",
-      "lines": [
+      "overrides": [
         "DB_HOST={{PGHOST}}",
         "DB_PASSWD=\"{{PGPASSWORD}}\"",
         "DB_TEST_NAME={{PGDATABASE}}_test",
@@ -52,7 +52,7 @@
     {
       "path": "web/.env.local",
       "secret": "web-env",
-      "lines": [
+      "overrides": [
         "API_URL=http://localhost:9000"
       ]
     }

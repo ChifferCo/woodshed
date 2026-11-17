@@ -16,7 +16,6 @@
 
   function savedLine(record) {
     if (!record) return 'None yet.';
-    // A value an older console copied from its Terraform env file secret says so.
     const by = record.by === 'terraform env_files' ? 'copied from Terraform' : record.by ? `by @${record.by}` : '';
     return [`Saved ${W.when(record.savedAt)}`, by, `${record.bytes.toLocaleString()} bytes`, record.keys && plural(record.keys.length, 'key', 'keys')].filter(Boolean).join(' · ');
   }
@@ -44,11 +43,11 @@
 
   const pathHead = (filePath) => filePath && h('p', { class: 'layer-path mono' }, filePath);
 
-  // Under a key several env files name: its values are written to each, which keeps its own defaults and lines.
+  // Under a key several env files name: its values are written to each, which keeps its own defaults and overrides.
   function sharedNote(f) {
     const paths = pathsOf(f);
     return h('p', { class: 'cap-note' }, `These values are written to ${paths.length === 2 ? 'both files' : `all ${paths.length} files`}, `,
-      keyList(paths), `, which name the secret ${f.key}. Each keeps its own defaults and lines.`);
+      keyList(paths), `, which name the secret ${f.key}. Each keeps its own defaults and overrides.`);
   }
 
   function defaultsLayer(f, repo) {
@@ -60,9 +59,9 @@
 
   function wiringParts(wiring) {
     const optional = new Set(wiring.optional);
-    const always = wiring.lines.filter((k) => !optional.has(k));
+    const always = wiring.overrides.filter((k) => !optional.has(k));
     return [
-      always.length && h('p', { class: 'layer-text' }, 'Its lines: ', keyList(always), '.'),
+      always.length && h('p', { class: 'layer-text' }, 'Its overrides: ', keyList(always), '.'),
       optional.size > 0 && h('p', { class: 'layer-text' }, 'Only when the session has a value for it: ', keyList([...optional]), '.'),
       wiring.env.length > 0 && h('p', { class: 'layer-text' }, 'The project file\'s env, set in every process: ', keyList(wiring.env), '.'),
     ].filter(Boolean);
@@ -80,10 +79,10 @@
   // A row of one path (`row.path`, where a key's files differ) is read against that path's wiring.
   const wiringOf = (f, row) => (row.path && f.files?.find((x) => x.path === row.path)?.wiring) || f.wiring;
 
-  // What wins a key the session sets itself: its lines, the project file's env, or one of Woodshed's own variables.
+  // What wins a key the session sets itself: its overrides, the project file's env, or one of Woodshed's own variables.
   function sessionCell(f, row) {
     const wiring = wiringOf(f, row);
-    if (wiring.lines.includes(row.key)) return wiring.optional.includes(row.key) ? '✓ if set' : '✓';
+    if (wiring.overrides.includes(row.key)) return wiring.optional.includes(row.key) ? '✓ if set' : '✓';
     if (wiring.env.includes(row.key)) return 'env';
     return row.wins === 'session' ? 'Woodshed' : '';
   }
@@ -126,6 +125,6 @@
   window.WoodshedRepoLayers = {
     INSTRUCTIONS_MAX_BYTES: 16 * 1024,
     NO_CREDENTIALS: 'No production credentials or integration tokens: sessions run unattended, and anything here can end up in a log, a commit or a pull request.',
-    LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules,
+    LAYER_WORDS, bytesOf, plural, pathsOf, labelOf, andList, savedLine, layer, keyList, githubFile, sharedNote, defaultsLayer, sessionLayer, keyTable, repoRules,
   };
 })();

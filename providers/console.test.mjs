@@ -105,7 +105,8 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_INSTALL_SECRE
   assert.throws(bad('registry-token=WOODSHED_TOKEN'), /one of Woodshed's own session variables/);
   assert.throws(bad('registry-token=GH_TOKEN'), /one of Woodshed's own session variables/);
   assert.throws(bad('a-token=TOKEN,b-token=TOKEN'), /pair 2 is named twice/);
-  assert.throws(bad('a-token=TOKEN,a-token=OTHER'), /pair 2 is named twice/);
+  assert.throws(bad('a-token=A,a-token=B'), /pair 2 is named twice/);
+  assert.doesNotThrow(bad('api-env=API_ENV'), 'an old env file secret\'s name is free');
   // A value pasted where a name belongs is said by its place, and never repeated into the console's log.
   assert.throws(bad('ok-token=OK,registry-token=ghp_pastedValue123'), (err) => /pair 2 is not/.test(err.message) && !err.message.includes('ghp_'));
   assert.throws(bad('registry-token=REGISTRY_TOKEN=ghp_pastedValue123'), (err) => /pair 1 is not/.test(err.message) && !err.message.includes('ghp_'));
@@ -121,7 +122,7 @@ test('Terraform refuses the same session variables for an install secret as the 
   const { SESSION_VARIABLES } = await import('../shared/reservedNames.mjs');
   const fs = await import('node:fs');
   const tf = fs.readFileSync(new URL('./aws/terraform/variables.tf', import.meta.url), 'utf8');
-  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
+  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "shared_services"'));
   const listed = /!contains\(\s*\[("SESSION_ID"[^\]]*)\]/.exec(block)?.[1] ?? '';
   assert.deepEqual([...listed.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]), [...SESSION_VARIABLES]);
   assert.match(block, /!startswith\(env_name, "WOODSHED_"\)/);
@@ -133,7 +134,7 @@ test('the console\'s own secrets are the ones Terraform refuses for an install s
   const fs = await import('node:fs');
   assert.deepEqual(secretSpecs().map((s) => s.name).sort(), [...CONSOLE_SECRETS].sort());
   const tf = fs.readFileSync(new URL('./aws/terraform/variables.tf', import.meta.url), 'utf8');
-  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
+  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "shared_services"'));
   const listed = /!contains\(\s*\[("anthropic-api-key"[^\]]*)\]/.exec(block)?.[1] ?? '';
   assert.deepEqual([...listed.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]).sort(), [...CONSOLE_SECRETS].sort());
 });
@@ -148,4 +149,9 @@ test('WOODSHED_START_CHECK=1 loads the console and its settings, then exits with
   const bad = run({ WOODSHED_PROVIDER: 'nowhere' });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /console: could not start.*unknown WOODSHED_PROVIDER "nowhere"/s);
+  // A host that writes a word for the one-person setting gets a console that stops, not one that guesses.
+  const onePerson = run({ WOODSHED_ONE_PERSON: 'yes' });
+  assert.equal(onePerson.status, 1);
+  assert.match(onePerson.stderr, /console: could not start.*WOODSHED_ONE_PERSON is 1 or 0, or not set \(it is yes\)/s);
+  assert.equal(run({ WOODSHED_ONE_PERSON: '1' }).status, 0);
 });

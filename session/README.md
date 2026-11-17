@@ -77,18 +77,16 @@ change to the stage by the workflow's run, about the time the build takes.
    A shared session never gets them: it holds no integration token.
 2. Writes the project file's env files in layers, later ones winning (`shared/repoSettings.mjs`): each file's
    `defaults` from the project file, the installation's values, a private session's owner's own lines, then the
-   file's `lines` with the databases' and shared services' addresses (see "The project file" in
+   file's `overrides` with the databases' and shared services' addresses (see "The project file" in
    `../docs/reference.md`). The installation's values and the owner's come from the console's repo settings
    (`POST /repo-settings`, console/README.md "Repo settings"), which every session but an ask fetches with the owner's
    settings (`fetchRepoSettings`). Only a private session's answer has an owner's layer: a shared or QA session's has
    none, and the session drops one it is handed without `personalFor`. The answer waits in
    `~/.config/woodshed/repo-settings.json`, readable by the session's user alone and outside the saved `~/.claude`,
-   until the env files and the rules are written, then is deleted. A layer with no value there is empty: nothing else
-   holds an env file's values, and a variable or `/settings` field an older installation still sets for one is not
-   read. Env files that name one secret share its key, so each of their paths is written the key's values, with its
-   own defaults and lines. A console from before the route answers 404: the log says `WARNING: repo settings not
-   offered by the console, so the env files have no installation or own values`, and the files have the repo's
-   defaults and the session's lines alone. Any other refusal stops the start (`could not get the repo settings from the
+   until the env files and the rules are written, then is deleted. A layer with no value there is empty. Env files
+   that name one secret share its key, so each of their paths is written the key's values, with its own defaults and
+   overrides. A console from before the route answers 404: the log says `Repo settings not offered by the console, the
+   env files get the repo's defaults alone`. Any other refusal stops the start (`could not get the repo settings from the
    console (status …)`), after the retries a 503 gets. The log says `Repo settings fetched` with each layer's keys and
    sizes, and `Env files written` with each file's layers, sizes and the keys the session's wiring replaced
    (`replaced by the session`; files that share a key are one entry, `api/.env, worker/.env from app-env (…)`, with the
@@ -102,7 +100,10 @@ change to the stage by the workflow's run, about the time the build takes.
    have no key prefix. The image keeps `redis-server` either way.
 4. Starts `claude --permission-mode auto` in tmux, through `session/bin/claude`, inline (never Claude Code's full-screen
    renderer, nor codex's alternate screen, so the conversation stays in tmux's history and the browser's scrollback), with the task as its first message and the rules
-   in `prompt.md`, then the project's own (`.woodshed/rules.md` here), then the installation's instructions for the
+   in `prompt.md` with `appAddress.md` (the app's `https://<SESSION_ID>.<SESSION_APP_DOMAIN>/` address, since the person
+   cannot reach the session's localhost) and, for a repo whose project file has no app or that has none, `noApp.md`
+   (what Set up app does, for claude to offer it in a private session, and in a shared one to run the app for its proof without committing the file;
+   `appRules`), then the project's own (`.woodshed/rules.md` here), then the installation's instructions for the
    repo and the private session's owner's own from the repo settings, with which of them win (`Instructions added to
    the rules` in the log, with their sizes), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. Auto mode runs
    routine work without asking and refuses risky actions; a session stuck on
@@ -129,7 +130,10 @@ from ECS: `machine` once the task has an address, and `pullStarted` when Fargate
 began pulling the image, which its tick reads up to 10 seconds late. It keeps
 their times as `startSteps`. While a
 session starts, its page shows them as a checklist with a clock, and the rail
-and the Shared page name the step it is on. The console also asks a starting
+and the Shared page name the step it is on. Its last row, Connecting to the
+session, is the console's own: the wait from claude opening until the console
+reads the session's statusd, which it can only once the launcher has answered
+with the session's address. The console also asks a starting
 session's statusd every 2 seconds, rather than every 10, so the terminal
 opens as soon as claude does.
 
@@ -145,10 +149,10 @@ session does, from the repo settings db-admin read for the databases' env files 
 | `SESSION_TOKEN` | session | Required. statusd wants `Authorization: Bearer <token>` |
 | `TERMINAL_TOKEN` | session | ttyd's basic auth, `woodshed:<token>`. Defaults to `SESSION_TOKEN`; the console always sets its own, because ttyd hands its credential to every browser that opens the terminal |
 | `WOODSHED_CONSOLE_URL` or `GH_TOKEN` | session | Where GitHub tokens come from, to push the branch and open the PR. With the GitHub App, the console's session API: `session/githubToken.sh` fetches an hour-long installation token from it, which git's credential helper and the `gh` wrapper (`/usr/local/bin/gh`) use. Without the App, one fixed `GH_TOKEN`. Never written to `.git/config` |
-| `ANTHROPIC_API_KEY` | session | The team key, for Claude Code and the app: the docker launcher's env file only. The ECS task definition has none: claude then reaches the console's Anthropic proxy with `SESSION_TOKEN` as its key ("The Anthropic proxy" in `../console/README.md`, under My Woodshed), and the app uses whatever key its own env files hold, from their secrets or the owner's own lines |
-| `SESSION_APP_DOMAIN` | session | The domain the console's app proxy serves session apps under (`WOODSHED_APP_DOMAIN`, `apps.<domain>` on AWS), so the session's app is `<SESSION_ID>.<SESSION_APP_DOMAIN>`. Unset when the console has session apps off. Woodshed's own app (`console/bin/devConsole.mjs`) lets in that name and loopback alone; a console from before it sends none, and the dev console then lets in any name whose first label is the session id, with a warning |
-| `WOODSHED_SESSION_DOCKER`, `DOCKER_HOST` | session | `1` and `unix:///var/run/docker.sock` when the docker launcher gave the session the machine's Docker socket (`../providers/local/README.md`, "Docker in a session"); the launcher alone sets them, and drops a `WOODSHED_SESSION_DOCKER` from the session env file. With it, `writeRules` adds `hostDocker.md` to claude's rules, and `startDockerPorts` runs `dockerPorts.mjs`, which forwards each port the machine's containers publish to the same port on the session's 127.0.0.1 (`/tmp/woodshed-docker-ports.log`) |
-| `SESSION_KIND` | session | `private` for a My Woodshed session. The entrypoint fetches its owner's settings from the session API (`POST /settings`). Their own lines for the env files (the repo settings' personal layer, from My settings' Repo settings card) and `~/.tmux.conf` (the `/settings` answer's `files`, whose only file is `tmux-conf`), where they keep some, go after the installation's text and the image's tmux config, and the overrides still go on top. Their own instructions for the repo go after the installation's in the rules. Their own whole files (`ownFiles`) are written after the env files by `session/ownFiles.mjs`, only where git ignores the path and does not track it (`Own files written` in the log, or a `WARNING` naming each one skipped and why). claude runs on their plan, directly: the `/settings` answer carries their Claude token, which becomes claude's `CLAUDE_CODE_OAUTH_TOKEN`, with no `ANTHROPIC_API_KEY` or `ANTHROPIC_BASE_URL`. That token is inference-only, so `/remote-control` needs `/woodshed:remote-control` (the `session/claudePlugin` command, passed with `--plugin-dir`, which runs `woodshed-login`: `claude auth login` in a tmux session of its own, the code pasted in the chat, then claude reopened with `--resume`) in that session; the login is per session, since refresh tokens rotate, and a restored home drops it |
+| `ANTHROPIC_API_KEY` | session | The team key, for Claude Code and the app: the docker launcher's env file only. The ECS task definition has none: claude then reaches the console's Anthropic proxy with `SESSION_TOKEN` as its key ("The Anthropic proxy" in `../console/README.md`, under My Woodshed), and the app uses whatever key its own env files hold, from the repo settings |
+| `SESSION_APP_DOMAIN` | session | The domain the console's app proxy serves session apps under (`WOODSHED_APP_DOMAIN`, `apps.<domain>` on AWS), so the session's app is `<SESSION_ID>.<SESSION_APP_DOMAIN>`, which `appRules` gives claude (`appAddress.md`). Unset when the console has session apps off. Woodshed's own app (`console/bin/devConsole.mjs`) lets in that name and loopback alone; a console from before it sends none, and the dev console then lets in any name whose first label is the session id, with a warning |
+| `WOODSHED_SESSION_DOCKER`, `DOCKER_HOST` | session | `1` and `unix:///var/run/docker.sock` when the docker launcher gave the session the machine's Docker socket, `own` and the same socket when it runs the session under Sysbox with a daemon of its own (`../providers/local/README.md`, "Docker in a session"); the launcher alone sets them, and drops a `WOODSHED_SESSION_DOCKER` from the session env file. With `1`, `writeRules` adds `hostDocker.md` to claude's rules, and `startDockerPorts` runs `dockerPorts.mjs`, which forwards each port the machine's containers publish to the same port on the session's 127.0.0.1 (`/tmp/woodshed-docker-ports.log`). With `own`, the launcher runs `ownDocker.sh` as root in place of the entrypoint: it starts `dockerd` (`/tmp/woodshed-dockerd.log`), waits for it, and runs the entrypoint as `node`; `writeRules` adds `ownDocker.md` |
+| `SESSION_KIND` | session | `private` for a My Woodshed session. The entrypoint fetches its owner's settings from the session API (`POST /settings`). Their own lines for the env files (the repo settings' personal layer, from My settings' Repo settings card) and `~/.tmux.conf` (the `/settings` answer's `files`), where they keep some, go after the installation's text and the image's tmux config, and the overrides still go on top. Their own instructions for the repo go after the installation's in the rules. Their own whole files for the session's repo (`ownFiles`, from that repo's tab on Repo settings) are written after the env files by `session/ownFiles.mjs`, only where git ignores the path and does not track it (`Own files written` in the log, or a `WARNING` naming each one skipped and why). claude runs on their plan, directly: the `/settings` answer carries their Claude token, which becomes claude's `CLAUDE_CODE_OAUTH_TOKEN`, with no `ANTHROPIC_API_KEY` or `ANTHROPIC_BASE_URL`. That token is inference-only, so `/remote-control` needs `/woodshed:remote-control` (the `session/claudePlugin` command, passed with `--plugin-dir`, which runs `woodshed-login`: `claude auth login` in a tmux session of its own, the code pasted in the chat, then claude reopened with `--resume`) in that session; the login is per session, since refresh tokens rotate, and a restored home drops it |
 | `WOODSHED_PROJECT_FILES_DIR` | session | The installation's folder of project files, set by the docker launcher to `/run/woodshed-project-files`, where it mounts the session's repo's file and the image's repo's read-only, when the installation has them (`../providers/local/README.md`). Read only for a repo with no `.woodshed/project.yaml` of its own on the checkout or default branch, or one whose own file Woodshed cannot read; the log's `Project file read` then says `from: installation` (`../docs/reference.md`, "The project file"). The db-admin task takes the same folder as `--project-files-dir`, never from its environment, and hands it to `entrypoint.sh seed` |
 | `PROJECT_REPO` | session | `owner/name`, set by the console for a session on a project other than the installation's default (`WOODSHED_PROJECTS`). Every project runs in the default project's image for now, so the entrypoint clones that repo at start next to the image's checkout (`/work/<name>`, or `/work/<name>-project` when the image's checkout has that name), through the credential helper, and uses it as `REPO_DIR`; its log says `Cloning the project's repo` and `Project repo cloned`. The project's installs run then, as for any install the image has no record of. Unset, or the image's own repo, the image's checkout is used as before. The console also sets it for the default project when that is a repo an admin added on Console settings (a console that started with no repo), since no image holds its checkout. An image built with no repo (`REPO` empty in the Dockerfile, as install.sh builds `woodshed-session:generic` for a local install that names none) has no checkout: every session clones its repo, keeps the secrets the console handed it, and runs its installs at start; one with no `PROJECT_REPO` stops with `the session image has no checkout and the console named no repo` |
 | `RESUME_SESSION` | session | Resume on a stopped private session: claude's conversation id, reopened with `claude --resume` from the restored Claude home, in place of a prompt |
@@ -158,12 +162,12 @@ session does, from the repo settings db-admin read for the databases' env files 
 | `WOODSHED_MONGO_HOST` | both | Mongo's server, as `host:port`, set only where the installation hosts it (`shared/databases/mongo.mjs`); `MONGODB_URI` is made from it and the console's user and password |
 | `PGUSER`, `PGPASSWORD`, `PGDATABASE`; `MONGODB_URI` | both | Optional for a session: a database to use as it is (the docker launcher), `MONGODB_URI` whole. The ECS task definition has none, so the entrypoint asks the session API (`POST /settings`) for the databases the console made: a shared session's own, waiting while the console answers 503, or a private session's owner's, one user, password and name on every engine. Each engine then exports its own variables (`PGHOST` to `PGDATABASE`, `PGSSLMODE`, `PG_URL`; `MONGODB_URI`), which the project file maps to the app's names. That user may create more databases beside its own, such as its tests' |
 | `WOODSHED_SERVICES`, and each variable it lists | both | The installation's shared services: the list of their variables, each set to its URL. An env file line needing one that is not set is a warning in the log, not a stop. db-admin passes them to the seed, and refuses a name not ending in `_URL` or `_ENDPOINT`, or a value that is not a plain http(s) URL |
-| `WOODSHED_SEED_REPO_SETTINGS` | seed | The file of repo settings, in the session API's answer's shape, that `dbAdmin.mjs` read for the databases' env files (the default project's installation values, its entryPoint's `--project`) and deletes after the seed. Unset without `--project`: the env files then have the repo's defaults and lines alone |
+| `WOODSHED_SEED_REPO_SETTINGS` | seed | The file of repo settings, in the session API's answer's shape, that `dbAdmin.mjs` read for the databases' env files (the default project's installation values, its entryPoint's `--project`) and deletes after the seed. Unset without `--project`: the env files get the repo's defaults alone |
 | `ISSUE`, `PR` or `PROMPT` | session | What to work on. `PROMPT` can be combined with the other two |
 | `STARTED_BY`, `BRANCH` | session | The GitHub login credited in the PR body, and an explicit branch name |
 | `SESSION_URL` | session | The session's page on the console (`WOODSHED_PUBLIC_URL`, or localhost for a local console), linked from the PR body. A console from before it sends none, and the line names Woodshed unlinked; `writeRules` drops it too when the project file says `consoleLinks: false` |
 | Each install secret, by the variable the installation names for it, and `WOODSHED_INSTALL_SECRETS` | session | What the repo's installs read, such as a registry's token (`install_secrets` in Terraform), in the variable its tools read, as it arrives: a reinstall and claude's terminal have it there. `WOODSHED_INSTALL_SECRETS` lists those variables, space-separated. Only needed when an install runs again |
-| `SESSION_MODE`, `ASKED_BY` | session | `ask` for a question from Slack: the default branch checked out detached, no databases, Redis, viewers or env files, each install secret `WOODSHED_INSTALL_SECRETS` lists unset before claude starts, and `session/ask.md` in place of `prompt.md`. `PROMPT` is the question and `ASKED_BY` the asker's Slack name |
+| `SESSION_MODE`, `ASKED_BY` | session | `ask` for a question from Slack: the default branch checked out detached, no databases, Redis, viewers or env files, the env files' secrets and each install secret `WOODSHED_INSTALL_SECRETS` lists unset before claude starts, and `session/ask.md` in place of `prompt.md`. `PROMPT` is the question and `ASKED_BY` the asker's Slack name |
 
 ## statusd
 
@@ -260,7 +264,6 @@ docker run -d --name ws-test --init --memory 6g --cpus 4 \
   -e PGHOST=host.docker.internal -e PGUSER=app_user -e PGPASSWORD=... -e PGDATABASE=app \
   -e MONGODB_URI=mongodb://host.docker.internal:27017/app \
   -e WOODSHED_SERVICES=S3_ENDPOINT -e S3_ENDPOINT=http://host.docker.internal:4566 \
-  -e APP_ENV="$(cat app/.env)" \
   -e PROMPT="..." woodshed-session
 
 curl -H 'Authorization: Bearer test-token' localhost:17682/status
@@ -270,3 +273,5 @@ curl -H 'Authorization: Bearer test-token' localhost:17682/status
 
 `GH_TOKEN="$(gh auth token)"` makes the session push as you, so give it a
 prompt that does not push unless that is what you want.
+
+With no console, the session gets no repo settings: its env files hold the repo's `defaults` and the overrides alone.

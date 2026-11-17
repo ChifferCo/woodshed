@@ -22,7 +22,7 @@ const FILES = {
   app: parseProject({
     version: 1, env: { NODE_ENV: 'development' }, rules: '.woodshed/rules.md',
     envFiles: [
-      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT={{PORT}}'] },
+      { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT={{PORT}}'] },
       { path: 'web/.env.local' },
     ],
   }),
@@ -186,8 +186,8 @@ test('env files that share a key are one tab naming both paths, and your values 
   const shared = parseProject({
     version: 1, env: {},
     envFiles: [
-      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080'] },
-      { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] },
+      { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080'] },
+      { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker'] },
     ],
   });
   const { app, calls, secrets } = await loadCard({ files: { ...FILES, app: shared } });
@@ -249,13 +249,15 @@ test('your instructions: the installation\'s are shown read only, yours are coun
   assert.ok(walk(app).some((e) => e.tag === 'pre' && textOf(e) === 'Keep pull requests small.\n'));
   await type(app, 'my-instructions-app', 'Explain each change.\n');
   assert.match(textOf(app), /21 of 16,384 bytes/);
-  buttons(app, 'Save').at(-1).listeners.click();
+  // The instructions' Save: the files panel's comes after it.
+  const instructionsSave = () => buttons(app, 'Save').at(-2);
+  instructionsSave().listeners.click();
   await settle();
   assert.equal(secrets.values.get('users/sam-ops/repos/app/instructions'), 'Explain each change.\n');
   assert.match(textOf(app), /Saved\. Your next private session on this repo has them in its prompt/);
 
   await type(app, 'my-instructions-app', `Use sk-ant-${'a'.repeat(40)} for it.\n`);
-  buttons(app, 'Save').at(-1).listeners.click();
+  instructionsSave().listeners.click();
   await settle();
   const error = walk(app).find((e) => e.className === 'form-error');
   assert.match(textOf(error), /put secrets in an env file's values instead/);
@@ -283,13 +285,70 @@ test('a link to a repo they cannot write to opens their default one instead, and
   assert.ok(!calls.some((c) => c.path.startsWith('/api/my/repos/infra')));
 });
 
-test('an env file with no installation values says nothing of a Terraform secret', async () => {
+test('an env file with no installation value names no Terraform secret on the installation\'s layer', async () => {
   const { app } = await loadCard();
-  assert.doesNotMatch(textOf(app), /Terraform/);
+  assert.doesNotMatch(textOf(app), /Terraform secret/);
 });
 
 test('an admin is pointed at the repo\'s page on Console settings for the installation\'s values', async () => {
   const { app } = await loadCard({ admin: true });
   const link = walk(app).find((e) => e.tag === 'a' && textOf(e) === 'change it on Console settings');
   assert.equal(link.attrs.href, '/console-settings/repos/app');
+});
+
+const inputOf = (app, id) => walk(app).find((e) => e.attrs.id === id);
+
+test('your files are each repo\'s own: added, opened, removed, and another repo\'s tab has none of them', async () => {
+  const { app, calls, secrets, asked } = await loadCard();
+  assert.match(textOf(app), /Your files/);
+  assert.match(textOf(app), /Whole files your private sessions on acme\/app write into its checkout/);
+  assert.ok(!calls.some((c) => c.path.endsWith('/files')), 'with none listed, nothing is read');
+  inputOf(app, 'own-file-path').value = 'app/.env.production';
+  editorOf(app, 'own-file-text').value = `NOTION_TOKEN=${SECRET_MARK}\n`;
+  buttons(app, 'Save').at(-1).listeners.click();
+  await settle();
+  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/my/repos/app/files', body: { path: 'app/.env.production', text: `NOTION_TOKEN=${SECRET_MARK}\n` } });
+  assert.deepEqual(JSON.parse(secrets.values.get('users/sam-ops/repos/app/files')), { 'app/.env.production': `NOTION_TOKEN=${SECRET_MARK}\n` });
+  assert.match(textOf(app), /Saved app\/\.env\.production\. Your next private session on acme\/app writes it/);
+  assert.deepEqual(buttons(app, 'app/.env.production').map((b) => b.attrs['aria-pressed']), ['true'], 'the saved file is open');
+  assert.equal(inputOf(app, 'own-file-path').readOnly, true, 'a saved file keeps its path');
+  assert.match(textOf(app), /Yours on 1 repo/);
+  assert.equal(buttons(app, 'acme/app •').length, 1);
+
+  button(app, 'acme/tools').listeners.click();
+  await settle();
+  assert.equal(buttons(app, 'app/.env.production').length, 0, 'the tools repo has none of app\'s files');
+  assert.equal(inputOf(app, 'own-file-path').value, '');
+  assert.equal(editorOf(app, 'own-file-text').value, '');
+
+  button(app, 'acme/app •').listeners.click();
+  await settle();
+  assert.equal(editorOf(app, 'own-file-text').value, `NOTION_TOKEN=${SECRET_MARK}\n`, 'back on app, its file is open again');
+  button(app, 'Remove').listeners.click();
+  await settle();
+  assert.match(asked.at(-1), /Remove app\/\.env\.production\? Your next sessions on acme\/app no longer write it/);
+  assert.equal(secrets.values.has('users/sam-ops/repos/app/files'), false);
+  assert.match(textOf(app), /Removed app\/\.env\.production\./);
+});
+
+test('saved files are read when the repo opens, and a refused path says why', async () => {
+  const { app, calls } = await loadCard({
+    before: ({ repoSettings }) => repoSettings.saveOwnFile({ login: 'sam-ops', project: 'app', path: '.mcp.local.json', text: '{}' }),
+  });
+  assert.ok(calls.some((c) => c.path === '/api/my/repos/app/files'));
+  assert.equal(editorOf(app, 'own-file-text').value, '{}', 'the first file is open');
+  button(app, '+ Add a file').listeners.click();
+  inputOf(app, 'own-file-path').value = 'api/.env';
+  editorOf(app, 'own-file-text').value = 'X=1';
+  buttons(app, 'Save').at(-1).listeners.click();
+  await settle();
+  assert.match(textOf(walk(app).find((e) => e.className === 'form-error')), /api\/\.env is one of acme\/app's env files/);
+  button(app, '+ Add a file').listeners.click();
+  inputOf(app, 'own-file-path').value = 'a.txt';
+  editorOf(app, 'own-file-text').value = '  ';
+  const before = calls.length;
+  buttons(app, 'Save').at(-1).listeners.click();
+  await settle();
+  assert.equal(calls.length, before, 'an empty file is not sent');
+  assert.match(textOf(app), /Write the file's text first/);
 });

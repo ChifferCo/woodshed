@@ -150,27 +150,30 @@ function tlsAskPort(env) {
   return port;
 }
 
-// Whether sessions get this machine's Docker (providers/local/dockerLauncher.mjs, `hostDocker`). It is root on the
-// machine for whoever can start a session (providers/local/README.md, "Docker in a session"), so it is on by default
-// only on one person's console: the local provider, on loopback, with no sign-in and no hosting proxy (the rule of
-// githubAppSetup.mjs's isOnePersonConsole, which imports this file). There the only person who starts sessions already
-// owns the machine. A console others sign in to has it only with WOODSHED_SESSION_DOCKER=1 in its own settings, never
-// by default: a shared session, started by anyone's label or comment, would otherwise reach the console's secrets, and
-// an existing team console taking Update would start handing that out unasked. Only the console's own settings decide
-// it, never a project file. A Fargate task cannot be given a Docker socket, so it is off on AWS.
+// Which Docker sessions get, as the docker launcher's `ownDocker` and `hostDocker` (providers/local/README.md, "Docker in
+// a session"), unless WOODSHED_SESSION_DOCKER=0. Every session gets its own where the machine has Sysbox: a daemon
+// inside the session's container, under `sysbox-runc`, which reaches nothing of the machine's and goes with the session,
+// on any console (CLAUDE.md's Rules: whoever can start a session on a local server is trusted with the other sessions
+// there). An existing team console gains it only once its admin installs Sysbox. Without Sysbox, the machine's socket,
+// which is root on the machine for whoever can start a session: by default only on one person's console, the local
+// provider on loopback with no sign-in and no hosting proxy (the rule of githubAppSetup.mjs's isOnePersonConsole),
+// where the only person who starts sessions already owns the machine. A console others sign in to has it only with
+// WOODSHED_SESSION_DOCKER=1 in its own settings, never from an Update. Only the console's own settings decide it, never
+// a project file. A Fargate task can have neither, so both are off on AWS.
 let warnedSessionDockerOnEcs = false;
 export function sessionDocker(env, { onePerson = true } = {}) {
   const value = String(env.WOODSHED_SESSION_DOCKER ?? '').trim();
-  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 1 (sessions use this machine\'s Docker; the default on one person\'s local console) or 0 (they do not)');
-  if (value === '0') return false;
+  if (!['', '0', '1'].includes(value)) throw new Error('WOODSHED_SESSION_DOCKER is 0 (no Docker) or 1 (this machine\'s Docker where there is no Sysbox, on any console); unset, each session gets its own under Sysbox where the machine has it, else this machine\'s on one person\'s console');
+  const off = { ownDocker: false, hostDocker: false };
+  if (value === '0') return off;
   if ((envValue(env, 'LAUNCHER') || 'docker') !== 'docker') {
-    if (value === '1' && !warnedSessionDockerOnEcs) {
+    if (value && !warnedSessionDockerOnEcs) {
       warnedSessionDockerOnEcs = true;
-      console.warn('config: WOODSHED_SESSION_DOCKER=1 does nothing on AWS: a Fargate task cannot be given a Docker socket');
+      console.warn(`config: WOODSHED_SESSION_DOCKER=${value} does nothing on AWS: a Fargate task can neither be given a Docker socket nor run Sysbox`);
     }
-    return false;
+    return off;
   }
-  return value === '1' || onePerson;
+  return { ownDocker: 'auto', hostDocker: value === '1' || onePerson };
 }
 
 const LOOPBACK_HOST = /^(localhost|127\.0\.0\.1|\[?::1\]?)$/i;
@@ -274,6 +277,14 @@ export function requireRepo(config) {
   if (repo && !/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('WOODSHED_REPO (or WOODSHED_PROJECTS) must name a repo as owner/name, or be left unset for a console that starts with none');
 }
 
+/** @returns {boolean|null}  WOODSHED_ONE_PERSON: 1 or 0, or null when it is not set */
+function onePerson(env) {
+  const value = env.WOODSHED_ONE_PERSON;
+  if (value === undefined || value === '') return null;
+  if (value !== '1' && value !== '0') throw new Error(`WOODSHED_ONE_PERSON is 1 or 0, or not set (it is ${value})`);
+  return value === '1';
+}
+
 /**
  * @param {NodeJS.ProcessEnv} env
  * @param {{readGhToken?: boolean}} [opts]  false leaves `gh auth token` unasked, for a caller that takes the defaults
@@ -333,8 +344,8 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
       image: envValue(env, 'IMAGE') || 'woodshed-session',
       memory: envValue(env, 'SESSION_MEMORY') || '6g',
       cpus: envValue(env, 'SESSION_CPUS') || '2',
-      // Sessions use this machine's Docker (sessionDocker above).
-      hostDocker: sessionDocker(env, {
+      // Which Docker sessions get: `ownDocker` and `hostDocker` (sessionDocker above).
+      ...sessionDocker(env, {
         onePerson: LOOPBACK_HOST.test(envValue(env, 'HOST') || '127.0.0.1') && envValue(env, 'REQUIRE_SIGN_IN') !== '1' && !identitySecret,
       }),
       ecs: {
@@ -368,6 +379,10 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     githubBroker: broker,
     // Who a local console with no sign-in treats the person using it as, for My Woodshed (server.mjs, soloLoginOf).
     localLogin: localLogin(env),
+    // Whether one person uses this console, so the rail shows one list of every session, with no Mine and Everyone
+    // (server.mjs, onePersonConsole): true for 1, false for 0, and null to tell by itself. Hosted mode keeps no People
+    // list, so there the host says it.
+    onePerson: onePerson(env),
     // The Secrets page's store. In AWS, Secrets Manager: it needs the base box role's access to these secrets.
     secrets: envValue(env, 'LAUNCHER') === 'ecs' ? { prefix: envValue(env, 'SECRET_PREFIX') || `${OLD_AWS_PREFIX}/` } : null,
     // On the local provider, a folder only the console's user can open; none leaves it without a Secrets page.

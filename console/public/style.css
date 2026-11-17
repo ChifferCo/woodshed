@@ -565,6 +565,9 @@ dialog.wizard:focus { outline: none; }
 @media (prefers-reduced-motion: reduce) { .switch-ui::after { transition: none; } }
 .toggle-row .toggle-label { font-size: 14px; font-weight: 600; }
 .toggle-row .sub { grid-column: 2; margin: 0; font-size: 12.5px; }
+.webhook-switch .form-error { grid-column: 2; margin: 0; font-size: 12.5px; color: var(--bad); }
+.webhook-switches { display: grid; gap: 8px; }
+.webhooks-off { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--stopped); font-size: 13px; }
 .toggle-row .why-off { grid-column: 2; margin: 0; font-size: 12.5px; color: var(--amber-ink); }
 /* The Share the app dialog: its switch is the toggle row's, its link list sits under it. */
 dialog.confirm .toggle-row { margin-top: 12px; }
@@ -577,6 +580,18 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .launch { flex: 1 1 auto; min-height: 0; padding: 24px; display: flex; flex-direction: column; gap: 16px; max-width: 760px; overflow-y: auto; }
 .launch[hidden] { display: none; }
 /* The Shared tab's page, in the pane beside the rail. */
+/* A repo sessions cannot start on: why, and the fix for an admin or whom to ask (designSystem/components/BlockerCard). */
+.blocker-card { padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); display: grid; gap: 10px; max-width: 560px; }
+.blocker-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.blocker-card p { margin: 0; }
+.blocker-reason { font-size: 14px; color: var(--ink); line-height: 1.45; }
+.blocker-card .cmd-steps { font-size: 13.5px; }
+.blocker-link { margin-top: 6px; }
+.blocker-ask { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.blocker-others { margin: 0; padding-left: 18px; font-size: 13px; color: var(--sub); display: grid; gap: 4px; }
+.project-more { margin: 0; font-size: 12.5px; color: var(--sub); }
+.launch-body { display: flex; flex-direction: column; gap: 12px; }
+.launch-body[hidden] { display: none; }
 .home { padding: 24px; display: flex; flex-direction: column; gap: 18px; max-width: 1040px; overflow-y: auto; min-width: 0; }
 .home[hidden] { display: none; }
 .launch-title { margin: 0 0 4px; font: 700 22px/1.25 Merriweather, Georgia, serif; }
@@ -688,8 +703,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .cmd-steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 10px; color: var(--ink); font-size: 14px; }
 .cmd-steps li::marker { color: var(--meta); font-weight: 600; }
 .cmd-steps p { margin: 0; }
-.cmd-steps .value-box, .cmd-aside .value-box { flex: 0 1 auto; white-space: pre; overflow-x: auto; }
-.cmd-aside { display: flex; flex-direction: column; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.cmd-steps .value-box { flex: 0 1 auto; white-space: pre; overflow-x: auto; }
 .restore-cmd { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .restore-cmd-title { margin: 0; font-size: 12.5px; color: var(--meta); }
 .restore-cmd .value-box { white-space: pre; overflow-x: auto; }
@@ -791,6 +805,9 @@ dialog.confirm .confirm-rows .now { font-weight: 600; color: var(--amber-ink); }
 .layer-count { margin: 0; font-family: var(--mono); font-size: 11px; color: var(--meta); }
 .layer-count.is-over { color: var(--bad); }
 .layer .value-row { margin: 0; }
+.layer .field.is-channel { width: 180px; max-width: 100%; font-family: var(--mono); }
+.layer .cmd-steps { font-size: 13px; }
+.cmd-steps .layer-pre { margin-top: 6px; }
 table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; font-size: 13px; }
 .layer-table th { text-align: left; padding: 7px 12px; background: var(--stopped); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .layer-table td { padding: 7px 12px; border-top: 1px solid var(--line-soft); vertical-align: middle; }
@@ -808,6 +825,20 @@ table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; fo
 /* A card's ⋯ and the menu it opens, after the shed's: each action with a line on what it does. */
 .rmenu { display: inline-grid; place-items: center; width: 22px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font-size: 14px; line-height: 1; cursor: pointer; }
 .rmenu:hover, .rmenu[aria-expanded="true"] { background: var(--line-soft); color: var(--ink); }
+.rename-offer { position: fixed; z-index: 45; display: flex; align-items: center; gap: 6px; max-width: calc(100vw - 16px); padding: 8px 6px 10px 12px; overflow: hidden; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); font-size: 13px; color: var(--ink); }
+.rename-offer-body { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.rename-offer-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); }
+.rename-offer-line b { color: var(--ink); font-weight: 600; }
+.rename-offer .btn { flex: none; }
+.rename-offer-form { display: flex; align-items: center; gap: 6px; cursor: auto; }
+.rename-offer-form .field { width: min(320px, calc(100vw - 180px)); min-height: 28px; padding: 3px 8px; font-size: 13px; }
+.rename-offer-close { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font: inherit; font-size: 16px; cursor: pointer; }
+.rename-offer-close:hover { background: var(--stopped); color: var(--ink); }
+/* What is left of the 10 s: gone once a click keeps the offer. */
+.rename-offer-timer { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--slate); transform-origin: left; animation: rename-offer-time linear forwards; }
+.rename-offer.is-kept .rename-offer-timer { display: none; }
+@keyframes rename-offer-time { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .rename-offer-timer { animation: none; } }
 .card-menu { position: fixed; z-index: 40; width: 320px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; display: flex; flex-direction: column; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); }
 .card-menu[hidden] { display: none; }
 /* Its rows keep their height when it is held to the screen's: it scrolls instead. */

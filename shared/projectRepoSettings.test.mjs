@@ -24,18 +24,17 @@ function settingsFile(t, answer) {
   return file;
 }
 
-// Two env files: one with a secret (its key), one keyed by its path alone.
+// Two env files: one keyed by its secret, one by its path alone.
 const PROJECT = parseProject({
   version: 1,
   env: { APP_PORT: '8000' },
   envFiles: [
-    { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE=false'], lines: ['DB_PASSWORD={{PGPASSWORD}}', 'KEY={{KEY?}}'] },
-    { path: 'web/.env.local', lines: ['API_URL={{SESSION_APP_URL}}'] },
+    { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info', 'FEATURE=false'], overrides: ['DB_PASSWORD={{PGPASSWORD}}', 'KEY={{KEY?}}'] },
+    { path: 'web/.env.local', overrides: ['API_URL={{SESSION_APP_URL}}'] },
   ],
 });
 const ENV = { PGPASSWORD: 'session-password', SESSION_APP_URL: 'https://x.app.example' };
-// What a session's environment held before repo settings: an env file's Terraform secret and the owner's old own lines.
-// Nothing reads them now.
+// What a task definition and a /settings answer from before repo settings handed a session: never read now.
 const LEGACY = { API_ENV: 'AUTH_DOMAIN=legacy.test\nLOG_LEVEL=warn', OWN_FILES: JSON.stringify({ 'api-env': 'LOG_LEVEL=legacy-own' }) };
 const ANSWER = {
   project: 'app',
@@ -100,16 +99,16 @@ test('with repo settings, each env file is the repo\'s defaults, the installatio
   ]);
 });
 
-test('a layer the console has no value for is empty, never the old secret\'s text; a shared session gets no owner lines', (t) => {
+test('a layer the console has no value for is empty, whatever old secret the environment holds; a shared session gets no owner lines', (t) => {
   const none = readRepoSettings(settingsFile(t, { project: 'app', envFiles: {}, instructions: {}, personalFor: 'octocat' }));
   const empty = write(t, { settings: none, env: LEGACY });
-  assert.equal(empty.api, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\nFEATURE=false\n\n# Woodshed overrides\nDB_PASSWORD=session-password\n');
+  assert.equal(empty.api, write(t, { settings: none }).api, 'the old secret\'s variable and own lines are not read');
   assert.doesNotMatch(empty.api + empty.web, /legacy/);
-  assert.deepEqual(empty.written.map((w) => w.layers), [['repo', 'session'], ['session']]);
-  assert.equal(empty.lines.length, 1, 'no warning');
+  assert.equal(empty.api, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\nFEATURE=false\n\n# Woodshed overrides\nDB_PASSWORD=session-password\n');
+  assert.deepEqual(empty.lines.slice(1), [], 'no warning');
   const shared = readRepoSettings(settingsFile(t, { ...ANSWER, personalFor: null }));
-  const { api, web } = write(t, { settings: shared, env: LEGACY });
-  assert.doesNotMatch(api + web, /Your own lines|LOG_LEVEL=debug|PUBLIC_FLAG=off|legacy/);
+  const { api, web } = write(t, { settings: shared, env: { API_ENV: LEGACY.API_ENV } });
+  assert.doesNotMatch(api + web, /Your own lines|LOG_LEVEL=debug|PUBLIC_FLAG=off/);
   assert.match(api, /AUTH_DOMAIN=installation\.test/);
 });
 
@@ -133,8 +132,8 @@ test('the log names layers, sizes and keys, never a value, and the repo settings
 const SHARED = parseProject({
   version: 1,
   envFiles: [
-    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], lines: ['PORT=8080', 'DB_PASSWORD={{PGPASSWORD}}'] },
-    { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker', 'KEY={{KEY?}}'] },
+    { path: 'api/.env', secret: 'app-env', defaults: ['LOG_LEVEL=info'], overrides: ['PORT=8080', 'DB_PASSWORD={{PGPASSWORD}}'] },
+    { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker', 'KEY={{KEY?}}'] },
   ],
 });
 
@@ -156,20 +155,12 @@ test('files that share a key are each written its layered values, with their own
   assert.deepEqual(lines, ['api/.env, worker/.env from app-env (installation: 24 bytes, personal: 15 bytes; '
     + 'api/.env layers: repo installation personal session, defaults: 1, replaced by the session: PORT; '
     + 'worker/.env layers: installation personal session, replaced by the session: none)']);
-
-  const none = writeShared(t, { settings: readRepoSettings(settingsFile(t, { project: 'app', envFiles: {}, instructions: {}, personalFor: null })), env: { APP_ENV: 'LOG_LEVEL=warn' } });
-  assert.equal(none.worker, '\n\n# Woodshed overrides\nROLE=worker\n', 'no legacy variable is read');
-  assert.deepEqual(none.lines.slice(1), []);
 });
 
-test('without repo settings (an ask, or a console that offers none) each file is the repo\'s and the session\'s alone', (t) => {
-  const none = write(t, { settings: null, env: LEGACY });
-  const empty = write(t, { settings: readRepoSettings(settingsFile(t, { project: 'app', envFiles: {} })), env: LEGACY });
-  assert.deepEqual([none.api, none.web], [empty.api, empty.web], 'the same as an answer with nothing in it');
-  assert.deepEqual(none.lines, [
-    'api/.env (layers: repo session, defaults: 2, installation: 0 bytes, replaced by the session: none), '
-      + 'web/.env.local (layers: session, installation: 0 bytes, replaced by the session: none)',
-  ]);
+test('without repo settings the files hold the repo\'s defaults and the overrides, in the log line Woodshed printed before them', (t) => {
+  const { api, lines } = write(t, { settings: null, env: LEGACY });
+  assert.deepEqual(lines, ['api/.env (base: 0 bytes, defaults: 2), web/.env.local (base: 0 bytes)']);
+  assert.doesNotMatch(api, /legacy/);
 });
 
 function cli(args, { repoDir, settings }) {

@@ -1,5 +1,5 @@
 # A made-up project of several apps: a store and its admin on one api, two databases, and three env files (two with a
-# secret, one without), whose lines wire the session's databases, ports and services. The golden test
+# secret, one without), whose overrides wire the session's databases, ports and services. The golden test
 # (test/repoSettingsGolden.test.mjs) writes its env files and rules and compares them with what Woodshed wrote before
 # env files had defaults.
 version: 1
@@ -23,7 +23,7 @@ env:
 envFiles:
   - path: api/.env
     secret: api-env
-    lines:
+    overrides:
       - SQL_URL={{PG_URL}}
       - SQL_HOST={{PGHOST}}
       - SQL_PASSWORD={{PGPASSWORD}}
@@ -36,12 +36,12 @@ envFiles:
       - SITE_URL={{SESSION_APP_URL}}
   - path: store/.env.local
     secret: store-env
-    lines:
+    overrides:
       - PUBLIC_API_URL=http://localhost:8080
       - PUBLIC_FEATURE_PREVIEW=true
       - PORT=5173
   - path: jobs/.env
-    lines:
+    overrides:
       - JOBS_DATABASE_URL={{PG_URL}}
       - JOBS_PER_WORKER=4
 

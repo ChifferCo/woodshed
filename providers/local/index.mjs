@@ -17,8 +17,7 @@ import { createSecretStore } from './secretStore.mjs';
 import { createWebhookReceiver } from './webhookReceiver.mjs';
 
 // What a session gets from the store, by the variable its entrypoint reads: the same ones ECS hands an AWS session
-// (../aws/terraform/ecs.tf, session_secrets): the install secrets, each in the variable the installation names. A
-// repo's env files are not among them: the session asks the console for its repo settings.
+// (../aws/terraform/ecs.tf, session_secrets). Each install secret arrives in the variable the installation names.
 /**
  * @param {{installSecrets?: {secret: string, variable: string}[]}} opts  loadConfig()'s
  * @returns {Record<string, string>}  each secret a session is handed, by the variable it arrives in
@@ -129,12 +128,16 @@ export function localWords({ memory, cpus, databases = ['postgres', 'mongo'] }) 
  *          localDatabases: object|null, localWebhooks: object|null, sessionEnv: Record<string, string>}} config  loadConfig()'s
  */
 export function localProvider(config) {
-  const { image, memory, cpus, hostDocker = false } = config.launcher;
+  const { image, memory, cpus, ownDocker = false, hostDocker = false } = config.launcher;
   const docker = createDockerLauncher({
-    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, hostDocker,
+    image, memory, cpus, network: config.localDockerNetwork, projectFilesDir: config.projectFilesDir, repo: defaultProject(config).repo, ownDocker, hostDocker,
   });
-  // Root on this machine for whoever can start a session (providers/local/README.md, "Docker in a session").
-  console.log('local: sessions use this machine\'s Docker', { on: hostDocker, ...(hostDocker ? { off: 'WOODSHED_SESSION_DOCKER=0' } : { onWith: 'WOODSHED_SESSION_DOCKER=1' }) });
+  // Their own, where the machine has Sysbox, which the first start finds out (`launcher: sessions get their own
+  // Docker`), else the machine's, root on it for whoever can start a session (providers/local/README.md, "Docker in a
+  // session").
+  console.log('local: sessions\' Docker', ownDocker || hostDocker
+    ? { own: 'with Sysbox', machine: hostDocker ? 'without Sysbox' : { onWith: 'WOODSHED_SESSION_DOCKER=1' }, off: 'WOODSHED_SESSION_DOCKER=0' }
+    : { off: true, onWith: 'WOODSHED_SESSION_DOCKER unset' });
   // The folder the settings name stays what it was. Without one, the dashboard's Secrets page picks the store.
   const fixed = secretStore(config);
   const secrets = fixed ?? createSecretSlot({ stateDir: config.stateDir, specs: secretSpecs({ installSecrets: config.installSecrets }) });

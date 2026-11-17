@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, unsetPlaceholders, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -24,22 +24,22 @@ test('a placeholder is its variable, empty when unset, and a `?` one leaves its 
   assert.equal(renderLine('lower={{lower}}', { lower: 'x' }), 'lower={{lower}}', 'only capital names are placeholders');
 });
 
-test('the variables lines need and the environment leaves empty are named once each, and a `?` one is not', () => {
+test('the variables overrides need and the environment leaves empty are named once each, and a `?` one is not', () => {
   const lines = ['STORE={{STORE_URL}}', 'COPY={{STORE_URL}}/x', 'PDF={{PDF_URL}}', 'KEY={{KEY?}}', 'DB={{PGHOST}}'];
   assert.deepEqual(unsetPlaceholders(lines, { PGHOST: 'db', PDF_URL: '' }), ['STORE_URL', 'PDF_URL']);
   assert.deepEqual(unsetPlaceholders(lines, { PGHOST: 'db', PDF_URL: 'p', STORE_URL: 's' }), []);
 });
 
 test('an env file is the secret, the owner\'s own lines, then the project\'s, so the project\'s win', () => {
-  assert.equal(envFileText({ base: 'A=1', own: 'B=2', lines: ['A={{X}}', 'K={{K?}}'], env: { X: '3' } }),
+  assert.equal(envFileText({ base: 'A=1', own: 'B=2', overrides: ['A={{X}}', 'K={{K?}}'], env: { X: '3' } }),
     'A=1\n\n# Your own lines, from My settings\nB=2\n\n# Woodshed overrides\nA=3\n');
-  assert.equal(envFileText({ base: '', own: '', lines: [], env: {} }), '\n\n# Woodshed overrides\n\n');
+  assert.equal(envFileText({ base: '', own: '', overrides: [], env: {} }), '\n\n# Woodshed overrides\n\n');
 });
 
 test('an env file\'s defaults come first, so the secret\'s text, the owner\'s lines and the project\'s lines replace them', () => {
-  assert.equal(envFileText({ defaults: ['A=0', 'D=0'], base: 'A=1', own: 'B=2', lines: ['A={{X}}'], env: { X: '3' } }),
+  assert.equal(envFileText({ defaults: ['A=0', 'D=0'], base: 'A=1', own: 'B=2', overrides: ['A={{X}}'], env: { X: '3' } }),
     '# From the repo (.woodshed/project.yaml)\nA=0\nD=0\n\n# From this installation\nA=1\n\n# Your own lines, from My settings\nB=2\n\n# Woodshed overrides\nA=3\n');
-  assert.equal(envFileText({ defaults: [], base: 'A=1', own: '', lines: [], env: {} }), envFileText({ base: 'A=1', own: '', lines: [], env: {} }));
+  assert.equal(envFileText({ defaults: [], base: 'A=1', own: '', overrides: [], env: {} }), envFileText({ base: 'A=1', own: '', overrides: [], env: {} }));
 });
 
 test('an env file\'s key is its secret, or else its path as a name, and two files share one only by naming one secret', () => {
@@ -51,20 +51,52 @@ test('an env file\'s key is its secret, or else its path as a name, and two file
   assert.deepEqual(read([{ path: 'web/.env.local' }, { path: 'api/.env', secret: 'api-env' }]).map((f) => f.key), ['web-env-local', 'api-env']);
   assert.throws(() => read([{ path: 'web/.env.local' }, { path: 'web-env.local' }]),
     /envFiles\[0\] \(web\/\.env\.local\) and envFiles\[1\] \(web-env\.local\) both have the key web-env-local: give one a secret, or give both the same secret to share its values$/);
-  const shared = read([{ path: 'api/.env', secret: 'app-env', defaults: ['PORT=8080'] }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }]);
-  assert.deepEqual(shared.map((f) => [f.path, f.key, f.defaults, f.lines]), [['api/.env', 'app-env', ['PORT=8080'], []], ['worker/.env', 'app-env', [], ['ROLE=worker']]],
-    'two files naming one secret share its key, each keeping its own defaults and lines');
+  const shared = read([{ path: 'api/.env', secret: 'app-env', defaults: ['PORT=8080'] }, { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker'] }]);
+  assert.deepEqual(shared.map((f) => [f.path, f.key, f.defaults, f.overrides]), [['api/.env', 'app-env', ['PORT=8080'], []], ['worker/.env', 'app-env', [], ['ROLE=worker']]],
+    'two files naming one secret share its key, each keeping its own defaults and overrides');
   assert.deepEqual(envFileKeys([...shared, { path: 'web/.env', key: 'web-env' }]), [{ key: 'app-env', paths: ['api/.env', 'worker/.env'] }, { key: 'web-env', paths: ['web/.env'] }]);
   assert.throws(() => read([{ path: 'api/.env' }, { path: 'web/.env', secret: 'api-env' }]), /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env/,
     'a secret and a key made from a path are one name');
   assert.throws(() => read([{ path: '---' }]), /whose path makes no key: give it a secret/);
 });
 
-test('defaults are plain NAME=value lines: a placeholder is the session\'s, in lines', () => {
+test('lines is the deprecated name of overrides: read the same, and a file with both is refused', () => {
+  const read = (file) => parseProject({ version: 1, envFiles: [{ path: 'api/.env', secret: 'api-env', ...file }] }).envFiles[0];
+  const overrides = read({ overrides: ['DB={{PGHOST}}', 'KEY={{KEY?}}'] });
+  const lines = read({ lines: ['DB={{PGHOST}}', 'KEY={{KEY?}}'] });
+  assert.deepEqual(lines, overrides);
+  assert.deepEqual(overrides, { path: 'api/.env', secret: 'api-env', key: 'api-env', defaults: [], overrides: ['DB={{PGHOST}}', 'KEY={{KEY?}}'] });
+  assert.equal(usesOldOverridesName(lines), true);
+  assert.equal(usesOldOverridesName(overrides), false);
+  assert.equal(usesOldOverridesName(read({})), false);
+  assert.throws(() => read({ overrides: ['A=1'], lines: ['A=2'] }), /envFiles\[0\] has both overrides and lines, its old name: keep overrides alone/);
+  assert.throws(() => read({ lines: 'A=1' }), /envFiles\[0\]\.lines must be a list/, 'a problem names the field as it was written');
+  assert.throws(() => read({ overrides: 'A=1' }), /envFiles\[0\]\.overrides must be a list/);
+});
+
+test('an env file a caller built itself is written from lines, the deprecated name, as from overrides', (t) => {
+  const write = (file) => {
+    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-hand-built-'));
+    t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
+    const settings = { envFiles: { 'api-env': { installation: 'A=1', personal: null } } };
+    const [written] = writeEnvFiles({ project: { env: {}, envFiles: [{ key: 'api-env', ...file }] }, repoDir, env: { PGHOST: 'db' }, settings });
+    return { written, text: fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8') };
+  };
+  const lines = write({ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGHOST}}', 'STORE={{STORE_URL}}'] });
+  assert.deepEqual(lines, write({ path: 'api/.env', secret: 'api-env', overrides: ['DB={{PGHOST}}', 'STORE={{STORE_URL}}'] }));
+  assert.equal(lines.text, 'A=1\n\n# Woodshed overrides\nDB=db\nSTORE=\n');
+  assert.deepEqual(lines.written.unset, ['STORE_URL']);
+  assert.equal(write({ path: 'api/.env', secret: 'api-env' }).text, 'A=1\n\n# Woodshed overrides\n\n', 'neither is none');
+  assert.equal(envFileText({ base: 'A=1', own: '', lines: ['B={{X}}'], env: { X: '2' } }), envFileText({ base: 'A=1', own: '', overrides: ['B={{X}}'], env: { X: '2' } }));
+  assert.equal(usesVariable({ env: {}, envFiles: [{ path: 'a/.env', lines: ['R={{REDIS_URL}}'] }] }, 'REDIS_URL'), true);
+  assert.equal(usesVariable({ env: {}, envFiles: [{ path: 'a/.env' }] }, 'REDIS_URL'), false);
+});
+
+test('defaults are plain NAME=value lines: a placeholder is the session\'s, in overrides', () => {
   const read = (file) => parseProject({ version: 1, envFiles: [{ path: 'api/.env', ...file }] }).envFiles[0];
   assert.deepEqual(read({ defaults: ['FEATURE_PREVIEW=true', '# A comment'] }).defaults, ['FEATURE_PREVIEW=true', '# A comment']);
   assert.deepEqual(read({}).defaults, [], 'none when left out');
-  assert.throws(() => read({ defaults: ['DB={{PGHOST}}'] }), /envFiles\[0\]\.defaults\[0\] has a \{\{…\}\} placeholder: a default is plain text, and a line the session fills in goes in lines/);
+  assert.throws(() => read({ defaults: ['DB={{PGHOST}}'] }), /envFiles\[0\]\.defaults\[0\] has a \{\{…\}\} placeholder: a default is plain text, and a line the session fills in goes in overrides/);
   assert.throws(() => read({ defaults: ['KEY={{KEY?}}'] }), /defaults\[0\] has a \{\{…\}\} placeholder/);
   assert.throws(() => read({ defaults: ['A={{ near }}'] }), /defaults\[0\] has a \{\{…\}\} placeholder/);
   assert.throws(() => read({ defaults: 'A=1' }), /envFiles\[0\]\.defaults must be a list/);
@@ -73,7 +105,7 @@ test('defaults are plain NAME=value lines: a placeholder is the session\'s, in l
 
 test('a database names its env files by key: an entry\'s secret, or the key its path makes', () => {
   const db = { engine: 'postgres', dir: '.', migrate: null, seed: null, paths: [], migrations: null, user: null, name: null };
-  const envFiles = [{ path: 'api/.env', secret: 'api-env', lines: [] }, { path: 'web/.env.local', lines: [] }];
+  const envFiles = [{ path: 'api/.env', secret: 'api-env', overrides: [] }, { path: 'web/.env.local', overrides: [] }];
   const project = parseProject({ ...EMPTY_PROJECT, envFiles, databases: [{ ...db, envFiles: ['api-env', 'web-env-local'] }] });
   assert.deepEqual(project.databases[0].envFiles, ['api-env', 'web-env-local']);
   assert.throws(() => parseProject({ ...EMPTY_PROJECT, envFiles, databases: [{ ...db, envFiles: ['web/.env.local'] }] }), /databases\[0\]\.envFiles\[0\] must be lowercase/);
@@ -87,8 +119,8 @@ test('a wrong project file names the field', () => {
   assert.throws(() => parseProject([]), /the file must be a mapping of version, dependencies/);
   assert.throws(() => parseProject({ ...EMPTY_PROJECT, version: 3 }), /version must be 1, the format this version of Woodshed reads \(it is 3\)/);
   assert.throws(() => full({ dependencies: ['api'] }), /dependencies must be a mapping of installs/);
-  assert.throws(() => full({ envFiles: [{ path: '../x', secret: null, lines: [] }] }), /envFiles\[0\]\.path must be a path inside the repo/);
-  assert.throws(() => full({ envFiles: [{ path: 'x', secret: 'Api_Env', lines: [] }] }), /envFiles\[0\]\.secret must be lowercase/);
+  assert.throws(() => full({ envFiles: [{ path: '../x', secret: null, overrides: [] }] }), /envFiles\[0\]\.path must be a path inside the repo/);
+  assert.throws(() => full({ envFiles: [{ path: 'x', secret: 'Api_Env', overrides: [] }] }), /envFiles\[0\]\.secret must be lowercase/);
   assert.throws(() => full({ envFiles: [{ secret: null }] }), /envFiles\[0\] is missing path/);
   assert.throws(() => full({ app: fixtureApp({ frontendPort: 'web' }) }), /app\.frontendPort must be a port number/);
   assert.throws(() => full({ env: { PORT: 9000 } }), /env\.PORT must be a string: quote it/);
@@ -142,7 +174,7 @@ test('only version must be written: a field left out is none, and a misspelt one
   assert.deepEqual(parseProject({ version: 1 }), EMPTY_PROJECT, 'a file with only its version is a repo with nothing');
   const { app, ...noApp } = EMPTY_PROJECT;
   assert.equal(parseProject(noApp).app, null);
-  assert.deepEqual(parseProject({ version: 1, envFiles: [{ path: 'api/.env' }] }).envFiles, [{ path: 'api/.env', secret: null, key: 'api-env', defaults: [], lines: [] }]);
+  assert.deepEqual(parseProject({ version: 1, envFiles: [{ path: 'api/.env' }] }).envFiles, [{ path: 'api/.env', secret: null, key: 'api-env', defaults: [], overrides: [] }]);
   const { stop, logs, paths, ...lean } = fixtureApp();
   assert.deepEqual(parseProject({ version: 1, app: lean }).app, { ...lean, stop: null, logs: {}, paths: [] });
   const [db] = parseProject({ version: 1, databases: [{ engine: 'mongo', dir: '.' }] }).databases;
@@ -271,6 +303,9 @@ test('a wrong pullRequests section names the field', () => {
   const { author, ...noAuthor } = PULL_REQUESTS.qa;
   assert.equal(full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed' } }).pullRequests.qa.author, null, 'a QA session has no comment author');
   assert.throws(() => full({ ...PULL_REQUESTS, qa: noAuthor }), /pullRequests\.qa is missing author/);
+  const { author: _author, ...noReviewAuthor } = REVIEW;
+  assert.equal(full({ ...PULL_REQUESTS, review: { ...noReviewAuthor, runner: 'woodshed' } }).pullRequests.review.author, null, 'a review session\'s author is the console\'s to fill in');
+  assert.throws(() => full({ ...PULL_REQUESTS, review: noReviewAuthor }), /pullRequests\.review is missing author/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed', author: '' } }), /pullRequests\.qa\.author must be a non-empty string/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'jenkins' } }), /pullRequests\.qa\.runner must be one of actions, woodshed/);
   assert.equal(full(PULL_REQUESTS).pullRequests.qa.autoLabel, false, 'left out, a person adds the label');
@@ -372,13 +407,13 @@ test('paths fill in the home and the checkout\'s folder name', () => {
   assert.equal(expandPath('logs/a.log', { repoDir: '/work/x' }), '/work/x/logs/a.log');
 });
 
-test('the CLI writes the env files from the repo and the session alone without repo settings, and prints the exports, fields and files', (t) => {
+test('the CLI writes the env files from the repo settings, never the old secrets\' variables, and prints the exports, fields and files', (t) => {
   const dir = scratch(t);
   fs.mkdirSync(path.join(dir, '.woodshed'));
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
     dependencies: { installs: [API_INSTALL] },
     env: { PORT: '8080', URL: 'http://localhost:{{PORT}}' },
-    envFiles: [{ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGDATABASE}}'] }],
+    envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: ['DB={{PGDATABASE}}'] }],
     rules: '.woodshed/rules.md',
   }));
   fs.writeFileSync(path.join(dir, '.woodshed/rules.md'), '- Run `make check`.\n');
@@ -390,20 +425,27 @@ test('the CLI writes the env files from the repo and the session alone without r
   assert.throws(() => cli(['secret-vars']), /unknown command: secret-vars/, 'an env file has no variable of its own now');
   assert.equal(cli(['file', 'rules']), '- Run `make check`.\n');
   assert.equal(cli(['file', 'setup']), '');
-  // An old Terraform secret's variable and old own lines in the environment are not read.
-  assert.equal(cli(['write-env-files'], { API_ENV: 'SECRET=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"MINE=1"}' }),
-    'api/.env (layers: session, installation: 0 bytes, replaced by the session: none)\n');
+  // The old Terraform secret's variable and own lines, which a task definition from before repo settings may still pass,
+  // are not read.
+  assert.equal(cli(['write-env-files'], { API_ENV: 'OLD=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"OLD=2"}' }), 'api/.env (base: 0 bytes)\n');
   assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'), '\n\n# Woodshed overrides\nDB=app\n');
+  const settings = path.join(dir, 'repo-settings.json');
+  fs.writeFileSync(settings, JSON.stringify({
+    project: 'app', envFiles: { 'api-env': { installation: 'SECRET=1', personal: 'MINE=1' } }, instructions: { installation: null, personal: null }, personalFor: 'octocat',
+  }));
+  assert.match(cli(['write-env-files'], { API_ENV: 'OLD=1', PGDATABASE: 'app', REPO_SETTINGS_FILE: settings }), /^api\/\.env \(layers: installation personal session, installation: 8 bytes, personal: 6 bytes, /);
+  assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'),
+    'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed overrides\nDB=app\n');
 });
 
 test('the CLI writes an env file\'s defaults first, and counts them in what it prints', (t) => {
   const dir = scratch(t);
   fs.mkdirSync(path.join(dir, '.woodshed'));
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
-    envFiles: [{ path: 'web/.env.local', defaults: ['FEATURE_PREVIEW=true'], lines: ['DB={{PGDATABASE}}'] }],
+    envFiles: [{ path: 'web/.env.local', defaults: ['FEATURE_PREVIEW=true'], overrides: ['DB={{PGDATABASE}}'] }],
   }));
   const cli = (env) => execFileSync('node', [SCRIPT, 'write-env-files'], { encoding: 'utf8', env: { PATH: process.env.PATH, REPO_DIR: dir, ...env } });
-  assert.equal(cli({ PGDATABASE: 'app' }), 'web/.env.local (layers: repo session, defaults: 1, installation: 0 bytes, replaced by the session: none)\n');
+  assert.equal(cli({ PGDATABASE: 'app' }), 'web/.env.local (base: 0 bytes, defaults: 1)\n');
   assert.equal(fs.readFileSync(path.join(dir, 'web/.env.local'), 'utf8'),
     '# From the repo (.woodshed/project.yaml)\nFEATURE_PREVIEW=true\n\n# Woodshed overrides\nDB=app\n');
 });
@@ -415,7 +457,7 @@ test('check prints what a session takes from the project file, and fails as a st
   const cli = (args) => execFileSync('node', [SCRIPT, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH, REPO_DIR: dir } });
   fs.writeFileSync(file, fixtureProject({
     dependencies: { installs: [API_INSTALL] },
-    envFiles: [{ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGDATABASE}}'] }],
+    envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: ['DB={{PGDATABASE}}'] }],
     app: fixtureApp(),
     rules: '.woodshed/rules.md',
   }));
@@ -440,10 +482,10 @@ test('checkoutDir is /work/<name>, the folder the session image clones into', ()
 });
 
 test('a project uses a variable when its env exports it, an env file writes it, or either takes it from the session', () => {
-  const project = { ...EMPTY_PROJECT, env: { REDIS_URL: 'redis://127.0.0.1:6379', API: '{{PDF_URL}}' }, envFiles: [{ path: 'a/.env', secret: null, lines: ['PGHOST={{PGHOST}}', 'KEY={{S3?}}'] }] };
+  const project = { ...EMPTY_PROJECT, env: { REDIS_URL: 'redis://127.0.0.1:6379', API: '{{PDF_URL}}' }, envFiles: [{ path: 'a/.env', secret: null, overrides: ['PGHOST={{PGHOST}}', 'KEY={{S3?}}'] }] };
   for (const name of ['REDIS_URL', 'PDF_URL', 'PGHOST', 'S3']) assert.equal(usesVariable(project, name), true, name);
   for (const name of ['MONGODB_URI', 'PGHOS', 'REDIS']) assert.equal(usesVariable(project, name), false, name);
-  const withDefault = { ...EMPTY_PROJECT, envFiles: [{ path: 'a/.env', secret: null, defaults: ['REDIS_URL=redis://127.0.0.1:6379'], lines: [] }] };
+  const withDefault = { ...EMPTY_PROJECT, envFiles: [{ path: 'a/.env', secret: null, defaults: ['REDIS_URL=redis://127.0.0.1:6379'], overrides: [] }] };
   assert.equal(usesVariable(withDefault, 'REDIS_URL'), true, 'a default the repo writes is the repo using it');
   assert.equal(usesVariable(EMPTY_PROJECT, 'REDIS_URL'), false);
 });
@@ -453,7 +495,7 @@ test('a project needs the engine of each of its databases, whatever its env line
   assert.deepEqual(neededDatabases(EMPTY_PROJECT), []);
   assert.deepEqual(neededDatabases({ ...EMPTY_PROJECT, databases: [database] }), ['mongo'], 'Mongo on its own');
   assert.deepEqual(neededDatabases({ ...EMPTY_PROJECT, databases: [{ ...database, engine: 'postgres' }, database] }), ['postgres', 'mongo']);
-  assert.deepEqual(neededDatabases({ ...EMPTY_PROJECT, envFiles: [{ path: 'a/.env', secret: null, lines: ['H={{PGHOST}}'] }] }), [],
+  assert.deepEqual(neededDatabases({ ...EMPTY_PROJECT, envFiles: [{ path: 'a/.env', secret: null, overrides: ['H={{PGHOST}}'] }] }), [],
     'a line naming an engine\'s variable is no database: it is left unset');
 });
 

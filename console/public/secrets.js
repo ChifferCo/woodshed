@@ -146,7 +146,7 @@
 
   function changedLine(s) {
     // Terraform makes each of AWS's; a store chosen on this page makes one when it is first saved.
-    if (!s.exists && manager?.kind === 'aws' && !manager.canChoose) return 'Missing in AWS: apply Terraform to create it';
+    if (!s.exists && !s.creatable && manager?.kind === 'aws' && !manager.canChoose) return 'Missing in AWS: apply Terraform to create it';
     if (!s.set) return 'No value yet';
     return `Changed ${W.when(s.changedAt)}`;
   }
@@ -200,6 +200,7 @@
 
   function secretRow(s) {
     const value = revealed.get(s.name);
+    const replaceable = s.exists || s.creatable;
     return h('div', { class: `secret-row${open === s.name ? ' is-open' : ''}` },
       h('div', { class: 'secret-head' },
         h('div', { class: 'secret-main' },
@@ -211,7 +212,7 @@
             h('button', { type: 'button', class: 'btn btn-plain', 'aria-pressed': String(value !== undefined), onclick: () => reveal(s.name) }, value === undefined ? 'Show' : 'Hide'),
             value !== undefined && copyButton(s.name, value)),
           !s.readable && h('div', { class: 'msg-plain' }, 'Write-only: sessions never see this key, so the console never shows it either.')),
-        s.exists && h('button', {
+        replaceable && h('button', {
           type: 'button', class: 'btn btn-stop', 'aria-expanded': String(open === s.name),
           onclick: () => { open = open === s.name ? null : s.name; render(); },
         }, open === s.name ? 'Close' : s.set ? 'Replace' : 'Set')),
@@ -363,10 +364,11 @@
       managerCard(),
       // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
       data.webhook && webhookCard(),
-      GROUPS.map((g) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
-        h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
-        h('p', { class: 'sub' }, g.note),
-        h('div', { class: 'secret-list' }, data.secrets.filter((s) => s.group === g.id && s.kind !== 'webhook').map(secretRow)))),
+      GROUPS.map((g) => [g, data.secrets.filter((s) => s.group === g.id && s.kind !== 'webhook')])
+        .map(([g, rows]) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
+          h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
+          h('p', { class: 'sub' }, g.note),
+          h('div', { class: 'secret-list' }, rows.map(secretRow)))),
       h('p', { class: 'foot' }, 'The Postgres password is not here: RDS keeps and rotates it.')));
   }
 

@@ -20,8 +20,8 @@ const MAX_SECRET_BYTES = 65_536;
  */
 
 /**
- * Every secret the Secrets page sets: the fixed ones, and one for each install secret (`installSecrets` from config.mjs),
- * which sit after the model keys. A repo's env files are not here: they are its Repo settings (repoSettings.mjs).
+ * Every secret the Secrets page sets: the fixed ones, and one for each install secret (`installSecrets` from
+ * config.mjs), which sit after the model keys. The env files' values are Repo settings (repoSettings.mjs), not these.
  * @param {{installSecrets?: {secret: string}[]}} [opts]
  * @returns {SecretSpec[]}
  */
@@ -48,7 +48,7 @@ export function secretSpecs({ installSecrets = [] } = {}) {
 export function checkValue(spec, value) {
   if (typeof value !== 'string') throw new Error('the value must be text');
   const text = value.trim();
-  if (!text) throw new Error('the value is empty');
+  if (!text.trim()) throw new Error('the value is empty');
   if (Buffer.byteLength(text) > MAX_SECRET_BYTES) throw new Error('the value is over the 64 KB a secret can hold');
   if (spec.kind === 'line' && /\s/.test(text)) throw new Error('the value must be one line with no spaces');
   if (spec.kind === 'pem') {

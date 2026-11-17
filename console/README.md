@@ -12,11 +12,15 @@ one row: a **Mine | Everyone** switch, **+ New session**, and on Everyone a **Pe
 of its own: `/all` (Everyone) shows the shared sessions in the pane, with a status filter, and `/` (Mine) shows New
 session. **People** filters Everyone by who started a session (it takes several people; `?by=<login>,<login>` in
 the URL). Your avatar menu (My settings, the console's pages, Sign out) is at the foot of the rail and opens upward.
-A card shows the title and its tag (on Everyone, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. On a console with more than one project, each card's left edge is its project's colour (the name is in its tooltip), and a row of chips under the head (**All**, then each project with its colour and count) filters the rail to one project; the browser keeps the pick (`woodshed-rail-project`), and one naming a project that is gone is All. How long it ran and who started it are under its Details; the app's button and the
+A card shows the title and its tag (on Everyone, and on Mine for a session you started that someone else has, the Assigned tag is the assignee's name), then a second line with the status, a name only when the card does not already say it (`from <person>` on a shared session someone else started, on Mine, or one nobody has, on Everyone), and the PR chip at the right end. On a console with more than one project, each card's left edge is its project's colour (the name is in its tooltip), and a row of chips under the head (**All**, then each project with its colour and count) filters the rail to one project; the browser keeps the pick (`woodshed-rail-project`), and one naming a project that is gone is All. How long it ran and who started it are under its Details; the app's button and the
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
-turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones assigned
-to you: **Needs you** (stopped sessions waiting on you), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. **Take it** on
+turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones you
+started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and have no Take it. A console one person uses has one list of
+every session, with no switch, and its head reads **My sessions** (`/all` opens it): one nobody signs in to (it listens on
+loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
+decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
+`/api/sessions` says which in `onePerson`. **Take it** on
 an unassigned card, or **Assign to me**, **Hand over to** and **Unassign** in the card's ⋯ menu, change
 who has it; only someone who can be assigned can (`POST /api/sessions/<id>/assign`). A later comment from someone else does not move it, but
 someone who can be assigned commenting on an unassigned session takes it. Assignment is a label, not a permission: a shared session stays visible
@@ -166,6 +170,18 @@ the session's app unless that repo's project file, read from its default branch,
 repo's should (`commentConsoleUrl` in `fleet.mjs`; `fleet: comment names no console address` in the log). When the file
 cannot be read, the default project's comments keep their links and another project's leave them out.
 
+Each repo has its own label and switches, on its settings page (Console settings → Repos → Settings, the **Sessions
+from GitHub** card; `console/repoTriggers.mjs`): **Start sessions from the label** and **/woodshed comments** turn each
+off for that repo alone, and the label's name is the repo's own, `woodshed` above being the console's
+(`WOODSHED_LABEL`) for a repo never given one. GitHub matches a label whatever its case, and so does the console. A
+name equal to the repo's QA label (`pullRequests.qa.label`) is refused, since the fleet tells them apart by name. They
+are kept in `state.json` under `repoTriggers`, by project, and a removed repo's go with it. Both the poll and the
+webhooks read them, so a change applies to the next label or comment. A label or comment a repo turns off is ignored
+with nothing posted on the issue: the console logs `fleet: trigger ignored, the repo turns it off`, and the Webhook
+events page lists a webhook's as ignored with the reason. Each change logs `repoTriggers: changed` with the `project`,
+`key` (`label`, `labels`, `comments`), `from`, `to` and `by`. The console's comments (a refusal, a failed start) name
+the repo's own label.
+
 GitHub's webhooks reach the console within a second or two: GitHub posts to a
 Lambda Function URL (`providers/aws/webhooks/index.mjs`), which checks the signature and
 queues a small message, and the console long-polls the queue. The console
@@ -286,12 +302,14 @@ and project, so a person just given write access waits up to 10 minutes for it t
 another one saves it (`POST /api/my/projects/default`, kept per person in `viewPrefs`), as does
 the **Default project** card on My settings; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
-asks for a prompt and, optionally:
-- a name. Left empty, the session starts named after the prompt's first line,
-  and the console asks Claude Haiku for a better one on the team's Anthropic
-  key (`console/autoName.mjs`). The rail shows it a second or so later; if the
-  call fails, the first line stays;
-- what to work on: `#123` for an issue or PR, `PR #123`, or a branch name. The field lists the project's open pull
+asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
+first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).
+The rail shows it a second or so later; if the call fails, the first line stays. Either way the console then sets the
+session's `namedAt`, and a page that saw the session before it (or opens it within 30 s) shows a small **Named …
+Rename** offer under its title for 10 s: a click on it keeps it open, and **Rename** turns it into a field that saves
+with Enter, as the title's own rename does. `POST /api/my/sessions` still takes a `name`, which skips all of this.
+- **Continue a PR or branch**: `#123` for an issue or PR, `PR #123`, or a branch name. Left empty, the session starts a
+  new branch from the default branch. The field lists the project's open pull
   requests (`GET /api/pulls`, the 100 updated last, read by the console in one GraphQL call and kept a minute per
   project): typing narrows them by number, title, branch or author, ▾ or ↓ shows them all, and a pick writes `PR #123`
   and names it under the field. The console logs `console: open pull requests read` with the count, or `console: open
@@ -537,8 +555,9 @@ what was forgotten. Forget it is refused while one of your sessions runs, since
 that session would save its home again within 5 minutes; Remove My Woodshed
 stops them first.
 
-**Repo settings**, on My settings, hold your own values for each repo's env files and your own instructions, for your
-private sessions on that repo ("Repo settings" below says how they are kept and handed out):
+**Repo settings**, on My settings, hold your own values for each repo's env files, your own instructions and your own
+files ("Your files" below), for your private sessions on that repo ("Repo settings" below says how they are kept and
+handed out):
 - The repos you can write to are tabs (New session's check), on your default project; `?repo=<project>` opens one and
   `&file=<key>` one of its env files. A repo you cannot write to is not listed, and its routes answer 403.
 - Each env file shows its layers as a session writes them: the repo's `defaults`, this installation's values (read only,
@@ -551,21 +570,31 @@ private sessions on that repo ("Repo settings" below says how they are kept and 
 
 **tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's `tmux.conf`, so a setting in
 both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or saving nothing, deletes
-them. Its routes are `GET`/`POST /api/my/files/tmux-conf` (and `/reset`); tmux-conf is the only file there, and any
-other name answers `no file called …`. Your own lines for an env file are under Repo settings.
+them. `/api/my/files/tmux-conf` is its route; your own lines for the env files are Repo settings, above.
 
-**Your own files**, on My settings, are whole files of your own, by their path in the repo (an
-`app/.env.production` that your MCP servers read, a tool's local config), which every My Woodshed session of yours
-writes into its checkout at start:
-- All of them are one secret, `<prefix>/users/<login>/own-files` (JSON, path to text; 64 KB and 20 files at
-  most). `state.json` keeps only each path and when it was saved (`people.<login>.ownFiles`).
+**Your files**, in each repo's tab on Repo settings, are whole files of your own for that repo, by their path in it (an
+`app/.env.production` that your MCP servers read, a tool's local config), which every private session of yours on that
+repo writes into its checkout at start. Another repo's sessions never get them, so one path can hold a different text
+for each repo:
+- A repo's are one secret, `<prefix>/users/<login>/repos/<project>/files` (JSON, path to text; 20 files at most, and the
+  secret store's `maxValueBytes` for the JSON: 64 KB in AWS, 1 MB in the local provider, 64 KB for a store that declares
+  none; the panel shows it). `state.json` keeps only each path and when it was saved
+  (`people.<login>.repos.<project>.files`). `GET`/`POST /api/my/repos/<project>/files` read and save them, refused (403)
+  for a repo you cannot write to, as the rest of Repo settings is.
 - A path is checked as it is saved and again in the session (`shared/ownFiles.mjs`): inside the repo, no `..`, not
-  under `.git`, and not one of the env files above, which take your lines instead.
+  under `.git`, and not one of that repo's env files (from its project file on the default branch: a save waits until it
+  can be read), which take your values instead.
 - The session writes a file only where git ignores it and does not track it, mode 600, so it cannot reach a commit
   (`session/ownFiles.mjs`). Its log says `Own files written`, or a `WARNING` with each file skipped and why.
-- The console logs `userSettings: own file saved` or `removed` with the path, and `sessionApi: settings handed out`
-  names them under `wholeFiles`. Remove My Woodshed deletes them.
+- The console logs `repoSettings: own file saved` or `removed` with the project and path, and `sessionApi: settings
+  handed out` names them under `wholeFiles`. Taking the repo off the console, or Remove My Woodshed, deletes them.
 - A running session keeps the files it started with; an edit made in a session is not saved back.
+- Before they were per repo, all of a person's files were one secret for every repo, `<prefix>/users/<login>/own-files`
+  (`people.<login>.ownFiles`). At each start the console moves those into the default project's, beside any the person
+  already keeps there, which win for a path in both (`repoSettings: own files moved to the default project`, with the
+  paths `added` and `kept`, and `leftOut` when the two together would be over the limit, which keeps theirs alone), then
+  deletes the old secret; one that fails (`own files not moved`) is tried again at the next start and reaches no
+  session meanwhile. `/api/my/own-files` still answers a page opened before, on the default project's.
 
 **Session timeouts**, on My settings, override the console's *Pause a session
 waiting for input after* (0.25 to 24 hours) and *Stop a working session after*
@@ -623,7 +652,9 @@ login as the session's `plan`, which the Shared page, the rail, the session's
 **Details ▾** and the start comment show (`◆ Mona Octocat's Claude`, the start comment
 with `@login`, or `Team key`). The
 session API's `/settings` answer tells that session its `plan`, and the
-entrypoint has claude go through the proxy on it. The token never reaches a
+entrypoint has claude go through the proxy on it. It asks whether or not the
+console makes the session databases (a console with no db-admin, or a project
+with no Postgres or Mongo, answers `{plan}` alone, and a 404 on the team key). The token never reaches a
 shared session: anyone signed in who opens it can type into it, and spends
 that person's plan while it runs, but cannot take the token away. So the
 Artifact tool does not work there, nor on the team key.
@@ -637,7 +668,7 @@ at it and hands claude the session's own `SESSION_TOKEN` as its credential,
 for claude alone: the entrypoint exports none of it, and `CLAUDE_ENV_FILE`
 takes it away again from every command claude runs. The repo's app is left
 to its own env files, however it was started, and calls Anthropic itself on
-whatever key they hold: the installation's repo settings, or the owner's own. A call with the
+whatever key they hold: the env file secret's, or the owner's own line. A call with the
 session token in
 `x-api-key` goes on the team key, which the console reads from
 `<prefix>/anthropic-api-key` and keeps 5 minutes; a call with it as a
@@ -698,19 +729,65 @@ is why it is only for a console nobody else can reach, until the App exists and 
 GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
 installation's App's. So a review session (`pullRequests.review.runner: woodshed`) submits its verdict as a second App,
 the reviewer App (`reviewerApp.mjs`), which asks for pull requests (write) and nothing else. Once the console has its
-App, `/setup/github` offers it:
+App, `/setup/github` offers it, and the setup card lists it right after the App, to admins (optional: sessions work
+without it, only their approvals do not count). Once the rest of setup is done it stays on New session, above the form,
+until the reviewer App is made:
 
 1. **Make the reviewer App.** *Create the reviewer App on GitHub* posts its manifest (`reviewerManifest`: no webhook,
    no sign-in). GitHub sends the browser back to `/setup/github/reviewer-created`, and the console keeps the key in the
    secret store (`github-reviewer-app-key`) and the App's ID and slug in `state.json` under `reviewerApp`. No restart:
    the key is read at each review.
-2. **Install it** on each repo whose review runs as a session, and set that project file's `pullRequests.review.author`
-   to its `<slug>[bot]` login. The review's PR comment and the Merge risk check stay the installation's App's.
+2. **Install it** on each repo whose review runs as a session. The project file names neither App: the console fills
+   in `pullRequests.review.author` with the reviewer App's `<slug>[bot]` and `commentAuthor` with its own
+   (`reviewLogins.mjs`), so renaming either App changes nothing there. The console App's login is read from GitHub when
+   the console starts; the reviewer App's follows a rename from the login its next review comes back with. A login the file does name still wins. With no
+   reviewer App no verdict is trusted, because sessions hold the console App's tokens and one could approve as it. The
+   review's PR comment and the Merge risk check stay the installation's App's.
+
+It asks for contents (write) as well as pull requests, because GitHub counts an approval toward a branch rule's required
+review only from an App that can write to the repo. Each review still goes out with a token narrowed to pull requests.
+A reviewer App made before it asked for contents needs it added in its settings on GitHub, then accepted on each
+installation.
 
 At each verdict the console finds the reviewer App's installation on the repo, mints a token narrowed to pull requests,
 and submits the review at the reviewed commit. It logs `fleet: review verdict submitted` with `as: 'reviewer App'`, or
 `as: 'console App'` when no reviewer App was made, in which case GitHub refuses an approval of the App's own pull
 requests.
+
+### The review in a session, as in Actions
+
+A review session does what `review.yml` does, so a repo can move from one to the other without losing anything. Its
+prompt (`shared/codeReview/prompt.txt`) is the workflow's word for word, apart from paths, and a test fails when they
+part. The session cannot write to GitHub, so it writes files and the console posts them:
+
+- **Inline comments** (`inline-comments.json`) go on the diff's lines with the verdict. GitHub refuses a whole review
+  when one comment is on a line the diff does not show, so the console then submits the verdict with the comments in
+  its body (`folded: true` in the log).
+- **Earlier inline comments** are in the session's context, with ids. Those by `review.author` that the head fixes go
+  in `resolved.txt`, and after an APPROVE the console resolves them and the review's outdated threads, never a
+  person's (`fleet: review threads resolved`).
+- **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
+
+### The approval waits for QA
+
+When QA runs here (`pullRequests.qa.runner: woodshed`) and the pull request carries the QA label, the review's APPROVE
+is held instead of submitted, so "Approved" on GitHub means reviewed and tested in any repo, with no branch rule that
+requires the QA check. The review's comment, the merge risk and the inline comments' context go out as usual; the
+console keeps the verdict on the review session (`review.held`) and starts QA on it at once (`fleet: review approval held
+until QA finishes`). When QA reports on that commit (`fleet: held approval released after QA`):
+
+- **Pass, or Not covered:** the APPROVE goes to GitHub with QA's result as its last line, and the fixed threads are
+  resolved.
+- **Fail:** the verdict goes in as REQUEST_CHANGES, saying the review approved but QA failed.
+- **The head moved meanwhile:** nothing is submitted; the new commit gets its own review.
+- **QA could not start** (the labeler has no write access, the project is not ready): the APPROVE goes out at once, its
+  last line saying why (`fleet: held approval released, QA did not start`).
+
+Only a report on the commit the QA session started on releases an approval: a report naming another commit did not
+test it.
+
+Without the label, as when someone removed it, the APPROVE goes out at once. A QA session that never reports leaves the
+approval held: removing and adding the label runs QA again, which releases it.
 
 ## Webhook events, secrets and the GitHub App's webhook
 
@@ -726,7 +803,28 @@ you out.
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
   (`webhookEvents: swept` with how many it kept) takes older lines out. A
   delivery the Lambda refused never reaches the queue: GitHub's Recent
-  Deliveries page shows those.
+  Deliveries page shows those. When a source is switched off on Console
+  settings (below), the page says so above the list.
+- **Webhooks** card on Console settings (`/console-settings#webhooks`): two
+  switches, shown where webhooks reach the console (a queue, the local
+  receiver, or the program it is embedded in), that turn each source off on
+  its own. **GitHub webhooks** off, the console drops
+  each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
+  at full speed (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does.
+  The poll finds only the session label and `/woodshed` comments, so what only
+  a webhook starts stops until it is on again: QA labels, QA after a review
+  approves, `qa.autoLabel`, review sessions started by a commit's tag, and the
+  assignee's message for a session's `Needs a human:` comment. The console logs
+  `webhooks: off, dropped a delivery the poll does not cover` with its `kind`
+  at the first of each.
+  **Slack questions** (only on a console that answers them) off, it drops each
+  mention of its bot, which nothing else brings, and lists it as ignored. Each
+  is kept in `state.json` under `webhooks.<source>`, with who turned it and
+  when; the console logs `webhooks: switched` with `source`, `off` and `by`,
+  then `webhooks: off, deliveries dropped from now on` with the `source` at the
+  first delivery it drops, and at start `console: GitHub webhooks are switched
+  off on Console settings, polling` or `console: Slack questions are switched
+  off on Console settings`.
 - **Secrets & webhooks** (`/secrets`): each secret's state and when it last
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
@@ -762,12 +860,26 @@ there is no db-admin task, Data ▾ has Redis alone, and My settings has no Your
 databases` once at start, with `made`, the `engines` it makes a copy on, the ones sessions are `hosted` on and the ones
 its `tunnel` reaches.
 
-When the default branch's project file names a database on an engine the installation does not host, no session that
-would get databases starts (`databaseGate.mjs`): New session and My settings say why, the API answers the start with
-the reason (`Not started: the project file's databases need mongo, which this installation does not host (it hosts
-postgres)`), and a label or `/woodshed` comment gets it on its issue. The console logs `console: project databases not
-hosted` with what the file `needs` and what is `hosted`, `fleet: session refused, its databases are not hosted` or
-`fleet: trigger refused, its databases are not hosted`. A question from Slack, which gets no database, still starts.
+Each repo is checked on its own (`databaseGate.mjs`): when a repo's project file, read from its default branch, names a
+database on an engine the installation does not host, no session on that repo that would get databases starts, and
+every other repo still does. That repo is a **blocker**: one sentence naming the repo (`acme/api's project file asks
+for a Mongo database, and this console only runs Postgres.`), the fix's steps in order (on AWS, add the engine to
+`databases` in Terraform and apply; on the local provider, its `WOODSHED_LOCAL_DB_*`, or `install.sh` again with
+`WOODSHED_REPO` where the install named no repo; then "Or take the Mongo database out of acme/api's project file",
+linked to the file on GitHub), and the People list's admins to ask. `GET /api/my` has `projectBlockers`, each blocked
+project you may start on by name (and `databasesRefusal`, the default project's as a sentence, for older pages);
+Console settings' Repos card says Needs setup or Ready on each repo, with the blocker under it.
+
+New session opens on your default repo only while it can start, else on the first that can, so a blocked repo never
+shows up front while another works. The repo picker is always there, the only repo named as text with a way to add
+another (Add a repo for an admin), and a blocked repo is listed with `needs setup`: picking it puts its card where the
+prompt and Start were, with the numbered fix for an admin, and for anyone else "Only an admin can fix this", whom to
+ask and a message to send them with Copy. My settings' Your databases lists the same cards. The API answers a start
+with the reason and the first step (`Not started: acme/api's project file asks for … Add "mongo" to databases …`), and
+a label, `/woodshed` comment or QA label gets the same on its issue. The console logs `console: project databases not
+hosted` with the `project`, what the file `needs` and what is `hosted`, `console: project ready again`, and `fleet:
+session refused, its project is not ready` or `fleet: trigger refused, its project is not ready`. A question from
+Slack, which gets no database, still starts.
 
 Every session's databases are a copy of one **template** on each engine, migrated and seeded
 from the default branch, and every database has a user of its own, with its own password, the same on
@@ -979,10 +1091,13 @@ progress. Half an app says which half: `API down` when the page loads but every
 call under it would fail, `frontend down` when only the backend answers (Start
 app then starts the frontend). The GitHub comment that announces a session gives
 the app's address. A project file with no `app` has nothing to start, so the button is **Set up app**
-instead: it types a request into the session's claude (`SETUP_APP_PROMPT` in `console/fleet.mjs`; held until its turn
-ends, as a message would be) to work out how the app runs, write the `app` section and commit it. statusd reads a
-project with no app again on each Start app, so the button turns into **Start app** once the file has one, and that
-start runs it.
+instead. It first says in a dialog what it does (Woodshed does not know how to start the app yet; the agent works it
+out, saves it and starts it), since its name alone did not, then types a request into the session's claude
+(`SETUP_APP_PROMPT` in `console/fleet.mjs`; held until its turn ends, as a message would be) to work out how the app
+runs, write the `app` section, commit it and leave the app running. statusd reads a project with no app again every
+10 seconds and on each Start app, so **Open app** shows once the file has one and the frontend answers. Claude's rules
+say the same (`session/noApp.md`), so a private session offers it when the person wants to see the app, and give it
+the app's address (`session/appAddress.md`) in place of a localhost one the person cannot reach.
 
 A project file with several apps (`apps`, docs/reference.md) runs one at a time. **Start app ▾** opens a menu of their
 labels, and picking one sends its name (`POST /api/sessions/<id>/app/start` with `{"app": "<name>"}`, passed on to
@@ -1274,6 +1389,11 @@ signs every request a signed-in browser sends, a cross-site one too. `woodshed-d
 which is not refused when the host later lets someone go: it lasts at most 12 hours. The console logs `console:
 hosted mode` with which of the two are on at start.
 
+**One person's console** (`WOODSHED_ONE_PERSON=1`, or `config.onePerson: true` for an embedding program). With no
+People list a hosted console cannot count who uses it, so the host says when it is one person's own, such as a
+personal workspace: the rail then shows one list of every session, with no Mine | Everyone switch. Without it, Mine
+still lists the shared sessions each person started, since nobody can be assigned one here.
+
 ## Embedding the console
 
 `console/installation.mjs` is one console without its servers: `createInstallation` builds the fleet, GitHub clients,
@@ -1301,16 +1421,35 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   where the fix is a page, such as giving the GitHub App access) for a refusal the page shows as it is; core refuses
   the default project, a repo with sessions on it, and a repo or name already there before it asks. `names: false` when
   the program names each repo itself: the page then asks for no name, and one sent is refused.
+- `projectReadiness({name, repo})`: why sessions cannot start on a project, where the program knows something core
+  does not (its session image is not built, an install secret has no value). Async; it answers `null` when the
+  project is ready, or a blocker without `project` and `repo`, which core fills in:
+  `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}`. `reason` is one plain sentence naming the repo;
+  `fix` the steps someone who can fix it takes, in order, each with an optional link (`href`, https or a console path
+  such as `/console-settings`) and its button text (`label`); `ask` whom someone who cannot should ask (GitHub logins)
+  and an optional message, ready to send. Core asks it before its own database check, on each look at New session, My
+  settings and Console settings and at each start (an answer is kept 10 seconds), and shows and refuses with it as
+  with its own (above, "Databases"); a link that is neither https nor a path, or a step with no text, is dropped. A
+  hook that throws blocks nothing: core logs `console: project readiness not read` and runs its own check.
+- `hostApp: {login(), reviewer?}`: the App whose GitHub access the program lends (`githubBroker`), which the console
+  cannot ask GitHub about itself. `login()` answers its `<slug>[bot]` (or null while unknown), asked each time, so the
+  console trusts its comments, the QA label it adds (`qa.autoLabel`) and a review session's PR comment as that App's.
+  `reviewer` is the program's reviewer App: `{login(), configured(), submitReview({repo, number, event, body, sha,
+  comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
+  no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
+  `console: GitHub App from the host`.
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 
-- Env files are each repo's Repo settings (below): `repos/<project>/env/<key>` and
-  `users/<login>/repos/<project>/env/<key>` in the program's secret store, one set a repo, so two repos' `api-env`
-  never share values. `config.envFiles` (with its `name` and `repo`), `users/<login>/<secret>` and a launcher's
-  env-file variables are no longer read: a program that gave them moves its values into Repo settings first (a console
-  of the release before this one copied them there at its start).
+- `maxValueBytes` on the program's secret store (`providers/README.md`, "A secret store's limit on one value"): the most
+  bytes it holds in one value. Your files on Repo settings, one secret per person and repo, are held to it (64 KB when the store declares
+  none), so a store with no such cap, such as one sealed in a database, should declare its own.
+
+- `createsOnWrite: true` on the program's secret store when its `write` makes a secret that does not exist yet
+  (`providers/README.md`, "A secret store that makes a secret when it is first written"): the Secrets page then
+  offers Set on a secret nobody has written. Without it, such a secret shows no Set.
 
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
@@ -1441,16 +1580,24 @@ To turn it on:
    `slack-bot-token`.
 3. The channel's ID (`C...`, at the bottom of the channel's About tab) in the
    Slack card of the Console settings page. The console keeps it in
-   `state.json`, and an empty channel turns the posts off.
+   `state.json`, and an empty channel turns the posts off. A repo can have a
+   channel of its own on its Settings page (below).
 
 Both are read for each post, so neither needs a restart.
 
 ### A channel for each project
 
-A project can have a channel of its own: the channel field on its row of the
-Console settings page's Repos card, for the installation's repos and the ones
-added there alike (`POST /api/console-settings/projects/slack-channel` with
-`{"name", "channel"}`, admins only, checked as the Slack card's channel is: a
+A project can have a channel of its own: the **Slack** card on its repo's
+Settings page (Console settings → Repos → **Settings**,
+`/console-settings/repos/<project>#slack`), for the installation's repos and the ones
+added there alike. The Repos card's row says where its pull requests go
+(`PRs to C…`, or the console's channel) and links there. The card says what
+the channel is for and where the next post goes, and Clear sends the repo's
+pull requests back to the console's channel; with no Slack (no secret store)
+it says so and its field is off. It reads the channel with the page's view
+(`slack`: `channel`, `consoleChannel`, `canPost`) and saves it with
+`POST /api/console-settings/projects/slack-channel` with
+`{"name", "channel"}` (admins only, checked as the Slack card's channel is: a
 channel ID, never a name). It is kept in `state.json` under
 `settings.projectSlackChannels`, by project name, and removing an added repo
 drops it. A project's pull requests and their decision briefs go to its own
@@ -1558,7 +1705,7 @@ anyone Slack will not say anything about.
    page).
 3. The session checks out the default branch detached, with no databases, no Redis and no
    app. Its GitHub token reads only (contents, pull requests and issues), and
-   the app's env files and the install secrets are unset before claude starts.
+   it gets no repo settings, and the install secrets are unset before claude starts.
    `session/ask.md` tells claude to read the code, link each claim to it at the
    commit it read, and post the answer with `session/answer.sh`, which goes
    through the session API's `POST /answer` to the thread.
@@ -1631,7 +1778,7 @@ card's:
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
 | Slack | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
-| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on the Repos card posts there instead | none |
+| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on its repo's Settings posts there instead | none |
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
@@ -1689,8 +1836,9 @@ or listed to resume (a shared one kept, or any of a person's My Woodshed session
 the default among them, are read-only here: they change where `WOODSHED_PROJECTS` is set. Each row, theirs too, has a
 Slack channel field for that repo's pull requests ("A channel for each project" under Slack). An added repo is on the
 same terms as any other project: My Woodshed sessions, and labels and `/woodshed` comments on its issues (a webhook about
-it is no longer dropped), in the default project's session image and databases, with Slack questions and the
-database check staying on the default project. The
+it is no longer dropped), in the default project's session image and databases, with Slack questions staying on the
+default project. Its own project file's databases are checked on their own: a repo whose file needs an engine the
+installation does not host shows Needs setup on its row, with why and the fix, and Ready otherwise. The
 console logs `projects: repo added` and `projects: repo removed` with who did it, and `projects: installation not read`
 when GitHub did not answer.
 
@@ -1718,7 +1866,7 @@ had since.
 Each repo has its own env file values and instructions, in layers (`shared/repoSettings.mjs` says how a session's files
 and prompt are made of them): the repo's own (`.woodshed/project.yaml`: each env file's `defaults`, and `rules`), the
 installation's (layer 2, set by admins), each person's own (layer 3, in their private sessions only) and the session's
-wiring (each env file's `lines`, the project's `env`, Woodshed's own variables), which no layer before it changes.
+wiring (each env file's `overrides`, the project's `env`, Woodshed's own variables), which no layer before it changes.
 `console/repoSettings.mjs` keeps layers 2 and 3 in the console's secret store, one value each:
 
 | Name | Holds |
@@ -1727,6 +1875,7 @@ wiring (each env file's `lines`, the project's `env`, Woodshed's own variables),
 | `repos/<project>/instructions` | the installation's instructions for the repo, at most 16 KB |
 | `users/<login>/repos/<project>/env/<key>` | one person's own lines for that env file |
 | `users/<login>/repos/<project>/instructions` | one person's own instructions for the repo |
+| `users/<login>/repos/<project>/files` | one person's own whole files for the repo (My settings, "Your files" above) |
 
 `<key>` is the env file's key in the project file: its `secret`, or one made from its path (`web/.env.local` is
 `web-env-local`). Env files that name one secret share its key, and so one value a layer, written to each of their
@@ -1744,25 +1893,29 @@ file of the project file it shows its key and path, the repo's `defaults` (read 
 GitHub), the installation's values (hidden until **Show and edit**, since reading them is logged), the keys the session
 sets itself, and a table of which layer wins each key: key names only, never a value. Env files that name one secret
 are one tab, `app-env → api/.env, worker/.env`, with a note that the values are written to both files; each file's
-defaults and lines are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
+defaults and overrides are shown under its path where they differ, and the table has a row a file (`LOG_LEVEL in api/.env`)
 for a key the files do not agree on. Then the installation's
 Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
 A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
-for it after a typed confirm. A value an older console copied from a Terraform secret says `copied from Terraform` in
-its saved line. The page loads for anyone signed in; its calls answer 403 to anyone but an admin, and it says so.
+for it after a typed confirm. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
+(and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
+the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
+in; its calls answer 403 to anyone but an admin, and it says so.
 
 Each person sets layer 3 on My settings' **Repo settings** card (public/myRepoSettings.js, with the layers drawn by
 public/repoLayers.js, which the admin page shares), for each repo they can write to: see "My Woodshed" above. Env
 files that share a key are one tab there too (`app-env → api/.env, worker/.env`), and a person's values are written to
 each of them.
 
-Secrets & webhooks has no env file: Repo settings are the only place their values are kept.
+Repo settings are the only place an env file's values are set: no secret on Secrets & webhooks, Terraform or the task
+definition holds them. A value saved by the old start-time copy from a Terraform secret says `copied from Terraform` in
+place of who saved it.
 
 The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `lines`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `unnamed` (keys saved that the file no longer names), the instructions' records |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
@@ -1787,21 +1940,14 @@ filled only in a private session, from its owner's names; a shared or QA session
 the keys each layer gave and whether each has instructions. The session writes them into its env files and rules
 (session/README.md, "What a container does").
 
-Before Repo settings, env files were Terraform secrets (`env_files`, `WOODSHED_ENV_FILES`), and a console of the
-release before this one copied them, and each person's own lines for them, into these names at its start. Nothing reads
-the old names now: a console that still has `WOODSHED_ENV_FILES` or `WOODSHED_DB_ENV_SECRETS` set logs `console:
-ignored: env files are Repo settings now` with which, and starts; a `repoSettingsMigration` record or a person's old
-`files` entry for an env file left in `state.json` is ignored, and a person's old `users/<login>/<secret>` goes with
-Remove My Woodshed. An installation that skipped that release has its values only in the old secrets: put each on its
-repo's page before Terraform destroys them (`../providers/aws/README.md`, "Env files leaving Terraform").
-
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the
 default project's installation values the same way, layers 1, 2 and 4 (no one's own lines: the seed is no one's). It
 reads them itself, as
 `repos/<project>/env/<key>` for the project its entryPoint's `--project` names, never a name a run gives; on AWS its task
 role may read that project's `repos/<project>/env/*` and no other repo's (`TheSeedsEnvFiles` in
 `providers/aws/terraform/ecs.tf`). A key that two env files name (they share a secret) is read once and written to
-both. Its log says `Seed env files read` with where each key came from and the paths that name it, never a value.
+both. Its log says `Seed env files read` with where each key came from (`repo settings` or `none`) and the paths that
+name it, never a value.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
@@ -1835,16 +1981,17 @@ Remove My Woodshed.
 | `WOODSHED_APP_DOMAIN` | none | Session apps answer at `<id>.<this>` ("Session apps"); none turns them off, unless `WOODSHED_APP_PORTS` is set |
 | `WOODSHED_APP_PORTS` | none | On one person's console only (loopback, no sign-in): ports such as `7701-7710` the console also listens on, each lent to one session's app, which answers at `<public URL's name>:<port>` (`appPorts.mjs`, "Session apps on ports"). Not beside `WOODSHED_APP_DOMAIN`. The installer sets it with `WOODSHED_TAILSCALE=1` |
 | `WOODSHED_TLS_ASK_PORT` | none | A port on `127.0.0.1` where a reverse proxy asks before getting a certificate on demand: `GET /tls-ask?domain=<name>` answers 200 for the public URL's host, `WOODSHED_HOSTS` and a session's app name, 403 otherwise (`tlsAsk.mjs`). For a console with no wildcard certificate; `providers/local/README.md` has the Caddyfile |
+| `WOODSHED_ONE_PERSON` | tells by itself | `1`: one person uses this console, so the rail shows one list of every session with no Mine \| Everyone switch; `0`: always the two views. Unset, a console nobody signs in to or with one member on People is one person's. Hosted mode has no People list, so its host sets it. See "Hosted mode" |
 | `WOODSHED_LOCAL_LOGIN` | `local` | The handle a local console with no sign-in gives the person using it, so My settings (their Claude token, private sessions) works there. Ignored with a GitHub App or on AWS |
 | `WOODSHED_REQUIRE_SIGN_IN` | off | `1` requires GitHub sign-in on every route from the start, with or without a client secret. Set on the base box |
 | `WOODSHED_TRUSTED_IDENTITY_SECRET` | none | Hosted mode: the secret a trusted proxy in front of the console signs each request's `X-Woodshed-Identity` header with, at least 32 characters. Set, that header is the only sign-in, and it is required; `role: owner` is an admin. See "Hosted mode" |
 | `WOODSHED_GITHUB_BROKER_URL`, `_GITHUB_BROKER_TOKEN_FILE` | none | Hosted mode: where the console asks its host for every installation token, and a file holding the bearer it asks with. Both or neither, and never with `WOODSHED_GITHUB_APP_ID`. See "Hosted mode" |
 | `WOODSHED_SUPERVISED` | on under systemd, else off | `1` says something starts the console again when it exits (a container with a restart policy), so the GitHub App setup page offers Restart; `0` says nothing does, even under systemd. See "Setting up the GitHub App from the console" |
 | `WOODSHED_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
-| `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on. Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer sets it only when given `WOODSHED_REPO`, and then builds the session image from it; without, the console starts with no repo, on `woodshed-session:generic`, an image with no checkout, and every session clones its repo at start |
-| `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack and the database check still run on the default project. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
-| `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | Not read: a repo's env files are its Repo settings. Set, the console logs `console: ignored: env files are Repo settings now` and starts. Remove them |
-| `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`), or one named twice, stops the start. Terraform sets it from `install_secrets` |
+| `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on, and the label of every repo that does not name its own on its settings page ("How sessions start"). Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer sets it only when given `WOODSHED_REPO`, and then builds the session image from it; without, the console starts with no repo, on `woodshed-session:generic`, an image with no checkout, and every session clones its repo at start |
+| `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack still run on the default project; each project's own file is checked for its databases. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
+| `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | Not read: a repo's env files are its Repo settings, and the local provider's db-admin run is given every value the default project's repo settings hold. Set, the console logs `console: ignored: env files are Repo settings now` and starts. Remove them |
+| `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) stops the start. Terraform sets it from `install_secrets` |
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |
 | `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |
 | `WOODSHED_FALLBACK_POLL_SECONDS` | `300` | How often the poll runs while webhooks arrive, and how often a pull request is read on its own while pull request webhooks arrive |
@@ -1857,13 +2004,13 @@ Remove My Woodshed.
 | `WOODSHED_ECS_CLUSTER`, `_ECS_TASK_DEFINITION`, `_ECS_SUBNETS`, `_ECS_SECURITY_GROUP`, `_ECS_LOG_GROUP` | none | For `ecs`; the base box bootstrap sets them from Terraform. Region from `AWS_REGION` |
 | `WOODSHED_IMAGE` | `woodshed-session` | |
 | `WOODSHED_SESSION_MEMORY`, `WOODSHED_SESSION_CPUS` | `6g`, `2` | Docker limits per session |
-| `WOODSHED_SESSION_DOCKER` | on with the `docker` launcher on one person's console (loopback, no sign-in, no hosting proxy); off on a console others sign in to, and with `ecs` | Sessions use the machine's Docker: its socket, so Claude can run a repo's compose services, Supabase local or Testcontainers (`../providers/local/README.md`, "Docker in a session"). That is root on the machine for whoever can start a session: on a console others use, a GitHub label or comment is enough, and it reaches the secrets key and every other session, so there it takes `1`. `0` turns it off. A question from Slack never gets it, nor does a project file decide it. With `ecs`, `1` only logs that a Fargate task cannot have it |
+| `WOODSHED_SESSION_DOCKER` | with the `docker` launcher, every session's own Docker where the machine has Sysbox; else the machine's on one person's console (loopback, no sign-in, no hosting proxy) and none on a console others sign in to; none with `ecs` | Which Docker sessions get, so Claude can run a repo's compose services, Supabase local, Testcontainers or an image build (`../providers/local/README.md`, "Docker in a session"). Their own is a daemon inside the session's container under Sysbox's `sysbox-runc`, which reaches nothing of the machine's and goes with the session; whoever can start a session on a server is trusted with the other sessions there (`../CLAUDE.md`, Rules). The machine's is its socket, root on the machine for whoever can start a session: on a console others use, a GitHub label or comment is enough, and it reaches the secrets key and every other session, so there it takes `1`. `0` turns both off. A question from Slack never gets either, nor does a project file decide it. With `ecs`, a value only logs that a Fargate task can have neither |
 | `WOODSHED_SESSION_ENV_FILE` | none | A JSON object of strings passed to every session: the shared services and secrets from the table above |
 | `WOODSHED_GITHUB_APP_ID`, `_GITHUB_APP_INSTALLATION_ID`, `_GITHUB_APP_KEY_FILE` | none | The GitHub App. When set, the console mints installation tokens with the key (`githubApp.mjs`) for its own GitHub calls and for sessions, and `GH_TOKEN` is not used. With the `ecs` launcher and no key file, the key is read from `<prefix>/github-app-key`; until it has a value the console runs without GitHub |
 | `WOODSHED_SECRET_PREFIX`, `WOODSHED_WEBHOOK_FUNCTION` | `woodshed-cloud/`, `woodshed-cloud-webhooks` | With the `ecs` launcher: where the Secrets page finds its secrets (and the `project` tag of those it makes), and the Lambda whose URL it sets on the GitHub App. Set on the base box from Terraform's `name_prefix`; the defaults are for a box whose stack predates that, and go later |
-| `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` | none | On the local provider: the folder the Secrets page keeps its secrets in, one `<name>.json` each, readable by the console's user only (`providers/local/secretStore.mjs`), and the key each file is sealed with, AES-256-GCM, from a file of its own outside the folder, mode 600 (`secretKey.mjs`; `bin/secret.mjs new-key` makes one). The folder needs the key; a plain file in it is sealed at start. Each session also gets each install secret from it as it starts, unless `WOODSHED_SESSION_ENV_FILE` sets them; its env files come from the console's repo settings, kept in the same folder. With the GitHub App and no key file, the App's key is read from it too. Without it, the local provider has no Secrets page |
+| `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` | none | On the local provider: the folder the Secrets page keeps its secrets in, one `<name>.json` each, readable by the console's user only (`providers/local/secretStore.mjs`), and the key each file is sealed with, AES-256-GCM, from a file of its own outside the folder, mode 600 (`secretKey.mjs`; `bin/secret.mjs new-key` makes one). The folder needs the key; a plain file in it is sealed at start. Each session also gets each install secret from it as it starts, unless `WOODSHED_SESSION_ENV_FILE` sets them. With the GitHub App and no key file, the App's key is read from it too. Without it, the local provider has no Secrets page |
 | `WOODSHED_LOCAL_HOMES_DIR` | none | On the local provider: the folder saved Claude homes are kept in, at the same names as the S3 bucket's keys (`providers/local/homeStore.mjs`), readable by the console's user only. Without it, the local provider keeps no Claude home between sessions |
-| `WOODSHED_LOCAL_DB_POSTGRES_HOST`, `_DB_POSTGRES_ROOT_USER`, `_DB_MONGO_HOST` | none | On the local provider: where each session's own databases are made, Postgres on 5432 by the first two (both or neither) and Mongo as `host:port`, each only for an engine the installation hosts, each on its own (`providers/local/postgres.yml` and `mongo.yml` run them). A db-admin run is a container of the session image (`providers/local/dbAdminRunner.mjs`); it reads the root passwords from `db-root/postgres` and `db-root/mongo` in `WOODSHED_LOCAL_SECRETS_DIR`, each for a database it runs, and sees only the database password its command makes and the default project's repo settings for its env files (`repos/<project>/env/*`), as the AWS task role does. Its flags name the default project (`--project`). A failed run's container is kept for `docker logs`, root passwords in its environment, until the next run of the same action and owner removes it. Each run's secrets are copied under `db-admin-runs/` in `WOODSHED_STATE_DIR`, which must be the same path for the docker daemon, as it is when the console runs on that machine |
+| `WOODSHED_LOCAL_DB_POSTGRES_HOST`, `_DB_POSTGRES_ROOT_USER`, `_DB_MONGO_HOST` | none | On the local provider: where each session's own databases are made, Postgres on 5432 by the first two (both or neither) and Mongo as `host:port`, each only for an engine the installation hosts, each on its own (`providers/local/postgres.yml` and `mongo.yml` run them). A db-admin run is a container of the session image (`providers/local/dbAdminRunner.mjs`); it reads the root passwords from `db-root/postgres` and `db-root/mongo` in `WOODSHED_LOCAL_SECRETS_DIR`, each for a database it runs, and sees only the database password its command makes and the env files the databases' commands read (their `envFiles`): the default project's repo settings for them, as the AWS task role does. Its flags name the default project (`--project`). A failed run's container is kept for `docker logs`, root passwords in its environment, until the next run of the same action and owner removes it. Each run's secrets are copied under `db-admin-runs/` in `WOODSHED_STATE_DIR`, which must be the same path for the docker daemon, as it is when the console runs on that machine |
 | `WOODSHED_LOCAL_DOCKER_NETWORK` | none | The docker network sessions and db-admin runs join, to reach the shared services by name (`providers/local/compose.yml`'s `woodshed`) |
 | `WOODSHED_LOCAL_WEBHOOK_PORT`, `_WEBHOOK_HOST`, `_WEBHOOK_URL` | none, `127.0.0.1`, none | On the local provider: where its webhook receiver listens (`providers/local/webhookReceiver.mjs`), at the Lambda's paths, `POST /github` and `POST /slack`, checked against `github-webhook-secret` and `slack-signing-secret` in `WOODSHED_LOCAL_SECRETS_DIR`, which it needs. `_WEBHOOK_URL` is the public address a proxy in front of it answers at, and the Secrets & webhooks page sets `<url>/github` on the GitHub App. A message the console fails on is tried three times; one still waiting when the console restarts is lost, and the poll finds it |
 | `WOODSHED_TUNNEL_POSTGRES`, `_TUNNEL_MONGO` | none | Where `woodshed-db.mjs`'s connections go, as `host:port`, each used only for a database the installation runs. Each one is a tunnel of its own, and the script listens for those alone; without either, or without own databases, My settings has no From your computer. Without the Postgres one there is no Restore a dump for Postgres either, and without the Mongo one none for Mongo. Set on the base box, for the databases it runs: RDS and the box's private address |

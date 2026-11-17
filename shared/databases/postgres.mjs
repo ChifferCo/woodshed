@@ -1,6 +1,6 @@
 // The postgres engine: RDS on AWS, a container on the local provider. A session gets libpq's own variables, so psql and
 // most drivers connect with no setup, and `PG_URL` for an app that reads one URL. What an app calls them is the
-// project file's to say, in its env file lines (docs/reference.md, "The project file").
+// project file's to say, in its env file overrides (docs/reference.md, "The project file").
 //
 // Every database is a copy of the template, `CREATE DATABASE ... TEMPLATE`, owned by its owner's role. The template's
 // comment says which commit it was built from, and is written last: a copy waits for it.

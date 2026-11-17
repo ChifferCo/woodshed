@@ -58,6 +58,15 @@
       h('td', { class: 'mono meta-cell', title: e.deliveryId || '' }, (e.deliveryId || '').slice(0, 8)));
   }
 
+  // A source switched off on Console settings (webhookSwitch.mjs): said here, since its deliveries stop showing.
+  function offNote() {
+    const off = [['github', 'GitHub webhooks'], ['slack', 'Slack questions']].filter(([k]) => data.webhooks?.[k]?.off);
+    if (!off.length) return null;
+    return h('p', { class: 'webhooks-off', role: 'status' },
+      `${off.map(([, label]) => label).join(' and ')} are switched off on `,
+      h('a', { href: '/console-settings#webhooks' }, 'Console settings'), ', so the console drops them.');
+  }
+
   function render() {
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
@@ -79,8 +88,9 @@
     app.replaceChildren(h('div', { class: 'page' },
       W.nav('/events'),
       head,
+      offNote(),
       h('div', { class: 'filters' },
-        h('p', { class: 'foot' }, data.queue ? 'Newest first. The last 7 days are kept.' : 'This console does not read a webhooks queue, so it only polls GitHub.'),
+        h('p', { class: 'foot' }, data.queue ? 'Newest first. The last 7 days are kept.' : 'No webhooks reach this console, so it only polls GitHub.'),
         h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' }, FILTERS.map((f) =>
           h('button', { type: 'button', 'aria-pressed': String(f.id === show), onclick: () => setFilter(f.id) }, f.label)))),
       table,

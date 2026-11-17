@@ -67,7 +67,9 @@ test('the stack.env install.sh writes starts a console on the local provider, an
   requireRepo(config);
   assert.equal(providerName(env), 'local');
   assert.equal(defaultProject(config).repo, 'acme/app');
-  assert.ok(!('WOODSHED_ENV_FILES' in env) && !('WOODSHED_DB_ENV_SECRETS' in env), 'env files are each repo\'s Repo settings, not the console\'s settings');
+  assert.equal(env.WOODSHED_ENV_FILES, undefined, 'no env file secrets: their values are repo settings');
+  assert.equal(env.WOODSHED_DB_ENV_SECRETS, undefined, 'the seed lists its repo settings from the store');
+  assert.ok(!('dbEnvSecrets' in config));
   fs.mkdirSync(env.WOODSHED_LOCAL_SECRETS_DIR, { recursive: true });
   runInstallFunction(`node "${path.resolve(import.meta.dirname, '../providers/local/bin/secret.mjs')}" new-key "${env.WOODSHED_LOCAL_SECRETS_KEY_FILE}" >/dev/null`);
   assert.equal(createProvider(config, env).name, 'local');
@@ -79,7 +81,7 @@ test('the stack.env install.sh writes starts a console on the local provider, an
   assert.equal(fs.readFileSync(file, 'utf8'), before);
 });
 
-test('projectSettings reads the database engines from the repository\'s project file, and nothing of its env files', () => {
+test('projectSettings reads the engines from the repository\'s project file, and nothing of its env files', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-repo-'));
   fs.mkdirSync(path.join(repo, '.woodshed'));
   fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), [
@@ -87,12 +89,12 @@ test('projectSettings reads the database engines from the repository\'s project 
     'envFiles:',
     '  - path: api/.env',
     '    secret: api-env',
-    '    lines: []',
+    '    overrides: []',
     '  - path: web/.env.local',
     '    secret: web-env',
-    '    lines: []',
+    '    overrides: []',
     '  - path: tools/.env',
-    '    lines: []',
+    '    overrides: []',
     'databases:',
     '  - engine: postgres',
     '    dir: api',
@@ -223,7 +225,7 @@ test('with WOODSHED_PROJECT_FILES_DIR, a repository with no project file is read
   const woodshed = path.resolve(import.meta.dirname, '..');
   const clone = fixtureCheckout(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-clone-')), { repo: 'acme/app' });
   const files = fixtureProjectFiles(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-files-')), {
-    'acme/app': fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] }),
+    'acme/app': fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] }),
   });
   const env = { DEFAULT_BRANCH: process.env.DEFAULT_BRANCH || 'main' };
   assert.equal(runInstallFunction(`projectSettings "${woodshed}" "${clone}" "${files}" 2>/dev/null`, env), 'postgres\n');
@@ -256,9 +258,6 @@ test('a stack.env written for another project file is named, and one written for
   assert.equal(runInstallFunction(`warnStaleStackEnv "${file}" none none`), '');
   const current = path.join(home, 'current.env');
   runInstallFunction(`writeStackEnv "${current}" "${home}" acme/app woodshed-session:acme-app 'mongo postgres' woodshed`);
-  assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" 'mongo postgres' 'postgres mongo'`), '');
-  // One written before Repo settings still names the env files: they are not read, and are no reason to warn.
-  fs.appendFileSync(current, 'WOODSHED_ENV_FILES=api-env=api/.env\nWOODSHED_DB_ENV_SECRETS=api-env\n');
   assert.equal(runInstallFunction(`warnStaleStackEnv "${current}" 'mongo postgres' 'postgres mongo'`), '');
 });
 
@@ -303,7 +302,7 @@ test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecate
   const said = runInstallFunction(`warnOldNames "${file}" 2>&1`);
   assert.match(said, /^woodshed install: deprecated variable, use WOODSHED_REPO \(.*stack\.env has WOODSHED_CLOUD_REPO\)$/m);
   assert.equal(said.match(/WOODSHED_CLOUD_REPO\)/g).length, 1, 'once a name');
-  assert.doesNotMatch(said, /acme\/app/, 'names only, never a value');
+  assert.doesNotMatch(said, /acme\/app|app-env/, 'names only, never a value');
   assert.equal(runInstallFunction(`set -a; . "${file}"; set +a; consoleSetting STATE_DIR`), `${home}/console`);
   runInstallFunction(`set -a; . "${file}"; set +a; writeSessionEnv "$(consoleSetting SESSION_ENV_FILE)" host.docker.internal postgres`);
   assert.ok(fs.existsSync(path.join(home, 'session-env.json')), 'the session env goes where the old name says');
@@ -320,6 +319,7 @@ test('a stack.env with the old WOODSHED_CLOUD_ names is read, named as deprecate
   assert.equal(config.stateDir, `${home}/console`);
   assert.equal(config.projectFilesDir, '/srv/other-files');
   assert.equal(defaultProject(config).repo, 'acme/app');
+  assert.ok(!('dbEnvSecrets' in config));
 });
 
 // A stand-in tailscale on the PATH: it says this machine's MagicDNS name and records each `serve` it was asked for.
@@ -404,26 +404,31 @@ test('with no WOODSHED_REPO, install.sh asks nothing, fetches nothing, and sets 
   assert.equal(fs.readFileSync(path.join(home, 'stack.env'), 'utf8'), before);
 });
 
-test('sessions use this machine\'s Docker with nothing set, and WOODSHED_SESSION_DOCKER=0 is saved in stack.env, where a later run keeps it', () => {
+test('sessions get their own Docker or this machine\'s with nothing set, and WOODSHED_SESSION_DOCKER=0 or 1 is saved in stack.env, where a later run keeps it', () => {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-install-docker-'));
   const file = path.join(home, 'stack.env');
+  const docker = () => {
+    const { ownDocker, hostDocker } = loadConfig(readEnvFile(file), { readGhToken: false }).launcher;
+    return { ownDocker, hostDocker };
+  };
   runMain({ WOODSHED_HOME: home });
   assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, undefined, 'nothing to say for the default');
-  assert.equal(loadConfig(readEnvFile(file), { readGhToken: false }).launcher.hostDocker, true);
+  assert.deepEqual(docker(), { ownDocker: 'auto', hostDocker: true });
 
   runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: '0' });
   assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '0');
-  assert.equal(loadConfig(readEnvFile(file), { readGhToken: false }).launcher.hostDocker, false);
+  assert.deepEqual(docker(), { ownDocker: false, hostDocker: false });
   runMain({ WOODSHED_HOME: home });
   assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '0', 'a run that does not set it keeps it');
 
   runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: '1' });
+  assert.deepEqual(docker(), { ownDocker: 'auto', hostDocker: true });
   const text = fs.readFileSync(file, 'utf8');
   assert.equal(text.match(/^WOODSHED_SESSION_DOCKER=/gm).length, 1);
   assert.equal(readEnvFile(file).WOODSHED_SESSION_DOCKER, '1');
   assert.equal(fs.statSync(file).mode & 0o777, 0o600);
 
-  assert.throws(() => runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: 'yes' }), (err) => /WOODSHED_SESSION_DOCKER is 0 .* or 1 .*, not yes/.test(err.stdout));
+  assert.throws(() => runMain({ WOODSHED_HOME: home, WOODSHED_SESSION_DOCKER: 'yes' }), (err) => /WOODSHED_SESSION_DOCKER is 0 \(no Docker\) or 1 .*, not yes/.test(err.stdout));
 });
 
 test('with the generic image missing, install.sh builds it with no repository and no token', () => {
@@ -477,7 +482,7 @@ test('a later run with WOODSHED_REPO gives a repo-less install that repo\'s imag
   // As a Tailscale run left it, and a line of the owner's.
   runInstallFunction(`setStackSetting "${file}" PUBLIC_URL https://mac.tail1234.ts.net`);
   fs.appendFileSync(file, 'WOODSHED_MAX_SESSIONS=3\n');
-  const project = fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', lines: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] });
+  const project = fixtureProject({ envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }], databases: [{ engine: 'postgres', dir: 'api', envFiles: ['api-env'] }] });
   const fetch = `fetchRepo() { mkdir -p "$2/.woodshed"; printf '%s' '${project}' >"$2/.woodshed/project.yaml"; echo "fetched $1"; }`;
   const out = runMain({ WOODSHED_HOME: home, WOODSHED_REPO: 'acme/app', GH_TOKEN: 't' }, [fetch]);
   assert.match(out, /fetched acme\/app/);
@@ -486,7 +491,8 @@ test('a later run with WOODSHED_REPO gives a repo-less install that repo\'s imag
   const env = readEnvFile(file);
   assert.equal(env.WOODSHED_REPO, 'acme/app');
   assert.equal(env.WOODSHED_IMAGE, 'woodshed-session:acme-app');
-  assert.ok(!('WOODSHED_ENV_FILES' in env) && !('WOODSHED_DB_ENV_SECRETS' in env), 'env files are each repo\'s Repo settings, not the console\'s settings');
+  assert.equal(env.WOODSHED_ENV_FILES, undefined);
+  assert.equal(env.WOODSHED_DB_ENV_SECRETS, undefined);
   assert.equal(env.WOODSHED_LOCAL_DB_POSTGRES_HOST, 'postgres');
   assert.match(env.WOODSHED_LOCAL_PG_ROOT_PASSWORD, /^[0-9a-f]{48}$/);
   assert.equal(env.WOODSHED_LOCAL_DOCKER_NETWORK, 'woodshed');

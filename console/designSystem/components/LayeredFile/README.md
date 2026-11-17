@@ -16,7 +16,7 @@ later layer wins.
   rule, every time.
 - A refusal from the console (a 400, 409 or 502) is a `form-error` line right under the buttons, in the console's own
   words, and never repeats the text. What was typed stays in the field.
-- Set by the session: the keys of the file's `lines`, those written only when the session has a value, and the
+- Set by the session: the keys of the file's `overrides` ("Its overrides:"), those written only when the session has a value, and the
   project file's `env`, each as mono `code`, with why they win.
 - What a session gets: a table, one row per key any layer sets: Key (mono), Repo, Installation, Session, and **Wins**
   as an outlined tag with the layer's word ("Session, if set" for a line that may be left out). A set cell is `✓`; the
@@ -26,14 +26,12 @@ later layer wins.
 - On My settings the installation's values are read only: hidden behind **Show** (outline) once saved, then a mono
   `stopped` block like the repo's defaults, with "Set by your admins" under it. One read fills it and the person's own
   field, which is behind **Show and edit** once saved. Clear is **Clear mine**.
-- A value an older console copied from a Terraform secret says `copied from Terraform` in its `meta` line, where the
-  others say who saved them.
 - Several env files are tabs above it (`file-tabs`), labelled by path, `•` on one with a saved value; `?file=<key>`
   opens one, so a link can point at it. On My settings the repos the person can write to are tabs above those, by
   `owner/name`, `•` on one where they keep something; `?repo=<project>` opens one.
 - Env files that name one secret share its key and its values: one tab, labelled `app-env → api/.env, worker/.env`,
   whose head is that label, and a `cap-note` under it saying the values are written to both files and each keeps its
-  own defaults and lines. From the repo and Set by the session show each path (`meta` mono, 600) over its own
+  own defaults and overrides. From the repo and Set by the session show each path (`meta` mono, 600) over its own
   defaults or keys where the files differ, and once where they agree. The table has one row for a key where the files
   agree, and one a file where they differ, the key followed by `in <path>` in `meta`. My settings has the same tab and
   note, and the person's values are written to both files too.

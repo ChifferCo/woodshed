@@ -60,7 +60,7 @@ function bash(script, env) {
 }
 
 // A checkout whose project file has one env file with a secret, and rules of its own.
-const API_ENV_FILE = { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], lines: ['DB_PASSWORD={{PGPASSWORD}}'] };
+const API_ENV_FILE = { path: 'api/.env', secret: 'api-env', defaults: ['LOG_LEVEL=info'], overrides: ['DB_PASSWORD={{PGPASSWORD}}'] };
 
 function checkout(envFiles = [API_ENV_FILE]) {
   const dir = fixtureCheckout(fs.mkdtempSync(path.join(TMP, 'repo-')), { repo: 'acme/app' });
@@ -83,7 +83,7 @@ async function start({ consoleUrl, kind = 'private', mode = '', env = {}, envFil
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
     `REPO_SETTINGS_JSON=${home}/.config/woodshed/repo-settings.json`,
     fn('consoleCall').replaceAll('--retry-delay 5', '--retry-delay 1'), fn('fetchRepoSettings'),
-    fn('writeEnvFiles'), fn('leaveOutConsoleLinks'), fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
+    fn('writeEnvFiles'), fn('leaveOutConsoleLinks'), fn('appRules'), fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
     'fetchRepoSettings',
     'if [ -f "$REPO_SETTINGS_JSON" ]; then echo "answer kept: $(stat -c %a "$REPO_SETTINGS_JSON")"; else echo "answer kept: no"; fi',
     'writeEnvFiles', 'writeRules', 'rm -f "$REPO_SETTINGS_JSON"',
@@ -116,7 +116,7 @@ test('a private session writes its env files and rules from repo settings, and l
 test('two env files that name one secret are both written its repo settings, and logged as one key', async () => {
   const answer = { ...ANSWER, envFiles: { 'app-env': ANSWER.envFiles['api-env'] } };
   const fake = await fakeConsole([{ json: answer }]);
-  const run = await start({ consoleUrl: fake.url, envFiles: [{ ...API_ENV_FILE, secret: 'app-env' }, { path: 'worker/.env', secret: 'app-env', lines: ['ROLE=worker'] }] });
+  const run = await start({ consoleUrl: fake.url, envFiles: [{ ...API_ENV_FILE, secret: 'app-env' }, { path: 'worker/.env', secret: 'app-env', overrides: ['ROLE=worker'] }] });
   assert.equal(run.status, 0, run.out);
   assert.match(run.out, /\[woodshed\] Env files written \(api\/\.env, worker\/\.env from app-env \(installation: 44 bytes, personal: 20 bytes; api\/\.env layers: repo installation personal session, defaults: 1, replaced by the session: none; worker\/\.env layers: installation personal session, replaced by the session: none\)\)/);
   assert.equal(run.worker, 'AUTH_DOMAIN=installation.test\nLOG_LEVEL=warn\n\n# Your own lines, from My settings\nLOG_LEVEL=debug-mine\n\n# Woodshed overrides\nROLE=worker\n');
@@ -135,25 +135,25 @@ test('a shared session gets the installation\'s layer alone, whatever the answer
   assert.match(run.rules, /# This installation's instructions for acme\/app\nUse pnpm/);
 });
 
-test('an empty installation value is the repo\'s defaults alone: an old Terraform secret in the environment is not read', async () => {
+test('an empty installation value leaves the file to the repo\'s defaults, whatever old secret the task holds; the rules are then as before', async () => {
   const fake = await fakeConsole([{ json: { project: 'app', envFiles: {}, instructions: { installation: null, personal: null }, personalFor: null } }]);
   const run = await start({ consoleUrl: fake.url, kind: 'shared', env: { API_ENV: 'AUTH_DOMAIN=legacy.test' } });
   assert.equal(run.status, 0, run.out);
-  assert.doesNotMatch(run.out, /legacy|WARNING/);
-  assert.match(run.out, /Env files written \(api\/\.env \(layers: repo session, defaults: 1, installation: 0 bytes, replaced by the session: none\)\)/);
+  assert.doesNotMatch(run.out, /WARNING/);
   assert.equal(run.env, '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\n\n# Woodshed overrides\nDB_PASSWORD=session-password\n');
   assert.doesNotMatch(run.out, /Instructions added/);
   assert.doesNotMatch(run.rules, /Which instructions win/);
 });
 
-test('an older console answers 404: the env files get the repo\'s defaults and the session\'s lines alone, with a warning', async () => {
+test('an older console answers 404: the session writes its env files from the repo\'s defaults alone, not the old secrets', async () => {
   const fake = await fakeConsole([{ status: 404, json: { error: 'not found' } }]);
   const run = await start({ consoleUrl: fake.url, env: { API_ENV: 'AUTH_DOMAIN=legacy.test', OWN_FILES: JSON.stringify({ 'api-env': 'MINE=1' }) } });
   assert.equal(run.status, 0, run.out);
-  assert.match(run.out, /\[woodshed\] WARNING: repo settings not offered by the console, so the env files have no installation or own values/);
+  assert.match(run.out, /\[woodshed\] Repo settings not offered by the console, the env files get the repo's defaults alone/);
   assert.match(run.out, /answer kept: no/);
-  assert.match(run.out, /Env files written \(api\/\.env \(layers: repo session, defaults: 1, installation: 0 bytes, replaced by the session: none\)\)/);
-  assert.doesNotMatch(run.env, /legacy\.test|MINE/, 'neither the old Terraform secret nor the old own lines');
+  assert.match(run.out, /Env files written \(api\/\.env \(base: 0 bytes, defaults: 1\)\)/, 'the log line from before repo settings');
+  assert.doesNotMatch(run.out, /WARNING/);
+  assert.doesNotMatch(run.env, /legacy\.test|MINE=1/);
 });
 
 test('a 503 is tried again, and a refusal stops the start with the console\'s reason', async () => {

@@ -5,10 +5,11 @@
 
 import { parseCommand } from './sessions.mjs';
 import { defaultProject, projectForRepo } from './projects.mjs';
+import { sameLabel } from './repoTriggers.mjs';
 
 /**
  * @param {object} message  one queued message's body
- * @param {{label: string}} opts
+ * @param {{label: string}} opts  the label of the message's repo (repoTriggers.mjs), matched whatever its case
  * @returns {object|null}  a trigger in the shape fleet.handleTrigger takes, plus `at`, or null to drop it
  */
 export function messageToTrigger(message, { label }) {
@@ -18,10 +19,10 @@ export function messageToTrigger(message, { label }) {
   if (message.type === 'label') {
     // Any other label on a pull request may be its project's QA label, which only its project file names: the fleet
     // reads that and drops the rest (qaSessions.mjs).
-    if (message.label !== label && message.kind === 'pr') {
+    if (!sameLabel(message.label, label) && message.kind === 'pr') {
       return { trigger: 'qa', number: message.number, label: message.label, login: message.login, ...project };
     }
-    if (message.label !== label) return null;
+    if (!sameLabel(message.label, label)) return null;
     return {
       trigger: 'label', number: message.number, title: message.title ?? '', kind: message.kind === 'pr' ? 'pr' : 'issue',
       login: message.login, at: message.receivedAt, ...project,
@@ -42,6 +43,9 @@ export function messageToTrigger(message, { label }) {
  *   `events` keeps what happened to each message (webhookEvents.mjs); without `asks`, a Slack mention is dropped, and
  *   without `pulls` a pull request change; a result with `unrecorded` is left out of `events`. `appIdentity`
  *   (appIdentity.mjs) says whose comment a session's "Needs a human:" must be; without one, those are dropped.
+ *   `webhookSwitch` (webhookSwitch.mjs) drops every GitHub message, and keeps `alive` from the fleet, while GitHub's is
+ *   off, and every Slack mention while Slack's is.
+ *   `labelOf(project)` is a repo's own label (repoTriggers.mjs), null naming the default project's; without it, `label`.
  *   `config` names the console's projects: a GitHub message about a repo that is no project's is dropped, and one
  *   about another project's repo is handed on naming that project (`project`), so it acts on that repo's numbers
  * @returns {{dispatch: (message: {text: string, id?: string|null, attempt?: string|null}) => Promise<boolean>, alive: () => void}}
@@ -49,10 +53,24 @@ export function messageToTrigger(message, { label }) {
  *   events log. It resolves true when the source may forget the message, false to have it come back for a retry.
  *   `alive` is called on each receive, so the fleet knows webhooks are arriving.
  */
+/**
+ * What a GitHub message would have started that the poll never does, so it stops while GitHub's webhooks are off: a
+ * session's Needs a human comment (its assignee's message), a QA label, and on a pull request's change QA after a
+ * review, the QA label on a new pull request and the review a commit's tag starts.
+ * @param {string} label  the message's repo's own label (repoTriggers.mjs)
+ * @returns {string|null}  null for what the poll finds by itself: the label, /woodshed comments, anything else
+ */
+export function pollMisses(body, label) {
+  if (body?.type === 'needsHuman') return 'Needs a human';
+  if (body?.type === 'label' && body.kind === 'pr' && !sameLabel(body.label, label)) return 'QA label';
+  if (body?.type === 'pr') return 'QA and review steps';
+  return null;
+}
+
 // The pull request events that may need the QA label added (fleet.qaAutoLabel).
 const AUTO_LABEL_EVENTS = new Set(['pull request opened', 'pull request ready_for_review']);
 
-export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null }) {
+export function createWebhookDispatch({ label, labelOf = null, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null, webhookSwitch = null }) {
   // Every GitHub message below acts on an issue or pull request number, which means nothing without its repo: another
   // project's #12 is not the default project's #12. So a message about another project's repo carries that project's
   // name from here on (`project`), and one about a repo that is no project's is dropped. A message with no repo was
@@ -71,6 +89,13 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     return { ...body, project: project.name };
   }
 
+  // A message's repo's own label: `project` once routed, else its repo's project; none is the default's.
+  function labelFor(body) {
+    if (!labelOf) return label;
+    const name = body?.project ?? (config && body?.repo ? projectForRepo(config, body.repo)?.name ?? null : null);
+    return labelOf(name);
+  }
+
   async function dispatch({ text, id = null, attempt = null }) {
     let body;
     try {
@@ -81,6 +106,12 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return true;
     }
     if (body?.source === 'slack') return dispatchSlack(body, attempt);
+    // Turned off on Console settings (webhookSwitch.mjs). The poll finds each repo's own label and /woodshed comments,
+    // and reads pull requests again at full speed; what else a message would have started stops (pollMisses).
+    if (body?.source === 'github' && webhookSwitch?.off('github')) {
+      webhookSwitch.dropped('github', pollMisses(body, labelFor(body)));
+      return true;
+    }
     if (body?.source === 'github') {
       body = routed(body);
       if (!body) return true;
@@ -114,7 +145,8 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       if (!pulls) return true;
       return settle(body, () => pulls.handle(body), body.number ?? null, attempt);
     }
-    const trigger = messageToTrigger(body, { label });
+    // The repo's own label: `project` is set only for another project's message, so none is the default's.
+    const trigger = messageToTrigger(body, { label: labelFor(body) });
     if (!trigger) {
       // Left out of the events log: every other label in the repo would push the ones that matter off it.
       console.log('webhooks: message not for the console, deleted', { type: body?.type ?? null, number: body?.number ?? null });
@@ -158,6 +190,12 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
   }
 
   function dispatchSlack(body, attempt) {
+    // Kept in the events log: a mention is someone waiting for an answer that will not come.
+    if (body.type === 'mention' && webhookSwitch?.off('slack')) {
+      webhookSwitch.dropped('slack');
+      events.record(body, { outcome: 'ignored', reason: 'Slack questions are switched off on Console settings' });
+      return true;
+    }
     if (!asks || body.type !== 'mention') {
       console.log('webhooks: Slack message not for the console, deleted', { type: body.type ?? null, asks: Boolean(asks) });
       if (body.type === 'mention') events.record(body, { outcome: 'ignored', reason: 'Slack questions are off on this console' });
@@ -182,5 +220,6 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     return true;
   }
 
-  return { dispatch, alive: () => fleet.webhooksAlive() };
+  // Off, the fleet hears nothing, so its poll goes back to full speed within a minute.
+  return { dispatch, alive: () => { if (!webhookSwitch?.off('github')) fleet.webhooksAlive(); } };
 }

@@ -3,9 +3,13 @@
 // where no queue is set up, such as on a dev box.
 
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { reduceChecks } from './prChips.mjs';
+import { sameLabel } from './repoTriggers.mjs';
 import { parseCommand } from './sessions.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -61,6 +65,24 @@ export function partialGraphql(err) {
   } catch {
     return null;
   }
+}
+
+// The pull request's review threads, each with its first comment's id and author: who opened it, and what a reviewer
+// names when it finds the problem fixed.
+const REVIEW_THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) { pullRequest(number: $number) {
+    reviewThreads(first: 100) { nodes { id isResolved isOutdated comments(first: 1) { nodes { databaseId author { login } } } } }
+  } } }`;
+const RESOLVE_THREAD_MUTATION = 'mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { thread { id } } }';
+
+/**
+ * The body of a formal review: its inline comments go on the head's lines, the side the change adds.
+ * @returns {{commit_id: string, event: string, body: string, comments?: object[]}}
+ */
+export function reviewPayload({ event, body, sha, comments = [] }) {
+  const payload = { commit_id: sha, event, body: body.slice(0, 60_000) };
+  if (comments.length) payload.comments = comments.map((c) => ({ path: c.path, line: c.line, side: 'RIGHT', body: c.body }));
+  return payload;
 }
 
 const LATEST_CHECKS = `commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 100) { nodes {
@@ -175,7 +197,8 @@ export function canWrite(answer) {
  */
 export function labelTriggers(events, { label, afterId }) {
   return events
-    .filter((e) => e.event === 'labeled' && e.label?.name === label && e.id > afterId && e.issue)
+    // GitHub matches a label's name whatever its case, as the repo's settings do (repoTriggers.mjs).
+    .filter((e) => e.event === 'labeled' && sameLabel(e.label?.name, label) && e.id > afterId && e.issue)
     .sort((a, b) => a.id - b.id)
     .map((e) => ({
       id: e.id,
@@ -449,10 +472,40 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
      * wrong commit. `event` is APPROVE, REQUEST_CHANGES or COMMENT. An APPROVE counts as the pull request's approval.
      * @returns {Promise<number|null>}  the review's id
      */
-    async createReview(number, { event, body, sha }) {
-      const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/pulls/${number}/reviews`,
-        '-f', `commit_id=${sha}`, '-f', `event=${event}`, '-f', `body=${body.slice(0, 60_000)}`]);
-      return created?.id ?? null;
+    async createReview(number, { event, body, sha, comments = [] }) {
+      // A JSON file, since gh's -f/-F fields cannot build an array of objects.
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-'));
+      const file = path.join(dir, 'review.json');
+      try {
+        fs.writeFileSync(file, JSON.stringify(reviewPayload({ event, body, sha, comments })));
+        const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/pulls/${number}/reviews`, '--input', file]);
+        return created?.id ?? null;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    /** @returns {Promise<{id: string, isResolved: boolean, isOutdated: boolean, commentId: number|null, author: string}[]>} */
+    async reviewThreads(number) {
+      const [owner, name] = currentRepo().split('/');
+      const answer = await ghApi(['graphql', '-f', `query=${REVIEW_THREADS_QUERY}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${Number(number)}`]);
+      return (answer?.data?.repository?.pullRequest?.reviewThreads?.nodes ?? []).map((t) => ({
+        id: t.id, isResolved: Boolean(t.isResolved), isOutdated: Boolean(t.isOutdated),
+        commentId: t.comments?.nodes?.[0]?.databaseId ?? null, author: t.comments?.nodes?.[0]?.author?.login ?? '',
+      }));
+    },
+    async resolveThread(threadId) {
+      await ghApi(['graphql', '-f', `query=${RESOLVE_THREAD_MUTATION}`, '-f', `id=${threadId}`]);
+      return true;
+    },
+    /** Creates the label, or sets its colour and description when it exists. */
+    async ensureLabel({ name, color, description }) {
+      try {
+        await ghApi(['--method', 'POST', `repos/${currentRepo()}/labels`, '-f', `name=${name}`, '-f', `color=${color}`, '-f', `description=${description}`]);
+      } catch (err) {
+        if (!/already_exists|HTTP 422/.test(String(err?.message ?? err))) throw err;
+        await ghApi(['--method', 'PATCH', `repos/${currentRepo()}/labels/${encodeURIComponent(name)}`, '-f', `color=${color}`, '-f', `description=${description}`]);
+      }
+      return true;
     },
     /** @returns {Promise<true>}  once GitHub took the label off; a label that was not there answers 404 and throws */
     async removeLabel(number, label) {

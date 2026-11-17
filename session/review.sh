@@ -18,22 +18,35 @@ SERVER=${GITHUB_SERVER_URL:-https://github.com}
 
 say() { printf '\n[review %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
+# owner/name, from the checkout's origin: GITHUB_REPOSITORY is set only in GitHub Actions, never in a session.
+repoOfCheckout() {
+  local url
+  url=$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null) || return 1
+  url=${url%.git}
+  printf '%s\n' "${url#*github.com[:/]}"
+}
+
 runClaude() {
   "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
     --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read,Grep,Glob,Write,Edit" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
     | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
     || true
+  # How claude ended, so a review that stops early says why in the pane and the session's log.
+  jq -rR 'fromjson? | select(.type == "result") | "subtype=\(.subtype) is_error=\(.is_error) turns=\(.num_turns // "?")"' \
+    "$DIR/logs/review.jsonl" 2>/dev/null | tail -1 | while read -r ended; do say "Claude ended ($ended)"; done
 }
 
 # The pull request's context and the repo's rules, from the base branch so a pull request cannot soften its own review.
 gatherContext() {
-  local repo="${GITHUB_REPOSITORY:-}"
   {
     echo "# Pull request #$PR"
     gh pr view "$PR" --json title,body,author --template '{{.title}} (by {{.author.login}}){{"\n\n"}}{{.body}}{{"\n"}}'
     echo; echo "# Discussion"
     gh pr view "$PR" --json comments --template '{{range .comments}}{{.author.login}}: {{.body}}{{"\n\n"}}{{end}}'
+    echo "# Inline comments"
+    gh api "repos/{owner}/{repo}/pulls/$PR/comments" --paginate \
+      --jq '.[] | "[comment \(.id)] \(.user.login) on \(.path):\(.line // .original_line): \(.body)\n"'
     echo "# Linked issues"
     for issue in $(gh pr view "$PR" --json closingIssuesReferences --jq '.closingIssuesReferences[].number' 2>/dev/null); do
       gh issue view "$issue" --comments; echo
@@ -74,9 +87,15 @@ main() {
   say "Review of pull request #$PR against $REVIEW_BASE"
   git fetch --quiet origin "+refs/heads/$REVIEW_BASE:refs/remotes/origin/$REVIEW_BASE" || say "Could not fetch $REVIEW_BASE"
   gatherContext
-  node "$REVIEW" prompt "$DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "${GITHUB_REPOSITORY:-}"
-  say "Reviewing the diff"
-  runClaude
+  local repo
+  repo=$(repoOfCheckout) || repo=
+  if [ -z "$repo" ] || ! node "$REVIEW" prompt "$DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$repo" \
+    --reviewer "${REVIEW_AUTHOR:-}"; then
+    say "Could not write the review prompt (repo: ${repo:-unknown}), so there is no review"
+  else
+    say "Reviewing the diff of $repo"
+    runClaude
+  fi
   sendReport
   rm -f "$RUNNING"
   exit 0

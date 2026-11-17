@@ -10,6 +10,7 @@
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -74,6 +75,16 @@ const sessions = [
   // A finished QA session: it opened no pull request, and tested the one it was started on.
   session('9a9a9a9a', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'QA finished: Pass: 6 test cases passed', qa: { conclusion: 'success' } }),
   session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console' }),
+  // A review the console runs on a pull request (pullRequests.review.runner: woodshed), started as its author with
+  // nobody assigned, and one that finished: the rail keeps both in its folded Reviews and QA zone, with no Take it.
+  session('7e7e7e7e', 145, 'Review: fix(session): tell the remote-control login where it stands', {
+    trigger: 'review', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null,
+    review: { base: 'main', sha: 'f00d145', heading: null, author: null, check: null, commentId: null },
+  }),
+  session('7f7f7f7f', 144, 'Review: feat(console): pin a session', {
+    trigger: 'review', prUrl: null, kept: true, stopReason: 'Review finished: APPROVE',
+    review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true },
+  }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
   // Polling is off, so none has a state here and all three show.
   session('cafe7777', 26330, 'Split the billing page into steps', {
@@ -100,6 +111,15 @@ const sessions = [
   session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false,
     // Near its memory limit, for the badge's red and the machine dialog's: its disk from an image before it was reported.
     usage: { cpuPercent: 162, memoryBytes: 7.5 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 7.9 * GB, cores: 2, diskUsedBytes: null, diskTotalBytes: null } }),
+  // A label the viewer added, on their own Claude plan, that nobody has: on Mine, since they started it, and Unassigned on
+  // Everyone.
+  session('a11e0001', 3, 'Add a ruler to the canvas', {
+    kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
+  }),
+  // One the viewer started and handed to someone else: still on Mine, since it runs on the viewer's plan.
+  session('a11e0002', 4, 'Snap shapes to the grid', {
+    kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', assignee: 'ana-dev', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
+  }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
   session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.
@@ -132,6 +152,8 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
   }),
+  // Paused when idle, so it waits in Mine's Needs you, with Move to Stopped in its ⋯ menu.
+  session('ba5ed001', null, 'A private session paused when idle', { kind: 'task', trigger: 'my-woodshed', owner: 'local', stopReason: 'idle for 1 h', prUrl: null }),
   session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
@@ -169,6 +191,12 @@ const sessions = [
   session('5a5a5a5a', 26700, 'A session starting', {
     status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 6_000).toISOString(),
     startSteps: { machine: new Date(Date.now() - 2_000).toISOString() },
+  }),
+  // Its agent open 2 min ago, every step done, and no address from its launcher: Connecting to the session counts.
+  session('7c7c7c7c', 26710, 'A session with claude open, not reached yet', {
+    status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 135_000).toISOString(),
+    startSteps: Object.fromEntries([['container', 122], ['settings', 121], ['home', 121], ['branch', 121], ['databases', 121], ['env', 120], ['claude', 120]]
+      .map(([step, secondsAgo]) => [step, new Date(Date.now() - secondsAgo * 1000).toISOString()])),
   }),
   // Waiting for room, with the steps its launcher says the wait is at (a launcher's `progress`, providers/README.md).
   // Its next try is an hour away, so the docker launcher never takes it, and nothing here changes the steps.
@@ -279,11 +307,38 @@ const consolePort = sessionApp ? await freePort() : port;
 // bin/woodshed does.
 const devClone = makeDevClone(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-clone-')));
 const RESTART_EXIT_CODE = 75;
+// DEV_CONSOLE_REPO_SETTINGS=1 gives My settings' Repo settings what it needs to save: a local secret store, and two
+// made-up repos whose project files this gh answers, the first the sessions' own.
+const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoSettings(stateDir) : null;
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
-const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'));
+const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), { projectFiles: repoSettingsDev?.projectFiles });
+
+// A local secret store, as the local provider keeps one.
+function devSecrets(dir) {
+  const secretsDir = path.join(dir, 'secrets');
+  const keyFile = path.join(dir, 'secrets.key');
+  fs.mkdirSync(secretsDir, { recursive: true });
+  fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('base64'), { mode: 0o600 });
+  return { WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile };
+}
+
+function devRepoSettings(dir) {
+  const file = (envPath) => `version: 1\nenvFiles:\n  - path: ${envPath}\n    defaults:\n      - LOG_LEVEL=info\n`;
+  return {
+    env: {
+      ...devSecrets(dir),
+      WOODSHED_PROJECTS: JSON.stringify([
+        { name: 'example-repo', repo: 'example-org/example-repo', default: true },
+        { name: 'example-tools', repo: 'example-org/example-tools' },
+      ]),
+    },
+    projectFiles: { 'example-org/example-repo': file('api/.env'), 'example-org/example-tools': file('tools/.env') },
+  };
+}
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
+const webhookPort = process.env.DEV_CONSOLE_WEBHOOKS === '1' ? await freePort() : null;
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
@@ -295,13 +350,20 @@ function startConsole() {
       // through Tailscale's serve has them (appPorts.mjs).
       ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
       WOODSHED_CHECKOUT: devClone, WOODSHED_SUPERVISED: '1',
+      // Nobody signs in here, which on its own would make it a one-person console with one list of sessions: the made-up
+      // team's Mine and Everyone show unless DEV_CONSOLE_ONE_PERSON=1 asks for that one list (server.mjs, onePersonConsole).
+      WOODSHED_ONE_PERSON: process.env.DEV_CONSOLE_ONE_PERSON === '1' ? '1' : '0',
       // Its own links name the port people open, not the one behind it.
       ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
       // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
       // installation that adds its repos on the Console settings page does.
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
+      ...repoSettingsDev?.env,
       ...tlsAskPort,
+      // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so Console settings shows its GitHub webhooks switch.
+      // Polling is off here, so the receiver never listens and nothing arrives.
+      ...(webhookPort ? { WOODSHED_LOCAL_WEBHOOK_PORT: String(webhookPort), ...(repoSettingsDev ? {} : devSecrets(path.join(stateDir, 'webhook-secrets'))) } : {}),
     },
   });
   child.on('exit', (code) => {

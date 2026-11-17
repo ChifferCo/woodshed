@@ -1,5 +1,5 @@
 // What the console reads from the repo's project file (.woodshed/project.yaml, docs/reference.md, "The project file"): its
-// env files with their defaults and lines for Repo settings (repoSettings.mjs), the gates a
+// env files with their defaults and overrides for Repo settings (repoSettings.mjs), the gates a
 // pull request waits for before it is posted (`pullRequests`, prAnnouncer.mjs), and the databases whose engines the
 // installation must host before a session starts (`databases`), and where a database keeps its migrations, which Restore
 // a dump counts a copy's against (`databases[].migrations`, with the table it records them in, what its dump commands
@@ -94,7 +94,7 @@ export function createProjectReader({ github, installationFile = () => null, now
       return project?.pullRequests ?? null;
     },
     /**
-     * What Repo settings shows of the repo's own layer (repoSettings.mjs): each env file with its key, defaults and lines,
+     * What Repo settings shows of the repo's own layer (repoSettings.mjs): each env file with its key, defaults and overrides,
      * the project's `env`, and its rules and setup files. None with no project file.
      * @returns {Promise<{envFiles: object[], env: Record<string, string>, rules: string|null, setup: string|null}>}
      * @throws {Error}  when the file could not be read or parsed

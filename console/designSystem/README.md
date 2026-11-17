@@ -23,7 +23,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## The rail
 
-- The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop.
+- The rail head is one row: the Mine | Everyone switch, the People filter on Everyone only, and + New session on the right. The rail is 360px wide on a desktop. On a console one person uses there is no switch: the head reads My sessions, over one list of every session in Mine's groups.
 - The user menu sits in a footer and opens upward. Beside it, a square quiet button with a sidebar icon hides the rail (⌘.); while it is hidden, a strip down the left edge, on `ground` with a `line` border, holds the same button at the foot to show it again. Neither shows on a phone, where the rail is its own page.
 - With more than one project, a row of filter chips sits under the head: All with its count, then one per project with its `proj-*` swatch, name and count. They are the legend of the cards' edges, and picking one shows only that project's sessions (the zone counts follow); the pick is kept in the browser.
 - A card has two lines. Line one: the title, an ownership tag, then the star and ⋯ marks. Line two: the status word first, then a name only when the card does not already say it, with the PR chips (at most two, older ones folded into a grey `+N` chip; RailCard) or the issue number and Resume or Take it at the right end. Resume is the only filled button on a card. How long a session ran is under its Details, not on the card. With more than one project, the card's left edge is 3px of its project's `proj-*` colour, and the project's name is in its tooltip and its link's accessible name.
@@ -33,8 +33,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   One app: one Start app, no menu.
 - CPU and memory, the Plan chip and Start app are in the pane bar, never on a card. The CPU and memory badge is a quiet button: it opens a dialog of the machine (CPU, memory with its peak, the checkout's disk), each a bar against its limit, `slate` until `amber` (with `amber-ink` for the number) as it runs high and `bad` when nearly full, the same lines the badge turns color at. So is **Editor ↗**, a quiet `pbtn` link to a new tab, never filled. The Plan chip shows the private session's agent's plan (Claude or Codex); only sessions on that agent share its readings and running count, and no chip appears before that agent reports limits: `bar-amber` from 70% of a window, with the word `out` at 100%. Its detail, in the bar's menu, colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
 - A pull request row has two lines, as a card does: its title and its checks' dot, then (`meta`) the project's name and the number, the checks in their colour and how long since it moved, with Open, Resume or Start and a `slate` ↗ to GitHub at the right end. With more than one project it has its project's 3px edge, and the name is always on line two.
-- Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions assigned to you whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups.
-- A shared session someone has carries the Assigned tag: on Mine the word Assigned, on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch: the rail head reads My sessions. **People** on Everyone filters by assignee. A resume keeps the assignee.
+- Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions you started or have whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups. Both end with Reviews and QA (sessions the console started to review or QA a pull request), folded until opened: they run by themselves, so they are never Unassigned and carry no **Take it**. A status chip on the phone's Everyone shows those of that status in it.
+- A shared session someone has carries the Assigned tag: on Mine the word Assigned when it is yours, and the name of whoever has it for one you started and handed over; on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch, nor has anyone on a console one person uses: the rail head reads My sessions. Mine holds the shared sessions you started as well as those assigned to you. **People** on Everyone filters by assignee. A resume keeps the assignee.
 
 ## Menus and presses
 
@@ -81,6 +81,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Show only what a person can do or is waiting on: no "signed in" row, no step for something the console does by itself, and Connect GitHub stays on My settings.
 - The same card fills the pane when New session is pressed before a Claude token or a Codex sign-in is saved and the databases are ready.
 
+## A repo that needs setup
+
+- A repo sessions cannot start on is a blocker card (`components/BlockerCard`): the repo, the word **Needs setup**
+  (`pill is-warn`), the reason in one sentence, then the fix as numbered steps for an admin, or whom to ask and a
+  message with **Copy** for anyone else. Its links are `btn-plain`, never orange.
+- New session never opens on it while another repo can start. The repo picker is always shown, the only repo as text
+  with Add a repo (admin) or a line saying an admin can connect another; a blocked repo stays in the list with
+  `— needs setup`, and picking it puts the card in place of the prompt and Start. Nothing on the rail or the New
+  session button changes for it.
+- Console settings' Repos card says **Ready** (`pill is-ok`) or **Needs setup** on each row, with the card's reason and
+  fix under a row that needs it.
+
 ## Checklists
 
 - A job a person waits on, made of steps (a session's start, Restore a dump), is a checklist: done, now, next and
@@ -96,10 +108,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Work on
 
-- New session's Work on is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
+- New session's Work on, labelled **Continue a PR or branch** with `optional: leave empty to start a new branch`, is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
   them, or open the quiet ▾ for all. Each row is enough to pick from without GitHub: number, title, Draft, author,
   branch and last update. A pick writes `PR #123` and is named under the field. Anything typed still goes as typed.
 - The list is a `menu` surface with rows on `slate-tint` when picked or hovered, never a status color.
+
+## Naming a session
+
+- New session asks for no name. Once the console has named the session, its page shows a rename offer under the title:
+  a `menu` surface (`ground`, `line` border, `menu` shadow) with `Named` in `sub` and the name in `ink` 600, a
+  `btn-plain` **Rename** and a quiet ×. A 2px `slate` line along its foot runs down over 10 s, when it goes. A click
+  anywhere on it keeps it and drops the line; **Rename** turns it into a field with a `btn-plain` Save and a quiet
+  Cancel. Never orange: renaming is not the session's primary action.
 
 ## Commands to copy
 
@@ -123,10 +143,19 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 - A repo's settings are their own page, `/console-settings/repos/<project>`, reached by a quiet **Settings** link on its
   row of the Repos card. The heading is the repo (`title`), with a `‹ Console settings · Repos` link above it.
-- Two cards: **Env files** (a tab per env file, by path) and **Instructions**. Each is a layered file
+- A row of the Repos card is the repo's name, where it was set, its sessions and, with Slack, where its pull requests go
+  (`PRs to C…` or `PRs to the console's channel`, a link to the Slack card), then **Settings** and, for an added repo,
+  **Remove**. No field: the channel is set on the repo's page.
+- Three cards: **Env files** (a tab per env file, by path), **Instructions** and **Slack**. The first two are a layered file
   (`components/LayeredFile`): the layers in the order a session writes them, the layer's word as a grey tag, and for an
   env file a table of which layer wins each key. Values never appear in the table, a log or a tooltip: only in their
   own layer's field, behind **Show and edit** once saved.
+- With no env files, the Env files card is a short how-to in the same box: numbered steps (`cmd-steps`), the YAML in a
+  mono `stopped` block, a link to the project file on GitHub (↗), and where the docs are.
+- **Slack** is one box of the same shape: the channel ID field (mono), a `meta` mono line saying where the next pull
+  request goes, Save and a quiet Clear (back to the console's channel), then a `sub` line on finding the ID and inviting
+  the bot. What the channel is for, and what does not use it, are `sub` lines around the box. With no Slack, a
+  `cap-note` says so and the field and buttons are off. `#slack` opens the page on it.
 - Save is the card's one `btn-open`; Clear and Hide are quiet. A refusal is a `form-error` under the buttons, in the
   console's words, and the typed text stays.
 - A non-admin gets the page's frame with one `cap-note` saying it is an admin's: no field, no value.

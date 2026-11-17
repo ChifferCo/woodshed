@@ -46,20 +46,20 @@ test('defaults come first under their own header, and the installation\'s text t
 });
 
 test('the session\'s wiring: its rendered lines, the project\'s env, the shared services and Woodshed\'s own variables', () => {
-  const wiring = sessionWiring({ lines: ['DB_HOST=10.0.1.5', '# a comment', 'PORT=8080'], env: { NODE_ENV: 'development' }, services: ['S3_ENDPOINT'] });
-  assert.deepEqual(wiring, { lines: ['DB_HOST', 'PORT'], env: ['NODE_ENV'], services: ['S3_ENDPOINT'] });
-  assert.equal(wiringReason(wiring, 'DB_HOST'), 'lines');
+  const wiring = sessionWiring({ overrides: ['DB_HOST=10.0.1.5', '# a comment', 'PORT=8080'], env: { NODE_ENV: 'development' }, services: ['S3_ENDPOINT'] });
+  assert.deepEqual(wiring, { overrides: ['DB_HOST', 'PORT'], env: ['NODE_ENV'], services: ['S3_ENDPOINT'] });
+  assert.equal(wiringReason(wiring, 'DB_HOST'), 'overrides');
   assert.equal(wiringReason(wiring, 'NODE_ENV'), 'env');
   assert.equal(wiringReason(wiring, 'S3_ENDPOINT'), 'session');
   assert.equal(wiringReason(wiring, 'GH_TOKEN'), 'session', 'one of Woodshed\'s own variables, by name');
   assert.equal(wiringReason(wiring, 'WOODSHED_ANYTHING'), 'session');
   assert.equal(wiringReason(wiring, 'LOG_LEVEL'), null);
-  assert.deepEqual(sessionWiring({}), { lines: [], env: [], services: [] });
+  assert.deepEqual(sessionWiring({}), { overrides: [], env: [], services: [] });
 });
 
 test('a line {{NAME?}} left out is not wiring, so the key it would set stays a person\'s', () => {
   // The caller renders the lines first: ANTHROPIC_API_KEY={{ANTHROPIC_API_KEY?}} with none set is no line at all.
-  const wiring = sessionWiring({ lines: ['PORT=8080'] });
+  const wiring = sessionWiring({ overrides: ['PORT=8080'] });
   assert.equal(wiringReason(wiring, 'ANTHROPIC_API_KEY'), 'session', 'Woodshed\'s own name is still flagged');
   const rows = envKeyTable({ layers: { personal: 'MY_KEY=1', session: 'PORT=8080' }, wiring });
   assert.deepEqual(rows.find((r) => r.key === 'MY_KEY'), { key: 'MY_KEY', setBy: ['personal'], wins: 'personal' });
@@ -67,7 +67,7 @@ test('a line {{NAME?}} left out is not wiring, so the key it would set stays a p
 
 test('each key\'s layers and winner, the last layer to set it unless the session wires it', () => {
   const layers = { repo: 'FEATURE_PREVIEW=true\nLOG_LEVEL=info', installation: 'AUTH=x\nLOG_LEVEL=warn', personal: 'FEATURE_PREVIEW=false\nPORT=1', session: 'PORT=8080' };
-  const wiring = sessionWiring({ lines: ['PORT=8080'], env: { NODE_ENV: 'development' } });
+  const wiring = sessionWiring({ overrides: ['PORT=8080'], env: { NODE_ENV: 'development' } });
   assert.deepEqual(envKeyTable({ layers, wiring }), [
     { key: 'FEATURE_PREVIEW', setBy: ['repo', 'personal'], wins: 'personal' },
     { key: 'LOG_LEVEL', setBy: ['repo', 'installation'], wins: 'installation' },

@@ -1,0 +1,4 @@
+- `docker` here is this session's own Docker, inside this container: use it for the repo's compose services, Supabase local, Testcontainers, or building and running an image. Nobody else's containers are in it, and everything in it goes when the session ends.
+  - A port a container publishes is on this container's 127.0.0.1, where the app and the tests reach it.
+  - It starts with no images, so the first pull of each takes a while. Its log is `/tmp/woodshed-dockerd.log`: read it when `docker` says it cannot connect.
+  - It shares this session's memory and CPU: stop what you no longer need.

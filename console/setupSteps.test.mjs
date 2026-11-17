@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import setup from './public/setupSteps.cjs';
 
-const { setupSteps, setupDone } = setup;
+const { setupSteps, setupDone, stepsAfterSetup } = setup;
 const me = ({ token = false, db = null } = {}) => ({ login: 'mia-dev', claudeToken: { set: token }, databases: db });
 const rows = (m) => setupSteps(m).map((s) => `${s.key}:${s.done ? 'done' : s.todo ? 'todo' : 'waiting'}`);
 
@@ -52,4 +52,20 @@ test('an optional GitHub App is offered on the card and never holds New session 
   assert.equal(setupSteps(m)[0].optional, true);
   assert.match(setupSteps(m)[0].label, /optional/);
   assert.equal(setupDone({ ...me({ token: true }), githubSetupOptional: true }), true);
+});
+
+test('once the App is connected, the reviewer App is offered next, and never holds New session back', () => {
+  const m = { ...me({ token: true, db: { available: true, status: 'ready' } }), reviewerSetupNeeded: true };
+  assert.deepEqual(rows(m), ['reviewer:waiting', 'token:done', 'databases:done']);
+  assert.equal(setupSteps(m)[0].optional, true);
+  assert.equal(setupDone(m), true, 'optional, as an App on a laptop is');
+  const both = { ...m, githubSetupNeeded: true };
+  assert.deepEqual(rows(both).slice(0, 2), ['github:waiting', 'reviewer:waiting'], 'the App first, then its reviewer');
+});
+
+test('once setup is done, an open reviewer step stays on New session, above the form, and nothing else does', () => {
+  const done = me({ token: true, db: { available: true, status: 'ready' } });
+  assert.deepEqual(stepsAfterSetup({ ...done, reviewerSetupNeeded: true }).map((s) => s.key), ['reviewer']);
+  assert.deepEqual(stepsAfterSetup(done), [], 'an admin with the reviewer App, or a member, sees no card');
+  assert.deepEqual(stepsAfterSetup({ ...done, githubSetupOptional: true }), [], 'the optional App on a laptop is not kept on screen');
 });

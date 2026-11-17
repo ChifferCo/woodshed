@@ -11,12 +11,12 @@ env: {}
 envFiles:
   - path: app/.env
     secret: app-env
-    lines:
+    overrides:
       - DATABASE_HOST={{PGHOST}}
       - PORT={{PORT}}
   - path: app/.env.local
     secret: null
-    lines: [X=1]
+    overrides: [X=1]
 databases: []
 app: null
 editor: true
@@ -25,11 +25,11 @@ setup: null
 pullRequests: null
 `;
 
-// The names one env file's lines write, read through repoLayer; none when the file could not be read.
-async function linesOf(reader, secret) {
+// The names one env file's overrides write, read through repoLayer; none when the file could not be read.
+async function overridesOf(reader, secret) {
   try {
     const layer = await reader.repoLayer();
-    return layer.envFiles.find((f) => f.secret === secret)?.lines.map((l) => l.split('=')[0]) ?? [];
+    return layer.envFiles.find((f) => f.secret === secret)?.overrides.map((l) => l.split('=')[0]) ?? [];
   } catch {
     return [];
   }
@@ -39,16 +39,16 @@ test('the reader keeps what it read for a while, and a repo with no project file
   let reads = 0;
   let clock = 0;
   const reader = createProjectReader({ github: { projectFile: async () => { reads += 1; return PROJECT; } }, now: () => clock });
-  assert.deepEqual(await linesOf(reader, 'app-env'), ['DATABASE_HOST', 'PORT']);
-  assert.deepEqual(await linesOf(reader, 'other'), []);
+  assert.deepEqual(await overridesOf(reader, 'app-env'), ['DATABASE_HOST', 'PORT']);
+  assert.deepEqual(await overridesOf(reader, 'other'), []);
   assert.equal(reads, 1);
   clock = 11 * 60_000;
-  await linesOf(reader, 'app-env');
+  await overridesOf(reader, 'app-env');
   assert.equal(reads, 2, 'read again after ten minutes');
   const none = createProjectReader({ github: { projectFile: async () => null } });
-  assert.deepEqual(await linesOf(none, 'app-env'), []);
+  assert.deepEqual(await overridesOf(none, 'app-env'), []);
   const broken = createProjectReader({ github: { projectFile: async () => { throw new Error('boom'); } } });
-  assert.deepEqual(await linesOf(broken, 'app-env'), []);
+  assert.deepEqual(await overridesOf(broken, 'app-env'), []);
 });
 
 test('the gates for a pull request are the file\'s pullRequests; an unread file is an error, not a repo with none', async (t) => {
@@ -99,7 +99,7 @@ test('files asked for at once share one read, and none of them sees an empty ans
   let reads = 0;
   const github = { projectFile: async () => { reads += 1; await new Promise((r) => setTimeout(r, 20)); return PROJECT; } };
   const reader = createProjectReader({ github });
-  const [a, b, c] = await Promise.all([linesOf(reader, 'app-env'), linesOf(reader, 'app-env'), linesOf(reader, 'other')]);
+  const [a, b, c] = await Promise.all([overridesOf(reader, 'app-env'), overridesOf(reader, 'app-env'), overridesOf(reader, 'other')]);
   assert.deepEqual([a, b, c], [['DATABASE_HOST', 'PORT'], ['DATABASE_HOST', 'PORT'], []]);
   assert.equal(reads, 1);
 });
@@ -129,12 +129,12 @@ test('a repo with no project file on its default branch is read from the install
   t.mock.method(console, 'log', (message, fields) => logs.push([message, fields]));
   const supplied = { text: PROJECT.replace('editor: true', 'editor: false'), path: '/files/acme/app.yaml' };
   const fromInstallation = createProjectReader({ github: { projectFile: async () => null }, installationFile: () => supplied });
-  assert.deepEqual(await linesOf(fromInstallation, 'app-env'), ['DATABASE_HOST', 'PORT']);
+  assert.deepEqual(await overridesOf(fromInstallation, 'app-env'), ['DATABASE_HOST', 'PORT']);
   assert.deepEqual(logs.at(-1), ['projectFile: read', { found: true, from: 'installation', envFiles: 2, pullRequests: false, databases: [] }]);
 
   let asked = 0;
   const own = createProjectReader({ github: { projectFile: async () => PROJECT.replace('PORT={{PORT}}', 'OWN=1') }, installationFile: () => { asked += 1; return supplied; } });
-  assert.deepEqual(await linesOf(own, 'app-env'), ['DATABASE_HOST', 'OWN']);
+  assert.deepEqual(await overridesOf(own, 'app-env'), ['DATABASE_HOST', 'OWN']);
   assert.equal(logs.at(-1)[1].from, 'default branch');
   assert.equal(asked, 0, 'the installation\'s file is not read while the repo has its own');
 
@@ -157,7 +157,7 @@ test('a default branch\'s file that does not parse gives way to the installation
   const old = 'version: 1\ndatabase: null\n';
   const supplied = { text: PROJECT, path: '/files/acme/app.yaml' };
   const reader = createProjectReader({ github: { projectFile: async () => old }, installationFile: () => supplied });
-  assert.deepEqual(await linesOf(reader, 'app-env'), ['DATABASE_HOST', 'PORT']);
+  assert.deepEqual(await overridesOf(reader, 'app-env'), ['DATABASE_HOST', 'PORT']);
   assert.equal(await reader.pullRequests(), null, 'read, so nothing waits on it');
   const [message, fields] = logs.at(-1);
   assert.equal(message, 'projectFile: read');
@@ -178,7 +178,7 @@ test('with no repo yet the reader asks GitHub nothing, and reads the default rep
   assert.equal(await reader.pullRequests(), null, 'no file, and no error: nothing waits on it');
   assert.equal(github.asked, 0);
   github.repo = 'acme/app';
-  assert.deepEqual(await linesOf(reader, 'app-env'), ['DATABASE_HOST', 'PORT'], 'the same clock: the cache follows the repo, not only the time');
+  assert.deepEqual(await overridesOf(reader, 'app-env'), ['DATABASE_HOST', 'PORT'], 'the same clock: the cache follows the repo, not only the time');
   assert.equal(github.asked, 1);
 });
 

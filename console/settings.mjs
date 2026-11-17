@@ -27,7 +27,7 @@ function firstLine(err) {
 }
 
 /**
- * @param {{config: object, secrets: {list: Function, read: Function, write: Function, save: Function, remove: Function},
+ * @param {{config: object, secrets: {list: Function, read: Function, write: Function, save: Function, remove: Function, createsOnWrite?: boolean},
  *          appKey: {current: () => string|null, set: (pem: string) => void},
  *          appApi: ReturnType<import('./githubApp.mjs').createAppApi>,
  *          webhookUrl: () => Promise<string|null>, checkKey?: (pem: string) => Promise<void>,
@@ -67,13 +67,20 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
     }
   }
 
+  async function listed() {
+    const list = await secrets.list();
+    // A store that makes a secret on its first write lets the page offer Set before the secret exists.
+    const creates = Boolean(secrets.createsOnWrite);
+    return list.map((s) => ({ ...s, creatable: creates && !s.exists }));
+  }
+
   async function view() {
     if (borrowed) {
-      const list = await secrets.list();
+      const list = await listed();
       return { repo: defaultProject(config).repo, secrets: list.filter((s) => !APP_SECRETS.includes(s.name)), webhook: null };
     }
     const [list, expectedUrl, github] = await Promise.all([
-      secrets.list(),
+      listed(),
       webhookUrl().catch((err) => {
         console.warn('settings: webhook function URL not readable', { message: firstLine(err) });
         return null;

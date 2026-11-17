@@ -7,7 +7,7 @@ import path from 'node:path';
 
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
-import { writeEnvFiles } from '../shared/project.mjs';
+import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
 
 const SESSIONS = [
   { id: 'aaaaaaaa', status: 'running', token: 'live-token' },
@@ -25,9 +25,9 @@ test('sessionForAuthorization accepts only an active session\'s own token', () =
   assert.equal(sessionForAuthorization('Bearer x', [{ id: 'dddddddd', status: 'running' }]), null, 'a session without a token never matches');
 });
 
-function request(port, { method = 'POST', path = '/github-token', authorization, body }) {
+function request(port, { method = 'POST', path = '/github-token', authorization, body, headers: extra = {} }) {
   return new Promise((resolve, reject) => {
-    const headers = authorization ? { authorization } : {};
+    const headers = { ...(authorization ? { authorization } : {}), ...extra };
     const req = http.request({ host: '127.0.0.1', port, method, path, headers }, (res) => {
       let body = '';
       res.on('data', (chunk) => { body += chunk; });
@@ -66,11 +66,12 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
   const asked = [];
   const userSettings = {
     claudeToken: async (login) => { asked.push(login); return login === 'octocat' ? 'sk-ant-joel' : null; },
-    ownFiles: async (login) => ({ 'api-env': `LOG_LEVEL=debug # ${login}`, 'web-env': null, 'tmux-conf': null }),
-    ownWholeFiles: async (login) => ({ 'app/.env.production': `NOTION_TOKEN=x # ${login}` }),
+    ownFiles: async (login) => ({ 'tmux-conf': `set -g mouse on # ${login}` }),
     gitIdentity: (login) => (login === 'octocat' ? { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' } : null),
   };
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  // The owner's whole files are the session's own repo's (repoSettings.filesForSession), chosen by the session.
+  const repoSettings = { filesForSession: async (session) => ({ 'app/.env.production': `NOTION_TOKEN=x # ${session.owner} ${session.id}` }) };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings, repoSettings });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
@@ -80,8 +81,8 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
   assert.deepEqual(await settings('Bearer joel-token'), {
     status: 200,
     body: {
-      files: { 'api-env': 'LOG_LEVEL=debug # octocat', 'web-env': null, 'tmux-conf': null },
-      ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat' },
+      files: { 'tmux-conf': 'set -g mouse on # octocat' },
+      ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat bbbbbbbb' },
       git: { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' }, database: null, claudeToken: 'sk-ant-joel',
     },
   });
@@ -145,6 +146,28 @@ test('a shared session gets its own databases and nothing else, waiting while th
   t.after(() => plain.close());
   assert.equal((await request(plain.address().port, { path: '/settings', authorization: 'Bearer ready-token' })).status, 404,
     'where the console makes no databases, the environment names one');
+});
+
+test('a shared session gets its starter\'s plan from a console that makes no databases, and a 404 on the team key', async (t) => {
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'starting', token: 'allen-plan', owner: null, startedBy: 'allen', plan: 'allen' },
+    { id: 'bbbbbbbb', status: 'starting', token: 'team-key', owner: null, startedBy: 'mia', plan: null },
+    { id: 'cccccccc', status: 'starting', token: 'switched-off', owner: null, startedBy: 'ana', plan: 'ana' },
+  ];
+  const tokens = { allen: 'sk-ant-oat01-allen', ana: 'sk-ant-oat01-ana' };
+  const userSettings = { claudeToken: async (login) => tokens[login] ?? null, usesOwnTokenForShared: (login) => login !== 'ana' };
+  for (const databases of [{ available: false }, null]) {
+    const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, databases, userSettings });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    t.after(() => server.close());
+    const settings = (token, headers = { 'x-woodshed-plan-only': '1' }) => request(server.address().port, { path: '/settings', authorization: `Bearer ${token}`, headers });
+    assert.deepEqual(await settings('allen-plan'), { status: 200, body: { plan: 'allen' } }, 'the plan, no database');
+    assert.equal((await settings('team-key')).status, 404, 'no plan: the 404 an older image reads as the environment\'s databases');
+    assert.equal((await settings('switched-off')).status, 404, 'switched off since the launch: the team key');
+    // An image from before the header stops on a 200 with no database (`the console sent no database user`).
+    assert.equal((await settings('allen-plan', {})).status, 404, 'an entrypoint that does not say it reads a plan alone gets the 404 it knows');
+  }
 });
 
 test('a private session whose owner connected GitHub gets their own token; anyone else the installation token', async (t) => {
@@ -673,4 +696,42 @@ test('/repo-settings answers for the calling session\'s own project, a private o
 
   secrets.read = async () => { throw new Error('ThrottlingException'); };
   assert.equal((await ask('private')).status, 503, 'the entrypoint tries again');
+});
+
+test('two repos that both have an api-env: each session writes its own repo\'s repo settings, and never a Terraform secret in its environment', async (t) => {
+  const { createRepoSettings } = await import('./repoSettings.mjs');
+  const values = new Map();
+  const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
+  const store = { state: {}, save() {} };
+  const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'api', repo: 'acme/api', default: false }] };
+  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', key: 'api-env', overrides: ['PORT=8080'] }], env: {} };
+  const userSettings = createUserSettings({ store, secrets });
+  const repoSettings = createRepoSettings({ store, secrets, config, readerOf: () => ({ repoLayer: async () => project }) });
+  await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');
+  await repoSettings.saveInstallation({ project: 'api', key: 'api-env', text: 'FROM=api-settings', by: 'mia' });
+  await repoSettings.saveOwn({ login: 'mia', project: 'api', key: 'api-env', text: 'MINE=api-settings' });
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', repo: 'acme/app', project: 'app' },
+    { id: 'bbbbbbbb', status: 'running', token: 'on-api', owner: 'mia', repo: 'acme/api', project: 'api' },
+  ];
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings, repoSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+
+  // What the entrypoint does: /repo-settings, then writeEnvFiles, with a task definition from before that still passes API_ENV.
+  const envFileOn = async (token) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'two-repos-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const { body: answer } = await request(port, { path: '/repo-settings', authorization: `Bearer ${token}` });
+    fs.writeFileSync(path.join(dir, 'answer.json'), JSON.stringify(answer));
+    const settings = readRepoSettings(path.join(dir, 'answer.json'));
+    writeEnvFiles({ project, repoDir: dir, env: { API_ENV: 'FROM=terraform' }, settings });
+    return fs.readFileSync(path.join(dir, 'api/.env'), 'utf8');
+  };
+  assert.equal(await envFileOn('on-api'), 'FROM=api-settings\n\n# Your own lines, from My settings\nMINE=api-settings\n\n# Woodshed overrides\nPORT=8080\n');
+  const onApp = await envFileOn('on-app');
+  assert.equal(onApp.includes('api-settings'), false, 'the other repo\'s session never gets them');
+  assert.equal(onApp.includes('FROM=terraform'), false, 'nor the Terraform secret');
 });

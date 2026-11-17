@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
 
-// The default project's env files, as installation.mjs reads them from its project file.
-const ENV_FILE_PATHS = async () => ['api/.env', 'web/.env.local'];
 
 function fakeSecrets() {
   const values = new Map();
@@ -66,43 +65,45 @@ test('removing everything deletes the person\'s secrets and their record, and le
   assert.equal(settings.view('octocat').setUp, false);
 });
 
-test('tmux is the image\'s file plus the person\'s own lines, kept apart by login; it is the only file', async () => {
+test('tmux is the image\'s file plus the person\'s own lines, kept apart by login', async () => {
   const secrets = fakeSecrets();
   const store = { state: {}, save() {} };
   const settings = createUserSettings({ store, secrets, now: () => Date.parse('2026-10-23T10:00:00Z') });
 
   const tmux = await settings.file('octocat', 'tmux-conf');
+  assert.deepEqual([tmux.text, tmux.custom, tmux.label, tmux.editable, tmux.appended], ['', false, '~/.tmux.conf', false, []]);
   assert.match(tmux.sharedText, /set -g mouse on/, 'tmux\'s shared file is the session image\'s own');
-  assert.deepEqual([tmux.text, tmux.custom, tmux.editable, tmux.appended, tmux.label], ['', false, false, [], '~/.tmux.conf'], 'and the console cannot change it');
 
   await settings.saveFile('octocat', 'tmux-conf', 'set -g prefix C-a\r\n');
   assert.equal(secrets.values.get('users/octocat/tmux-conf'), 'set -g prefix C-a\n', 'only their own lines are kept');
+  assert.equal((await settings.file('octocat', 'tmux-conf')).custom, true);
   assert.equal(settings.view('octocat').files['tmux-conf'].savedAt, '2026-10-23T10:00:00.000Z');
   assert.deepEqual(await settings.ownFiles('octocat'), { 'tmux-conf': 'set -g prefix C-a\n' });
   assert.deepEqual(await settings.ownFiles('mia-dev'), { 'tmux-conf': null }, 'a teammate has none');
+
+  await settings.saveFile('octocat', 'tmux-conf', '  \n');
+  assert.equal(secrets.values.has('users/octocat/tmux-conf'), false, 'saving nothing clears their lines');
+  await settings.saveFile('octocat', 'tmux-conf', 'set -g prefix C-a');
   await settings.resetFile('octocat', 'tmux-conf');
   assert.equal((await settings.ownFiles('octocat'))['tmux-conf'], null);
 
   await assert.rejects(settings.saveFile('octocat', 'tmux-conf', 'x'.repeat(70_000)), /64 KB/);
-  for (const key of ['api-env', 'secrets']) {
-    await assert.rejects(settings.file('octocat', key), /no file called/, `${key}: a repo's env files are its Repo settings`);
-    await assert.rejects(settings.saveFile('octocat', key, 'X=1'), /no file called/);
-  }
-  assert.deepEqual(Object.keys(settings.view('octocat').files), ['tmux-conf']);
+  await assert.rejects(settings.file('octocat', 'secrets'), /no file called/);
+  await settings.saveFile('octocat', 'tmux-conf', 'set -g mouse off');
+  await settings.removeAll('octocat');
+  assert.equal(secrets.values.size, 0, 'Remove deletes the files too');
 });
 
-test('own lines an env file\'s secret kept before Repo settings are not read, and go with Remove My Woodshed', async () => {
+test('Remove My Woodshed deletes own lines left from the env file tabs before Repo settings, which only the record names', async () => {
   const secrets = fakeSecrets();
-  secrets.values.set('api-env', 'LOG_LEVEL=info\n');
-  secrets.values.set('users/octocat/api-env', 'LOG_LEVEL=debug\n');
-  secrets.values.set('users/octocat/web-env', 'OLD=1\n');
-  // The records a console from before left: one value saved, one cleared since.
-  const store = { state: { people: { octocat: { files: { 'api-env': '2026-10-01T00:00:00.000Z', 'web-env': null, 'tmux-conf': null } } } }, save() {} };
+  const store = { state: { people: { octocat: { files: { 'api-env': '2026-10-01T00:00:00.000Z', 'web-env': null } } } }, save() {} };
+  await secrets.save('users/octocat/api-env', 'OWN_KEY=1', '');
+  await secrets.save('users/mia-dev/api-env', 'HERS=1', '');
   const settings = createUserSettings({ store, secrets });
-  assert.deepEqual(Object.keys(settings.view('octocat').files), ['tmux-conf']);
-  assert.deepEqual(await settings.ownFiles('octocat'), { 'tmux-conf': null }, 'a session is handed none of them');
   await settings.removeAll('octocat');
-  assert.deepEqual([...secrets.values.keys()].sort(), ['api-env', 'users/octocat/web-env'], 'the saved one goes; the Terraform secret is not theirs');
+  assert.equal(secrets.values.has('users/octocat/api-env'), false, 'the old lines go with the record that named them');
+  assert.equal(secrets.values.has('users/mia-dev/api-env'), true, 'nobody else\'s');
+  assert.equal(store.state.people.octocat, undefined);
 });
 
 test('the switch for shared sessions is on by default, needs a token, is in effect only while one is saved, and goes with Remove', async () => {
@@ -127,6 +128,14 @@ test('the switch for shared sessions is on by default, needs a token, is in effe
   settings.setOwnTokenForShared('joel', false);
   await settings.removeAll('joel');
   assert.equal(settings.view('joel').ownTokenForShared, true, 'back to the default');
+});
+
+test('My settings\' files are tmux-conf alone: an env file\'s own lines are Repo settings', async () => {
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  const view = settings.view('mia');
+  assert.deepEqual(Object.entries(view.files).map(([key, f]) => [key, f.label]), [['tmux-conf', '~/.tmux.conf']]);
+  await assert.rejects(settings.file('mia', 'api-env'), /no file called api-env/);
+  await assert.rejects(settings.saveFile('mia', 'api-env', 'A=1'), /no file called api-env/);
 });
 
 test('a Codex sign-in is an API key or a codex auth.json, kept under the person\'s login', async () => {
@@ -226,35 +235,9 @@ test('with no token saved, page loads inside the minute ask the store once', asy
   assert.equal(reads, 4, 'and one more once the minute is up');
 });
 
-test('a person\'s own whole files are one secret of theirs, kept by path, and an env file\'s path is refused', async () => {
-  const secrets = fakeSecrets();
-  const store = { state: {}, save() {} };
-  let clock = Date.parse('2026-11-11T10:00:00Z');
-  const settings = createUserSettings({ store, secrets, envFilePaths: ENV_FILE_PATHS, now: () => clock });
-
-  assert.deepEqual(await settings.ownWholeFiles('octocat'), {}, 'none yet');
-  assert.deepEqual(await settings.saveOwnFile('Octocat', ' app/.env.production ', 'NOTION_TOKEN=a\r\n'), { 'app/.env.production': 'NOTION_TOKEN=a\n' });
-  clock += 60_000;
-  await settings.saveOwnFile('octocat', '.mcp.local.json', '{}');
-  assert.deepEqual(JSON.parse(secrets.values.get('users/octocat/own-files')), { 'app/.env.production': 'NOTION_TOKEN=a\n', '.mcp.local.json': '{}' });
-  assert.deepEqual(settings.view('octocat').ownFiles, [
-    { path: '.mcp.local.json', savedAt: '2026-11-11T10:01:00.000Z' },
-    { path: 'app/.env.production', savedAt: '2026-11-11T10:00:00.000Z' },
-  ], 'a save keeps the others\' times');
-  assert.equal(JSON.stringify(store.state).includes('NOTION_TOKEN'), false, 'state.json never holds the text');
-  assert.deepEqual(await settings.ownWholeFiles('mia-dev'), {}, 'nobody else\'s');
-
-  for (const [file, message] of [['/etc/passwd', /leading/], ['../x', /\.\./], ['.git/config', /git's own/], ['a b', /letters/], ['api/.env', /env files/]]) {
-    await assert.rejects(settings.saveOwnFile('octocat', file, 'x'), (err) => err.shown && message.test(err.message), file);
-  }
-  await assert.rejects(settings.saveOwnFile('octocat', 'big', 'x'.repeat(70_000)), /64 KB/);
-
-  await settings.saveOwnFile('octocat', 'app/.env.production', '  ');
-  await settings.saveOwnFile('octocat', '.mcp.local.json', '');
-  assert.equal(secrets.values.has('users/octocat/own-files'), false, 'the last one removed takes the secret with it');
-  assert.deepEqual(settings.view('octocat').ownFiles, []);
-
-  await settings.saveOwnFile('octocat', 'a/.env', 'X=1');
-  await settings.removeAll('octocat');
-  assert.equal(secrets.values.size, 0, 'Remove My Woodshed deletes them too');
+test('the own-files request body limit follows the store\'s limit, and never drops below 160 KB', () => {
+  assert.equal(ownFilesBodyLimit(undefined), 160 * 1024);
+  assert.equal(ownFilesBodyLimit(65_536), 160 * 1024);
+  assert.equal(ownFilesBodyLimit(1_048_576), 2_621_440);
+  assert.equal(ownFilesBodyLimit(1e12), 16 * 1024 * 1024);
 });

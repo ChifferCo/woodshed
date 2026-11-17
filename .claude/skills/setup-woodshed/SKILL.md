@@ -35,9 +35,10 @@ then, not an install setting. For this machine, ask in the same message:
   people have a shell on (a shared dev box, a CI runner, a teammate's VM) reaches a console with no sign-in as them.
   List the Linux and server peers from `tailscale status` and ask about each: who else logs in to it? Any with other
   people on it means "others too", or taking that machine off the tailnet first. Only them also means this, said once
-  and plainly: sessions use this machine's Docker (for a repo's compose services, Supabase local or Testcontainers),
-  so Claude in a session can do anything on this machine. `WOODSHED_SESSION_DOCKER=0` turns that off. Others too: the GitHub App and sign-in become required, and Open app needs
-  a domain of their own (`WOODSHED_TAILSCALE=shared`), and sessions get no Docker unless they add `WOODSHED_SESSION_DOCKER=1`, with which anyone who can start a session has this machine through its
+  and plainly: without Sysbox (always on a Mac), sessions use this machine's Docker (for a repo's compose services,
+  Supabase local or Testcontainers), so Claude in a session can do anything on this machine; on Linux with Sysbox each
+  session runs its own instead. `WOODSHED_SESSION_DOCKER=0` turns Docker off. Others too: the GitHub App and sign-in become required, and Open app needs
+  a domain of their own (`WOODSHED_TAILSCALE=shared`), and sessions get Docker only of their own, once the machine has Sysbox, unless they add `WOODSHED_SESSION_DOCKER=1`, with which anyone who can start a session has this machine through its
   Docker, as on a server (step 1 of the briefing). `docs/self-host.md`, "From your other devices", has both.
 
 Someone who only wants to see the console needs none of this:
@@ -61,12 +62,15 @@ the like) at the prompt, so its output lands here. Never ask for a token in the 
    "Costs"), what runs afterwards and on which address, what is open to the network and what is not, and how long the
    slow part takes (the session image's first build: a few minutes on this machine, where it holds no repository;
    several on a server or AWS; longer with no published runtime). On a server, and on this machine when others use it,
-   say this plainly, once: sessions get the machine's Docker (a repo's compose services, Supabase local) only with
-   `WOODSHED_SESSION_DOCKER=1` in `stack.env`, which you set when they want it, and with it anyone who can start a
+   say this plainly, once: sessions get a Docker of their own (a repo's compose services, Supabase local, image builds)
+   once the machine has Sysbox (providers/local/README.md, "Their own Docker, with Sysbox"), which is the way to offer
+   it. It reaches nothing of the machine's, but whoever can start a session can reach the other sessions' traffic and
+   tokens: a shared server is for a team that trusts each other with that, and a team that must be kept apart runs
+   each session on a machine or task of its own. They get the machine's own Docker only with `WOODSHED_SESSION_DOCKER=1` in `stack.env`, which you set when they want it without Sysbox, and with it anyone who can start a
    session (a GitHub label or comment included) gets root on the machine. That reaches the secrets key, so every stored
-   secret and Claude token, and every other session's containers and databases. Set it when they want sessions to use
-   Docker and everyone who can start one is someone they would give root on the box; leave it out otherwise. AWS
-   sessions never get it.
+   secret and Claude token, and every other session's containers and databases. Set it only when everyone who can
+   start one is someone they would give root on the box. `WOODSHED_SESSION_DOCKER=0` turns Docker off. AWS sessions
+   never get it.
 2. **What the checks found**: what is ready, and what they must fix first.
 3. **Everything you will need from them, start to finish**, from the table below, each with when in the order it comes,
    so they can line it up now (an organization owner to approve the GitHub App, a dev API key for an env file).
@@ -82,7 +86,7 @@ Then ask them to say go.
 
 | Where | From them |
 | --- | --- |
-| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. On this machine, first pick the repository on the console's Console settings, Repos (**Add a repo**). On a server or AWS, make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. On this machine it is optional: sessions push as them with their `gh` sign-in, so leave it out unless they ask for one. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. Dev values for each env file the project file names, on **Console settings → Repos → the repo → Settings** (never production) |
+| Every place | Commit (or merge your pull request of) `.woodshed/project.yaml` to the default branch. On this machine, first pick the repository on the console's Console settings, Repos (**Add a repo**). On a server or AWS, make the GitHub App: a few clicks in the browser, on the repository's organization or their account, and an organization may need an owner to approve it. On this machine it is optional: sessions push as them with their `gh` sign-in, so leave it out unless they ask for one. Give sessions a Claude: run `claude setup-token` in their own terminal and save it on **My settings**, or an Anthropic API key on **Secrets & webhooks**. A dev value for each env file `secret` the project file names (never production) |
 | This machine, with Tailscale | Tailscale signed in on this machine and the devices they will use, MagicDNS and HTTPS certificates on. Only them: nothing more. Others too: making the GitHub App at `https://<name>/setup/github` the moment the console runs, then signing in first, so they are its admin, and adding the others on People |
 | A server, also | The machine (Ubuntu 24.04, about 4 GB a session) and SSH access to it for you. A firewall in their provider's panel. A name: a domain with an `A` and a wildcard record, or none with sslip.io. Their own IP, for the fence until sign-in. Signing in first, so they are the first admin |
 | AWS, also | An AWS account for Woodshed alone, with credentials in this shell. A domain to delegate, with NS records at its parent's DNS. An email for the budget alerts. The GitHub App made by hand (its permissions are in `providers/aws/README.md`, "Setting it up", step 2), its private key uploaded on the console later. Approving each Terraform apply after reading its plan |
@@ -107,7 +111,7 @@ session image builds, so an install run before it is an install run again.
 On this machine the install builds nothing from it: sessions clone the repository and read the file at start. Once the
 person added a repo on the console, check its default branch for one (`gh api repos/<owner>/<name>/contents/.woodshed/project.yaml`
 answers 404 when it has none) and write it then, with the same skill, in a checkout cloned with `gh repo clone` beside
-this one, never inside it. When the file has `databases`, or env files with a `secret`, the install must be made for
+this one, never inside it. When the file has `databases`, the install must be made for
 that repository to host them: run the installer again with `WOODSHED_REPO=<owner>/<name>` (and the same
 `WOODSHED_TAILSCALE`), as "On this machine", step 5, says, and restart the console. Say so in the briefing once you
 know, since that run builds the repository's own image (several minutes).
@@ -142,7 +146,7 @@ These come from `CLAUDE.md`, "Rules"; read it if a step touches secrets.
 
 - **Never print a secret's value.** Check a secret by `node providers/local/bin/secret.mjs list` (names only) or a call
   that prints only a status code. Pass a value to a tool on stdin, never on its command line.
-- **No production credentials in a session.** An env file's values are the dev setup's keys only. A team-wide key
+- **No production credentials in a session.** An env file's values on Repo settings are the dev setup's keys only. A team-wide key
   goes on the Secrets & webhooks page, never in `session-env.json`, which every session reads.
 - **Nothing open before sign-in.** On a server, the proxy answers only the person's IP until the GitHub App is made,
   `WOODSHED_REQUIRE_SIGN_IN=1` is set and they signed in as the first admin ("On a server", steps 7 and 9).

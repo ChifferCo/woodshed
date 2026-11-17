@@ -6,11 +6,10 @@
 //   users/<login>/claude-token   from `claude setup-token`: the person's own Claude plan
 //   users/<login>/codex-auth     the person's own Codex sign-in: an OpenAI API key, or the ~/.codex/auth.json of `codex login`.
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
-//   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the image's own, so a change to
-//                                that still reaches them. Readable by them, since their sessions hold the same text anyway.
-//                                Their own lines for a repo's env files are Repo settings' (repoSettings.mjs)
-//   users/<login>/own-files    their own whole files (an app/.env.production), as JSON {"<path>": "<text>"}, which their
-//                                sessions write into the checkout where git ignores them (session/ownFiles.mjs). Readable by them
+//   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
+//                                that still reaches them. Readable by them, since their sessions hold the same text anyway
+//   users/<login>/own-files      legacy: their own whole files from before they were per repo, which repoSettings.mjs moves
+//                                into the default project's (moveOwnFiles); deleted here with the rest by Remove My Woodshed
 //   users/<login>/github         their GitHub user token, from Connect GitHub (githubUser.mjs), as JSON
 //   users/<login>/database       the password of their own databases' user (databases.mjs)
 
@@ -19,7 +18,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
-import { MAX_OWN_FILES, MAX_OWN_FILES_BYTES, ownFilePath, ownFilePathProblem } from '../shared/ownFiles.mjs';
 const { loginKey } = logins;
 
 const CLAUDE_TOKEN = 'claude-token';
@@ -40,11 +38,11 @@ const OWN_LIMIT_KEYS = ['idleHours', 'lifetimeHours'];
 const OWN_LIMITS = SETTINGS.filter((setting) => OWN_LIMIT_KEYS.includes(setting.key));
 const TMUX_DEFAULT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'session', 'tmux.conf');
 
-// The files a person may add their own lines to: tmux's, after the session image's own tmux.conf (the console image
-// carries it too).
-const FILES = { 'tmux-conf': { label: '~/.tmux.conf' } };
-// The name of an env file's secret, as the own lines of one were kept under `users/<login>/<secret>` before Repo settings.
-const OLD_FILE_KEY = /^[a-z0-9-]+$/;
+const TMUX_FILE = { label: '~/.tmux.conf' };
+
+// The files a person may add their own lines to: tmux's, which is the session image's own tmux.conf (the console image
+// carries it too). Their own lines for the repo's env files are Repo settings (repoSettings.mjs).
+const FILES = { 'tmux-conf': TMUX_FILE };
 
 /**
  * @param {unknown} text
@@ -138,11 +136,9 @@ export function checkIdentity({ name, email }) {
 
 /**
  * @param {{store: {state: object, save: () => void}, secrets: {read: Function, save: Function, remove: Function}|null,
- *          envFilePaths?: () => Promise<string[]>, now?: () => number}} deps  `secrets` is null where the console has no
- *   Secrets Manager: nothing can be saved. `envFilePaths` are the default project's env files, which a person's own
- *   whole files may not replace (their values are Repo settings')
+ *          now?: () => number}} deps  `secrets` is null where the console has no Secrets Manager: nothing can be saved
  */
-export function createUserSettings({ store, secrets, envFilePaths = async () => [], now = Date.now }) {
+export function createUserSettings({ store, secrets, now = Date.now }) {
   function people() {
     store.state.people ??= {};
     return store.state.people;
@@ -215,7 +211,6 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
       files,
-      ownFiles: Object.entries(record?.ownFiles ?? {}).map(([file, savedAt]) => ({ path: file, savedAt })).sort((a, b) => a.path.localeCompare(b.path)),
       setUp: Boolean(record),
       available: Boolean(secrets) && secrets.configured?.() !== false,
     };
@@ -225,7 +220,7 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
     if (!FILES[key]) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
   }
 
-  /** @returns {string}  the image's own file: what every session starts from */
+  /** @returns {string}  the image's file: what every session starts from */
   function sharedFile(key) {
     requireFile(key);
     return fs.readFileSync(TMUX_DEFAULT, 'utf8');
@@ -239,13 +234,12 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
   }
 
   /**
-   * @returns {Promise<{key: string, label: string, text: string, custom: boolean, sharedText: string, editable: boolean,
-   *                    appended: string[]}>}  the image's file is not the console's to change, and nothing is appended to it
+   * @returns {Promise<{key: string, label: string, text: string, custom: boolean, sharedText: string, editable: false,
+   *                    appended: string[]}>}
    */
   async function file(login, key) {
-    const sharedText = sharedFile(key);
     const own = await ownFile(login, key);
-    return { key, label: FILES[key].label, text: own ?? '', custom: own !== null, sharedText, editable: false, appended: [] };
+    return { key, label: FILES[key].label, text: own ?? '', custom: own !== null, sharedText: sharedFile(key), editable: false, appended: [] };
   }
 
   async function saveFile(login, key, text) {
@@ -266,50 +260,6 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
     const record = recordFor(login);
     touch(login, { files: { ...record?.files, [key]: null } });
     console.log('userSettings: own lines cleared', { login, key });
-  }
-
-  /** @returns {Promise<Record<string, string>>}  the person's own whole files, by path; {} while they have none */
-  async function ownWholeFiles(login) {
-    if (!secrets || !Object.keys(recordFor(login)?.ownFiles ?? {}).length) return {};
-    const value = await secrets.read(userSecretName(login, OWN_FILES));
-    if (!value) return {};
-    try {
-      const files = JSON.parse(value);
-      return files && typeof files === 'object' && !Array.isArray(files) ? files : {};
-    } catch {
-      console.warn('userSettings: own files not read, the secret is not JSON', { login });
-      return {};
-    }
-  }
-
-  /**
-   * Adds, replaces or (with empty text) removes one of the person's own files. All of them are one secret, so a save
-   * writes them all.
-   * @returns {Promise<Record<string, string>>}  their files after the change
-   * @throws {Error}  with a message the page can show
-   */
-  async function saveOwnFile(login, file, text) {
-    requireSecrets();
-    const problem = ownFilePathProblem(file);
-    if (problem) throw Object.assign(new Error(problem), { shown: true });
-    const key = ownFilePath(file);
-    if ((await envFilePaths()).includes(key)) throw Object.assign(new Error(`${key} is one of the repo's env files: set your values for it under Repo settings`), { shown: true });
-    if (text !== undefined && typeof text !== 'string') throw Object.assign(new Error('the file must be text'), { shown: true });
-    const value = String(text ?? '').replace(/\r\n/g, '\n');
-    const files = await ownWholeFiles(login);
-    if (value.trim()) files[key] = value;
-    else delete files[key];
-    if (Object.keys(files).length > MAX_OWN_FILES) throw Object.assign(new Error(`you can keep ${MAX_OWN_FILES} files at most`), { shown: true });
-    const json = JSON.stringify(files);
-    if (Buffer.byteLength(json) > MAX_OWN_FILES_BYTES) throw Object.assign(new Error('your files together are over the 64 KB a secret can hold'), { shown: true });
-    if (Object.keys(files).length) await secrets.save(userSecretName(login, OWN_FILES), json, `Woodshed: @${login}'s own files, for their My Woodshed sessions only`);
-    else await secrets.remove(userSecretName(login, OWN_FILES));
-    const record = recordFor(login);
-    const at = new Date(now()).toISOString();
-    const kept = Object.fromEntries(Object.keys(files).map((f) => [f, f === key ? at : record?.ownFiles?.[f] ?? at]));
-    touch(login, { ownFiles: Object.keys(kept).length ? kept : null });
-    console.log(value.trim() ? 'userSettings: own file saved' : 'userSettings: own file removed', { login, path: key, files: Object.keys(files).length, ...(value.trim() && { bytes: Buffer.byteLength(value) }) });
-    return files;
   }
 
   /** @returns {Promise<object|null>}  what githubUser.mjs kept from Connect GitHub, or null when not connected */
@@ -351,7 +301,11 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
     touch(login, { home: bytes ? { savedAt: new Date(now()).toISOString(), bytes } : null });
   }
 
-  /** @returns {Promise<Record<string, string|null>>}  each file's own lines for a private session; null is none */
+  /**
+   * Each file's own lines for a private session, by its key (`tmux-conf`); null is none.
+   * @param {string} login
+   * @returns {Promise<Record<string, string|null>>}
+   */
   async function ownFiles(login) {
     const keys = Object.keys(FILES);
     const values = await Promise.all(keys.map((key) => ownFile(login, key)));
@@ -435,13 +389,12 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
     return secrets.read(userSecretName(login, CLAUDE_TOKEN));
   }
 
-  /**
-   * Deletes everything this person saved, the secrets first, so a failure leaves the record to try again from. Own lines
-   * kept for an env file's secret before Repo settings (`users/<login>/<secret>`) go too, while their record says so.
-   */
+  /** Deletes everything this person saved, the secrets first, so a failure leaves the record to try again from. */
   async function removeAll(login) {
     if (secrets) {
-      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !FILES[key] && OLD_FILE_KEY.test(key) && recordFor(login).files[key]);
+      // Own lines saved on My settings' env file tabs before Repo settings (`users/<login>/<env secret>`) are known only
+      // by this record's `files`, which goes below: they go first, or nothing would know of them again.
+      const old = Object.keys(recordFor(login)?.files ?? {}).filter((key) => !FILES[key] && /^[a-z0-9-]+$/.test(key));
       for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES), ...old]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];
@@ -450,7 +403,7 @@ export function createUserSettings({ store, secrets, envFilePaths = async () => 
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles, ownWholeFiles, saveOwnFile,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

@@ -20,6 +20,13 @@ is applied (`docs/reference.md` here, then `console/`, `session/` and
   Claude home. A shared session never gets the default plugins or anyone's
   login, and nothing team-wide (a bot token) goes in any session. An installation's env files set `AWS_ACCESS_KEY_ID=test`
   on purpose when its backend uses localstack: it accepts anything.
+- **On one local server, whoever can start a session is trusted with the other sessions on it.** Where the machine has
+  Sysbox, every session runs its own Docker (providers/local/README.md, "Docker in a session"), whose root reaches
+  nothing of the machine's but can reach the network the sessions share, and so another session's calls to the
+  console and the tokens in them. That is the deal of a shared server: a team whose members must be kept apart runs
+  each session on a VM or task of its own (AWS, or a launcher that makes one), never several on one machine. The
+  machine's own Docker socket, root on the machine and every secret, is never a default where others sign in: only
+  `WOODSHED_SESSION_DOCKER=1` in that console's own `stack.env` gives it, and no Update turns either on unasked.
 - **An installation's exceptions are written in its own `.woodshed/install/README.md`**, each with what has to happen to
   remove it. None is in this folder: what is here applies to every installation.
 - **Never print a secret's value.** Check a secret by its shape, its
@@ -105,16 +112,16 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | `github-app-client-secret` | The console only, to sign people in with GitHub. Write-only on the Secrets tab. Never in a session | The base box's console always requires sign-in, so with no value or a wrong one nobody gets in: GitHub refuses each sign-in code and the console logs `auth: GitHub refused the sign-in code`. console/README.md, "Sign-in", sets it from a shell |
 | `users/<login>/claude-token` | The Claude plan of one person's My Woodshed sessions, and the shared sessions they start while their switch for it is on. Made by the console on My settings, never by Terraform; write-only there. Handed to that person's private sessions alone, in the `/settings` answer, for claude to call Anthropic with directly (the Artifact tool needs a real token). Never handed to a shared session: the console's Anthropic proxy adds it to the calls of a shared session whose `plan` is that login and who started it | The session's log says `could not get the owner's settings` and it fails. The console logs `sessionApi: no Claude token for the owner`, or `anthropicProxy: no Claude token saved for the plan` when it was removed mid-session from a shared session's starter. A running private session keeps the token it started with until it stops. claude asks to log in when the token was revoked: save a new one |
 | `users/<login>/codex-auth` | One person's Codex sign-in from My settings: an OpenAI API key, or `~/.codex/auth.json`. Handed to their private Codex sessions alone, in the `/settings` answer; a session writes a refreshed ChatGPT login back at stop (`POST /codex-auth`) since OpenAI rotates it | The console logs `sessionApi: Codex sign-in decided` with `own`, and `Codex sign-in kept` or `refused` at stop; statusd logs `statusd: Codex sign-in sent back` with the status. codex asking to log in means the saved login expired or a session never stopped cleanly to save the rotated one: save a new one |
-| `repos/<project>/env/<key>`, `repos/<project>/instructions`, `users/<login>/repos/<project>/...` | Repo settings (`console/repoSettings.mjs`, console/README.md "Repo settings"): the installation's values for each env file of a repo and its instructions, and each person's own: the only place an env file's values are kept. Made, read and deleted by the console, never by Terraform. Handed out by the session API's `POST /repo-settings`, the personal ones to that person's private sessions alone, which write them into the env files and the rules. The db-admin task's seed reads the default project's `repos/<project>/env/<key>` for its databases' env files itself (its entryPoint's `--project`; on AWS its role reads that project's and no other's). What each file must hold is the installation's: its `.woodshed/install/README.md` | The console logs `repoSettings: handed out` with the keys each layer gave. The session logs `Repo settings fetched` with the keys and sizes it got and `Env files written` with each file's layers; `WARNING: repo settings not offered by the console` means a console from before them, and the files then have the repo's defaults and the session's lines alone. The db-admin task logs `Seed env files read` with where each key came from (`repo settings` or `none`), and its seed the same `Env files written` line; `none` for a key that Console settings → Repos shows a value for means the entryPoint's `--project` is not the console's default project (Terraform names it from `projects`, else from `github_repo`). Never print a value: these lines carry keys and sizes only |
-| `users/<login>/tmux-conf` | One person's own lines for tmux config, from My settings' tmux card, written after the image's `tmux.conf` in their private sessions only. Readable by them, since their sessions hold the same text. Their own lines for an env file are their Repo settings (above); an old `users/<login>/<env file secret>` from before those is read by nothing, and goes with Remove My Woodshed | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (tmux, or the env file under Repo settings) fixes it. The rules above apply to these too: no production credentials |
+| `repos/<project>/env/<key>`, `repos/<project>/instructions`, `users/<login>/repos/<project>/...` | Repo settings (`console/repoSettings.mjs`, console/README.md "Repo settings"): the installation's values for each env file of a repo and its instructions, and each person's own. Made, read and deleted by the console, and the only place an env file's values are kept: no Terraform secret or task definition holds them. What each file must hold is the installation's: its `.woodshed/install/README.md`. Handed out by the session API's `POST /repo-settings`, the personal ones to that person's private sessions alone, which write them into the env files and the rules. The db-admin task's seed reads the default project's `repos/<project>/env/<key>` for its databases' env files itself (its entryPoint's `--project`; on AWS its role reads that project's and no other's) | The console logs `repoSettings: handed out` with the keys each layer gave. The session logs `Repo settings fetched` with the keys and sizes it got, and `Env files written` with each file's layers; `Repo settings not offered by the console` means a console from before them, and its env files get the repo's defaults alone. The db-admin task logs `Seed env files read` with where each key came from (`repo settings` or `none`), and its seed the same `Env files written` line; `none` for a key that Console settings → Repos shows a value for means the entryPoint's `--project` is not the console's default project (Terraform names it from `projects`, else from `github_repo`). Never print a value: these lines carry keys and sizes only |
+| `users/<login>/tmux-conf` | One person's own lines for tmux config, from My settings' tmux card, written after the image's `tmux.conf` in their private sessions only. Readable by them, since their sessions hold the same text. A `users/<login>/<env secret>` left from before Repo settings is read by nothing | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (tmux, or the env file under Repo settings) fixes it. The rules above apply to these too: no production credentials |
 | `users/<login>/github` | One person's GitHub App user token from Connect GitHub (JSON: the token, its expiry, the refresh token), for their private sessions' git and `gh`. Made and rotated by the console (`githubUser.mjs`); never in a session | Their next push fails with `GitHub no longer accepts @<login>'s authorization`: the console logs `githubUser: GitHub refused the refresh, disconnecting`. Connect GitHub again on My settings. A session whose project file says `githubAccess: repo` gets it scoped to that project's repo (`githubUser: scoped token made`); `githubUser: GitHub refused a scoped token` or `no scoped token, the console has no client secret`, then `sessionApi: no scoped owner token for the session's project`, means it pushes as the App instead |
 | `sessions/<id>/database`, `users/<login>/database` | The password of each database's own user: `woodshed__<id>` for that shared session and the viewers inside it, deleted with its databases; `woodshed_<login>` for that person's private sessions and the viewers inside them. Made by the console. Not on the Secrets tab | See the database symptoms below |
 | RDS's own master secret, `<prefix>-root/mongo` | Each only where the installation runs that database (`databases` in Terraform). Root, for the db-admin task alone, through its execution role. Not the console, not the base box (which writes Mongo's once and cannot read it back), not a session | The db-admin task's log (`/<prefix>/sessions`, stream `db-admin/...`) fails at its first connection. A Mongo root password that could not be saved is in `/root/<prefix>-mongo-root` on the base box: put it in the secret, then delete the file |
 | Each install secret (`install_secrets` in Terraform, such as `registry-token`) | The repo's dependency installs: the image build's (a line of the build's `install_env` secret, which the deploy workflow's session job writes from a repo secret) and a session's, only when a branch changed an install's files since the image was built. A session gets it in the variable `install_secrets` names, which claude's terminal has too; an ask session unsets each variable `WOODSHED_INSTALL_SECRETS` lists | `/tmp/woodshed-deps` says `failed: \`<command>\` in <dir>. Are the install secrets (<variables>) right?`, the log has `ERROR: the install failed` with the dir, and Claude asks for help. The image build logs `deps: install secrets in <variables>`, or `deps: no install secrets` when it got no `install_env`. In a session's Terminal, `[ -n "$<variable>" ] && echo set` |
 
 The entrypoint adds the session's databases, Mongo, Redis (when the project uses it), the shared services, port and
-URL on top of each env file's repo settings (`writeEnvFiles` in `session/entrypoint.sh`), so those never belong in
-its values.
+URL on top of each env file's Repo settings values
+(`writeEnvFiles` in `session/entrypoint.sh`), so those never belong in them.
 
 ## By symptom
 
@@ -153,7 +160,10 @@ its values.
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
   console` on the base box. Check it has no `GitHub refused an installation
   token` lines, and that the person is a collaborator with write access: the console ignores
-  anyone else.
+  anyone else. The repo's settings page (Console settings → Repos → Settings, Sessions from GitHub) may turn its label
+  or `/woodshed` comments off, or name its label otherwise than `woodshed`: the console logs `fleet: trigger ignored,
+  the repo turns it off`, and `repoTriggers: changed` with who changed it. A label of another name is not this repo's
+  and starts nothing.
 - **A shared session is Unassigned, or has the wrong person.** The console logs `fleet: session starts unassigned, its
   starter cannot be assigned` when the label or comment came from someone with Can be assigned off (People page), and `fleet:
   session assigned` with `from`, `to`, `by` and `how` (`label`, `comment`, `console`, `take it`, `hand over`, `unassign`) on every
@@ -169,6 +179,12 @@ its values.
   `issueTracking: assignee put on the issue`, `taken off the issue` or `already on the issue`. `fleet: issue in progress
   failed` or `fleet: issue assignee failed` with `Resource not accessible by integration` means the GitHub App lacks
   the org's Projects write or the repo's Issues write permission, or the org has not accepted it yet.
+- **Labels and comments take a minute, the Webhook events list stays empty, and QA labels, QA after a review, the
+  automatic QA label, reviews started by a commit's tag or Needs a human messages do nothing.** Someone turned GitHub
+  webhooks off on Console settings' Webhooks card: it says since when and by whom, and the console logs `webhooks:
+  switched` with `source`, `off` and `by`, then `webhooks: off, dropped a delivery the poll does not cover` with the
+  `kind` the first time each of those is dropped. The poll finds only the label and `/woodshed` comments. Turn the
+  switch back on.
 - **A label takes up to 5 minutes to start a session.** Webhooks are not
   arriving and the fallback poll found it. The webhook card on the Secrets &
   webhooks tab says which of its four checks fails; **Check again** opens the
@@ -305,16 +321,21 @@ its values.
   means neither could see it, such as another user's process. The install's own console is never in the way: it is
   told by `WOODSHED_STATE_DIR` in its environment (or its `bin/woodshed` launcher), and stopped and started again.
   A Tailscale `serve` listener on the same port does not count.
-- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider sessions
-  use the machine's Docker on one person's console unless `WOODSHED_SESSION_DOCKER=0`, and on a console others sign in
-  to only with `WOODSHED_SESSION_DOCKER=1` (providers/local/README.md, "Docker in a session"): the console logs `local:
-  sessions use this machine's Docker` with `on` at start (`onWith` when it is off by default), then `launcher: sessions get this
-  machine's Docker` with the socket's `group` at the first session, and `launcher: session given this machine's Docker`
-  for each. A start that fails with `its socket could not be given to the session` gives docker's reason. In the
-  session's Terminal, `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists
-  the socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found`
-  is an image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions
-  never get it.
+- **Claude in a session says there is no Docker, or `docker` is not found or refused.** On the local provider every
+  session runs its own Docker where the machine has Sysbox, and otherwise uses the machine's on one person's console;
+  on a console others sign in to, the machine's only with `WOODSHED_SESSION_DOCKER=1`, and `0` turns both off
+  (providers/local/README.md, "Docker in a session"). The console logs `local: sessions'
+  Docker` at start (`off: true` when it is off), then at the first session `launcher: sessions get their own Docker` with `own: true`, or `own:
+  false` with `why` (`no sysbox-runc runtime: install Sysbox`, or `the session image has no Docker daemon`: rebuild it)
+  and what they get `instead`; a no is asked again ten minutes later. Each session logs `launcher: session given its
+  own Docker` or `launcher: session given this machine's Docker`. With their own, the session's log says `Own Docker
+  ready`, or `WARNING: own Docker did not start` with the end of `/tmp/woodshed-dockerd.log` (in the session), and
+  `echo $WOODSHED_SESSION_DOCKER` says `own`. With the machine's, `launcher: sessions get this machine's Docker` gives the socket's
+  `group`, a start that fails with `its socket could not be given to the session` gives docker's reason, and in the
+  session's Terminal `echo $WOODSHED_SESSION_DOCKER $DOCKER_HOST` says `1 unix:///var/run/docker.sock`, `id` lists the
+  socket's group, and `ls -l /var/run/docker.sock` shows the group that must match. `docker: command not found` is an
+  image built before the CLI was in it: rebuild it (`WOODSHED_REBUILD=1`). A question from Slack and AWS sessions never
+  get either.
 - **A tool in a session cannot reach a container it started on `127.0.0.1:<port>`, or a dev server fails with
   `EADDRINUSE`.** `session/dockerPorts.mjs` forwards each port the machine's containers publish to the same port on the
   session's 127.0.0.1: `/tmp/woodshed-docker-ports.log` has `dockerPorts: port forwarded` with the container, `port
@@ -344,18 +365,29 @@ its values.
   console restarted mid-start (an image build) has no task for the session:
   its next tick finds the task by the session id and logs `fleet: lost start
   found again`.
+- **Every step of a starting session's checklist is done, and Connecting to the session keeps counting.** claude is
+  open, but the console has not reached the session: it turns to running only once its launcher has answered with the
+  session's address and statusd answers there. 30 s after claude opened the console logs `fleet: the agent is open but
+  the console has not reached the session`, once for the start: `address: false` with `launching: true` is a launcher
+  whose start call has not come back (no `fleet: machine ready` either), and `address: true` gives the statusd read's
+  error in `message`. It stays there until the start timeout fails it.
 - **The app inside a session will not start or log in.** That is about the repo's own app, and its installation
   says what to check: `.woodshed/install/README.md` in the repo. The env files get the databases through the project
-  file's lines, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
+  file's env file overrides, from each engine's variables (`PGHOST`, `PGPASSWORD`, `MONGODB_URI`; docs/reference.md, "Databases"):
   quote a password there, since an app that reads them with a stricter parser than dotenv can take a `#` for a
   comment.
-- **No session starts, saying `the project file's databases need mongo, which this installation does not host`.**
-  The project file's `databases` name an engine the installation does not host: add it to `databases` in Terraform
-  (or the local provider's `WOODSHED_LOCAL_DB_*` and session env), or take that database out of the project file. The
-  console reads the default branch's file and logs `console: project databases not hosted` with `needs` and `hosted`,
-  then `fleet: session refused, its databases are not hosted` for each start it refused (`fleet: trigger refused` for a
-  label or comment, which gets the reason on its issue). A session started from a branch whose own file differs stops
-  at start with the same words. On a local install made with no repository, the refusal ends `run WOODSHED_REPO=<repo>
+- **Sessions on one repo do not start, saying `<repo>'s project file asks for a Mongo database, and this console only
+  runs Postgres`, or New session shows that repo's Needs setup card.** That repo's own project file names an engine
+  the installation does not host: add it to `databases` in Terraform (or the local provider's `WOODSHED_LOCAL_DB_*` and
+  session env), or take that database out of the project file. Each repo is checked on its own (`console/databaseGate.mjs`),
+  so the others still start; Console settings' Repos card says Needs setup or Ready on each. The console reads each
+  repo's default branch's file and logs `console: project databases not hosted` with the `project`, `needs` and
+  `hosted`, then `fleet: session refused, its project is not ready` for each start it refused (`fleet: trigger
+  refused, its project is not ready` for a label or comment, which gets the reason and its first fix on its issue).
+  An embedding program's `projectReadiness` hook answers first: `console: project not ready` with `from: 'program'`
+  and its reason, or `console: project readiness not read` when the hook threw (nothing is blocked then). A session
+  started from a branch whose own file differs stops at start with `the project file's databases need mongo, which
+  this installation does not host`. On a local install made with no repository, the fix is `Run WOODSHED_REPO=<repo>
   bash install.sh again on this machine`: that builds the repo's own image and starts its databases
   (providers/local/README.md, "Setting it up"). The console logs `console: databases` at start with the `engines` it makes and the ones
   sessions are `hosted` on; a session in an installation with none logs `No databases to fetch`. A db-admin run logs
@@ -547,8 +579,11 @@ its values.
   runs on` with `plan`. `fleet: the starter's Claude token is not saved` or
   `could not be read` mean it fell back to the team key; the switch also has no
   effect for someone with no token saved (`userSettings: own token for shared
-  sessions` logs each change), nor on a console that makes no shared databases
-  (the docker launcher), whose sessions never ask the session API. The session's own log says `Runs on the
+  sessions` logs each change). A console that makes no shared databases (no
+  db-admin, or a project with no Postgres or Mongo) still decides it: the session
+  asks `/settings` for the plan alone, and the console logs `sessionApi: settings
+  handed out` with `database: null`. A session image from before that never asks,
+  and stays on the team key. The session's own log says `Runs on the
   starter's Claude plan` when it does; `sessionApi: the starter's Claude token is
   gone` means it was removed between the launch and the session asking.
 - **An assignee got no Slack message.** Messages go only to the assignee of a shared session, when it starts asking
@@ -590,7 +625,9 @@ its values.
   `slack: decision brief replied in the thread` with `replied`, or `slack: decision brief not replied` with the error. The assignee's mention after it logs `slack: assignee mentioned in the thread` with `tagged`. `<check> not posted` with that `mergeRisk` check on the commit means it was not the
   review's: another app, an older commit, or a run that is not `review.workflow` on this commit (`slack: a merge risk check not
   from the review's workflow, ignored` with the run's `path` and `sameCommit`).
-- **A question in Slack gets no 👀 and no answer.** The Lambda's log has
+- **A question in Slack gets no 👀 and no answer.** First, the Webhook events page: with its Slack questions switch
+  off, each mention is listed there as `Ignored: Slack questions are switched off on Console settings`.
+  Otherwise, the Lambda's log has
   `webhooks: Slack mention queued` for each mention it took, or `Slack event
   ignored` with the event type (a bot, an edit, another workspace). Nothing at
   all means Slack is not sending: the app's Event Subscriptions must be on, with
@@ -866,7 +903,16 @@ chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and 
 `devConsole.mjs` to cover another state.
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
-name, and refuses any other typed repo with a link to give the App access, as a hosted console does.
+name, and refuses any other typed repo with a link to give the App access, as a hosted console does. With
+`DEV_CONSOLE_BLOCKED_REPO=acme/api` its made-up `projectReadiness` hook says that repo's image is not built, for the
+Needs setup card on New session and the Repos card; with `WOODSHED_PROJECTS` naming the three, the default can be the
+blocked one. The dev console has no sign-in, so everyone is an admin: to see the card as anyone else, answer `/api/me`
+with `admin: false` from the Playwright browser (`page.route`).
+`DEV_CONSOLE_REPO_SETTINGS=1` gives it a local secret store and two made-up repos, `example-org/example-repo` and
+`example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
+env file values, instructions and Your files, each per repo.
+`DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
+settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 
