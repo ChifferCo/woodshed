@@ -105,6 +105,7 @@ test('a save keeps the value in the store, and state.json its date, size and key
   assert.equal(view.instructions.installation.bytes, Buffer.byteLength(INSTRUCTIONS));
   assert.equal(view.instructions.personal, null);
   assert.equal(view.projectFile.rules, '.woodshed/rules.md');
+  assert.equal(view.projectFile.runsOn, null);
   assert.ok(!JSON.stringify(view).includes(SECRET_MARK), 'a view never carries a value');
   const other = await repoSettings.view('app', { login: 'ana-k' });
   assert.equal(other.envFiles.find((f) => f.key === 'api-env').personal, null, 'nobody sees another person\'s records');

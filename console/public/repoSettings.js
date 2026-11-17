@@ -266,10 +266,10 @@
       !view.projectFile.read
         ? h('p', { class: 'cap-note', role: 'status' }, 'The project file could not be read, so this is not known.')
         : [
-          h('p', null, on ? h('code', null, on) : 'Every connected console'),
+          h('p', { style: 'overflow-wrap: anywhere' }, on ? h('code', null, on) : 'Every connected console'),
           h('p', { class: 'sub' }, on
-            ? ['Only the console whose GitHub App acts as this login starts sessions from the label, runs the review and runs QA. Set by ', code('pullRequests.runsOn'), ' in the project file.']
-            : ['No ', code('pullRequests.runsOn'), ' in the project file, so every console connected to this repo starts sessions from the label and runs the review and QA.'])]);
+            ? ['Only the console whose GitHub App acts as this login starts sessions from the label or /woodshed comments, runs the review and runs QA. Set by ', code('pullRequests.runsOn'), ' in the project file.']
+            : ['No ', code('pullRequests.runsOn'), ' in the project file, so every console connected to this repo starts sessions from the label or /woodshed comments and runs the review and QA.'])]);
   }
 
   function instructionsCard() {
