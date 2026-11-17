@@ -47,7 +47,8 @@ Mongo on 17017, so a laptop's own databases keep theirs, and each session gets i
 neither, and sessions get none. An install made with no repository takes one this way later, keeping the rest of its
 `stack.env`, and that is the way to host the databases of a repo added on the console whose project file has some:
 until then its sessions are refused with `the project file's databases need postgres, which this installation does
-not host (it hosts none): run WOODSHED_REPO=owner/name bash install.sh again on this machine`. Once an install
+not host (it hosts none): run WOODSHED_REPO=owner/name bash install.sh again on this machine`. An env file's `secret`
+likewise gets its slot on Secrets & webhooks only from the install's repository (`WOODSHED_ENV_FILES`). Once an install
 has a repository it refuses another: a second one gets its own `WOODSHED_HOME`.
 
 Before it builds anything, it checks the ports the console will listen on (7690, the session API's 7691, and with
@@ -152,9 +153,9 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
   started` says `installationProjectFile`. A repo's own `.woodshed/project.yaml` wins over the installation's wherever
   it is read. The folder must be the same path for the docker daemon, and its files readable by uid 1000, the image's
   `node` user. Set it on the first run of `install.sh`: `stack.env` is written once, so an install made before the
-  folder had the repo's file keeps the seed secrets and database engines of no project file, and its image
-  the installs of none. `install.sh` then says `was written for another project file`: set `WOODSHED_DB_ENV_SECRETS`
-  in `stack.env` to what the file names (or, with no databases yet, move
+  folder had the repo's file keeps the env files, seed secrets and database engines of no project file, and its image
+  the installs of none. `install.sh` then says `was written for another project file`: set `WOODSHED_ENV_FILES`
+  and `WOODSHED_DB_ENV_SECRETS` in `stack.env` to what the file names (or, with no databases yet, move
   `stack.env` aside to have it written again), and run it with `WOODSHED_REBUILD=1` to build the image from the file.
 - **A shared service keeps nothing across restarts** unless its compose file gives it a volume. A fake S3's buckets
   can be made on every start by an init script it mounts, such as localstack's `/etc/localstack/init/ready.d/`.

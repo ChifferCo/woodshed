@@ -111,7 +111,7 @@ session image builds, so an install run before it is an install run again.
 On this machine the install builds nothing from it: sessions clone the repository and read the file at start. Once the
 person added a repo on the console, check its default branch for one (`gh api repos/<owner>/<name>/contents/.woodshed/project.yaml`
 answers 404 when it has none) and write it then, with the same skill, in a checkout cloned with `gh repo clone` beside
-this one, never inside it. When the file has `databases`, the install must be made for
+this one, never inside it. When the file has `databases`, or env files with a `secret`, the install must be made for
 that repository to host them: run the installer again with `WOODSHED_REPO=<owner>/<name>` (and the same
 `WOODSHED_TAILSCALE`), as "On this machine", step 5, says, and restart the console. Say so in the briefing once you
 know, since that run builds the repository's own image (several minutes).
@@ -146,7 +146,7 @@ These come from `CLAUDE.md`, "Rules"; read it if a step touches secrets.
 
 - **Never print a secret's value.** Check a secret by `node providers/local/bin/secret.mjs list` (names only) or a call
   that prints only a status code. Pass a value to a tool on stdin, never on its command line.
-- **No production credentials in a session.** An env file's values on Repo settings are the dev setup's keys only. A team-wide key
+- **No production credentials in a session.** An env file's secrets are the dev setup's keys only. A team-wide key
   goes on the Secrets & webhooks page, never in `session-env.json`, which every session reads.
 - **Nothing open before sign-in.** On a server, the proxy answers only the person's IP until the GitHub App is made,
   `WOODSHED_REQUIRE_SIGN_IN=1` is set and they signed in as the first admin ("On a server", steps 7 and 9).

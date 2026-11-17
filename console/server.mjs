@@ -22,9 +22,10 @@
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
-//   GET  /api/my/files/tmux-conf the image's tmux.conf, and your own lines added after it
-//   POST /api/my/files/tmux-conf {"text": "..."}   your own lines, for your next sessions; empty clears them
-//   POST /api/my/files/tmux-conf/reset             clears them: the image's file alone again
+//   GET  /api/my/files/<file>    the console's shared file for tmux-conf or one of the Terraform env files, and your own lines added after it
+//   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
+//   POST /api/my/files/<file>/reset                clears them: the console's file alone again. For an env file these
+//                                                  three are the default project's repo settings (repoSettings.mjs, legacyFileRoute)
 //   GET  /api/my/repos[/<project>[/env/<key>|/instructions|/files]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
 //   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
 //   POST /api/my/repos/<project>/files   {"path": "app/.env.production", "text": "..."}   one of your own whole files, which your
@@ -168,7 +169,7 @@ import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
-import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
+import { createRepoSettingsApi, legacyFileRoute, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -1787,7 +1788,7 @@ export function createHandler({
     if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
-    const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
+    const repoRoute = repoSettingsApi && (repoSettingsRoute(pathname) ?? legacyFileRoute(pathname, config));
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
@@ -1927,7 +1928,7 @@ export function createHandler({
     }
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
-    const repoRead = repoSettingsApi && repoSettingsRoute(pathname);
+    const repoRead = repoSettingsApi && (repoSettingsRoute(pathname) ?? legacyFileRoute(pathname, config));
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
