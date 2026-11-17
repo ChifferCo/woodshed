@@ -240,3 +240,7 @@ pullRequests:
   mergeRisk:
     # Required.
     check: Merge risk
+  # Default: none. For a repo connected to more than one console: the login of the GitHub App whose console does the
+  # automatic work, meaning sessions from the label or a comment, the review and QA. Other consoles skip it and still
+  # start sessions by hand. Consoles that act as the same App (Woodshed Cloud orgs) all match it.
+  runsOn: woodshed-cloud[bot]

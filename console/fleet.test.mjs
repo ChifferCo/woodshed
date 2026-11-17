@@ -2959,3 +2959,27 @@ test('the refusal and failure comments name the repo\'s own label', async () => 
   assert.match(calls.comments[0].body, /the `agent` label was taken off/);
   assert.match(failedComment({ session: { startedBy: 'joel', id: 'aaaa1111' }, publicUrl: null, label: 'agent' }), /Add the `agent` label again/);
 });
+
+test('pullRequests.runsOn keeps label sessions, reviews and QA on the console it names, and a session by hand anywhere', async () => {
+  const elsewhere = { ...REVIEW_GATES, runsOn: 'woodshed-internal[bot]' };
+  const label = setup({ gates: elsewhere, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  assert.equal((await label.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'ignored');
+  assert.deepEqual([label.calls.started.length, label.calls.comments.length], [0, 0]);
+  const review = reviewSetup({ gates: elsewhere, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  assert.equal((await review.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored');
+  const here = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  assert.equal((await here.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+  assert.ok(await label.fleet.startManual({ number: 43, startedBy: 'joel' }), 'by hand, on any console');
+});
+
+test('pullRequests.runsOn keeps the QA label to the console it names, so its own label starts its QA', async () => {
+  const gates = { ...REVIEW_GATES, qa: { ...REVIEW_GATES.qa ?? {}, check: 'QA', label: 'woodshed-qa', heading: '## QA', runner: 'woodshed', autoLabel: true } };
+  const elsewhere = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-internal[bot]' }) });
+  elsewhere.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
+  await elsewhere.fleet.qaAutoLabel({ number: 7 });
+  assert.deepEqual(elsewhere.calls.labeled, []);
+  const here = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  here.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
+  await here.fleet.qaAutoLabel({ number: 7 });
+  assert.deepEqual(here.calls.labeled, [{ number: 7, label: 'woodshed-qa' }]);
+});
