@@ -67,7 +67,8 @@
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
 //   Admins only (members.mjs), with 403 for anyone else: /api/people*, /api/secrets*, /api/webhook*,
 //   /api/console-settings*, the API behind People, Secrets & webhooks, Webhook events and Console settings.
-//   GET  /api/webhook-events     what the console did with each queued webhook
+//   GET  /api/webhook-events     what the console did with each queued webhook, and whether GitHub's are switched off
+//   POST /api/webhook-events/switch  {"off": true|false}   drop GitHub's webhooks and poll instead (webhookSwitch.mjs)
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
 //   GET/POST /api/secrets-manager  where this console keeps its secrets: {"kind": "local"|"aws", "prefix"}. Only where the
 //                                local provider has no WOODSHED_LOCAL_SECRETS_DIR (providers/local/secretSlot.mjs)
@@ -265,7 +266,7 @@ const REVIEWER_SETUP_PATH = '/api/setup/github/reviewer';
 const WEBHOOK_RE = /^\/api\/webhook\/(rotate|apply|url)$/;
 // The calls behind People, Secrets & webhooks, Webhook events and Console settings. Their pages load for anyone signed
 // in, and say what these calls answer.
-const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup)(?:\/|$)|^\/api\/webhook-events$/;
+const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup)(?:\/|$)|^\/api\/webhook-events(?:\/switch)?$/;
 const APP_ID_RE = /^[0-9a-f]{8}$/;
 const APP_AUTH_PATH = '/__woodshed/auth';
 const APP_SHARE_PATH = '/__woodshed/share';
@@ -541,7 +542,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
  *   `settings` only where the Secrets page works (AWS); `people` gives the pages each handle's display name
  */
 export function createHandler({
-  config, fleet, settings = null, events = { list: () => [] }, auth = null, review = null, userSettings = null, github = null,
+  config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
@@ -1620,6 +1621,30 @@ export function createHandler({
   }
 
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
+  // `queue`: whether webhooks reach this console at all, by a queue or from the program it is embedded in.
+  function webhookState() {
+    const view = webhookSwitch?.view() ?? null;
+    const receiving = view?.receiving ?? (config.webhookQueue || config.localWebhooks ? 'queue' : null);
+    return { queue: Boolean(receiving), webhooks: view ? { off: view.off, by: view.by, at: view.at, dropped: view.dropped } : null };
+  }
+
+  async function webhookSwitchWrite(req, res, login) {
+    if (!webhookSwitch) return reply(res, 404, { error: 'this console has no webhook switch' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      webhookSwitch.set({ off: body?.off, by: login ?? 'console' });
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      throw err;
+    }
+    return reply(res, 200, webhookState());
+  }
+
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
     let body;
@@ -1748,6 +1773,7 @@ export function createHandler({
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
+    if (pathname === '/api/webhook-events/switch') return webhookSwitchWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
@@ -1953,7 +1979,7 @@ export function createHandler({
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
     if (pathname === '/api/webhook-events') {
       const list = events.list();
-      return reply(res, 200, { repo: defaultProject(config).repo, queue: Boolean(config.webhookQueue || config.localWebhooks), events: list, names: namesFor(list.map((e) => e.login)) });
+      return reply(res, 200, { repo: defaultProject(config).repo, ...webhookState(), events: list, names: namesFor(list.map((e) => e.login)) });
     }
     if (pathname === '/api/secrets-manager') return reply(res, 200, managerView());
     if (pathname === '/api/secrets') {

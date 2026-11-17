@@ -13,7 +13,7 @@ export const FLOWING_MS = 30 * 60_000;
 /**
  * @param {{now?: () => number}} [opts]
  * @returns {{flowing: () => boolean, watch: (reader: {name: string, stale: (numbers: number[], project: string|null) => number[]}) => void,
- *            handle: (message: object) => {outcome: 'refreshed', reason: string}|{unrecorded: true}}}
+ *            handle: (message: object) => {outcome: 'refreshed', reason: string}|{unrecorded: true}, forget: () => void}}
  *   each reader's `stale` returns the numbers it reads, of those it was given on that project's repo (null: the default's)
  */
 export function createPullWebhooks({ now = Date.now } = {}) {
@@ -46,5 +46,11 @@ export function createPullWebhooks({ now = Date.now } = {}) {
     return { outcome: 'refreshed', reason: by.join(', ') };
   }
 
-  return { flowing, watch, handle };
+  /** Webhooks were turned off: the readers go back to their full speed now, not half an hour later. */
+  function forget() {
+    lastAt = -Infinity;
+    flowing();
+  }
+
+  return { flowing, watch, handle, forget };
 }

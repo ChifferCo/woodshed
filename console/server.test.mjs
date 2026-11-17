@@ -464,7 +464,7 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
     '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/people/invite',
-    '/api/console-settings/updates/check', '/api/console-settings/updates/update'];
+    '/api/console-settings/updates/check', '/api/console-settings/updates/update', '/api/webhook-events/switch'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -1469,6 +1469,34 @@ test('the pages get the display name of each handle they show: the signed-in per
   assert.ok(asked.at(-1).includes('nameless'), 'a handle with no name is asked too, so a name set later shows');
   assert.deepEqual((await get('/api/me')).names, { 'mia-dev': 'Mia' });
   assert.deepEqual((await get('/api/webhook-events')).names, { octo: 'Octo Cat' });
+});
+
+test('the Webhook events page turns GitHub\'s webhooks off and on, says who did, and whether any reach the console', async (t) => {
+  const { createWebhookSwitch } = await import('./webhookSwitch.mjs');
+  const store = { state: {}, save() {} };
+  const webhookSwitch = createWebhookSwitch({ store });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, webhookSwitch });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const get = async () => (await fetch(`http://127.0.0.1:${port}/api/webhook-events`)).json();
+
+  assert.equal((await get()).queue, false, 'nothing said webhooks arrive');
+  webhookSwitch.receiving('delivered');
+  const before = await get();
+  assert.equal(before.queue, true, 'a console its host hands webhooks to says so, with no queue of its own');
+  assert.equal(before.webhooks.off, false);
+  const off = await post(port, '/api/webhook-events/switch', { off: true });
+  assert.equal(off.status, 200);
+  assert.equal(off.body.webhooks.off, true);
+  assert.equal(off.body.webhooks.by, 'console');
+  assert.equal(webhookSwitch.off(), true);
+  assert.equal((await post(port, '/api/webhook-events/switch', { off: 'please' })).status, 400);
+  assert.equal((await post(port, '/api/webhook-events/switch', { off: false })).body.webhooks.off, false);
 });
 
 test('Remove on a private session acts for the signed-in person, from the console\'s own origin', async (t) => {

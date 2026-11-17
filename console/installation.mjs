@@ -49,6 +49,7 @@ import { createMembers } from './members.mjs';
 import { createAppShares } from './appShares.mjs';
 import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
+import { createWebhookSwitch } from './webhookSwitch.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
@@ -326,6 +327,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
+  const webhookSwitch = createWebhookSwitch({ store, onOff: () => pullWebhooks.forget() });
   // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
   const brokerRead = tokens?.borrowFor
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
@@ -380,7 +382,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     token: tokens ? async () => (await tokens.console.token()).token : null,
   });
   const handle = createHandler({
-    config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
+    config, fleet, settings, events, webhookSwitch, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings,
@@ -398,7 +400,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
   }) : null;
-  const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity });
+  const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
 
   // Neither the poll nor the webhooks start without an App key: a message read then would fail its three tries and
@@ -412,10 +414,16 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (loops.stopped()) return;
     loops.every(config.pollMs, 'github poll', () => fleet.pollGitHub());
     appIdentity.login();
-    if (deliveredWebhooks) loops.every(DELIVERED_WEBHOOKS_ALIVE_MS, 'webhooks alive', () => webhookDispatch.alive());
+    if (deliveredWebhooks) {
+      webhookSwitch.receiving('delivered');
+      loops.every(DELIVERED_WEBHOOKS_ALIVE_MS, 'webhooks alive', () => webhookDispatch.alive());
     // Nobody points a webhook at a single console with no App of its own: it polls.
-    else if (webhooks && config.githubBroker) console.log('console: webhooks off, GitHub access is borrowed', { pollSeconds: config.pollMs / 1000 });
-    else if (webhooks) webhooks.run(webhookDispatch);
+    } else if (webhooks && config.githubBroker) console.log('console: webhooks off, GitHub access is borrowed', { pollSeconds: config.pollMs / 1000 });
+    else if (webhooks) {
+      webhookSwitch.receiving('queue');
+      webhooks.run(webhookDispatch);
+    }
+    if (webhookSwitch.off()) console.log('console: GitHub webhooks are switched off on the Webhook events page, polling', { pollSeconds: config.pollMs / 1000 });
   }
 
   /**

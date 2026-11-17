@@ -303,15 +303,20 @@ const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoS
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
 const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), { projectFiles: repoSettingsDev?.projectFiles });
 
-function devRepoSettings(dir) {
+// A local secret store, as the local provider keeps one.
+function devSecrets(dir) {
   const secretsDir = path.join(dir, 'secrets');
   const keyFile = path.join(dir, 'secrets.key');
-  fs.mkdirSync(secretsDir);
+  fs.mkdirSync(secretsDir, { recursive: true });
   fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('base64'), { mode: 0o600 });
+  return { WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile };
+}
+
+function devRepoSettings(dir) {
   const file = (envPath) => `version: 1\nenvFiles:\n  - path: ${envPath}\n    defaults:\n      - LOG_LEVEL=info\n`;
   return {
     env: {
-      WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile,
+      ...devSecrets(dir),
       WOODSHED_PROJECTS: JSON.stringify([
         { name: 'example-repo', repo: 'example-org/example-repo', default: true },
         { name: 'example-tools', repo: 'example-org/example-tools' },
@@ -323,6 +328,7 @@ function devRepoSettings(dir) {
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
+const webhookPort = process.env.DEV_CONSOLE_WEBHOOKS === '1' ? await freePort() : null;
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
@@ -345,6 +351,9 @@ function startConsole() {
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
       ...tlsAskPort,
+      // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so the Webhook events page shows its GitHub webhooks switch.
+      // Polling is off here, so the receiver never listens and nothing arrives.
+      ...(webhookPort ? { WOODSHED_LOCAL_WEBHOOK_PORT: String(webhookPort), ...(repoSettingsDev ? {} : devSecrets(path.join(stateDir, 'webhook-secrets'))) } : {}),
     },
   });
   child.on('exit', (code) => {

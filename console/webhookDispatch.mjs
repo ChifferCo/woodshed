@@ -42,6 +42,7 @@ export function messageToTrigger(message, { label }) {
  *   `events` keeps what happened to each message (webhookEvents.mjs); without `asks`, a Slack mention is dropped, and
  *   without `pulls` a pull request change; a result with `unrecorded` is left out of `events`. `appIdentity`
  *   (appIdentity.mjs) says whose comment a session's "Needs a human:" must be; without one, those are dropped.
+ *   `webhookSwitch` (webhookSwitch.mjs) drops every GitHub message, and keeps `alive` from the fleet, while it is off.
  *   `config` names the console's projects: a GitHub message about a repo that is no project's is dropped, and one
  *   about another project's repo is handed on naming that project (`project`), so it acts on that repo's numbers
  * @returns {{dispatch: (message: {text: string, id?: string|null, attempt?: string|null}) => Promise<boolean>, alive: () => void}}
@@ -52,7 +53,7 @@ export function messageToTrigger(message, { label }) {
 // The pull request events that may need the QA label added (fleet.qaAutoLabel).
 const AUTO_LABEL_EVENTS = new Set(['pull request opened', 'pull request ready_for_review']);
 
-export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null }) {
+export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null, webhookSwitch = null }) {
   // Every GitHub message below acts on an issue or pull request number, which means nothing without its repo: another
   // project's #12 is not the default project's #12. So a message about another project's repo carries that project's
   // name from here on (`project`), and one about a repo that is no project's is dropped. A message with no repo was
@@ -81,6 +82,11 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return true;
     }
     if (body?.source === 'slack') return dispatchSlack(body, attempt);
+    // Turned off on the Webhook events page (webhookSwitch.mjs): the poll finds what this would have.
+    if (body?.source === 'github' && webhookSwitch?.off()) {
+      webhookSwitch.dropped();
+      return true;
+    }
     if (body?.source === 'github') {
       body = routed(body);
       if (!body) return true;
@@ -182,5 +188,6 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     return true;
   }
 
-  return { dispatch, alive: () => fleet.webhooksAlive() };
+  // Off, the fleet hears nothing, so its poll goes back to full speed within a minute.
+  return { dispatch, alive: () => { if (!webhookSwitch?.off()) fleet.webhooksAlive(); } };
 }

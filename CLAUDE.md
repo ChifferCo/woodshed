@@ -178,6 +178,9 @@ secrets.
   `issueTracking: assignee put on the issue`, `taken off the issue` or `already on the issue`. `fleet: issue in progress
   failed` or `fleet: issue assignee failed` with `Resource not accessible by integration` means the GitHub App lacks
   the org's Projects write or the repo's Issues write permission, or the org has not accepted it yet.
+- **Labels and comments take a minute, and the Webhook events list stays empty.** Someone turned GitHub webhooks off
+  on the Webhook events page: it says since when and by whom, and the console logs `webhooks: GitHub webhooks
+  switched` with `off` and `by`. Turn the switch back on.
 - **A label takes up to 5 minutes to start a session.** Webhooks are not
   arriving and the fallback poll found it. The webhook card on the Secrets &
   webhooks tab says which of its four checks fails; **Check again** opens the
@@ -902,6 +905,8 @@ with `admin: false` from the Playwright browser (`page.route`).
 `DEV_CONSOLE_REPO_SETTINGS=1` gives it a local secret store and two made-up repos, `example-org/example-repo` and
 `example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
 env file values, instructions and Your files, each per repo.
+`DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Webhook events
+page shows its GitHub webhooks switch.
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

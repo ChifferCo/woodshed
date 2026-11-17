@@ -798,7 +798,16 @@ you out.
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
   (`webhookEvents: swept` with how many it kept) takes older lines out. A
   delivery the Lambda refused never reaches the queue: GitHub's Recent
-  Deliveries page shows those.
+  Deliveries page shows those. Its **GitHub webhooks** switch, shown where
+  webhooks reach the console (a queue, the local receiver, or the program it
+  is embedded in), turns them off: the console then drops each GitHub delivery
+  as it arrives, so the queue forgets it, and polls GitHub at full speed
+  (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does. Slack mentions
+  still come through. It is kept in `state.json` under `webhooks`, with who
+  turned it and when; the console logs `webhooks: GitHub webhooks switched`
+  with `off` and `by`, then `webhooks: off, GitHub deliveries dropped from now
+  on` at the first delivery it drops, and at start `console: GitHub webhooks
+  are switched off on the Webhook events page, polling`.
 - **Secrets & webhooks** (`/secrets`): each secret's state and when it last
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
