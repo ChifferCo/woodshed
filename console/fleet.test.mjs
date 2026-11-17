@@ -2970,3 +2970,15 @@ test('pullRequests.runsOn keeps label sessions, reviews and QA on the console it
   assert.equal((await here.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.ok(await label.fleet.startManual({ number: 43, startedBy: 'joel' }), 'by hand, on any console');
 });
+
+test('pullRequests.runsOn keeps the QA label to the console it names, so its own label starts its QA', async () => {
+  const gates = { ...REVIEW_GATES, qa: { ...REVIEW_GATES.qa ?? {}, check: 'QA', label: 'woodshed-qa', heading: '## QA', runner: 'woodshed', autoLabel: true } };
+  const elsewhere = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-internal[bot]' }) });
+  elsewhere.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
+  await elsewhere.fleet.qaAutoLabel({ number: 7 });
+  assert.deepEqual(elsewhere.calls.labeled, []);
+  const here = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  here.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
+  await here.fleet.qaAutoLabel({ number: 7 });
+  assert.deepEqual(here.calls.labeled, [{ number: 7, label: 'woodshed-qa' }]);
+});

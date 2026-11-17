@@ -736,7 +736,7 @@ is why it is only for a console nobody else can reach, until the App exists and 
 A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org, and each hears
 the same GitHub events. Without more, each starts its own session from the label or a comment, and its own review and
 QA. `pullRequests.runsOn` in the project file names the one that does, by the login its GitHub App acts as
-(`woodshed-cloud[bot]`, say). Any other console logs `fleet: skipped, pullRequests.runsOn names another console` and
+(`woodshed-cloud[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
 starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
 act as the same App all match it, so it cannot pick between two Woodshed Cloud orgs.
 

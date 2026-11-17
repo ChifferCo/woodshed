@@ -1649,6 +1649,8 @@ export function createFleet({
     const gates = project ? await pullRequests(project.name) : null;
     const qa = gates?.qa;
     if (!qa?.autoLabel || qa.runner !== 'woodshed') return { unrecorded: true };
+    // The label's author is whose QA it is: another console's would read to the one runsOn names as a stranger's.
+    if (runsElsewhere(gates, project, number, 'qa label')) return { unrecorded: true };
     const gh = githubOf(project);
     const pull = await gh.pull(number);
     if (pull.state !== 'open' || pull.draft || (pull.labels ?? []).some((l) => l.name === qa.label)) return { unrecorded: true };
