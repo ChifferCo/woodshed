@@ -25,7 +25,7 @@ test('the reference project file parses, and writes every field of every section
   const { app, ...rest } = raw;
   assert.deepEqual(parseProject({ ...rest, apps }).apps.map((a) => a.name), ['web', 'admin'], 'the apps block parses too');
   const sections = {
-    '': { ...raw, apps }, dependencies: raw.dependencies, 'dependencies.installs': raw.dependencies.installs[0], envFiles: raw.envFiles[0], databases: raw.databases[0], 'databases.migrationsTable': raw.databases[0].migrationsTable, 'databases.dump': raw.databases[0].dump, services: raw.services[0], app: raw.app, apps: apps[0], pullRequests: raw.pullRequests,
+    '': { ...raw, apps }, dependencies: raw.dependencies, 'dependencies.installs': raw.dependencies.installs[0], envFiles: raw.envFiles[0], databases: raw.databases[0], 'databases.migrationsTable': raw.databases[0].migrationsTable, 'databases.dump': raw.databases[0].dump, services: raw.services[0], 'services.data': raw.services[0].data, app: raw.app, apps: apps[0], pullRequests: raw.pullRequests,
     'pullRequests.review': raw.pullRequests.review, 'pullRequests.suites': raw.pullRequests.suites[0],
     'pullRequests.qa': raw.pullRequests.qa, 'pullRequests.mergeRisk': raw.pullRequests.mergeRisk,
   };

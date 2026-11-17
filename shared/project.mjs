@@ -18,8 +18,6 @@
 //   node project.mjs secret-vars         the variables the env files' secrets arrive in, one a line
 //   node project.mjs installs            `dependencies.installs` as the manifest session/deps.sh reads: one `install`
 //                                        line each (installsManifest)
-//   node project.mjs services-tfvars     `services` as Terraform's shared_services, a var file in JSON, each file's
-//                                        text in place of its path (projectServices.mjs, servicesTfvars)
 //   node project.mjs apps-rules          with several apps, the lines of a session's rules that name each and how to
 //                                        prove a change in it (appsRules); nothing for one app or none
 //
@@ -67,7 +65,8 @@ export const PROJECT_FIELDS = Object.freeze({
   databases: ['engine', 'dir', 'migrate', 'seed', 'envFiles', 'paths', 'migrations', 'migrationsTable', 'dump', 'user', 'name'],
   'databases.migrationsTable': ['table', 'column'],
   'databases.dump': ['skip', 'extensions'],
-  services: ['name', 'image', 'port', 'variable', 'environment', 'files', 'memory'],
+  services: ['name', 'image', 'port', 'variable', 'environment', 'files', 'memory', 'data'],
+  'services.data': ['dir', 'keep'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
@@ -309,8 +308,7 @@ function databases(value, keys) {
 // A service's name is its container's, and the host every reader gives it on the sessions' network: these are taken
 // there already, by the databases (shared/databases/), and the base box's console and Caddy (providers/aws).
 export const RESERVED_SERVICE_NAMES = Object.freeze(['postgres', 'mongo', 'console', 'caddy']);
-// What listens beside a service wherever it runs: Caddy, Postgres, the session API and Mongo. Terraform's shared_services
-// validation repeats both lists (test/projectServices.test.mjs holds them together).
+// What listens beside a service wherever it runs: Caddy, Postgres, the session API and Mongo.
 export const RESERVED_SERVICE_PORTS = Object.freeze([80, 443, 5432, 7691, 27017]);
 const SERVICE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
 // The variable its URL reaches sessions and the seed in: the db-admin task takes no other (session/dbAdmin.mjs,
@@ -340,8 +338,25 @@ function serviceFiles(value, field) {
   return value;
 }
 
+// Whose a stateful service's data is. `person`: a private session's is its owner's, the same in each of their sessions
+// and kept between them; a shared session (an issue's, a review's, QA's) is no one's, so it gets data of its own that
+// starts empty and goes when it ends. `session`: every session's starts empty and goes when it ends.
+export const SERVICE_KEEPS = Object.freeze(['person', 'session']);
+
+// A service with no `data` keeps nothing worth keeping, so one copy may serve every session. One with `data` keeps its
+// `dir`, whose `keep` says for whom.
+function serviceData(value, field) {
+  const d = fields(value, field, PROJECT_FIELDS['services.data']);
+  string(d.dir, `${field}.dir`);
+  if (!d.dir.startsWith('/') || d.dir === '/' || d.dir.includes(':') || d.dir.split('/').includes('..')) {
+    fail(`${field}.dir must be an absolute folder in the container, not /, with no colon or ..`);
+  }
+  if (!SERVICE_KEEPS.includes(d.keep)) fail(`${field}.keep must be one of ${SERVICE_KEEPS.join(', ')} (it is ${JSON.stringify(d.keep)})`);
+  return { dir: d.dir.replace(/\/+$/, ''), keep: d.keep };
+}
+
 function service(value, field) {
-  const s = fields(value, field, PROJECT_FIELDS.services, { environment: {}, files: {}, memory: '768m' });
+  const s = fields(value, field, PROJECT_FIELDS.services, { environment: {}, files: {}, memory: '768m', data: null });
   if (typeof s.name !== 'string' || !SERVICE_NAME.test(s.name)) fail(`${field}.name must be lowercase letters, digits and dashes, starting with a letter, at most 32`);
   if (RESERVED_SERVICE_NAMES.includes(s.name)) fail(`${field}.name is ${s.name}, which Woodshed runs beside the services itself`);
   const p = port(s.port, `${field}.port`);
@@ -353,14 +368,15 @@ function service(value, field) {
   if (typeof s.memory !== 'string' || !MEMORY.test(s.memory)) fail(`${field}.memory must be megabytes or gigabytes, as 768m or 2g`);
   return {
     name: s.name, image: serviceImage(s.image, `${field}.image`), port: p, variable: s.variable, environment,
-    files: serviceFiles(s.files, `${field}.files`), memory: s.memory,
+    files: serviceFiles(s.files, `${field}.files`), memory: s.memory, data: nullable(s.data, `${field}.data`, serviceData),
   };
 }
 
-// The containers the repo's sessions need beside them, such as a fake S3, each reached at its URL in its variable. Where
-// each runs is the installation's: the base box for every session (AWS), the machine's compose stack (local), or each
-// session's own VM (Woodshed Cloud). Every reader takes the default branch's, never a branch's: a branch cannot change
-// what runs beside the console.
+// The containers the repo's sessions need beside them, such as a fake S3 or a PDF renderer, each reached at its URL in
+// its variable. Where they run is the installation's, one place for all of its sessions: the base box (AWS), the
+// machine's compose stack (local) or the org's services VM (Woodshed Cloud), with one copy of a stateless service for
+// everyone and one of a stateful one for each person (`data`). Every reader takes the default branch's, never a
+// branch's: a branch cannot change what runs beside the console.
 function services(value) {
   const all = list(value, 'services', service);
   for (const key of ['name', 'port', 'variable']) {
@@ -544,7 +560,7 @@ const TOP_DEFAULTS = {
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, key: string, defaults: string[], overrides: string[]}[], databases: object[],
  *   services: {name: string, image: string, port: number, variable: string, environment: Record<string, string>,
- *   files: Record<string, string>, memory: string}[],
+ *   files: Record<string, string>, memory: string, data: {dir: string, keep: 'person'|'session'}|null}[],
  *   app: object|null,
  *   apps: {name: string, label: string}[],
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
@@ -1003,15 +1019,11 @@ async function main([command, arg]) {
     if (names.length) process.stdout.write(`${names.join('\n')}\n`);
   } else if (command === 'installs') {
     process.stdout.write(installsManifest(project.dependencies));
-  } else if (command === 'services-tfvars') {
-    // Loaded here, not imported: projectServices.mjs imports this module.
-    const { servicesTfvars } = await import('./projectServices.mjs');
-    process.stdout.write(`${JSON.stringify(servicesTfvars(project, repoDir), null, 2)}\n`);
   } else if (command === 'apps-rules') {
     const text = appsRules(project);
     if (text) process.stdout.write(`${text}\n`);
   } else {
-    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, repo-settings, add-instructions, file, uses, secret-vars, installs, services-tfvars or apps-rules)`);
+    throw new Error(`unknown command: ${command} (expected check, get, env, write-env-files, repo-settings, add-instructions, file, uses, secret-vars, installs or apps-rules)`);
   }
 }
 

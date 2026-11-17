@@ -68,14 +68,9 @@ starts it again when the GitHub App setup page asks. By hand, on any machine:
    each on its own. Leave out the lines of an engine you do not host, in both files (`PGHOST`, `PGPORT` and
    `PGSSLMODE`, or `WOODSHED_MONGO_HOST`, in the session env), and make up a root password for each
    one you do, such as with `openssl rand -hex 24`. If the repo's app needs shared
-   services, such as a fake S3, name them in its project file's `services`: `install.sh` writes them as
-   `~/.woodshed/services.yml`, each on the `woodshed` network with no published port (and on `WOODSHED_NETWORK`'s too,
-   when sessions join another), with its `files` under `~/.woodshed/services/`, and sets each one's variable and
-   `WOODSHED_SERVICES` in `session-env.json` at every run, taking out one the file no longer has. By hand, or for a
-   service the project file does not name, copy `services.example.yml` and make it the repo's: each service joins the
+   services, such as a fake S3, copy `services.example.yml` too and make it the repo's: each service joins the
    `woodshed` network with no published port, and `session-env.json` sets the variable each reaches sessions in and
-   lists them in `WOODSHED_SERVICES`, which db-admin runs pass to the seed. A service the project file drops is left
-   running: `docker rm -f <name>` stops it.
+   lists them in `WOODSHED_SERVICES`, which db-admin runs pass to the seed.
 3. Start the databases, and the services if you have them:
 
    ```bash

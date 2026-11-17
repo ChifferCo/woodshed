@@ -170,37 +170,6 @@ projectSettings() {
   '
 }
 
-# The project file's services (shared/projectServices.mjs): writes them as $home/services.yml, a compose file beside the
-# databases' with each file under $home/services/, or removes both when there are none; and records the session env
-# they give in $home/services-env.json. Prints the record from before, `{}` for none, so writeSessionEnv takes out of
-# session-env.json what this script set for a service the file no longer has. `network` is the one sessions join, which
-# each service joins too when it is not woodshed.
-writeServices() {
-  local src=$1 repoDir=$2 projectFilesDir=$3 home=$4 network=${5:-}
-  # shellcheck disable=SC2016 # JavaScript, not shell, expands these
-  PROJECT_MJS=$src/shared/project.mjs SERVICES_MJS=$src/shared/projectServices.mjs REPO_DIR_TO_READ=$repoDir HOME_DIR=$home \
-    SESSIONS_NETWORK=$network WOODSHED_PROJECT_FILES_DIR=$projectFilesDir node --input-type=module -e '
-    const fs = await import("node:fs");
-    const path = await import("node:path");
-    const { loadProject } = await import(process.env.PROJECT_MJS);
-    const { serviceEnv, servicesCompose } = await import(process.env.SERVICES_MJS);
-    const home = process.env.HOME_DIR;
-    const project = loadProject(process.env.REPO_DIR_TO_READ);
-    const compose = servicesCompose(project, { repoDir: process.env.REPO_DIR_TO_READ, dir: path.join(home, "services"), network: process.env.SESSIONS_NETWORK || null });
-    const file = path.join(home, "services.yml");
-    const record = path.join(home, "services-env.json");
-    const before = fs.existsSync(record) ? fs.readFileSync(record, "utf8").trim() : "{}";
-    if (compose) {
-      fs.writeFileSync(file, `# Written by install.sh from the project file'"'"'s services: changed by the next run.\n${JSON.stringify(compose, null, 2)}\n`);
-      fs.writeFileSync(record, `${JSON.stringify(serviceEnv(project))}\n`);
-    } else {
-      fs.rmSync(file, { force: true });
-      fs.rmSync(record, { force: true });
-    }
-    console.log(before || "{}");
-  '
-}
-
 # The session image is built for one repository: it holds a checkout and that checkout's node_modules. With no
 # repository (an empty `repo`) it holds neither, and keeps the editor, which only a repo's project file turns off: every
 # session clones its repo and runs its installs at start (session/Dockerfile, REPO empty), so the build needs no token.
@@ -349,49 +318,37 @@ hostedEngines() {
   printf '%s' "${engines[*]:-none}"
 }
 
-# Written once; a later run only moves WOODSHED_CONSOLE_URL, adds the server of an engine hosted since (an install
-# that had no repository, given one), and sets the project file's services (writeServices: `services` is their session
-# env, `servicesBefore` what the last run set), so a shared service added to the file by hand stays. Each engine's
-# server, in the names its engine reads (shared/databases/).
+# Written once; a later run only moves WOODSHED_CONSOLE_URL, and adds the server of an engine hosted since (an install
+# that had no repository, given one), so a shared service added to the file stays. Each engine's server, in the names
+# its engine reads (shared/databases/).
 writeSessionEnv() {
-  local file=$1 consoleHost=$2 engines=$3 services=${4:-} servicesBefore=${5:-}
-  [ -n "$services" ] || services='{}'
-  [ -n "$servicesBefore" ] || servicesBefore='{}'
+  local file=$1 consoleHost=$2 engines=$3
   local apiPort
   apiPort=$(consoleSetting SESSION_API_PORT)
   local url=http://$consoleHost:${apiPort:-$SESSION_API_PORT}
-  if [ ! -f "$file" ]; then
-    (
-      umask 077
-      {
-        printf '{\n'
-        if hasEngine "$engines" postgres; then printf '  "PGHOST": "postgres",\n  "PGPORT": "5432",\n  "PGSSLMODE": "disable",\n'; fi
-        if hasEngine "$engines" mongo; then printf '  "WOODSHED_MONGO_HOST": "mongo:27017",\n'; fi
-        printf '  "WOODSHED_CONSOLE_URL": "%s"\n}\n' "$url"
-      } >"$file"
-    )
+  if [ -f "$file" ]; then
+    # shellcheck disable=SC2016 # JavaScript, not shell, expands these
+    SESSION_ENV_FILE=$file CONSOLE_URL=$url ENGINES=" $engines " node -e '
+      const fs = require("node:fs");
+      const file = process.env.SESSION_ENV_FILE;
+      const env = JSON.parse(fs.readFileSync(file, "utf8"));
+      const hosted = (name) => process.env.ENGINES.includes(` ${name} `);
+      if (hosted("postgres") && !env.PGHOST) Object.assign(env, { PGHOST: "postgres", PGPORT: "5432", PGSSLMODE: "disable" });
+      if (hosted("mongo") && !env.WOODSHED_MONGO_HOST) env.WOODSHED_MONGO_HOST = "mongo:27017";
+      env.WOODSHED_CONSOLE_URL = process.env.CONSOLE_URL;
+      fs.writeFileSync(file, `${JSON.stringify(env, null, 2)}\n`);
+    '
+    return
   fi
-  # The project file's services are this script's to set at every run: the ones it set before and the file no longer
-  # has are taken out, and a service added by hand (its own compose file, its variable in WOODSHED_SERVICES) stays.
-  # shellcheck disable=SC2016 # JavaScript, not shell, expands these
-  SESSION_ENV_FILE=$file CONSOLE_URL=$url ENGINES=" $engines " SERVICES=$services SERVICES_BEFORE=$servicesBefore node -e '
-    const fs = require("node:fs");
-    const file = process.env.SESSION_ENV_FILE;
-    const env = JSON.parse(fs.readFileSync(file, "utf8"));
-    const hosted = (name) => process.env.ENGINES.includes(` ${name} `);
-    if (hosted("postgres") && !env.PGHOST) Object.assign(env, { PGHOST: "postgres", PGPORT: "5432", PGSSLMODE: "disable" });
-    if (hosted("mongo") && !env.WOODSHED_MONGO_HOST) env.WOODSHED_MONGO_HOST = "mongo:27017";
-    env.WOODSHED_CONSOLE_URL = process.env.CONSOLE_URL;
-    const { WOODSHED_SERVICES: now = "", ...urls } = JSON.parse(process.env.SERVICES);
-    const before = (JSON.parse(process.env.SERVICES_BEFORE).WOODSHED_SERVICES ?? "").split(" ").filter(Boolean);
-    for (const name of before) if (!(name in urls)) delete env[name];
-    const byHand = (env.WOODSHED_SERVICES ?? "").split(" ").filter((name) => name && !before.includes(name) && !(name in urls));
-    Object.assign(env, urls);
-    const list = [...new Set([...byHand, ...now.split(" ").filter(Boolean)])].sort();
-    if (list.length) env.WOODSHED_SERVICES = list.join(" ");
-    else delete env.WOODSHED_SERVICES;
-    fs.writeFileSync(file, `${JSON.stringify(env, null, 2)}\n`);
-  '
+  (
+    umask 077
+    {
+      printf '{\n'
+      if hasEngine "$engines" postgres; then printf '  "PGHOST": "postgres",\n  "PGPORT": "5432",\n  "PGSSLMODE": "disable",\n'; fi
+      if hasEngine "$engines" mongo; then printf '  "WOODSHED_MONGO_HOST": "mongo:27017",\n'; fi
+      printf '  "WOODSHED_CONSOLE_URL": "%s"\n}\n' "$url"
+    } >"$file"
+  )
 }
 
 # The installation's folder of project files, in stack.env for the console and, through it, each session. Moved when a
@@ -701,14 +658,8 @@ main() {
   local settings=$'\n\nnone' engines network
   if [ -n "$repo" ]; then settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir"); fi
   engines=$(sed -n 3p <<<"$settings")
-  network=${WOODSHED_NETWORK:-$(savedConsoleSetting "$stackEnv" LOCAL_DOCKER_NETWORK)}
-  # The services first: with any, sessions join a network to reach them by name, as with a database.
-  local services='{}' servicesBefore='{}'
-  if [ -n "$repo" ]; then
-    servicesBefore=$(writeServices "$src" "$repoDir" "$projectFilesDir" "$home" "$network")
-    [ ! -f "$home/services-env.json" ] || services=$(cat "$home/services-env.json")
-  fi
-  [ -n "$network" ] || { ! anyEngine "$engines" && [ ! -f "$home/services.yml" ]; } || network=woodshed
+  network=${WOODSHED_NETWORK:-}
+  [ -n "$network" ] || ! anyEngine "$engines" || network=woodshed
   local stackArgs=("$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network")
   if [ -n "$repo" ] && [ -f "$stackEnv" ] && [ -z "$(savedConsoleSetting "$stackEnv" REPO)" ]; then
     addRepoToStackEnv "$stackEnv" "${stackArgs[@]}"
@@ -718,8 +669,6 @@ main() {
   fi
   saveProjectFilesDir "$stackEnv" "$projectFilesDir"
   saveSessionDocker "$stackEnv"
-  # stack.env is written once: an install that had no network gets one when the project file gains services.
-  if [ -f "$home/services.yml" ] && [ -z "$(savedConsoleSetting "$stackEnv" LOCAL_DOCKER_NETWORK)" ]; then setStackSetting "$stackEnv" LOCAL_DOCKER_NETWORK "$network"; fi
   set -a
   # shellcheck source=/dev/null
   . "$stackEnv"
@@ -729,20 +678,12 @@ main() {
   local hosted engine files=()
   hosted=$(hostedEngines)
   warnStaleStackEnv "$stackEnv" "$settings" "$engines" "$hosted"
-  if [ "$hosted" != none ] || [ -f "$home/services.yml" ]; then
-    if [ "$hosted" != none ]; then
-      say "Starting $hosted, for a copy of the databases in each session"
-      mkdir -p "$WOODSHED_LOCAL_DATA_DIR"
-    fi
-    # Each engine is a compose file of its own, added to the network's, and the project file's services one more
-    # (providers/local/README.md).
-    for engine in $hosted; do [ "$engine" = none ] || files+=(-f "$src/providers/local/$engine.yml"); done
-    if [ -f "$home/services.yml" ]; then
-      say "Starting the project file's services, for every session: $(SERVICES=$services node -p 'JSON.parse(process.env.SERVICES).WOODSHED_SERVICES')"
-      files+=(-f "$home/services.yml")
-    fi
+  if [ "$hosted" != none ]; then
+    say "Starting $hosted, for a copy of the databases in each session"
+    mkdir -p "$WOODSHED_LOCAL_DATA_DIR"
+    # Each engine is a compose file of its own, added to the network's (providers/local/README.md).
+    for engine in $hosted; do files+=(-f "$src/providers/local/$engine.yml"); done
     docker compose -f "$src/providers/local/compose.yml" "${files[@]}" --env-file "$stackEnv" up -d --quiet-pull
-    [ "$hosted" != none ] || say 'The project file has no databases: sessions get none of their own'
   elif [ -n "$repo" ]; then
     say 'The project file has no databases: sessions get none of their own'
   else
@@ -760,7 +701,7 @@ main() {
   if [ -z "$(savedConsoleSetting "$stackEnv" SESSION_API_HOST)" ]; then
     printf 'WOODSHED_SESSION_API_HOST=%s\n' "$apiHost" >>"$stackEnv"
   fi
-  writeSessionEnv "$(consoleSetting SESSION_ENV_FILE)" "$consoleHost" "$hosted" "$services" "$servicesBefore"
+  writeSessionEnv "$(consoleSetting SESSION_ENV_FILE)" "$consoleHost" "$hosted"
 
   local secretCli=$src/providers/local/bin/secret.mjs
   [ -f "$WOODSHED_LOCAL_SECRETS_KEY_FILE" ] || node "$secretCli" new-key "$WOODSHED_LOCAL_SECRETS_KEY_FILE" >/dev/null
