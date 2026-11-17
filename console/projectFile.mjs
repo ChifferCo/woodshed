@@ -101,7 +101,7 @@ export function createProjectReader({ github, installationFile = () => null, now
     async repoLayer() {
       const { project, error } = await read();
       if (error) throw new Error(`the project file could not be read: ${String(error.message ?? error).split('\n')[0]}`);
-      return { envFiles: project?.envFiles ?? [], env: project?.env ?? {}, rules: project?.rules ?? null, setup: project?.setup ?? null };
+      return { envFiles: project?.envFiles ?? [], env: project?.env ?? {}, rules: project?.rules ?? null, setup: project?.setup ?? null, runsOn: project?.pullRequests?.runsOn ?? null };
     },
     /**
      * @returns {Promise<boolean|null>}  whether what is posted to the repo may name the console's address (`consoleLinks`,

@@ -301,6 +301,19 @@
       h('p', { class: 'sub' }, on ? onText : offText));
   }
 
+  // Where the repo's automatic work (label sessions, review, QA) runs: the project file's pullRequests.runsOn.
+  function runsOnCard() {
+    const pf = view.projectFile;
+    if (!pf?.read) return null;
+    const code = (text) => h('code', null, text);
+    return h('section', { class: 'settings-card', id: 'runs-on', 'aria-labelledby': 'card-runs-on' },
+      h('h2', { id: 'card-runs-on', class: 'label' }, 'Where automatic work runs'),
+      h('p', { class: 'sub' }, 'Sessions from the label, reviews and QA for ', view.repo, '. Set in the project file\'s ', code('pullRequests.runsOn'), '.'),
+      h('p', { class: 'layer-meta', id: 'runs-on-value' }, pf.runsOn
+        ? ['Only the console whose GitHub App acts as ', code(pf.runsOn), '. Other consoles leave them alone.']
+        : 'Every connected console.'));
+  }
+
   function githubCard() {
     const t = view.triggers;
     if (!t) return null;
@@ -444,6 +457,7 @@
       envCard(),
       instructionsCard(),
       githubCard(),
+      runsOnCard(),
       slackCard()));
     for (const key of editors.keys()) updateCounts(key);
     if (focused && ([...editors.values()].includes(focused) || focused === channelInput || focused === labelInput)) {

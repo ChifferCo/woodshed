@@ -187,6 +187,12 @@ test('Repo settings reads each env file with its key and defaults, none with no 
   const layer = await reader.repoLayer();
   assert.deepEqual(layer.envFiles.map((f) => [f.key, f.path, f.defaults]), [['app-env', 'app/.env', []], ['app-env-local', 'app/.env.local', []]]);
   assert.deepEqual([layer.env, layer.rules, layer.setup], [{}, null, null]);
-  assert.deepEqual(await createProjectReader({ github: { projectFile: async () => null } }).repoLayer(), { envFiles: [], env: {}, rules: null, setup: null });
+  assert.deepEqual(await createProjectReader({ github: { projectFile: async () => null } }).repoLayer(), { envFiles: [], env: {}, rules: null, setup: null, runsOn: null });
   await assert.rejects(createProjectReader({ github: { projectFile: async () => { throw new Error('HTTP 502'); } } }).repoLayer(), /could not be read: HTTP 502/);
+});
+
+test('Repo settings reads pullRequests.runsOn, none when unset', async () => {
+  const withRunsOn = PROJECT.replace("pullRequests: null", "pullRequests:\n  runsOn: woodshed-cloud[bot]");
+  assert.equal((await createProjectReader({ github: { projectFile: async () => withRunsOn } }).repoLayer()).runsOn, 'woodshed-cloud[bot]');
+  assert.equal((await createProjectReader({ github: { projectFile: async () => PROJECT } }).repoLayer()).runsOn, null);
 });
