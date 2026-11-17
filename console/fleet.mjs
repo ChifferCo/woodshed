@@ -567,9 +567,10 @@ export function createFleet({
     update(session, { status: 'stopped', stoppedAt: nowIso(), endpoint: null, ...keptFields(session) });
   }
 
-  // A shared session that ran keeps its conversation and databases once stopped, however it stopped.
+  // A shared session that ran keeps its conversation and databases once stopped, however it stopped. A QA or review
+  // run is never resumed: the next commit gets a run of its own, so it ends when it stops.
   function keptFields(session) {
-    return session.owner || isQa(session) ? {} : { kept: true };
+    return session.owner || isQa(session) || isReview(session) ? {} : { kept: true };
   }
 
   async function finishInterruptedStop(session) {

@@ -2546,6 +2546,21 @@ test('reviewFinished submits the formal review and the Merge risk check as the c
   assert.equal(fleet.sessions()[0].review.conclusion, 'APPROVE');
 });
 
+test('a finished review session ends: it is not kept, so it never shows Resume and a /woodshed comment does not resume it', async () => {
+  const { fleet, statuses } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(session.status, 'running');
+
+  await fleet.reviewFinished(session, REVIEW_RESULT);
+  await settle();
+  assert.equal(session.status, 'stopped');
+  assert.match(session.stopReason, /^Review finished: APPROVE/);
+  assert.equal(session.kept, undefined, 'a review is never resumed: the next commit gets a review of its own');
+});
+
 test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {
   const submitted = [];
   const reviewerApp = { configured: () => true, async submitReview(args) { submitted.push(args); return 1; } };
