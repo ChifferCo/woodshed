@@ -49,6 +49,15 @@ export function reviewEndedComment({ reason, sessionUrl }) {
   return `⚠️ **The review did not finish**${where}: ${reason}. A new commit starts another.\n`;
 }
 
+/**
+ * @param {{conclusion: string, tier: string|null}} args
+ * @returns {string}  the review's comment when it reported a verdict but wrote no comment of its own
+ */
+export function reviewDoneComment({ conclusion, tier }) {
+  const verdict = conclusion === 'APPROVE' ? 'approved' : 'changes requested';
+  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. The review itself has the details.\n`;
+}
+
 export function parseReviewReport(raw) {
   let body;
   try {

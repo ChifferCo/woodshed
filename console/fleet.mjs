@@ -12,7 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
-import { reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
+import { reviewDoneComment, reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
@@ -1825,6 +1825,9 @@ export function createFleet({
     if (!conclusion) {
       console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
       await postReviewEnded(session, project, 'the session wrote no verdict');
+    } else if (!comment && session.review.runningPosted && session.review.commentId) {
+      console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
+      await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
     }
     const held = hold && ours ? { sha, summary, inlineComments, resolved } : null;
     update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
