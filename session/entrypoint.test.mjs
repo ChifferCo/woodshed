@@ -246,6 +246,21 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   assert.ok(!hooks.permissions.allow.some((rule) => /^(Edit|Write)\(/.test(rule)));
 });
 
+// Claude Code asks "Adding a new directory: … Is this a directory you trust?" at start for each --add-dir folder no
+// project entry in ~/.claude.json trusts, which held every session before its first prompt (Claude Code 2.1.326).
+test('claude starts trusting the checkout and every folder it is given with --add-dir, so no trust dialog opens', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { '/tmp/uploads': { allowedTools: ['Bash'] } } }));
+  execFileSync('bash', ['-c', `set -euo pipefail\n${fn('configureClaude')}\nconfigureClaude`], {
+    env: { PATH: process.env.PATH, HOME: home, REPO_DIR: REPO, SESSION_KIND: 'private', WOODSHED_CLAUDE_AUTH: 'own' },
+  });
+  const config = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+  const addDirs = [...fn('claudeFlags').matchAll(/--add-dir %s' "\$\{UPLOADS_DIR:-([^}]+)\}"/g)].map((m) => m[1]);
+  for (const dir of [REPO, ...addDirs]) assert.equal(config.projects[dir]?.hasTrustDialogAccepted, true, `${dir} is trusted`);
+  assert.deepEqual(config.projects['/tmp/uploads'].allowedTools, ['Bash'], 'what the home already held for the folder stays');
+});
+
 test('a session given this machine\'s Docker is told so, with its own id to name stacks by, and one without is told nothing', () => {
   const on = writePrompt({ attachments: false, hostDocker: '1' });
   assert.match(on.rules, /`docker` here is the Docker of the machine Woodshed runs on, not this container's own/);

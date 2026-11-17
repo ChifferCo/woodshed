@@ -322,15 +322,18 @@ configureClaude() {
     key) key=$SESSION_TOKEN ;;
     plan | own) key= ;;
   esac
-  node - "$REPO_DIR" "${key: -20}" <<'NODE'
+  node - "$REPO_DIR" "${key: -20}" "${UPLOADS_DIR:-/tmp/uploads}" <<'NODE'
 const fs = require('node:fs');
-const [repoDir, keySuffix] = process.argv.slice(2);
+const [repoDir, keySuffix, uploadsDir] = process.argv.slice(2);
 const path = `${process.env.HOME}/.claude.json`;
 const config = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, 'utf8')) : {};
 config.hasCompletedOnboarding = true;
 config.customApiKeyResponses = { approved: keySuffix ? [keySuffix] : [], rejected: [] };
 config.projects = config.projects ?? {};
 config.projects[repoDir] = { ...config.projects[repoDir], hasTrustDialogAccepted: true };
+// claudeFlags passes it with --add-dir, and Claude Code asks "Adding a new directory: … Is this a directory you
+// trust?" at start for an added folder no project entry trusts, which held every session before its first prompt.
+config.projects[uploadsDir] = { ...config.projects[uploadsDir], hasTrustDialogAccepted: true };
 fs.writeFileSync(path, JSON.stringify(config, null, 2));
 // Auto mode's confirmation is the one dialog that lives in settings, not ~/.claude.json. The status line
 // under the prompt is the dev box's.
