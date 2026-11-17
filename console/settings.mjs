@@ -27,7 +27,7 @@ function firstLine(err) {
 }
 
 /**
- * @param {{config: object, secrets: {list: Function, read: Function, write: Function, save: Function, remove: Function},
+ * @param {{config: object, secrets: {list: Function, read: Function, write: Function, save: Function, remove: Function, createsOnWrite?: boolean},
  *          appKey: {current: () => string|null, set: (pem: string) => void},
  *          appApi: ReturnType<import('./githubApp.mjs').createAppApi>,
  *          webhookUrl: () => Promise<string|null>, checkKey?: (pem: string) => Promise<void>,
@@ -72,7 +72,12 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
   // An env file's secret is legacy now: each row says whose Repo settings it moved to.
   async function listed() {
     const list = await secrets.list();
-    return list.map((s) => (s.kind === 'env' && repoSettings ? { ...s, moved: repoSettings.legacyState(s.name) } : s));
+    // A store that makes a secret on its first write lets the page offer Set before the secret exists.
+    const creates = Boolean(secrets.createsOnWrite);
+    return list.map((s) => {
+      const row = { ...s, creatable: creates && !s.exists };
+      return s.kind === 'env' && repoSettings ? { ...row, moved: repoSettings.legacyState(s.name) } : row;
+    });
   }
 
   async function view() {

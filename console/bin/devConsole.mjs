@@ -10,6 +10,7 @@
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
 
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
@@ -100,6 +101,15 @@ const sessions = [
   session('cdef9999', 26629, 'Retry Xero sync on a 429', { status: 'running', state: 'working', stoppedAt: null, stopReason: null, startedBy: 'priya-dev', assignee: 'priya-dev', redis: false,
     // Near its memory limit, for the badge's red and the machine dialog's: its disk from an image before it was reported.
     usage: { cpuPercent: 162, memoryBytes: 7.5 * GB, memoryLimitBytes: 8 * GB, memoryPeakBytes: 7.9 * GB, cores: 2, diskUsedBytes: null, diskTotalBytes: null } }),
+  // A label the viewer added, on their own Claude plan, that nobody has: on Mine, since they started it, and Unassigned on
+  // Everyone.
+  session('a11e0001', 3, 'Add a ruler to the canvas', {
+    kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
+  }),
+  // One the viewer started and handed to someone else: still on Mine, since it runs on the viewer's plan.
+  session('a11e0002', 4, 'Snap shapes to the grid', {
+    kind: 'issue', trigger: 'label', startedBy: 'local', plan: 'local', assignee: 'ana-dev', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null,
+  }),
   // Finished: its pull request is in Slack. Listed under Finished on Mine and on Everyone.
   session('ab12cd34', 26690, 'manage_datasets query returns too many rows', { kept: true, slackPostedAt: now, stopReason: null, assignee: 'octocat' }),
   // Two private sessions with plan readings: the older one's pane shows the newer reading, since the plan is shared.
@@ -132,6 +142,8 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
   }),
+  // Paused when idle, so it waits in Mine's Needs you, with Move to Stopped in its ⋯ menu.
+  session('ba5ed001', null, 'A private session paused when idle', { kind: 'task', trigger: 'my-woodshed', owner: 'local', stopReason: 'idle for 1 h', prUrl: null }),
   session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
@@ -169,6 +181,12 @@ const sessions = [
   session('5a5a5a5a', 26700, 'A session starting', {
     status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 6_000).toISOString(),
     startSteps: { machine: new Date(Date.now() - 2_000).toISOString() },
+  }),
+  // Its agent open 2 min ago, every step done, and no address from its launcher: Connecting to the session counts.
+  session('7c7c7c7c', 26710, 'A session with claude open, not reached yet', {
+    status: 'starting', stoppedAt: null, stopReason: null, prUrl: null, startedAt: new Date(Date.now() - 135_000).toISOString(),
+    startSteps: Object.fromEntries([['container', 122], ['settings', 121], ['home', 121], ['branch', 121], ['databases', 121], ['env', 120], ['claude', 120]]
+      .map(([step, secondsAgo]) => [step, new Date(Date.now() - secondsAgo * 1000).toISOString()])),
   }),
   // Waiting for room, with the steps its launcher says the wait is at (a launcher's `progress`, providers/README.md).
   // Its next try is an hour away, so the docker launcher never takes it, and nothing here changes the steps.
@@ -279,8 +297,29 @@ const consolePort = sessionApp ? await freePort() : port;
 // bin/woodshed does.
 const devClone = makeDevClone(fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-dev-clone-')));
 const RESTART_EXIT_CODE = 75;
+// DEV_CONSOLE_REPO_SETTINGS=1 gives My settings' Repo settings what it needs to save: a local secret store, and two
+// made-up repos whose project files this gh answers, the first the sessions' own.
+const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoSettings(stateDir) : null;
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
-const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'));
+const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), { projectFiles: repoSettingsDev?.projectFiles });
+
+function devRepoSettings(dir) {
+  const secretsDir = path.join(dir, 'secrets');
+  const keyFile = path.join(dir, 'secrets.key');
+  fs.mkdirSync(secretsDir);
+  fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('base64'), { mode: 0o600 });
+  const file = (envPath) => `version: 1\nenvFiles:\n  - path: ${envPath}\n    defaults:\n      - LOG_LEVEL=info\n`;
+  return {
+    env: {
+      WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile,
+      WOODSHED_PROJECTS: JSON.stringify([
+        { name: 'example-repo', repo: 'example-org/example-repo', default: true },
+        { name: 'example-tools', repo: 'example-org/example-tools' },
+      ]),
+    },
+    projectFiles: { 'example-org/example-repo': file('api/.env'), 'example-org/example-tools': file('tools/.env') },
+  };
+}
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
@@ -295,12 +334,16 @@ function startConsole() {
       // through Tailscale's serve has them (appPorts.mjs).
       ...(process.env.DEV_CONSOLE_APP_PORTS ? { WOODSHED_APP_PORTS: process.env.DEV_CONSOLE_APP_PORTS } : { WOODSHED_APP_DOMAIN: 'apps.localhost' }),
       WOODSHED_CHECKOUT: devClone, WOODSHED_SUPERVISED: '1',
+      // Nobody signs in here, which on its own would make it a one-person console with one list of sessions: the made-up
+      // team's Mine and Everyone show unless DEV_CONSOLE_ONE_PERSON=1 asks for that one list (server.mjs, onePersonConsole).
+      WOODSHED_ONE_PERSON: process.env.DEV_CONSOLE_ONE_PERSON === '1' ? '1' : '0',
       // Its own links name the port people open, not the one behind it.
       ...(sessionApp ? { WOODSHED_PUBLIC_URL: `http://localhost:${port}` } : {}),
       // The sessions' made-up repo, or the projects this shell names. DEV_CONSOLE_NO_REPO=1 starts it with none, as a new
       // installation that adds its repos on the Console settings page does.
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
+      ...repoSettingsDev?.env,
       ...tlsAskPort,
     },
   });

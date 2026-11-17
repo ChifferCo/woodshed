@@ -34,3 +34,17 @@ export function createAppIdentity({ appApi }) {
 
   return { available: Boolean(appApi), login, known: () => kept };
 }
+
+/**
+ * The App a host gave the installation (createInstallation's `hostApp`): a console whose GitHub access is borrowed has
+ * no App of its own to ask, so the host, which holds it, says its login. Asked each time, so a rename shows at once.
+ * @param {() => string|null} hostLogin  `<slug>[bot]`; null when the host does not know it yet
+ * @returns {{available: boolean, login: () => Promise<string|null>, known: () => {slug: string, login: string}|null}}
+ */
+export function hostAppIdentity(hostLogin) {
+  const known = () => {
+    const login = hostLogin() || null;
+    return login ? { slug: login.replace(/\[bot\]$/, ''), login } : null;
+  };
+  return { available: true, login: async () => known()?.login ?? null, known };
+}

@@ -30,15 +30,21 @@ ARG PLAYWRIGHT_MCP_VERSION=0.0.83
 ARG OPENVSCODE_VERSION=1.109.5
 ARG OPENVSCODE_SHA256_AMD64=b433bf4f0227321a7014d8460d10a8f958adc0f45aa79bd889e84e65e8f88363
 ARG OPENVSCODE_SHA256_ARM64=36d9c14036489b63de84ebace837fcacf7e60e669a0dc715802c5443684ea4dc
-# The docker CLI and its compose plugin, for a session given the machine's Docker (providers/local/dockerLauncher.mjs,
-# hostDocker): the client only, talking to the machine's daemon through its socket. Docker publishes no checksum for its
-# static builds, so these are the sha256 of the files as first downloaded; compose's are its release's checksums.txt.
+# Docker's static build and its compose plugin: the CLI, for a session given the machine's Docker through its socket
+# (providers/local/dockerLauncher.mjs, hostDocker), and the daemon with containerd and runc, for a session that runs
+# its own under Sysbox (ownDocker, session/ownDocker.sh). Docker publishes no checksum for its static builds, so these
+# are the sha256 of the files as first downloaded; compose's are its release's checksums.txt.
 ARG DOCKER_VERSION=29.9.2
 ARG DOCKER_SHA256_AMD64=9ac225999fd5e863f7694c728ef23d480616b1e5639328fa309befd4243d69eb
 ARG DOCKER_SHA256_ARM64=873b3e0207857c3b2f28392fb922f3ea6efe37620c16d4d4aaf2fef409c90b73
 ARG COMPOSE_VERSION=5.6.1
 ARG COMPOSE_SHA256_AMD64=47737f4236e6d3ccea7291995203f8f018058783b4c3a9469119811a0b5db8c0
 ARG COMPOSE_SHA256_ARM64=42cfa75f51ad0ccf290bad37899e0038a8c10a0069e85233ecc1d53e3ff1347d
+# buildx, which `docker build` and compose's builds need for BuildKit (RUN --mount, cache mounts, this Dockerfile's own
+# syntax): without it the CLI falls back to the legacy builder. Its release's checksums.txt.
+ARG BUILDX_VERSION=0.38.1
+ARG BUILDX_SHA256_AMD64=e25d5cd675092bb5d1d03632fdc46cdf3fede7b514dc5f023a105e00d3ce5ad4
+ARG BUILDX_SHA256_ARM64=3b83b3731916ba433feccaaa689fe5bcdc81c641d92c8e6c2ea865dfa141c97a
 # psql, for the session's own Postgres databases (the PG* variables, docs/reference.md "Databases"): the client alone,
 # from PostgreSQL's apt repository, at the major the installations host (RDS's engine_version in providers/aws, the
 # local provider's postgres:16), as the console's is. Debian bookworm's own is 15, older than the servers; a newer one's
@@ -65,7 +71,7 @@ ARG BASE_WEEK=
 # The slim base has no compiler: g++, make and python3 are for native modules a repo's install builds from source,
 # here and in a session that reinstalls. The rest are tools the full base had that sessions use.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends bzip2 ca-certificates curl file g++ git gnupg iproute2 jq make openssh-client patch procps python3 redis-server tmux unzip wget xz-utils \
+  && apt-get install -y --no-install-recommends bzip2 ca-certificates curl file g++ git gnupg iproute2 iptables jq make openssh-client patch procps python3 redis-server tmux unzip wget xz-utils \
   && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
   && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o /usr/share/keyrings/pgdg.asc \
@@ -101,8 +107,9 @@ RUN npm install -g npm@10.9.0 "@playwright/mcp@${PLAYWRIGHT_MCP_VERSION}" "redis
   && npm cache clean --force && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /work && chown node:node /work
 
-# The docker CLI and compose (the ARGs above say why). The last stage adds them to a published runtime from before they
-# were here, until it is published again.
+# Docker and compose (the ARGs above say why): every binary of the static build, the daemon's too, and the docker group
+# that owns a session's own daemon's socket, with node in it. The last stage adds them to a published runtime from
+# before they were here, until it is published again.
 ARG TARGETARCH
 ARG DOCKER_VERSION
 ARG DOCKER_SHA256_AMD64
@@ -110,18 +117,25 @@ ARG DOCKER_SHA256_ARM64
 ARG COMPOSE_VERSION
 ARG COMPOSE_SHA256_AMD64
 ARG COMPOSE_SHA256_ARM64
+ARG BUILDX_VERSION
+ARG BUILDX_SHA256_AMD64
+ARG BUILDX_SHA256_ARM64
 RUN case "$TARGETARCH" in \
-    amd64) arch=x86_64; docker_sha="$DOCKER_SHA256_AMD64"; compose_sha="$COMPOSE_SHA256_AMD64" ;; \
-    arm64) arch=aarch64; docker_sha="$DOCKER_SHA256_ARM64"; compose_sha="$COMPOSE_SHA256_ARM64" ;; \
+    amd64) arch=x86_64; docker_sha="$DOCKER_SHA256_AMD64"; compose_sha="$COMPOSE_SHA256_AMD64"; buildx_arch=amd64; buildx_sha="$BUILDX_SHA256_AMD64" ;; \
+    arm64) arch=aarch64; docker_sha="$DOCKER_SHA256_ARM64"; compose_sha="$COMPOSE_SHA256_ARM64"; buildx_arch=arm64; buildx_sha="$BUILDX_SHA256_ARM64" ;; \
     *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
   esac \
   && curl -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_VERSION}.tgz" \
   && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
-  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker && rm /tmp/docker.tgz \
+  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 && rm /tmp/docker.tgz \
+  && { getent group docker >/dev/null || groupadd --system docker; } && usermod -aG docker node \
   && mkdir -p /usr/local/lib/docker/cli-plugins \
   && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
   && echo "${compose_sha}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
-  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose \
+  && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${buildx_arch}" \
+  && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
+  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
 
 # The session should not be root: the node image's own uid 1000 user runs everything below.
 USER node
@@ -184,28 +198,38 @@ RUN --mount=type=bind,source=woodshed-deps.editor,target=/tmp/woodshed-editor \
   && mkdir -p /opt/openvscode-server && tar -xzf /tmp/openvscode.tgz -C /opt/openvscode-server --strip-components=1 \
   && rm /tmp/openvscode.tgz
 
-# The runtime stage's docker CLI and compose, for a published runtime built before they were in it (or with others):
-# the same install, skipped when the runtime has these versions.
+# The runtime stage's Docker and compose, for a published runtime built before they were in it (or with others, or with
+# the CLI alone): the same install, skipped when the runtime has these versions, the daemon and the docker group.
 ARG DOCKER_VERSION
 ARG DOCKER_SHA256_AMD64
 ARG DOCKER_SHA256_ARM64
 ARG COMPOSE_VERSION
 ARG COMPOSE_SHA256_AMD64
 ARG COMPOSE_SHA256_ARM64
+ARG BUILDX_VERSION
+ARG BUILDX_SHA256_AMD64
+ARG BUILDX_SHA256_ARM64
 RUN if docker --version 2>/dev/null | grep -qF "version ${DOCKER_VERSION}," \
-    && [ "$(docker compose version --short 2>/dev/null)" = "${COMPOSE_VERSION}" ]; then echo "docker ${DOCKER_VERSION} and compose ${COMPOSE_VERSION} from the runtime"; exit 0; fi \
+    && [ "$(docker compose version --short 2>/dev/null)" = "${COMPOSE_VERSION}" ] \
+    && docker buildx version 2>/dev/null | grep -qF " v${BUILDX_VERSION} " \
+    && command -v dockerd >/dev/null && command -v iptables >/dev/null && id -nG node | grep -qw docker; then echo "docker ${DOCKER_VERSION}, compose ${COMPOSE_VERSION} and buildx ${BUILDX_VERSION} from the runtime"; exit 0; fi \
+  && if ! command -v iptables >/dev/null; then apt-get update && apt-get install -y --no-install-recommends iptables && rm -rf /var/lib/apt/lists/*; fi \
   && case "$TARGETARCH" in \
-    amd64) arch=x86_64; docker_sha="$DOCKER_SHA256_AMD64"; compose_sha="$COMPOSE_SHA256_AMD64" ;; \
-    arm64) arch=aarch64; docker_sha="$DOCKER_SHA256_ARM64"; compose_sha="$COMPOSE_SHA256_ARM64" ;; \
+    amd64) arch=x86_64; docker_sha="$DOCKER_SHA256_AMD64"; compose_sha="$COMPOSE_SHA256_AMD64"; buildx_arch=amd64; buildx_sha="$BUILDX_SHA256_AMD64" ;; \
+    arm64) arch=aarch64; docker_sha="$DOCKER_SHA256_ARM64"; compose_sha="$COMPOSE_SHA256_ARM64"; buildx_arch=arm64; buildx_sha="$BUILDX_SHA256_ARM64" ;; \
     *) echo "unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
   esac \
   && curl -fsSL -o /tmp/docker.tgz "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_VERSION}.tgz" \
   && echo "${docker_sha}  /tmp/docker.tgz" | sha256sum -c - \
-  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 docker/docker && rm /tmp/docker.tgz \
+  && tar -xzf /tmp/docker.tgz -C /usr/local/bin --strip-components=1 && rm /tmp/docker.tgz \
+  && { getent group docker >/dev/null || groupadd --system docker; } && usermod -aG docker node \
   && mkdir -p /usr/local/lib/docker/cli-plugins \
   && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-compose "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${arch}" \
   && echo "${compose_sha}  /usr/local/lib/docker/cli-plugins/docker-compose" | sha256sum -c - \
-  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose
+  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-compose \
+  && curl -fsSL -o /usr/local/lib/docker/cli-plugins/docker-buildx "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${buildx_arch}" \
+  && echo "${buildx_sha}  /usr/local/lib/docker/cli-plugins/docker-buildx" | sha256sum -c - \
+  && chmod 755 /usr/local/lib/docker/cli-plugins/docker-buildx
 
 # The base stage's psql, for a published runtime built before it was there: the same install, skipped when the runtime
 # has that major.

@@ -4,7 +4,7 @@
   'use strict';
 
   const { sameLogin, findLogin, uniqueLogins } = window.WoodshedLogins;
-  const { setupSteps, setupDone } = window.WoodshedSetup;
+  const { setupSteps, setupDone, stepsAfterSetup } = window.WoodshedSetup;
   const invite = window.WoodshedInvite;
 
   // What the pages say about where sessions run, in the provider's own words: pageShell's meta tag, from
@@ -210,6 +210,16 @@
     return !s.owner && sameLogin(s.assignee, login);
   }
 
+  /**
+   * What the rail's Mine lists: your own private sessions, and the shared ones you started (a label or a /woodshed
+   * comment, which run on your Claude plan when your switch is on) or that are assigned to you.
+   * @returns {boolean}
+   */
+  function inMine(s, login) {
+    if (s.owner) return sameLogin(s.owner, login);
+    return Boolean(login) && (sameLogin(s.assignee, login) || sameLogin(s.startedBy, login));
+  }
+
   /** @returns {boolean}  a session waiting on its person, live or stopped; on Mine the Needs you zone lists only the stopped ones and Active sorts the live ones first */
   function needsYou(s) {
     if (isLive(s)) return WAITING_KEYS.has(displayStatus(s).key);
@@ -239,22 +249,63 @@
     return null;
   }
 
+  /**
+   * Why sessions cannot start on a repo, and how to fix it (`projectBlockers` in /api/my, databaseGate.mjs). An admin
+   * gets the fix's numbered steps with their links; anyone else who to ask, and a message to send them with Copy.
+   * @param {{repo: string, reason: string, fix?: {text: string, href?: string, label?: string}[], ask?: {who: string[], text?: string}}} blocker
+   * @param {{admin?: boolean, others?: boolean, head?: boolean}} [o]  others: another repo can be picked above;
+   *   head: false leaves out the repo and its Needs setup word, where the row around it says them
+   */
+  function blockerCard(blocker, { admin = isAdmin(), others = false, head = true } = {}) {
+    const link = (step) => {
+      const away = /^https:/.test(step.href);
+      return h('a', { class: 'btn btn-plain btn-sm', href: step.href, ...(away ? { target: '_blank', rel: 'noopener' } : {}) },
+        `${step.label || (away ? 'Open' : 'Go there')}${away ? ' \u2197' : ''}`);
+    };
+    const steps = blocker.fix ?? [];
+    const who = blocker.ask?.who ?? [];
+    const message = blocker.ask?.text || `${blocker.reason} Could you fix it, so sessions can start on ${blocker.repo}?`;
+    let copied = false;
+    const copy = h('button', { type: 'button', class: 'btn btn-plain btn-sm' }, 'Copy');
+    copy.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(message);
+        copied = true;
+      } catch {
+        copied = false;
+      }
+      copy.textContent = copied ? 'Copied' : 'Copy';
+    });
+    return h('section', { class: 'blocker-card', role: 'status' },
+      head && h('div', { class: 'blocker-head' }, h('b', { class: 'mono' }, blocker.repo), h('span', { class: 'pill is-warn' }, 'Needs setup')),
+      h('p', { class: 'blocker-reason' }, blocker.reason),
+      admin
+        ? (steps.length ? h('ol', { class: 'cmd-steps' }, steps.map((step) => h('li', null, h('p', null, step.text), step.href && h('div', { class: 'blocker-link' }, link(step))))) : null)
+        : [
+          h('p', { class: 'sub' }, 'Only an admin can fix this.', who.length ? [' Ask ', who.map((login, i) => [i ? (i === who.length - 1 ? ' or ' : ', ') : '', h('b', null, `@${login}`)]), '.'] : ' Ask an admin of this console.'),
+          h('div', { class: 'blocker-ask' }, h('div', { class: 'value-box' }, message), copy),
+        ],
+      others && h('p', { class: 'sub' }, 'Pick another repo above to start a session now.'));
+  }
+
   /** The setup card: what is left, with Claude or Codex taking you to that sign-in's box on My settings, and Open My settings for databases that did not start. */
-  function setupCard(me, { compact = false } = {}) {
-    const steps = setupSteps(me);
+  function setupCard(me, { compact = false, steps = setupSteps(me) } = {}) {
+    const after = steps.every((step) => step.optional);
     const rows = steps.map((step) => h('div', { class: `setup-step${step.done ? ' is-done' : ''}` },
       h('span', { class: 'setup-check', 'aria-hidden': 'true' }, step.done ? '✓' : ''),
       h('span', { class: 'setup-label' }, step.label, h('small', null, step.hint)),
       step.key === 'repo' ? (isAdmin() ? h('a', { class: 'btn btn-primary btn-sm', href: '/console-settings#card-projects' }, 'Add a repo') : null)
         : step.key === 'github' ? h('a', { class: `btn ${step.optional ? 'btn-plain' : 'btn-primary'} btn-sm`, href: '/setup/github' }, 'Set up')
+        : step.key === 'reviewer' ? h('a', { class: 'btn btn-plain btn-sm', href: '/setup/github#reviewer' }, 'Set up')
         // Two equal choices, each to its own box on My settings: neither agent is the default.
         : step.key === 'token' && !step.done ? h('span', { class: 'setup-choices' },
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
     return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
-      h('h3', null, 'Set up your Woodshed'),
-      h('p', null, steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
+      h('h3', null, after ? 'Finish setting up your Woodshed' : 'Set up your Woodshed'),
+      h('p', null, after ? 'Optional: New session works without it.'
+        : steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
       rows);
   }
 
@@ -373,8 +424,10 @@
 
   // A session's start, step by step: the machine and the wait for the pull are the console's own steps, from the
   // launcher, and named by the provider, which leaves out one it never reaches. The rest are what its entrypoint
-  // reports (START_STEPS in sessions.mjs). A step reported after a later one is done too, as is any step a session
-  // started from an older image never reports.
+  // reports (START_STEPS in sessions.mjs), and last the console reaching the session once its agent is open: until its
+  // launcher answers with the address and statusd answers there, it is still starting. That one is never done here: once
+  // it is, the page shows the terminal. A step reported after a later one is done too, as is any step a session started
+  // from an older image never reports.
   const PROVIDER_STEPS = PROVIDER_WORDS.startSteps ?? {};
   const START_STEPS = [
     ['machine', ...(PROVIDER_STEPS.machine ?? [])],
@@ -386,6 +439,7 @@
     ['databases', 'Getting its databases', 'databases'],
     ['env', 'Writing the env files and the prompt', 'env files'],
     ['claude', 'Opening the agent', 'opening the agent'],
+    ['connect', 'Connecting to the session', 'connecting'],
   ].filter(([, label]) => label);
 
   /** @returns {{steps: {key: string, label: string, short: string, state: 'done'|'now'|'next', seconds: number|null}[], current: object|null}} */
@@ -710,6 +764,45 @@
     return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
   }
 
+  // Set up app says what it does before it asks the agent: the button's name alone did not, and a phone shows no title.
+  function setupAppDialog(s, onDone = () => {}) {
+    const agent = agentOf(s);
+    const go = h('button', { type: 'button', class: 'btn btn-open' }, 'Set up app');
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'setup-app-title' },
+      h('h2', { id: 'setup-app-title' }, 'Set up this repo\'s app?'),
+      h('p', null, 'Woodshed does not know how to start this repo\'s app yet, so there is nothing for Start app to run or Open app to open.'),
+      h('p', null, `${agent[0].toUpperCase()}${agent.slice(1)} works out how the app runs, writes it to `, h('code', null, '.woodshed/project.yaml'),
+        ' on this branch and starts it. Open app then opens it here, and once the file is merged every session gets Start app.'),
+      error,
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
+        go));
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      error.hidden = true;
+      try {
+        const { sent } = await appAction(s, 'setup');
+        dialog.close();
+        notify(setupAppToast(sent, s));
+        onDone();
+      } catch (err) {
+        // Closed with Esc or Cancel while the call was out: the dialog is gone, so the failure is a toast.
+        if (!dialog.open) {
+          notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
+          return;
+        }
+        error.replaceChildren(`Could not set up the app: ${err.message}`);
+        error.hidden = false;
+        go.disabled = false;
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    go.focus();
+  }
+
   /**
    * The app's controls, after the shed's app line: Open app while it runs, Start app otherwise, and Stop app
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
@@ -754,18 +847,11 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
-        onclick: async (e) => {
+        title: `Woodshed does not know how to start this repo's app yet. Asks ${agentOf(s)} to work it out, save it and start it.`,
+        onclick: (e) => {
           e.preventDefault();
           e.stopPropagation();
-          setup.disabled = true;
-          try {
-            const { sent } = await appAction(s, 'setup');
-            notify(setupAppToast(sent, s));
-          } catch (err) {
-            notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
-          }
-          onDone();
+          setupAppDialog(s, onDone);
         },
       }, 'Set up app');
       const ctl = group(setup);
@@ -1355,8 +1441,8 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, setupCard, sameLogin, uniqueLogins, startedLine, assignedTo, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

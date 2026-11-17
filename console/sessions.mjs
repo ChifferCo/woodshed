@@ -137,9 +137,11 @@ export function routeTrigger({ sessions, number, trigger, kind = 'issue', text =
  * @param {{sessions: object[], number: number}} args
  * @returns {{action: 'ignore', reason: string}|{action: 'start'}}
  */
+export const QA_ALREADY_RUNNING = 'QA is already running on it';
+
 export function routeQa({ sessions, number }) {
   const running = sessions.find((s) => isQa(s) && s.number === number && ACTIVE_STATUSES.has(s.status));
-  return running ? { action: 'ignore', reason: 'QA is already running on it' } : { action: 'start' };
+  return running ? { action: 'ignore', reason: QA_ALREADY_RUNNING } : { action: 'start' };
 }
 
 /**

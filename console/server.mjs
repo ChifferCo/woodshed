@@ -9,7 +9,8 @@
 //   GET  /                       My Woodshed: your private sessions, and New session
 //   GET  /settings               My settings: your Claude token
 //   GET  /api/sessions           every shared session and your own private ones, without their tokens
-//   GET  /api/my                 your settings' state (never a value), your running count and limit
+//   GET  /api/my                 your settings' state (never a value), your running count and limit, and each of your
+//                                projects that cannot start sessions with why and how to fix it (`projectBlockers`)
 //   POST /api/my/sessions        {"prompt", "name", "workOn", "model", "effort", "permissionMode", "project"}  a private session
 //   GET  /api/my/projects        the projects you can start sessions on, and the one New session opens on for you
 //   GET  /api/my/codex-models    the Codex models New session offers you: OpenAI's catalog, read on your Codex sign-in or the team key
@@ -25,10 +26,11 @@
 //   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
 //   POST /api/my/files/<file>/reset                clears them: the console's file alone again. For an env file these
 //                                                  three are the default project's repo settings (repoSettings.mjs, legacyFileRoute)
-//   GET  /api/my/own-files       your own whole files, {"files": {"<path>": "<text>"}}, which your sessions write into the checkout
-//   POST /api/my/own-files       {"path": "app/.env.production", "text": "..."}   adds or replaces one; empty text removes it
-//   GET  /api/my/repos[/<project>[/env/<key>|/instructions]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
+//   GET  /api/my/repos[/<project>[/env/<key>|/instructions|/files]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
 //   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
+//   POST /api/my/repos/<project>/files   {"path": "app/.env.production", "text": "..."}   one of your own whole files, which your
+//                                        sessions on that repo write into the checkout; empty text removes it
+//   GET  /api/my/own-files, POST /api/my/own-files   the same, from before they were per repo: the default project's
 //   GET  /auth/connect           Connect GitHub: sign in once more and keep the token, so your sessions push as you
 //   POST /api/my/github/identity {"name": "...", "email": "..."}   what your sessions' commits say
 //   POST /api/my/github/disconnect
@@ -139,7 +141,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { viewersOf } from '../shared/databases/index.mjs';
 import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
@@ -227,7 +228,6 @@ const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
 const MY_FILE_RE = /^\/api\/my\/files\/([a-z-]+)(\/reset)?$/;
-const MY_OWN_FILES_PATH = '/api/my/own-files';
 const MY_GITHUB_RE = /^\/api\/my\/github\/(identity|disconnect)$/;
 const MY_SESSION_ACTION_RE = /^\/api\/my\/sessions\/([0-9a-f]{8})\/(resume|remove)$/;
 const MY_TUNNEL_RE = /^\/api\/my\/tunnel-token(\/remove)?$/;
@@ -548,7 +548,7 @@ export function createHandler({
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null,
 }) {
-  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack }) : null;
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -584,6 +584,15 @@ export function createHandler({
   // Sign-in is required: by the hosting proxy's header, or by GitHub sign-in once it is turned on.
   function signInOn() {
     return Boolean(trusted) || Boolean(auth?.enabled());
+  }
+
+  // A console one person uses: as WOODSHED_ONE_PERSON says when it is set (hosted mode keeps no People list, so the host
+  // says it), else one nobody signs in to (loopback only: requireClosedWhenReachable) or whose People list has one
+  // member. Every shared session there is that person's, so the rail shows one list with no Mine and Everyone.
+  function onePersonConsole() {
+    if (typeof config.onePerson === 'boolean') return config.onePerson;
+    if (!signInOn()) return true;
+    return Boolean(members) && members.view().members.length === 1;
   }
 
   // Who is signed in to the console: the hosting proxy's identity, or the browser's session cookie.
@@ -960,6 +969,8 @@ export function createHandler({
       assignables: members?.assignables() ?? [],
       assignable: Boolean(login && members?.isAssignable(login)),
       shared: seesShared(login),
+      // One list of every session, with no Mine and Everyone (onePersonConsole).
+      onePerson: onePersonConsole(),
       names: namesFor([login, ...(members?.assignables() ?? []), ...sessions.flatMap((s) => [s.startedBy, s.plan, s.assignee])]),
       viewPrefs: viewPrefs?.view(login, new Set(sessions.map((s) => s.id))) ?? null,
     };
@@ -1139,12 +1150,24 @@ export function createHandler({
     return teamOpenAiKey;
   }
 
+  // The blockers each person's projects had at their last look at /api/my, for the answers that cannot wait for a read.
+  const blockersSeen = new Map();
+  async function readProjectBlockers(login) {
+    if (!databaseGate) return {};
+    const { projects } = await projectsView(login);
+    const found = await databaseGate.blockers(projects.map((p) => projectNamed(config, p.name) ?? p));
+    blockersSeen.set(login, found);
+    return found;
+  }
+
   function myView(login) {
     const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: false, available: false };
     return {
       login, ...view,
       // The agents New session offers: each only with something to run it on.
-      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last() ?? null, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
+      agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
+      // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
+      projectBlockers: blockersSeen.get(login) ?? {}, restore: dbRestore?.view(login) ?? null, tunnel: tunnel?.view(login) ?? null, running: activePrivateCount(fleet.sessions(), login),
       limit: config.maxPrivatePerPerson, limitDefaults: { idleHours: config.limits.idleMs / 3_600_000, lifetimeHours: config.limits.lifetimeMs / 3_600_000 }, names: namesFor([login]),
       // A console that started with no repo: the setup card sends an admin to add one on Console settings.
       repoNeeded: !hasRepo(config),
@@ -1152,6 +1175,9 @@ export function createHandler({
       // one person's own machine with a gh token it is optional, and does not hold New session back.
       githubSetupNeeded: Boolean(githubSetup?.available()) && !githubSetup.optional?.(),
       githubSetupOptional: Boolean(githubSetup?.optional?.()),
+      // The console has its App and could make the reviewer App, but has not: the setup card offers it next, to an admin,
+      // since /setup/github is theirs alone.
+      reviewerSetupNeeded: Boolean(config.githubApp && secrets && reviewerApp && !reviewerApp.configured() && isAdmin({ login })),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
@@ -1184,17 +1210,6 @@ export function createHandler({
     } catch (err) {
       if (err.shown) return reply(res, 404, { error: err.message });
       console.error('console: file not readable', { login, key, message: String(err?.message ?? err).split('\n')[0] });
-      return reply(res, 502, { error: 'The secret store did not answer: try again in a moment' });
-    }
-  }
-
-  async function ownFilesReply(res, login) {
-    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
-    if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
-    try {
-      return reply(res, 200, { files: await userSettings.ownWholeFiles(login) });
-    } catch (err) {
-      console.error('console: own files not readable', { login, message: String(err?.message ?? err).split('\n')[0] });
       return reply(res, 502, { error: 'The secret store did not answer: try again in a moment' });
     }
   }
@@ -1244,7 +1259,7 @@ export function createHandler({
     let body;
     const fileMatch = MY_FILE_RE.exec(pathname);
     try {
-      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : pathname === MY_OWN_FILES_PATH ? ownFilesBodyLimit(userSettings?.maxOwnFilesBytes?.()) : undefined);
+      body = await readJson(req, fileMatch ? MAX_FILE_BODY_BYTES : undefined);
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
@@ -1294,10 +1309,6 @@ export function createHandler({
         if (reset) await userSettings.resetFile(login, key);
         else await userSettings.saveFile(login, key, body.text);
         return reply(res, 200, await userSettings.file(login, key));
-      }
-      if (pathname === MY_OWN_FILES_PATH) {
-        if (!userSettings) return reply(res, 404, { error: 'this console has no secret store, so there are no files to keep' });
-        return reply(res, 200, { files: await userSettings.saveOwnFile(login, body.path, body.text), view: myView(login) });
       }
       if (pathname === '/api/my/sessions') {
         const { prompt, name, workOn, agent, model, effort, permissionMode, attachments: attachmentIds } = body;
@@ -1583,10 +1594,12 @@ export function createHandler({
   async function consoleSettingsReply(res) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
     const colors = new Map(projectsWithColors().map((p) => [p.name, p.color]));
+    // Each repo's readiness, so an admin sees which one cannot start sessions and how to fix it.
+    const blockers = databaseGate ? await databaseGate.blockers(allProjects(config)) : {};
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
-      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '' })) ?? null,
+      projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '', blocker: blockers[p.name] ?? null })) ?? null,
       // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
       repoNames: addedProjects ? addedProjects.names !== false : null,
       palette: projectColorsShared.PALETTE,
@@ -1737,7 +1750,7 @@ export function createHandler({
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
-    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname) || pathname === MY_OWN_FILES_PATH
+    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
       || MY_TUNNEL_RE.test(pathname) || MY_RESTORE_RE.test(pathname)) {
       return myWrite(req, res, pathname, login);
@@ -1897,7 +1910,7 @@ export function createHandler({
       const looking = userSettings?.refresh?.(user.login)?.catch((err) => {
         console.warn('userSettings: stored sign-ins not followed', { message: String(err?.message ?? err).split('\n')[0] });
       });
-      await Promise.all([databaseGate?.refusal(), first ? looking : null, readTeamOpenAiKey()]);
+      await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey()]);
       return reply(res, 200, myView(user.login));
     }
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
@@ -1936,7 +1949,6 @@ export function createHandler({
     }
     const fileRead = MY_FILE_RE.exec(pathname);
     if (fileRead && !fileRead[2]) return fileReply(res, user.login, fileRead[1]);
-    if (pathname === MY_OWN_FILES_PATH) return ownFilesReply(res, user.login);
     const reviewMatch = REVIEW_RE.exec(pathname);
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
     if (pathname === '/api/webhook-events') {
@@ -2102,10 +2114,10 @@ export function createConsoleUpgrade({ config, fleet, auth = null, members = nul
  *   (databases.mjs), `webhooks` hands GitHub and Slack events to webhookDispatch.mjs, and `webhookUrl` is where GitHub
  *   should post them
  *   `config` is loadConfig()'s, read again when left out
- *   `repos` is an embedding program's repos hook, passed on to createInstallation (installation.mjs): only the dev
- *   console's stand-in (scripts/devHostConsole.mjs) passes one here
+ *   `repos` and `projectReadiness` are an embedding program's hooks, passed on to createInstallation (installation.mjs):
+ *   only the dev console's stand-in (scripts/devHostConsole.mjs) passes them here
  */
-export async function startConsole({ provider, config: given = null, repos = null }) {
+export async function startConsole({ provider, config: given = null, repos = null, projectReadiness = null }) {
   const first = given ?? loadConfig();
   const store = openStore(first.stateDir);
   // An App saved on the setup page is the console's own from the next start.
@@ -2115,7 +2127,7 @@ export async function startConsole({ provider, config: given = null, repos = nul
   const trusted = loaded.trustedIdentitySecret ? createTrustedIdentity({ secret: loaded.trustedIdentitySecret }) : null;
   console.log('console: hosted mode', { githubBroker: Boolean(loaded.githubBroker), trustedIdentity: Boolean(trusted) });
   await checkGh();
-  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos });
+  const installation = await createInstallation({ config: loaded, store, provider, trusted, githubSetup, repos, projectReadiness });
   const { config, handle } = installation;
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {

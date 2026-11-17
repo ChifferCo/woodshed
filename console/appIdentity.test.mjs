@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createAppIdentity } from './appIdentity.mjs';
+import { createAppIdentity, hostAppIdentity } from './appIdentity.mjs';
 
 test('the App\'s login is <slug>[bot], read from GitHub once and kept', async () => {
   let reads = 0;
@@ -23,4 +23,16 @@ test('a failed read answers null and is tried again; with no App there is nothin
   assert.equal(await identity.login(), 'acme-woodshed[bot]');
   const none = createAppIdentity({ appApi: null });
   assert.deepEqual([none.available, await none.login(), none.known()], [false, null, null]);
+});
+
+test('an App the host lends is the host\'s to name, asked each time, so a rename shows at once', async () => {
+  let login = 'woodshed-cloud[bot]';
+  const identity = hostAppIdentity(() => login);
+  assert.equal(identity.available, true);
+  assert.equal(await identity.login(), 'woodshed-cloud[bot]');
+  assert.deepEqual(identity.known(), { slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' });
+  login = 'acme-cloud[bot]';
+  assert.deepEqual(identity.known(), { slug: 'acme-cloud', login: 'acme-cloud[bot]' });
+  login = null;
+  assert.deepEqual([await identity.login(), identity.known()], [null, null], 'not known yet');
 });

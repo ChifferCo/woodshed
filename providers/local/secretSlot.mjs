@@ -116,6 +116,8 @@ export function createSecretSlot({ stateDir, specs, aws = awsCli }) {
     configure, describe,
     configured: () => backend !== null,
     get maxValueBytes() { return backend?.maxValueBytes; },
+    // write() makes a missing secret whichever store is behind it (above), so the page may offer Set on it.
+    get createsOnWrite() { return backend !== null; },
     list: async () => (backend ? backend.list() : []),
     read: async (name) => (backend ? backend.read(name) : null),
     write, save,

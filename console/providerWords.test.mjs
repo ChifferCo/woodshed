@@ -78,6 +78,17 @@ test('on the local provider the checklist names a container, and has no wait for
   assert.equal(W.providerWords.homesPlace, 'the homes folder');
 });
 
+test('once the agent is open the checklist waits on Connecting to the session, counting from then, until it is running', () => {
+  const W = pageFor({ name: 'local', words: LOCAL });
+  const steps = (s, seconds) => plain(W.startProgress(s, Date.parse(at(seconds))).steps.slice(-2).map((step) => [step.label, step.state, step.seconds]));
+  assert.deepEqual(steps(starting({ machine: at(1), env: at(14) }), 15), [['Opening claude', 'now', 1], ['Connecting to the session', 'next', null]]);
+  const open = starting({ machine: at(1), env: at(14), claude: at(15) });
+  assert.deepEqual(steps(open, 158), [['Opening claude', 'done', 1], ['Connecting to the session', 'now', 143]]);
+  const { current } = W.startProgress(open, Date.parse(at(158)));
+  assert.deepEqual([current.label, current.short], ['Connecting to the session', 'connecting'], 'the rail names it too');
+  assert.equal(W.startProgress({ ...open, options: { agent: 'codex' } }).steps.at(-1).label, 'Connecting to the session', 'whichever agent');
+});
+
 test('nothing in the local provider\'s words names AWS, Fargate, S3, RDS or a Lambda', () => {
   assert.doesNotMatch(JSON.stringify(providerWords({ name: 'local', words: LOCAL })), /AWS|Fargate|\bS3\b|\bRDS\b|Lambda|[Tt]erraform/);
 });

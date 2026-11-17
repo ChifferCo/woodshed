@@ -115,7 +115,7 @@ test('a Codex session is named codex where a Claude session says claude', () => 
   assert.equal(W.displayStatus(running({ ...codex, state: 'idle' })).word, 'codex exited');
   assert.equal(W.displayStatus(running({ state: 'idle' })).word, 'claude exited');
   assert.equal(W.setupAppToast('typed', codex), 'Asked codex to set up the app');
-  const opening = (s) => W.startProgress({ status: 'starting', startedAt: '2026-11-12T10:00:00Z', startSteps: {}, ...s }).steps.at(-1).label;
+  const opening = (s) => W.startProgress({ status: 'starting', startedAt: '2026-11-12T10:00:00Z', startSteps: {}, ...s }).steps.find((step) => step.key === 'claude').label;
   assert.equal(opening(codex), 'Opening codex');
   assert.equal(opening({}), 'Opening claude');
 });

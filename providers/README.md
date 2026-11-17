@@ -39,10 +39,18 @@ it: no Secrets page, no saved Claude homes, no databases of its own, or GitHub's
 
 A `secrets` store may declare `maxValueBytes`: the most bytes it holds in one secret's value. The AWS store declares
 65,536 (Secrets Manager's own limit) and the local store 1,048,576. A store that declares none is held to 65,536, so
-the default stays safe. Today only Your own files on My settings reads it: all of a person's files are one secret, so
-a save over the limit is refused naming it (`your files together are over the 1024 KB this console's secret store
-holds`), and the console's request body limit for that save follows it. The other secrets (an env file, a token) stay
+the default stays safe. Today only Your files, on My settings' Repo settings, reads it: all of a person's files for one
+repo are one secret, so a save over the limit is refused naming it (`your files for <repo> together are over the 1024 KB
+this console's secret store holds`), and the console's request body limit for that save follows it. The other secrets (an env file, a token) stay
 at 64 KB.
+
+### A secret store that makes a secret when it is first written
+
+A `secrets` store may declare `createsOnWrite: true`: `write` makes a secret that does not exist yet. The local store
+declares it. The Secrets page then lists each secret that is not there yet with `creatable: true` and offers Set, so
+the first value can be given on the page. A store that declares none (AWS: Terraform makes every secret first) lists
+a missing secret as "Missing in AWS" with no Set, because that is a misconfiguration. An embedding program's store
+whose `write` creates a missing secret should declare it too.
 
 ### A wait's progress
 

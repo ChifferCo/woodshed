@@ -148,9 +148,10 @@ repos your `gh` login can push to. The project file comes after that, for the re
    of them: the project file", above, says (the `write-project-file` skill), and have it committed. Sessions read the
    file at start, from their branch, so nothing is rebuilt for it.
 
-   If the file has `databases`, this install hosts none yet, and the console refuses sessions with `the project file's
-   databases need postgres, which this installation does not host (it hosts none): run WOODSHED_REPO=owner/name bash
-   install.sh again on this machine`. Do that, with `WOODSHED_NO_START=1` and the same `WOODSHED_TAILSCALE`, then stop
+   If the file has `databases`, this install hosts none yet, and the console refuses sessions on that repo with
+   `owner/name's project file asks for a Postgres database, and this console runs no database. Run
+   WOODSHED_REPO=owner/name bash install.sh again on this machine, …` (New session shows it as the repo's Needs setup
+   card). Do that, with `WOODSHED_NO_START=1` and the same `WOODSHED_TAILSCALE`, then stop
    the console and start it again as in step 3: the run builds that repository's own session image (several minutes)
    and starts its databases, and keeps the rest of the install.
    Do the same when the file has env files with a `secret`, so they get their slot on **Secrets & webhooks**. Read
@@ -185,11 +186,13 @@ What to know on this machine:
 
 - Nothing is open to the network: the console listens on localhost only, with no sign-in, so do not expose port 7690
   other than through Tailscale's `serve`, below.
-- Sessions use this machine's Docker, so a repo's compose services, Supabase local or Testcontainers run: the
-  containers Claude starts run on this machine beside the session, and their published ports are forwarded into it.
-  That is root on this machine for Claude in every session: it can do anything here that you can. That is part of
-  what "only you" means. `WOODSHED_SESSION_DOCKER=0` (in `~/.woodshed/stack.env`, or with the installer) turns it off.
-  Those containers outlive the session that started them: `docker ps` lists them, and `docker rm -f` removes them.
+- Sessions have Docker, so a repo's compose services, Supabase local, Testcontainers or an image build run. On Linux
+  with Sysbox installed (providers/local/README.md, "Their own Docker, with Sysbox"), each session runs its own,
+  which reaches nothing of this machine's and goes with the session. Without Sysbox (always on a Mac) they use this
+  machine's: the containers Claude starts run here beside the session, and their published ports are forwarded into
+  it. That is root on this machine for Claude in every session: it can do anything here that you can. That is part of
+  what "only you" means. `WOODSHED_SESSION_DOCKER=0` (in `~/.woodshed/stack.env`, or with the installer) turns Docker
+  off. Those containers outlive the session that started them: `docker ps` lists them, and `docker rm -f` removes them.
   A browser-side address in the app's env (`SUPABASE_URL=http://127.0.0.1:54321` in an Expo web app) works in the
   session's own Playwright browser, but not from your phone through Open app, which reaches only the app's own port.
 - Session apps (**Open app**) need HTTPS and a name or port of their own, which the installer sets only with
@@ -216,9 +219,9 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
   `https://<name>` opens the console on your phone.
 - **Others too**: `WOODSHED_TAILSCALE=shared`, then step 6 is not optional and comes first, before step 4, at
   `https://<name>/setup/github`; then set `WOODSHED_REQUIRE_SIGN_IN=1` in `~/.woodshed/stack.env`, restart the console
-  and sign in first. Open app needs a domain of your own for this. Sessions get no Docker here unless you add
-  `WOODSHED_SESSION_DOCKER=1` to `stack.env`, and with it everyone who can start one has this machine, as on a
-  server (below). **Done when** the console's log has
+  and sign in first. Open app needs a domain of your own for this. Sessions get their own Docker here once the
+  machine has Sysbox, as on a server (below), and this machine's only if you add `WOODSHED_SESSION_DOCKER=1` to
+  `stack.env`, with which everyone who can start one has this machine. **Done when** the console's log has
   `console: GitHub App from the setup page`, and opening it from another device asks to sign in with GitHub.
 
 ## On a server
@@ -226,11 +229,16 @@ Tailscale's `serve` puts the console at `https://<this machine>.<tailnet>.ts.net
 There is no installer for a server. `providers/local/README.md`, "Setting it up" and "On a server your team reaches",
 has every step; this is the order, with the checks. Steps marked **Server** run on the machine.
 
-Sessions get the server's Docker (for a repo's compose services, Supabase local or Testcontainers) when `stack.env`
-says `WOODSHED_SESSION_DOCKER=1`, which step 5 sets: a console others sign in to never has it by default, nor gains it
-from an Update. With it, anyone who can start a session, from a GitHub label or comment too, gets root on the server:
-the secrets key, so every stored secret and Claude token, and every other session's containers and databases. Only
-people you would give root on the box should be able to start sessions there; leave it out otherwise.
+Sessions get a Docker of their own (for a repo's compose services, Supabase local, Testcontainers or an image build)
+once the server has Sysbox: install it as providers/local/README.md, "Their own Docker, with Sysbox", says, and every
+session has `docker`, reaching nothing of the server's and going with the session. A server everyone signs in to is one
+the team trusts each other with: a session's own Docker can reach the network the sessions share, and with it the
+other sessions' calls to the console and their tokens. A team whose members must be kept apart runs each session on a
+machine or task of its own instead. `WOODSHED_SESSION_DOCKER=0` in `stack.env` turns Docker off. Without Sysbox,
+sessions get the server's own Docker only when `stack.env` says `WOODSHED_SESSION_DOCKER=1`, never by default nor from
+an Update. With it, anyone who can start a session, from a GitHub label or comment too, gets root on the server: the
+secrets key, so every stored secret and Claude token. Only people you would give root on the box should be able to
+start sessions there; leave it out otherwise.
 
 1. **You.** Make the machine: Ubuntu 24.04, about 4 GB of memory a session (16 GB holds about four). On Hetzner Cloud,
    a CPX41 or CAX31.
@@ -245,8 +253,8 @@ people you would give root on the box should be able to start sessions there; le
    `stack.env` and `session-env.json` (outside the checkout, mode 600), start the databases, make the secrets key and
    store the root passwords. Keep the key off the Volume: `WOODSHED_LOCAL_SECRETS_KEY_FILE=/etc/woodshed/secrets.key`.
    For a server also set `WOODSHED_PUBLIC_URL` and `WOODSHED_APP_DOMAIN` to the name from step 3, and
-   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate. Add `WOODSHED_SESSION_DOCKER=1` for sessions to use
-   the server's Docker, knowing what it gives (above).
+   `WOODSHED_TLS_ASK_PORT=7692` without a wildcard certificate. Install Sysbox for sessions to have their own Docker;
+   add `WOODSHED_SESSION_DOCKER=1` only for them to use the server's without it, knowing what it gives (above).
 
    **Done when** `docker compose … ps` shows the databases healthy and `node <woodshed>/providers/local/bin/secret.mjs
    list` lists `db-root/postgres` (and `db-root/mongo`).
