@@ -1009,15 +1009,8 @@
         group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', href: W.appUrl(s, data.appDomain),
       },
       data.appDomain && none && s.kind !== 'ask' && {
-        group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
-        run: async () => {
-          try {
-            W.notify(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
-          } catch (err) {
-            W.notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
-          }
-          refresh();
-        },
+        group: 'App', label: 'Set up app', note: `Woodshed does not know how to start this repo's app yet: ${W.agentOf(s)} works it out, saves it and starts it`,
+        run: () => W.setupAppDialog(s, refresh),
       },
       ...choices,
       data.appDomain && !up && !busy && !none && !choices.length && {

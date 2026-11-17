@@ -428,11 +428,33 @@ leaveOutConsoleLinks() {
   log "Session link left out of pull requests (the project file's consoleLinks)"
 }
 
+# What claude is told of the app, added to writeRules' `rules`: the address the person opens it at, since they are not on
+# this machine and a localhost one reaches nothing (appAddress.md, only where the console serves session apps), and for
+# a project file with no app, or no project file, what Set up app would do, for claude to offer it (noApp.md). Its
+# {{PRIVATE_ONLY}} and {{SHARED_ONLY}} lines go with the rest of the rules'.
+appRules() {
+  local from address missing
+  if [ -n "${SESSION_APP_DOMAIN:-}" ] && [ -n "${SESSION_ID:-}" ]; then
+    address=$(cat "$SESSION_DIR/appAddress.md")
+    rules+=$'\n'"${address//"{{APP_URL}}"/"https://$SESSION_ID.$SESSION_APP_DOMAIN/"}"
+  fi
+  [ -z "$(project get apps)" ] || return 0
+  from=$(project get from) || die "the project file could not be read"
+  if [ "$from" = none ]; then
+    missing='This repo has no `.woodshed/project.yaml`'
+  else
+    missing='This repo'"'"'s `.woodshed/project.yaml` has no `app` section'
+  fi
+  address=$(cat "$SESSION_DIR/noApp.md")
+  rules+=$'\n'"${address//"{{WHAT_IS_MISSING}}"/"$missing"}"
+}
+
 writeRules() {
   local rules setup notes tag apps added
   leaveOutConsoleLinks
   # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
+  appRules
   # Plain substitution, not sed: a branch name is chosen by whoever opened the PR.
   rules=${rules//"{{BRANCH}}"/"$BRANCH"}
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}

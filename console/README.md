@@ -1065,10 +1065,13 @@ progress. Half an app says which half: `API down` when the page loads but every
 call under it would fail, `frontend down` when only the backend answers (Start
 app then starts the frontend). The GitHub comment that announces a session gives
 the app's address. A project file with no `app` has nothing to start, so the button is **Set up app**
-instead: it types a request into the session's claude (`SETUP_APP_PROMPT` in `console/fleet.mjs`; held until its turn
-ends, as a message would be) to work out how the app runs, write the `app` section and commit it. statusd reads a
-project with no app again on each Start app, so the button turns into **Start app** once the file has one, and that
-start runs it.
+instead. It first says in a dialog what it does (Woodshed does not know how to start the app yet; the agent works it
+out, saves it and starts it), since its name alone did not, then types a request into the session's claude
+(`SETUP_APP_PROMPT` in `console/fleet.mjs`; held until its turn ends, as a message would be) to work out how the app
+runs, write the `app` section, commit it and leave the app running. statusd reads a project with no app again every
+10 seconds and on each Start app, so **Open app** shows once the file has one and the frontend answers. Claude's rules
+say the same (`session/noApp.md`), so a private session offers it when the person wants to see the app, and give it
+the app's address (`session/appAddress.md`) in place of a localhost one the person cannot reach.
 
 A project file with several apps (`apps`, docs/reference.md) runs one at a time. **Start app ▾** opens a menu of their
 labels, and picking one sends its name (`POST /api/sessions/<id>/app/start` with `{"app": "<name>"}`, passed on to
