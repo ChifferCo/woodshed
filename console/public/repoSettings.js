@@ -257,6 +257,21 @@
         h('p', { class: 'sub' }, 'Every field is in Woodshed\'s ', h('code', null, 'docs/reference.md'), ', "The project file".')));
   }
 
+  // Where the repo's automatic work (label sessions, review, QA) runs: pullRequests.runsOn, or every console.
+  function runsOnCard() {
+    const on = view.projectFile.runsOn;
+    const code = (text) => h('code', null, text);
+    return h('section', { class: 'settings-card', id: 'runs-on', 'aria-labelledby': 'card-runs-on' },
+      h('h2', { id: 'card-runs-on', class: 'label' }, 'Where automatic work runs'),
+      !view.projectFile.read
+        ? h('p', { class: 'cap-note', role: 'status' }, 'The project file could not be read, so this is not known.')
+        : [
+          h('p', null, on ? h('code', null, on) : 'Every connected console'),
+          h('p', { class: 'sub' }, on
+            ? ['Only the console whose GitHub App acts as this login starts sessions from the label, runs the review and runs QA. Set by ', code('pullRequests.runsOn'), ' in the project file.']
+            : ['No ', code('pullRequests.runsOn'), ' in the project file, so every console connected to this repo starts sessions from the label and runs the review and QA.'])]);
+  }
+
   function instructionsCard() {
     const record = view.instructions.installation;
     return h('section', { class: 'settings-card', id: 'instructions', 'aria-labelledby': 'card-instructions' },
@@ -443,6 +458,7 @@
       !view.available && h('p', { class: 'cap-note', role: 'status' }, 'This console has no secret store, so nothing can be saved here. Choose one on Secrets & webhooks.'),
       envCard(),
       instructionsCard(),
+      runsOnCard(),
       githubCard(),
       slackCard()));
     for (const key of editors.keys()) updateCounts(key);

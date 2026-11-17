@@ -186,7 +186,9 @@ test('Repo settings reads each env file with its key and defaults, none with no 
   const reader = createProjectReader({ github: { projectFile: async () => PROJECT } });
   const layer = await reader.repoLayer();
   assert.deepEqual(layer.envFiles.map((f) => [f.key, f.path, f.defaults]), [['app-env', 'app/.env', []], ['app-env-local', 'app/.env.local', []]]);
-  assert.deepEqual([layer.env, layer.rules, layer.setup], [{}, null, null]);
-  assert.deepEqual(await createProjectReader({ github: { projectFile: async () => null } }).repoLayer(), { envFiles: [], env: {}, rules: null, setup: null });
+  assert.deepEqual([layer.env, layer.rules, layer.setup, layer.runsOn], [{}, null, null, null]);
+  const named = await createProjectReader({ github: { projectFile: async () => `${PROJECT.replace("pullRequests: null", "pullRequests:\n  runsOn: acme-bot[bot]")}` } }).repoLayer();
+  assert.equal(named.runsOn, 'acme-bot[bot]');
+  assert.deepEqual(await createProjectReader({ github: { projectFile: async () => null } }).repoLayer(), { envFiles: [], env: {}, rules: null, setup: null, runsOn: null });
   await assert.rejects(createProjectReader({ github: { projectFile: async () => { throw new Error('HTTP 502'); } } }).repoLayer(), /could not be read: HTTP 502/);
 });

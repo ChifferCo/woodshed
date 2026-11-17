@@ -274,7 +274,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     const files = layer ? named : saved.map((key) => ({ key, path: null, secret: null, defaults: [], overrides: [] }));
     return {
       project: project.name, repo: project.repo, default: Boolean(project.default),
-      projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null },
+      projectFile: { read: Boolean(layer), error, rules: layer?.rules ?? null, setup: layer?.setup ?? null, runsOn: layer?.runsOn ?? null },
       envFiles: byKey(files).map((group) => envFileView({ project, files: group, layer, login })),
       // Saved for a key the project file no longer names: kept until someone deletes it.
       unnamed: layer ? saved.map((key) => ({ key, installation: instEnv[key] ?? null, ...(login && { personal: ownEnv[key] ?? null }) })) : [],

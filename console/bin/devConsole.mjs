@@ -333,7 +333,7 @@ function devRepoSettings(dir) {
         { name: 'example-tools', repo: 'example-org/example-tools' },
       ]),
     },
-    projectFiles: { 'example-org/example-repo': file('api/.env'), 'example-org/example-tools': file('tools/.env') },
+    projectFiles: { 'example-org/example-repo': file('api/.env'), 'example-org/example-tools': `${file('tools/.env')}pullRequests:\n  runsOn: example-bot[bot]\n` },
   };
 }
 

@@ -50,7 +50,7 @@ function setup({ state = {}, secrets = memorySecrets(), files = FILES } = {}) {
     async repoLayer() {
       if (files[name] instanceof Error) throw files[name];
       const project = files[name];
-      return { envFiles: project?.envFiles ?? [], env: project?.env ?? {}, rules: project?.rules ?? null, setup: project?.setup ?? null };
+      return { envFiles: project?.envFiles ?? [], env: project?.env ?? {}, rules: project?.rules ?? null, setup: project?.setup ?? null, runsOn: project?.pullRequests?.runsOn ?? null };
     },
   });
   let clock = Date.parse('2026-11-12T10:00:00Z');
