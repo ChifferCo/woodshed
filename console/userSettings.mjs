@@ -6,8 +6,6 @@
 //   users/<login>/claude-token   from `claude setup-token`: the person's own Claude plan
 //   users/<login>/codex-auth     the person's own Codex sign-in: an OpenAI API key, or the ~/.codex/auth.json of `codex login`.
 //                                Handed to their private Codex sessions, which write a refreshed login back (sessionApi.mjs)
-//   users/<login>/<env secret>   their own lines for each Terraform env file (a secret's name, as api-env), legacy: Repo settings
-//                                hold them now, and saving there deletes these (repoSettings.mjs); and
 //   users/<login>/tmux-conf      ~/.tmux.conf, which their sessions write after the console's shared file, so a change to
 //                                that still reaches them. Readable by them, since their sessions hold the same text anyway
 //   users/<login>/own-files    their own whole files (an app/.env.production), as JSON {"<path>": "<text>"}, which their
@@ -43,23 +41,9 @@ const TMUX_DEFAULT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..
 
 const TMUX_FILE = { label: '~/.tmux.conf' };
 
-/**
- * The files a person may add their own lines to: the repo's env files, each the console's shared secret for it (set on
- * the Secrets & webhooks page) with the file's path for its label, and tmux's, which is the session image's own
- * tmux.conf (the console image carries it too). An embedding program whose store keeps an env file's secret under
- * another name than the project file's gives that as `name`, and `repo` for a file of one repo only, so two repos'
- * `api-env` are two files here, each labelled with its repo (console/README.md, "Embedding the console").
- * @param {{secret: string, path: string, name?: string, repo?: string}[]} envFiles  config.mjs's
- * @returns {Record<string, {label: string, secret?: string, name?: string, repo?: string}>}
- */
-export function filesOf(envFiles) {
-  return {
-    ...Object.fromEntries(envFiles.map(({ secret, path: file, name, repo }) => [secret, {
-      label: repo ? `${file} (${repo})` : file, secret, name: name ?? secret, ...(repo && { repo }),
-    }])),
-    'tmux-conf': TMUX_FILE,
-  };
-}
+// The files a person may add their own lines to: tmux's, which is the session image's own tmux.conf (the console image
+// carries it too). Their own lines for the repo's env files are Repo settings (repoSettings.mjs).
+const FILES = { 'tmux-conf': TMUX_FILE };
 
 /**
  * @param {unknown} text
@@ -153,14 +137,11 @@ export function checkIdentity({ name, email }) {
 
 /**
  * @param {{store: {state: object, save: () => void}, secrets: {read: Function, save: Function, remove: Function}|null,
- *          envFiles?: {secret: string, path: string, name?: string, repo?: string}[],
- *          appendedFor?: (secret: string, repo?: string) => Promise<string[]>,
- *          now?: () => number}} deps  `secrets` is null where the console has no Secrets Manager: nothing can be saved.
- *   `appendedFor` names the variables the entrypoint always writes after an env file (writeEnvFiles in session/entrypoint.sh),
- *   shown on the page so nobody spends time setting them: they would lose
+ *          envFilePaths?: () => Promise<string[]>, now?: () => number}} deps  `secrets` is null where the console has no
+ *   Secrets Manager: nothing can be saved. `envFilePaths` the default project's env files' paths, which a person's own
+ *   whole file may not be: its values are Repo settings
  */
-export function createUserSettings({ store, secrets, envFiles = [], appendedFor = async () => [], now = Date.now }) {
-  const FILES = filesOf(envFiles);
+export function createUserSettings({ store, secrets, envFilePaths = async () => [], now = Date.now }) {
   function people() {
     store.state.people ??= {};
     return store.state.people;
@@ -249,11 +230,10 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     if (!FILES[key]) throw Object.assign(new Error(`no file called ${key}`), { shown: true });
   }
 
-  /** @returns {Promise<string>}  the console's shared file: what every session starts from */
-  async function sharedFile(key) {
+  /** @returns {string}  the image's file: what every session starts from */
+  function sharedFile(key) {
     requireFile(key);
-    if (!FILES[key].secret) return fs.readFileSync(TMUX_DEFAULT, 'utf8');
-    return (secrets ? await secrets.read(FILES[key].secret) : null) ?? '';
+    return fs.readFileSync(TMUX_DEFAULT, 'utf8');
   }
 
   /** @returns {Promise<string|null>}  the person's own lines, or null while they have none */
@@ -264,15 +244,12 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   }
 
   /**
-   * @returns {Promise<{key: string, label: string, text: string, custom: boolean, sharedText: string, editable: boolean,
-   *                    appended: string[]}>}  `editable` when the shared file is one of the console's secrets
+   * @returns {Promise<{key: string, label: string, text: string, custom: boolean, sharedText: string, editable: false,
+   *                    appended: string[]}>}
    */
   async function file(login, key) {
-    const [own, sharedText] = await Promise.all([ownFile(login, key), sharedFile(key)]);
-    return {
-      key, label: FILES[key].label, text: own ?? '', custom: own !== null, sharedText, editable: Boolean(FILES[key].secret),
-      appended: FILES[key].secret ? await appendedFor(FILES[key].name, FILES[key].repo) : [],
-    };
+    const own = await ownFile(login, key);
+    return { key, label: FILES[key].label, text: own ?? '', custom: own !== null, sharedText: sharedFile(key), editable: false, appended: [] };
   }
 
   async function saveFile(login, key, text) {
@@ -320,8 +297,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     const problem = ownFilePathProblem(file);
     if (problem) throw Object.assign(new Error(problem), { shown: true });
     const key = ownFilePath(file);
-    const envFile = envFiles.find((f) => f.path === key);
-    if (envFile) throw Object.assign(new Error(`${key} is one of the repo's env files: set your values for it under Repo settings`), { shown: true });
+    if ((await envFilePaths().catch(() => [])).includes(key)) throw Object.assign(new Error(`${key} is one of the repo's env files: set your values for it under Repo settings`), { shown: true });
     if (text !== undefined && typeof text !== 'string') throw Object.assign(new Error('the file must be text'), { shown: true });
     const value = String(text ?? '').replace(/\r\n/g, '\n');
     const files = await ownWholeFiles(login);
@@ -384,23 +360,14 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   }
 
   /**
-   * Each file's own lines for a private session on `repo`, by the name its project file gives the file, which is what
-   * the session looks them up by (writeEnvFiles in shared/project.mjs); null is none. A file of another repo is left
-   * out, and one of this repo wins over one for every repo of the same name.
+   * Each file's own lines for a private session, by its key (`tmux-conf`); null is none.
    * @param {string} login
-   * @param {{repo?: string}} [opts]  the session's repo, owner/name
    * @returns {Promise<Record<string, string|null>>}
    */
-  async function ownFiles(login, { repo } = {}) {
-    const sameRepo = (key) => FILES[key].repo?.toLowerCase() === String(repo ?? '').toLowerCase();
-    const keys = Object.keys(FILES).filter((key) => !FILES[key].repo || sameRepo(key));
+  async function ownFiles(login) {
+    const keys = Object.keys(FILES);
     const values = await Promise.all(keys.map((key) => ownFile(login, key)));
-    const files = {};
-    keys.forEach((key, i) => {
-      const name = FILES[key].name ?? key;
-      if (!(name in files) || FILES[key].repo) files[name] = values[i];
-    });
-    return files;
+    return Object.fromEntries(keys.map((key, i) => [key, values[i]]));
   }
 
   async function setClaudeToken(login, value) {

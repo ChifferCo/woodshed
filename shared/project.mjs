@@ -7,15 +7,16 @@
 //                                        JSON), a missing field prints nothing
 //   node project.mjs env                 the project's `env`, as `export` lines for the entrypoint to eval
 //   node project.mjs write-env-files     each of `envFiles`: its defaults, the installation's text, the owner's own
-//                                        lines, then its overrides; from the console's repo settings when
-//                                        REPO_SETTINGS_FILE names them, else from the legacy secrets as before;
+//                                        lines, then its overrides; the installation's and the owner's from the
+//                                        console's repo settings that REPO_SETTINGS_FILE names, none without them;
 //                                        prints each file, with the variables its overrides need that are unset, then a
 //                                        line for each warning (writeEnvFiles)
 //   node project.mjs repo-settings       what REPO_SETTINGS_FILE holds, as keys and sizes, never a value
 //   node project.mjs add-instructions <file>  the rules file <file>, with the installation's and the owner's
 //                                        instructions from REPO_SETTINGS_FILE after it (instructionsText)
 //   node project.mjs file <rules|setup>  the text of the file that field names, empty without one
-//   node project.mjs secret-vars         the variables the env files' secrets arrive in, one a line
+//   node project.mjs secret-vars         the variables an env file's old Terraform secret arrived in, one a line,
+//                                        which an ask session and another project's session unset
 //   node project.mjs installs            `dependencies.installs` as the manifest session/deps.sh reads: one `install`
 //                                        line each (installsManifest)
 //   node project.mjs apps-rules          with several apps, the lines of a session's rules that name each and how to
@@ -140,7 +141,8 @@ function port(value, field) {
   return value;
 }
 
-// A secret on the Secrets & webhooks tab reaches the task as its name in capitals: `app-env` is APP_ENV.
+// The variable an env file's old Terraform secret reached the task in, its name in capitals (`app-env` is APP_ENV):
+// an ask session and another project's session still unset it, while a task definition may still pass it.
 export function secretEnvName(secret) {
   return secret.toUpperCase().replace(/-/g, '_');
 }
@@ -728,26 +730,10 @@ export function repoSettingsSummary(settings) {
   ].join(', ');
 }
 
-// One env file's installation and personal text. With repo settings, each is the console's value; one with none falls
-// back to the legacy text (the Terraform secret's variable, the /settings answer's own lines) while an installation
-// still has it, which `legacy` names for the log's warning. Without repo settings, the legacy text as before.
-function envFileLayers({ file, settings, env, own }) {
-  const legacyInstallation = file.secret ? env[secretEnvName(file.secret)] ?? '' : '';
-  const legacyPersonal = file.secret ? own[file.secret] ?? '' : '';
-  if (!settings) return { installation: legacyInstallation, personal: legacyPersonal, legacy: [] };
-  const given = settings.envFiles[file.key] ?? { installation: null, personal: null };
-  const legacy = [];
-  let installation = given.installation ?? '';
-  if (!installation && legacyInstallation.trim()) {
-    installation = legacyInstallation;
-    legacy.push('installation');
-  }
-  let personal = given.personal ?? '';
-  if (!personal && legacyPersonal.trim()) {
-    personal = legacyPersonal;
-    legacy.push('personal');
-  }
-  return { installation, personal, legacy };
+// One env file's installation and personal text: the console's repo settings for its key, none without them.
+function envFileLayers({ file, settings }) {
+  const given = settings?.envFiles[file.key];
+  return { installation: given?.installation ?? '', personal: given?.personal ?? '' };
 }
 
 // The keys a layer before the session's sets that the session's wiring replaces, for the log.
@@ -761,17 +747,15 @@ function sessionReplaced({ defaults, installation, personal, session, project, e
 /**
  * @param {{project: ReturnType<typeof parseProject>, repoDir: string, env: NodeJS.ProcessEnv,
  *   settings?: ReturnType<typeof readRepoSettings>}} args
- *   `env.OWN_FILES` is the owner's own lines, as the console's `/settings` answer has them: `{<secret>: text}`;
- *   `settings` the console's repo settings, null to write the files from the legacy secrets alone, as before them
+ *   `settings` the console's repo settings, null for none: the files then hold the repo's defaults and the overrides
  * @returns {{path: string, key: string, baseBytes: number, own: boolean, personalBytes: number, defaults?: number,
- *   unset?: string[], layers: string[], legacy: string[], replaced: string[]}[]}
+ *   unset?: string[], layers: string[], replaced: string[]}[]}
  */
 export function writeEnvFiles({ project, repoDir, env, settings = null }) {
-  const own = env.OWN_FILES ? JSON.parse(env.OWN_FILES) : {};
   return project.envFiles.map((file) => {
     // A caller may hand over env files it built itself, without parseProject's defaults.
     const defaults = file.defaults ?? [];
-    const { installation, personal, legacy } = envFileLayers({ file, settings, env, own });
+    const { installation, personal } = envFileLayers({ file, settings });
     const overrides = overridesOf(file);
     const session = overrides.map((line) => renderLine(line, env)).filter((line) => line !== null);
     const target = path.join(repoDir, file.path);
@@ -781,7 +765,7 @@ export function writeEnvFiles({ project, repoDir, env, settings = null }) {
     const layers = [defaults.length && 'repo', installation && 'installation', personal && 'personal', session.length && 'session'].filter(Boolean);
     return {
       path: file.path, key: file.key, baseBytes: Buffer.byteLength(installation), own: Boolean(personal), personalBytes: Buffer.byteLength(personal),
-      ...(defaults.length && { defaults: defaults.length }), ...(unset.length && { unset }), layers, legacy,
+      ...(defaults.length && { defaults: defaults.length }), ...(unset.length && { unset }), layers,
       replaced: sessionReplaced({ defaults, installation, personal, session, project, env }),
     };
   });
@@ -791,8 +775,8 @@ export function writeEnvFiles({ project, repoDir, env, settings = null }) {
  * What `write-env-files` prints: one line naming each file, then a line for each warning. Without repo settings, the
  * line Woodshed printed before them, byte for byte. With them, each file's layers and sizes, and the keys the session
  * replaced; files that share a key (they name one secret) are one entry, `api/.env, worker/.env from app-env (…)`, its
- * values' sizes once and each path's layers after them. Each value taken from a legacy secret, and each key the answer
- * holds that this checkout's project file has no env file for, has a line of its own. Keys and sizes only, never a value.
+ * values' sizes once and each path's layers after them. Each key the answer holds that this checkout's project file has
+ * no env file for has a line of its own. Keys and sizes only, never a value.
  * @param {{written: ReturnType<typeof writeEnvFiles>, settings: ReturnType<typeof readRepoSettings>, project: ReturnType<typeof parseProject>}} args
  * @returns {string[]}
  */
@@ -800,8 +784,7 @@ export function writtenLines({ written, settings, project }) {
   const unset = (w) => (w.unset ? `, unset: ${w.unset.join(' ')}` : '');
   const defaults = (w) => (w.defaults ? `, defaults: ${w.defaults}` : '');
   if (!settings) return [written.map((w) => `${w.path} (base: ${w.baseBytes} bytes${defaults(w)}${w.own ? ', own lines' : ''}${unset(w)})`).join(', ') || 'none'];
-  const legacy = (w, layer) => (w.legacy.includes(layer) ? ' from the legacy secret' : '');
-  const values = (w) => `installation: ${w.baseBytes} bytes${legacy(w, 'installation')}${w.own ? `, personal: ${w.personalBytes} bytes${legacy(w, 'personal')}` : ''}`;
+  const values = (w) => `installation: ${w.baseBytes} bytes${w.own ? `, personal: ${w.personalBytes} bytes` : ''}`;
   const replaced = (w) => `replaced by the session: ${w.replaced.join(' ') || 'none'}${unset(w)}`;
   const groups = envFileKeys(written).map(({ key, paths }) => ({ key, files: paths.map((p) => written.find((w) => w.path === p)) }));
   const entry = ({ key, files: [w, ...more] }) => {
@@ -810,14 +793,7 @@ export function writtenLines({ written, settings, project }) {
     return `${[w, ...more].map((f) => f.path).join(', ')} from ${key} (${values(w)}; ${each.join('; ')})`;
   };
   const summary = groups.map(entry).join(', ') || 'none';
-  const secretOf = (key) => project.envFiles.find((f) => f.key === key)?.secret;
-  const warnings = groups.flatMap(({ key, files: [w, ...more] }) => {
-    const paths = [w, ...more].map((f) => f.path).join(', ');
-    return [
-      w.legacy.includes('installation') && `WARNING: ${paths} from the legacy env file secret ${secretOf(key)}: set it on Console settings → Repos`,
-      w.legacy.includes('personal') && `WARNING: ${paths}'s own lines from the legacy env file lines (${secretOf(key)}) of My settings: save them on its Repo settings`,
-    ];
-  }).filter(Boolean);
+  const warnings = [];
   const known = new Set(project.envFiles.map((f) => f.key));
   const unused = Object.entries(settings.envFiles).filter(([key, layers]) => !known.has(key) && (layers.installation || layers.personal)).map(([key]) => key);
   if (unused.length) warnings.push(`Repo settings unused: this checkout's project file has no env file with the key (keys: ${unused.join(' ')})`);

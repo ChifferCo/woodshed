@@ -1,5 +1,4 @@
-// The Secrets & webhooks page (public/secrets.js) on a tiny DOM: the Terraform env files' rows, which moved to Repo
-// settings.
+// The Secrets & webhooks page (public/secrets.js) on a tiny DOM: its groups, and each row's buttons.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,7 +25,7 @@ function walk(el, out = []) {
   return out;
 }
 
-const row = (name, fields) => ({ name, group: 'session', kind: 'env', readable: true, exists: true, set: true, description: '', changedAt: '2026-10-01T00:00:00Z', ...fields });
+const row = (name, fields) => ({ name, group: 'session', kind: 'line', readable: true, exists: true, set: true, description: '', changedAt: '2026-10-01T00:00:00Z', ...fields });
 
 async function loadPage(secrets) {
   const app = element('div');
@@ -54,26 +53,19 @@ async function loadPage(secrets) {
 
 const section = (app, title) => walk(app).find((e) => e.tag === 'section' && textOf(e.children[0]) === title);
 
-test('the env files\' secrets are listed under Moved to Repo settings, with a link, and no Replace once Repo settings hold them', async () => {
+test('each session secret is listed under Session secrets with Replace, Show for a readable one, and Set for one with no value', async () => {
   const app = await loadPage([
-    row('anthropic-api-key', { kind: 'line', readable: false }),
-    row('api-env', { moved: { secret: 'api-env', path: 'api/.env', project: 'app', repo: 'acme/app', key: 'api-env', copiedAt: '2026-11-12T10:00:00.000Z', saved: true } }),
-    row('web-env', { set: false, moved: { secret: 'web-env', path: 'web/.env.local', project: 'app', repo: 'acme/app', key: 'web-env', copiedAt: null, saved: false } }),
+    row('anthropic-api-key', { readable: false }),
+    row('registry-token'),
+    row('other-token', { set: false }),
   ]);
-  const moved = section(app, 'Moved to Repo settings');
-  assert.ok(moved);
-  assert.doesNotMatch(textOf(section(app, 'Session secrets')), /api-env|web-env/, 'they leave the session secrets');
-  assert.match(textOf(moved), /Copied on at 2026-11-12T10:00:00\.000Z\. Sessions read acme\/app's Repo settings now: edit it there\./);
-  assert.match(textOf(moved), /No values on acme\/app's Repo settings yet, so sessions still read this one\. Set them there instead\./);
-  const links = walk(moved).filter((e) => e.tag === 'a').map((a) => a.attrs.href);
-  assert.deepEqual(links, ['/console-settings/repos/app?file=api-env', '/console-settings/repos/app?file=web-env']);
-  const rows = walk(moved).filter((e) => e.className?.startsWith('secret-row'));
+  const rows = walk(section(app, 'Session secrets')).filter((e) => e.className?.startsWith('secret-row'));
   const actions = rows.map((r) => walk(r).filter((e) => e.tag === 'button').map(textOf));
-  assert.deepEqual(actions, [['Show'], ['Set']], 'Replace is gone where the console would refuse it; Show stays');
+  assert.deepEqual(actions, [['Replace'], ['Show', 'Replace'], ['Set']]);
 });
 
-test('without env files there is no Moved section', async () => {
-  const app = await loadPage([row('anthropic-api-key', { kind: 'line', readable: false })]);
+test('there is no Moved to Repo settings section: the env files are Repo settings alone', async () => {
+  const app = await loadPage([row('anthropic-api-key', { readable: false })]);
   assert.equal(section(app, 'Moved to Repo settings'), undefined);
   assert.ok(section(app, 'Session secrets'));
 });

@@ -66,7 +66,7 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
   const asked = [];
   const userSettings = {
     claudeToken: async (login) => { asked.push(login); return login === 'octocat' ? 'sk-ant-joel' : null; },
-    ownFiles: async (login) => ({ 'api-env': `LOG_LEVEL=debug # ${login}`, 'web-env': null, 'tmux-conf': null }),
+    ownFiles: async (login) => ({ 'tmux-conf': `set -g mouse on # ${login}` }),
     ownWholeFiles: async (login) => ({ 'app/.env.production': `NOTION_TOKEN=x # ${login}` }),
     gitIdentity: (login) => (login === 'octocat' ? { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' } : null),
   };
@@ -80,7 +80,7 @@ test('a private session gets its own owner\'s settings and Claude token, and a s
   assert.deepEqual(await settings('Bearer joel-token'), {
     status: 200,
     body: {
-      files: { 'api-env': 'LOG_LEVEL=debug # octocat', 'web-env': null, 'tmux-conf': null },
+      files: { 'tmux-conf': 'set -g mouse on # octocat' },
       ownFiles: { 'app/.env.production': 'NOTION_TOKEN=x # octocat' },
       git: { name: 'Mona Octocat', email: '1+octocat@users.noreply.github.com' }, database: null, claudeToken: 'sk-ant-joel',
     },
@@ -622,45 +622,6 @@ test('a review session gets the plan from /settings, no database, and the team k
   assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-team' }), { status: 200, body: {} }, 'no plan recorded, so the team key');
 });
 
-test('a person\'s own lines for one repo\'s env file reach their private session on that repo alone, by the project file\'s name', async (t) => {
-  // Two repos that both name api-env, each kept under a store name of its own, as an embedding program gives them.
-  const envFiles = [
-    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
-    { secret: 'api-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/api' },
-  ];
-  const values = new Map();
-  const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
-  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets, envFiles });
-  await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');
-  await userSettings.saveFile('mia', 'api-4d5e6f--api-env', 'LOG_LEVEL=debug');
-  const sessions = [
-    { id: 'aaaaaaaa', status: 'running', token: 'on-api', owner: 'mia', repo: 'acme/api' },
-    { id: 'bbbbbbbb', status: 'running', token: 'on-app', owner: 'mia', repo: 'acme/app' },
-  ];
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
-  const { port } = server.address();
-
-  // What the session's entrypoint then writes (fetchOwnerSettings, then writeEnvFiles), from the project file's names.
-  const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }] };
-  const envFileOn = async (token) => {
-    const { body } = await request(port, { path: '/settings', authorization: `Bearer ${token}` });
-    const own = Object.fromEntries(Object.entries(body.files).filter(([key, text]) => key !== 'tmux-conf' && text));
-    const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'own-lines-'));
-    t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
-    writeEnvFiles({ project, repoDir, env: { API_ENV: 'LOG_LEVEL=info', OWN_FILES: JSON.stringify(own) } });
-    return { files: body.files, text: fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8') };
-  };
-  const onApi = await envFileOn('on-api');
-  assert.deepEqual(onApi.files, { 'api-env': 'LOG_LEVEL=debug', 'tmux-conf': null });
-  assert.match(onApi.text, /^LOG_LEVEL=info\n\n# Your own lines, from My settings\nLOG_LEVEL=debug\n/, 'their lines after the shared text');
-  const onApp = await envFileOn('on-app');
-  assert.deepEqual(onApp.files, { 'api-env': null, 'tmux-conf': null });
-  assert.equal(onApp.text.includes('LOG_LEVEL=debug'), false, 'the other repo\'s session never gets them');
-});
-
 test('/repo-settings answers for the calling session\'s own project, a private one with its owner\'s layer, an ask session nothing', async (t) => {
   const { createRepoSettings } = await import('./repoSettings.mjs');
   const values = new Map([
@@ -714,23 +675,18 @@ test('/repo-settings answers for the calling session\'s own project, a private o
   assert.equal((await ask('private')).status, 503, 'the entrypoint tries again');
 });
 
-test('two repos that both have an api-env: each session falls back to its own repo\'s legacy lines until repo settings hold a value', async (t) => {
+test('two repos that both have an api-env: each session writes its own repo\'s repo settings, and never a Terraform secret in its environment', async (t) => {
   const { createRepoSettings } = await import('./repoSettings.mjs');
-  // As an embedding program gives them: each repo's api-env kept under a store name of its own.
-  const envFiles = [
-    { secret: 'app-1a2b3c--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/app' },
-    { secret: 'api-4d5e6f--api-env', path: 'api/.env', name: 'api-env', repo: 'acme/api' },
-  ];
   const values = new Map();
   const secrets = { read: async (name) => values.get(name) ?? null, save: async (name, value) => { values.set(name, value); }, remove: async (name) => { values.delete(name); } };
   const store = { state: {}, save() {} };
-  const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'api', repo: 'acme/api', default: false }], envFiles };
+  const config = { projects: [{ name: 'app', repo: 'acme/app', default: true }, { name: 'api', repo: 'acme/api', default: false }] };
   const project = { envFiles: [{ path: 'api/.env', secret: 'api-env', key: 'api-env', overrides: ['PORT=8080'] }], env: {} };
-  const userSettings = createUserSettings({ store, secrets, envFiles });
+  const userSettings = createUserSettings({ store, secrets });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf: () => ({ repoLayer: async () => project }) });
   await userSettings.setClaudeToken('mia', 'sk-ant-oat01-mia');
-  await userSettings.saveFile('mia', 'app-1a2b3c--api-env', 'MINE=app');
-  await userSettings.saveFile('mia', 'api-4d5e6f--api-env', 'MINE=api');
+  await repoSettings.saveInstallation({ project: 'api', key: 'api-env', text: 'FROM=api-settings', by: 'mia' });
+  await repoSettings.saveOwn({ login: 'mia', project: 'api', key: 'api-env', text: 'MINE=api-settings' });
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', repo: 'acme/app', project: 'app' },
     { id: 'bbbbbbbb', status: 'running', token: 'on-api', owner: 'mia', repo: 'acme/api', project: 'api' },
@@ -741,25 +697,18 @@ test('two repos that both have an api-env: each session falls back to its own re
   t.after(() => server.close());
   const { port } = server.address();
 
-  // What the entrypoint does: /settings and /repo-settings, then writeEnvFiles, with the launcher's API_ENV for the repo.
-  const envFileOn = async (token, shared) => {
+  // What the entrypoint does: /repo-settings, then writeEnvFiles, with a task definition from before that still passes API_ENV.
+  const envFileOn = async (token) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'two-repos-'));
     t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-    const { body: own } = await request(port, { path: '/settings', authorization: `Bearer ${token}` });
     const { body: answer } = await request(port, { path: '/repo-settings', authorization: `Bearer ${token}` });
     fs.writeFileSync(path.join(dir, 'answer.json'), JSON.stringify(answer));
     const settings = readRepoSettings(path.join(dir, 'answer.json'));
-    const ownLines = Object.fromEntries(Object.entries(own.files).filter(([key, text]) => key !== 'tmux-conf' && text));
-    const [written] = writeEnvFiles({ project, repoDir: dir, env: { API_ENV: shared, OWN_FILES: JSON.stringify(ownLines) }, settings });
-    return { text: fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'), legacy: written.legacy };
+    writeEnvFiles({ project, repoDir: dir, env: { API_ENV: 'FROM=terraform' }, settings });
+    return fs.readFileSync(path.join(dir, 'api/.env'), 'utf8');
   };
-  const before = { app: await envFileOn('on-app', 'FROM=app-legacy'), api: await envFileOn('on-api', 'FROM=api-legacy') };
-  assert.deepEqual(before.app, { text: 'FROM=app-legacy\n\n# Your own lines, from My settings\nMINE=app\n\n# Woodshed overrides\nPORT=8080\n', legacy: ['installation', 'personal'] });
-  assert.deepEqual(before.api, { text: 'FROM=api-legacy\n\n# Your own lines, from My settings\nMINE=api\n\n# Woodshed overrides\nPORT=8080\n', legacy: ['installation', 'personal'] });
-
-  await repoSettings.saveInstallation({ project: 'api', key: 'api-env', text: 'FROM=api-settings', by: 'mia' });
-  await repoSettings.saveOwn({ login: 'mia', project: 'api', key: 'api-env', text: 'MINE=api-settings' });
-  const after = { app: await envFileOn('on-app', 'FROM=app-legacy'), api: await envFileOn('on-api', 'FROM=api-legacy') };
-  assert.deepEqual(after.app, before.app, 'the other repo\'s api-env still falls back to its own');
-  assert.deepEqual(after.api, { text: 'FROM=api-settings\n\n# Your own lines, from My settings\nMINE=api-settings\n\n# Woodshed overrides\nPORT=8080\n', legacy: [] });
+  assert.equal(await envFileOn('on-api'), 'FROM=api-settings\n\n# Your own lines, from My settings\nMINE=api-settings\n\n# Woodshed overrides\nPORT=8080\n');
+  const onApp = await envFileOn('on-app');
+  assert.equal(onApp.includes('api-settings'), false, 'the other repo\'s session never gets them');
+  assert.equal(onApp.includes('FROM=terraform'), false, 'nor the Terraform secret');
 });
