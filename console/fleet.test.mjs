@@ -2958,6 +2958,7 @@ test('the refusal and failure comments name the repo\'s own label', async () => 
   assert.deepEqual(calls.unlabeled, [{ number: 3, label: 'agent' }]);
   assert.match(calls.comments[0].body, /the `agent` label was taken off/);
   assert.match(failedComment({ session: { startedBy: 'joel', id: 'aaaa1111' }, publicUrl: null, label: 'agent' }), /Add the `agent` label again/);
+});
 
 test('pullRequests.runsOn keeps label sessions, reviews and QA on the console it names, and a session by hand anywhere', async () => {
   const elsewhere = { ...REVIEW_GATES, runsOn: 'woodshed-internal[bot]' };
