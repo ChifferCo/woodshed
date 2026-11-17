@@ -531,6 +531,14 @@ export function createFleet({
       console.log('fleet: session stopped before it ran', { id: session.id, reason, by });
       return;
     }
+    // One that stopped by itself (paused when idle or at its lifetime, or failed) waits on its person in Needs you;
+    // a person stopping it says it waits on nobody, so it moves to Stopped. Resume still picks it up.
+    if (session.status === 'stopped' || session.status === 'failed') {
+      if (!by || session.stoppedBy) return;
+      update(session, { stoppedBy: by });
+      console.log('fleet: stopped session moved to Stopped', { id: session.id, by, stopReason: session.stopReason });
+      return;
+    }
     if (session.status !== 'starting' && session.status !== 'running') return;
     update(session, { status: 'stopping', stoppingAt: nowIso(), stopReason: reason, stoppedBy: by });
     console.log('fleet: stopping session', { id: session.id, reason, by });

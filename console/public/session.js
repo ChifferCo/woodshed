@@ -359,6 +359,17 @@
     ].filter(Boolean);
   }
 
+  // A session that stopped by itself (paused when idle or at its lifetime) waits in Needs you until its person resumes
+  // it; stopping it again marks it stopped by them, which moves it to Stopped (fleet.stop).
+  async function moveToStopped(s) {
+    try {
+      await W.stopSession(s.id);
+    } catch (err) {
+      W.shell.toast(`Not moved: ${err.message}`);
+    }
+    refresh();
+  }
+
   // A card's ⋯ menu, after the shed's: what can be done to this session, each with what it does. Ending ones last.
   function cardActions(s) {
     const live = W.isLive(s);
@@ -378,6 +389,10 @@
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
+      !live && W.needsYou(s) && {
+        label: 'Move to Stopped', note: 'Nothing to do on it now: take it out of Needs you. Resume still picks it up', end: true,
+        run: () => moveToStopped(s),
+      },
       live && {
         label: 'Stop session', note: 'Commit and push its work, then stop it. Resume picks it up again', end: true,
         run: async () => {
@@ -950,6 +965,7 @@
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
       s.prUrl && { group: 'Elsewhere', label: 'Open its pull request ↗', run: () => window.open(s.prUrl, '_blank', 'noopener') },
+      !W.isLive(s) && W.needsYou(s) && { group: 'Session', label: 'Move it to Stopped', run: () => moveToStopped(s) },
       (s.status === 'running' || s.status === 'starting' || s.status === 'queued') && {
         group: 'Danger', label: 'Stop it', danger: true,
         run: async () => {
@@ -1811,7 +1827,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
   let currentSession = null;

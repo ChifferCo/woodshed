@@ -280,6 +280,25 @@ test('a stop from the console records who stopped it, an idle pause no one, and 
   assert.deepEqual([session.status, session.stoppedBy], ['stopped', null]);
 });
 
+test('stopping a session that paused by itself moves it to Stopped, and only once', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(session, 'idle for 1 h');
+  const removed = calls.stopped.length;
+  await fleet.stop(session, 'idle for 1 h');
+  assert.equal(session.stoppedBy, null, 'a stop with no person leaves it waiting');
+  await fleet.stop(session, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual([session.status, session.stoppedBy, session.stopReason], ['stopped', 'joel', 'idle for 1 h']);
+  await fleet.stop(session, 'stopped from the console', { by: 'ana' });
+  assert.equal(session.stoppedBy, 'joel');
+  assert.equal(calls.stopped.length, removed, 'nothing is stopped again');
+  await fleet.resumeShared(session, { by: 'joel', why: 'console' });
+  assert.equal(session.stoppedBy, null);
+});
+
 test('a comment on a running session is typed into it', async () => {
   const { fleet, calls, statuses } = setup();
   await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
