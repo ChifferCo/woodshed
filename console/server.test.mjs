@@ -1562,6 +1562,36 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
   assert.equal((await get()).webhooks.github.off, true, 'and Webhook events says what is off');
 });
 
+test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {
+  const { createWebhookSwitch } = await import('./webhookSwitch.mjs');
+  const base = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, webhookQueue: 'https://sqs.example/queue',
+  };
+  async function webhooksOf(config, setUp = () => {}) {
+    const store = { state: {}, save() {} };
+    const webhookSwitch = createWebhookSwitch({ store });
+    setUp(webhookSwitch);
+    const handle = createHandler({ config, fleet: { sessions: () => [] }, webhookSwitch, consoleSettings: createConsoleSettings({ store, config }) });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    const port = await listen(server);
+    t.after(() => server.close());
+    const settings = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
+    const events = await (await fetch(`http://127.0.0.1:${port}/api/webhook-events`)).json();
+    return { settings: settings.webhooks, queue: events.queue };
+  }
+
+  const own = await webhooksOf(base);
+  assert.equal(own.settings.receiving, true, 'a queue with no broker is read once the App key loads');
+  const borrowed = await webhooksOf({ ...base, githubBroker: { url: 'https://host.example' } });
+  assert.equal(borrowed.settings.receiving, false, 'a broker console never reads its queue, so the card hides its switches');
+  assert.equal(borrowed.queue, false, 'and Webhook events says no webhooks reach it');
+  const delivered = await webhooksOf({ ...base, githubBroker: { url: 'https://host.example' } }, (sw) => sw.receiving('delivered'));
+  assert.equal(delivered.settings.receiving, true, 'one its host hands webhooks to still shows them');
+  const offBefore = await webhooksOf({ ...base, githubBroker: { url: 'https://host.example' } }, (sw) => sw.set({ source: 'github', off: true, by: 'joel' }));
+  assert.equal(offBefore.settings.github.off, true, 'a switch already off is still there to turn back on');
+});
+
 test('Remove on a private session acts for the signed-in person, from the console\'s own origin', async (t) => {
   const removed = [];
   const fleet = { sessions: () => [], async removePrivateSession(args) { removed.push(args); } };
