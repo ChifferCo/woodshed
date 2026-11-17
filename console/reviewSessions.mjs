@@ -55,7 +55,7 @@ export function reviewEndedComment({ reason, sessionUrl }) {
  */
 export function reviewDoneComment({ conclusion, tier }) {
   const verdict = conclusion === 'APPROVE' ? 'approved' : 'changes requested';
-  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. The review itself has the details.\n`;
+  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
 }
 
 export function parseReviewReport(raw) {
