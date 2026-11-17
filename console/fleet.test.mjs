@@ -3000,7 +3000,7 @@ test('a pull request the console\'s own session opened is reviewed as the person
   assert.equal(unknown.fleet.sessions().find((s) => s.review)?.startedBy, app.login, 'no session of its own opened it: as before');
 });
 
-test('QA the console labelled on a pull request its own session opened runs as that session\'s starter, not on the team key', async () => {
+test('QA the console labelled on a pull request its own session opened runs as that session\'s starter, found by branch before its URL is known', async () => {
   const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
   const pull = { ...QA_PULL, user: { login: APP.login } };
   t.github.pull = async () => pull;
@@ -3008,7 +3008,7 @@ test('QA the console labelled on a pull request its own session opened runs as t
   t.github.labeledBy = async () => APP.login;
   t.store.state.sessions.push({
     id: 'c0d1c0d1', repo: 'o/r', kind: 'issue', number: 3, title: 'gtm', startedBy: 'joel', status: 'stopped',
-    prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+    branch: QA_PULL.head.ref, prUrl: null, createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
   });
   assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
   const session = t.fleet.sessions().find((s) => s.qa);
