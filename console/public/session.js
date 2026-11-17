@@ -1419,7 +1419,7 @@
       h('h2', null, 'Waiting for a free slot'),
       h('p', null, `${W.lineText(place).replace(/^./, (c) => c.toUpperCase())}. You have ${runningMine()} of ${data.maxPrivate} sessions running. This one starts by itself when one of them stops or is paused.`),
       h('div', { class: 'row' }, W.stopButton(s, refresh, { label: 'Take it out of the line' })),
-      W.isAdmin() && h('p', { class: 'hint' }, 'Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Console settings'), '.'));
+      W.isAdmin() && h('p', { class: 'hint' }, 'Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'));
   }
 
   function terminalBody(s) {

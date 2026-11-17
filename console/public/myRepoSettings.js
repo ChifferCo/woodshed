@@ -257,7 +257,7 @@
     }
 
     function byAdmins() {
-      return W.isAdmin?.() ? ['Set by admins, for every session on this repo: ', h('a', { href: `/console-settings/repos/${encodeURIComponent(project)}` }, 'change it on Console settings'), '.']
+      return W.isAdmin?.() ? ['Set by admins, for every session on this repo: ', h('a', { href: `/console-settings/repos/${encodeURIComponent(project)}` }, 'change it in Settings'), '.']
         : 'Set by your admins, for every session on this repo.';
     }
 

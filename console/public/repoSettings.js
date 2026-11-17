@@ -1,4 +1,4 @@
-// A repo's settings on Console settings (/console-settings/repos/<project>): for each env file of its project file, the
+// A repo's page under Settings (/console-settings/repos/<project>): for each env file of its project file, the
 // repo's defaults, this installation's values, what the session sets itself, and which of them a session gets for each
 // key; then the installation's instructions, how its sessions start from GitHub (its label and switches), and the Slack
 // channel its pull requests are posted to. Admins only: the
@@ -360,7 +360,7 @@
     return raw && !CHANNEL_RE.test(raw) ? 'Give the channel\'s ID, such as C0123456789, not its name.' : null;
   }
 
-  // Saved through the Repos card's API, which answers with Console settings' view: the repo's channel is in its row.
+  // Saved through the Repos card's API, which answers with Settings' view: the repo's channel is in its row.
   function saveChannel(channel) {
     return act(SLACK, async () => {
       const answer = await W.postJson('/api/console-settings/projects/slack-channel', { name: view.project, channel });
@@ -390,7 +390,7 @@
     field.disabled = off;
     field.readOnly = busy.has(SLACK);
     field.setAttribute('aria-invalid', bad ? 'true' : 'false');
-    const consoleLink = h('a', { href: '/console-settings#card-slack' }, 'Console settings\' Slack card');
+    const consoleLink = h('a', { href: '/console-settings#card-slack' }, 'Settings\' Slack card');
     return h('section', { class: 'settings-card', id: 'slack', 'aria-labelledby': 'card-slack' },
       h('h2', { id: 'card-slack', class: 'label' }, 'Slack'),
       h('p', { class: 'sub' }, 'When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post\'s thread. With no channel here, it goes to the channel on ', consoleLink, '.'),
@@ -413,7 +413,7 @@
     return h('div', { class: 'page' }, W.nav('/console-settings'),
       h('header', { class: 'page-head' },
         h('div', null,
-          h('p', { class: 'crumb' }, h('a', { href: '/console-settings#card-projects' }, '‹ Console settings · Repos')),
+          h('p', { class: 'crumb' }, h('a', { href: '/console-settings#card-projects' }, '‹ Settings · Repos')),
           h('h1', { class: 'title' }, view?.repo ?? project),
           h('p', { class: 'sub' }, view
             ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'What sessions on this repo get in their env files and prompt. Only admins can change these, and each change is logged with who made it.']
@@ -423,7 +423,7 @@
 
   function loadFailed() {
     const words = loadError.status === 403 ? 'Only an admin can open a repo\'s settings. Ask one to change them for you.'
-      : loadError.status === 404 ? `${loadError.message} Repos on Console settings lists the ones there are.`
+      : loadError.status === 404 ? `${loadError.message} Repos in Settings lists the ones there are.`
         : `Could not load the repo's settings: ${loadError.message}`;
     return h('p', { class: loadError.status === 403 ? 'cap-note' : 'form-error', role: 'alert' }, words);
   }

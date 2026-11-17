@@ -52,7 +52,7 @@ async function loadPage(answer, { repos, updates = null, clock = null, timers = 
     return el;
   };
   const W = {
-    h, nav: () => element('nav'), providerWords: {},
+    h, nav: () => element('nav'), settingsTabs: () => element('nav'), providerWords: {},
     getJson: async (path) => {
       if (path === '/api/console-settings/projects/repos' && repos) {
         if (repos instanceof Error) throw repos;

@@ -292,7 +292,7 @@ test('an env file with no installation value names no Terraform secret on the in
 
 test('an admin is pointed at the repo\'s page on Console settings for the installation\'s values', async () => {
   const { app } = await loadCard({ admin: true });
-  const link = walk(app).find((e) => e.tag === 'a' && textOf(e) === 'change it on Console settings');
+  const link = walk(app).find((e) => e.tag === 'a' && textOf(e) === 'change it in Settings');
   assert.equal(link.attrs.href, '/console-settings/repos/app');
 });
 

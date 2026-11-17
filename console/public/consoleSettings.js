@@ -1,4 +1,4 @@
-// The Console settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
+// The Settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
 // typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
 // stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
 // change survives.
@@ -739,7 +739,8 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Console settings'),
+        h('h1', { class: 'title' }, 'Settings'),
+        W.settingsTabs('/console-settings'),
         h('p', { class: 'sub' }, 'Only admins can change these. A change applies on the console\'s next check, and is logged with who made it.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head,
