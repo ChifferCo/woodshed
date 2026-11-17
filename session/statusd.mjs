@@ -784,10 +784,11 @@ async function send(text) {
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
 // a shared session's for its own next run.
 // The full Claude login is never in a home: the console keeps it apart, for one session at a time. `swapped` is a copy
-// of ~/.claude/.credentials.json without it (MCP logins alone), archived under the file's own name.
+// of ~/.claude/.credentials.json without it (MCP logins alone), named SWAPPED_CREDENTIALS, archived under the file's own name.
+const SWAPPED_CREDENTIALS = 'credentials.json';
 export function homeArchiveArgs(home, entries, { swapped = null } = {}) {
   const swap = swapped && entries.includes('.claude')
-    ? ['--exclude=.claude/.credentials.json', '-C', path.dirname(swapped), `--transform=s,^${path.basename(swapped).replace(/[.]/g, '\\.')}$,.claude/.credentials.json,`, path.basename(swapped)]
+    ? ['--exclude=.claude/.credentials.json', '-C', path.dirname(swapped), '--transform=s,^credentials\\.json$,.claude/.credentials.json,', SWAPPED_CREDENTIALS]
     : [];
   return ['czf', '-', '-C', home, ...HOME_EXCLUDES.map((e) => `--exclude=${e}`), ...(swap.length ? [swap[0]] : []), ...entries, ...swap.slice(1)];
 }
@@ -834,7 +835,7 @@ export async function credentialsWithoutLogin(home) {
   if (!parsed?.claudeAiOauth) return null;
   const { claudeAiOauth, ...rest } = parsed;
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-home-credentials-'));
-  const copy = path.join(dir, 'credentials.json');
+  const copy = path.join(dir, SWAPPED_CREDENTIALS);
   await fs.writeFile(copy, `${JSON.stringify(rest)}\n`, { mode: 0o600 });
   return copy;
 }

@@ -10,7 +10,7 @@
 // The lease file (in /tmp, never in the Claude home) holds the generation, the expiry and a hash of the refresh token
 // last sent, so statusd sends back only a login that changed. Nothing here prints or logs a token.
 
-import { createHash } from 'node:crypto';
+import { scryptSync } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -24,9 +24,13 @@ export function credentialsFile(home = os.homedir()) {
   return path.join(home, '.claude', '.credentials.json');
 }
 
+// A fixed salt: the hash only tells one refresh token from the next, in a file this user alone reads.
+const FINGERPRINT_SALT = 'woodshed-claude-login';
+
 /** @returns {{refreshHash: string, expiresAt: number}}  what says a login changed, with no token in it */
 export function fingerprint(oauth) {
-  return { refreshHash: createHash('sha256').update(String(oauth?.refreshToken ?? '')).digest('hex').slice(0, 16), expiresAt: Number(oauth?.expiresAt) || 0 };
+  const refreshHash = scryptSync(String(oauth?.refreshToken ?? ''), FINGERPRINT_SALT, 16).toString('hex');
+  return { refreshHash, expiresAt: Number(oauth?.expiresAt) || 0 };
 }
 
 async function readJson(file) {
