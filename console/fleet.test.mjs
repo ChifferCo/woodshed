@@ -2983,3 +2983,34 @@ test('pullRequests.runsOn keeps the QA label to the console it names, so its own
   await here.fleet.qaAutoLabel({ number: 7 });
   assert.deepEqual(here.calls.labeled, [{ number: 7, label: 'woodshed-qa' }]);
 });
+
+test('a pull request the console\'s own session opened is reviewed as the person who started that session', async () => {
+  const app = { login: 'woodshed[bot]' };
+  const t = reviewSetup({ ownApp: () => app });
+  t.github.pull = async () => ({ ...REVIEW_PULL, user: { login: app.login } });
+  t.store.state.sessions.push({
+    id: 'c0d1c0d1', repo: 'o/r', kind: 'issue', number: 3, title: 'gtm', startedBy: 'ada', status: 'stopped',
+    prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  await t.fleet.reviewOnTag({ number: 7 });
+  assert.equal(t.fleet.sessions().find((s) => s.review)?.startedBy, 'ada');
+  const unknown = reviewSetup({ ownApp: () => app });
+  unknown.github.pull = async () => ({ ...REVIEW_PULL, user: { login: app.login } });
+  await unknown.fleet.reviewOnTag({ number: 7 });
+  assert.equal(unknown.fleet.sessions().find((s) => s.review)?.startedBy, app.login, 'no session of its own opened it: as before');
+});
+
+test('QA the console labelled on a pull request its own session opened runs as that session\'s starter, not on the team key', async () => {
+  const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  const pull = { ...QA_PULL, user: { login: APP.login } };
+  t.github.pull = async () => pull;
+  t.github.reviews = async () => reviewOn(pull.head.sha);
+  t.github.labeledBy = async () => APP.login;
+  t.store.state.sessions.push({
+    id: 'c0d1c0d1', repo: 'o/r', kind: 'issue', number: 3, title: 'gtm', startedBy: 'joel', status: 'stopped',
+    prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  const session = t.fleet.sessions().find((s) => s.qa);
+  assert.deepEqual([session.startedBy, session.qa.teamKey], ['joel', undefined]);
+});
