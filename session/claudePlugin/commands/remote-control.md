@@ -14,7 +14,8 @@ Now:
    soon as this reply ends, then end your turn. Do nothing else.
 2. If it printed a link, show it to the person as a link, and ask them to open it, approve, and paste the code it
    shows here. Then end your turn and wait for the code. Say nothing else.
-3. When they paste the code, run `woodshed-login code '<the code>'`, with nothing else in the command.
+3. When they paste the code, run `woodshed-login code '<the code>'`, with nothing else in the command. Never write the
+   code, or any part of it, in your reply: it signs this session in as them.
    - If it says the sign-in worked, tell the person in one line that claude reopens this conversation in a few seconds
      with Remote Control on, and end your turn at once: claude restarts only when your turn has ended.
    - If it says the code was not accepted, say so in one line and run `woodshed-login start` again for a new link.
