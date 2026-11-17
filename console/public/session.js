@@ -1218,7 +1218,7 @@
         tabButton('diff', 'Diff', s.kind === 'ask' ? 'A question from Slack changes no code'
           : s.status === 'running' ? null : 'The diff is read from the session while it runs: Review shows what it pushed'),
         tabButton('applog', 'App log', tools ? null : s.kind === 'ask' ? 'A question from Slack runs no app' : 'The app\'s logs are there while the session runs')),
-      h('button', { type: 'button', class: 'ptitle', title: `${s.title}\nClick to rename it`, 'aria-label': `Rename ${s.title}`, onclick: () => rename(s) },
+      h('button', { type: 'button', class: 'ptitle', title: `${s.title}${s.branch ? `\nBranch: ${s.branch}` : ''}\nClick to rename it`, 'aria-label': `Rename ${s.title}`, onclick: () => rename(s) },
         h('span', { class: 'ptitle-text' }, s.title), h('span', { class: 'prename', 'aria-hidden': 'true' }, '✎')),
       W.statusBadge(s),
       s.number && h('a', { class: 'pref', href: W.issueUrl(data.repo, s), target: '_blank', rel: 'noopener', title: s.kind === 'pr' ? 'Open the pull request' : 'Open the issue' }, W.ref(s)),
