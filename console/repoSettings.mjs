@@ -17,7 +17,7 @@
 // Values are never logged: keys, sizes and who.
 
 import logins from './public/logins.cjs';
-import { projectFor, projectForRepo, projectNamed, defaultProject } from './projects.mjs';
+import { projectFor, projectNamed, defaultProject } from './projects.mjs';
 import { isAsk, isQa } from './sessions.mjs';
 import { checkFile } from './userSettings.mjs';
 import { envKeyTable, envKeys, instructionsProblem, sessionWiring } from '../shared/repoSettings.mjs';
@@ -27,30 +27,11 @@ const { loginKey } = logins;
 // An env file's key: the project file's `secret` syntax, or a key made from its path (shared/project.mjs, envFileKey).
 const KEY = /^[a-z0-9][a-z0-9-]{0,99}$/;
 const PROJECT = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const MIGRATED_FROM = 'terraform env_files';
 // A whole .env file, JSON-escaped, under the store's 64 KB.
 const MAX_BODY_BYTES = 160 * 1024;
 
 const shown = (message, status = 400) => Object.assign(new Error(message), { shown: true, status });
 const firstLine = (err) => String(err?.message ?? err).split('\n')[0];
-
-/**
- * The env file secrets from before repo settings (`config.envFiles`, WOODSHED_ENV_FILES), each with the project and key
- * repo settings keep its values under. An entry with `repo` (an embedding program's, for one repo's sessions alone) is
- * that repo's project's, keyed by `name`, the project file's secret, where the store keeps it under another; one
- * without is the default project's, keyed by its secret. An entry of a repo the console has no project for has none.
- * Entries of one repo come first, so they win over one for every repo with the same key, as they do on My settings.
- * @param {{envFiles?: {secret: string, path: string, name?: string, repo?: string}[]}} config
- * @returns {{secret: string, key: string, path: string, project: string|null, repo: string|null}[]}
- */
-export function legacyEnvFiles(config) {
-  const main = defaultProject(config);
-  const all = (config.envFiles ?? []).map((f) => ({
-    secret: f.secret, key: f.name ?? f.secret, path: f.path, repo: f.repo ?? null,
-    project: (f.repo ? projectForRepo(config, f.repo)?.name : main.repo ? main.name : null) ?? null,
-  }));
-  return [...all.filter((f) => f.repo), ...all.filter((f) => !f.repo)];
-}
 
 /** @returns {string}  the installation's value for one env file of a project, under the console's prefix */
 export function installationEnvName(project, key) {
@@ -75,7 +56,7 @@ export function personalFilesName(login, project) {
   return `users/${loginKey(login)}/repos/${project}/files`;
 }
 
-// Where own whole files were kept before they were per repo: one value a person, for every repo. migrate() moves it
+// Where own whole files were kept before they were per repo: one value a person, for every repo. moveOwnFiles() moves it
 // into the default project's.
 const legacyOwnFilesName = (login) => `users/${loginKey(login)}/own-files`;
 
@@ -110,7 +91,7 @@ const keyText = (keys) => (keys ?? []).map((k) => `${k}=`).join('\n');
  *          configured?: () => boolean}|null, config: object,
  *          readerOf: (project: string) => {repoLayer: () => Promise<{envFiles: object[], env: Record<string, string>,
  *            rules: string|null, setup: string|null}>}, now?: () => number}} deps
- *   `config` is the live one (its `projects` and the legacy `envFiles` pairs); `readerOf` reads a project's file from
+ *   `config` is the live one (its `projects`); `readerOf` reads a project's file from
  *   its default branch (projectFile.mjs)
  */
 export function createRepoSettings({ store, secrets, config, readerOf, now = Date.now }) {
@@ -184,25 +165,9 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     requireSecrets();
     await secrets.remove(nameOf({ login, project, key }));
     writeRecord({ login, project, key, record: null });
-    if (key && !login) noteCleared(project, key);
     if (!key) console.log('repoSettings: instructions cleared', { layer: login ? 'personal' : 'installation', project, by });
     else if (login) console.log('repoSettings: own values cleared', { project, key, login });
     else console.log('repoSettings: installation values cleared', { project, key, by });
-  }
-
-  // The legacy secret a project's key is copied from (legacyEnvFiles), or null.
-  const legacyOf = (project, key) => legacyEnvFiles(config).find((f) => f.project === project && f.key === key) ?? null;
-
-  // The start-time copy runs once per name: a Terraform env file cleared here stays cleared, so sessions read the
-  // Terraform secret again (the documented fallback) rather than get the copy back at the next start. Dates only, by
-  // the legacy secret's name, as `files` is.
-  function noteCleared(project, key) {
-    const legacy = legacyOf(project, key);
-    if (!legacy) return;
-    const before = store.state.repoSettingsMigration ?? { from: MIGRATED_FROM };
-    store.state.repoSettingsMigration = { ...before, cleared: { ...before.cleared, [legacy.secret]: new Date(now()).toISOString() } };
-    store.save();
-    console.log('repoSettings: legacy copy turned off for a cleared value', { project, key, secret: legacy.secret });
   }
 
   // Saving nothing clears the layer.
@@ -239,13 +204,6 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return file;
   }
 
-  // The legacy secret an env file of the project was read from before repo settings (legacyEnvFiles), by its store name.
-  function legacyFor(project, file) {
-    if (!file.secret) return null;
-    const legacy = legacyEnvFiles(config).find((f) => f.project === project.name && f.key === file.secret);
-    return legacy ? { secret: legacy.secret, copiedAt: store.state.repoSettingsMigration?.files?.[legacy.secret] ?? null } : null;
-  }
-
   // One path of a key: its own defaults and wiring, and which layer wins each key in it.
   function pathView({ file, layer, inst, own, login }) {
     const wiring = sessionWiring({ overrides: file.overrides, env: layer?.env ?? {} });
@@ -280,7 +238,7 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
     return {
       key: first.key, path: first.path, paths: files.map((f) => f.path), secret: first.secret, defaults: first.defaults, wiring: paths[0].wiring,
       files: paths.map(({ table, ...rest }) => rest),
-      installation: inst, ...(login && { personal: own }), legacy: legacyFor(project, first),
+      installation: inst, ...(login && { personal: own }),
       table: sharedTable(paths),
     };
   }
@@ -370,9 +328,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   async function saveOwn({ login, project: name, key = null, text }) {
     const project = requireProject(name);
-    const file = key ? await requireEnvFile(project, key) : null;
+    if (key) await requireEnvFile(project, key);
     await saveValue({ login, project: project.name, key, text, by: login });
-    if (file) await dropLegacyOwn({ login, project, file, cleared: !String(text ?? '').trim() });
   }
 
   /** @returns {number}  the most bytes the secret store holds in one value; a store that declares none holds 64 KB */
@@ -476,75 +433,6 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
   }
 
   /**
-   * A person's own lines for a legacy env file (`users/<login>/<secret>`, My settings' old Env files tabs) go once
-   * they save or clear the file's repo settings: a session falls back to them whenever their repo settings value is
-   * empty, and the next start would copy them back, so a Clear would not stay cleared.
-   * @param {{cleared: boolean}} opts  a clear that cannot drop them fails, since the old lines would come back
-   */
-  async function dropLegacyOwn({ login, project, file, cleared }) {
-    const person = store.state.people?.[loginKey(login)];
-    // By the legacy secret's name: an embedding program's is the store's, not the project file's.
-    const secret = legacyFor(project, file)?.secret;
-    if (!secret || !person?.files?.[secret]) return;
-    try {
-      await secrets.remove(`users/${loginKey(login)}/${secret}`);
-    } catch (err) {
-      console.warn('repoSettings: legacy own lines not removed', { login, project: project.name, key: file.key, secret, cleared, message: firstLine(err) });
-      if (cleared) throw err;
-      return;
-    }
-    person.files = { ...person.files, [secret]: null };
-    store.save();
-    console.log('repoSettings: legacy own lines removed, repo settings hold them now', { login, project: project.name, key: file.key, secret });
-  }
-
-  /**
-   * Each Terraform env file secret (WOODSHED_ENV_FILES), as the Secrets page lists it: whose repo settings it was
-   * copied into, when, and whether that value is there now. Once it is, sessions read it and not the secret.
-   * @returns {{secret: string, path: string, project: string, repo: string, key: string, copiedAt: string|null,
-   *   saved: boolean}|null}  null for a name that is not one
-   */
-  function legacyState(secret) {
-    const legacy = legacyEnvFiles(config).find((f) => f.secret === secret && f.project);
-    if (!legacy) return null;
-    return {
-      secret, path: legacy.path, project: legacy.project, repo: projectNamed(config, legacy.project).repo, key: legacy.key,
-      copiedAt: store.state.repoSettingsMigration?.files?.[secret] ?? null, saved: Boolean(recordOf({ project: legacy.project, key: legacy.key })),
-    };
-  }
-
-  /**
-   * My settings' old route for one env file's own lines (`/api/my/files/<secret>`), kept while pages from before repo
-   * settings are open: it reads and writes the repo settings the secret is copied into (legacyState: the default
-   * project's, or an embedding program's `repo`'s under `name`), so an edit made the old way reaches sessions.
-   * Answered in the old shape.
-   * @param {{login: string, key: string, change?: {text: unknown}|null}} args  `change` saves first; '' clears
-   * @returns {Promise<{key: string, label: string, text: string, custom: boolean, sharedText: string, editable: true,
-   *   appended: string[]}>}
-   */
-  async function legacyFile({ login, key, change = null }) {
-    const state = legacyState(key);
-    if (!state) throw shown(`no file called ${key}`, 404);
-    if (change) {
-      await saveOwn({ login, project: state.project, key: state.key, text: change.text });
-      console.log('repoSettings: old own lines route, saved to repo settings', { login, project: state.project, key: state.key, secret: key, cleared: !change.text?.trim?.() });
-    }
-    const [own, installation, layer] = await Promise.all([
-      ownText({ login, project: state.project, key: state.key }),
-      installationText({ project: state.project, key: state.key, by: login, on: 'my settings, old route' }),
-      repoLayer(requireProject(state.project)).catch(() => null),
-    ]);
-    // What sessions read where the installation has no value yet: the Terraform secret.
-    const sharedText = installation ?? (available() ? await secrets.read(key) : null) ?? '';
-    const file = layer?.envFiles.find((f) => f.key === state.key);
-    const wiring = file ? sessionWiring({ overrides: file.overrides, env: layer.env ?? {} }) : null;
-    return {
-      key, label: state.path, text: own ?? '', custom: own !== null, sharedText, editable: true,
-      appended: wiring ? [...new Set([...wiring.overrides, ...wiring.env])] : [],
-    };
-  }
-
-  /**
    * What a session is handed at start: its own project's values, chosen by the session, never by what it asks for.
    * A person's only in their own private session: a shared or QA session, which anyone signed in can type into, gets
    * none. Every key the console holds for the project: the session uses those its checkout's project file names.
@@ -572,82 +460,6 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
       instructions: { installation: instructions[0] !== null, personal: instructions[1] !== null }, personalFor,
     });
     return { project, envFiles, instructions: { installation: instructions[0], personal: instructions[1] ?? null }, personalFor };
-  }
-
-  // One legacy value into its new name, unless that name has one already: the copy never overwrites.
-  async function copyOne({ from, to, record }) {
-    const existing = await secrets.read(nameOf(to));
-    if (existing !== null) {
-      if (!recordOf(to)) writeRecord({ ...to, record: { savedAt: new Date(now()).toISOString(), ...(!to.login && { by: 'unknown' }), bytes: Buffer.byteLength(existing), keys: envKeys(existing) } });
-      return 'kept';
-    }
-    const value = await secrets.read(from);
-    if (!value?.trim()) return 'none';
-    await secrets.save(nameOf(to), value, description(to));
-    writeRecord({ ...to, record: { ...record, bytes: Buffer.byteLength(value), keys: envKeys(value) } });
-    return 'copied';
-  }
-
-  /**
-   * At each start: the Terraform env file secrets (WOODSHED_ENV_FILES) and each person's own lines for them into their
-   * project's new names (legacyEnvFiles): the default project's, or with `repo` that repo's, under `name`. A name that
-   * has a value already is left as it is, so a second run copies nothing; an installation name copied once, or cleared
-   * on the page, is never copied again (`done`), so a clear stays.
-   * @returns {Promise<{copied: number, ownCopied: number, kept: number, none: number, done: number, failed: number}>}
-   */
-  async function migrate() {
-    const counts = { copied: 0, ownCopied: 0, kept: 0, none: 0, done: 0, failed: 0 };
-    const all = legacyEnvFiles(config);
-    const legacy = all.filter((f) => f.project);
-    const orphans = all.filter((f) => !f.project && f.repo).map((f) => f.secret);
-    if (orphans.length) console.warn('repoSettings: legacy env files of a repo with no project, not copied', { secrets: orphans });
-    if (!legacy.length) return counts;
-    if (!available()) {
-      console.log('repoSettings: legacy copy skipped, no secret store');
-      return counts;
-    }
-    const at = new Date(now()).toISOString();
-    const files = {};
-    const attempt = async (what, args, log) => {
-      try {
-        const result = await copyOne(args);
-        if (result === 'copied') log();
-        return result;
-      } catch (err) {
-        console.warn('repoSettings: legacy copy failed, tried again at the next start', { ...what, message: firstLine(err) });
-        return 'failed';
-      }
-    };
-    const record = store.state.repoSettingsMigration;
-    for (const { secret, project, key } of legacy) {
-      const to = { project, key };
-      if (record?.files?.[secret] || record?.cleared?.[secret]) {
-        counts.done += 1;
-        continue;
-      }
-      const result = await attempt({ project, key, secret }, { from: secret, to, record: { savedAt: at, by: MIGRATED_FROM } }, () => {
-        console.log('repoSettings: legacy env file copied', { project, key, secret, bytes: recordOf(to).bytes });
-      });
-      if (result === 'copied') files[secret] = at;
-      counts[result === 'copied' ? 'copied' : result] += 1;
-    }
-    for (const [login, person] of Object.entries(store.state.people ?? {})) {
-      for (const { secret, project, key } of legacy) {
-        if (!person?.files?.[secret]) continue;
-        const to = { login, project, key };
-        const result = await attempt({ login, project, key, secret }, { from: `users/${login}/${secret}`, to, record: { savedAt: at } }, () => {
-          console.log('repoSettings: legacy own lines copied', { login, project, key, secret });
-        });
-        counts[result === 'copied' ? 'ownCopied' : result] += 1;
-      }
-    }
-    if (counts.copied || counts.ownCopied) {
-      const before = store.state.repoSettingsMigration;
-      store.state.repoSettingsMigration = { ...before, copiedAt: at, from: MIGRATED_FROM, files: { ...before?.files, ...files } };
-      store.save();
-    }
-    console.log('repoSettings: legacy copy checked', { projects: [...new Set(legacy.map((f) => f.project))], ...counts });
-    return counts;
   }
 
   // One person's old files into the default project's. Where they keep some there already (saved on the page before
@@ -753,21 +565,8 @@ export function createRepoSettings({ store, secrets, config, readerOf, now = Dat
 
   return {
     view, summary, installationText, saveInstallation, removeUnnamed, ownText, saveOwn, ownFiles, saveOwnFile, filesForSession,
-    maxFilesBytes, forSession, migrate, moveOwnFiles, forget, forgetPerson, legacyState, legacyFile, available,
+    maxFilesBytes, forSession, moveOwnFiles, forget, forgetPerson, available,
   };
-}
-
-const LEGACY_FILE_RE = /^\/api\/my\/files\/([a-z0-9-]+)(\/reset)?$/;
-
-/**
- * My settings' old route for one env file's own lines, which writes repo settings now (`legacyFile`). tmux-conf, and
- * any name that is not one of the Terraform env files, stays userSettings.mjs's.
- * @returns {{scope: 'legacy', project: null, key: string, reset: boolean, instructions: false, remove: false}|null}
- */
-export function legacyFileRoute(pathname, config) {
-  const match = LEGACY_FILE_RE.exec(pathname);
-  if (!match || !(config.envFiles ?? []).some((f) => f.secret === match[1])) return null;
-  return { scope: 'legacy', project: null, key: match[1], reset: Boolean(match[2]), instructions: false, remove: false };
 }
 
 const ADMIN_RE = /^\/api\/console-settings\/repos\/([^/]+)(?:\/env\/([^/]+)(\/remove)?|\/(instructions))?$/;
@@ -837,10 +636,8 @@ async function readBody(req, limit = MAX_BODY_BYTES) {
  *                                                                Answers {"files", "view"}
  *   GET  /api/my/own-files, POST /api/my/own-files               the old route of your own whole files, on the default
  *                                                                project's, for a page from before they were per repo
- *   GET  /api/my/files/<secret>                                  the old route of a Terraform env file's own lines, on the
- *   POST /api/my/files/<secret>[/reset]                          default project's repo settings (legacyFile), in its old shape
  *
- * Every /api/my/repos/<project> route, and the old one for the default project, is refused (403) to someone who cannot write to the repo: they cannot start
+ * Every /api/my/repos/<project> route is refused (403) to someone who cannot write to the repo: they cannot start
  * sessions on it, so they keep nothing for it and read nothing of it.
  * @param {{repoSettings: ReturnType<typeof createRepoSettings>, config: object,
  *          projectAccess?: {view: Function, forStart: (login: string, name: string) => Promise<object|null>}|null,
@@ -904,15 +701,6 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
     return reply(res, 200, { files: saved, view: old ? myView?.(login) ?? null : await repoSettings.view(project, { login }) });
   }
 
-  // The old /api/my/files/<secret>, on the repo settings it is copied into, refused as /api/my/repos/<project> is.
-  async function legacy(req, res, { key, reset }, login) {
-    const project = repoSettings.legacyState(key)?.project ?? defaultProject(config).name;
-    if (!(await refuseUnwritable(req, res, login, project))) return undefined;
-    if (req.method === 'GET') return reply(res, 200, await repoSettings.legacyFile({ login, key }));
-    const text = await readText(req);
-    return reply(res, 200, await repoSettings.legacyFile({ login, key, change: { text: reset ? '' : text } }));
-  }
-
   /** @returns {Promise<boolean>}  true when the person may go on; else the 403 is sent */
   async function refuseUnwritable(req, res, login, project) {
     if (await canWrite(login, project)) return true;
@@ -928,11 +716,10 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
    */
   return async function handle(req, res, { route, login }) {
     if (req.method !== 'GET' && req.method !== 'POST') return reply(res, 405, { error: 'method not allowed' });
-    if (req.method === 'GET' && (route.remove || route.reset)) return reply(res, 405, { error: 'method not allowed' });
+    if (req.method === 'GET' && route.remove) return reply(res, 405, { error: 'method not allowed' });
     if (route.scope !== 'admin' && !login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
     try {
       if (route.scope === 'admin') return await admin(req, res, route, login ?? 'console');
-      if (route.scope === 'legacy') return await legacy(req, res, route, login);
       return await mine(req, res, route, login);
     } catch (err) {
       if (err.shown) return reply(res, err.status ?? 400, { error: err.message });

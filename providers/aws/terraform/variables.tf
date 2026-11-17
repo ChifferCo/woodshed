@@ -144,11 +144,6 @@ variable "database_user" {
   }
 }
 
-variable "env_files" {
-  description = "The repo's env files that sessions write, as secret name = path in the repo: the project file's envFiles that have a `secret` (.woodshed/project.yaml). Each becomes a Secrets Manager secret, set on the console's Secrets page, and a variable of the secret's name in capitals in the session task."
-  type        = map(string)
-}
-
 variable "install_secrets" {
   description = "Secrets the repo's dependency installs read, such as a private package registry's token, as secret name = the variable a session gets it in: the one the repo's own tools read (its .npmrc, say). Each becomes a Secrets Manager secret, set on the console's Secrets page, and a task-definition secret under that variable. The session image's build gets the same variables from its install_env build secret (session/README.md). {} for none."
   type        = map(string)
@@ -157,26 +152,15 @@ variable "install_secrets" {
   validation {
     condition = alltrue([for name, env_name in var.install_secrets : can(regex("^[a-z0-9-]+$", name)) && !contains(
       ["anthropic-api-key", "openai-api-key", "github-app-key", "github-app-client-secret", "github-reviewer-app-key", "github-webhook-secret", "slack-bot-token", "slack-signing-secret"],
-    name) && !contains(keys(var.env_files), name)])
-    error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets or an env file's."
+    name)])
+    error_message = "An install secret's name is lowercase letters, digits and dashes, and is not one of the console's own secrets."
   }
   validation {
     # Woodshed's own session variables: the same list as SESSION_VARIABLES in shared/reservedNames.mjs.
     condition = alltrue([for env_name in values(var.install_secrets) : can(regex("^[A-Z_][A-Z0-9_]*$", env_name)) && !startswith(env_name, "WOODSHED_") && !contains(
       ["SESSION_ID", "SESSION_TOKEN", "TERMINAL_TOKEN", "SESSION_URL", "SESSION_APP_DOMAIN", "SESSION_KIND", "SESSION_MODE", "STARTED_BY", "ISSUE", "PR", "BRANCH", "PROMPT", "ASKED_BY", "AGENT", "MODEL", "EFFORT", "PERMISSION_MODE", "RESUME_SESSION", "ATTACHMENTS", "REVIEW_ONLY", "REPO_DIR", "GH_TOKEN", "ANTHROPIC_API_KEY", "PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE", "PGSSLMODE", "PGSSLROOTCERT", "PG_URL", "MONGODB_URI", "HOME", "PATH"],
-    env_name) && !contains([for name in keys(var.env_files) : upper(replace(name, "-", "_"))], env_name)]) && length(distinct(values(var.install_secrets))) == length(var.install_secrets)
-    error_message = "Each install secret's variable is a different name of capitals, digits and underscores, and not one of Woodshed's own (WOODSHED_*, SESSION_ID, GH_TOKEN, PGHOST and the rest) or an env file's."
-  }
-}
-
-variable "database_env_secrets" {
-  description = "Which of env_files the project's database commands read: every envFiles of the project file's databases. The db-admin task may read these and no others. [] (the default) without databases."
-  type        = list(string)
-  default     = []
-
-  validation {
-    condition     = length(var.databases) > 0 || length(var.database_env_secrets) == 0
-    error_message = "database_env_secrets is what the db-admin task's seed reads, and an installation with no databases has no db-admin task."
+    env_name)]) && length(distinct(values(var.install_secrets))) == length(var.install_secrets)
+    error_message = "Each install secret's variable is a different name of capitals, digits and underscores, and not one of Woodshed's own (WOODSHED_*, SESSION_ID, GH_TOKEN, PGHOST and the rest)."
   }
 }
 

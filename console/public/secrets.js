@@ -23,12 +23,8 @@
   }
   const GROUPS = [
     { id: 'session', title: 'Session secrets', note: 'Every session reads these when it starts. None may hold a production credential or an integration token.' },
-    { id: 'moved', title: 'Not in Repo settings yet', note: 'Each repo\'s env files are set on its Repo settings now. Sessions still read these old secrets because their repo has no values there yet: set them there, and each leaves this list.' },
     { id: 'console', title: 'Console only', note: 'Sessions cannot read these. They stay on the base box.' },
   ];
-  // An env file's secret is listed under Moved, whatever its group, and not at all once Repo settings hold its values:
-  // sessions no longer read it then.
-  const groupOf = (s) => (s.moved ? (s.moved.saved ? null : 'moved') : s.group);
 
   let data = null;
   let manager = null;
@@ -202,16 +198,9 @@
     return form;
   }
 
-  // Where a moved env file's values belong now. Only a file with none there yet is listed.
-  function movedNote(moved) {
-    const page = h('a', { href: `/console-settings/repos/${encodeURIComponent(moved.project)}?file=${encodeURIComponent(moved.key)}` }, `${moved.repo}'s Repo settings`);
-    return h('p', { class: 'cap-note' }, 'No values on ', page, ' yet, so sessions still read this one. Set them there instead.');
-  }
-
   function secretRow(s) {
     const value = revealed.get(s.name);
-    // Once Repo settings hold the file, a Replace here would reach no session: the console refuses it.
-    const replaceable = (s.exists || s.creatable) && !s.moved?.saved;
+    const replaceable = s.exists || s.creatable;
     return h('div', { class: `secret-row${open === s.name ? ' is-open' : ''}` },
       h('div', { class: 'secret-head' },
         h('div', { class: 'secret-main' },
@@ -222,8 +211,7 @@
             mono(value ?? MASK, value === undefined ? 'is-masked' : ''),
             h('button', { type: 'button', class: 'btn btn-plain', 'aria-pressed': String(value !== undefined), onclick: () => reveal(s.name) }, value === undefined ? 'Show' : 'Hide'),
             value !== undefined && copyButton(s.name, value)),
-          !s.readable && h('div', { class: 'msg-plain' }, 'Write-only: sessions never see this key, so the console never shows it either.'),
-          s.moved && movedNote(s.moved)),
+          !s.readable && h('div', { class: 'msg-plain' }, 'Write-only: sessions never see this key, so the console never shows it either.')),
         replaceable && h('button', {
           type: 'button', class: 'btn btn-stop', 'aria-expanded': String(open === s.name),
           onclick: () => { open = open === s.name ? null : s.name; render(); },
@@ -377,8 +365,7 @@
       managerCard(),
       // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
       data.webhook && webhookCard(),
-      GROUPS.map((g) => [g, data.secrets.filter((s) => groupOf(s) === g.id && s.kind !== 'webhook')])
-        .filter(([g, rows]) => rows.length || g.id !== 'moved')
+      GROUPS.map((g) => [g, data.secrets.filter((s) => s.group === g.id && s.kind !== 'webhook')])
         .map(([g, rows]) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
           h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
           h('p', { class: 'sub' }, g.note),

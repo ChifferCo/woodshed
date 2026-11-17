@@ -570,14 +570,7 @@ handed out):
 
 **tmux**, on My settings, adds your own lines to `~/.tmux.conf`, after the session image's `tmux.conf`, so a setting in
 both uses yours. Saving keeps them at `<prefix>/users/<login>/tmux-conf`; **Clear mine**, or saving nothing, deletes
-them. This card held each env file's own lines too until Repo settings: `GET`/`POST /api/my/files/<secret>` (and
-`/reset`) still answer, in their old shape, for a page opened before them, but read and write
-`users/<login>/repos/<default project>/env/<secret>`, with the same 403 as `/api/my/repos/<project>`, and the console
-logs `repoSettings: old own lines route, saved to repo settings`. An embedding program's file of one repo (`name` and
-`repo`, "Embedding the console") is that repo's: `/api/my/files/<store name>` reads and writes
-`users/<login>/repos/<its project>/env/<name>`, refused to someone who cannot write to that repo. Its per-repo tabs
-are now each repo's tab on the Repo settings card, one a key. They go when the fallback ends (`../docs/reference.md`,
-"The env files").
+them. `/api/my/files/tmux-conf` is its route; your own lines for the env files are Repo settings, above.
 
 **Your files**, in each repo's tab on Repo settings, are whole files of your own for that repo, by their path in it (an
 `app/.env.production` that your MCP servers read, a tool's local config), which every private session of yours on that
@@ -1459,13 +1452,6 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
   `toMessage` makes the message from GitHub's own payload): the GitHub poll then runs only as a fallback.
 
-- `config.envFiles` entries with `name` and `repo`, where its secret store keeps an env file's secret under another name
-  than the project file's (`secret` is the store's, `name` the project file's), for one repo's sessions alone (`repo`,
-  owner/name). My settings lists each as a tab of its own, labelled with its path and repo, and keeps a person's lines
-  under `users/<login>/<secret>`, so two repos' `api-env` never share them; the session API hands a private session the
-  lines of its own repo's files under `name`, which the session's `writeEnvFiles` reads. The shared text is the
-  launcher's to give, in `name`'s variable (`API_ENV`).
-
 - `maxValueBytes` on the program's secret store (`providers/README.md`, "A secret store's limit on one value"): the most
   bytes it holds in one value. Your files on Repo settings, one secret per person and repo, are held to it (64 KB when the store declares
   none), so a store with no such cap, such as one sealed in a database, should declare its own.
@@ -1728,7 +1714,7 @@ anyone Slack will not say anything about.
    page).
 3. The session checks out the default branch detached, with no databases, no Redis and no
    app. Its GitHub token reads only (contents, pull requests and issues), and
-   the app's env files and the install secrets are unset before claude starts.
+   it gets no repo settings, and the install secrets are unset before claude starts.
    `session/ask.md` tells claude to read the code, link each claim to it at the
    commit it read, and post the answer with `session/answer.sh`, which goes
    through the session API's `POST /answer` to the thread.
@@ -1922,8 +1908,7 @@ defaults and overrides are shown under its path where they differ, and the table
 for a key the files do not agree on. Then the installation's
 Instructions, with the 16 KB count as they are typed; a save that looks like a credential is refused under the field.
 A key saved for an env file the project file no longer names is listed with **Delete**, which removes everyone's values
-for it after a typed confirm. While an env file may still be read from its Terraform secret, the page says which one
-sessions read. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
+for it after a typed confirm. A project file with no env files gets a short how-to in their place: an `envFiles` entry with a `path`
 (and `defaults` if any) in a pull request, no `secret` needed, and a tab here once it is on the default branch. Last,
 the repo's **Slack** card ("A channel for each project", above; `#slack` opens it). The page loads for anyone signed
 in; its calls answer 403 to anyone but an admin, and it says so.
@@ -1933,17 +1918,15 @@ public/repoLayers.js, which the admin page shares), for each repo they can write
 files that share a key are one tab there too (`app-env → api/.env, worker/.env`), and a person's values are written to
 each of them.
 
-On Secrets & webhooks, the env files' Terraform secrets (`WOODSHED_ENV_FILES`) are listed under **Moved to Repo
-settings**, each with a link to its repo's page and when it was copied. Once Repo settings hold a value for the file,
-**Replace** is gone from its row and the console refuses it (409, `settings: replace refused, the env file moved to
-repo settings`): sessions read the Repo settings value, so an edit there would reach none. Before that, the secret is
-what sessions read, and may be set as before.
+Repo settings are the only place an env file's values are set: no secret on Secrets & webhooks, Terraform or the task
+definition holds them. A value saved by the old start-time copy from a Terraform secret says `copied from Terraform` in
+place of who saved it.
 
 The JSON API:
 
 | Route | Who | Answers |
 | --- | --- | --- |
-| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `legacy` (the Terraform secret it was copied from, and when), `unnamed` (keys saved that the file no longer names), the instructions' records |
+| `GET /api/console-settings/repos/<project>` | admins | the project file's env files, one a key (key, `paths`, and `files`: each path's defaults and wiring, `overrides`, `optional`, `env`; `path`, `defaults` and `wiring` are the first path's), each layer's records, `table` (each key, the layers that set it and the one that `wins`, one row for all the paths where they agree, else one a path with its `path`), `unnamed` (keys saved that the file no longer names), the instructions' records |
 | `GET`, `POST /api/console-settings/repos/<project>/env/<key>` | admins | `{"text"}`, the installation's values; a POST of `{"text": ""}` clears them |
 | `POST /api/console-settings/repos/<project>/env/<key>/remove` | admins | deletes the installation's and everyone's values for a key the project file no longer names |
 | `GET`, `POST /api/console-settings/repos/<project>/instructions` | admins | `{"text"}` |
@@ -1968,35 +1951,14 @@ filled only in a private session, from its owner's names; a shared or QA session
 the keys each layer gave and whether each has instructions. The session writes them into its env files and rules
 (session/README.md, "What a container does").
 
-At each start the console copies the Terraform env file secrets (`WOODSHED_ENV_FILES`) into
-`repos/<default project>/env/<secret>`, and each person's own lines for them (`users/<login>/<secret>`) into
-`users/<login>/repos/<default project>/env/<secret>`, only where the new name has no value yet: a value already there
-is never replaced, so a second start copies nothing. An embedding program's `config.envFiles` entry with `repo` and
-`name` ("Embedding the console") goes to that repo's project instead, under `name`: its secret into
-`repos/<project>/env/<name>`, each person's `users/<login>/<secret>` into `users/<login>/repos/<project>/env/<name>`,
-ahead of an entry for every repo with the same name; one whose repo has no project is not copied (`repoSettings:
-legacy env files of a repo with no project, not copied`). Each installation name is copied once: one copied before, or
-cleared on its page since, is skipped at every later start (`repoSettingsMigration.files` and `.cleared` in
-`state.json`, dates by the legacy secret's name; `repoSettings: legacy copy turned off for a cleared value`), so a
-Clear stays cleared and sessions read the Terraform secret again, with their warning. Once a person saves or clears
-their own values for one of those files, their old lines for it (`users/<login>/<secret>`, by the store's name) are
-deleted (`repoSettings: legacy own lines removed, repo settings hold them now`): a session would fall back to them
-whenever the new value is empty, and the next start would copy them back, so a Clear would not stay cleared. It logs
-`repoSettings: legacy env file copied` (`project`, `key`, `secret`, `bytes`), `legacy own lines copied` (`login`,
-`project`, `key`, `secret`) and `legacy copy checked` with how many were copied, kept, empty, done before or failed (a
-failed one is tried at the next start), and keeps when under `repoSettingsMigration` in `state.json`. A session reads a
-Terraform secret only for a file that has no value in Repo settings, and logs a warning when it does.
-
 The database template's seed (`session/dbAdmin.mjs`, `seedEnvFiles`) writes the env files its databases name from the
-default project's installation values the same way, layers 1, 2 and 4 (no one's own lines: the seed is no one's), and
-falls back to a file's Terraform secret, with the session's warning, while it has none. It reads them itself, as
+default project's installation values the same way, layers 1, 2 and 4 (no one's own lines: the seed is no one's). It
+reads them itself, as
 `repos/<project>/env/<key>` for the project its entryPoint's `--project` names, never a name a run gives; on AWS its task
 role may read that project's `repos/<project>/env/*` and no other repo's (`TheSeedsEnvFiles` in
 `providers/aws/terraform/ecs.tf`). A key that two env files name (they share a secret) is read once and written to
-both. Its log says `Seed env files read` with where each key came from and the paths that name it, never a value. The
-fallback is the Terraform secret by the project file's name (`database_env_secrets`), as before repo settings: an
-embedding program's `config.envFiles` `name` and `repo` reach the seed through repo settings alone, since the start's
-copy puts the default repo's entry into `repos/<default project>/env/<name>`, which the seed reads first.
+both. Its log says `Seed env files read` with where each key came from (`repo settings` or `none`) and the paths that
+name it, never a value.
 
 **Remove** on the Repos card deletes the repo's installation values and every person's own for it
 (`repoSettings: repo forgotten`, with how many), and **Remove My Woodshed** deletes the person's for every repo.
@@ -2039,8 +2001,8 @@ Remove My Woodshed.
 | `WOODSHED_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
 | `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on, and the label of every repo that does not name its own on its settings page ("How sessions start"). Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer sets it only when given `WOODSHED_REPO`, and then builds the session image from it; without, the console starts with no repo, on `woodshed-session:generic`, an image with no checkout, and every session clones its repo at start |
 | `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack still run on the default project; each project's own file is checked for its databases. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
-| `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | The repo's env files as `secret=path` pairs (`api-env=api/.env,web-env=web/.env.local`): each is a secret on the Secrets page and a tab on My settings. The second lists which of those secrets the databases' commands read (every `envFiles` of the project file's `databases`). Terraform sets both from `env_files` and `database_env_secrets`; the project file's own `envFiles` must name the same secrets |
-| `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) or an env file's stops the start. Terraform sets it from `install_secrets` |
+| `WOODSHED_DB_ENV_SECRETS` | none | On the local provider: the keys of the env files the databases' commands read (every `envFiles` of the project file's `databases`), comma-separated; a db-admin run is given the default project's repo settings for them. `install.sh` sets it from the project file. `WOODSHED_ENV_FILES`, from before Repo settings, is read no more |
+| `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) stops the start. Terraform sets it from `install_secrets` |
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |
 | `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |
 | `WOODSHED_FALLBACK_POLL_SECONDS` | `300` | How often the poll runs while webhooks arrive, and how often a pull request is read on its own while pull request webhooks arrive |
@@ -2057,9 +2019,9 @@ Remove My Woodshed.
 | `WOODSHED_SESSION_ENV_FILE` | none | A JSON object of strings passed to every session: the shared services and secrets from the table above |
 | `WOODSHED_GITHUB_APP_ID`, `_GITHUB_APP_INSTALLATION_ID`, `_GITHUB_APP_KEY_FILE` | none | The GitHub App. When set, the console mints installation tokens with the key (`githubApp.mjs`) for its own GitHub calls and for sessions, and `GH_TOKEN` is not used. With the `ecs` launcher and no key file, the key is read from `<prefix>/github-app-key`; until it has a value the console runs without GitHub |
 | `WOODSHED_SECRET_PREFIX`, `WOODSHED_WEBHOOK_FUNCTION` | `woodshed-cloud/`, `woodshed-cloud-webhooks` | With the `ecs` launcher: where the Secrets page finds its secrets (and the `project` tag of those it makes), and the Lambda whose URL it sets on the GitHub App. Set on the base box from Terraform's `name_prefix`; the defaults are for a box whose stack predates that, and go later |
-| `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` | none | On the local provider: the folder the Secrets page keeps its secrets in, one `<name>.json` each, readable by the console's user only (`providers/local/secretStore.mjs`), and the key each file is sealed with, AES-256-GCM, from a file of its own outside the folder, mode 600 (`secretKey.mjs`; `bin/secret.mjs new-key` makes one). The folder needs the key; a plain file in it is sealed at start. Each session also gets each env file's secret and each install secret from it as it starts, unless `WOODSHED_SESSION_ENV_FILE` sets them. With the GitHub App and no key file, the App's key is read from it too. Without it, the local provider has no Secrets page |
+| `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` | none | On the local provider: the folder the Secrets page keeps its secrets in, one `<name>.json` each, readable by the console's user only (`providers/local/secretStore.mjs`), and the key each file is sealed with, AES-256-GCM, from a file of its own outside the folder, mode 600 (`secretKey.mjs`; `bin/secret.mjs new-key` makes one). The folder needs the key; a plain file in it is sealed at start. Each session also gets each install secret from it as it starts, unless `WOODSHED_SESSION_ENV_FILE` sets them. With the GitHub App and no key file, the App's key is read from it too. Without it, the local provider has no Secrets page |
 | `WOODSHED_LOCAL_HOMES_DIR` | none | On the local provider: the folder saved Claude homes are kept in, at the same names as the S3 bucket's keys (`providers/local/homeStore.mjs`), readable by the console's user only. Without it, the local provider keeps no Claude home between sessions |
-| `WOODSHED_LOCAL_DB_POSTGRES_HOST`, `_DB_POSTGRES_ROOT_USER`, `_DB_MONGO_HOST` | none | On the local provider: where each session's own databases are made, Postgres on 5432 by the first two (both or neither) and Mongo as `host:port`, each only for an engine the installation hosts, each on its own (`providers/local/postgres.yml` and `mongo.yml` run them). A db-admin run is a container of the session image (`providers/local/dbAdminRunner.mjs`); it reads the root passwords from `db-root/postgres` and `db-root/mongo` in `WOODSHED_LOCAL_SECRETS_DIR`, each for a database it runs, and sees only the database password its command makes and the env files the databases' commands read (their `envFiles`): the default project's repo settings for them and their legacy secrets, as the AWS task role does. Its flags name the default project (`--project`). A failed run's container is kept for `docker logs`, root passwords in its environment, until the next run of the same action and owner removes it. Each run's secrets are copied under `db-admin-runs/` in `WOODSHED_STATE_DIR`, which must be the same path for the docker daemon, as it is when the console runs on that machine |
+| `WOODSHED_LOCAL_DB_POSTGRES_HOST`, `_DB_POSTGRES_ROOT_USER`, `_DB_MONGO_HOST` | none | On the local provider: where each session's own databases are made, Postgres on 5432 by the first two (both or neither) and Mongo as `host:port`, each only for an engine the installation hosts, each on its own (`providers/local/postgres.yml` and `mongo.yml` run them). A db-admin run is a container of the session image (`providers/local/dbAdminRunner.mjs`); it reads the root passwords from `db-root/postgres` and `db-root/mongo` in `WOODSHED_LOCAL_SECRETS_DIR`, each for a database it runs, and sees only the database password its command makes and the env files the databases' commands read (their `envFiles`): the default project's repo settings for them, as the AWS task role does. Its flags name the default project (`--project`). A failed run's container is kept for `docker logs`, root passwords in its environment, until the next run of the same action and owner removes it. Each run's secrets are copied under `db-admin-runs/` in `WOODSHED_STATE_DIR`, which must be the same path for the docker daemon, as it is when the console runs on that machine |
 | `WOODSHED_LOCAL_DOCKER_NETWORK` | none | The docker network sessions and db-admin runs join, to reach the shared services by name (`providers/local/compose.yml`'s `woodshed`) |
 | `WOODSHED_LOCAL_WEBHOOK_PORT`, `_WEBHOOK_HOST`, `_WEBHOOK_URL` | none, `127.0.0.1`, none | On the local provider: where its webhook receiver listens (`providers/local/webhookReceiver.mjs`), at the Lambda's paths, `POST /github` and `POST /slack`, checked against `github-webhook-secret` and `slack-signing-secret` in `WOODSHED_LOCAL_SECRETS_DIR`, which it needs. `_WEBHOOK_URL` is the public address a proxy in front of it answers at, and the Secrets & webhooks page sets `<url>/github` on the GitHub App. A message the console fails on is tried three times; one still waiting when the console restarts is lost, and the poll finds it |
 | `WOODSHED_TUNNEL_POSTGRES`, `_TUNNEL_MONGO` | none | Where `woodshed-db.mjs`'s connections go, as `host:port`, each used only for a database the installation runs. Each one is a tunnel of its own, and the script listens for those alone; without either, or without own databases, My settings has no From your computer. Without the Postgres one there is no Restore a dump for Postgres either, and without the Mongo one none for Mongo. Set on the base box, for the databases it runs: RDS and the box's private address |
