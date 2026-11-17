@@ -2814,6 +2814,74 @@ test('a QA report for a commit other than the one the session started on release
   assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
 });
 
+test('a QA run that stops without its report releases the held approval on the next tick, once, saying it did not finish', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  t.statuses[qa.id] = { state: 'working' };
+  await t.fleet.tick();
+  assert.equal(qa.status, 'running');
+  await t.fleet.stop(qa, 'idle for 2 h');
+  await t.fleet.tick();
+  assert.deepEqual(t.calls.reviews.map((r) => [r.event, r.sha]), [['APPROVE', 'a'.repeat(40)]], 'the approval goes out');
+  assert.match(t.calls.reviews[0].body, /QA did not finish: idle for 2 h\.$/);
+  assert.equal(t.fleet.sessions()[0].review.held, null);
+  await t.fleet.tick();
+  assert.equal(t.calls.reviews.length, 1, 'once');
+});
+
+test('a QA run that never started releases the held approval too, and one that reported releases nothing more', async () => {
+  const failed = heldSetup();
+  failed.launcher.start = async () => { throw new Error('CannotPullContainerError: no image'); };
+  const qa = await approveThenQa(failed, null);
+  await failed.fleet.tick();
+  assert.equal(qa.status, 'failed');
+  await failed.fleet.tick();
+  assert.deepEqual(failed.calls.reviews.map((r) => r.event), ['APPROVE']);
+  assert.match(failed.calls.reviews[0].body, /QA did not finish: /);
+
+  const reported = heldSetup();
+  const ran = await approveThenQa(reported, QA_VERDICT);
+  await settle();
+  await reported.fleet.tick();
+  assert.equal(ran.status, 'stopped');
+  assert.equal(reported.calls.reviews.length, 1, 'released by the report alone');
+});
+
+test('a QA run that stops without its report leaves the approval held while another QA run tests the same commit', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  const second = await t.fleet.createSession({ kind: 'pr', number: 7, title: 'QA: again', startedBy: 'joel', trigger: 'qa', branch: 'b', qa: { ...qa.qa, commentId: null } });
+  t.statuses[qa.id] = { state: 'working' };
+  await t.fleet.tick();
+  await t.fleet.stop(qa, 'stopped by the console');
+  await t.fleet.tick();
+  assert.ok(['queued', 'starting', 'running'].includes(second.status));
+  assert.deepEqual(t.calls.reviews, [], 'the other run will report on it');
+  assert.ok(t.fleet.sessions()[0].review.held);
+  t.statuses[second.id] = { state: 'working' };
+  await t.fleet.tick();
+  await t.fleet.stop(second, 'idle for 2 h');
+  await t.fleet.tick();
+  assert.deepEqual(t.calls.reviews.map((r) => r.event), ['APPROVE'], 'released once neither will report');
+});
+
+test('a commit approved while a QA run held QA gets its own run when that run stops without a report', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  t.statuses[qa.id] = { state: 'working' };
+  await t.fleet.tick();
+  const newer = { ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'b'.repeat(40) } };
+  t.github.pull = async () => newer;
+  await t.fleet.reviewOnTag({ number: 7 });
+  const second = t.fleet.sessions().filter((s) => s.trigger === 'review').at(-1);
+  await t.fleet.reviewFinished(second, { ...REVIEW_RESULT, sha: 'b'.repeat(40) });
+  assert.equal(t.fleet.sessions().filter((s) => s.trigger === 'qa').length, 1, 'QA is already running on the older commit');
+  await t.fleet.stop(qa, 'idle for 2 h');
+  await t.fleet.tick();
+  const runs = t.fleet.sessions().filter((s) => s.trigger === 'qa');
+  assert.deepEqual(runs.map((s) => s.qa.sha), ['a'.repeat(40), 'b'.repeat(40)], 'the newer commit is tested now');
+});
+
 // Each repo's own label and switches (repoTriggers.mjs), set on its settings page.
 test('the poll starts sessions from each repo\'s own label, and skips a label or comment its repo turns off', async () => {
   const { createRepoTriggers } = await import('./repoTriggers.mjs');

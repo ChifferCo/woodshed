@@ -816,6 +816,8 @@ export function createFleet({
         }
       }
       await startQueued();
+      // Before retention, which can take an ended QA run off the list at once.
+      for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
       await sweepDatabases();
       await announcer.check();
@@ -1822,6 +1824,32 @@ export function createFleet({
    * QA finished on a commit whose approval was held for it: the approval goes to GitHub with QA's result in it, or, when
    * QA failed, the verdict becomes REQUEST_CHANGES. Not when the head moved since: that commit gets its own review.
    */
+  /**
+   * A QA run that ended without its report (paused when idle or at its lifetime, stopped by someone, or failed to
+   * start) never reaches qaFinished, so the approval its review holds for it would wait for good. Once it has ended,
+   * that approval goes out saying QA did not finish, unless another QA run on the same commit is still going, which
+   * will report on it. A commit approved meanwhile, while this run held QA, gets its own run, as qaFinished starts it.
+   * Checked once per run, on a tick.
+   * @param {object} session
+   */
+  async function qaEndedUnreported(session) {
+    if (!isQa(session) || session.qa.conclusion || session.qa.endChecked) return;
+    if (session.status !== 'stopped' && session.status !== 'failed') return;
+    const project = projectFor(config, session);
+    const { sha } = session.qa;
+    const same = (s) => s !== session && isQa(s) && s.number === session.number && onProject(s, project);
+    if (state.sessions.some((s) => same(s) && s.qa.sha === sha && (ACTIVE_STATUSES.has(s.status) || s.status === 'stopping'))) return;
+    update(session, { qa: { ...session.qa, endChecked: true } });
+    const holding = state.sessions.filter((s) => isReview(s) && s.number === session.number && onProject(s, project) && s.review.held);
+    if (!holding.length) return;
+    const reason = firstLine(session.stopReason ?? session.error ?? '') || 'it stopped without a report';
+    if (heldApproval(project, session.number, sha)) {
+      console.log('fleet: held approval released, QA stopped without a report', { id: session.id, number: session.number, sha, reason });
+      await releaseHeldApproval(project, session.number, { sha, failed: false, qaLine: `QA did not finish: ${reason}.` });
+    }
+    if (holding.some((s) => s.review.held?.sha !== sha)) await qaAfterReview({ number: session.number, project: project.name });
+  }
+
   async function releaseHeldApproval(project, number, { sha, failed, qaLine }) {
     const review = heldApproval(project, number, sha);
     if (!review) return;
