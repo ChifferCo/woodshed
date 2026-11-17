@@ -149,7 +149,7 @@
 
   function changedLine(s) {
     // Terraform makes each of AWS's; a store chosen on this page makes one when it is first saved.
-    if (!s.exists && manager?.kind === 'aws' && !manager.canChoose) return 'Missing in AWS: apply Terraform to create it';
+    if (!s.exists && !s.creatable && manager?.kind === 'aws' && !manager.canChoose) return 'Missing in AWS: apply Terraform to create it';
     if (!s.set) return 'No value yet';
     return `Changed ${W.when(s.changedAt)}`;
   }
@@ -214,7 +214,7 @@
   function secretRow(s) {
     const value = revealed.get(s.name);
     // Once Repo settings hold the file, a Replace here would reach no session: the console refuses it.
-    const replaceable = s.exists && !s.moved?.saved;
+    const replaceable = (s.exists || s.creatable) && !s.moved?.saved;
     return h('div', { class: `secret-row${open === s.name ? ' is-open' : ''}` },
       h('div', { class: 'secret-head' },
         h('div', { class: 'secret-main' },
