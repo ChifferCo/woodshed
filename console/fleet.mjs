@@ -1943,7 +1943,7 @@ export function createFleet({
     if (String(body).includes(GAVE_UP_TEXT)) return { outcome: 'ignored', reason: 'the console\'s own comment, already messaged' };
     const project = projectOfEvent(projectName);
     const session = project && state.sessions
-      .filter((s) => !s.owner && !isQa(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
+      .filter((s) => !s.owner && !isQa(s) && !isReview(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
     if (!session) {
       console.log('fleet: a Needs a human comment with no shared session on it', { number, ...(projectName ? { project: projectName } : {}) });
       return { outcome: 'ignored', reason: 'no shared session works on this issue or pull request' };

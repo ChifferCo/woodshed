@@ -1911,6 +1911,21 @@ test('a session\'s Needs a human comment messages its assignee once, and the con
   assert.equal(told.length, 1);
 });
 
+test('a Needs a human comment on a pull request goes to the session working on it, not a review session started after it', async () => {
+  const told = [];
+  const pings = { needsYou: async () => true, gaveUp: async () => true, needsHuman: async (s) => { told.push(s.id); return true; } };
+  const { fleet, store } = setup({ assignables: ['joel'], pings });
+  store.state.sessions.push(
+    { id: 'wwwwwwww', repo: 'o/r', kind: 'issue', number: 3, title: 'w', startedBy: 'joel', assignee: 'joel', status: 'running', prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [] },
+    { id: 'rrrrrrrr', repo: 'o/r', kind: 'pr', number: 7, title: 'Review: w', startedBy: 'joel', trigger: 'review', status: 'running', createdAt: '2026-10-21T09:30:00.000Z', pendingMessages: [], review: { sha: 'a' } },
+  );
+  store.state.github ??= { seenComments: [] };
+  store.state.github.seenComments ??= [];
+  const result = await fleet.handleNeedsHuman({ number: 7, commentId: 601, url: 'https://github.com/o/r/pull/7#issuecomment-601', body: 'Needs a human: x' });
+  assert.deepEqual(result, { outcome: 'sent', sessionId: 'wwwwwwww' });
+  assert.deepEqual(told, ['wwwwwwww']);
+});
+
 test('a webhook about a kept session\'s pull request has it read at the next tick, not 15 minutes later', async () => {
   const ctx = setup();
   await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
