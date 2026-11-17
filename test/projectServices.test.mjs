@@ -107,3 +107,12 @@ test('check refuses a service\'s file that is a symlink, or under a symlinked fo
   fs.symlinkSync(outside, path.join(dir, '.woodshed/services'));
   assert.match(repoProblems(project, dir).join('\n'), /which is a symlink, or under one/);
 });
+
+test('check names a service\'s file that is a folder, or under a file, rather than failing on it', () => {
+  const dir = checkout();
+  fs.writeFileSync(path.join(dir, 'README.md'), 'x');
+  for (const source of ['.woodshed/services', 'README.md/init.sh']) {
+    const project = { ...parse([{ ...LOCALSTACK, files: { [INIT]: source } }]), from: 'checkout' };
+    assert.deepEqual(repoProblems(project, dir), [`services[0].files.${INIT} is ${source}, which is not a file in the checkout`], source);
+  }
+});

@@ -170,11 +170,26 @@ function databaseProblems(project, repoDir) {
   });
 }
 
-// A symlink, or a folder on the way that is one, in the checkout: what it names is read as the file, which can be anything
-// the reader may read (a CI runner's environment, a file in the machine owner's home).
-function symlinkOnPath(repoDir, file) {
+// What a service's file is in the checkout, without following a symlink: `symlink` for one, or a folder on the way that
+// is one (what it names is read as the file, which can be anything the reader may read: a CI runner's environment, a
+// file in the machine owner's home); `file` for the repo's own file; `missing` when the checkout has none, so the
+// default branch's is read; `other` for a folder, or a path through a file (`README.md/init.sh`).
+function checkoutEntry(repoDir, file) {
   const parts = file.split('/');
-  return parts.some((_, i) => fs.lstatSync(path.join(repoDir, ...parts.slice(0, i + 1)), { throwIfNoEntry: false })?.isSymbolicLink() ?? false);
+  for (let i = 1; i <= parts.length; i += 1) {
+    let stat;
+    try {
+      stat = fs.lstatSync(path.join(repoDir, ...parts.slice(0, i)), { throwIfNoEntry: false });
+    } catch (err) {
+      if (err.code === 'ENOTDIR') return 'other';
+      throw err;
+    }
+    if (!stat) return 'missing';
+    if (stat.isSymbolicLink()) return 'symlink';
+    if (i < parts.length && !stat.isDirectory()) return 'other';
+    if (i === parts.length) return stat.isFile() ? 'file' : 'other';
+  }
+  return 'other';
 }
 
 // Each service's files must be in the repo, where its readers take them from, and each a file of the repo's own, never
@@ -184,8 +199,10 @@ function serviceProblems(project, repoDir) {
   return project.services.flatMap((service, i) => [
     ...Object.entries(service.files).flatMap(([target, source]) => {
       const at = `services[${i}].files.${target}`;
-      if (symlinkOnPath(repoDir, source)) return [`${at} is ${source}, which is a symlink, or under one, in the checkout: a service's file must be the repo's own`];
-      return readRepoFile(repoDir, source) ? [] : [`${at} is ${source}, which is not in the checkout or on the default branch`];
+      const entry = checkoutEntry(repoDir, source);
+      if (entry === 'symlink') return [`${at} is ${source}, which is a symlink, or under one, in the checkout: a service's file must be the repo's own`];
+      if (entry === 'other') return [`${at} is ${source}, which is not a file in the checkout`];
+      return entry === 'file' || readRepoFile(repoDir, source) ? [] : [`${at} is ${source}, which is not in the checkout or on the default branch`];
     }),
     ...(Object.hasOwn(project.env, service.variable) ? [`env.${service.variable} is services[${i}]'s variable, which its URL arrives in: leave it to the service`] : []),
   ]);
