@@ -261,12 +261,6 @@
         : 'Set by your admins, for every session on this repo.';
     }
 
-    // While a file may still be read from its Terraform secret: no installation value yet.
-    function legacyNote(f) {
-      if (!f.legacy || f.installation) return null;
-      return h('p', { class: 'cap-note' }, 'No values here yet: sessions still read the Terraform secret ', h('code', null, f.legacy.secret), '.');
-    }
-
     function envPanel(f) {
       const v = view();
       const read = v.projectFile.read;
@@ -279,7 +273,6 @@
         layer('installation', 'This installation\'s values',
           h('p', { class: 'layer-meta' }, savedLine(f.installation)),
           installationBlock(f.key, f.installation),
-          legacyNote(f),
           h('p', { class: 'sub' }, byAdmins())),
         layer('personal', 'Your values',
           h('p', { class: 'layer-meta' }, savedLine(f.personal)),

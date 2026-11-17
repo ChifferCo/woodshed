@@ -106,7 +106,7 @@ export function createReviewerApp({ store, secrets, config, fetchImpl = fetch, n
       console.warn('reviewerApp: manifest conversion refused', { status: res.status });
       throw refusal(`GitHub would not hand over the reviewer App (HTTP ${res.status}): the code is single use and lasts an hour, so start again`);
     }
-    const spec = secretSpecs({ envFiles: [] }).find((s) => s.name === REVIEWER_KEY_SECRET);
+    const spec = secretSpecs().find((s) => s.name === REVIEWER_KEY_SECRET);
     await secrets.save(REVIEWER_KEY_SECRET, checkValue(spec, made.pem), 'The Woodshed reviewer App\'s private key (.pem). Only the console reads it, to submit reviews');
     store.state.reviewerApp = { appId: String(made.id), slug: made.slug };
     store.save();

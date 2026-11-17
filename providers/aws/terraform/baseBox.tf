@@ -332,8 +332,6 @@ locals {
     services           = var.shared_services
     reserved_mib       = local.base_box_reserved_mib
     legacy_services    = local.legacy_services_json
-    env_files          = join(",", [for name, path in var.env_files : "${name}=${path}"])
-    db_env_secrets     = join(",", var.database_env_secrets)
     install_secrets    = join(",", [for name, env_name in var.install_secrets : "${name}=${env_name}"])
     max_sessions       = var.max_sessions
     console_name       = var.console_name

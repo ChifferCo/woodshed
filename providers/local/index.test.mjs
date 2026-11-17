@@ -15,19 +15,30 @@ function keyFile() {
 }
 
 test('a session gets the store\'s session secrets as it starts; one the console\'s settings set stays', async () => {
-  const values = { 'api-env': 'A=1', 'web-env': 'B=2' };
+  const values = { 'registry-token': 'r1', 'other-token': 'o1' };
   const secrets = { read: async (name) => values[name] ?? null };
   const started = [];
   const launcher = { kind: 'docker', async start(id, env) { started.push([id, env]); return { ref: `woodshed-${id}` }; }, stop() {} };
-  const wrapped = withSessionSecrets({ launcher, secrets, envFiles: [{ secret: 'api-env' }, { secret: 'web-env' }] });
+  const installSecrets = [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }, { secret: 'other-token', variable: 'OTHER_TOKEN' }];
+  const wrapped = withSessionSecrets({ launcher, secrets, installSecrets });
 
-  assert.deepEqual(await wrapped.start('aaaa1111', { SESSION_ID: 'aaaa1111', WEB_ENV: 'from settings' }), { ref: 'woodshed-aaaa1111' });
-  assert.deepEqual(started[0][1], { SESSION_ID: 'aaaa1111', WEB_ENV: 'from settings', API_ENV: 'A=1' }, 'no install secrets, no WOODSHED_INSTALL_SECRETS');
+  assert.deepEqual(await wrapped.start('aaaa1111', { SESSION_ID: 'aaaa1111', OTHER_TOKEN: 'from settings' }), { ref: 'woodshed-aaaa1111' });
+  assert.deepEqual(started[0][1], { WOODSHED_INSTALL_SECRETS: 'OTHER_TOKEN REGISTRY_TOKEN', SESSION_ID: 'aaaa1111', OTHER_TOKEN: 'from settings', REGISTRY_TOKEN: 'r1' });
   assert.equal(wrapped.kind, 'docker');
 
-  values['api-env'] = 'A=2';
+  values['registry-token'] = 'r2';
   await wrapped.start('bbbb2222', {});
-  assert.equal(started[1][1].API_ENV, 'A=2', 'a replaced value reaches the next session');
+  assert.equal(started[1][1].REGISTRY_TOKEN, 'r2', 'a replaced value reaches the next session');
+});
+
+test('a session gets no env file secret: those values are repo settings, and nothing is read without install secrets', async () => {
+  const asked = [];
+  const secrets = { read: async (name) => { asked.push(name); return 'A=1'; } };
+  const started = [];
+  const launcher = { kind: 'docker', async start(id, env) { started.push(env); return { ref: id }; }, stop() {} };
+  await withSessionSecrets({ launcher, secrets }).start('aaaa1111', { SESSION_ID: 'aaaa1111' });
+  assert.deepEqual(started[0], { SESSION_ID: 'aaaa1111' }, 'no install secrets, no WOODSHED_INSTALL_SECRETS');
+  assert.deepEqual(asked, []);
 });
 
 test('an install secret reaches a session in the variable the installation names, which WOODSHED_INSTALL_SECRETS lists', async () => {
@@ -36,7 +47,7 @@ test('an install secret reaches a session in the variable the installation names
   const started = [];
   const launcher = { kind: 'docker', async start(id, env) { started.push(env); return { ref: id }; }, stop() {} };
   const installSecrets = [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }, { secret: 'other-token', variable: 'OTHER_TOKEN' }];
-  const wrapped = withSessionSecrets({ launcher, secrets, envFiles: [], installSecrets });
+  const wrapped = withSessionSecrets({ launcher, secrets, installSecrets });
   await wrapped.start('aaaa1111', { SESSION_ID: 'aaaa1111' });
   assert.deepEqual(started[0], { WOODSHED_INSTALL_SECRETS: 'OTHER_TOKEN REGISTRY_TOKEN', SESSION_ID: 'aaaa1111', REGISTRY_TOKEN: 'r1' },
     'an unset one adds no variable, and is still listed');

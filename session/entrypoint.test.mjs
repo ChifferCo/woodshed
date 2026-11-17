@@ -737,7 +737,7 @@ async function seedEnvFilesWritten(t, { secretValues, project = 'app', envFiles 
   const found = await seedEnvFiles({ flags, project: loadProject(repoDir), secrets: { get: async (name) => secretValues[name] ?? null } });
   const settingsFile = found.settings && path.join(repoDir, 'settings.json');
   if (settingsFile) fs.writeFileSync(settingsFile, JSON.stringify(found.settings), { mode: 0o600 });
-  const env = seedEnv({ flags, env: {}, databases: [PG], user: 'woodshed__seed', name: 'next', password: 'ab', files: found.files, settingsFile });
+  const env = seedEnv({ flags, env: {}, databases: [PG], user: 'woodshed__seed', name: 'next', password: 'ab', settingsFile });
   const result = spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
@@ -762,13 +762,13 @@ test('the seed writes its env files from the default project\'s repo settings, a
   assert.match(seeded.log, /Templates ready for the swap \(mode: seed, commands: 1\)/);
 });
 
-test('the seed falls back to an env file\'s legacy secret with the session\'s warning, and writes one with neither from the repo alone', async (t) => {
+test('the seed writes an env file with no repo settings value from the repo alone, whatever old secret the store holds', async (t) => {
   const seeded = await seedEnvFilesWritten(t, { secretValues: { 'p/api-env': 'API_KEY=old\n' } });
-  assert.equal(seeded.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.equal(seeded.api, `\n\n# Woodshed overrides\n${SEED_URL}\n`);
   assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nPUBLIC_MODE=dev\n\n# Woodshed overrides\n\n');
-  assert.match(seeded.log, /WARNING: api\/\.env from the legacy env file secret api-env: set it on Console settings → Repos/);
-  assert.match(seeded.log, /api\/\.env \(layers: installation session, installation: 12 bytes from the legacy secret,/);
-  assert.deepEqual(seeded.read, [{ key: 'api-env', paths: ['api/.env'], from: 'legacy secret' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
+  assert.doesNotMatch(seeded.log, /WARNING|legacy/);
+  assert.match(seeded.log, /api\/\.env \(layers: session, installation: 0 bytes,/);
+  assert.deepEqual(seeded.read, [{ key: 'api-env', paths: ['api/.env'], from: 'none' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
 });
 
 test('the seed writes a key two env files name to both, each with its own lines', async (t) => {
@@ -780,13 +780,13 @@ test('the seed writes a key two env files name to both, each with its own lines'
   assert.deepEqual(seeded.read, [{ key: 'app-env', paths: ['api/.env', 'worker/.env'], from: 'repo settings' }]);
 });
 
-test('a seed with no --project writes the env files from the legacy secrets as before, byte for byte', async (t) => {
+test('a seed with no --project writes the env files from the repo alone, in the log line from before repo settings', async (t) => {
   const values = { 'p/api-env': 'API_KEY=old\n', 'p/repos/app/env/api-env': 'API_KEY=new\n' };
-  const legacy = await seedEnvFilesWritten(t, { secretValues: values, project: null });
-  assert.equal(legacy.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
-  assert.match(legacy.log, /Env files written \(api\/\.env \(base: 12 bytes\), web\/\.env\.local \(base: 0 bytes, defaults: 1\)\)/, 'the line from before repo settings');
-  const fromSettings = await seedEnvFilesWritten(t, { secretValues: { ...values, 'p/repos/app/env/api-env': 'API_KEY=old\n' } });
-  assert.deepEqual([fromSettings.api, fromSettings.web], [legacy.api, legacy.web], 'the same text from either name gives the same bytes');
+  const bare = await seedEnvFilesWritten(t, { secretValues: values, project: null });
+  assert.equal(bare.api, `\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.match(bare.log, /Env files written \(api\/\.env \(base: 0 bytes\), web\/\.env\.local \(base: 0 bytes, defaults: 1\)\)/, 'the line from before repo settings');
+  const empty = await seedEnvFilesWritten(t, { secretValues: { 'p/api-env': 'API_KEY=old\n' } });
+  assert.deepEqual([empty.api, empty.web], [bare.api, bare.web], 'repo settings with no value give the same bytes');
 });
 
 test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.md', () => {

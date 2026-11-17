@@ -78,7 +78,8 @@ test('an env file a caller built itself is written from lines, the deprecated na
   const write = (file) => {
     const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-hand-built-'));
     t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
-    const [written] = writeEnvFiles({ project: { env: {}, envFiles: [{ key: 'api-env', ...file }] }, repoDir, env: { PGHOST: 'db', API_ENV: 'A=1' } });
+    const settings = { envFiles: { 'api-env': { installation: 'A=1', personal: null } } };
+    const [written] = writeEnvFiles({ project: { env: {}, envFiles: [{ key: 'api-env', ...file }] }, repoDir, env: { PGHOST: 'db' }, settings });
     return { written, text: fs.readFileSync(path.join(repoDir, 'api/.env'), 'utf8') };
   };
   const lines = write({ path: 'api/.env', secret: 'api-env', lines: ['DB={{PGHOST}}', 'STORE={{STORE_URL}}'] });
@@ -413,7 +414,7 @@ test('paths fill in the home and the checkout\'s folder name', () => {
   assert.equal(expandPath('logs/a.log', { repoDir: '/work/x' }), '/work/x/logs/a.log');
 });
 
-test('the CLI writes the env files from their secrets\' variables, and prints the exports, fields and files', (t) => {
+test('the CLI writes the env files from the repo settings, never the old secrets\' variables, and prints the exports, fields and files', (t) => {
   const dir = scratch(t);
   fs.mkdirSync(path.join(dir, '.woodshed'));
   fs.writeFileSync(path.join(dir, '.woodshed/project.yaml'), fixtureProject({
@@ -431,7 +432,15 @@ test('the CLI writes the env files from their secrets\' variables, and prints th
   assert.equal(cli(['secret-vars']), 'API_ENV\n');
   assert.equal(cli(['file', 'rules']), '- Run `make check`.\n');
   assert.equal(cli(['file', 'setup']), '');
-  assert.equal(cli(['write-env-files'], { API_ENV: 'SECRET=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"MINE=1"}' }), 'api/.env (base: 8 bytes, own lines)\n');
+  // The old Terraform secret's variable and own lines, which a task definition from before repo settings may still pass,
+  // are not read.
+  assert.equal(cli(['write-env-files'], { API_ENV: 'OLD=1', PGDATABASE: 'app', OWN_FILES: '{"api-env":"OLD=2"}' }), 'api/.env (base: 0 bytes)\n');
+  assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'), '\n\n# Woodshed overrides\nDB=app\n');
+  const settings = path.join(dir, 'repo-settings.json');
+  fs.writeFileSync(settings, JSON.stringify({
+    project: 'app', envFiles: { 'api-env': { installation: 'SECRET=1', personal: 'MINE=1' } }, instructions: { installation: null, personal: null }, personalFor: 'octocat',
+  }));
+  assert.match(cli(['write-env-files'], { API_ENV: 'OLD=1', PGDATABASE: 'app', REPO_SETTINGS_FILE: settings }), /^api\/\.env \(layers: installation personal session, installation: 8 bytes, personal: 6 bytes, /);
   assert.equal(fs.readFileSync(path.join(dir, 'api/.env'), 'utf8'),
     'SECRET=1\n\n# Your own lines, from My settings\nMINE=1\n\n# Woodshed overrides\nDB=app\n');
 });
