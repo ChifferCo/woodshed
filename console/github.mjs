@@ -510,6 +510,10 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       await ghApi(['--method', 'DELETE', `repos/${currentRepo()}/issues/${number}/labels/${encodeURIComponent(label)}`]);
       return true;
     },
+    /** @returns {Promise<{id: number, content: string, created_at: string, user: {login: string, type: string}}[]>}  its 👀, oldest first */
+    issueReactions(number) {
+      return ghApi([`repos/${currentRepo()}/issues/${number}/reactions?content=eyes&per_page=100`]);
+    },
     reactToIssue(number, content = 'eyes') {
       return ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/reactions`, '-f', `content=${content}`]);
     },

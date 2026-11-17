@@ -78,6 +78,10 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     async reviewThreads() { return this.threads; },
     async resolveThread(id) { calls.resolvedThreads.push(id); return true; },
     async reactToIssue(number) { calls.reactions.push({ issue: number }); },
+    async issueReactions(number) {
+      const login = ownApp()?.login;
+      return calls.reactions.filter((r) => r.issue === number && login).map((r, i) => ({ id: i + 1, content: 'eyes', created_at: '2026-10-21T10:00:00Z', user: { login, type: 'Bot' } }));
+    },
     async reactToComment(id) { calls.reactions.push({ comment: id }); },
     projectItems: {},
     async issueProjectItems(number) { return this.projectItems[number] ?? []; },
@@ -103,7 +107,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, wait: async () => {}, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2735,4 +2739,18 @@ test('a QA report for a commit other than the one the session started on release
   other.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'd'.repeat(40) } });
   await other.fleet.qaFinished(started, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'd'.repeat(40), costUsd: 1 });
   assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
+});
+
+test('a repo another console claimed first starts no label session, review or QA here, and a failed check starts it anyway', async () => {
+  const other = [{ id: 1, content: 'eyes', created_at: '2026-10-21T09:00:00Z', user: { login: 'other-console[bot]', type: 'Bot' } }];
+  const label = setup({ ownApp: () => ({ login: 'woodshed[bot]' }) });
+  label.github.issueReactions = async () => other;
+  assert.equal((await label.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'ignored');
+  assert.deepEqual([label.calls.started.length, label.calls.comments.length], [0, 0]);
+  const review = reviewSetup({ ownApp: () => ({ login: 'woodshed[bot]' }) });
+  review.github.issueReactions = async () => other;
+  assert.equal((await review.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored');
+  const broken = setup({ ownApp: () => ({ login: 'woodshed[bot]' }) });
+  broken.github.issueReactions = async () => { throw new Error('gh: HTTP 502'); };
+  assert.equal((await broken.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'started');
 });

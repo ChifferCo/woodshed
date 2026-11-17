@@ -371,6 +371,7 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     // In AWS the queue Terraform makes, found by name; `0` turns it off. Elsewhere none, so a dev box only polls.
     webhookQueue: webhookQueue(env),
     fallbackPollMs: number(envValue(env, 'FALLBACK_POLL_SECONDS'), 300) * 1000,
+    claimMs: number(envValue(env, 'CLAIM_SECONDS'), 5) * 1000,
     sessionEnv: readSessionEnv(envValue(env, 'SESSION_ENV_FILE')),
     // Where woodshed-db.mjs's connections go (dbTunnel.mjs), as `host:port`; without both, no tunnel.
     tunnelTargets: { pg: envValue(env, 'TUNNEL_POSTGRES') || null, mongo: envValue(env, 'TUNNEL_MONGO') || null },
