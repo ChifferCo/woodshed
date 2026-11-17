@@ -1,7 +1,7 @@
 // A review session's report, as session/review.sh sends it to the console (POST /review-report): the verdict the
 // console submits as a formal review, and the merge-risk the console posts as the Merge risk check. The session has
 // already read these from its files with shared/codeReview/codeReview.mjs; this only validates what arrived.
-import { MAX_REPORT_CHARS } from './qaSessions.mjs';
+import { MAX_REPORT_CHARS, SPINNER_HTML } from './qaSessions.mjs';
 
 const CONCLUSIONS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 const TIERS = new Set(['Low', 'Medium', 'High']);
@@ -31,6 +31,33 @@ function resolvedOf(raw) {
  *   mergeRisk: {tier: string|null, reason: string, summary: string}, inlineComments: {path: string, line: number, body: string}[],
  *   resolved: number[], sha: string, costUsd: number|null}}
  */
+/**
+ * @param {{sessionUrl: string|null}} args
+ * @returns {string}  the review's comment while its session runs, replaced by the review's own comment when it ends
+ */
+export function reviewRunningComment({ sessionUrl }) {
+  const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
+  return `**Reviewing** in ${where}: the review and its merge risk follow here when it ends. ${SPINNER_HTML}\n`;
+}
+
+/**
+ * @param {{reason: string, sessionUrl: string|null}} args
+ * @returns {string}  the review's comment when its session ended without a review
+ */
+export function reviewEndedComment({ reason, sessionUrl }) {
+  const where = sessionUrl ? ` ([session](${sessionUrl}))` : '';
+  return `⚠️ **The review did not finish**${where}: ${reason}. A new commit starts another.\n`;
+}
+
+/**
+ * @param {{conclusion: string, tier: string|null}} args
+ * @returns {string}  the review's comment when it reported a verdict but wrote no comment of its own
+ */
+export function reviewDoneComment({ conclusion, tier }) {
+  const verdict = { APPROVE: 'approved', REQUEST_CHANGES: 'changes requested', COMMENT: 'commented, no verdict' }[conclusion] ?? 'finished';
+  return `**Review finished**: ${verdict}${tier ? `, merge risk ${tier}` : ''}. Details in the review.\n`;
+}
+
 export function parseReviewReport(raw) {
   let body;
   try {

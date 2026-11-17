@@ -2410,7 +2410,7 @@ test('the QA label on a pull request starts a QA session on its branch, read onl
   const { env } = calls.started[0];
   assert.deepEqual([env.SESSION_MODE, env.PR, env.QA_BASE, env.GH_TOKEN], ['qa', '7', 'main', undefined]);
   assert.equal(calls.comments.length, 1);
-  assert.match(calls.comments[0].body, /^## QA\n\n⏳ \*\*Running\*\*/);
+  assert.match(calls.comments[0].body, /^## QA\n\n\*\*Running\*\*/);
   assert.match(calls.comments[0].body, new RegExp(`https://console.test/s/${session.id}`));
   assert.equal(session.qa.commentId, 9001);
 });
@@ -3013,4 +3013,34 @@ test('QA the console labelled on a pull request its own session opened runs as t
   assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
   const session = t.fleet.sessions().find((s) => s.qa);
   assert.deepEqual([session.startedBy, session.qa.teamKey], ['joel', undefined]);
+});
+
+test('a review comments that it started, and that comment becomes the review\'s comment, or says it did not finish', async () => {
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [running] = calls.comments;
+  assert.ok(running.body.startsWith('**Reviewing**') && running.body.includes('<img'));
+  await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
+  assert.deepEqual(calls.comments.at(-1), { id: 9001, body: REVIEW_RESULT.comment }, 'the review edits its started comment');
+
+  const silent = reviewSetup();
+  await silent.fleet.reviewOnTag({ number: 7 });
+  await silent.fleet.reviewFinished(silent.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: null, comment: null });
+  assert.match(silent.calls.comments.at(-1).body, /did not finish.*no verdict/);
+
+  const bare = reviewSetup();
+  await bare.fleet.reviewOnTag({ number: 7 });
+  await bare.fleet.reviewFinished(bare.fleet.sessions()[0], { ...REVIEW_RESULT, comment: '' });
+  assert.equal(bare.calls.comments.at(-1).body, '**Review finished**: approved, merge risk Low. Details in the review.\n', 'a verdict with no comment still ends the spinner');
+  const commented = reviewSetup();
+  await commented.fleet.reviewOnTag({ number: 7 });
+  await commented.fleet.reviewFinished(commented.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: 'COMMENT', comment: '' });
+  assert.match(commented.calls.comments.at(-1).body, /commented, no verdict/);
+
+  const died = reviewSetup();
+  await died.fleet.reviewOnTag({ number: 7 });
+  died.store.state.sessions[0].status = 'failed';
+  died.store.state.sessions[0].error = 'CannotPullContainerError: no image';
+  await died.fleet.tick();
+  assert.match(died.calls.comments.at(-1).body, /did not finish.*CannotPullContainerError/);
 });
