@@ -1634,7 +1634,9 @@ export function createHandler({
   // source's switch is null where there is none: Slack's only where Slack questions are answered at all.
   function webhookState() {
     const view = webhookSwitch?.view() ?? null;
-    const receiving = Boolean(view?.receiving ?? (config.webhookQueue || config.localWebhooks));
+    // Until the GitHub start says how (it waits for the App key), a webhook source configured is taken as read, but not
+    // on a console that borrows its GitHub access: that one never reads its own (installation.mjs, startGitHub).
+    const receiving = Boolean(view?.receiving ?? (!config.githubBroker && (config.webhookQueue || config.localWebhooks)));
     return { receiving, github: view?.github ?? null, slack: view && asks ? view.slack : null };
   }
 
