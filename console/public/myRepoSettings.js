@@ -1,5 +1,6 @@
-// My settings' Repo settings card: for each repo the person can write to, their own values for each of its env files
-// and their own instructions, which only their private sessions on that repo get, drawn as the layers a session writes
+// My settings' Repo settings card: for each repo the person can write to, their own values for each of its env files,
+// their own instructions and their own whole files (an app/.env.production), which only their private sessions on that
+// repo get, drawn as the layers a session writes
 // them from (designSystem/components/LayeredFile). They may read the installation's values too, since their sessions
 // hold them anyway; each read is logged. ?repo=<project> opens one repo, and ?file=<key> one of its env files.
 (function () {
@@ -32,6 +33,18 @@
     const busy = new Set();
     const saveButtons = new Map();
     const sizeLine = h('p', { class: 'layer-count', role: 'status' });
+    // Your own whole files, by project: their texts, read the first time the repo's panel is drawn (a read that failed
+    // is not tried again until Try again, or render() would ask at once for as long as the store is down), and the one
+    // open, '' a new one.
+    const ownFiles = new Map();
+    const ownFilesFailed = new Map();
+    const ownLoads = new Set();
+    const ownOpen = new Map();
+    const FILES = '#files';
+    // The repo whose open file the path and text boxes hold.
+    let boxesFor = null;
+    const ownPathInput = h('input', { id: 'own-file-path', class: 'field mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'app/.env.production' });
+    const fileTextBox = h('textarea', { id: 'own-file-text', class: 'field mono file-text', rows: '10', spellcheck: 'false', autocomplete: 'off', placeholder: 'NOTION_TOKEN=…' });
 
     const id = (key) => `${project}\n${key}`;
     const base = (name) => `/api/my/repos/${encodeURIComponent(name)}`;
@@ -150,6 +163,7 @@
       if (!row) return;
       row.envFiles = v.envFiles.filter((f) => f.personal).map((f) => f.key);
       row.instructions = Boolean(v.instructions.personal);
+      row.files = v.files?.length ?? 0;
     }
 
     async function loadView(name) {
@@ -290,6 +304,106 @@
           h('p', { class: 'sub' }, 'At most 16 KB. They go into the prompt of your private sessions on this repo only, after this installation\'s, and win where the two disagree. No secrets: put them in an env file\'s values.')));
     }
 
+    async function loadOwnFiles(name) {
+      if (ownLoads.has(name)) return;
+      ownLoads.add(name);
+      ownFilesFailed.delete(name);
+      try {
+        const answer = await W.getJson(`${base(name)}/files`);
+        ownFiles.set(name, answer.files ?? {});
+        ownOpen.set(name, Object.keys(answer.files ?? {}).sort()[0] ?? '');
+        if (name === project) boxesFor = null;
+      } catch (err) {
+        ownFilesFailed.set(name, refusal(err));
+      }
+      ownLoads.delete(name);
+      render();
+    }
+
+    // The path and text boxes are one pair, filled from the open file of the repo on screen.
+    function openOwnFile(file, { redraw = true } = {}) {
+      ownOpen.set(project, file);
+      ownPathInput.value = file;
+      fileTextBox.value = file ? ownFiles.get(project)?.[file] ?? '' : '';
+      notes.delete(id(FILES));
+      if (redraw) render();
+    }
+
+    function saveOwnFile(file, text, done) {
+      const name = project;
+      return act(id(FILES), async () => {
+        const answer = await W.postJson(`${base(name)}/files`, { path: file, text });
+        ownFiles.set(name, answer.files);
+        views.set(name, answer.view);
+        summaryOf(name, answer.view);
+        const next = answer.files[file.trim()] !== undefined ? file.trim() : Object.keys(answer.files).sort()[0] ?? '';
+        if (name === project) openOwnFile(next, { redraw: false });
+        else ownOpen.set(name, next);
+        return done;
+      });
+    }
+
+    function filesPanel() {
+      const v = view();
+      const k = id(FILES);
+      let files = ownFiles.get(project) ?? null;
+      // The view lists their paths: with none, there is nothing to read.
+      if (v.available && !files && !ownFilesFailed.has(project)) {
+        if (v.files?.length) loadOwnFiles(project);
+        else ownFiles.set(project, files = {});
+      }
+      // A repo opened since the boxes were last filled: fill them from its open file.
+      if (files && boxesFor !== project) {
+        boxesFor = project;
+        openOwnFile(ownOpen.get(project) ?? Object.keys(files).sort()[0] ?? '', { redraw: false });
+      }
+      const open = ownOpen.get(project) ?? '';
+      const records = v.files ?? [];
+      const savedAt = (file) => records.find((f) => f.path === file)?.savedAt;
+      const working = busy.has(k);
+      ownPathInput.readOnly = working || Boolean(open);
+      fileTextBox.readOnly = working;
+      ownPathInput.disabled = fileTextBox.disabled = !v.available || !files;
+      const failed = ownFilesFailed.get(project);
+      return h('div', { class: 'layered', 'aria-labelledby': 'my-files-head' },
+        h('div', { class: 'layered-head' }, h('h3', { id: 'my-files-head' }, 'Your files'),
+          h('span', { class: 'data-meta' }, h('span', null, records.length ? plural(records.length, 'file', 'files') : 'None'))),
+        // Only the person's layer: nothing of the repo's or the installation's is under these paths.
+        layer('personal', 'Your whole files',
+          h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Your file' },
+            records.map((f) => h('button', { type: 'button', 'aria-pressed': String(f.path === open), disabled: working || !files, onclick: () => openOwnFile(f.path) }, f.path)),
+            h('button', { type: 'button', 'aria-pressed': String(open === ''), disabled: working || !files, onclick: () => openOwnFile('') }, '+ Add a file')),
+          h('label', { class: 'field-label', for: 'own-file-path' }, h('span', null, 'Path in the repo')),
+          ownPathInput,
+          h('label', { class: 'field-label', for: 'own-file-text' }, h('span', null, open ? `${open}${savedAt(open) ? `, saved ${W.when(savedAt(open))}` : ''}` : 'Its text')),
+          fileTextBox,
+          h('div', { class: 'card-foot' },
+            failed && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => loadOwnFiles(project) }, 'Try again'),
+            h('button', {
+              type: 'button', class: 'btn btn-open', disabled: !v.available || !files || working,
+              onclick: () => {
+                const file = ownPathInput.value.trim();
+                if (!fileTextBox.value.trim()) {
+                  notes.set(k, { text: 'Write the file\'s text first. To delete a file, use Remove.', bad: true });
+                  render();
+                  return;
+                }
+                saveOwnFile(file, fileTextBox.value, `Saved ${file}. Your next private session on ${v.repo} writes it; running ones keep theirs.`);
+              },
+            }, working ? 'Saving…' : 'Save'),
+            open && h('button', {
+              type: 'button', class: 'btn btn-quiet', disabled: working,
+              onclick: () => {
+                if (!window.confirm(`Remove ${open}? Your next sessions on ${v.repo} no longer write it.`)) return;
+                saveOwnFile(open, '', `Removed ${open}.`);
+              },
+            }, 'Remove')),
+          failed ? h('p', { class: 'form-error', role: 'alert' }, `Could not read your files: ${failed}`) : note(k),
+          h('p', { class: 'sub' }, `Whole files your private sessions on ${v.repo} write into its checkout at start, such as the `, h('code', null, '.env.production'),
+            ' your MCP servers read. A file is written only where git ignores it, so it never reaches a commit. Other repos never get them.',
+            v.filesMaxBytes ? ` Up to ${Math.floor(v.filesMaxBytes / 1024)} KB across this repo's files, ${v.filesMax ?? 20} files at most.` : '')));
+    }
+
     function repoBody() {
       const v = view();
       if (viewErrors.has(project)) return h('p', { class: 'form-error', role: 'alert' }, `Could not load this repo's settings: ${viewErrors.get(project)}`);
@@ -305,13 +419,14 @@
         }, labelOf(x), x.personal ? ' •' : ''))),
         f ? envPanel(f) : h('p', { class: 'sub' }, 'The project file has no env files.'),
         instructionsPanel(),
+        filesPanel(),
       ];
     }
 
     function card() {
       saveButtons.clear();
       const list = repos?.repos ?? [];
-      const keeps = list.filter((r) => r.envFiles.length || r.instructions);
+      const keeps = list.filter((r) => r.envFiles.length || r.instructions || r.files);
       const pill = keeps.length ? h('span', { class: 'pill is-ok' }, `Yours on ${plural(keeps.length, 'repo', 'repos')}`) : h('span', { class: 'pill' }, 'None of yours');
       const body = reposError ? h('p', { class: 'form-error', role: 'alert' }, `Could not load your repos: ${reposError}`)
         : !repos ? h('p', { class: 'empty' }, 'Loading your repos…')
@@ -319,12 +434,12 @@
             : [
               list.length > 1 && h('div', { class: 'file-tabs', role: 'group', 'aria-label': 'Repo' }, list.map((r) => h('button', {
                 type: 'button', 'aria-pressed': String(r.project === project), onclick: () => openRepo(r.project),
-              }, r.repo, r.envFiles.length || r.instructions ? ' •' : ''))),
+              }, r.repo, r.envFiles.length || r.instructions || r.files ? ' •' : ''))),
               repoBody(),
             ];
       const node = h('section', { class: 'set-card is-wide', id: 'repo-settings' },
         h('div', { class: 'set-head' }, h('h2', null, 'Repo settings'), pill),
-        h('p', { class: 'sub' }, 'Your own values for each repo\'s env files, and your own instructions, for your private sessions on that repo. Shared sessions never get them. Your next private session picks up what you save; running ones keep theirs. Only repos you can write to are listed.'),
+        h('p', { class: 'sub' }, 'Your own values for each repo\'s env files, your own instructions and your own files, for your private sessions on that repo. Shared sessions never get them. Your next private session picks up what you save; running ones keep theirs. Only repos you can write to are listed.'),
         body);
       for (const k of editors.keys()) updateCounts(k);
       return node;
@@ -338,8 +453,11 @@
 
     // After Remove My Woodshed: nothing of the person's is left, so everything is read again.
     function reload() {
-      for (const map of [views, viewErrors, shownText, installationText, notes]) map.clear();
+      for (const map of [views, viewErrors, shownText, installationText, notes, ownFiles, ownFilesFailed, ownOpen]) map.clear();
       for (const editor of editors.values()) editor.value = '';
+      ownPathInput.value = '';
+      fileTextBox.value = '';
+      boxesFor = null;
       repos = null;
       load();
     }

@@ -31,12 +31,13 @@ Look for, and note the file each answer came from:
   A repo with more than one app (a second frontend, an admin site) writes `apps` instead of `app`: a list of the same
   fields, each with a `name` and an optional `label`, the first the default. Give each app its own log file.
 - **Services in Docker**: a `supabase/` folder (Supabase local), or a compose file of services the app needs (a queue,
-  a search engine, a Postgres the Woodshed databases do not stand in for). On the local provider, sessions use the
-  machine's Docker on one person's console (and on a shared one with `WOODSHED_SESSION_DOCKER=1`), so the app's
-  `start` can bring them up there: `supabase start`,
+  a search engine, a Postgres the Woodshed databases do not stand in for). On the local provider, sessions have
+  Docker: their own where the machine has Sysbox, else the machine's on one person's console (and on a shared one with
+  `WOODSHED_SESSION_DOCKER=1`), so the app's `start` can bring them up: `supabase start`,
   or `docker compose -p <name> up -d --wait`. Name them after the session (`$SESSION_ID`, in a compose project name or
-  Supabase's `project_id`), since every session shares that Docker, and have `stop` take them down. `start` can check
-  `WOODSHED_SESSION_DOCKER=1` and, without it, fail with what is missing (`this session has no Docker: supabase start
+  Supabase's `project_id`), since with the machine's every session shares that Docker, and have `stop` take them down.
+  `start` can check `[ -n "${WOODSHED_SESSION_DOCKER:-}" ]` (`1` the machine's, `own` the session's own) and, without
+  it, fail with what is missing (`this session has no Docker: supabase start
   needs it`) rather than a page that never loads. AWS sessions never have Docker: say so when the installation is on
   AWS.
 - **CI**: the workflow that runs the tests on pull requests, and its job names, for `pullRequests.suites`.

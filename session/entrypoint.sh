@@ -51,6 +51,8 @@
 #   WOODSHED_SESSION_DOCKER=1  the machine's Docker socket is mounted and DOCKER_HOST names it (the docker launcher's
 #                        hostDocker): claude's rules say so (hostDocker.md), and dockerPorts.mjs forwards what its
 #                        containers publish to 127.0.0.1 here
+#   WOODSHED_SESSION_DOCKER=own  the session runs its own Docker daemon, under Sysbox, which ownDocker.sh started before
+#                        this (the docker launcher's ownDocker): claude's rules say so (ownDocker.md)
 #   SESSION_KIND=private  a My Woodshed session: claude runs on its owner's Claude token, which the console hands
 #                         it, instead of the team key, on the owner's own databases;
 #                         the owner's own lines for the project's env files and ~/.tmux.conf, where they keep
@@ -318,15 +320,18 @@ configureClaude() {
     key) key=$SESSION_TOKEN ;;
     plan | own) key= ;;
   esac
-  node - "$REPO_DIR" "${key: -20}" <<'NODE'
+  node - "$REPO_DIR" "${key: -20}" "${UPLOADS_DIR:-/tmp/uploads}" <<'NODE'
 const fs = require('node:fs');
-const [repoDir, keySuffix] = process.argv.slice(2);
+const [repoDir, keySuffix, uploadsDir] = process.argv.slice(2);
 const path = `${process.env.HOME}/.claude.json`;
 const config = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, 'utf8')) : {};
 config.hasCompletedOnboarding = true;
 config.customApiKeyResponses = { approved: keySuffix ? [keySuffix] : [], rejected: [] };
 config.projects = config.projects ?? {};
 config.projects[repoDir] = { ...config.projects[repoDir], hasTrustDialogAccepted: true };
+// claudeFlags passes it with --add-dir, and Claude Code asks "Adding a new directory: … Is this a directory you
+// trust?" at start for an added folder no project entry trusts, which held every session before its first prompt.
+config.projects[uploadsDir] = { ...config.projects[uploadsDir], hasTrustDialogAccepted: true };
 fs.writeFileSync(path, JSON.stringify(config, null, 2));
 // Auto mode's confirmation is the one dialog that lives in settings, not ~/.claude.json. The status line
 // under the prompt is the dev box's.
@@ -421,11 +426,33 @@ leaveOutConsoleLinks() {
   log "Session link left out of pull requests (the project file's consoleLinks)"
 }
 
+# What claude is told of the app, added to writeRules' `rules`: the address the person opens it at, since they are not on
+# this machine and a localhost one reaches nothing (appAddress.md, only where the console serves session apps), and for
+# a project file with no app, or no project file, what Set up app would do, for claude to offer it (noApp.md). Its
+# {{PRIVATE_ONLY}} and {{SHARED_ONLY}} lines go with the rest of the rules'.
+appRules() {
+  local from address missing
+  if [ -n "${SESSION_APP_DOMAIN:-}" ] && [ -n "${SESSION_ID:-}" ]; then
+    address=$(cat "$SESSION_DIR/appAddress.md")
+    rules+=$'\n'"${address//"{{APP_URL}}"/"https://$SESSION_ID.$SESSION_APP_DOMAIN/"}"
+  fi
+  [ -z "$(project get apps)" ] || return 0
+  from=$(project get from) || die "the project file could not be read"
+  if [ "$from" = none ]; then
+    missing='This repo has no `.woodshed/project.yaml`'
+  else
+    missing='This repo'"'"'s `.woodshed/project.yaml` has no `app` section'
+  fi
+  address=$(cat "$SESSION_DIR/noApp.md")
+  rules+=$'\n'"${address//"{{WHAT_IS_MISSING}}"/"$missing"}"
+}
+
 writeRules() {
   local rules setup notes tag apps added
   leaveOutConsoleLinks
   # Woodshed's own rules, then the project's: its skills, checks and review workflow.
   rules=$(cat "$SESSION_DIR/prompt.md"; printf '\n'; project file rules) || die "the project's rules could not be read"
+  appRules
   # Plain substitution, not sed: a branch name is chosen by whoever opened the PR.
   rules=${rules//"{{BRANCH}}"/"$BRANCH"}
   rules=${rules//"{{DEFAULT_BRANCH}}"/"$DEFAULT_BRANCH"}
@@ -460,20 +487,21 @@ writeRules() {
   # A project of several apps names each, how it starts and how to prove a change in it; one app adds nothing.
   apps=$(project apps-rules) || die "the project's apps could not be read"
   [ -z "$apps" ] || rules+=$'\n'"$apps"
-  # This machine's Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file.
-  if [ "${WOODSHED_SESSION_DOCKER:-}" = 1 ]; then
-    local docker
-    docker=$(cat "$SESSION_DIR/hostDocker.md")
-    docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"}
-    rules+=$'\n'"$docker"
-  fi
+  # A Docker, which only the console's launcher gives (WOODSHED_SESSION_DOCKER), never the project file: the machine's
+  # (1) or the session's own (own).
+  local docker=
+  case "${WOODSHED_SESSION_DOCKER:-}" in
+    1) docker=$(cat "$SESSION_DIR/hostDocker.md"); docker=${docker//"{{SESSION_ID}}"/"$SESSION_ID"} ;;
+    own) docker=$(cat "$SESSION_DIR/ownDocker.md") ;;
+  esac
+  [ -z "$docker" ] || rules+=$'\n'"$docker"
   printf '%s\n' "$rules" > /tmp/woodshed-rules.md
   # The installation's instructions for the repo and the owner's own go after all of it, with which of them win.
   if [ -f "${REPO_SETTINGS_JSON:-}" ]; then
     added=$(REPO_SETTINGS_FILE=$REPO_SETTINGS_JSON project add-instructions /tmp/woodshed-rules.md) || die "the repo's instructions could not be added to the rules"
     [ -z "$added" ] || log "Instructions added to the rules" "($added)"
   fi
-  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, host docker: ${WOODSHED_SESSION_DOCKER:-0}, apps: $(project get apps | grep -c . || true))"
+  log "Rules written" "(bytes: $(wc -c < /tmp/woodshed-rules.md), review tag: ${tag:-none}, docker: ${WOODSHED_SESSION_DOCKER:-none}, apps: $(project get apps | grep -c . || true))"
 }
 
 # With this machine's Docker, the ports its containers publish are forwarded to the same ports on 127.0.0.1 here, where
@@ -533,26 +561,42 @@ useDatabaseFrom() {
 DATABASE_WAIT_SECONDS=600
 # The console's /settings answer, between consoleCall and its reader, which deletes it: it holds a database password.
 SETTINGS_ANSWER=/tmp/woodshed-settings.json
+# Tells the console this entrypoint reads a /settings answer that has a plan and no database (sessionApi.mjs's
+# PLAN_ONLY_HEADER): an image from before it stops on one, so the console sends those a 404 instead.
+PLAN_ONLY_HEADER='X-Woodshed-Plan-Only: 1'
+# The Claude plan a shared session runs on, asked once from /settings when the console makes it no databases: a review,
+# a session whose environment already names its databases (the docker launcher, a pool machine's own), or an
+# installation that hosts none. A 404 or no answer is the team key, as before.
+fetchStarterPlan() {
+  [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  local code
+  code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15 -H "$PLAN_ONLY_HEADER")
+  [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
+  rm -f "$SETTINGS_ANSWER"
+  [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
+  return 0
+}
+
 fetchSessionDatabases() {
   # A review session reads the diff and runs no app, so the console makes it no databases: it asks once only for the
   # Claude plan it runs on (the /settings answer's .plan), and never waits on databases.
   if [ "${SESSION_MODE:-}" = review ]; then
-    [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
-    local code
-    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
-    [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
-    rm -f "$SETTINGS_ANSWER"
-    [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
+    fetchStarterPlan
     return 0
   fi
-  [ "${SESSION_KIND:-}" != private ] && [ -z "$(databases given)" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  [ "${SESSION_KIND:-}" != private ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  if [ -n "$(databases given)" ]; then
+    fetchStarterPlan
+    return 0
+  fi
   if [ -z "$(databases hosted)" ]; then
     log "No databases to fetch" "(the installation hosts no database engine)"
+    fetchStarterPlan
     return 0
   fi
   local answer code start=$SECONDS
   while :; do
-    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15)
+    code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15 -H "$PLAN_ONLY_HEADER")
     answer=$(cat "$SETTINGS_ANSWER" 2>/dev/null || true)
     rm -f "$SETTINGS_ANSWER"
     # 503 while the copy runs, which consoleCall tries again for its 40 s; no answer, 502 or 504 while the console
@@ -561,17 +605,19 @@ fetchSessionDatabases() {
     [ $((SECONDS - start)) -lt "$DATABASE_WAIT_SECONDS" ] || die "the session's databases were not ready after $DATABASE_WAIT_SECONDS s (last status $code)"
     sleep 2
   done
-  # A console that makes no databases: the environment's stay.
-  if [ "$code" = 404 ]; then
+  # A console that makes no databases: the environment's stay. It answers 200 with only the plan when the session
+  # runs on its starter's.
+  if [ "$code" = 404 ] || { [ "$code" = 200 ] && ! jq -e '.database' <<< "$answer" > /dev/null 2>&1; }; then
     log "WARNING: the console made no databases for this session, using the environment's"
-    return 0
+  else
+    [ "$code" = 200 ] || die "could not get the session's databases from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
+    useDatabaseFrom "$answer"
+    log "Session's databases fetched" "(database: $WOODSHED_DB_NAME, waited: $((SECONDS - start)) s)"
   fi
-  [ "$code" = 200 ] || die "could not get the session's databases from the console (status $code): $(jq -r '.error // empty' <<< "$answer" 2>/dev/null)"
-  useDatabaseFrom "$answer"
-  log "Session's databases fetched" "(database: $WOODSHED_DB_NAME, waited: $((SECONDS - start)) s)"
   # Whoever started it switched on their own Claude for the shared sessions they start, and has a token saved.
-  STARTER_PLAN=$(jq -r '.plan // empty' <<< "$answer")
-  if [ -n "$STARTER_PLAN" ]; then log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"; fi
+  [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$answer")
+  if [ -n "${STARTER_PLAN:-}" ]; then log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"; fi
+  return 0
 }
 
 OWN_CLAUDE_TOKEN_FILE=$HOME/.config/woodshed/claude-token

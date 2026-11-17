@@ -303,6 +303,9 @@ test('a wrong pullRequests section names the field', () => {
   const { author, ...noAuthor } = PULL_REQUESTS.qa;
   assert.equal(full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed' } }).pullRequests.qa.author, null, 'a QA session has no comment author');
   assert.throws(() => full({ ...PULL_REQUESTS, qa: noAuthor }), /pullRequests\.qa is missing author/);
+  const { author: _author, ...noReviewAuthor } = REVIEW;
+  assert.equal(full({ ...PULL_REQUESTS, review: { ...noReviewAuthor, runner: 'woodshed' } }).pullRequests.review.author, null, 'a review session\'s author is the console\'s to fill in');
+  assert.throws(() => full({ ...PULL_REQUESTS, review: noReviewAuthor }), /pullRequests\.review is missing author/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noAuthor, runner: 'woodshed', author: '' } }), /pullRequests\.qa\.author must be a non-empty string/);
   assert.throws(() => full({ ...PULL_REQUESTS, qa: { ...noRunner, runner: 'jenkins' } }), /pullRequests\.qa\.runner must be one of actions, woodshed/);
   assert.equal(full(PULL_REQUESTS).pullRequests.qa.autoLabel, false, 'left out, a person adds the label');

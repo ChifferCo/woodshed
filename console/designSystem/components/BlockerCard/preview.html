@@ -1,0 +1,33 @@
+<!-- @dsCard group="Cards" height=620 subtitle="A repo that needs setup: the fix for an admin; whom to ask for anyone else; Ready and Needs setup on a Repos row" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+ body{margin:0;padding:20px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif;display:grid;gap:14px;max-width:560px}
+ .card{padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--ground);display:grid;gap:10px}
+ .head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+ .mono{font-family:"JetBrains Mono",monospace;font-size:13px}
+ p{margin:0}
+ .reason{font-size:14px;line-height:1.45}
+ .sub{font-size:12.5px;color:var(--sub)}
+ .pill{font-size:11.5px;font-weight:600;padding:2px 9px;border-radius:999px;white-space:nowrap}
+ .warn{background:var(--amber-tint);color:var(--amber-ink)}
+ .ok{background:var(--add-tint);color:var(--green)}
+ ol{margin:0;padding-left:22px;display:grid;gap:10px;font-size:13.5px}
+ li::marker{color:var(--meta);font-weight:600}
+ .btn{margin-top:6px;min-height:24px;padding:0 8px;border-radius:var(--radius-sm);background:var(--ground);color:var(--ink);border:1px solid var(--line);font:600 11.5px "Red Hat Display",system-ui,sans-serif}
+ .ask{display:flex;gap:8px;align-items:flex-start}
+ .box{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:4px;background:var(--stopped);font:12.5px "JetBrains Mono",monospace}
+ .cap{font:600 11px "Red Hat Display",system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--label);margin:0}
+</style>
+<p class="cap">An admin</p>
+<div class="card"><div class="head"><b class="mono">acme/api</b><span class="pill warn">Needs setup</span></div>
+ <p class="reason">acme/api's project file asks for a Mongo database, and this console only runs Postgres.</p>
+ <ol><li><p>Add "mongo" to databases in the installation's terraform.tfvars, then run terraform plan and terraform apply in providers/aws/terraform.</p></li>
+ <li><p>Or take the Mongo database out of acme/api's project file.</p><button class="btn" type="button">Open the project file ↗</button></li></ol>
+ <p class="sub">Pick another repo above to start a session now.</p></div>
+<p class="cap">Anyone else</p>
+<div class="card"><div class="head"><b class="mono">acme/api</b><span class="pill warn">Needs setup</span></div>
+ <p class="reason">acme/api's project file asks for a Mongo database, and this console only runs Postgres.</p>
+ <p class="sub">Only an admin can fix this. Ask <b>@ana</b> or <b>@bo</b>.</p>
+ <div class="ask"><div class="box">Sessions cannot start on acme/api: its project file asks for Mongo, which this console does not run. Could you add it, or should the project file drop it?</div><button class="btn" type="button" style="margin:0">Copy</button></div></div>
+<p class="cap">On the Repos card</p>
+<div class="head"><b>acme/web</b><span class="pill ok">Ready</span></div>

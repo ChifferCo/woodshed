@@ -56,6 +56,21 @@ test('the console refuses unknown hosts and cross-origin writes', async (t) => {
   assert.deepEqual(stopped, ['0a1b2c3d']);
 });
 
+test('a console nobody signs in to is one person\'s, with one list of sessions, unless WOODSHED_ONE_PERSON=0 says otherwise', async (t) => {
+  const fleet = { sessions: () => [], find: () => null };
+  const base = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const onePerson = async (config) => {
+    const server = http.createServer(createHandler({ config, fleet }));
+    const port = await listen(server);
+    t.after(() => server.close());
+    const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: { host: `localhost:${port}` } });
+    return (await res.json()).onePerson;
+  };
+  assert.equal(await onePerson(base), true, 'loopback with no sign-in: one person');
+  assert.equal(await onePerson({ ...base, onePerson: false }), false, 'the setting at 0: Mine and Everyone, as the dev console shows them');
+  assert.equal(await onePerson({ ...base, onePerson: true }), true);
+});
+
 function post(port, path, body, headers = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -1021,71 +1036,6 @@ test('a person\'s files are read and written for the signed-in login only', asyn
   assert.ok(calls.every((c) => c[1] === 'mia-dev'));
 });
 
-test('a person\'s own whole files are read and saved for the signed-in login only, and a refused path says why', async (t) => {
-  const calls = [];
-  let failRead = false;
-  const userSettings = {
-    view: (login) => ({ claudeToken: { set: false }, files: {}, ownFiles: [{ path: 'app/.env.production', savedAt: 'x' }], setUp: true, available: true, login }),
-    ownWholeFiles: async (login) => {
-      calls.push(['read', login]);
-      if (failRead) throw new Error('AccessDeniedException');
-      return { 'app/.env.production': `A=${login}` };
-    },
-    saveOwnFile: async (login, file, text) => {
-      calls.push(['save', login, file, text]);
-      if (file.includes('..')) throw Object.assign(new Error('a path cannot have . or .. in it'), { shown: true });
-      return { [file]: text };
-    },
-  };
-  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
-  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
-  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  const port = await listen(server);
-  t.after(() => server.close());
-  const as = { cookie: 'woodshed_session=mia-dev' };
-
-  assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as })).json(), { files: { 'app/.env.production': 'A=mia-dev' } });
-  const saved = await post(port, '/api/my/own-files', { path: 'app/.env.production', text: 'B=1', login: 'octocat' }, as);
-  assert.equal(saved.status, 200);
-  assert.deepEqual(saved.body.files, { 'app/.env.production': 'B=1' });
-  assert.equal(saved.body.view.ownFiles[0].path, 'app/.env.production', 'the page gets its new view with the answer');
-  const refused = await post(port, '/api/my/own-files', { path: '../x', text: 'x' }, as);
-  assert.equal(refused.status, 409);
-  assert.equal(refused.body.error, 'a path cannot have . or .. in it');
-  assert.equal((await post(port, '/api/my/own-files', { path: 'a', text: 'x' }, { ...as, origin: 'https://evil.example' })).status, 403);
-  assert.ok(calls.every((c) => c[1] === 'mia-dev'), 'never the login a body names');
-  failRead = true;
-  const failed = await fetch(`http://127.0.0.1:${port}/api/my/own-files`, { headers: as });
-  assert.equal(failed.status, 502);
-  assert.equal(JSON.stringify(await failed.json()).includes('AccessDenied'), false, 'the store\'s error stays in the log');
-});
-
-test('an own-files save may be as big as the secret store\'s limit allows, and a smaller store refuses a body it could not hold', async (t) => {
-  const saved = [];
-  const settingsOf = (limit) => ({
-    view: () => ({ files: {}, ownFiles: [], setUp: true, available: true }),
-    maxOwnFilesBytes: () => limit,
-    saveOwnFile: async (login, file, text) => { saved.push(text.length); return { [file]: 'kept' }; },
-  });
-  const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'mia-dev' }) };
-  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
-  const as = { cookie: 'woodshed_session=mia-dev' };
-  const serve = async (userSettings) => {
-    const server = http.createServer((req, res) => { createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings })(req, res); });
-    t.after(() => server.close());
-    return listen(server);
-  };
-  const text = 'x'.repeat(300_000);
-
-  const roomy = await serve(settingsOf(1_048_576));
-  assert.equal((await post(roomy, '/api/my/own-files', { path: 'a', text }, as)).status, 200);
-  assert.deepEqual(saved, [300_000]);
-  const small = await serve(settingsOf(65_536));
-  assert.notEqual((await post(small, '/api/my/own-files', { path: 'a', text }, as)).status, 200, 'over what 64 KB could hold, even escaped');
-  assert.deepEqual(saved, [300_000], 'the small store never saw it');
-});
-
 test('Connect GitHub starts a sign-in that keeps its token, and the git identity is the signed-in person\'s', async (t) => {
   const started = [];
   const done = [];
@@ -1679,6 +1629,12 @@ test('an admin turns on sessions from GitHub, then Can be assigned, and only the
 
   const listed = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: mia })).json();
   assert.deepEqual([listed.assignables, listed.assignable, listed.shared, listed.sessions.length], [['mia-dev'], true, true, 1], 'the rail learns who may be assigned, whether you are one, and that Everyone shows');
+  assert.equal(listed.onePerson, false, 'two people on the list: Mine and Everyone');
+  const sam = store.state.members['sam-ops'];
+  delete store.state.members['sam-ops'];
+  const alone = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: mia })).json();
+  assert.equal(alone.onePerson, true, 'one person on the list: one list of every session');
+  store.state.members['sam-ops'] = sam;
 
   assert.equal((await post(port, `/api/sessions/${shared.id}/assign`, { to: 'mia-dev' }, mia)).status, 200);
   assert.equal((await post(port, `/api/sessions/${shared.id}/assign`, { to: null }, mia)).status, 200, 'null unassigns');
@@ -1832,6 +1788,45 @@ test('New session lists the projects you can write to, saves your default, and r
   assert.equal(started[0].project.repo, 'acme/tools');
   assert.equal((await post(port, '/api/my/sessions', { prompt: 'go' }, as)).status, 201);
   assert.equal(started[1].project.name, 'app', 'a page from before projects starts on the installation\'s default');
+});
+
+test('/api/my names each of your projects that cannot start sessions, and only yours, with why and how to fix it', async (t) => {
+  const { createProjectAccess } = await import('./projectAccess.mjs');
+  const { createViewPrefs } = await import('./viewPrefs.mjs');
+  const { createDatabaseGate } = await import('./databaseGate.mjs');
+  t.mock.method(console, 'warn', () => {});
+  const userSettings = { view: () => ({ claudeToken: { set: true, savedAt: null }, setUp: true, available: true }) };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'mia-dev' }) };
+  const projects = [
+    { name: 'app', repo: 'acme/app', default: true },
+    { name: 'tools', repo: 'acme/tools', default: false },
+    { name: 'secret', repo: 'acme/secret', default: false },
+  ];
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], projects, label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const githubFor = (project) => ({ canWrite: async () => project.name !== 'secret' });
+  const viewPrefs = createViewPrefs({ state: {}, save() {} });
+  // The default needs Mongo, which is not hosted; secret, which Mia cannot see, is blocked by the program's hook.
+  const files = { app: [{ engine: 'mongo' }], tools: [{ engine: 'postgres' }], secret: [] };
+  const databaseGate = createDatabaseGate({
+    projectDatabases: async (p) => files[p.name], hosted: ['postgres'], provider: 'aws', admins: () => ['ana'],
+    readiness: async (p) => (p.name === 'secret' ? { reason: 'acme/secret is not built.', fix: [] } : null),
+  });
+  const consoleSettings = { view: () => ({}) };
+  const addedProjects = { view: () => projects.map((p) => ({ ...p, sessions: 0 })), names: true };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings, viewPrefs, databaseGate, consoleSettings, addedProjects, projectAccess: createProjectAccess({ config, githubFor, viewPrefs }) });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const me = JSON.parse(await getBody(port, '/api/my', { cookie: 'woodshed_session=mia-dev' }));
+  assert.deepEqual(Object.keys(me.projectBlockers), ['app'], 'tools starts; secret is not hers to see');
+  assert.equal(me.projectBlockers.app.reason, 'acme/app\'s project file asks for a Mongo database, and this console only runs Postgres.');
+  assert.equal(me.projectBlockers.app.fix.at(-1).href, 'https://github.com/acme/app/blob/HEAD/.woodshed/project.yaml');
+  assert.deepEqual(me.projectBlockers.app.ask.who, ['ana']);
+  assert.match(me.databasesRefusal, /^acme\/app's project file asks for a Mongo database/, 'older pages still get the default project\'s');
+  const settings = JSON.parse(await getBody(port, '/api/console-settings', { cookie: 'woodshed_session=mia-dev' }));
+  assert.deepEqual(settings.projects.map((p) => [p.name, p.blocker?.reason ?? null]), [
+    ['app', me.projectBlockers.app.reason], ['tools', null], ['secret', 'acme/secret is not built.'],
+  ], 'Console settings shows each repo\'s readiness');
 });
 
 test('Resume asks again whether the person may start on the session\'s project', async (t) => {
@@ -2028,4 +2023,35 @@ test('the rail\'s pull requests are read from each repo the person may start on,
   const answer = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
   assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
   assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
+});
+
+test('the setup card offers the reviewer App to an admin of a console with its App, never to a member who could not open the page', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const store = { state: { members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } } }, save() {} };
+  const members = createMembers({ store });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, githubApp: { appId: '1' },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1] }) };
+  let made = false;
+  const reviewerApp = { configured: () => made };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, secrets: {}, reviewerApp });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const me = async (login) => (await fetch(`http://127.0.0.1:${port}/api/my`, { headers: { cookie: `woodshed_session=${login}` } })).json();
+  assert.equal((await me('mia-dev')).reviewerSetupNeeded, true);
+  assert.equal((await me('sam-ops')).reviewerSetupNeeded, false, '/setup/github answers them 403');
+  made = true;
+  assert.equal((await me('mia-dev')).reviewerSetupNeeded, false, 'once it is made');
+  made = false;
+  for (const [what, options] of [['no App of its own', { config: { ...config, githubApp: null } }], ['no secret store to keep its key', { secrets: null }]]) {
+    const other = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, members, secrets: {}, reviewerApp, ...options });
+    const otherServer = http.createServer((req, res) => { other(req, res); });
+    const otherPort = await listen(otherServer);
+    t.after(() => otherServer.close());
+    const view = await (await fetch(`http://127.0.0.1:${otherPort}/api/my`, { headers: { cookie: 'woodshed_session=mia-dev' } })).json();
+    assert.equal(view.reviewerSetupNeeded, false, `a console with ${what}`);
+  }
 });

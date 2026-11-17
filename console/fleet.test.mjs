@@ -14,7 +14,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, databasesRefusal = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -103,7 +103,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, databasesRefusal, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -119,17 +119,37 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   return { fleet, calls, github, alive, pulls, statuses, store, fail, launcher, advance: (ms) => { clock += ms; } };
 }
 
-// The project file needs an engine the installation does not host (databaseGate.mjs): nothing starts that would get
-// databases, and the reason reaches whoever asked.
-test('a project whose databases are not hosted starts no session: a label is told why on its issue, and the API refuses', async () => {
-  const why = 'the project file\'s databases need mongo, which this installation does not host (it hosts postgres)';
-  const { fleet, calls } = setup({ databasesRefusal: async () => why });
+// A project that is not ready (databaseGate.mjs) starts no session that would get databases, and the reason, with its
+// first fix, reaches whoever asked. Another project still starts.
+const MONGO_BLOCKER = {
+  project: 'example-repo', repo: 'example-org/example-repo',
+  reason: 'example-org/example-repo\'s project file asks for a Mongo database, and this console only runs Postgres.',
+  fix: [{ text: 'Add "mongo" to databases in the installation\'s terraform.tfvars, then run terraform plan and terraform apply.' }, { text: 'Or take the Mongo database out.' }],
+};
+const MONGO_WHY = `${MONGO_BLOCKER.reason} ${MONGO_BLOCKER.fix[0].text}`;
+
+test('a project that is not ready starts no session: a label is told why on its issue, and the API refuses', async () => {
+  const asked = [];
+  const { fleet, calls } = setup({ projectBlocker: async (project) => { asked.push(project.name); return MONGO_BLOCKER; } });
   const outcome = await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' });
-  assert.deepEqual(outcome, { outcome: 'ignored', reason: why });
-  assert.deepEqual(calls.comments.map((c) => c.body), [`Woodshed cannot start a session here: ${why}.`]);
+  assert.deepEqual(outcome, { outcome: 'ignored', reason: MONGO_WHY });
+  assert.deepEqual(calls.comments.map((c) => c.body), [`Woodshed cannot start a session here: ${MONGO_WHY}`]);
   assert.equal(fleet.sessions().length, 0);
-  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${why}` });
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${MONGO_WHY}` });
   assert.equal(calls.started.length, 0);
+  assert.equal(asked.length, 2, 'each start checks its project');
+});
+
+test('a blocked project holds back only its own sessions: another project starts', async () => {
+  const projects = [
+    { name: 'example-repo', repo: 'example-org/example-repo', default: true },
+    { name: 'web', repo: 'example-org/web', default: false },
+  ];
+  const { fleet, calls } = setup({ projects, projectBlocker: async (project) => (project.name === 'example-repo' ? MONGO_BLOCKER : null) });
+  await assert.rejects(fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' }), { shown: true, message: `Not started: ${MONGO_WHY}` });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: projects[1] });
+  assert.equal(session.project, 'web');
+  assert.equal(calls.started.length, 1);
 });
 
 test('a label from a writer starts a session and announces it on the issue', async () => {
@@ -258,6 +278,25 @@ test('a stop from the console records who stopped it, an idle pause no one, and 
   await fleet.tick();
   await fleet.stop(session, 'idle for 1 h');
   assert.deepEqual([session.status, session.stoppedBy], ['stopped', null]);
+});
+
+test('stopping a session that paused by itself moves it to Stopped, and only once', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(session, 'idle for 1 h');
+  const removed = calls.stopped.length;
+  await fleet.stop(session, 'idle for 1 h');
+  assert.equal(session.stoppedBy, null, 'a stop with no person leaves it waiting');
+  await fleet.stop(session, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual([session.status, session.stoppedBy, session.stopReason], ['stopped', 'joel', 'idle for 1 h']);
+  await fleet.stop(session, 'stopped from the console', { by: 'ana' });
+  assert.equal(session.stoppedBy, 'joel');
+  assert.equal(calls.stopped.length, removed, 'nothing is stopped again');
+  await fleet.resumeShared(session, { by: 'joel', why: 'console' });
+  assert.equal(session.stoppedBy, null);
 });
 
 test('a comment on a running session is typed into it', async () => {
@@ -734,6 +773,58 @@ test('a starting session records each start step once, and opens on the quick ch
   assert.equal(session.startSteps.claude, undefined, 'a running session\'s start is over');
 });
 
+test('a start whose agent opened but whose launcher never answered is logged once, 30 s on, as not reached', async () => {
+  const { fleet, fail, advance } = setup();
+  let finish;
+  fail.startWaits = new Promise((resolve) => { finish = resolve; });
+  const starting = fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  await new Promise((resolve) => setImmediate(resolve));
+  const [session] = fleet.sessions();
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (line, fields) => warned.push([line, fields]);
+  try {
+    advance(15_000);
+    fleet.startStep(session, 'claude');
+    advance(29_000);
+    await fleet.checkStarting();
+    assert.deepEqual(warned, [], 'not yet: reaching it takes a second or two');
+    advance(1_000);
+    await fleet.checkStarting();
+    await fleet.checkStarting();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(warned, [['fleet: the agent is open but the console has not reached the session', {
+    id: session.id, seconds: 30, address: false, launching: true, message: null,
+  }]], 'once for the start, saying the launcher has not answered');
+  finish();
+  await starting;
+});
+
+test('a start whose statusd does not answer after its agent opened is logged once, with the read\'s error', async () => {
+  const { fleet, advance, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  fleet.startStep(session, 'claude');
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (line, fields) => warned.push([line, fields]);
+  try {
+    advance(45_000);
+    await fleet.checkStarting();
+    await fleet.tick();
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(warned, [['fleet: the agent is open but the console has not reached the session', {
+    id: session.id, seconds: 45, address: true, launching: false, message: 'connection refused',
+  }]]);
+  statuses[session.id] = { state: 'working' };
+  await fleet.checkStarting();
+  assert.equal(session.status, 'running');
+});
+
 test('the wait for AWS ends when ECS began the pull, as the tick reads it, even after the container reported', async () => {
   const { fleet, pulls, advance } = setup();
   await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
@@ -883,20 +974,30 @@ test('a private session with no name starts on its prompt\'s first line, and tak
   answers['Fix the currency\nrounding too']('Billing rounding');
   await new Promise(setImmediate);
   assert.equal(fleet.find(fix.id).title, 'Billing rounding');
+  assert.ok(fleet.find(fix.id).namedAt, 'the page is told the naming is over, for its rename offer');
 
   const look = await fleet.startPrivate({ owner: 'joel', prompt: 'Look at it' });
   answers['Look at it']('');
   await new Promise(setImmediate);
   assert.equal(fleet.find(look.id).title, 'Look at it', 'no name keeps the first line');
+  assert.ok(fleet.find(look.id).namedAt, 'the rename is offered on the first line too');
 
   const renamed = await fleet.startPrivate({ owner: 'joel', prompt: 'Tidy up' });
   fleet.rename(renamed, 'My own name');
   answers['Tidy up']('Haiku name');
   await new Promise(setImmediate);
   assert.equal(fleet.find(renamed.id).title, 'My own name', 'a rename on the rail before the answer is kept');
+  assert.equal(fleet.find(renamed.id).namedAt, undefined, 'and no rename is offered after one');
+
+  const failed = await fleet.startPrivate({ owner: 'joel', prompt: 'Break it' });
+  answers['Break it'](Promise.reject(new Error('Anthropic not reached')));
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.equal(fleet.find(failed.id).title, 'Break it');
+  assert.ok(fleet.find(failed.id).namedAt, 'a failed naming offers the rename too');
 
   assert.equal((await fleet.startPrivate({ owner: 'joel', prompt: 'Fix x', name: 'Mine' })).title, 'Mine');
-  assert.deepEqual(named, ['Fix the currency\nrounding too', 'Look at it', 'Tidy up'], 'a name given is not asked for');
+  assert.deepEqual(named, ['Fix the currency\nrounding too', 'Look at it', 'Tidy up', 'Break it'], 'a name given is not asked for');
 });
 
 test('a /woodshed comment on an issue with a private session starts its own shared one', async () => {
@@ -1620,11 +1721,17 @@ test('a session started from the console\'s API never runs on a personal plan, w
   assert.equal(session.plan, null, 'GitHub did not vouch for this starter');
 });
 
-test('a console that makes no shared databases runs every shared session on the team key, switch or not', async () => {
-  const ctx = setup({ userSettings: ownTokens() });
-  await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
-  assert.equal(ctx.fleet.sessions()[0].plan, null, 'its entrypoint never asks the session API, so the token would never arrive');
-  assert.doesNotMatch(ctx.calls.comments[0].body, /Claude plan/);
+test('a console that makes no shared databases still runs a session from GitHub on its starter\'s plan', async () => {
+  // A hosted pool's console has no db-admin, and a project with no Postgres or Mongo gets none: the entrypoint asks
+  // /settings for the plan alone, so neither may send it to a team key the console may not have.
+  for (const databases of [undefined, { available: false, async createForSession() { throw new Error('none made'); }, async sweep() {} }]) {
+    const ctx = setup({ userSettings: ownTokens(), databases });
+    await ctx.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+    const [session] = ctx.fleet.sessions();
+    assert.equal(session.plan, 'joel');
+    assert.equal(session.status, 'starting', 'no databases asked for');
+    assert.match(ctx.calls.comments[0].body, /on @joel's own Claude plan\.$/m);
+  }
 });
 
 test('a My Woodshed session is untouched: it runs on its owner\'s token as before, and has no plan', async () => {
@@ -2554,4 +2661,78 @@ test('a review on an author without Sessions from GitHub still runs, on the team
   t.github.pull = async () => REVIEW_PULL;
   assert.equal((await t.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.equal(t.fleet.sessions()[0].review.teamKey, true);
+});
+
+const HELD_GATES = { ...REVIEW_GATES, qa: QA_GATES.qa };
+const HELD_PULL = { ...REVIEW_PULL, labels: [{ name: 'qa' }] };
+function heldSetup(options = {}) {
+  const t = setup({ gates: HELD_GATES, ...options });
+  t.github.pull = async () => HELD_PULL;
+  t.github.reviews = async () => [];
+  t.github.labeledBy = async () => 'joel';
+  return t;
+}
+async function approveThenQa(t, verdict) {
+  await t.fleet.reviewOnTag({ number: 7 });
+  await t.fleet.reviewFinished(t.fleet.sessions()[0], REVIEW_RESULT);
+  const qa = t.fleet.sessions().find((s) => s.trigger === 'qa');
+  if (qa && verdict) await t.fleet.qaFinished(qa, { verdict, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  return qa;
+}
+
+test('a review\'s APPROVE waits for QA when the pull request carries the QA label, which starts on it at once', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  assert.deepEqual(t.calls.reviews, [], 'not approved on GitHub yet');
+  assert.ok(t.calls.checks.some((c) => c.name === 'Merge risk'), 'the merge risk still goes out');
+  assert.equal(qa?.qa.sha, 'a'.repeat(40), 'QA started from the held approval, with no review webhook');
+  await t.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.deepEqual(t.calls.reviews.map((r) => [r.event, r.sha]), [['APPROVE', 'a'.repeat(40)]]);
+  assert.match(t.calls.reviews[0].body, /^## Code review — APPROVE\n\nLooks good\.\n\nQA: Pass: 2 test cases passed\.$/);
+  assert.equal(t.fleet.sessions()[0].review.held, null, 'released once');
+});
+
+test('QA that fails turns the held approval into REQUEST_CHANGES; QA with nothing to test still approves', async () => {
+  const failed = heldSetup();
+  await approveThenQa(failed, { conclusion: 'failure', title: 'Fail: 1 of 2 test cases failed', status: '❌', total: 2 });
+  assert.equal(failed.calls.reviews[0].event, 'REQUEST_CHANGES');
+  assert.match(failed.calls.reviews[0].body, /but QA failed \(Fail: 1 of 2 test cases failed\): see the QA comment\./);
+  const skipped = heldSetup();
+  await approveThenQa(skipped, { conclusion: 'neutral', title: 'Not covered: nothing to test', status: '⏭️', total: 0 });
+  assert.deepEqual(skipped.calls.reviews.map((r) => r.event), ['APPROVE']);
+  assert.match(skipped.calls.reviews[0].body, /QA: Not covered: nothing to test\.$/);
+});
+
+test('without the QA label the approval goes out at once, and a held one is dropped when the head moved during QA', async () => {
+  const unlabeled = heldSetup();
+  unlabeled.github.pull = async () => ({ ...HELD_PULL, labels: [] });
+  await approveThenQa(unlabeled, null);
+  assert.deepEqual(unlabeled.calls.reviews.map((r) => r.event), ['APPROVE']);
+  const moved = heldSetup();
+  const qa = await approveThenQa(moved, null);
+  moved.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'c'.repeat(40) } });
+  await moved.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.deepEqual(moved.calls.reviews, [], 'the new commit gets its own review');
+});
+
+test('a held approval goes out at once, saying why, when QA cannot start on it', async () => {
+  const t = heldSetup();
+  t.github.canWrite = async () => false;
+  await approveThenQa(t, null);
+  assert.equal(t.fleet.sessions().filter((s) => s.trigger === 'qa').length, 0, 'the labeler has no write access');
+  assert.deepEqual(t.calls.reviews.map((r) => r.event), ['APPROVE']);
+  assert.match(t.calls.reviews[0].body, /QA did not start: no write access to the repo\.$/);
+  assert.equal(t.fleet.sessions()[0].review.held, null);
+});
+
+test('a QA report for a commit other than the one the session started on releases nothing', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  await t.fleet.qaFinished(qa, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  assert.equal(t.calls.reviews.length, 1);
+  const other = heldSetup();
+  const started = await approveThenQa(other, null);
+  other.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'd'.repeat(40) } });
+  await other.fleet.qaFinished(started, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'd'.repeat(40), costUsd: 1 });
+  assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
 });

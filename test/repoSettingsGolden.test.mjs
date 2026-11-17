@@ -169,7 +169,7 @@ function writeRules(kind) {
   roots.push(tmp);
   const script = [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
-    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', fn('leaveOutConsoleLinks'), fn('writeRules').replaceAll('/tmp/', `${tmp}/`), 'writeRules',
+    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', fn('leaveOutConsoleLinks'), fn('appRules'), fn('writeRules').replaceAll('/tmp/', `${tmp}/`), 'writeRules',
   ].join('\n');
   execFileSync('bash', ['-c', script], {
     encoding: 'utf8',

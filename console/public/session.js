@@ -109,11 +109,17 @@
     return data?.shared !== false;
   }
 
+  // One list, with no Mine and Everyone: no shared session to show, or a console one person uses (server.mjs,
+  // onePersonConsole), where every shared session is that person's.
+  function oneList() {
+    return !sharesShown() || data?.onePerson === true;
+  }
+
   function railMine() {
-    if (!sharesShown()) return (lastRailMine = true);
+    if (oneList()) return (lastRailMine = true);
     if (onMy) lastRailMine = true;
     else if (onShared || !id) lastRailMine = false;
-    else if (currentSession) lastRailMine = W.isPrivate(currentSession) || (lastRailMine && W.assignedTo(currentSession, data?.login));
+    else if (currentSession) lastRailMine = W.isPrivate(currentSession) || (lastRailMine && W.inMine(currentSession, data?.login));
     return lastRailMine;
   }
 
@@ -228,6 +234,103 @@
     refresh();
   }
 
+  // New session asks for no name: once the console has named a session (`namedAt`, Haiku's name or the prompt's first
+  // line), its page offers a rename under the title for 10 s. A click or focus inside keeps it open until it is saved
+  // or closed. Offered once per naming, to a page that saw the session unnamed or opened it within 30 s of the naming.
+  const RENAME_OFFER_MS = 10_000;
+  const namingSeen = new Map();
+  let offer = null;
+  function closeRenameOffer() {
+    if (!offer) return;
+    clearTimeout(offer.timer);
+    offer.el.remove();
+    offer = null;
+  }
+  function placeRenameOffer() {
+    if (!offer) return;
+    const title = slots.head.querySelector('.ptitle');
+    const anchor = title?.getClientRects().length ? title : slots.head;
+    const r = anchor.getBoundingClientRect();
+    const width = offer.el.offsetWidth;
+    offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
+    offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
+  }
+  function offerRenameOnce(s) {
+    if (offer && offer.id !== s?.id) closeRenameOffer();
+    if (!s) return;
+    if (!s.namedAt) {
+      namingSeen.set(s.id, null);
+      return;
+    }
+    const was = namingSeen.get(s.id);
+    if (was === s.namedAt) {
+      if (offer) {
+        if (!offer.editing) offer.name.textContent = s.title;
+        placeRenameOffer();
+      }
+      return;
+    }
+    namingSeen.set(s.id, s.namedAt);
+    if (was !== null && Date.now() - Date.parse(s.namedAt) > 30_000) return;
+    showRenameOffer(s);
+  }
+  function showRenameOffer(s) {
+    closeRenameOffer();
+    const name = h('b', null, s.title);
+    const keep = () => {
+      if (!offer || offer.kept) return;
+      offer.kept = true;
+      clearTimeout(offer.timer);
+      el.classList.add('is-kept');
+    };
+    const edit = () => {
+      keep();
+      if (offer.editing) return;
+      offer.editing = true;
+      const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
+      const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
+      const form = h('form', { class: 'rename-offer-form' }, input, save,
+        h('button', { type: 'button', class: 'btn btn-quiet btn-sm', onclick: closeRenameOffer }, 'Cancel'));
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = input.value.replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!title) return input.focus();
+        if (title === currentSession?.title) return closeRenameOffer();
+        save.disabled = true;
+        try {
+          await W.postJson(`/api/sessions/${s.id}/rename`, { title });
+          W.shell.toast(`Renamed to ${title}`);
+          closeRenameOffer();
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not renamed: ${err.message}`, { ms: 6000 });
+          save.disabled = false;
+        }
+      });
+      body.replaceChildren(form);
+      placeRenameOffer();
+      input.focus();
+      input.select();
+    };
+    const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
+      h('span', { class: 'rename-offer-line' }, 'Named ', name),
+      h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
+      body,
+      h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
+      h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
+    el.addEventListener('pointerdown', keep);
+    el.addEventListener('focusin', keep);
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      closeRenameOffer();
+    });
+    document.body.append(el);
+    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    placeRenameOffer();
+  }
+
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
   function starButton(s) {
     const pinned = isPinned(s);
@@ -256,6 +359,17 @@
     ].filter(Boolean);
   }
 
+  // A session that stopped by itself (paused when idle or at its lifetime) waits in Needs you until its person resumes
+  // it; stopping it again marks it stopped by them, which moves it to Stopped (fleet.stop).
+  async function moveToStopped(s) {
+    try {
+      await W.stopSession(s.id);
+    } catch (err) {
+      W.shell.toast(`Not moved: ${err.message}`);
+    }
+    refresh();
+  }
+
   // A card's ⋯ menu, after the shed's: what can be done to this session, each with what it does. Ending ones last.
   function cardActions(s) {
     const live = W.isLive(s);
@@ -275,6 +389,10 @@
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
+      !live && W.needsYou(s) && {
+        label: 'Move to Stopped', note: 'Nothing to do on it now: take it out of Needs you. Resume still picks it up', end: true,
+        run: () => moveToStopped(s),
+      },
       live && {
         label: 'Stop session', note: 'Commit and push its work, then stop it. Resume picks it up again', end: true,
         run: async () => {
@@ -422,10 +540,10 @@
     return [...list.filter(isPinned), ...list.filter((s) => !isPinned(s))];
   }
 
-  // Private is told apart only where it sits beside an assigned shared session, so a rail of one's own stays quiet.
+  // Private is told apart only where it sits beside a shared session, so a rail of one's own stays quiet.
   function showOwnerTag(s) {
     if (!W.isPrivate(s)) return Boolean(s.assignee);
-    return railMine() && data.sessions.some((o) => W.assignedTo(o, data.login));
+    return railMine() && railListing().some((o) => !W.isPrivate(o));
   }
 
   // Assign, take it, hand over and unassign are for someone who can be assigned; the console checks, the page only offers them.
@@ -486,7 +604,8 @@
       h('div', { class: 'rtop' },
         live ? h('span', { class: `status is-${st.key}` }, h('span', { class: 'dot', 'aria-hidden': 'true' })) : h('span', { class: `dot ring is-${st.key}`, 'aria-hidden': 'true' }),
         h('a', { class: 'rname', href, title: project ? `${s.title} · project ${project.name}` : s.title, 'aria-label': project ? `${s.title}, project ${project.name}` : null }, s.title),
-        showOwnerTag(s) && W.ownerTag(s, { named: !railMine() }),
+        // The word Assigned on Mine means yours; a session you started that someone else has names them, as on Everyone.
+        showOwnerTag(s) && W.ownerTag(s, { named: !railMine() || !W.sameLogin(s.assignee, data.login) }),
         h('span', { class: 'rmarks' }, starButton(s), menuButton(s))),
       h('div', { class: 'rsub' },
         h('span', { class: 'rsub-text' }, sub),
@@ -608,8 +727,8 @@
       railFrame.only = h('b', { class: 'rail-only' }, 'My sessions');
       railFrame.el = h('div', { class: 'rail-head' }, railFrame.seg, railFrame.only, picker.el, railFrame.add);
     }
-    railFrame.seg.hidden = !sharesShown();
-    railFrame.only.hidden = sharesShown();
+    railFrame.seg.hidden = oneList();
+    railFrame.only.hidden = !oneList();
     // A switch's own page is marked as the one open only there; on a session's page it is the view the session belongs to.
     railFrame.everyone.setAttribute('href', `/all${W.byQuery(picked)}`);
     railFrame.everyone.setAttribute('aria-current', onShared ? 'page' : !railMine() ? 'true' : 'false');
@@ -759,10 +878,11 @@
     return me && railMine() && !W.setupDone(me) ? W.setupCard(me, { compact: true }) : null;
   }
 
-  // Mine is your private sessions and the shared ones assigned to you; Everyone is every shared session, with the ones
-  // nobody has first.
+  // Mine is your private sessions and the shared ones you started or that are assigned to you (W.inMine); Everyone is
+  // every shared session, with the ones nobody has first. A console one person uses has one list: all of them.
   function railListing() {
-    if (railMine()) return data.sessions.filter((s) => W.isPrivate(s) || W.assignedTo(s, data.login));
+    if (data.onePerson === true) return data.sessions;
+    if (railMine()) return data.sessions.filter((s) => W.inMine(s, data.login));
     return data.sessions.filter((s) => !W.isPrivate(s) && (picked.length === 0 || picked.some((l) => W.sameLogin(l, s.assignee))));
   }
 
@@ -845,6 +965,7 @@
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
       s.prUrl && { group: 'Elsewhere', label: 'Open its pull request ↗', run: () => window.open(s.prUrl, '_blank', 'noopener') },
+      !W.isLive(s) && W.needsYou(s) && { group: 'Session', label: 'Move it to Stopped', run: () => moveToStopped(s) },
       (s.status === 'running' || s.status === 'starting' || s.status === 'queued') && {
         group: 'Danger', label: 'Stop it', danger: true,
         run: async () => {
@@ -888,15 +1009,8 @@
         group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', href: W.appUrl(s, data.appDomain),
       },
       data.appDomain && none && s.kind !== 'ask' && {
-        group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
-        run: async () => {
-          try {
-            W.notify(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
-          } catch (err) {
-            W.notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
-          }
-          refresh();
-        },
+        group: 'App', label: 'Set up app', note: `Woodshed does not know how to start this repo's app yet: ${W.agentOf(s)} works it out, saves it and starts it`,
+        run: () => W.setupAppDialog(s, refresh),
       },
       ...choices,
       data.appDomain && !up && !busy && !none && !choices.length && {
@@ -1706,7 +1820,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
   let currentSession = null;
@@ -1715,8 +1829,9 @@
       document.getElementById('app').replaceChildren(h('p', { class: 'empty' }, loadError ? `Could not load sessions: ${loadError}` : 'Loading…'));
       return;
     }
-    // Everyone has nothing to show without shared sessions, so its address opens Mine.
-    if (onShared && !sharesShown()) {
+    // Everyone has nothing to show without shared sessions, nor beside the one list of a console one person uses, so its
+    // address opens Mine.
+    if (onShared && oneList()) {
       window.history.replaceState(null, '', '/');
       readRoute();
     }
@@ -1763,6 +1878,7 @@
     if (!hasShell) shellPool.hide();
     else if (tab === 'terminal') shellPool.show(s);
     if (!s) {
+      offerRenameOnce(null);
       slots.plain.hidden = true;
       slots.body.hidden = tabPage;
       slots.head.replaceChildren();
@@ -1780,6 +1896,7 @@
     if (tab === 'terminal' && !hasShell) tab = 'agent';
     if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'agent';
     slots.head.replaceChildren(paneBar(s));
+    offerRenameOnce(s);
     renderKeyBar(s);
     // A phone's message box, for claude on the Agent tab; the Terminal tab's shell takes the keyboard straight in.
     messageBox.show(narrow.matches && s.status === 'running' && tab === 'agent' ? s : null);

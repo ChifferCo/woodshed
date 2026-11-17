@@ -24,7 +24,7 @@ import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
 import { createAppApi } from './githubApp.mjs';
 import { appOwnerCheck } from './appOwner.mjs';
-import { createAppIdentity } from './appIdentity.mjs';
+import { createAppIdentity, hostAppIdentity } from './appIdentity.mjs';
 import { createAnthropicProxy } from './anthropicProxy.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
@@ -56,6 +56,7 @@ import { createProjectColors } from './projectColors.mjs';
 import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
+import { withAppLogins } from './reviewLogins.mjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
@@ -204,18 +205,25 @@ async function loadAppKey(config, secrets) {
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
- *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null}} args
+ *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
+ *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
  *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation.
  *   `repos` is where the program keeps the installation's repo list, which `config.projects` was built from, so the
  *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
- *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`
+ *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`. `projectReadiness` says why
+ *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
+ *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console")
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null }) {
+  if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
+  if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
+    throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
+  }
   if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
     throw new Error('repos needs add and remove, and list when it has one');
   }
@@ -268,16 +276,17 @@ export async function createInstallation({ config: loaded, store, provider, trus
     return projectReaders.get(key);
   };
   // A local install that named no repo hosts no database: install.sh, given the repo, builds its image and starts them.
-  const databasesFix = () => {
-    const project = defaultProject(config);
-    return provider.name === 'local' && project.clonedAtStart
-      ? `run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases`
-      : null;
-  };
-  const databaseGate = createDatabaseGate({ projectDatabases: projectReader.databases, hosted, fix: databasesFix });
-  // A person's own whole file may not be one of the default project's env files, whose values are Repo settings.
-  const envFilePaths = async () => (await readerOf(null).repoLayer()).envFiles.map((f) => f.path);
-  const userSettings = createUserSettings({ store, secrets, envFilePaths });
+  const databasesFix = (project) => (provider.name === 'local' && project.clonedAtStart
+    ? [{ text: `Run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases.` }]
+    : null);
+  // Whom someone who cannot fix a project asks: the People list's admins. Behind a hosting proxy there is no list, and
+  // the program's own hook names them.
+  const admins = () => (members ? members.view().members.filter((m) => m.admin).map((m) => m.login) : null);
+  const databaseGate = createDatabaseGate({
+    projectDatabases: (project) => readerOf(project.name).databases(), hosted, provider: provider.name ?? null, fix: databasesFix, admins,
+    readiness: projectReadiness,
+  });
+  const userSettings = createUserSettings({ store, secrets });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
@@ -293,12 +302,17 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
   const pings = createAssigneePings({ slack, slackPeople, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null });
   const appApi = appKey ? createAppApi({ appId: config.githubApp.appId, privateKey: () => appKey.current() }) : null;
-  const appIdentity = createAppIdentity({ appApi });
-  const reviewerApp = createReviewerApp({ store, secrets, config });
+  // A host that lends its GitHub access (hosted.mjs) also says who its App is, and lends its reviewer App: the
+  // console has neither of its own, and without them no review or console-added QA label is trusted.
+  const appIdentity = hostApp ? hostAppIdentity(hostApp.login) : createAppIdentity({ appApi });
+  const ownReviewer = hostApp ? null : createReviewerApp({ store, secrets, config });
+  const reviewerApp = hostApp ? hostApp.reviewer ?? null : ownReviewer;
+  if (hostApp) console.log('console: GitHub App from the host', { login: hostApp.login() ?? null, reviewer: Boolean(hostApp.reviewer) });
   const fleet = createFleet({
     config, store, launcher: provider.launcher, github, databases, slack, homes, userSettings, people, members, pings,
     autoName: createAutoNamer({ teamKey: anthropic.teamCredential }), attachments, pullWebhooksFlowing: pullWebhooks.flowing,
-    pullRequests: (name) => readerOf(name).pullRequests(), databasesRefusal: databaseGate.refusal, githubFor,
+    pullRequests: async (name) => withAppLogins(await readerOf(name).pullRequests(), { reviewerLogin: reviewerApp?.login() ?? null, ownLogin: await appIdentity.login() }),
+    projectBlocker: databaseGate.blocker, githubFor,
     consoleLinks: (name) => readerOf(name).consoleLinks(), ...(newId ? { newId } : {}),
     // The App that posts a QA session's check, so the brief trusts it.
     ownApp: () => appIdentity.known(),
@@ -366,7 +380,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
@@ -411,6 +425,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
+    repoSettings.moveOwnFiles().catch((err) => console.error('repoSettings: own files not moved', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());
     // Every session someone can still open: a stopped one's pull request still merges or closes.

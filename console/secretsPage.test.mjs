@@ -69,3 +69,13 @@ test('there is no Moved to Repo settings section: the env files are Repo setting
   assert.equal(section(app, 'Moved to Repo settings'), undefined);
   assert.ok(section(app, 'Session secrets'));
 });
+
+test('a missing secret shows Set where the store makes it on its first write, and none, with the AWS wording, where it does not', async () => {
+  const buttonsOf = (app, name) => walk(walk(app).find((e) => e.className?.startsWith('secret-row') && textOf(e).includes(name))).filter((e) => e.tag === 'button').map(textOf);
+  const creates = await loadPage([row('openai-api-key', { kind: 'line', readable: false, exists: false, set: false, creatable: true, changedAt: null })]);
+  assert.deepEqual(buttonsOf(creates, 'openai-api-key'), ['Set']);
+  assert.match(textOf(creates), /No value yet/);
+  const terraform = await loadPage([row('openai-api-key', { kind: 'line', readable: false, exists: false, set: false, changedAt: null })]);
+  assert.deepEqual(buttonsOf(terraform, 'openai-api-key'), []);
+  assert.match(textOf(terraform), /Missing in AWS: apply Terraform to create it/);
+});

@@ -17,6 +17,7 @@ test('until a store is chosen a read finds nothing and a write says to choose on
   const slot = createSecretSlot({ stateDir: stateDir(), specs });
   assert.equal(slot.configured(), false);
   assert.equal(slot.maxValueBytes, undefined, 'nothing declared until a store is chosen: the default holds');
+  assert.equal(slot.createsOnWrite, false, 'no store, so nothing to create a secret in');
   assert.equal(await slot.read('other-token'), null);
   await assert.rejects(slot.save('users/a/claude-token', 'x', 'd'), (err) => err.shown && /choose one/.test(err.message));
 });
@@ -26,6 +27,7 @@ test('the local store is sealed, and the choice and its secrets come back after 
   const slot = createSecretSlot({ stateDir: dir, specs });
   assert.equal((await slot.configure({ kind: 'local' })).kind, 'local');
   assert.equal(slot.maxValueBytes, 1_048_576);
+  assert.equal(slot.createsOnWrite, true, 'a first write makes the file');
   await slot.save('users/a/claude-token', 'sk-ant-oat01-secret', 'a token');
   const raw = fs.readFileSync(path.join(dir, 'secrets', 'users', 'a', 'claude-token.json'), 'utf8');
   assert.ok(!raw.includes('sk-ant-oat01-secret'), 'the file holds no plain value');
@@ -52,6 +54,7 @@ test('AWS is tried before it is kept, and a first write creates the secret', asy
   };
   const ok = createSecretSlot({ stateDir: dir, specs, aws });
   assert.equal((await ok.configure({ kind: 'aws', prefix: 'mine/' })).prefix, 'mine/');
+  assert.equal(ok.createsOnWrite, true, 'chosen from the page, AWS has no Terraform making its secrets: a write creates them');
   await ok.write('other-token', 'A=1');
   assert.deepEqual(calls, ['secretsmanager list-secrets', 'secretsmanager put-secret-value', 'secretsmanager create-secret']);
   await assert.rejects(ok.configure({ kind: 'aws', prefix: 'bad prefix!' }), /prefix may hold/);

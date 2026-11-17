@@ -146,3 +146,13 @@ test('a value saved while the sealing pass seals that secret\'s plain file is th
 test('the store declares how much one value may hold', () => {
   assert.equal(createSecretStore({ dir: tmpDir(), key: KEY, specs: SECRETS }).maxValueBytes, 1_048_576);
 });
+
+test('the store makes a secret on its first write, and the list then reports it set', async () => {
+  const store = createSecretStore({ dir: tmpDir(), key: KEY, specs: SECRETS });
+  assert.equal(store.createsOnWrite, true);
+  assert.equal((await store.list()).find((s) => s.name === 'registry-token').exists, false);
+  await store.write('registry-token', 'tok-1');
+  const entry = (await store.list()).find((s) => s.name === 'registry-token');
+  assert.deepEqual([entry.exists, entry.set], [true, true]);
+  assert.equal(await store.read('registry-token'), 'tok-1');
+});

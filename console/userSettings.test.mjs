@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { ownFilesBodyLimit } from '../shared/ownFiles.mjs';
 import { checkClaudeToken, checkCodexAuth, createUserSettings, userSecretName } from './userSettings.mjs';
 
-const ENV_FILE_PATHS = async () => ['api/.env', 'web/.env.local'];
 
 function fakeSecrets() {
   const values = new Map();
@@ -222,56 +221,6 @@ test('with no token saved, page loads inside the minute ask the store once', asy
   assert.equal(reads, 2, 'one refresh in the first minute, its claude-token and codex-auth reads');
   await settings.refresh('mia-dev');
   assert.equal(reads, 4, 'and one more once the minute is up');
-});
-
-test('a person\'s own whole files are one secret of theirs, kept by path, and an env file\'s path is refused', async () => {
-  const secrets = fakeSecrets();
-  const store = { state: {}, save() {} };
-  let clock = Date.parse('2026-11-11T10:00:00Z');
-  const settings = createUserSettings({ store, secrets, envFilePaths: ENV_FILE_PATHS, now: () => clock });
-
-  assert.deepEqual(await settings.ownWholeFiles('octocat'), {}, 'none yet');
-  assert.deepEqual(await settings.saveOwnFile('Octocat', ' app/.env.production ', 'NOTION_TOKEN=a\r\n'), { 'app/.env.production': 'NOTION_TOKEN=a\n' });
-  clock += 60_000;
-  await settings.saveOwnFile('octocat', '.mcp.local.json', '{}');
-  assert.deepEqual(JSON.parse(secrets.values.get('users/octocat/own-files')), { 'app/.env.production': 'NOTION_TOKEN=a\n', '.mcp.local.json': '{}' });
-  assert.deepEqual(settings.view('octocat').ownFiles, [
-    { path: '.mcp.local.json', savedAt: '2026-11-11T10:01:00.000Z' },
-    { path: 'app/.env.production', savedAt: '2026-11-11T10:00:00.000Z' },
-  ], 'a save keeps the others\' times');
-  assert.equal(JSON.stringify(store.state).includes('NOTION_TOKEN'), false, 'state.json never holds the text');
-  assert.deepEqual(await settings.ownWholeFiles('mia-dev'), {}, 'nobody else\'s');
-
-  for (const [file, message] of [['/etc/passwd', /leading/], ['../x', /\.\./], ['.git/config', /git's own/], ['a b', /letters/], ['api/.env', /env files/]]) {
-    await assert.rejects(settings.saveOwnFile('octocat', file, 'x'), (err) => err.shown && message.test(err.message), file);
-  }
-  await assert.rejects(settings.saveOwnFile('octocat', 'big', 'x'.repeat(70_000)), /64 KB/);
-
-  await settings.saveOwnFile('octocat', 'app/.env.production', '  ');
-  await settings.saveOwnFile('octocat', '.mcp.local.json', '');
-  assert.equal(secrets.values.has('users/octocat/own-files'), false, 'the last one removed takes the secret with it');
-  assert.deepEqual(settings.view('octocat').ownFiles, []);
-
-  await settings.saveOwnFile('octocat', 'a/.env', 'X=1');
-  await settings.removeAll('octocat');
-  assert.equal(secrets.values.size, 0, 'Remove My Woodshed deletes them too');
-});
-
-test('the own-files size limit is the secret store\'s maxValueBytes, 64 KB when it declares none, and the message names it', async () => {
-  const big = 'x'.repeat(70_000);
-  const make = (limit) => {
-    const secrets = fakeSecrets();
-    if (limit !== undefined) secrets.maxValueBytes = limit;
-    return createUserSettings({ store: { state: {}, save() {} }, secrets });
-  };
-
-  await assert.rejects(make(65_536).saveOwnFile('octocat', 'big', big), (err) => err.shown && /over the 64 KB this console's secret store holds/.test(err.message));
-  await assert.rejects(make(undefined).saveOwnFile('octocat', 'big', big), /over the 64 KB this console's secret store holds/);
-  const roomy = make(1_048_576);
-  assert.equal(roomy.view('octocat').ownFilesMaxBytes, 1_048_576);
-  assert.equal(make(undefined).view('octocat').ownFilesMaxBytes, 65_536);
-  assert.equal((await roomy.saveOwnFile('octocat', 'big', big)).big.length, 70_000);
-  await assert.rejects(roomy.saveOwnFile('octocat', 'huge', 'x'.repeat(1_100_000)), /over the 1024 KB this console's secret store holds/);
 });
 
 test('the own-files request body limit follows the store\'s limit, and never drops below 160 KB', () => {
