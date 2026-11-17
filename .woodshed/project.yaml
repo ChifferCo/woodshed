@@ -30,6 +30,10 @@ rules: .woodshed/rules.md
 # What a pull request a session opens must pass before the console posts it to Slack: the review session's APPROVE,
 # the Check suite's `test` job, and the review's Merge risk check, which the brief quotes.
 pullRequests:
+  # This repo is connected to Woodshed Internal and to Woodshed Cloud orgs: only Internal starts sessions from a label
+  # or comment and runs review and QA, so a ticket gets one session and one set of comments. Sessions started by hand
+  # still run on any console.
+  runsOn: woodshed-internal[bot]
   review:
     # The review runs as a Woodshed session on each new commit of a ready pull request, with no tag. The verdict is the
     # reviewer App's, since GitHub never lets the console App approve a pull request it opened. The PR comment with its
