@@ -39,20 +39,32 @@ const SESSION_ENV = {
   PG_URL: 'postgres://woodshed__0a1b2c3d:session-password@10.0.1.5:5432/woodshed__0a1b2c3d',
   MONGODB_URI: 'mongodb://10.0.1.6:27017/woodshed__0a1b2c3d', SESSION_APP_URL: 'https://0a1b2c3d.app.example',
 };
-// The installation's text for each env file, as its secret's variable carries it: comments, a blank line, a quoted value
-// over several lines, and no newline at the end.
-const LEGACY = {
-  API_ENV: '# The api\'s shared values\nAUTH_DOMAIN=example.test\nAUTH_CLIENT_ID=abc123\n\nPRIVATE_KEY="-----BEGIN TEST KEY-----\nnot-a-real-key\n-----END TEST KEY-----"\nPORT=8000',
-  STORE_ENV: 'PUBLIC_AUTH_DOMAIN=example.test\nPUBLIC_FEATURE_PREVIEW=false\n',
-  APP_ENV: '# Shared by the api and the worker\nLOG_LEVEL=info\nPORT=8000',
+// The installation's text for each env file, by its key, as the console's repo settings hold it: comments, a blank
+// line, a quoted value over several lines, and no newline at the end.
+const INSTALLATION = {
+  'api-env': '# The api\'s shared values\nAUTH_DOMAIN=example.test\nAUTH_CLIENT_ID=abc123\n\nPRIVATE_KEY="-----BEGIN TEST KEY-----\nnot-a-real-key\n-----END TEST KEY-----"\nPORT=8000',
+  'store-env': 'PUBLIC_AUTH_DOMAIN=example.test\nPUBLIC_FEATURE_PREVIEW=false\n',
+  'app-env': '# Shared by the api and the worker\nLOG_LEVEL=info\nPORT=8000',
 };
 const OWN = { 'api-env': 'AUTH_CLIENT_ID=mine\nLOG_LEVEL=debug', 'store-env': 'PUBLIC_FEATURE_PREVIEW=false', 'app-env': 'LOG_LEVEL=debug' };
 
-// No installation values at all; the installation's (a shared session); and a private session's, with its owner's lines.
+// The console's repo settings answer, as the session hands it over in REPO_SETTINGS_FILE.
+const ANSWER_NONE = { project: 'app', envFiles: {}, instructions: { installation: null, personal: null }, personalFor: null };
+function answer({ own }) {
+  const keys = [...new Set([...Object.keys(INSTALLATION), ...(own ? Object.keys(OWN) : [])])];
+  return {
+    ...ANSWER_NONE, personalFor: own ? 'octocat' : null,
+    envFiles: Object.fromEntries(keys.map((key) => [key, { installation: INSTALLATION[key] ?? null, personal: own ? OWN[key] ?? null : null }])),
+  };
+}
+
+// No repo settings at all; the installation's (a shared session); and a private session's, with its owner's lines. The
+// golden files were written when the last two came from the env files' Terraform secrets: the files are the same bytes
+// from repo settings, though the line printed about them is repo settings' own, so only the files are compared there.
 const SCENARIOS = {
-  bare: SESSION_ENV,
-  shared: { ...SESSION_ENV, ...LEGACY, S3_ENDPOINT: 'http://10.0.1.7:4566' },
-  private: { ...SESSION_ENV, ...LEGACY, OWN_FILES: JSON.stringify(OWN) },
+  bare: { env: SESSION_ENV, settings: null },
+  shared: { env: { ...SESSION_ENV, S3_ENDPOINT: 'http://10.0.1.7:4566' }, settings: answer({ own: false }) },
+  private: { env: SESSION_ENV, settings: answer({ own: true }) },
 };
 
 const roots = [];
@@ -75,13 +87,21 @@ function writeEnvFilesFor(text, env, settings = null) {
   return [`printed: ${printed}`, ...files.map((file) => `==> ${file} <==\n${fs.readFileSync(path.join(dir, file), 'utf8')}`)].join('');
 }
 
+const filesOf = (written) => written.slice(written.indexOf('==> '));
+// The whole output with no repo settings, which UPDATE_GOLDEN=1 may write again; the files alone with them.
+function assertGolden(written, golden, settings, message) {
+  if (!settings) return assert.equal(written, fs.readFileSync(golden, 'utf8'), message);
+  return assert.equal(filesOf(written), filesOf(fs.readFileSync(golden, 'utf8')), message);
+}
+
 for (const [name, text] of Object.entries(PROJECTS)) {
-  for (const [scenario, env] of Object.entries(SCENARIOS)) {
+  for (const [scenario, { env, settings }] of Object.entries(SCENARIOS)) {
     test(`${name}'s env files, ${scenario}, are written byte for byte as before env files had defaults`, () => {
       const golden = path.join(FIXTURES, `${name}.${scenario}.env.txt`);
-      const written = writeEnvFilesFor(text, env);
-      if (UPDATE) fs.writeFileSync(golden, written);
-      assert.equal(written, fs.readFileSync(golden, 'utf8'));
+      const written = writeEnvFilesFor(text, env, settings);
+      if (UPDATE && !settings) fs.writeFileSync(golden, written);
+      assertGolden(written, golden, settings);
+      assert.doesNotMatch(written, /WARNING/);
     });
   }
 }
@@ -94,51 +114,37 @@ for (const [name, text] of Object.entries(PROJECTS)) {
   const [from, to] = /^\s+lines:|"lines":/m.test(text) ? ['lines', 'overrides'] : ['overrides', 'lines'];
   test(`${name}'s env files are written byte for byte the same with ${from} renamed ${to}`, () => {
     assert.notEqual(renamed(text, from, to), text, `${name} has ${from} to rename`);
-    for (const [scenario, env] of Object.entries(SCENARIOS)) {
-      assert.equal(writeEnvFilesFor(renamed(text, from, to), env), fs.readFileSync(path.join(FIXTURES, `${name}.${scenario}.env.txt`), 'utf8'), scenario);
+    for (const [scenario, { env, settings }] of Object.entries(SCENARIOS)) {
+      assertGolden(writeEnvFilesFor(renamed(text, from, to), env, settings), path.join(FIXTURES, `${name}.${scenario}.env.txt`), settings, scenario);
     }
   });
 }
 
-// A session asking a console that keeps no repo settings for the project (every key absent), or one that copied the
-// legacy values into them (what the console's start does), writes the same files, byte for byte.
-const filesOf = (written) => written.slice(written.indexOf('==> '));
-const ANSWER_NONE = { project: 'app', envFiles: {}, instructions: { installation: null, personal: null }, personalFor: null };
-function copiedAnswer(scenario) {
-  const env = SCENARIOS[scenario];
-  const own = scenario === 'private' ? OWN : {};
-  const keys = [...new Set([...Object.keys(LEGACY).map((v) => v.toLowerCase().replace(/_/g, '-')), ...Object.keys(own)])];
-  return {
-    ...ANSWER_NONE, personalFor: scenario === 'private' ? 'octocat' : null,
-    envFiles: Object.fromEntries(keys.map((key) => [key, { installation: env[key.toUpperCase().replace(/-/g, '_')] ?? null, personal: own[key] ?? null }])),
-  };
-}
+// A session asking a console that keeps no repo settings for the project (every key absent) writes what one with no
+// answer at all writes: the repo's defaults and the overrides, nothing else.
 for (const [name, text] of Object.entries(PROJECTS)) {
-  for (const scenario of Object.keys(SCENARIOS)) {
-    test(`${name}'s env files, ${scenario}, are the same from repo settings with nothing in them, or the legacy values copied into them`, () => {
-      const golden = filesOf(fs.readFileSync(path.join(FIXTURES, `${name}.${scenario}.env.txt`), 'utf8'));
-      const none = writeEnvFilesFor(text, SCENARIOS[scenario], { ...ANSWER_NONE, personalFor: scenario === 'private' ? 'octocat' : null });
-      assert.equal(filesOf(none), golden, 'nothing in repo settings: the legacy secrets, as before');
-      assert.equal(/WARNING: .* legacy env file/.test(none), scenario !== 'bare', 'and each one read says so');
-      const copied = writeEnvFilesFor(text, { ...SESSION_ENV, ...(scenario === 'shared' && { S3_ENDPOINT: SCENARIOS.shared.S3_ENDPOINT }) }, copiedAnswer(scenario));
-      assert.equal(filesOf(copied), golden, 'the copies, with no legacy variable left in the environment');
-      assert.doesNotMatch(copied, /WARNING/);
+  for (const [scenario, { env }] of Object.entries(SCENARIOS)) {
+    test(`${name}'s env files, ${scenario}, are the same from repo settings with nothing in them as with none`, () => {
+      const none = writeEnvFilesFor(text, env, { ...ANSWER_NONE, personalFor: scenario === 'private' ? 'octocat' : null });
+      assert.equal(filesOf(none), filesOf(writeEnvFilesFor(text, env)));
+      assert.doesNotMatch(none, /WARNING/);
     });
   }
 }
 
 // With its defaults, the reference's file starts with them, under their own header, and the rest is as before.
-for (const [scenario, env] of Object.entries(SCENARIOS)) {
+for (const [scenario, { env, settings }] of Object.entries(SCENARIOS)) {
   test(`the reference's env file, ${scenario}, starts with its defaults and is otherwise as before`, () => {
     const golden = path.join(FIXTURES, `referenceWithDefaults.${scenario}.env.txt`);
-    const written = writeEnvFilesFor(REFERENCE, env);
-    if (UPDATE) fs.writeFileSync(golden, written);
-    assert.equal(written, fs.readFileSync(golden, 'utf8'));
+    const written = writeEnvFilesFor(REFERENCE, env, settings);
+    if (UPDATE && !settings) fs.writeFileSync(golden, written);
+    assertGolden(written, golden, settings);
     const before = fs.readFileSync(path.join(FIXTURES, `reference.${scenario}.env.txt`), 'utf8');
     const defaults = '# From the repo (.woodshed/project.yaml)\nLOG_LEVEL=info\nFEATURE_SEARCH=false';
     const [printed, file] = written.split('==> api/.env <==\n');
     const [printedBefore, fileBefore] = before.split('==> api/.env <==\n');
-    assert.equal(printed, printedBefore.replace(' bytes', ' bytes, defaults: 2'), 'the log line counts them');
+    if (!settings) assert.equal(printed, printedBefore.replace(' bytes', ' bytes, defaults: 2'), 'the log line counts them');
+    else assert.match(printed, /defaults: 2/, 'the log line counts them');
     assert.equal(file, fileBefore.startsWith('\n\n') ? `${defaults}${fileBefore}` : `${defaults}\n\n# From this installation\n${fileBefore}`);
   });
 }

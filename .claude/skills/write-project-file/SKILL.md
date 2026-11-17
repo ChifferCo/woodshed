@@ -22,8 +22,8 @@ Look for, and note the file each answer came from:
 - **Databases**: docker compose services, env examples (`.env.example`), ORM config (Prisma, Drizzle, Knex, Alembic,
   Django, Rails, Mongoose), the migration and seed commands, the migrations folder, and the table the migration tool
   records runs in. Only `postgres` and `mongo` are engines; one database an engine.
-- **Env files**: each file the app reads that git ignores, and which of its lines are secret (go in an env file's
-  `secret`, set later on the console) and which are derived (go in its `overrides`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
+- **Env files**: each file the app reads that git ignores, and which of its lines are secret (set later on the
+  console's Repo settings, never in the file) and which are derived (go in its `overrides`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
   and the rest, `project.reference.yaml`'s `databases` comment), which always win. A plain value a person may change
   goes in its `defaults`. Write `overrides`, never its deprecated old name `lines`.
 - **The app**: how it starts in dev (one command that returns once it is up, or a script that backgrounds it), how it
@@ -78,8 +78,8 @@ installation must provide, so list them for the person.
   default branch, so a file on another branch is not read by the install.
 - Offer the CI check from `docs/self-host.md`, "Before any of them: the project file", step 4: a workflow of the
   repository's own calling Woodshed's reusable `project-check.yml`.
-- List what the installation must still provide: each env file `secret` (set on the console's Secrets & webhooks
-  page), each install variable, each `from the session` variable, and Docker when the app's `start` needs it.
+- List what the installation must still provide: each env file's secret values (set on the console's Repo settings:
+  Console settings, Repos, the repo's **Settings**), each install variable, each `from the session` variable, and Docker when the app's `start` needs it.
 
 ## When a session refused the file
 

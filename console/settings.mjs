@@ -31,16 +31,14 @@ function firstLine(err) {
  *          appKey: {current: () => string|null, set: (pem: string) => void},
  *          appApi: ReturnType<import('./githubApp.mjs').createAppApi>,
  *          webhookUrl: () => Promise<string|null>, checkKey?: (pem: string) => Promise<void>,
- *          onReplace?: (name: string, value: string) => void,
- *          repoSettings?: {legacyState: (secret: string) => object|null}|null}} deps
+ *          onReplace?: (name: string, value: string) => void}} deps
  *   `webhookUrl` is where the provider receives GitHub's webhooks, null where it has nowhere; `checkKey` mints a token with a new App key before it is kept; tests pass a fake.
- *   `onReplace` hears of every replaced value, for the parts of the console that hold one (sign-in). `repoSettings`
- *   says where each env file's secret moved: those rows are listed as moved, and refused once Repo settings hold them
+ *   `onReplace` hears of every replaced value, for the parts of the console that hold one (sign-in)
  */
-export function createSettings({ config, secrets, appKey, appApi, webhookUrl, checkKey, onReplace = () => {}, repoSettings = null }) {
+export function createSettings({ config, secrets, appKey, appApi, webhookUrl, checkKey, onReplace = () => {} }) {
   // A console that borrows its GitHub access has no App: no key, no client secret, no webhook of its own to keep.
   const borrowed = Boolean(config.githubBroker);
-  const specs = secretSpecs({ envFiles: config.envFiles ?? [], installSecrets: config.installSecrets ?? [] })
+  const specs = secretSpecs({ installSecrets: config.installSecrets ?? [] })
     .filter((spec) => !borrowed || !APP_SECRETS.includes(spec.name));
   // One change at a time, so two Replaces of the App key cannot store one and keep the other in memory.
   let changing = Promise.resolve();
@@ -69,15 +67,11 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
     }
   }
 
-  // An env file's secret is legacy now: each row says whose Repo settings it moved to.
   async function listed() {
     const list = await secrets.list();
     // A store that makes a secret on its first write lets the page offer Set before the secret exists.
     const creates = Boolean(secrets.createsOnWrite);
-    return list.map((s) => {
-      const row = { ...s, creatable: creates && !s.exists };
-      return s.kind === 'env' && repoSettings ? { ...row, moved: repoSettings.legacyState(s.name) } : row;
-    });
+    return list.map((s) => ({ ...s, creatable: creates && !s.exists }));
   }
 
   async function view() {
@@ -126,12 +120,6 @@ export function createSettings({ config, secrets, appKey, appApi, webhookUrl, ch
   async function replace(name, value) {
     const spec = specOrThrow(name);
     if (spec.kind === 'webhook') throw refusal('rotate the webhook secret instead: the console makes it');
-    const moved = spec.kind === 'env' ? repoSettings?.legacyState(name) : null;
-    // Two copies would drift: sessions read the Repo settings one, so an edit here would reach no session.
-    if (moved?.saved) {
-      console.log('settings: replace refused, the env file moved to repo settings', { name, project: moved.project });
-      throw refusal(`${name} moved to Repo settings: edit it on Console settings → Repos → ${moved.repo} → Settings, which sessions read now`);
-    }
     let text;
     try {
       text = checkValue(spec, value);
