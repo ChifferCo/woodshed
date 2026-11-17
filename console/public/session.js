@@ -919,7 +919,8 @@
         setupNotice(),
         empty,
         zones,
-        status === 'all' && zone('checks', 'Reviews and QA', checks),
+        // A status chip picked on the phone shows the reviews and QA of that status, as its count says.
+        zone('checks', 'Reviews and QA', status === 'all' ? checks : checks.filter((s) => W.group(s) === status)),
         railMine() && pullsZone(onProject)),
     ].filter(Boolean);
   }
