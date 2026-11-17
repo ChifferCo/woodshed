@@ -6,8 +6,8 @@
 // and the console picks only the command. The root passwords are `db-root/postgres` and `db-root/mongo` in the local
 // secret store, each needed only for a database the console has an address for, handed over by name in the
 // environment, never on a command line. A run sees only the secrets the AWS
-// task role reads: the database password its command makes, and the default project's repo settings for the env files
-// the project's seed reads (`repos/<project>/env/<key>`). They are copied into a
+// task role reads: the database password its command makes, and the env files the project's seed reads, both the default
+// project's repo settings for them (`repos/<project>/env/<key>`) and their legacy secrets. They are copied into a
 // folder of the run's own, mounted read-only, and that folder goes once the run is over.
 //
 // The runs' folders are under one the console's user alone can open (`runsDir`, in its state folder by default).
@@ -36,10 +36,11 @@ const ENTRYPOINT = ['-u', 'NODE_OPTIONS', '-u', 'NODE_TLS_REJECT_UNAUTHORIZED', 
 
 /**
  * @param {{project: string|null, keys: string[]}} seed  the default project, and the keys of its databases' env files
- * @returns {string[]}  the secrets the seed's env files are read from: each key's repo settings
+ * @returns {string[]}  the secrets the seed's env files are read from: each key's repo settings, then its legacy secret
+ *   (a key is its file's secret when it has one: shared/project.mjs, envFileKey)
  */
 export function seedSecretNames({ project, keys }) {
-  return project ? keys.map((key) => `repos/${project}/env/${key}`) : [];
+  return [...(project ? keys.map((key) => `repos/${project}/env/${key}`) : []), ...keys];
 }
 
 /** @returns {string[]}  the secrets a command reads, beyond the seed's env files, by dbAdmin.mjs's names for them */

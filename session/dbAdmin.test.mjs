@@ -226,13 +226,14 @@ test('a project database on an engine the installation does not host stops the t
 test('the seed gets each database\'s own variables, on its next template, as the seeder, and no root password', () => {
   const env = seedEnv({
     flags: { ...FLAGS, 'pg-ca': 'none' }, env: { PG_ROOT_PASSWORD: 'root', MONGO_ROOT_PASSWORD: 'root' }, databases: [database, MONGO],
-    user: 'woodshed__seed', name: 'woodshed__template_next', password: 'ab',
+    user: 'woodshed__seed', name: 'woodshed__template_next', password: 'ab', files: { API_ENV: 'X=1' },
   });
   assert.deepEqual([env.PGHOST, env.PGPORT, env.PGUSER, env.PGPASSWORD, env.PGDATABASE, env.PGSSLMODE], ['db.rds', '5432', 'woodshed__seed', 'ab', 'woodshed__template_next', 'disable']);
   assert.equal(env.PG_URL, 'postgres://woodshed__seed:ab@db.rds:5432/woodshed__template_next?sslmode=disable');
   assert.equal(env.MONGODB_URI, 'mongodb://woodshed__seed:ab@10.0.0.10:27017/woodshed__template_next?authSource=woodshed__template_next');
+  assert.equal(env.API_ENV, 'X=1');
   assert.ok(!Object.values(env).includes('root'), 'no root password');
-  const pgOnly = seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p' });
+  const pgOnly = seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} });
   assert.equal(pgOnly.PGSSLMODE, 'verify-full', 'verified against the CA the entryPoint names');
   assert.ok(!('MONGODB_URI' in pgOnly), 'no Mongo for a project with none');
 });
@@ -415,21 +416,21 @@ test('the installation\'s project file is read from the entryPoint\'s --project-
   delete process.env.WOODSHED_PROJECT_FILES_DIR;
   assert.doesNotThrow(() => createDbAdmin({ flags: { ...flags, repo: checkout, 'pg-ca': 'none' }, env: {}, secrets: {}, drivers: { postgres: {}, mongo: {} } }));
 
-  const env = seedEnv({ flags, env: {}, databases: [database], user: 'u', name: 'n', password: 'p' });
+  const env = seedEnv({ flags, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} });
   assert.equal(env.WOODSHED_PROJECT_FILES_DIR, files);
-  assert.equal(seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p' }).WOODSHED_PROJECT_FILES_DIR, undefined);
+  assert.equal(seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} }).WOODSHED_PROJECT_FILES_DIR, undefined);
 });
 
 test('parseArgs takes the default project from the entryPoint\'s --project, and refuses one that is not a project\'s name', () => {
   const at = (name) => [...FIXED.slice(0, -1), '--project', name, '--', 'template'];
   assert.equal(parseArgs(at('acme-app')).flags.project, 'acme-app');
-  assert.equal(FLAGS.project, undefined, 'optional: an entryPoint from before it seeds with the repo\'s defaults alone');
+  assert.equal(FLAGS.project, undefined, 'optional: an entryPoint from before it reads the legacy secrets alone');
   for (const bad of ['../users', 'App', 'a--b', 'a/env', 'x'.repeat(33)]) assert.throws(() => parseArgs(at(bad)), { refused: true }, bad);
   assert.throws(() => parseArgs([...at('app'), 'reset']), { refused: true }, 'a run adds nothing but its command');
   assert.equal(installationEnvSecretName('woodshed/', 'app', 'api-env'), 'woodshed/repos/app/env/api-env');
 });
 
-// The databases' env files: api/.env keyed by its secret, and web/.env.local with none, named by its path.
+// The databases' env files: api/.env with its legacy secret, and web/.env.local with none, named by its key.
 const SEED_PROJECT = parseProject({
   version: 1,
   envFiles: [
@@ -463,19 +464,25 @@ test('the seed\'s env files come from the default project\'s repo settings, each
     envFiles: { 'api-env': { installation: 'API_KEY=new\n', personal: null }, 'web-env-local': { installation: 'PUBLIC_MODE=qa\n', personal: null } },
     instructions: { installation: null, personal: null }, personalFor: null,
   });
-  assert.ok(!('files' in found), 'no old secret is read for the seed');
+  assert.deepEqual(found.files, {}, 'no legacy secret where the repo settings have a value');
   assert.deepEqual(found.read, [{ key: 'api-env', paths: ['api/.env'], from: 'repo settings' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'repo settings' }]);
   assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/repos/app/env/web-env-local'],
-    'only the databases\' keys, only the default project\'s, and no old secret');
+    'only the databases\' keys, only the default project\'s, and no legacy secret');
 });
 
-test('a key with no repo settings value is none, whatever old secret the store still holds', async () => {
+test('a key with no repo settings value falls back to its legacy secret, and one with neither is empty', async () => {
   const flags = seedFlags(['--project', 'app', '--', 'template']);
   const secrets = recordingSecrets({ 'acme/repos/app/env/api-env': '  \n', 'acme/api-env': 'API_KEY=old\n' });
   const found = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets });
   assert.deepEqual(found.settings.envFiles, {}, 'a blank value is none, as the session API leaves it out');
-  assert.deepEqual(found.read, [{ key: 'api-env', paths: ['api/.env'], from: 'none' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
-  assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/repos/app/env/web-env-local'], 'the old secret is never asked for');
+  assert.deepEqual(found.files, { API_ENV: 'API_KEY=old\n' });
+  assert.deepEqual(found.read, [{ key: 'api-env', paths: ['api/.env'], from: 'legacy secret' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
+  assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env', 'acme/api-env', 'acme/repos/app/env/web-env-local'],
+    'a file with no secret has no legacy name to read');
+
+  const none = await seedEnvFiles({ flags, project: SEED_PROJECT, secrets: recordingSecrets({}) });
+  assert.deepEqual([none.settings.envFiles, none.files], [{}, { API_ENV: '' }]);
+  assert.deepEqual(none.read.map((r) => r.from), ['none', 'none']);
 });
 
 test('a key two env files name is read once for the seed, naming both paths, from its own project alone', async () => {
@@ -492,19 +499,19 @@ test('a key two env files name is read once for the seed, naming both paths, fro
   assert.deepEqual(secrets.asked, ['acme/repos/app/env/api-env']);
 });
 
-test('without --project the seed reads no secret: its env files get the repo\'s defaults alone', async () => {
+test('without --project the seed reads the legacy secrets alone, as before repo settings', async () => {
   const secrets = recordingSecrets({ 'acme/api-env': 'API_KEY=old\n', 'acme/repos/app/env/api-env': 'API_KEY=new\n' });
   const found = await seedEnvFiles({ flags: seedFlags(['--', 'template']), project: SEED_PROJECT, secrets });
   assert.equal(found.settings, null);
-  assert.deepEqual(found.read.map((r) => r.from), ['none', 'none']);
-  assert.deepEqual(secrets.asked, []);
+  assert.deepEqual(found.files, { API_ENV: 'API_KEY=old\n' });
+  assert.deepEqual(secrets.asked, ['acme/api-env']);
 });
 
-test('the seed is told where its repo settings are from the file it was given alone, never from the run\'s environment', () => {
+test('the seed is told where its repo settings are last, so no legacy secret\'s variable can stand in for it', () => {
   const env = seedEnv({
-    flags: FLAGS, env: { WOODSHED_SEED_REPO_SETTINGS: '/etc/passwd' }, databases: [database], user: 'u', name: 'n', password: 'p',
-    settingsFile: '/tmp/woodshed-seed-x/repo-settings.json',
+    flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p',
+    files: { WOODSHED_SEED_REPO_SETTINGS: '/etc/passwd' }, settingsFile: '/tmp/woodshed-seed-x/repo-settings.json',
   });
   assert.equal(env.WOODSHED_SEED_REPO_SETTINGS, '/tmp/woodshed-seed-x/repo-settings.json');
-  assert.ok(!('WOODSHED_SEED_REPO_SETTINGS' in seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p' })));
+  assert.ok(!('WOODSHED_SEED_REPO_SETTINGS' in seedEnv({ flags: FLAGS, env: {}, databases: [database], user: 'u', name: 'n', password: 'p', files: {} })));
 });

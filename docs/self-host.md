@@ -98,8 +98,7 @@ server or AWS it comes before the install; on this machine after it, for the rep
    pin moves. **Done when** the pull request that adds it shows a passing `check / Project check`.
 
 Things the file cannot hold: secrets. An env file's secret values (API keys the app's dev setup needs, never
-production ones: `CLAUDE.md`, "Rules") are set on the console's Repo settings (Console settings, Repos, the repo's
-**Settings**) after it starts.
+production ones: `CLAUDE.md`, "Rules") are set on the console's Secrets & webhooks page after it starts.
 
 ## On this machine
 
@@ -155,7 +154,8 @@ repos your `gh` login can push to. The project file comes after that, for the re
    card). Do that, with `WOODSHED_NO_START=1` and the same `WOODSHED_TAILSCALE`, then stop
    the console and start it again as in step 3: the run builds that repository's own session image (several minutes)
    and starts its databases, and keeps the rest of the install.
-   Read "Known gaps", below, before the first session.
+   Do the same when the file has env files with a `secret`, so they get their slot on **Secrets & webhooks**. Read
+   "Known gaps", below, before the first session.
 6. **You**, optional. Sessions push and open pull requests as you, with your `gh` sign-in, so a GitHub App is not
    needed on this machine: skip this step unless you want sessions to push as a bot scoped to the repository. Then
    the setup card's **Connect a GitHub App (optional)** leads to `/setup/github`: create the App on GitHub (one
@@ -169,8 +169,8 @@ repos your `gh` login can push to. The project file comes after that, for the re
    piece: a token that lost a character to a wrapped line looks right and fails in the session. With an Anthropic API
    key instead: save it as `anthropic-api-key` on **Secrets & webhooks**. For Codex: run `codex login` and paste
    `~/.codex/auth.json`, or paste an OpenAI API key; then pick Codex as the agent in New session.
-8. **You**, if the repository's project file has env files: set their values on **Console settings**, Repos, the
-   repo's **Settings**.
+8. **You**, if step 5 ran the installer with the repository and its project file has env files with a `secret`: set
+   each on **Secrets & webhooks**.
 9. **You.** Press **New session** and say what to build.
 
    **Done when** the session reaches its terminal and claude is working. Its log starts `Cloning the project's repo`
@@ -200,7 +200,7 @@ What to know on this machine:
   your browser.
 - More repos: **Console settings**, Repos, **Add a repo** lists every repo your `gh` login can push to. Each starts its
   sessions in the install's session image, cloning its own repo at start, so its dependencies install then. Only the
-  install's repository (`WOODSHED_REPO`) has databases.
+  install's repository (`WOODSHED_REPO`) has databases and env file secrets.
 - GitHub webhooks need a public address, so the console polls GitHub every 30 seconds: a `woodshed` label or a
   `/woodshed` comment takes up to that long. **New session** is immediate.
 - Everything is in `~/.woodshed`. `WOODSHED_REBUILD=1` with the installer builds the session image again, which it
@@ -298,8 +298,8 @@ start sessions there; leave it out otherwise.
 
    **Done when** the log has `console: GitHub App from the setup page` and `auth: signed in`, and opening the console
    from another browser asks to sign in with GitHub.
-10. **You.** My settings (a Claude token), the repo's env files on Console settings' Repos, Secrets & webhooks
-    (`anthropic-api-key` for sessions not on someone's plan, then **Set up webhook**), and **New session**, as on this machine. Invite teammates on
+10. **You.** My settings (a Claude token), Secrets & webhooks (env file secrets, `anthropic-api-key` for sessions not
+    on someone's plan, then **Set up webhook**), and **New session**, as on this machine. Invite teammates on
     **People**. A team key goes on the Secrets page only, never in `session-env.json`, which every session reads.
 11. **Server.** Back up the Volume on a schedule; Hetzner's backups leave Volumes out. Copy the databases with
     `pg_dumpall` and `mongodump` rather than their live folders. Rebuild the session image when the project file's

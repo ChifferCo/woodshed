@@ -153,9 +153,9 @@ fetchRepo() {
   unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
 }
 
-# What the repository's project file decides here, one per line: the keys of the seed's env files (each its secret, or
-# the key its path makes), as WOODSHED_DB_ENV_SECRETS wants them (maybe empty), and the engines its databases are on,
-# space-separated, or `none`.
+# What the repository's project file decides here, one per line: its env files with a legacy secret, and the keys of
+# the seed's (each its secret, or the key its path makes), as WOODSHED_ENV_FILES and WOODSHED_DB_ENV_SECRETS want them
+# (either may be empty), and the engines its databases are on, space-separated, or `none`.
 projectSettings() {
   local src=$1 repoDir=$2 projectFilesDir=${3:-}
   # The paths go in the environment: as arguments, project.mjs would take argv[1] for itself and run as a command.
@@ -164,6 +164,7 @@ projectSettings() {
     const { loadProject } = await import(process.env.PROJECT_MJS);
     const project = loadProject(process.env.REPO_DIR_TO_READ);
     console.error(`woodshed install: project file from ${project.from}`);
+    console.log(project.envFiles.filter((f) => f.secret).map((f) => `${f.secret}=${f.path}`).join(","));
     console.log([...new Set(project.databases.flatMap((d) => d.envFiles))].join(","));
     console.log(project.databases.map((d) => d.engine).join(" ") || "none");
   '
@@ -222,7 +223,7 @@ randomSecret() { node -p 'require("node:crypto").randomBytes(24).toString("hex")
 # console makes no databases for sessions: the db-admin run refuses a project file with no databases, and every shared
 # session would wait on it.
 writeStackEnv() {
-  local file=$1 home=$2 repo=$3 image=$4 dbEnvSecrets=$5 engines=$6 network=$7
+  local file=$1 home=$2 repo=$3 image=$4 envFiles=$5 dbEnvSecrets=$6 engines=$7 network=$8
   [ -f "$file" ] && return 0
   (
     umask 077
@@ -249,6 +250,7 @@ EOF
       # None for an install that names no repository: the console starts with none, and an admin adds them.
       if [ -n "$repo" ]; then printf 'WOODSHED_REPO=%s\n' "$repo"; fi
       cat <<EOF
+WOODSHED_ENV_FILES=$envFiles
 WOODSHED_DB_ENV_SECRETS=$dbEnvSecrets
 WOODSHED_PORT=$CONSOLE_PORT
 WOODSHED_PUBLIC_URL=http://localhost:$CONSOLE_PORT
@@ -266,7 +268,8 @@ EOF
   )
 }
 
-# A stack.env written with no repository, given one now: the repository decides its image and seed secrets, and adds its databases' settings; every other line stays as it was (a Tailscale name, the session API's
+# A stack.env written with no repository, given one now: the repository decides its image, env files and seed
+# secrets, and adds its databases' settings; every other line stays as it was (a Tailscale name, the session API's
 # address, a line of its owner's). Takes writeStackEnv's arguments after the file.
 addRepoToStackEnv() {
   local file=$1 fresh=$1.new kept line name
@@ -366,9 +369,10 @@ saveProjectFilesDir() {
 warnStaleStackEnv() {
   local file=$1 settings=$2 engines=$3 hosted=$4 wanted
   wanted=$(tr ' ' '\n' <<<"$engines" | sed '/^none$/d' | sort | paste -sd ' ' -)
-  [ "$(savedConsoleSetting "$file" DB_ENV_SECRETS)" != "$(sed -n 1p <<<"$settings")" ] \
+  [ "$(savedConsoleSetting "$file" ENV_FILES)" != "$(sed -n 1p <<<"$settings")" ] \
+    || [ "$(savedConsoleSetting "$file" DB_ENV_SECRETS)" != "$(sed -n 2p <<<"$settings")" ] \
     || [ "$wanted" != "$(tr ' ' '\n' <<<"$hosted" | sed '/^none$/d' | sort | paste -sd ' ' -)" ] || return 0
-  say "$file was written for another project file: its seed secrets or database engines are not the ones it names now. providers/local/README.md, \"Project files the installation supplies\", says what to change"
+  say "$file was written for another project file: its env files, seed secrets or database engines are not the ones it names now. providers/local/README.md, \"Project files the installation supplies\", says what to change"
 }
 
 # A setting in stack.env, set to `value`, or taken out when it is empty. The rest of the file stays as it was.
@@ -650,13 +654,13 @@ main() {
     say "Using the session image $image (WOODSHED_REBUILD=1 builds it again)"
   fi
 
-  # With no repository there is no project file yet: no seed secrets or databases.
-  local settings=$'\nnone' engines network
+  # With no repository there is no project file yet: no env files, seed secrets or databases.
+  local settings=$'\n\nnone' engines network
   if [ -n "$repo" ]; then settings=$(projectSettings "$src" "$repoDir" "$projectFilesDir"); fi
-  engines=$(sed -n 2p <<<"$settings")
+  engines=$(sed -n 3p <<<"$settings")
   network=${WOODSHED_NETWORK:-}
   [ -n "$network" ] || ! anyEngine "$engines" || network=woodshed
-  local stackArgs=("$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$engines" "$network")
+  local stackArgs=("$home" "$repo" "$image" "$(sed -n 1p <<<"$settings")" "$(sed -n 2p <<<"$settings")" "$engines" "$network")
   if [ -n "$repo" ] && [ -f "$stackEnv" ] && [ -z "$(savedConsoleSetting "$stackEnv" REPO)" ]; then
     addRepoToStackEnv "$stackEnv" "${stackArgs[@]}"
     say "This install had no repository: it works on $repo now, in its own session image. Repos added on Console settings still clone theirs at start"

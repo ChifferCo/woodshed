@@ -7,7 +7,8 @@
 //                        "personalFor": "<login>"|null}: the session's own project's repo settings (repoSettings.mjs),
 //                        the owner's own in a private session alone; 404 for an ask session, 503 while the store does
 //                        not answer
-//   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"tmux-conf": "..."|null},
+//   POST /settings       Authorization: Bearer <SESSION_TOKEN>  ->  {"files": {"api-env": "..."|null, ...}, by the
+//                        names the session's project file gives its env files, its own repo's alone,
 //                        "ownFiles": {"<path>": "<text>"} (the owner's whole files for the session's repo, written
 //                        where git ignores them),
 //                        "database": {"user", "password", "name"}|null, "claudeToken"}   database null only where the
@@ -317,8 +318,9 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
     console.warn('sessionApi: the owner\'s databases are not ready', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner}'s own databases are not ready: see My settings` });
   }
-  // Their own lines for tmux-conf, null for none (userSettings.ownFiles). Their env file values are /repo-settings'.
-  const files = await userSettings.ownFiles(session.owner);
+  // null for a file is the console's default, which the task definition already gives every session.
+  // By the names the session's project file gives its env files, and only its own repo's (userSettings.ownFiles).
+  const files = await userSettings.ownFiles(session.owner, { repo: session.repo });
   // Their whole files for the session's own repo alone (repoSettings.filesForSession).
   const ownFiles = await repoSettings?.filesForSession?.(session) ?? {};
   console.log('sessionApi: settings handed out', {

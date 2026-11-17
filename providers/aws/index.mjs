@@ -53,7 +53,7 @@ export function awsDatabases({ dbAdminTaskDefinition = null, databases = null })
 
 /**
  * @param {{launcher: {ecs: {dbAdminTaskDefinition?: string|null, databases?: string[]|null}}, secrets: {prefix: string}|null,
- *          homesBucket: string|null, webhookQueue: string, webhookFunction: string}} config
+ *          homesBucket: string|null, webhookQueue: string, webhookFunction: string, envFiles: {secret: string}[]}} config
  *   loadConfig()'s
  */
 export function awsProvider(config) {
@@ -68,7 +68,7 @@ export function awsProvider(config) {
     },
     databases,
     launcher: ecsLauncher(ecs),
-    secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ installSecrets: config.installSecrets }) }) : null,
+    secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) }) : null,
     homes: config.homesBucket ? createHomeStore({ bucket: config.homesBucket, aws: awsCli }) : null,
     dbAdmin: ecs.dbAdminTaskDefinition ? createDbAdminRunner({ ecs, aws: awsCli }) : null,
     webhooks: config.webhookQueue ? createWebhookQueue({ queue: config.webhookQueue, aws: awsCli }) : null,

@@ -135,14 +135,15 @@
       if (key === INSTRUCTIONS) return text.trim() ? 'Saved. The next session on this repo has them in its prompt; running ones keep theirs.' : 'Cleared. Sessions on this repo get the repo\'s own rules alone.';
       const f = fileOf(key);
       if (text.trim()) return `Saved. The next session on ${view.repo} writes them into ${f ? andList(pathsOf(f)) : key}; running ones keep theirs.`;
-      return 'Cleared. Sessions get the repo\'s defaults alone.';
+      return f?.legacy ? `Cleared. Sessions read the Terraform secret ${f.legacy.secret} again.` : 'Cleared. Sessions get the repo\'s defaults alone.';
     });
   }
 
   function clear(key) {
     const f = key === INSTRUCTIONS ? null : fileOf(key);
     const what = key === INSTRUCTIONS ? 'this installation\'s instructions' : `this installation's values for ${labelOf(f)}`;
-    if (!window.confirm(`Clear ${what}?`)) return;
+    const after = f?.legacy ? ` Sessions then read the Terraform secret ${f.legacy.secret} again.` : '';
+    if (!window.confirm(`Clear ${what}?${after}`)) return;
     save(key, { clear: true });
   }
 
@@ -172,6 +173,15 @@
     return block;
   }
 
+  // While sessions may still read an env file's old Terraform secret, which one they read.
+  function legacyNote(f) {
+    if (!f.legacy) return null;
+    const secret = h('code', null, f.legacy.secret);
+    if (!f.installation) return h('p', { class: 'cap-note' }, 'No values yet: sessions still read the Terraform secret ', secret, '.');
+    if (f.legacy.copiedAt) return h('p', { class: 'cap-note' }, 'Copied from the Terraform secret ', secret, ` on ${W.when(f.legacy.copiedAt)}. Sessions read this one now.`);
+    return h('p', { class: 'cap-note' }, 'Sessions read these values now, not the Terraform secret ', secret, '.');
+  }
+
   function envFilePanel(f) {
     const read = view.projectFile.read;
     return h('div', { class: 'layered', 'aria-labelledby': `file-${f.key}` },
@@ -184,6 +194,7 @@
         h('p', { class: 'layer-meta' }, savedLine(f.installation)),
         editorBlock(f.key, f.installation, `This installation's values for ${labelOf(f)}`),
         note(f.key),
+        legacyNote(f),
         h('p', { class: 'sub' }, `They replace the repo's defaults for the keys they set. ${NO_CREDENTIALS}`)),
       read && L.sessionLayer(f),
       read && h('div', { class: 'layer-gets' },

@@ -78,10 +78,13 @@ test('a console other machines reach will not start without sign-in required', (
   assert.doesNotThrow(at('0.0.0.0', { WOODSHED_REQUIRE_SIGN_IN: '1' }), 'sign-in from the first request: as the base box runs');
 });
 
-test('the env files are no setting of the console: an old WOODSHED_ENV_FILES is ignored, whatever it holds', async () => {
-  const config = await import('../console/config.mjs');
-  assert.equal(config.envFiles, undefined);
-  assert.equal(loadConfig({ GH_TOKEN: 'x', WOODSHED_ENV_FILES: 'api-env=api/.env,ghp_pastedValue123' }).envFiles, undefined);
+test('the env files are secret=path pairs, from WOODSHED_ENV_FILES; none without it, and a bad pair stops the start', async () => {
+  const { envFiles } = await import('../console/config.mjs');
+  assert.deepEqual(loadConfig({ GH_TOKEN: 'x' }).envFiles, []);
+  assert.deepEqual(envFiles({ WOODSHED_ENV_FILES: 'api-env=api/.env, web-env=web/.env.local' }),
+    [{ secret: 'api-env', path: 'api/.env' }, { secret: 'web-env', path: 'web/.env.local' }]);
+  assert.throws(() => envFiles({ WOODSHED_ENV_FILES: 'api-env' }), /secret=path pairs/);
+  assert.throws(() => envFiles({ WOODSHED_ENV_FILES: 'Bad_Name=x' }), /secret=path pairs/);
 });
 
 test('the install secrets are secret=VARIABLE pairs, from WOODSHED_INSTALL_SECRET_PAIRS, in none of Woodshed\'s own variables', async () => {
@@ -89,16 +92,16 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_INSTALL_SECRE
   assert.deepEqual(loadConfig({ GH_TOKEN: 'x' }).installSecrets, []);
   assert.deepEqual(loadConfig({ GH_TOKEN: 'x', WOODSHED_INSTALL_SECRET_PAIRS: 'registry-token=REGISTRY_TOKEN, other-token=_OTHER' }).installSecrets,
     [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }, { secret: 'other-token', variable: '_OTHER' }]);
-  const bad = (value) => () => installSecrets({ WOODSHED_INSTALL_SECRET_PAIRS: value });
+  const bad = (value, files) => () => installSecrets({ WOODSHED_INSTALL_SECRET_PAIRS: value, WOODSHED_ENV_FILES: files });
   assert.throws(bad('registry-token'), /secret=VARIABLE pairs/);
   assert.throws(bad('Registry=REGISTRY_TOKEN'), /secret=VARIABLE pairs/);
   assert.throws(bad('registry-token=registry_token'), /secret=VARIABLE pairs/);
   assert.throws(bad('registry-token=1TOKEN'), /secret=VARIABLE pairs/);
   assert.throws(bad('registry-token=WOODSHED_TOKEN'), /one of Woodshed's own session variables/);
   assert.throws(bad('registry-token=GH_TOKEN'), /one of Woodshed's own session variables/);
-  assert.throws(bad('a-token=TOKEN,b-token=TOKEN'), /pair 2 is named twice/);
-  assert.throws(bad('a-token=A,a-token=B'), /pair 2 is named twice/);
-  assert.doesNotThrow(bad('api-env=API_ENV'), 'an old env file secret\'s name is free');
+  assert.throws(bad('api-env=TOKEN', 'api-env=api/.env'), /is an env file's, or named twice/);
+  assert.throws(bad('registry-token=API_ENV', 'api-env=api/.env'), /is an env file's, or named twice/);
+  assert.throws(bad('a-token=TOKEN,b-token=TOKEN'), /pair 2 is an env file's, or named twice/);
   // A value pasted where a name belongs is said by its place, and never repeated into the console's log.
   assert.throws(bad('ok-token=OK,registry-token=ghp_pastedValue123'), (err) => /pair 2 is not/.test(err.message) && !err.message.includes('ghp_'));
   assert.throws(bad('registry-token=REGISTRY_TOKEN=ghp_pastedValue123'), (err) => /pair 1 is not/.test(err.message) && !err.message.includes('ghp_'));
@@ -107,6 +110,8 @@ test('the install secrets are secret=VARIABLE pairs, from WOODSHED_INSTALL_SECRE
   for (const name of ['anthropic-api-key', 'openai-api-key', 'github-app-key', 'github-app-client-secret', 'github-webhook-secret', 'slack-bot-token', 'slack-signing-secret']) {
     assert.throws(bad(`${name}=REGISTRY_TOKEN`), /one of the console's own secrets/, name);
   }
+  assert.throws(() => loadConfig({ GH_TOKEN: 'x', WOODSHED_ENV_FILES: 'api-env=api/.env,ghp_pastedValue123' }),
+    (err) => /WOODSHED_ENV_FILES wants secret=path pairs.*pair 2 is not/.test(err.message) && !err.message.includes('ghp_'));
 });
 
 // Terraform cannot import the list, so its install_secrets validation repeats it: they must not drift apart.
@@ -114,7 +119,7 @@ test('Terraform refuses the same session variables for an install secret as the 
   const { SESSION_VARIABLES } = await import('../shared/reservedNames.mjs');
   const fs = await import('node:fs');
   const tf = fs.readFileSync(new URL('./aws/terraform/variables.tf', import.meta.url), 'utf8');
-  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "shared_services"'));
+  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
   const listed = /!contains\(\s*\[("SESSION_ID"[^\]]*)\]/.exec(block)?.[1] ?? '';
   assert.deepEqual([...listed.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]), [...SESSION_VARIABLES]);
   assert.match(block, /!startswith\(env_name, "WOODSHED_"\)/);
@@ -124,9 +129,9 @@ test('the console\'s own secrets are the ones Terraform refuses for an install s
   const { CONSOLE_SECRETS } = await import('../shared/reservedNames.mjs');
   const { secretSpecs } = await import('../console/secrets.mjs');
   const fs = await import('node:fs');
-  assert.deepEqual(secretSpecs().map((s) => s.name).sort(), [...CONSOLE_SECRETS].sort());
+  assert.deepEqual(secretSpecs({ envFiles: [] }).map((s) => s.name).sort(), [...CONSOLE_SECRETS].sort());
   const tf = fs.readFileSync(new URL('./aws/terraform/variables.tf', import.meta.url), 'utf8');
-  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "shared_services"'));
+  const block = tf.slice(tf.indexOf('variable "install_secrets"'), tf.indexOf('variable "database_env_secrets"'));
   const listed = /!contains\(\s*\[("anthropic-api-key"[^\]]*)\]/.exec(block)?.[1] ?? '';
   assert.deepEqual([...listed.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]).sort(), [...CONSOLE_SECRETS].sort());
 });
