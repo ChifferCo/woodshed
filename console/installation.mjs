@@ -423,8 +423,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
       webhookSwitch.receiving('queue');
       webhooks.run(webhookDispatch);
     }
-    if (webhookSwitch.off('github')) console.log('console: GitHub webhooks are switched off on the Webhook events page, polling', { pollSeconds: config.pollMs / 1000 });
-    if (webhookSwitch.off('slack')) console.log('console: Slack questions are switched off on the Webhook events page');
+    if (webhookSwitch.off('github')) console.log('console: GitHub webhooks are switched off on Console settings, polling', { pollSeconds: config.pollMs / 1000 });
+    if (webhookSwitch.off('slack')) console.log('console: Slack questions are switched off on Console settings');
   }
 
   /**

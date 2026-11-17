@@ -1,4 +1,4 @@
-// The switches on the Webhook events page, one for each source of webhooks: GitHub's and Slack's. GitHub's off, the
+// The switches on Console settings, one for each source of webhooks: GitHub's and Slack's. GitHub's off, the
 // console drops each GitHub delivery as it arrives (the queue or the caller forgets it), stops telling the fleet and
 // the pull request readers that webhooks flow, and so polls GitHub at full speed, as a console with no webhooks does.
 // Slack's off, it drops each mention: nothing else brings them, so questions from Slack go unanswered. Kept in

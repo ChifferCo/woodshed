@@ -75,7 +75,7 @@ test('Slack\'s off, mentions are dropped and logged as ignored; GitHub\'s still 
   sw.set({ source: 'slack', off: true, by: 'joel' });
   assert.equal(await dispatch.dispatch({ text: JSON.stringify(mention) }), true);
   assert.deepEqual(mentions, []);
-  assert.deepEqual(recorded, [{ outcome: 'ignored', reason: 'Slack questions are switched off on this page' }]);
+  assert.deepEqual(recorded, [{ outcome: 'ignored', reason: 'Slack questions are switched off on Console settings' }]);
   assert.equal(sw.view().slack.dropped, 1);
   await dispatch.dispatch({ text: JSON.stringify(label) });
   dispatch.alive();

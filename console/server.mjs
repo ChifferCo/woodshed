@@ -67,8 +67,7 @@
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
 //   Admins only (members.mjs), with 403 for anyone else: /api/people*, /api/secrets*, /api/webhook*,
 //   /api/console-settings*, the API behind People, Secrets & webhooks, Webhook events and Console settings.
-//   GET  /api/webhook-events     what the console did with each queued webhook, and whether GitHub's are switched off
-//   POST /api/webhook-events/switch  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
+//   GET  /api/webhook-events     what the console did with each queued webhook, and which sources are switched off
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
 //   GET/POST /api/secrets-manager  where this console keeps its secrets: {"kind": "local"|"aws", "prefix"}. Only where the
 //                                local provider has no WOODSHED_LOCAL_SECRETS_DIR (providers/local/secretSlot.mjs)
@@ -85,6 +84,7 @@
 //   POST /api/people/slack       {"login": "<handle>", "slack": "U01ABC2DEF3" | "@handle" | ""}   links a member's Slack user by hand (slackPeople.mjs)
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
+//   POST /api/console-settings/webhooks  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
@@ -266,7 +266,7 @@ const REVIEWER_SETUP_PATH = '/api/setup/github/reviewer';
 const WEBHOOK_RE = /^\/api\/webhook\/(rotate|apply|url)$/;
 // The calls behind People, Secrets & webhooks, Webhook events and Console settings. Their pages load for anyone signed
 // in, and say what these calls answer.
-const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup)(?:\/|$)|^\/api\/webhook-events(?:\/switch)?$/;
+const ADMIN_API_RE = /^\/api\/(?:people|secrets|secrets-manager|webhook|console-settings|setup)(?:\/|$)|^\/api\/webhook-events$/;
 const APP_ID_RE = /^[0-9a-f]{8}$/;
 const APP_AUTH_PATH = '/__woodshed/auth';
 const APP_SHARE_PATH = '/__woodshed/share';
@@ -1600,6 +1600,7 @@ export function createHandler({
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
+      webhooks: webhookState(),
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '', blocker: blockers[p.name] ?? null })) ?? null,
       // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
       repoNames: addedProjects ? addedProjects.names !== false : null,
@@ -1620,12 +1621,12 @@ export function createHandler({
     }
   }
 
-  // `queue`: whether webhooks reach this console at all, by a queue or from the program it is embedded in.
+  // `receiving`: whether webhooks reach this console at all, by a queue or from the program it is embedded in. Each
+  // source's switch is null where there is none: Slack's only where Slack questions are answered at all.
   function webhookState() {
     const view = webhookSwitch?.view() ?? null;
-    const receiving = view?.receiving ?? (config.webhookQueue || config.localWebhooks ? 'queue' : null);
-    // Slack's switch only where Slack questions are answered at all.
-    return { queue: Boolean(receiving), webhooks: view ? { github: view.github, slack: asks ? view.slack : null } : null };
+    const receiving = Boolean(view?.receiving ?? (config.webhookQueue || config.localWebhooks));
+    return { receiving, github: view?.github ?? null, slack: view && asks ? view.slack : null };
   }
 
   async function webhookSwitchWrite(req, res, login) {
@@ -1642,7 +1643,7 @@ export function createHandler({
       if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
       throw err;
     }
-    return reply(res, 200, webhookState());
+    return reply(res, 200, { webhooks: webhookState() });
   }
 
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
@@ -1774,7 +1775,7 @@ export function createHandler({
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
-    if (pathname === '/api/webhook-events/switch') return webhookSwitchWrite(req, res, login);
+    if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
@@ -1980,7 +1981,8 @@ export function createHandler({
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
     if (pathname === '/api/webhook-events') {
       const list = events.list();
-      return reply(res, 200, { repo: defaultProject(config).repo, ...webhookState(), events: list, names: namesFor(list.map((e) => e.login)) });
+      const state = webhookState();
+      return reply(res, 200, { repo: defaultProject(config).repo, queue: state.receiving, webhooks: state, events: list, names: namesFor(list.map((e) => e.login)) });
     }
     if (pathname === '/api/secrets-manager') return reply(res, 200, managerView());
     if (pathname === '/api/secrets') {

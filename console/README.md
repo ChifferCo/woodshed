@@ -798,9 +798,12 @@ you out.
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
   (`webhookEvents: swept` with how many it kept) takes older lines out. A
   delivery the Lambda refused never reaches the queue: GitHub's Recent
-  Deliveries page shows those. Its two switches, shown where webhooks reach
-  the console (a queue, the local receiver, or the program it is embedded in),
-  turn each source off on its own. **GitHub webhooks** off, the console drops
+  Deliveries page shows those. When a source is switched off on Console
+  settings (below), the page says so above the list.
+- **Webhooks** card on Console settings (`/console-settings#webhooks`): two
+  switches, shown where webhooks reach the console (a queue, the local
+  receiver, or the program it is embedded in), that turn each source off on
+  its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
   at full speed (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does.
   **Slack questions** (only on a console that answers them) off, it drops each
@@ -809,8 +812,8 @@ you out.
   when; the console logs `webhooks: switched` with `source`, `off` and `by`,
   then `webhooks: off, deliveries dropped from now on` with the `source` at the
   first delivery it drops, and at start `console: GitHub webhooks are switched
-  off on the Webhook events page, polling` or `console: Slack questions are
-  switched off on the Webhook events page`.
+  off on Console settings, polling` or `console: Slack questions are switched
+  off on Console settings`.
 - **Secrets & webhooks** (`/secrets`): each secret's state and when it last
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the

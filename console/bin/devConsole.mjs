@@ -351,7 +351,7 @@ function startConsole() {
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
       ...tlsAskPort,
-      // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so the Webhook events page shows its GitHub webhooks switch.
+      // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so Console settings shows its GitHub webhooks switch.
       // Polling is off here, so the receiver never listens and nothing arrives.
       ...(webhookPort ? { WOODSHED_LOCAL_WEBHOOK_PORT: String(webhookPort), ...(repoSettingsDev ? {} : devSecrets(path.join(stateDir, 'webhook-secrets'))) } : {}),
     },

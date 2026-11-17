@@ -83,7 +83,7 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return true;
     }
     if (body?.source === 'slack') return dispatchSlack(body, attempt);
-    // Turned off on the Webhook events page (webhookSwitch.mjs): the poll finds what this would have.
+    // Turned off on Console settings (webhookSwitch.mjs): the poll finds what this would have.
     if (body?.source === 'github' && webhookSwitch?.off('github')) {
       webhookSwitch.dropped('github');
       return true;
@@ -168,7 +168,7 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     // Kept in the events log: a mention is someone waiting for an answer that will not come.
     if (body.type === 'mention' && webhookSwitch?.off('slack')) {
       webhookSwitch.dropped('slack');
-      events.record(body, { outcome: 'ignored', reason: 'Slack questions are switched off on this page' });
+      events.record(body, { outcome: 'ignored', reason: 'Slack questions are switched off on Console settings' });
       return true;
     }
     if (!asks || body.type !== 'mention') {
