@@ -445,7 +445,7 @@
               repoBody(),
             ];
       const node = h('section', { class: 'set-card is-wide', id: 'repo-settings' },
-        h('div', { class: 'set-head' }, h('h2', null, 'Repo settings'), pill),
+        h('div', { class: 'set-head' }, h('h2', null, 'My repo settings'), pill),
         h('p', { class: 'sub' }, 'Your own values for each repo\'s env files, your own instructions and your own files, for your private sessions on that repo. Shared sessions never get them. Your next private session picks up what you save; running ones keep theirs. Only repos you can write to are listed.'),
         body);
       for (const k of editors.keys()) updateCounts(k);

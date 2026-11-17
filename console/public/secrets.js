@@ -365,7 +365,7 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Secrets & webhooks'),
+        h('h1', { class: 'title' }, 'Secrets & webhooks ', W.scopePill('/secrets')),
         h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`)));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
@@ -376,6 +376,7 @@
     app.replaceChildren(h('div', { class: 'page' },
       W.nav('/secrets'),
       head,
+      W.settingsSearch(),
       managerCard(),
       // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
       data.webhook && webhookCard(),

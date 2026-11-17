@@ -135,7 +135,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     return el;
   };
   const W = {
-    h, nav: () => element('nav'), when: (iso) => `at ${iso}`,
+    h, nav: () => element('nav'), settingsSearch: () => element('div'), scopePill: () => element('span'), when: (iso) => `at ${iso}`,
     getJson: (path) => consoleCall('GET', path),
     postJson: (path, body) => consoleCall('POST', path, body),
     confirmChange: (opts) => { confirms.push(opts); },

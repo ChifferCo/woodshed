@@ -62,7 +62,7 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Webhook events'),
+        h('h1', { class: 'title' }, 'Webhook events ', W.scopePill('/events')),
         h('p', { class: 'sub' }, 'Every delivery the console took off the queue, and what it did with it.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/events'), head,
@@ -79,6 +79,7 @@
     app.replaceChildren(h('div', { class: 'page' },
       W.nav('/events'),
       head,
+      W.settingsSearch(),
       h('div', { class: 'filters' },
         h('p', { class: 'foot' }, data.queue ? 'Newest first. The last 7 days are kept.' : 'This console does not read a webhooks queue, so it only polls GitHub.'),
         h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' }, FILTERS.map((f) =>

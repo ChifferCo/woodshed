@@ -680,14 +680,14 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Console settings'),
-        h('p', { class: 'sub' }, 'Only admins can change these. A change applies on the console\'s next check, and is logged with who made it.')));
+        h('h1', { class: 'title' }, 'Console settings ', W.scopePill('/console-settings')),
+        h('p', { class: 'sub' }, 'For every shared session on this console, and only admins can change them. A change applies on the console\'s next check, and is logged with who made it. Your own settings, for your My Woodshed sessions, are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, W.settingsSearch(), updatesCard(), projectsCard(), CARDS.map(settingsCard), dataCard()));
   }
 
   async function load() {

@@ -344,7 +344,7 @@
           h('p', { class: 'crumb' }, h('a', { href: '/console-settings#card-projects' }, '‹ Console settings · Repos')),
           h('h1', { class: 'title' }, view?.repo ?? project),
           h('p', { class: 'sub' }, view
-            ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'What sessions on this repo get in their env files and prompt. Only admins can change these, and each change is logged with who made it.']
+            ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'What every shared session on this repo gets in its env files and prompt. Only admins can change these, and each change is logged with who made it. Your own values for the same files, for your My Woodshed sessions, are on ', h('a', { href: '/settings#repo-settings' }, 'My settings'), '.']
             : 'Repo settings'))),
       body);
   }

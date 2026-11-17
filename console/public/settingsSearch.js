@@ -1,0 +1,123 @@
+// The search at the top of every settings page: it lists every section of every settings page, narrows as you type
+// (settingsIndex.cjs says what each is called and what people call it), and takes you to the section, on its page.
+(function () {
+  'use strict';
+  const W = window.Woodshed;
+  const { h } = W;
+  const Index = window.WoodshedSettingsIndex;
+
+  // A page the person cannot open is left out: the console's own pages are an admin's, and People is not there behind a
+  // hosting proxy.
+  const allowed = (page) => !Index.PAGES[page].admin || (W.isAdmin() && W.consoleLinks().some((link) => link.href === page));
+
+  /** Scrolls to a section's card and outlines it for a moment; once the page has drawn it, since its cards come late. */
+  function reveal(id) {
+    const start = Date.now();
+    const find = () => {
+      const target = document.getElementById(id);
+      if (!target) return false;
+      // Some cards carry the id on their heading.
+      const el = target.closest('section, form') ?? target;
+      el.scrollIntoView({ block: 'start' });
+      el.classList.add('is-found');
+      setTimeout(() => el.classList.remove('is-found'), 2500);
+      return true;
+    };
+    if (find()) return;
+    const app = document.getElementById('app');
+    const watch = new MutationObserver(() => { if (find() || Date.now() - start > 8000) watch.disconnect(); });
+    watch.observe(app, { childList: true, subtree: true });
+    setTimeout(() => watch.disconnect(), 8000);
+  }
+
+  // Arriving from the search (or a link) on another page: its section, once drawn.
+  if (window.location.hash && Index.ENTRIES.some((e) => e.page === window.location.pathname && `#${e.id}` === window.location.hash)) {
+    reveal(window.location.hash.slice(1));
+  }
+
+  /** @param {string} page  a settings page's path, for the words that say whose sessions it changes */
+  function scopePill(page) {
+    const you = Index.PAGES[page].scope === 'you';
+    return h('span', { class: 'pill', title: you ? 'Changes your My Woodshed sessions only' : 'Changes every shared session, and the console' },
+      you ? 'Only you' : 'Everyone');
+  }
+
+  let node = null;
+  /** One search for the page, kept between its redraws so what is typed stays. */
+  function settingsSearch() {
+    if (node) return node;
+    let active = -1;
+    let results = [];
+    const input = h('input', {
+      id: 'settings-search', class: 'field ssearch-input', type: 'search', autocomplete: 'off', spellcheck: 'false',
+      placeholder: 'Find a setting: token, repo, timeout, slack, database…', role: 'combobox', 'aria-expanded': 'false',
+      'aria-controls': 'settings-search-list', 'aria-label': 'Find a setting',
+    });
+    const list = h('div', { id: 'settings-search-list', class: 'ssearch-list', role: 'listbox', hidden: true });
+    node = h('div', { class: 'ssearch' }, input, list);
+
+    function go(entry, event) {
+      if (entry.page === window.location.pathname) {
+        event?.preventDefault();
+        window.history.replaceState(null, '', `#${entry.id}`);
+        setOpen(false);
+        reveal(entry.id);
+      } else if (!event) {
+        window.location.href = entry.href;
+      }
+    }
+    function setOpen(open) {
+      list.hidden = !open;
+      input.setAttribute('aria-expanded', String(open));
+    }
+    function draw() {
+      results = Index.search(input.value, { allowed });
+      active = results.length ? Math.min(Math.max(active, 0), results.length - 1) : -1;
+      if (!results.length) {
+        list.replaceChildren(h('p', { class: 'ssearch-none' }, `Nothing matches "${input.value.trim()}". Try one word: repo, token, slack, database, timeout.`));
+        return;
+      }
+      const typed = input.value.trim() !== '';
+      let lastPage = null;
+      list.replaceChildren(...results.flatMap((entry, i) => {
+        const head = !typed && entry.page !== lastPage ? [h('div', { class: 'ssearch-group' }, entry.pageLabel, h('span', { class: 'pill' }, entry.scope === 'you' ? 'Only you' : 'Everyone'))] : [];
+        lastPage = entry.page;
+        return [...head, h('a', {
+          class: 'ssearch-item', href: entry.href, role: 'option', id: `ssearch-${i}`, 'aria-selected': String(i === active),
+          onclick: (e) => go(entry, e), onmousemove: () => { if (active !== i) { active = i; mark(); } },
+        },
+          h('span', { class: 'ssearch-title' }, entry.title, typed && h('span', { class: 'pill' }, `${entry.pageLabel} · ${entry.scope === 'you' ? 'only you' : 'everyone'}`)),
+          h('span', { class: 'ssearch-note' }, entry.note))];
+      }));
+      mark();
+    }
+    function mark() {
+      list.querySelectorAll('.ssearch-item').forEach((el, i) => {
+        el.setAttribute('aria-selected', String(i === active));
+        if (i === active) { input.setAttribute('aria-activedescendant', el.id); el.scrollIntoView({ block: 'nearest' }); }
+      });
+    }
+    input.addEventListener('focus', () => { draw(); setOpen(true); });
+    input.addEventListener('input', () => { active = 0; draw(); setOpen(true); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { setOpen(false); input.blur(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (list.hidden) { draw(); setOpen(true); }
+        if (results.length) active = (active + (e.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length;
+        mark();
+      } else if (e.key === 'Enter' && results[active]) {
+        e.preventDefault();
+        go(results[active]);
+      }
+    });
+    node.addEventListener('focusout', (e) => { if (!node.contains(e.relatedTarget)) setOpen(false); });
+    // A page learns it is an admin's late: the list is drawn again then.
+    window.addEventListener('woodshed:me', () => { if (!list.hidden) draw(); });
+    return node;
+  }
+
+  W.settingsSearch = settingsSearch;
+  W.scopePill = scopePill;
+  W.revealSection = reveal;
+})();
