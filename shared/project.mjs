@@ -67,7 +67,7 @@ export const PROJECT_FIELDS = Object.freeze({
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
-  'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
+  'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner', 'approvesUpTo'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
   'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
   'pullRequests.mergeRisk': ['check'],
@@ -410,6 +410,12 @@ export function appNamed(project, name) {
   if (name === undefined || name === null || name === '') return project.apps[0] ?? null;
   return project.apps.find((a) => a.name === name) ?? null;
 }
+const MERGE_RISK_TIERS = ['Low', 'Medium', 'High'];
+
+function oneOf(value, where, allowed) {
+  if (!allowed.includes(value)) fail(`${where} must be one of ${allowed.join(', ')} (it is ${JSON.stringify(value)})`);
+  return value;
+}
 
 // What a pull request a session opens must pass before the console posts it to Slack, in the repo's own CI's words:
 // the review whose verdict counts, the suites whose jobs must pass, and the QA and Merge risk checks the brief quotes.
@@ -417,7 +423,7 @@ export function appNamed(project, name) {
 function pullRequests(value) {
   const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
-    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null, author: null });
+    const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null, author: null, approvesUpTo: 'Medium' });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.review.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
     // With `actions` the review runs in a workflow, named here; with `woodshed` it runs as a console session and the
     // workflow is the console's App, not a file (so the merge-risk check is trusted from the App, not a workflow run).
@@ -430,6 +436,8 @@ function pullRequests(value) {
       author, heading: string(f.heading, 'pullRequests.review.heading'),
       workflow, rerun: nullable(f.rerun, 'pullRequests.review.rerun', string),
       commentAuthor: nullable(f.commentAuthor, 'pullRequests.review.commentAuthor', string), runner: f.runner,
+      // The highest merge risk a session's review approves by itself; above it, a person approves (console/fleet.mjs).
+      approvesUpTo: oneOf(f.approvesUpTo, 'pullRequests.review.approvesUpTo', MERGE_RISK_TIERS),
     };
   });
   const suites = list(p.suites, 'pullRequests.suites', (s, where) => {

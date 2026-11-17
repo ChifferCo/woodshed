@@ -85,6 +85,28 @@ test('the review verdict is its author\'s latest, and only a body under its head
   assert.equal(reviewVerdict([verdict('APPROVED')], null), null, 'no review configured');
 });
 
+test('a review that left the commit to a person is answered by a writer\'s approval of that commit, and by nobody else\'s', () => {
+  const left = { ...verdict('COMMENTED'), body: '## Code review — COMMENT\n\nHigh merge risk, so a person approves it: ...' };
+  const person = (login, association, commitId = 'abc') => ({ id: ++reviewIds, user: { login }, state: 'APPROVED', body: '', commit_id: commitId, author_association: association });
+  assert.equal(reviewVerdict([left], REVIEW).state, 'COMMENTED', 'waiting for a person');
+  assert.equal(reviewVerdict([left, person('ada', 'MEMBER')], REVIEW).user.login, 'ada');
+  assert.equal(reviewVerdict([left, person('drive-by', 'NONE')], REVIEW).state, 'COMMENTED', 'not someone without write access');
+  assert.equal(reviewVerdict([left, person('ada', 'MEMBER', 'older')], REVIEW).state, 'COMMENTED', 'not an approval of another commit');
+  assert.equal(reviewVerdict([{ ...verdict('COMMENTED') }, person('ada', 'MEMBER')], REVIEW).state, 'COMMENTED', 'only when the review left it to a person');
+});
+
+test('a pull request the review left to a person is posted once a person approves it', async () => {
+  const left = { ...verdict('COMMENTED'), body: '## Code review — COMMENT\n\nHigh merge risk, so a person approves it.' };
+  const { announcer, github, slack, session, advance } = setup({ reviews: [left] });
+  await announcer.track(session);
+  await announcer.check();
+  assert.equal(slack.posts.length, 0, 'the review\'s comment alone does not let it through');
+  github.reviews = async () => [left, { id: 99, user: { login: 'ada' }, state: 'APPROVED', body: '', commit_id: 'abc', author_association: 'MEMBER' }];
+  advance(MINUTE);
+  await announcer.check();
+  assert.equal(slack.posts.length, 1);
+});
+
 test('a suite is green only when every job under its name ran and passed', () => {
   const green = (runs) => suiteOutcome(runs, SUITE) === 'green';
   assert.equal(green(allShards('success')), true);

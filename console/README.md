@@ -784,6 +784,21 @@ test it.
 Without the label, as when someone removed it, the APPROVE goes out at once. A QA session that never reports leaves the
 approval held: removing and adding the label runs QA again, which releases it.
 
+### A person approves the riskiest
+
+A review session approves by itself only up to `pullRequests.review.approvesUpTo` (Low, Medium or High; Medium unless
+the project file says). Above it, a review that finds nothing to change submits a `COMMENT`, not an `APPROVE`, saying
+the merge risk and that a person approves it, so the pull request waits for a person's approval. QA still runs on it
+first when it carries the QA label, and its result goes in the same comment. A review that asks for changes still
+does. Logged as `fleet: review approval left to a person, merge risk above approvesUpTo` with the tier. A merge risk
+the review did not name approves as before. `High` turns this off.
+
+GitHub counts a reviewer's latest approval and skips its comments, so the review first dismisses its own approvals of
+earlier commits on the pull request (`fleet: earlier review approvals dismissed`; a branch rule that lets only some
+people dismiss can refuse, logged as a warning). The gates (`pullGates.mjs`, `reviewVerdict`) then take an approval of
+that commit by someone with write access as the review's verdict, so the Slack post and the decision brief go out once
+a person approves.
+
 ## Webhook events, secrets and the GitHub App's webhook
 
 In AWS the console has two more pages, under Console in the menu under your

@@ -3,16 +3,25 @@
 // suite's workflow runs at all for the files it touched. Pure functions over what GitHub answered.
 
 const PASSING = new Set(['success', 'neutral', 'skipped']);
+/** What a review that left its approval to a person says, which reviewVerdict looks for (fleet.mjs, personLine). */
+export const LEFT_TO_A_PERSON = 'so a person approves it';
+const WRITERS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
 
 /**
  * The review posts its verdict as a review by its `author`, whose body starts with its `heading`.
  * @param {object[]} reviews  a pull request's, oldest first
  * @param {{author: string, heading: string}|null} review  the project file's `pullRequests.review`
- * @returns {object|null}  the latest such review: its `state` is the verdict, such as `APPROVED` or `CHANGES_REQUESTED`
+ * @returns {object|null}  the latest such review: its `state` is the verdict, such as `APPROVED` or `CHANGES_REQUESTED`;
+ *   when it left the commit to a person, that person's approval of it once there is one
  */
 export function reviewVerdict(reviews, review) {
   if (!review) return null;
-  return (reviews ?? []).filter((r) => r.user?.login === review.author && String(r.body ?? '').startsWith(review.heading)).at(-1) ?? null;
+  const list = reviews ?? [];
+  const own = list.filter((r) => r.user?.login === review.author && String(r.body ?? '').startsWith(review.heading)).at(-1) ?? null;
+  if (own?.state !== 'COMMENTED' || !String(own.body ?? '').includes(LEFT_TO_A_PERSON)) return own;
+  // The review left this commit to a person (fleet.mjs, approvesUpTo): a person's approval of it is the verdict.
+  return list.filter((r) => r.state === 'APPROVED' && r.commit_id === own.commit_id && r.user?.login !== review.author
+    && WRITERS.has(r.author_association)).at(-1) ?? own;
 }
 
 /**

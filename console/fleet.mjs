@@ -12,7 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
-import { reviewVerdict } from './pullGates.mjs';
+import { LEFT_TO_A_PERSON, reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
@@ -51,6 +51,18 @@ const GITHUB_TRIGGERS = new Set(['label', 'comment', 'qa', 'review']);
 // The merge risk labels' colours, the Actions review's.
 const MERGE_RISK_COLORS = { Low: '0e8a16', Medium: 'fbca04', High: 'd93f0b' };
 // How the tiers are decided, under every rating, so a reader can see which rule a change hit.
+const RISK_ORDER = ['Low', 'Medium', 'High'];
+
+/** @returns {boolean}  the review's merge risk is above what the project lets it approve by itself; unknown tiers approve */
+function needsPerson(review, tier) {
+  const at = RISK_ORDER.indexOf(tier);
+  return at >= 0 && at > RISK_ORDER.indexOf(review?.approvesUpTo ?? 'Medium');
+}
+
+function personLine(tier) {
+  return `The review found nothing to change, but this is ${tier} merge risk, ${LEFT_TO_A_PERSON}: the AI review approves up to the project's \`pullRequests.review.approvesUpTo\`.`;
+}
+
 const MERGE_RISK_TIERS = '**High** when it touches any of: the repo\'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests that add or strengthen checks, docs or a small tested fix. **Medium** is everything between.';
 
 // GraphQL spells a bot's login without the `[bot]` the REST API and the project file carry.
@@ -1712,6 +1724,7 @@ export function createFleet({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
+        approvesUpTo: review.approvesUpTo ?? 'Medium',
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });
@@ -1737,10 +1750,20 @@ export function createFleet({
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
-    const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
+    // Riskier than the project lets the review approve by itself (pullRequests.review.approvesUpTo): it finds nothing to
+    // change, and says so as a comment, so a person's approval is what lets it merge.
+    const person = conclusion === 'APPROVE' && needsPerson(session.review, mergeRisk?.tier);
+    if (person) {
+      console.log('fleet: review approval left to a person, merge risk above approvesUpTo', { id: session.id, number: session.number, tier: mergeRisk.tier, approvesUpTo: session.review.approvesUpTo });
+      await dismissEarlierApprovals(session, gh, mergeRisk.tier);
+    }
+    const sent = person && !hold
+      ? { conclusion: 'COMMENT', summary: `${summary}\n\n${personLine(mergeRisk.tier)}`.trim() }
+      : { conclusion, summary };
+    const ours = conclusion ? await submitReview(session, gh, { ...sent, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
     if (!conclusion) console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
-    const held = hold && ours ? { sha, summary, inlineComments, resolved } : null;
+    const held = hold && ours ? { sha, summary, inlineComments, resolved, ...(person ? { person: mergeRisk.tier } : {}) } : null;
     update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
     stop(session, conclusion ? `Review finished: ${conclusion}` : 'Review finished without a verdict')
@@ -1755,6 +1778,22 @@ export function createFleet({
     const reason = qa?.reason ?? 'no QA session could start';
     console.warn('fleet: held approval released, QA did not start', { id: session.id, number: session.number, reason });
     await safely('held approval without QA', () => releaseHeldApproval(project, session.number, { sha, failed: false, qaLine: `QA did not start: ${reason}.` }));
+  }
+
+  // GitHub counts a reviewer's latest approval and skips a comment, so the review's approval of an earlier, less risky
+  // commit would still satisfy a required review unless the branch rule dismisses stale ones: dismiss it here.
+  async function dismissEarlierApprovals(session, gh, tier) {
+    const author = session.review.author;
+    if (!author) return;
+    const earlier = ((await safely('reviews before leaving one to a person', () => gh.reviews(session.number))) ?? [])
+      .filter((r) => r.state === 'APPROVED' && r.user?.login === author);
+    let dismissed = 0;
+    for (const r of earlier) {
+      const ok = await safely('earlier approval dismissed', () => gh.dismissReview(session.number, r.id, `A later commit is ${tier} merge risk, which a person approves.`));
+      if (ok !== null) dismissed += 1;
+    }
+    if (earlier.length) console.log('fleet: earlier review approvals dismissed', { id: session.id, number: session.number, found: earlier.length, dismissed });
+    if (dismissed < earlier.length) console.warn('fleet: an earlier review approval still counts, GitHub refused to dismiss it', { id: session.id, number: session.number });
   }
 
   // QA runs on this pull request here (pullRequests.qa.runner: woodshed, and it carries the QA label), so the review's
@@ -1785,15 +1824,16 @@ export function createFleet({
     const review = heldApproval(project, number, sha);
     if (!review) return;
     const gh = githubOf(project);
-    const { summary, inlineComments, resolved } = review.review.held;
+    const { summary, inlineComments, resolved, person } = review.review.held;
     update(review, { review: { ...review.review, held: null } });
     const head = (await safely('pull request for a held approval', () => gh.pull(number)))?.head?.sha;
     if (head !== sha) {
       console.log('fleet: held approval dropped, the head moved since', { id: review.id, number, sha, head: head ?? null });
       return;
     }
-    const verdict = failed ? 'REQUEST_CHANGES' : 'APPROVE';
-    const ok = await sendVerdict(review, gh, { conclusion: verdict, body: `${review.review.heading} — ${verdict}\n\n${summary}\n\n${qaLine}`.trim(), inlineComments, sha });
+    const verdict = failed ? 'REQUEST_CHANGES' : person ? 'COMMENT' : 'APPROVE';
+    const lines = [summary, qaLine, verdict === 'COMMENT' ? personLine(person) : ''].filter(Boolean).join('\n\n');
+    const ok = await sendVerdict(review, gh, { conclusion: verdict, body: `${review.review.heading} — ${verdict}\n\n${lines}`.trim(), inlineComments, sha });
     if (ok && !failed) await resolveFixedThreads(review, gh, resolved);
     console.log('fleet: held approval released', { id: review.id, number, verdict, ok });
   }
