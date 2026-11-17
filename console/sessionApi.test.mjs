@@ -786,3 +786,90 @@ test('two repos that both have an api-env: each session falls back to its own re
   assert.deepEqual(after.app, before.app, 'the other repo\'s api-env still falls back to its own');
   assert.deepEqual(after.api, { text: 'FROM=api-settings\n\n# Your own lines, from My settings\nMINE=api-settings\n\n# Woodshed overrides\nPORT=8080\n', legacy: [] });
 });
+
+// A made-up full Claude login: never a real one.
+function fakeClaudeLogin(refresh, expiresAt) {
+  return { accessToken: `fake-access-${refresh}`, refreshToken: `fake-refresh-${refresh}`, expiresAt, scopes: ['user:inference', 'user:sessions:claude_code'] };
+}
+
+async function claudeLoginApi(t, sessions) {
+  const values = new Map();
+  const secrets = { async read(n) { return values.get(n) ?? null; }, async save(n, v) { values.set(n, v); }, async remove(n) { values.delete(n); } };
+  const store = { state: { people: { octocat: { claudeTokenAt: '2026-11-01T00:00:00.000Z' }, 'mia-dev': { claudeTokenAt: '2026-11-01T00:00:00.000Z' } } }, save() {} };
+  const userSettings = createUserSettings({ store, secrets });
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: null, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const call = (token, route, body) => request(port, { path: route, authorization: `Bearer ${token}`, body: body === undefined ? undefined : JSON.stringify(body) });
+  return { call, values, store };
+}
+
+test('the Claude login routes: a fresh login is kept, a second session is told it is held, and takes it once the first stopped', async (t) => {
+  const sessions = [
+    { id: 'aaaa1111', status: 'running', token: 'first', owner: 'octocat' },
+    { id: 'bbbb2222', status: 'running', token: 'second', owner: 'octocat' },
+  ];
+  const { call, values } = await claudeLoginApi(t, sessions);
+  assert.deepEqual(await call('first', '/claude-login/take'), { status: 200, body: { status: 'none' } });
+  assert.deepEqual(await call('first', '/claude-login', { fresh: true, claudeAiOauth: fakeClaudeLogin('one', 1000) }), { status: 200, body: { generation: 1 } });
+  assert.deepEqual(await call('second', '/claude-login/take'), { status: 200, body: { status: 'held', heldBy: 'aaaa1111' } });
+
+  assert.deepEqual(await call('first', '/claude-login', { generation: 1, claudeAiOauth: fakeClaudeLogin('two', 2000) }), { status: 200, body: { generation: 1 } });
+  assert.equal((await call('first', '/claude-login', { generation: 1, claudeAiOauth: fakeClaudeLogin('old', 1500) })).status, 409, 'an older expiry');
+  assert.equal((await call('first', '/claude-login', { generation: 2, claudeAiOauth: fakeClaudeLogin('three', 3000) })).status, 409, 'a generation it was never given');
+  assert.equal((await call('first', '/claude-login', { generation: 1, claudeAiOauth: { accessToken: 'x' } })).status, 400);
+  assert.equal(JSON.parse(values.get('users/octocat/claude-login')).claudeAiOauth.refreshToken, 'fake-refresh-two');
+
+  sessions[0].status = 'stopped';
+  const taken = await call('second', '/claude-login/take');
+  assert.deepEqual(taken, { status: 200, body: { status: 'given', generation: 2, claudeAiOauth: fakeClaudeLogin('two', 2000) } });
+  assert.deepEqual(await call('second', '/claude-login/release', { generation: 2 }), { status: 200, body: { released: true } });
+});
+
+test('the Claude login is only ever handed to a Claude session of its owner\'s own My Woodshed', async (t) => {
+  const sessions = [
+    { id: 'aaaa1111', status: 'running', token: 'owner', owner: 'octocat' },
+    { id: 'cccc3333', status: 'running', token: 'shared', owner: null },
+    { id: 'dddd4444', status: 'running', token: 'ask', owner: null, kind: 'ask' },
+    { id: 'eeee5555', status: 'running', token: 'qa', owner: null, qa: { number: 7 } },
+    { id: 'ffff6666', status: 'running', token: 'review', owner: null, review: { number: 7 } },
+    { id: '1111aaaa', status: 'running', token: 'codex', owner: 'octocat', options: { agent: 'codex' } },
+    { id: '2222bbbb', status: 'running', token: 'other', owner: 'mia-dev' },
+    { id: '3333cccc', status: 'stopped', token: 'stopped', owner: 'octocat' },
+  ];
+  const { call, store } = await claudeLoginApi(t, sessions);
+  await call('owner', '/claude-login', { fresh: true, claudeAiOauth: fakeClaudeLogin('one', 1000) });
+  await call('owner', '/claude-login/release', { generation: 1 });
+  for (const token of ['shared', 'ask', 'qa', 'review', 'codex']) {
+    for (const route of ['/claude-login/take', '/claude-login', '/claude-login/release']) {
+      assert.equal((await call(token, route, { fresh: true, claudeAiOauth: fakeClaudeLogin('x', 9000) })).status, 404, `${token} ${route}`);
+    }
+  }
+  assert.equal((await call('stopped', '/claude-login/take')).status, 401);
+  assert.deepEqual((await call('other', '/claude-login/take')).body, { status: 'none' }, 'another person\'s session reaches its own owner\'s, never octocat\'s');
+  delete store.state.people.octocat;
+  assert.equal((await call('owner', '/claude-login', { fresh: true, claudeAiOauth: fakeClaudeLogin('y', 9000) })).status, 409, 'My Woodshed removed: nothing is kept');
+  assert.equal(store.state.people.octocat, undefined);
+});
+
+test('the session API logs no part of a Claude login', async (t) => {
+  const sessions = [{ id: 'aaaa1111', status: 'running', token: 'owner', owner: 'octocat' }, { id: 'bbbb2222', status: 'running', token: 'second', owner: 'octocat' }];
+  const { call } = await claudeLoginApi(t, sessions);
+  const lines = [];
+  const saved = { log: console.log, warn: console.warn };
+  console.log = console.warn = (...args) => lines.push(JSON.stringify(args));
+  try {
+    await call('owner', '/claude-login', { fresh: true, claudeAiOauth: fakeClaudeLogin('zq9', 1000) });
+    await call('second', '/claude-login/take');
+    await call('owner', '/claude-login', { generation: 1, claudeAiOauth: fakeClaudeLogin('zq9b', 900) });
+    await call('owner', '/claude-login', { generation: 1, claudeAiOauth: { accessToken: 'fake-access-zq9c' } });
+    await call('owner', '/claude-login/release', { generation: 1 });
+    await call('second', '/claude-login/take');
+  } finally {
+    Object.assign(console, saved);
+  }
+  assert.ok(lines.some((l) => l.includes('Claude login take answered')));
+  assert.ok(!lines.some((l) => /fake-(access|refresh)-zq9/.test(l)), lines.join('\n'));
+});

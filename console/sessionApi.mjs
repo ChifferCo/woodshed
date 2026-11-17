@@ -18,6 +18,13 @@
 //   *    /anthropic/...  claude's calls to Anthropic, the real credential added here (anthropicProxy.mjs)
 //   *    /openai/...     a Codex session's calls to OpenAI on the team key, added here (openaiProxy.mjs)
 //   POST /codex-auth     a Codex session's refreshed ~/.codex/auth.json, kept for its owner's next session
+//   POST /claude-login/take     ->  {"status": "given", "generation", "claudeAiOauth"} | {"status": "held", "heldBy"} |
+//                        {"status": "none"}: the owner's saved Claude login, the full one Remote Control needs, with the
+//                        lease on it, unless another of their running sessions holds it (claudeLogin.mjs)
+//   POST /claude-login   {"generation", "claudeAiOauth"} a refreshed login from the holder, or {"fresh": true,
+//                        "claudeAiOauth"} one signed in here, which takes the lease  ->  {"generation"}; 409 when not kept
+//   POST /claude-login/release  {"generation"}  ->  {"released"}: at the stop
+//                        These three answer a Claude session of its owner's My Woodshed alone: 404 for any other
 //   POST /home           a session's Claude home, a gzipped tar, saved on stop: a private one's for its owner, a
 //                        shared one's for its own next run
 //   POST /home/restore   that tar back, for the owner's next private session or the shared session's next run;
@@ -64,6 +71,8 @@ import { parseReviewReport } from './reviewSessions.mjs';
 // A step name is a word; the body is never more than a few of them.
 const MAX_PROGRESS_BYTES = 256;
 const MAX_CODEX_AUTH_BYTES = 40_000;
+const MAX_CLAUDE_LOGIN_BYTES = 32_000;
+const CLAUDE_LOGIN_ROUTES = { '/claude-login/take': 'take', '/claude-login': 'writeBack', '/claude-login/release': 'release' };
 // JSON escapes can grow the text up to six-fold; past this the answer is over MAX_ANSWER_CHARS anyway.
 const MAX_ANSWER_BYTES = MAX_ANSWER_CHARS * 6;
 // The report, cut to MAX_REPORT_CHARS by the console, plus the verdict: the same six-fold for escapes.
@@ -165,7 +174,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
+    const routes = [...Object.keys(CLAUDE_LOGIN_ROUTES), '/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -175,6 +184,7 @@ export function createSessionApi({
     if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
+    if (CLAUDE_LOGIN_ROUTES[pathname]) return claudeLoginReply(req, res, session, { userSettings, fleet, action: CLAUDE_LOGIN_ROUTES[pathname] });
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
@@ -373,6 +383,56 @@ async function codexAuthReply(req, res, session, userSettings) {
   }
   console.log('sessionApi: Codex sign-in kept', { sessionId: session.id, owner: session.owner });
   return reply(res, 200, { ok: true });
+}
+
+// A Claude session of its owner's My Woodshed: never a shared, ask, QA, review or Codex one, whose claude is not theirs.
+function keepsClaudeLogin(session) {
+  return Boolean(session.owner) && !isAsk(session) && !isQa(session) && !isReview(session) && session.options?.agent !== 'codex';
+}
+
+// The owner's full Claude login, taken, written back and released by their own sessions alone (claudeLogin.mjs). The
+// login is never logged: these lines carry ids, the generation and the outcome.
+async function claudeLoginReply(req, res, session, { userSettings, fleet, action }) {
+  if (!userSettings?.claudeLogin || !keepsClaudeLogin(session)) {
+    req.resume();
+    return reply(res, 404, { error: 'only a Claude session of its owner\'s My Woodshed keeps a Claude login' });
+  }
+  if (!userSettings.view(session.owner).setUp) {
+    req.resume();
+    return reply(res, 409, { error: 'My Woodshed was removed, so nothing is kept' });
+  }
+  let text = '';
+  for await (const chunk of req) {
+    text += chunk;
+    if (text.length > MAX_CLAUDE_LOGIN_BYTES) return reply(res, 413, { error: 'too large' });
+  }
+  let body = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    return reply(res, 400, { error: 'not JSON' });
+  }
+  const logins = userSettings.claudeLogin;
+  const isLive = (id) => fleet.sessions().some((s) => s.id === id && ACTIVE_STATUSES.has(s.status));
+  if (action === 'take') {
+    const taken = await logins.take(session.owner, { sessionId: session.id, isLive });
+    console.log('sessionApi: Claude login take answered', { sessionId: session.id, owner: session.owner, status: taken.status, generation: taken.generation ?? null });
+    return reply(res, 200, taken);
+  }
+  if (action === 'release') {
+    const released = await logins.release(session.owner, { sessionId: session.id, generation: body.generation });
+    return reply(res, 200, { released });
+  }
+  let kept;
+  try {
+    kept = await logins.writeBack(session.owner, { sessionId: session.id, generation: body.generation, fresh: body.fresh === true, value: { claudeAiOauth: body.claudeAiOauth } });
+  } catch (err) {
+    if (!err.shown) throw err;
+    console.warn('sessionApi: Claude login refused', { sessionId: session.id, owner: session.owner, why: err.message });
+    return reply(res, 400, { error: err.message });
+  }
+  if (!kept.kept) return reply(res, 409, { error: kept.why });
+  return reply(res, 200, { generation: kept.generation });
 }
 
 // A start step the session reports, kept for its page's checklist.

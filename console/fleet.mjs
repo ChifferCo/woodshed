@@ -559,6 +559,15 @@ export function createFleet({
     await startQueued();
   }
 
+  // Its lease on the owner's Claude login ends with it, however it ended (claudeLogin.mjs): a take finds a lease of an
+  // ended session free anyway, and this says so in the log as it happens.
+  async function freeClaudeLogin(session) {
+    if (!session.owner || !userSettings?.claudeLogin) return;
+    await userSettings.claudeLogin.sessionEnded(session.owner, session.id).catch((err) => {
+      console.warn('fleet: Claude login lease not freed', { id: session.id, message: firstLine(err) });
+    });
+  }
+
   async function checkpointAndRemove(session) {
     if (session.endpoint) {
       try {
@@ -570,6 +579,7 @@ export function createFleet({
     }
     await launcher.stop(session.ref);
     update(session, { status: 'stopped', stoppedAt: nowIso(), endpoint: null, ...keptFields(session) });
+    await freeClaudeLogin(session);
   }
 
   // A shared session that ran keeps its conversation and databases once stopped, however it stopped. A QA or review
@@ -594,6 +604,7 @@ export function createFleet({
     console.log('fleet: finishing a stop the last run did not', { id: session.id });
     await launcher.stop(session.ref);
     update(session, { status: 'stopped', stoppedAt: nowIso(), endpoint: null, ...keptFields(session) });
+    await freeClaudeLogin(session);
   }
 
   async function containerGone(session) {
@@ -607,6 +618,7 @@ export function createFleet({
       stopReason: failed ? null : 'container exited', error: failed ? reason : null,
       ...(failed ? {} : keptFields(session)),
     });
+    await freeClaudeLogin(session);
     if (failed) await announceFailure(session);
   }
 
@@ -966,6 +978,7 @@ export function createFleet({
       status: 'stopped', stoppedAt: nowIso(), endpoint: null, stopReason: session.stopReason ?? `stuck ${session.status}, stopped by @${by}`,
       ...(session.startedAt && !session.owner ? keptFields(session) : {}),
     });
+    await freeClaudeLogin(session);
     return session;
   }
 

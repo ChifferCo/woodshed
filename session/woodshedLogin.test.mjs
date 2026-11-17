@@ -162,3 +162,93 @@ test('already on the login, start only types /remote-control once the turn ends'
   await until(() => fs.existsSync(path.join(runDir, 'typed')), '/remote-control typed in');
   assert.equal(fs.readFileSync(path.join(runDir, 'typed'), 'utf8'), '/remote-control\n');
 });
+
+const HELPER = fileURLToPath(new URL('./claudeLogin.mjs', import.meta.url));
+const SAVED_LOGIN = { accessToken: 'fake-access-saved', refreshToken: 'fake-refresh-saved', expiresAt: 2000, scopes: ['user:inference'] };
+
+// The console's session API as far as the kept login goes: what take answers is the test's to say.
+async function fakeConsole(t, runDir, takeAnswer) {
+  const http = await import('node:http');
+  const got = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      got.push({ route: req.url, auth: req.headers.authorization, body: JSON.parse(body || '{}') });
+      const answer = req.url === '/claude-login/take' ? takeAnswer() : req.url === '/claude-login' ? { generation: 1 } : null;
+      res.writeHead(answer ? 200 : 404, { 'content-type': 'application/json' }).end(JSON.stringify(answer ?? {}));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const env = {
+    WOODSHED_CONSOLE_URL: `http://127.0.0.1:${server.address().port}`, SESSION_TOKEN: 'fake-session-token',
+    WOODSHED_CLAUDE_LOGIN_HELPER: HELPER, WOODSHED_CLAUDE_LOGIN_LEASE: path.join(runDir, 'lease.json'),
+  };
+  return { got, env };
+}
+
+test('start takes the login the console kept: no link, the login written, and claude reopened on it', { skip: !hasTmux && 'no tmux' }, async (t) => {
+  const { login, tmux, runDir, home, until, hook } = setUp(t);
+  const { got, env } = await fakeConsole(t, runDir, () => ({ status: 'given', generation: 3, claudeAiOauth: SAVED_LOGIN }));
+  fs.writeFileSync(path.join(runDir, 'woodshed-claude-flags'), ' --plugin-dir /x/claudePlugin');
+  tmux('new-session', '-d', '-s', 'claude', '-x', '200', '-y', '50', 'bash --norc');
+  tmux('send-keys', '-t', 'claude', 'sleep 300', 'Enter');
+  const panePid = tmux('display', '-p', '-t', 'claude', '#{pane_pid}').trim();
+  let claudePid = '';
+  await until(() => {
+    try {
+      claudePid = execFileSync('pgrep', ['-P', panePid, 'sleep'], { encoding: 'utf8' }).trim();
+    } catch {}
+    return Boolean(claudePid);
+  }, 'the running claude started');
+
+  const started = await login(['start'], { ...env, CLAUDE_PID: claudePid, CLAUDE_CODE_SESSION_ID: 'sess-5678' });
+  assert.equal(started.code, 0, started.stderr);
+  assert.match(started.stdout, /saved Claude login, no link needed/);
+  assert.doesNotMatch(started.stdout, /https:/);
+  assert.throws(() => tmux('has-session', '-t', '=woodshed-login'), 'no sign-in was started');
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.claude/.credentials.json'), 'utf8')).claudeAiOauth, SAVED_LOGIN);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'lease.json'), 'utf8')).generation, 3);
+  assert.deepEqual(got.map((g) => [g.route, g.auth]), [['/claude-login/take', 'Bearer fake-session-token']]);
+
+  hook({ state: 'done', event: 'Stop' });
+  await until(() => /\/remote-control typed in/.test(fs.existsSync(path.join(runDir, 'woodshed-login.log')) ? fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8') : ''), 'claude reopened with /remote-control typed in');
+  assert.equal(fs.readFileSync(path.join(runDir, 'claude-args'), 'utf8').trim(), '--plugin-dir /x/claudePlugin --resume sess-5678');
+  const log = fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8');
+  assert.match(log, /saved login taken[\s\S]*claude reopened/);
+  assert.ok(!log.includes('fake-refresh-saved') && !started.stdout.includes('fake-refresh-saved'), 'no token in what it says');
+});
+
+test('start signs in here when no login is kept or another session holds it, and a code that works keeps the new one', { skip: !hasTmux && 'no tmux' }, async (t) => {
+  const { login, runDir, home } = setUp(t);
+  let answer = { status: 'none' };
+  const { got, env } = await fakeConsole(t, runDir, () => answer);
+
+  const none = await login(['start'], env);
+  assert.equal(none.code, 0, none.stderr);
+  assert.match(none.stdout, /^https:\/\/claude\.com\/cai\/oauth\/authorize/m);
+  assert.doesNotMatch(none.stdout, /in use/);
+
+  answer = { status: 'held', heldBy: 'bbbb2222' };
+  const held = await login(['start'], env);
+  assert.equal(held.code, 0, held.stderr);
+  assert.match(held.stdout, /in use by session bbbb2222, so this session signs in by itself/);
+  assert.match(held.stdout, /^https:\/\/claude\.com\/cai\/oauth\/authorize/m);
+
+  const signed = await login(['code', 'good-code'], env);
+  assert.equal(signed.code, 0, signed.stderr);
+  assert.match(signed.stdout, /Signed in\. Your next sessions use this login too/);
+  assert.deepEqual(got.at(-1), { route: '/claude-login', auth: 'Bearer fake-session-token', body: { fresh: true, claudeAiOauth: { accessToken: 'x' } } });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(runDir, 'lease.json'), 'utf8')).generation, 1);
+  assert.ok(fs.existsSync(path.join(home, '.claude/.credentials.json')));
+  assert.match(fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8'), /held by another session[\s\S]*login kept for the next sessions: stored/);
+});
+
+test('without the console, start goes straight to the sign-in link, as before', { skip: !hasTmux && 'no tmux' }, async (t) => {
+  const { login, runDir } = setUp(t);
+  const started = await login(['start'], { WOODSHED_CLAUDE_LOGIN_HELPER: HELPER });
+  assert.equal(started.code, 0, started.stderr);
+  assert.match(started.stdout, /^https:\/\/claude\.com\/cai\/oauth\/authorize/m);
+  assert.match(fs.readFileSync(path.join(runDir, 'woodshed-login.log'), 'utf8'), /no saved login to take \(unavailable\)/);
+});

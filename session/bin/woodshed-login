@@ -1,15 +1,19 @@
 #!/bin/bash
 # Signs claude in for Remote Control in this session. claude's own setup-token, which a private session runs on, is
-# inference-only, so /remote-control refuses it. The login made here is this session's alone: Anthropic rotates the
-# refresh token at each use, so a copy in another session would log one of them out. session/bin/claude then runs on
-# the login instead of the token (until `claude auth logout`).
+# inference-only, so /remote-control refuses it. The console keeps the login between the owner's sessions
+# (console/claudeLogin.mjs, session/claudeLogin.mjs), one session at a time: Anthropic rotates the refresh token at each
+# use, so a copy used in two sessions would log one of them out. session/bin/claude then runs on the login instead of
+# the token (until `claude auth logout`).
 #
 #   woodshed-login          the sign-in in this terminal: open the link, paste the code. Then restart claude yourself
-#   woodshed-login start    for /woodshed:remote-control (session/claudePlugin): starts the sign-in in a tmux session of
-#                           its own and prints its link, so claude can show it. Already signed in, it types
+#   woodshed-login start    for /woodshed:remote-control (session/claudePlugin): takes the login the console keeps, when
+#                           no other running session holds it, and reopens claude's conversation on it once claude's
+#                           turn ends, with /remote-control typed in. Otherwise it starts the sign-in in a tmux session
+#                           of its own and prints its link, so claude can show it. Already signed in, it types
 #                           /remote-control into claude once claude's turn ends
-#   woodshed-login code C   types the code into that sign-in; once it worked, reopens claude's conversation on the login
-#                           when its turn ends, with /remote-control typed in. claude never has to be left by hand
+#   woodshed-login code C   types the code into that sign-in; once it worked, has the console keep the login for the
+#                           owner's next sessions, and reopens claude's conversation on it when its turn ends, with
+#                           /remote-control typed in. claude never has to be left by hand
 #   woodshed-login restart  that reopening, in the background: run by `code`, its log in /tmp/woodshed-login.log
 set -euo pipefail
 
@@ -23,6 +27,8 @@ STATE_FILE=$RUN_DIR/woodshed-claude-state.json
 FLAGS_FILE=$RUN_DIR/woodshed-claude-flags
 CLAUDE_PANE=claude
 CREDENTIALS=$HOME/.claude/.credentials.json
+# The console's side of the kept login; the tests point at the repo's copy.
+LOGIN_HELPER=${WOODSHED_CLAUDE_LOGIN_HELPER:-$BIN_DIR/../claudeLogin.mjs}
 # How long each wait lasts, in tenths of a second: the tests make them short.
 URL_WAIT=${WOODSHED_LOGIN_URL_WAIT:-200}
 CODE_WAIT=${WOODSHED_LOGIN_CODE_WAIT:-300}
@@ -54,6 +60,17 @@ waitFor() {
   return 1
 }
 
+# `given`, `held <session id>`, `none` or `unavailable`: never a token. Without the console's session API (a local
+# session) or a helper, there is nothing to take.
+takeSaved() {
+  if [ -z "${WOODSHED_CONSOLE_URL:-}" ] || [ ! -f "$LOGIN_HELPER" ]; then echo unavailable; return; fi
+  node "$LOGIN_HELPER" take 2>> "$LOG_FILE" || echo unavailable
+}
+storeFresh() {
+  if [ -z "${WOODSHED_CONSOLE_URL:-}" ] || [ ! -f "$LOGIN_HELPER" ]; then echo not-stored; return; fi
+  node "$LOGIN_HELPER" store 2>> "$LOG_FILE" || echo not-stored
+}
+
 # Starts restart in the background, out of claude's process group, so it outlives the command claude ran. The time is
 # taken here: a turn that ended before the background job started must still count.
 restartLater() {
@@ -64,6 +81,7 @@ case "${1:-}" in
   '')
     echo "Sign in with your Claude account. Open the link below, approve, and paste the code it shows."
     claude auth login --claudeai
+    [ "$(storeFresh)" = stored ] && echo "Your next sessions use this login too, without the browser."
     echo
     echo "Done. Start claude again (or /exit and reopen it) and run /remote-control. Inside claude, /woodshed:remote-control does all of this for you."
     ;;
@@ -74,6 +92,17 @@ case "${1:-}" in
       echo "Already signed in: this claude runs on your Claude login. /remote-control is typed in once this reply ends."
       exit 0
     fi
+    taken=$(takeSaved)
+    case "$taken" in
+      given)
+        say "saved login taken"
+        restartLater resume
+        echo "Signed in with your saved Claude login, no link needed. Once this reply ends, claude reopens this conversation on it and types /remote-control."
+        exit 0
+        ;;
+      held\ *) say "saved login held by another session, signing in here" "(holder: ${taken#held })" ;;
+      *) say "no saved login to take" "($taken)" ;;
+    esac
     tmux kill-session -t "=$LOGIN_TMUX" 2>/dev/null || true
     rm -f "$STATUS_FILE"
     # Wide, so the link is on one line of the pane; the exit status says how it went, the pane what claude said.
@@ -87,6 +116,9 @@ case "${1:-}" in
       exit 1
     fi
     say "sign-in started"
+    case "$taken" in
+      held\ *) echo "Your saved Claude login is in use by session ${taken#held }, so this session signs in by itself." ;;
+    esac
     echo "Sign-in link (open it, approve with your Claude account, and paste the code it shows back here):"
     link
     ;;
@@ -112,8 +144,12 @@ case "${1:-}" in
       exit 1
     fi
     say "signed in"
+    stored=$(storeFresh)
+    say "login kept for the next sessions: $stored"
     restartLater resume
-    echo "Signed in. Once this reply ends, claude reopens this conversation on your login and types /remote-control."
+    kept=""
+    [ "$stored" = stored ] && kept=" Your next sessions use this login too, without the browser."
+    echo "Signed in.$kept Once this reply ends, claude reopens this conversation on your login and types /remote-control."
     ;;
 
   restart)

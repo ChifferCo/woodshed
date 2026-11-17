@@ -10,7 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, claudeState, credentialsWithoutLogin, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { fingerprint } from './claudeLogin.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -706,4 +707,84 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
   await until('claude', '/woodshed:remote-control');
   assert.equal(await typed('claude'), '/woodshed:remote-control\n');
   assert.equal(await typed('shell'), 'woodshed-login\n', 'nothing more at the Terminal tab');
+});
+
+test('the Claude home archive keeps the MCP logins and never the full Claude login', async (t) => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  await fs.mkdir(path.join(home, '.claude'), { recursive: true });
+  const credentials = { claudeAiOauth: { accessToken: 'fake-access-zq7', refreshToken: 'fake-refresh-zq7', expiresAt: 1, scopes: [] }, mcpOAuth: { slack: { accessToken: 'fake-mcp' } } };
+  await fs.writeFile(path.join(home, '.claude/.credentials.json'), JSON.stringify(credentials));
+  await fs.writeFile(path.join(home, '.claude/settings.json'), '{}');
+  const swapped = await credentialsWithoutLogin(home);
+  const archive = path.join(home, 'out.tgz');
+  const { execFileSync } = await import('node:child_process');
+  execFileSync('tar', homeArchiveArgs(home, ['.claude'], { swapped }), { stdio: ['ignore', (await import('node:fs')).openSync(archive, 'w'), 'inherit'] });
+  const out = path.join(home, 'out');
+  await fs.mkdir(out);
+  await promisify(execFile)('tar', ['xzf', archive, '-C', out]);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(out, '.claude/.credentials.json'), 'utf8')), { mcpOAuth: { slack: { accessToken: 'fake-mcp' } } });
+  assert.ok(await fs.stat(path.join(out, '.claude/settings.json')));
+  assert.equal(JSON.parse(await fs.readFile(path.join(home, '.claude/.credentials.json'), 'utf8')).claudeAiOauth.refreshToken, 'fake-refresh-zq7', 'the session keeps its own');
+  assert.equal(await credentialsWithoutLogin(out), null, 'nothing to leave out');
+});
+
+test('a private session\'s statusd sends a refreshed Claude login back, then gives it up at the checkpoint, and logs no token', async (t) => {
+  const got = [];
+  const consoleServer = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      got.push({ route: req.url, auth: req.headers.authorization, body: req.url.startsWith('/claude-login') ? JSON.parse(body || '{}') : null });
+      if (req.url === '/claude-login') return res.writeHead(200, { 'content-type': 'application/json' }).end('{"generation":3}');
+      if (req.url === '/claude-login/release') return res.writeHead(200, { 'content-type': 'application/json' }).end('{"released":true}');
+      if (req.url.startsWith('/home')) return res.writeHead(200, { 'content-type': 'application/json' }).end('{"bytes":1}');
+      res.writeHead(404).end('{}');
+    });
+  });
+  await new Promise((resolve) => consoleServer.listen(0, '127.0.0.1', resolve));
+  t.after(() => consoleServer.close());
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-login-home-'));
+  t.after(() => fs.rm(home, { recursive: true, force: true }));
+  const file = path.join(home, '.claude/.credentials.json');
+  const leaseFile = path.join(home, 'lease.json');
+  const login = (refresh, expiresAt) => ({ accessToken: `fake-access-${refresh}`, refreshToken: `fake-refresh-${refresh}`, expiresAt, scopes: ['user:inference'] });
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, JSON.stringify({ claudeAiOauth: login('zq5a', 1000) }));
+  await fs.writeFile(leaseFile, JSON.stringify({ generation: 3, ...fingerprint(login('zq5a', 1000)) }));
+
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-login-repo-'));
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  await promisify(execFile)('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'init', '-q', '-b', 'woodshed/test']);
+  await promisify(execFile)('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'init']);
+  const port = await freePort();
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./statusd.mjs', import.meta.url))], {
+    env: {
+      ...process.env, HOME: home, SESSION_TOKEN: 'sess', STATUSD_PORT: String(port), REPO_DIR: repo, SESSION_KIND: 'private', AGENT: '', SESSION_MODE: '',
+      WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`, WOODSHED_CLAUDE_LOGIN_LEASE: leaseFile, WOODSHED_CLAUDE_LOGIN_EVERY_MS: '100',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill());
+  let logs = '';
+  child.stdout.on('data', (c) => { logs += c; });
+  child.stderr.on('data', (c) => { logs += c; });
+  const until = async (check, what) => {
+    for (let i = 0; i < 100 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.ok(check(), `${what}; logs: ${logs}`);
+  };
+  await until(() => logs.includes('listening'), 'statusd listening');
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(got.filter((g) => g.route === '/claude-login').length, 0, 'unchanged: nothing sent');
+
+  await fs.writeFile(file, JSON.stringify({ claudeAiOauth: login('zq5b', 2000), mcpOAuth: {} }));
+  await until(() => got.some((g) => g.route === '/claude-login'), 'the refreshed login sent back');
+  assert.deepEqual(got.find((g) => g.route === '/claude-login'), { route: '/claude-login', auth: 'Bearer sess', body: { generation: 3, claudeAiOauth: login('zq5b', 2000) } });
+
+  await fetch(`http://127.0.0.1:${port}/checkpoint`, { method: 'POST', headers: { authorization: 'Bearer sess' } });
+  await until(() => got.some((g) => g.route === '/claude-login/release'), 'released at the checkpoint');
+  assert.deepEqual(got.find((g) => g.route === '/claude-login/release').body, { generation: 3 });
+  assert.ok(got.findIndex((g) => g.route === '/claude-login/release') < got.findIndex((g) => g.route.startsWith('/home')), 'before the home is saved');
+  assert.match(logs, /statusd: Claude login checked.*sent/);
+  assert.ok(!/fake-(access|refresh)-zq5/.test(logs), logs);
 });

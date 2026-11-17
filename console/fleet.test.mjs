@@ -2983,3 +2983,30 @@ test('pullRequests.runsOn keeps the QA label to the console it names, so its own
   await here.fleet.qaAutoLabel({ number: 7 });
   assert.deepEqual(here.calls.labeled, [{ number: 7, label: 'woodshed-qa' }]);
 });
+
+test('the lease on the owner\'s Claude login ends with the session: at a stop, and when its task is found gone', async () => {
+  const { createUserSettings } = await import('./userSettings.mjs');
+  const values = new Map();
+  const secrets = { async read(n) { return values.get(n) ?? null; }, async save(n, v) { values.set(n, v); }, async remove(n) { values.delete(n); } };
+  const userSettings = createUserSettings({ store: { state: { people: { joel: { claudeTokenAt: '2026-10-01T00:00:00.000Z' } } }, save() {} }, secrets });
+  const { fleet, alive, statuses } = setup({ userSettings });
+  const fresh = { accessToken: 'fake-access', refreshToken: 'fake-refresh', expiresAt: 1000, scopes: ['user:inference'] };
+  const isLive = () => true;
+  const holder = (login) => userSettings.claudeLogin.view(login, { isLive }).heldBy;
+
+  const first = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  await userSettings.claudeLogin.writeBack('joel', { sessionId: first.id, fresh: true, value: { claudeAiOauth: fresh } });
+  assert.equal(holder('joel'), first.id);
+  await fleet.stop(first, 'by hand', { by: 'joel' });
+  assert.equal(holder('joel'), null, 'stopped');
+
+  const second = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it again' });
+  statuses[second.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(second.status, 'running');
+  assert.equal((await userSettings.claudeLogin.take('joel', { sessionId: second.id, isLive })).status, 'given');
+  alive.delete(second.ref);
+  await fleet.tick();
+  assert.equal(second.status, 'stopped');
+  assert.equal(holder('joel'), null, 'reaped');
+});

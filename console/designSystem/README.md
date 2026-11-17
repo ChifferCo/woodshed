@@ -171,6 +171,10 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `is-wide`): the repos as tabs, then each env file's layers with **Person** · Your values between Installation and
   Session, and a **Yours** column in the table, then the Instructions. The installation's layer is read only there.
   `?repo=<project>` (and `&file=<key>`) opens one. tmux keeps a card of its own.
+- My settings' **Remote Control login** card (`public/claudeLoginCard.js`) has no field: sessions save the login. Its
+  pill says the state in a word: **Saved** (`pill is-ok`), **In use** (`pill is-work`, `slate`: a session has it now,
+  named and linked under it) or **Not saved** (the plain pill). **Forget** is quiet (`btn-quiet`), never orange, and
+  asks first.
 - On Secrets & webhooks the env files' Terraform secrets with no values in Repo settings yet are a group of their own,
   **Not in Repo settings yet**, each row with a `cap-note` linking the repo's page. A secret leaves the page once Repo
   settings hold its file, and the group goes with the last one.

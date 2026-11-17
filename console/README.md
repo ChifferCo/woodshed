@@ -493,6 +493,31 @@ next push then fails with that reason rather than quietly pushing as the App.
 GitHub. A session keeps a token for 5 minutes at most, so a running one is back
 to pushing as the App within 5 minutes.
 
+**Your Remote Control login** carries over between your private sessions too. Remote Control needs a full Claude
+login, which the token from `claude setup-token` is not: `/woodshed:remote-control` (or Sign in for Remote Control in a
+session's ⋯ menu) signs a session in with a link and a code, and the session sends that login to the console, which
+keeps it as `users/<login>/claude-login` (`claudeLogin.mjs`). Your next session's `/woodshed:remote-control` takes it
+instead: no link, no code, claude reopens on it with Remote Control on.
+- **One session at a time.** Each refresh (about every 8 hours) replaces the refresh token and retires the old one, so
+  a lease in the console's state says which session has it: `{sessionId, generation, takenAt}`. A take while another
+  of your sessions runs with it says so, and that session signs in by itself; the holder's refreshes come back with its
+  generation (statusd checks every minute), and the console keeps one only from the holder and only when it expires
+  later than the saved one, so a stale copy never replaces a newer login. The lease ends at the session's stop (statusd
+  releases it after sending the last refresh), or when the fleet finds it stopped, failed or gone.
+- **Only yours.** Only a Claude session of your own My Woodshed reaches the routes (`POST /claude-login/take`,
+  `/claude-login`, `/claude-login/release`): a shared, ask, QA, review or Codex session gets 404, and a session only
+  ever reaches its owner's. The login is never on a page, in the `/settings` answer, a saved Claude home or the settings
+  sync, and the console's and statusd's lines about it carry ids, the generation and outcomes only.
+- **My settings** shows a Remote Control login card: Saved, In use (with the session) or Not saved, when it was saved
+  and last refreshed, and **Forget**, which deletes the secret and the lease. A session using it then keeps its own copy
+  until it stops, and its refreshes are refused. Remove My Woodshed deletes it with the rest.
+- **30 days.** Anthropic ends the refresh grant 30 days after the first sign-in, whatever the refreshes: a session then
+  signs in again, and its login replaces the saved one.
+- An embedding program whose secret store is its own keeps `users/<login>/claude-login` beside the person's other
+  `users/<login>/` values, as sensitive as their GitHub token: readable by the console alone, never logged, deleted with
+  the rest. The console writes it; a value put there by hand is not used until the console's state records it, since
+  the lease and the expiry it compares against live there.
+
 **MCP logins and Claude memory** carry over between your private sessions.
 - **While it runs, and on stop:** every 5 minutes, when something in it
   changed since the last save, statusd sends the session's `~/.claude` and

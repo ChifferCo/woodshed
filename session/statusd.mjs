@@ -14,7 +14,8 @@
 //                     (~/.claude and ~/.claude.json) to the console, for the session's next run
 //
 // A private session also keeps its owner's shared Claude settings in step with their other sessions, every
-// SYNC_EVERY_MS (settingsSync.mjs).
+// SYNC_EVERY_MS (settingsSync.mjs), and sends their full Claude login back to the console whenever claude refreshed it,
+// then gives it up at the checkpoint (claudeLogin.mjs).
 //                     An ask session (SESSION_MODE=ask) only saves its home: it is on the default branch and pushes nothing;
 //                     nor does a QA session (SESSION_MODE=qa), which tests a pull request's branch and changes nothing
 //   ANY  /redis/<id>/* forwarded to redis-commander, which listens on loopback only
@@ -56,6 +57,7 @@ import { STOP_TIMEOUT_MS, SYNC_EVERY_MS, exchange, readState, syncOnce, writeSta
 import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs';
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
+import { credentialsFile, release as releaseLogin, sendBackIfChanged } from './claudeLogin.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
@@ -631,6 +633,31 @@ async function keepCodexAuth() {
   }
 }
 
+// The owner's full Claude login, which a refresh rotates: the console keeps the newest for their next session.
+const KEEPS_CLAUDE_LOGIN = !CODEX && !ASK && !QA && process.env.SESSION_KIND === 'private';
+const CLAUDE_LOGIN_EVERY_MS = Number(process.env.WOODSHED_CLAUDE_LOGIN_EVERY_MS) || 60_000;
+let lastLoginResult = null;
+async function keepClaudeLogin() {
+  if (!KEEPS_CLAUDE_LOGIN || !CONSOLE_URL) return;
+  const result = await sendBackIfChanged().catch((err) => {
+    console.warn('statusd: Claude login not sent back', { message: err?.message });
+    return 'failed';
+  });
+  // Each minute's check is logged only when it does something, or says something new.
+  if (result !== lastLoginResult || result === 'sent') console.log('statusd: Claude login checked', { result });
+  lastLoginResult = result;
+}
+
+async function giveUpClaudeLogin() {
+  if (!KEEPS_CLAUDE_LOGIN || !CONSOLE_URL) return;
+  await keepClaudeLogin();
+  const result = await releaseLogin().catch((err) => {
+    console.warn('statusd: Claude login not released', { message: err?.message });
+    return 'failed';
+  });
+  console.log('statusd: Claude login released', { result });
+}
+
 async function status() {
   let pane = '';
   try {
@@ -756,8 +783,13 @@ async function send(text) {
 
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
 // a shared session's for its own next run.
-export function homeArchiveArgs(home, entries) {
-  return ['czf', '-', '-C', home, ...HOME_EXCLUDES.map((e) => `--exclude=${e}`), ...entries];
+// The full Claude login is never in a home: the console keeps it apart, for one session at a time. `swapped` is a copy
+// of ~/.claude/.credentials.json without it (MCP logins alone), archived under the file's own name.
+export function homeArchiveArgs(home, entries, { swapped = null } = {}) {
+  const swap = swapped && entries.includes('.claude')
+    ? ['--exclude=.claude/.credentials.json', '-C', path.dirname(swapped), `--transform=s,^${path.basename(swapped).replace(/[.]/g, '\\.')}$,.claude/.credentials.json,`, path.basename(swapped)]
+    : [];
+  return ['czf', '-', '-C', home, ...HOME_EXCLUDES.map((e) => `--exclude=${e}`), ...(swap.length ? [swap[0]] : []), ...entries, ...swap.slice(1)];
 }
 
 /**
@@ -788,6 +820,25 @@ export async function homeChangedSince(home, sinceMs) {
   return false;
 }
 
+/**
+ * A copy of ~/.claude/.credentials.json without the full Claude login, in a folder only this user reads, for the
+ * home's archive; null when the file holds no login (or is not claude's JSON), and it is archived as it is.
+ */
+export async function credentialsWithoutLogin(home) {
+  let parsed;
+  try {
+    parsed = JSON.parse(await fs.readFile(credentialsFile(home), 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!parsed?.claudeAiOauth) return null;
+  const { claudeAiOauth, ...rest } = parsed;
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'woodshed-home-credentials-'));
+  const copy = path.join(dir, 'credentials.json');
+  await fs.writeFile(copy, `${JSON.stringify(rest)}\n`, { mode: 0o600 });
+  return copy;
+}
+
 async function saveHome(why, signal) {
   const home = os.homedir();
   const entries = [];
@@ -796,8 +847,17 @@ async function saveHome(why, signal) {
   }
   if (!entries.length) return { saved: false };
   if (signal?.aborted) throw new Error('given up for the save at stop');
+  const swapped = await credentialsWithoutLogin(home);
+  try {
+    return await archiveHome({ why, signal, home, entries, swapped });
+  } finally {
+    if (swapped) await fs.rm(path.dirname(swapped), { recursive: true, force: true });
+  }
+}
+
+function archiveHome({ why, signal, home, entries, swapped }) {
   return new Promise((resolve, reject) => {
-    const tar = spawn('tar', homeArchiveArgs(home, entries), { stdio: ['ignore', 'pipe', 'inherit'] });
+    const tar = spawn('tar', homeArchiveArgs(home, entries, { swapped }), { stdio: ['ignore', 'pipe', 'inherit'] });
     let bytes = 0;
     tar.stdout.on('data', (chunk) => { bytes += chunk.length; });
     const req = http.request(`${CONSOLE_URL}/home?why=${why}`, {
@@ -908,6 +968,7 @@ async function lastSettingsRound() {
 async function checkpoint() {
   homeSavesOver = true;
   await keepCodexAuth();
+  await giveUpClaudeLogin();
   await lastSettingsRound();
   // Before the push, which can fail: the home is worth keeping either way.
   const home = CONSOLE_URL ? await saveHomeInTurn('stop') : { saved: false };
@@ -1180,6 +1241,7 @@ function main() {
       console.warn('statusd: shared Claude settings not synced', { message: err?.message });
     }), SYNC_EVERY_MS);
   }
+  if (CONSOLE_URL && KEEPS_CLAUDE_LOGIN) setInterval(keepClaudeLogin, CLAUDE_LOGIN_EVERY_MS);
   // The container's init passes the stop on as SIGTERM. Without one, statusd is PID 1, which ignores SIGTERM without
   // a handler: ECS would wait 30s to kill it.
   process.on('SIGTERM', async () => {

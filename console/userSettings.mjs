@@ -13,6 +13,8 @@
 //   users/<login>/own-files      legacy: their own whole files from before they were per repo, which repoSettings.mjs moves
 //                                into the default project's (moveOwnFiles); deleted here with the rest by Remove My Woodshed
 //   users/<login>/github         their GitHub user token, from Connect GitHub (githubUser.mjs), as JSON
+//   users/<login>/claude-login   their full Claude login for Remote Control, from their own sessions alone, and the lease on
+//                                it (claudeLogin.mjs). Never on the page, in the /settings answer or a home
 //   users/<login>/database       the password of their own databases' user (databases.mjs)
 
 import fs from 'node:fs';
@@ -20,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import logins from './public/logins.cjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
+import { CLAUDE_LOGIN, createClaudeLogins } from './claudeLogin.mjs';
 const { loginKey } = logins;
 
 const CLAUDE_TOKEN = 'claude-token';
@@ -208,6 +211,8 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
     touch(login, changes);
     console.log('userSettings: sign-ins follow the secret store', { login, claudeToken: Boolean(token), codexAuth: Boolean(codex) });
   }
+
+  const claudeLogin = createClaudeLogins({ record: recordFor, touch, secretName: (login) => userSecretName(login, CLAUDE_LOGIN), secrets, now });
 
   function requireSecrets() {
     if (!secrets) throw Object.assign(new Error('this console has no secret store, so My settings cannot be saved'), { shown: true });
@@ -426,7 +431,7 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
   /** Deletes everything this person saved, the secrets first, so a failure leaves the record to try again from. */
   async function removeAll(login) {
     if (secrets) {
-      for (const key of [CLAUDE_TOKEN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES)]) await secrets.remove(userSecretName(login, key));
+      for (const key of [CLAUDE_TOKEN, CLAUDE_LOGIN, CODEX_AUTH, GITHUB, OWN_FILES, 'database', ...Object.keys(FILES)]) await secrets.remove(userSecretName(login, key));
     }
     delete people()[loginKey(login)];
     store.save();
@@ -435,6 +440,6 @@ export function createUserSettings({ store, secrets, envFiles = [], appendedFor 
 
   return {
     view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
-    githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
+    githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll, claudeLogin,
   };
 }

@@ -19,6 +19,7 @@
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
 //   POST /api/my/codex-auth/remove
 //   POST /api/my/claude-token/remove
+//   POST /api/my/claude-login/forget   deletes the Claude login your sessions keep for Remote Control, and its lease
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
@@ -202,6 +203,7 @@ const STATIC_FILES = {
   'login.js': 'text/javascript; charset=utf-8',
   'launcher.js': 'text/javascript; charset=utf-8',
   'mySettings.js': 'text/javascript; charset=utf-8',
+  'claudeLoginCard.js': 'text/javascript; charset=utf-8',
   'dbRestore.js': 'text/javascript; charset=utf-8',
   'dbRestoreStates.js': 'text/javascript; charset=utf-8',
   'consoleSettings.js': 'text/javascript; charset=utf-8',
@@ -221,6 +223,7 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
+const MY_CLAUDE_LOGIN_FORGET_PATH = '/api/my/claude-login/forget';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const UPDATES_PATH = '/api/console-settings/updates';
 const UPDATES_CHECK_PATH = `${UPDATES_PATH}/check`;
@@ -1167,8 +1170,10 @@ export function createHandler({
 
   function myView(login) {
     const view = userSettings ? userSettings.view(login) : { claudeToken: { set: false, savedAt: null }, codexAuth: { set: false, savedAt: null }, setUp: false, available: false };
+    // Dates and the holder's id: the login itself never leaves the secret store but for the session that takes it.
+    const claudeLogin = userSettings?.claudeLogin?.view(login, { isLive: (id) => fleet.sessions().some((s) => s.id === id && ACTIVE_STATUSES.has(s.status)) }) ?? null;
     return {
-      login, ...view,
+      login, ...view, claudeLogin,
       // The agents New session offers: each only with something to run it on.
       agents: { claude: Boolean(view.claudeToken?.set), codex: Boolean(view.codexAuth?.set) || teamOpenAiKey }, databases: databases?.view(login) ?? null, databasesRefusal: databaseGate?.last(defaultProject(config).name) ?? null,
       // Each project the person may start on that is not ready, by name (databaseGate.mjs), as last read.
@@ -1380,6 +1385,10 @@ export function createHandler({
         }
         // The models list was read on the sign-in that is gone: the next look reads it on the new one.
         codexModels?.forget(login);
+        return reply(res, 200, myView(login));
+      }
+      if (pathname === MY_CLAUDE_LOGIN_FORGET_PATH) {
+        await userSettings.claudeLogin.forget(login);
         return reply(res, 200, myView(login));
       }
       if (pathname === MY_LIMITS_PATH) {
@@ -1796,7 +1805,7 @@ export function createHandler({
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
-    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
+    if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || pathname === MY_CLAUDE_LOGIN_FORGET_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
       || MY_TUNNEL_RE.test(pathname) || MY_RESTORE_RE.test(pathname)) {
       return myWrite(req, res, pathname, login);
@@ -1932,7 +1941,7 @@ export function createHandler({
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'claudeLoginCard.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);

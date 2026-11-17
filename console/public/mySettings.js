@@ -19,6 +19,7 @@
     renderFilePill();
   });
   const repoSettings = window.WoodshedMyRepoSettings.create({ render });
+  const claudeLogin = window.WoodshedClaudeLoginCard.create({ me: () => me, setMe: (answer) => { me = answer; }, render });
   const tokenInput = h('input', { id: 'claude-token', type: 'password', class: 'field mono', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-ant-oat01-…' });
   const status = h('p', { class: 'form-note', role: 'status' });
 
@@ -517,7 +518,7 @@
     const live = me.running;
     return h('section', { class: 'set-card is-danger' },
       h('div', { class: 'set-head' }, h('h2', null, 'Remove My Woodshed'), !me.setUp && !live && h('span', { class: 'pill' }, 'Nothing to remove')),
-      h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'}, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, GitHub connection, your own databases, your repo settings, tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.`),
+      h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'}, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, saved Remote Control login, GitHub connection, your own databases, your repo settings, tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.`),
       h('div', { class: 'set-actions' }, h('button', {
         type: 'button', class: 'btn btn-danger',
         onclick: () => W.confirmChange({
@@ -555,6 +556,7 @@
         h('h1', { class: 'title' }, 'My settings'),
         h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions. Shared sessions get none of it, but for your Claude token when you switch that on below.`))),
       tokenCard(),
+      claudeLogin.card(),
       codexCard(),
       projectCard(),
       limitsCard(),
