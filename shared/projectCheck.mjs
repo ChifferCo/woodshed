@@ -195,7 +195,7 @@ function checkoutEntry(repoDir, file) {
 // Each service's files must be in the repo, where its readers take them from, and each a file of the repo's own, never
 // a symlink, whose text could be any file of the reader's; and its variable is the installation's to set, so the
 // project's env setting it would hide the URL.
-function serviceProblems(project, repoDir) {
+export function serviceProblems(project, repoDir) {
   return project.services.flatMap((service, i) => [
     ...Object.entries(service.files).flatMap(([target, source]) => {
       const at = `services[${i}].files.${target}`;

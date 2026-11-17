@@ -20,18 +20,22 @@ export function taskOutcome(task) {
 
 /**
  * @param {{ecs: {cluster: string, dbAdminTaskDefinition?: string|null, subnets: string[], securityGroup: string},
- *          aws: (args: string[]) => Promise<any>}} opts
+ *          aws: (args: string[]) => Promise<any>, services?: () => {environment: {name: string, value: string}[]}|null}} opts
+ *   `services` gives the base box's services (services.mjs, serviceUrlReader)
  * @returns {{start: (command: string[]) => Promise<string>, stop: (id: string) => Promise<void>,
  *            outcomes: (ids: string[]) => Promise<Array<{done: false}|{done: true, ok: boolean, reason: string|null}>>}}
  *   `start` resolves to the run's id (the task's ARN), and `outcomes` gives each id's outcome in the order asked
  */
-export function createDbAdminRunner({ ecs, aws }) {
+export function createDbAdminRunner({ ecs, aws, services = () => null }) {
   async function start(command) {
+    // The project file's services the base box runs, for the seed, as a session gets them (services.mjs). None leaves
+    // the task definition's, Terraform's shared_services.
+    const environment = services()?.environment ?? [];
     const network = { awsvpcConfiguration: { subnets: ecs.subnets, securityGroups: [ecs.securityGroup], assignPublicIp: 'ENABLED' } };
     const out = await aws([
       'ecs', 'run-task', '--cluster', ecs.cluster, '--task-definition', ecs.dbAdminTaskDefinition, '--launch-type', 'FARGATE',
       '--started-by', `db-admin-${command[1]}`.slice(0, 36), '--network-configuration', JSON.stringify(network),
-      '--overrides', JSON.stringify({ containerOverrides: [{ name: CONTAINER, command }] }), '--propagate-tags', 'TASK_DEFINITION',
+      '--overrides', JSON.stringify({ containerOverrides: [{ name: CONTAINER, command, ...(environment.length && { environment }) }] }), '--propagate-tags', 'TASK_DEFINITION',
     ]);
     const taskArn = out?.tasks?.[0]?.taskArn;
     if (!taskArn) throw new Error(`run-task started nothing: ${out?.failures?.[0]?.reason ?? 'no reason given'}`);

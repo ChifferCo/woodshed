@@ -357,12 +357,12 @@ An installation works on one repo, and nothing in this folder names one. To set 
   `database_user` are the database and master user RDS starts with, which nothing else uses; a change replaces RDS.
 - **The shared services:** the project file's `services` names them, and each installation runs them in one place
   for all its sessions: one copy of a stateless service, and one of a service with `data` for each person whose
-  private sessions use it (and for each shared session). No provider here reads `services` yet (a host that runs
-  sessions for others, such as Woodshed Cloud, may): until they do, AWS takes `shared_services` in Terraform, the
-  containers the base box runs for every session, each with its image, port and the variable its URL reaches sessions
-  in, and the local provider a compose file of the installation's own, whose variables its session env sets
-  (`providers/local/README.md`). Either way sessions and the db-admin task also get `WOODSHED_SERVICES`, the list of
-  those variables.
+  private sessions use it (and for each shared session). The AWS provider runs the stateless ones on its base box, from
+  the deploy workflow (`providers/aws/README.md`, "The project's services"); one with `data` stays in Terraform's
+  `shared_services` until it runs those too, the containers the base box runs for every session, each with its image,
+  port and the variable its URL reaches sessions in. The local provider takes a compose file of the installation's own,
+  whose variables its session env sets (`providers/local/README.md`). Either way sessions and the db-admin task also
+  get `WOODSHED_SERVICES`, the list of those variables.
 - **The project file:** `.woodshed/project.yaml` in the repo, as above.
 
 - **The default branch** is whatever the remote says (`HEAD`), read at each session's start into `DEFAULT_BRANCH`, so a repo

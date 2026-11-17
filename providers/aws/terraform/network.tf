@@ -118,6 +118,17 @@ resource "aws_vpc_security_group_ingress_rule" "shared_services" {
   to_port                      = each.value
 }
 
+# The project file's services (providers/aws/services.mjs, FIRST_HOST_PORT and HOST_PORT_RANGE), whatever ports the
+# box gives them, so a change to the project file needs no apply. Nothing else on the box listens in the range.
+resource "aws_vpc_security_group_ingress_rule" "project_services" {
+  security_group_id            = aws_security_group.base_box.id
+  description                  = "project services"
+  referenced_security_group_id = aws_security_group.sessions.id
+  ip_protocol                  = "tcp"
+  from_port                    = 42000
+  to_port                      = 42099
+}
+
 resource "aws_vpc_security_group_ingress_rule" "session_ports" {
   for_each = {
     ttyd    = 7681

@@ -251,6 +251,57 @@ EOF
 chmod 0755 /usr/local/bin/${name_prefix}-mongo-root
 %{ endif ~}
 
+# The project file's services (providers/aws/services.mjs, "The project's services" in providers/aws/README.md), one
+# copy of each for every session on the default project: the deploy workflow sends the spec its checkout makes through
+# the ${name_prefix}-refresh-services document, which pipes it here. Checked and turned into a compose file in a
+# container of the console image with no network, never by this script, then pulled before anything running stops,
+# so a bad image or spec leaves the services as they were. Kept on the data volume, so a replaced box starts them too.
+cat > /usr/local/bin/${name_prefix}-services <<'EOF'
+#!/bin/bash
+set -euo pipefail
+umask 022
+DIR=/var/lib/${name_prefix}/services
+NEW=$DIR.new
+spec=$(cat)
+rm -rf "$NEW"
+mkdir -p "$NEW"
+# What the services may have: the box's memory less what the OS, Docker, the console, Caddy and Mongo keep (and
+# Terraform's shared_services, which --legacy names, with the names, variables and ports they keep).
+total=$(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo)
+printf '%s' "$spec" | docker run --rm -i --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --user 0:0 -v "$NEW:/out" ${console_image} node /opt/woodshed/providers/aws/services.mjs render \
+  --out /out --dir "$DIR" --private-ip ${private_ip} --prefix ${name_prefix} --memory-mib $((total - ${reserved_mib})) \
+  --legacy ${base64encode(legacy_services)}
+if [ "$(cat "$NEW/count")" -gt 0 ]; then
+  docker compose -f "$NEW/compose.json" pull --quiet
+fi
+rm -rf "$DIR.old"
+if [ -d "$DIR" ]; then mv "$DIR" "$DIR.old"; fi
+mv "$NEW" "$DIR"
+# Containers that will not start put back the ones before, and the console keeps their URLs.
+start() {
+  if [ "$(cat "$1/count")" -gt 0 ]; then
+    docker compose -f "$1/compose.json" up -d --remove-orphans
+  else
+    docker compose -p ${name_prefix}-services down --remove-orphans
+  fi
+}
+if ! start "$DIR"; then
+  echo "${name_prefix}: the new services did not start; starting the ones before" >&2
+  rm -rf "$DIR"
+  if [ -d "$DIR.old" ]; then
+    mv "$DIR.old" "$DIR"
+    start "$DIR" || true
+  fi
+  exit 1
+fi
+rm -rf "$DIR.old"
+# The URLs the console hands each session it starts from now on (providers/aws/services.mjs, serviceUrlReader).
+install -o 1000 -g 1000 -m 0644 "$DIR/services.json" /var/lib/${name_prefix}/console/services.json
+docker compose -p ${name_prefix}-services ps
+EOF
+chmod 0755 /usr/local/bin/${name_prefix}-services
+
 # Fetches the newest images, then (re)starts the stack. The console reads its secrets itself.
 cat > /usr/local/bin/${name_prefix}-up <<'EOF'
 #!/bin/bash
@@ -267,6 +318,10 @@ cd /opt/${name_prefix}
 # The build cache makes an unchanged Dockerfile a no-op.
 docker build --quiet --tag ${name_prefix}-caddy /opt/${name_prefix}/caddy
 docker compose up -d --remove-orphans
+# The project file's services, as ${name_prefix}-services last left them (a replaced box's included).
+if [ -f /var/lib/${name_prefix}/services/compose.json ] && [ "$(cat /var/lib/${name_prefix}/services/count)" -gt 0 ]; then
+  docker compose -f /var/lib/${name_prefix}/services/compose.json up -d --remove-orphans
+fi
 # The images the stack ran before: running containers keep theirs (the redeploy-console document does the same).
 docker image prune -af
 %{ if mongo ~}

@@ -137,7 +137,7 @@ because it names where Woodshed comes from (a fork, a pinned commit or this repo
 | check | none | Runs Woodshed's reusable `.github/workflows/project-check.yml` at that commit on the repo's project file, before anything touches AWS |
 | plan | `<prefix>-plan`, `WOODSHED_CLOUD_PLAN_ROLE_ARN` | `terraform init` with the installation's `backend.hcl` and `-lockfile=readonly`, then `terraform plan -var-file=<its terraform.tfvars> -out=... -detailed-exitcode`. It writes the plan to the run summary, with anything it destroys or replaces first, and uploads the plan file with `providers/aws/terraform/.build/` (the Lambda zip the plan was made with) |
 | apply | `<prefix>-infra`, `WOODSHED_CLOUD_INFRA_ROLE_ARN` | Waits for a reviewer, then applies exactly the uploaded plan. Skipped when the plan has no changes. One at a time (a `concurrency` group, never cancelled) |
-| console | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the console image, then runs the `<prefix>-redeploy-console` SSM document on the base box (`WOODSHED_CLOUD_BASE_BOX_ID`) |
+| console | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the console image, then runs the `<prefix>-redeploy-console` SSM document on the base box (`WOODSHED_CLOUD_BASE_BOX_ID`), then `<prefix>-refresh-services` with the project file's services ("The project's services", below) |
 | session | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the session image with the repo checked out in it, adds its SOCI index (`session/addSociIndex.sh`), and builds the database template again when its `paths` changed |
 
 The image jobs run after a successful apply, or when apply was skipped because the plan had no changes, never after a
@@ -158,8 +158,53 @@ say what changed since the last deploy.
 | Infrastructure | Run the deploy workflow: it plans, and applies once a reviewer approves ("Changing the infrastructure", below) | Depends on the change; the plan says. Replacing the base box restarts Mongo |
 
 What survives a restart or a resized or replaced base box: Mongo, the console's
-list of sessions and Caddy's certificate, all on the data disk. What does not:
+list of sessions, Caddy's certificate and the project file's services, all on the data disk. What does not:
 what a shared service keeps in its container, such as files in a fake S3, which has no volume.
+
+### The project's services
+
+The project file's `services` (docs/reference.md, "The shared services") run on the base box, one copy of each for
+every session on the default project, from the default branch's file: a change to them is a merge and a deploy, with
+no apply. The deploy workflow's console job, after the redeploy, makes the spec in its checkout and sends it:
+
+```yaml
+      - name: Run the project file's services on the base box
+        run: |
+          # The default branch's services and their files, checked, onto the base box (providers/aws/services.mjs)
+          set -euo pipefail
+          spec=$(node woodshed/providers/aws/services.mjs spec)
+          id=$(aws ssm send-command --instance-ids "$WOODSHED_CLOUD_BASE_BOX_ID" --document-name "<prefix>-refresh-services" \
+            --parameters "$(jq -cn --arg spec "$spec" '{spec: [$spec]}')" --query Command.CommandId --output text)
+          # The document allows 15 minutes, and a first pull of a large image takes a few: ssm wait gives up at 100 s.
+          for _ in $(seq 90); do
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$WOODSHED_CLOUD_BASE_BOX_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in Pending | InProgress | Delayed) sleep 10 ;; *) break ;; esac
+          done
+          aws ssm get-command-invocation --command-id "$id" --instance-id "$WOODSHED_CLOUD_BASE_BOX_ID" \
+            --query '[Status, StandardOutputContent, StandardErrorContent]' --output text
+          [ "$status" = Success ]
+```
+
+The box checks the spec again in a container of the console image with no network, pulls the images, and only then
+replaces what ran, so a refused spec or an image that will not pull leaves the services as they were. Each service
+listens on the box's private address at a port from 42000 up, in the order the file lists them, which the security
+group lets sessions alone reach; the console gives a session each URL in its variable, with `WOODSHED_SERVICES`, as it
+starts, and the db-admin task's runs too. A session on another project gets none of them. A file with no services
+stops what ran.
+
+For now, only stateless services: one with `data` stops the spec (`keeps data ..., which the AWS provider does not
+run yet`), before anything changes on the box, and stays in Terraform's `shared_services` meanwhile. The services
+share the box's memory with the console, Caddy and Mongo: the box refuses services that need more than it has left,
+which on the default `t3.small` is next to nothing, so set `base_box_instance_type` (`t3.medium` leaves about 2 GB).
+
+Moving from `shared_services`: the two run side by side, and `WOODSHED_SERVICES` lists both, but a service of the
+project file's may not take a name or variable one of `shared_services` has, nor may one of those listen on 42000 to
+42099. Move each stateless one into the project file's `services` (its `mem_limit` is `memory`, and each of `files`
+is a file in the repo instead of its text) and take it out of `shared_services` in the same change, then run the
+deploy workflow: the apply goes first, and the console job then starts it from the project file. Its port changes,
+so sessions started before carry the old URL until they restart. One that keeps data stays in `shared_services`.
+The apply's stack change reaches the box through an association, which runs a little after it: a console job that
+says the service is still one of `shared_services` ran first, and running it again starts it.
 
 ### Changing the infrastructure
 
@@ -243,9 +288,9 @@ that holds nothing else: the security below relies on that.
 
 | Piece | What |
 | --- | --- |
-| Network | Its own VPC, two public subnets, no NAT. Security groups: 443 to the base box from anywhere, and 80, which only redirects to HTTPS; Mongo (with `mongo` in `databases`) and each of `shared_services` from sessions only; ttyd and statusd on sessions from the base box only; Postgres from both (with `postgres`) |
+| Network | Its own VPC, two public subnets, no NAT. Security groups: 443 to the base box from anywhere, and 80, which only redirects to HTTPS; Mongo (with `mongo` in `databases`), each of `shared_services` and the project file's services (42000 to 42099) from sessions only; ttyd and statusd on sessions from the base box only; Postgres from both (with `postgres`) |
 | RDS | With `postgres` in `databases`: Postgres 16 `db.t4g.micro`, 20 GB, backups off. RDS keeps the master (root) password in its own Secrets Manager secret, which only the db-admin task reads |
-| Base box | EC2 `t3.small`, or `t3.medium` with Mongo or a shared service on it (`base_box_instance_type` picks another; one with less memory, or not x86 like the session image, is refused at plan), with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/<prefix>/compose.yml`, each service's `files` from `/opt/<prefix>/services/`. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
+| Base box | EC2 `t3.small`, or `t3.medium` with Mongo or a shared service on it (`base_box_instance_type` picks another; one with less memory, or not x86 like the session image, is refused at plan), with an Elastic IP, SSM and no SSH. `baseBox.sh.tftpl` (first boot) installs Docker and mounts the data volume; `baseBoxStack.sh.tftpl`, applied by an SSM association, runs Mongo (with `mongo` in `databases`), the installation's `shared_services`, the console and Caddy from `/opt/<prefix>/compose.yml`, each service's `files` from `/opt/<prefix>/services/`; the project file's services, which `<prefix>-refresh-services` writes, from `/var/lib/<prefix>/services/` on the data volume. Caddy is built on the box with the Route 53 DNS provider: it gets `domain`'s Let's Encrypt certificate through a TXT record in the zone, so Let's Encrypt never connects to the box. The bare IP keeps `tls internal` |
 | Data volume | A 20 GB EBS volume at `/var/lib/<prefix>` holding Mongo, the console's session list and Caddy's certificate, so they survive restarts, resizes (`base_box_instance_type`) and a replaced box. `terraform destroy` removes it with the rest. Localstack's S3 files are not kept: the free edition has no persistence |
 | Sessions | ECS cluster and one Fargate task definition for shared and private sessions, 2 vCPU / 8 GB / 50 GB disk. Secrets come from Secrets Manager through the task definition, all but the Anthropic key, which only the console's proxy holds; a run passes only the per-session values, and the databases come from the session API. No task role, so session code has no AWS credentials. A second, `<prefix>-db-admin`, is the db-admin task, with a database in `databases`: the root passwords of those it runs through its execution role, and a task role that reads the database users' passwords and the seed's env files: the default project's repo settings (`<prefix>/repos/<project>/env/*`, the project its entryPoint's `--project` names) and the legacy `database_env_secrets` |
 | Images | ECR `<prefix>-session` and `<prefix>-console`, built by the installation's deploy workflow ("The deploy workflow", above) through GitHub OIDC, from the default branch only. They build in separate jobs, and a console build restarts the console on the base box. The session image gets a SOCI index (`session/addSociIndex.sh`), so Fargate starts a session in seconds and fetches files as they are read instead of pulling the whole image first, and then the database template is built again from it |
