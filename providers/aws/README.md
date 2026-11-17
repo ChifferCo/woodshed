@@ -175,10 +175,14 @@ no apply. The deploy workflow's console job, after the redeploy, makes the spec 
           spec=$(node woodshed/providers/aws/services.mjs spec)
           id=$(aws ssm send-command --instance-ids "$WOODSHED_CLOUD_BASE_BOX_ID" --document-name "<prefix>-refresh-services" \
             --parameters "$(jq -cn --arg spec "$spec" '{spec: [$spec]}')" --query Command.CommandId --output text)
-          aws ssm wait command-executed --command-id "$id" --instance-id "$WOODSHED_CLOUD_BASE_BOX_ID" || true
+          # The document allows 15 minutes, and a first pull of a large image takes a few: ssm wait gives up at 100 s.
+          for _ in $(seq 90); do
+            status=$(aws ssm get-command-invocation --command-id "$id" --instance-id "$WOODSHED_CLOUD_BASE_BOX_ID" --query Status --output text 2>/dev/null || echo Pending)
+            case "$status" in Pending | InProgress | Delayed) sleep 10 ;; *) break ;; esac
+          done
           aws ssm get-command-invocation --command-id "$id" --instance-id "$WOODSHED_CLOUD_BASE_BOX_ID" \
             --query '[Status, StandardOutputContent, StandardErrorContent]' --output text
-          [ "$(aws ssm get-command-invocation --command-id "$id" --instance-id "$WOODSHED_CLOUD_BASE_BOX_ID" --query Status --output text)" = Success ]
+          [ "$status" = Success ]
 ```
 
 The box checks the spec again in a container of the console image with no network, pulls the images, and only then

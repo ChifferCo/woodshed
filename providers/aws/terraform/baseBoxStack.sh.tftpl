@@ -278,10 +278,22 @@ fi
 rm -rf "$DIR.old"
 if [ -d "$DIR" ]; then mv "$DIR" "$DIR.old"; fi
 mv "$NEW" "$DIR"
-if [ "$(cat "$DIR/count")" -gt 0 ]; then
-  docker compose -f "$DIR/compose.json" up -d --remove-orphans
-else
-  docker compose -p ${name_prefix}-services down --remove-orphans
+# Containers that will not start put back the ones before, and the console keeps their URLs.
+start() {
+  if [ "$(cat "$1/count")" -gt 0 ]; then
+    docker compose -f "$1/compose.json" up -d --remove-orphans
+  else
+    docker compose -p ${name_prefix}-services down --remove-orphans
+  fi
+}
+if ! start "$DIR"; then
+  echo "${name_prefix}: the new services did not start; starting the ones before" >&2
+  rm -rf "$DIR"
+  if [ -d "$DIR.old" ]; then
+    mv "$DIR.old" "$DIR"
+    start "$DIR" || true
+  fi
+  exit 1
 fi
 rm -rf "$DIR.old"
 # The URLs the console hands each session it starts from now on (providers/aws/services.mjs, serviceUrlReader).

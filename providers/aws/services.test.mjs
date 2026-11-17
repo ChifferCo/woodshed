@@ -175,6 +175,8 @@ function fakeDocker(bin, log) {
   const services = path.join(import.meta.dirname, 'services.mjs');
   fs.writeFileSync(path.join(bin, 'docker'), `#!/bin/bash
 echo "docker $*" >> ${JSON.stringify(log)}
+# A compose file naming FAIL_UP_WITH's service will not start.
+if [ "$2" = -f ] && [ "$4" = up ] && [ -n "\${FAIL_UP_WITH:-}" ] && grep -q "\"$FAIL_UP_WITH\"" "$3"; then exit 1; fi
 if [ "$1" = run ]; then
   while [ "$1" != -v ]; do shift; done
   out=\${2%%:*}
@@ -216,6 +218,15 @@ test('the box\'s script renders in a container, pulls before it swaps, and leave
   assert.match(bad.stderr, /must be version 1/);
   assert.equal(fs.readFileSync(log, 'utf8').trim().split('\n').length, 1, 'no pull, no up');
   assert.ok(fs.existsSync(path.join(dir, 'compose.json')));
+
+  // Containers that will not start put back the ones before, with their URLs.
+  fs.writeFileSync(log, '');
+  const failing = spawnSync('bash', ['-c', servicesScript(root)], { input: specOf(checkout([PDF, MAIL])), encoding: 'utf8', env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, FAIL_UP_WITH: 'mail' } });
+  assert.equal(failing.status, 1);
+  assert.match(failing.stderr, /the new services did not start; starting the ones before/);
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(path.join(dir, 'compose.json'), 'utf8')).services), ['pdf']);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, 'var/lib/woodshed/console/services.json'), 'utf8')).services.map((s) => s.name), ['pdf']);
+  assert.equal(fs.readFileSync(log, 'utf8').match(/ up -d /g).length, 2, 'the new, then the ones before');
 
   // None stops them all.
   fs.writeFileSync(log, '');
