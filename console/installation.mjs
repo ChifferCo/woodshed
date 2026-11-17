@@ -327,7 +327,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
-  const webhookSwitch = createWebhookSwitch({ store, onOff: () => pullWebhooks.forget() });
+  const webhookSwitch = createWebhookSwitch({ store, onOff: (source) => { if (source === 'github') pullWebhooks.forget(); } });
   // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
   const brokerRead = tokens?.borrowFor
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
@@ -423,7 +423,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
       webhookSwitch.receiving('queue');
       webhooks.run(webhookDispatch);
     }
-    if (webhookSwitch.off()) console.log('console: GitHub webhooks are switched off on the Webhook events page, polling', { pollSeconds: config.pollMs / 1000 });
+    if (webhookSwitch.off('github')) console.log('console: GitHub webhooks are switched off on the Webhook events page, polling', { pollSeconds: config.pollMs / 1000 });
+    if (webhookSwitch.off('slack')) console.log('console: Slack questions are switched off on the Webhook events page');
   }
 
   /**

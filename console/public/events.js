@@ -14,7 +14,7 @@
 
   let data = null;
   let loadError = null;
-  let switching = false;
+  let switching = null;
   let switchError = null;
 
   function filter() {
@@ -60,35 +60,52 @@
       h('td', { class: 'mono meta-cell', title: e.deliveryId || '' }, (e.deliveryId || '').slice(0, 8)));
   }
 
-  // The switch that drops GitHub's webhooks (webhookSwitch.mjs). Only where webhooks reach the console at all.
-  async function flip(off) {
-    switching = true;
+  // The switches that drop each source's webhooks (webhookSwitch.mjs). Only where webhooks reach the console at all.
+  const SWITCHES = [
+    {
+      source: 'github', label: 'GitHub webhooks',
+      on: 'On: labels, comments and pull request changes reach the console within seconds. Turn it off to have the console drop them and poll GitHub instead.',
+      off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so a label or comment takes up to a minute.`,
+    },
+    {
+      source: 'slack', label: 'Slack questions',
+      on: 'On: the console answers each mention of its Slack bot in a session of its own. Turn it off to have it drop them.',
+      off: (dropped) => `the console drops each mention of its Slack bot${dropped}, so questions in Slack go unanswered. They show below as ignored.`,
+    },
+  ];
+
+  async function flip(source, off) {
+    switching = source;
     switchError = null;
     render();
     try {
-      data = { ...data, ...(await W.postJson('/api/webhook-events/switch', { off })) };
+      data = { ...data, ...(await W.postJson('/api/webhook-events/switch', { source, off })) };
     } catch (err) {
-      switchError = err.message;
+      switchError = { source, text: err.message };
     }
-    switching = false;
+    switching = null;
     render();
   }
 
-  function switchRow() {
-    const state = data.webhooks;
+  function switchRow(s) {
+    const state = data.webhooks?.[s.source];
     if (!state || (!data.queue && !state.off)) return null;
     const on = !state.off;
     const since = state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : '';
+    const labelId = `webhooks-switch-${s.source}`;
     return h('div', { class: `toggle-row webhook-switch${on ? '' : ' is-off'}` },
       h('button', {
-        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': 'webhooks-switch-label', disabled: switching,
-        onclick: () => flip(on),
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': labelId, disabled: Boolean(switching),
+        onclick: () => flip(s.source, on),
       }),
-      h('span', { class: 'toggle-label', id: 'webhooks-switch-label' }, 'GitHub webhooks'),
-      h('p', { class: 'sub' }, on
-        ? 'On: labels, comments and pull request changes reach the console within seconds. Turn it off to have the console drop them and poll GitHub instead.'
-        : `Off${since}: the console drops each GitHub delivery${state.dropped ? ` (${state.dropped} so far)` : ''} and polls GitHub, so a label or comment takes up to a minute. Slack questions still come in.`),
-      switchError ? h('p', { class: 'form-error', role: 'alert' }, switchError) : null);
+      h('span', { class: 'toggle-label', id: labelId }, s.label),
+      h('p', { class: 'sub' }, on ? s.on : `Off${since}: ${s.off(state.dropped ? ` (${state.dropped} so far)` : '')}`),
+      switchError?.source === s.source ? h('p', { class: 'form-error', role: 'alert' }, switchError.text) : null);
+  }
+
+  function switchRows() {
+    const rows = SWITCHES.map(switchRow).filter(Boolean);
+    return rows.length ? h('div', { class: 'webhook-switches' }, rows) : null;
   }
 
   function render() {
@@ -112,7 +129,7 @@
     app.replaceChildren(h('div', { class: 'page' },
       W.nav('/events'),
       head,
-      switchRow(),
+      switchRows(),
       h('div', { class: 'filters' },
         h('p', { class: 'foot' }, data.queue ? 'Newest first. The last 7 days are kept.' : 'No webhooks reach this console, so it only polls GitHub.'),
         h('div', { class: 'seg', role: 'group', 'aria-label': 'Show' }, FILTERS.map((f) =>

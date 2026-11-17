@@ -566,6 +566,7 @@ dialog.wizard:focus { outline: none; }
 .toggle-row .toggle-label { font-size: 14px; font-weight: 600; }
 .toggle-row .sub { grid-column: 2; margin: 0; font-size: 12.5px; }
 .webhook-switch .form-error { grid-column: 2; margin: 0; font-size: 12.5px; color: var(--bad); }
+.webhook-switches { display: grid; gap: 8px; }
 .toggle-row .why-off { grid-column: 2; margin: 0; font-size: 12.5px; color: var(--amber-ink); }
 /* The Share the app dialog: its switch is the toggle row's, its link list sits under it. */
 dialog.confirm .toggle-row { margin-top: 12px; }

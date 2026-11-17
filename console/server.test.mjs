@@ -1471,7 +1471,7 @@ test('the pages get the display name of each handle they show: the signed-in per
   assert.deepEqual((await get('/api/webhook-events')).names, { octo: 'Octo Cat' });
 });
 
-test('the Webhook events page turns GitHub\'s webhooks off and on, says who did, and whether any reach the console', async (t) => {
+test('the Webhook events page turns each source\'s webhooks off and on, says who did, and whether any reach the console', async (t) => {
   const { createWebhookSwitch } = await import('./webhookSwitch.mjs');
   const store = { state: {}, save() {} };
   const webhookSwitch = createWebhookSwitch({ store });
@@ -1479,7 +1479,7 @@ test('the Webhook events page turns GitHub\'s webhooks off and on, says who did,
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
   };
-  const handle = createHandler({ config, fleet: { sessions: () => [] }, webhookSwitch });
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, webhookSwitch, asks: { names: () => ({}) } });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
@@ -1489,14 +1489,17 @@ test('the Webhook events page turns GitHub\'s webhooks off and on, says who did,
   webhookSwitch.receiving('delivered');
   const before = await get();
   assert.equal(before.queue, true, 'a console its host hands webhooks to says so, with no queue of its own');
-  assert.equal(before.webhooks.off, false);
-  const off = await post(port, '/api/webhook-events/switch', { off: true });
+  assert.equal(before.webhooks.github.off, false);
+  assert.equal(before.webhooks.slack.off, false);
+  const off = await post(port, '/api/webhook-events/switch', { source: 'slack', off: true });
   assert.equal(off.status, 200);
-  assert.equal(off.body.webhooks.off, true);
-  assert.equal(off.body.webhooks.by, 'console');
-  assert.equal(webhookSwitch.off(), true);
-  assert.equal((await post(port, '/api/webhook-events/switch', { off: 'please' })).status, 400);
-  assert.equal((await post(port, '/api/webhook-events/switch', { off: false })).body.webhooks.off, false);
+  assert.equal(off.body.webhooks.slack.off, true);
+  assert.equal(off.body.webhooks.slack.by, 'console');
+  assert.equal(off.body.webhooks.github.off, false);
+  assert.equal(webhookSwitch.off('slack'), true);
+  assert.equal((await post(port, '/api/webhook-events/switch', { source: 'github', off: 'please' })).status, 400);
+  assert.equal((await post(port, '/api/webhook-events/switch', { off: true })).status, 400, 'a source is named');
+  assert.equal((await post(port, '/api/webhook-events/switch', { source: 'github', off: true })).body.webhooks.github.off, true);
 });
 
 test('Remove on a private session acts for the signed-in person, from the console\'s own origin', async (t) => {

@@ -68,7 +68,7 @@
 //   Admins only (members.mjs), with 403 for anyone else: /api/people*, /api/secrets*, /api/webhook*,
 //   /api/console-settings*, the API behind People, Secrets & webhooks, Webhook events and Console settings.
 //   GET  /api/webhook-events     what the console did with each queued webhook, and whether GitHub's are switched off
-//   POST /api/webhook-events/switch  {"off": true|false}   drop GitHub's webhooks and poll instead (webhookSwitch.mjs)
+//   POST /api/webhook-events/switch  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
 //   GET/POST /api/secrets-manager  where this console keeps its secrets: {"kind": "local"|"aws", "prefix"}. Only where the
 //                                local provider has no WOODSHED_LOCAL_SECRETS_DIR (providers/local/secretSlot.mjs)
@@ -1620,12 +1620,12 @@ export function createHandler({
     }
   }
 
-  // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   // `queue`: whether webhooks reach this console at all, by a queue or from the program it is embedded in.
   function webhookState() {
     const view = webhookSwitch?.view() ?? null;
     const receiving = view?.receiving ?? (config.webhookQueue || config.localWebhooks ? 'queue' : null);
-    return { queue: Boolean(receiving), webhooks: view ? { off: view.off, by: view.by, at: view.at, dropped: view.dropped } : null };
+    // Slack's switch only where Slack questions are answered at all.
+    return { queue: Boolean(receiving), webhooks: view ? { github: view.github, slack: asks ? view.slack : null } : null };
   }
 
   async function webhookSwitchWrite(req, res, login) {
@@ -1637,7 +1637,7 @@ export function createHandler({
       return reply(res, 400, { error: err.message });
     }
     try {
-      webhookSwitch.set({ off: body?.off, by: login ?? 'console' });
+      webhookSwitch.set({ source: body?.source, off: body?.off, by: login ?? 'console' });
     } catch (err) {
       if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
       throw err;
@@ -1645,6 +1645,7 @@ export function createHandler({
     return reply(res, 200, webhookState());
   }
 
+  // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
     let body;
