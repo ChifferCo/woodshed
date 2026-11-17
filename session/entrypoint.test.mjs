@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { seedEnv, seedEnvFiles } from './dbAdmin.mjs';
 import { loadProject } from '../shared/project.mjs';
-import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
+import { fixtureApp, fixtureCheckout, fixtureProject } from '../shared/projectFixture.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -35,7 +35,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null, appDomain = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -46,6 +46,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
     // The function writes and reads under /tmp; point both at this test's own folder.
     fn('writePrompt').replaceAll('/tmp/', `${tmp}/`),
     fn('leaveOutConsoleLinks'),
+    fn('appRules'),
     fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
     'writePrompt',
     'writeRules',
@@ -55,7 +56,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}), ...(appDomain !== null ? { SESSION_APP_DOMAIN: appDomain, SESSION_ID: '0a1b2c3d' } : {}) },
     });
     return {
       out,
@@ -134,6 +135,42 @@ test('a project of several apps has its rules name each, with how it starts and 
   assert.match(out, /Rules written .*apps: 2\)/);
   fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ app: fixtureApp() }));
   assert.doesNotMatch(writePrompt({ attachments: false, repoDir: repo }).rules, /several apps/);
+});
+
+test('the rules give the app\'s address the person can open, never localhost, only where the console serves session apps', () => {
+  const { rules } = writePrompt({ attachments: false, appDomain: 'apps.example.com' });
+  assert.match(rules, /^- The person is not on this machine: a `localhost` or `127\.0\.0\.1` address means nothing to them/m);
+  assert.match(rules, /This session's app is theirs at https:\/\/0a1b2c3d\.apps\.example\.com\/, which the console forwards to `127\.0\.0\.1:<frontendPort>` here/);
+  assert.match(rules, /--baseURL https:\/\/0a1b2c3d\.apps\.example\.com\/ --appendPort=false/);
+  assert.doesNotMatch(rules, /\{\{/);
+  assert.doesNotMatch(writePrompt({ attachments: false }).rules, /The person is not on this machine/, 'no app domain, no address');
+});
+
+test('a repo with no app, or no project file, has its rules say what Set up app does: a private session offers it, a shared one does it to prove a change', () => {
+  // REPO's project file has no app.
+  const own = writePrompt({ attachments: false }).rules;
+  assert.match(own, /^- This repo's `\.woodshed\/project\.yaml` has no `app` section, so Woodshed does not know how to start this repo's app: the console shows \*\*Set up app\*\*/m);
+  assert.match(own, /offer once to set it up, and say what that means/);
+  assert.match(own, /Do not write it unasked\./);
+  assert.doesNotMatch(own, /When proving the change needs the app running/);
+  for (const field of ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'howToProve']) assert.match(own, new RegExp(`\`${field}\``), `names ${field}`);
+  assert.doesNotMatch(own, /\{\{/);
+  const shared = writePrompt({ attachments: false, kind: 'shared' }).rules;
+  assert.match(shared, /When proving the change needs the app running, set it up yourself/);
+  assert.doesNotMatch(shared, /offer once/);
+
+  // No project file at all: the default branch has none either.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-bare-'));
+  after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  fixtureCheckout(bare);
+  assert.match(writePrompt({ attachments: false, repoDir: bare }).rules, /^- This repo has no `\.woodshed\/project\.yaml`, so Woodshed does not know how to start this repo's app/m);
+
+  // An app: nothing of the kind.
+  const withApp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-app-'));
+  after(() => fs.rmSync(withApp, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(withApp, '.woodshed'));
+  fs.writeFileSync(path.join(withApp, '.woodshed/project.yaml'), fixtureProject({ app: fixtureApp() }));
+  assert.doesNotMatch(writePrompt({ attachments: false, repoDir: withApp }).rules, /Set up app/);
 });
 
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
@@ -230,7 +267,7 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   // What claude is told: Woodshed's rules for each kind of session, the notes' pointer, and the dependencies' status,
   // which the project's notes have claude wait for.
   const told = [
-    ...['prompt.md', 'ask.md', 'hostDocker.md', 'ownDocker.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
+    ...['prompt.md', 'ask.md', 'hostDocker.md', 'ownDocker.md', 'appAddress.md', 'noApp.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
     fn('writeRules').split('\n').find((line) => line.includes('Environment notes (')),
   ].join('\n');
   const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];

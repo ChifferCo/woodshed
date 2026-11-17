@@ -73,7 +73,10 @@ export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .wood
   + 'same port twice for one server), `logs` (a name for each server\'s log file) and `howToProve` (how to check a '
   + 'change in the running app); `start`, both ports and `howToProve` are required. Write .woodshed/project.yaml '
   + 'with `version: 1` if there is none, and check it with `node /opt/woodshed/shared/project.mjs get app`. Run the '
-  + 'start command yourself and check both ports answer, run the stop, then commit the file on this branch. Start app reads the file again, so tell me when to press it.';
+  + 'start command yourself and check both ports answer, run the stop, then start it again and leave it running, and '
+  + 'commit the file on this branch. The console reads the file within seconds and shows Open app once the frontend '
+  + 'answers. Then tell me in a few plain words what you set up and that Open app opens it, at the address your rules '
+  + 'give, never a localhost one, which I cannot reach.';
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);

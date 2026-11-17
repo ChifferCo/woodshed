@@ -764,6 +764,40 @@
     return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
   }
 
+  // Set up app says what it does before it asks the agent: the button's name alone did not, and a phone shows no title.
+  function setupAppDialog(s, onDone = () => {}) {
+    const agent = agentOf(s);
+    const go = h('button', { type: 'button', class: 'btn btn-open' }, 'Set up app');
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'setup-app-title' },
+      h('h2', { id: 'setup-app-title' }, 'Set up this repo\'s app?'),
+      h('p', null, 'Woodshed does not know how to start this repo\'s app yet, so there is nothing for Start app to run or Open app to open.'),
+      h('p', null, `${agent[0].toUpperCase()}${agent.slice(1)} works out how the app runs, writes it to `, h('code', null, '.woodshed/project.yaml'),
+        ' on this branch and starts it. Open app then opens it here, and once the file is merged every session gets Start app.'),
+      error,
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
+        go));
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      error.hidden = true;
+      try {
+        const { sent } = await appAction(s, 'setup');
+        dialog.close();
+        notify(setupAppToast(sent, s));
+        onDone();
+      } catch (err) {
+        error.replaceChildren(`Could not set up the app: ${err.message}`);
+        error.hidden = false;
+        go.disabled = false;
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    go.focus();
+  }
+
   /**
    * The app's controls, after the shed's app line: Open app while it runs, Start app otherwise, and Stop app
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
@@ -808,18 +842,11 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
-        onclick: async (e) => {
+        title: `Woodshed does not know how to start this repo's app yet. Asks ${agentOf(s)} to work it out, save it and start it.`,
+        onclick: (e) => {
           e.preventDefault();
           e.stopPropagation();
-          setup.disabled = true;
-          try {
-            const { sent } = await appAction(s, 'setup');
-            notify(setupAppToast(sent, s));
-          } catch (err) {
-            notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
-          }
-          onDone();
+          setupAppDialog(s, onDone);
         },
       }, 'Set up app');
       const ctl = group(setup);
@@ -1409,7 +1436,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
