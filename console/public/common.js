@@ -311,7 +311,7 @@
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#claude' }, 'Claude'),
           h('a', { class: 'btn btn-plain btn-sm', href: '/settings#codex' }, 'Codex'))
         : step.todo ? h('a', { class: 'btn btn-plain btn-sm', href: '/settings' }, 'Open My settings') : null));
-    return h('section', { class: `setup-card${compact ? ' is-compact' : ''}` },
+    return h('section', { class: `setup-card${compact ? ' is-compact' : ''}${after ? ' is-finish' : ''}` },
       h('h3', null, after ? 'Finish setting up your Woodshed' : 'Set up your Woodshed'),
       h('p', null, after ? 'Optional: New session works without it.'
         : steps.some((step) => step.optional) ? 'New session needs the steps not marked optional, and nothing else does.' : 'New session needs these, and nothing else does.'),
