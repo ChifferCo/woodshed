@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sharedHomeName } from './homes.mjs';
 
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
@@ -2544,6 +2545,82 @@ test('reviewFinished submits the formal review and the Merge risk check as the c
   const risk = calls.checks.find((c) => c.name === 'Merge risk');
   assert.deepEqual([risk.conclusion, risk.title], ['neutral', 'Low: Only a docs page.']);
   assert.equal(fleet.sessions()[0].review.conclusion, 'APPROVE');
+});
+
+test('a finished review session ends: it is not kept, so it never shows Resume and a /woodshed comment does not resume it', async () => {
+  const { fleet, statuses } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(session.status, 'running');
+
+  await fleet.reviewFinished(session, REVIEW_RESULT);
+  await settle();
+  assert.equal(session.status, 'stopped');
+  assert.match(session.stopReason, /^Review finished: APPROVE/);
+  assert.equal(session.kept, undefined, 'a review is never resumed: the next commit gets a review of its own');
+});
+
+test('a finished review or QA run deletes the conversation it saved at its stop, which nothing would resume', async () => {
+  const removed = [];
+  const homes = { async remove(name) { removed.push(name); } };
+  const review = reviewSetup({ homes });
+  await review.fleet.reviewOnTag({ number: 7 });
+  const [reviewed] = review.fleet.sessions();
+  review.statuses[reviewed.id] = { state: 'working' };
+  await review.fleet.tick();
+  await review.fleet.reviewFinished(reviewed, REVIEW_RESULT);
+  await settle();
+  await review.fleet.tick();
+  assert.deepEqual(removed, [sharedHomeName(reviewed.id)], 'the review\'s saved conversation');
+  assert.equal(reviewed.homeDeletePending, false);
+
+  const qa = qaSetup({ homes });
+  await qa.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [tested] = qa.fleet.sessions();
+  qa.statuses[tested.id] = { state: 'working' };
+  await qa.fleet.tick();
+  await qa.fleet.qaFinished(tested, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  await qa.fleet.tick();
+  assert.deepEqual(removed.slice(1), [sharedHomeName(tested.id)], 'the QA run\'s saved conversation');
+});
+
+test('a QA run that stopped before its conversation was deleted at its stop has it deleted on the next tick, once', async () => {
+  const removed = [];
+  const { fleet, store } = setup({ homes: { async remove(name) { removed.push(name); } } });
+  const old = (id, extra) => ({
+    id, repo: 'o/r', kind: 'pr', number: 7, title: 'QA: x', startedBy: 'joel', trigger: 'qa', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T10:00:00.000Z', pendingMessages: [], qa: { sha: 'a' }, ...extra,
+  });
+  store.state.sessions.push(old('0a0a0a0a', {}), old('0c0c0c0c', { qa: undefined }), old('0b0b0b0b', { trigger: 'label', qa: undefined, kept: false, cleanedAt: '2026-10-22T10:00:00.000Z', homeDeletePending: false }));
+  await fleet.tick();
+  assert.deepEqual(removed, [sharedHomeName('0a0a0a0a'), sharedHomeName('0c0c0c0c')], 'each QA run\'s, by its trigger too, never a session already cleaned up');
+  await fleet.tick();
+  assert.equal(removed.length, 2, 'deleted once');
+});
+
+test('an ended review stays on the list while its approval is held for QA, then as long as a kept one did, so its commit is not reviewed again', async () => {
+  const retention = { afterCloseMs: 3 * 24 * HOUR, withoutPrMs: 7 * 24 * HOUR, openPrMs: 14 * 24 * HOUR, slackGiveUpMs: 7 * 24 * HOUR, removeAfterDeleteMs: 0 };
+  const { fleet, store, advance } = reviewSetup({ retention });
+  const held = { sha: 'a'.repeat(40), summary: 's', inlineComments: [], resolved: [] };
+  store.state.sessions.push({
+    id: 'e0e0e0e0', repo: 'o/r', kind: 'pr', number: 7, title: 'Review: x', startedBy: 'joel', trigger: 'review', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+    homeDeletePending: false, review: { sha: 'a'.repeat(40), base: 'main', conclusion: 'APPROVE', reported: true, held },
+  });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'its held approval waits for QA on the record, even with Take off the list at 0');
+
+  store.state.sessions[0].review.held = null;
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'released, it stays as long as a kept review stayed');
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'so a pull request event does not review the commit again');
+
+  advance(7 * 24 * HOUR);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'then it goes');
 });
 
 test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {

@@ -572,9 +572,22 @@ export function createFleet({
     update(session, { status: 'stopped', stoppedAt: nowIso(), endpoint: null, ...keptFields(session) });
   }
 
-  // A shared session that ran keeps its conversation and databases once stopped, however it stopped.
+  // A shared session that ran keeps its conversation and databases once stopped, however it stopped. A QA or review
+  // run is never resumed: the next commit gets a run of its own, so it ends when it stops, and the conversation its
+  // stop saved is deleted on the next tick.
   function keptFields(session) {
-    return session.owner || isQa(session) ? {} : { kept: true };
+    if (session.owner) return {};
+    return isQa(session) || isReview(session) ? { homeDeletePending: Boolean(homes) } : { kept: true };
+  }
+
+  // A QA run that stopped before its stop deleted its conversation left it saved, with nothing to delete it: its
+  // homeDeletePending was never set. Marked once, so the delete is tried as for any other. Its trigger names it too,
+  // for a run whose qa or review fields are missing.
+  function endedRunHome(session) {
+    const run = isQa(session) || isReview(session) || session.trigger === 'qa' || session.trigger === 'review';
+    if (session.owner || session.kept || session.homeDeletePending !== undefined || !run) return;
+    if (ACTIVE_STATUSES.has(session.status) || session.status === 'stopping') return;
+    update(session, { homeDeletePending: Boolean(homes) });
   }
 
   async function finishInterruptedStop(session) {
@@ -834,6 +847,7 @@ export function createFleet({
   }
 
   async function retain(session) {
+    endedRunHome(session);
     if (session.homeDeletePending) await deleteHome(session);
     if (isGone(session)) return dropIfDue(session);
     if (session.owner || !session.kept || ACTIVE_STATUSES.has(session.status)) return;
@@ -904,10 +918,13 @@ export function createFleet({
   // Off the list once it has shown as Deleted for the Console settings page's number of days. A question waits until
   // its thread has been told it went unanswered, and a Claude home still being deleted until it is gone, since
   // nothing retries it once the session is off the list.
+  // An ended review stays while the approval it holds for QA waits on its record (heldApproval), then as long as a
+  // kept review lasted: its record is what tells reviewOnTag that its commit was reviewed.
   function dropIfDue(session) {
-    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt)) return;
+    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt) || session.review?.held) return;
     const from = Date.parse(session.cleanedAt ?? session.stoppedAt ?? session.createdAt);
-    const ms = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const removeMs = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const ms = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
   }

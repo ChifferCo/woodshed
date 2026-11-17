@@ -76,13 +76,14 @@ const sessions = [
   session('9a9a9a9a', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'QA finished: Pass: 6 test cases passed', qa: { conclusion: 'success' } }),
   session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console' }),
   // A review the console runs on a pull request (pullRequests.review.runner: woodshed), started as its author with
-  // nobody assigned, and one that finished: the rail keeps both in its folded Reviews and QA zone, with no Take it.
+  // nobody assigned, and one that finished, which is never kept, so it shows as stopped with no Resume. The rail keeps
+  // both in its folded Reviews and QA zone, with no Take it.
   session('7e7e7e7e', 145, 'Review: fix(session): tell the remote-control login where it stands', {
     trigger: 'review', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null,
     review: { base: 'main', sha: 'f00d145', heading: null, author: null, check: null, commentId: null },
   }),
   session('7f7f7f7f', 144, 'Review: feat(console): pin a session', {
-    trigger: 'review', prUrl: null, kept: true, stopReason: 'Review finished: APPROVE',
+    trigger: 'review', prUrl: null, stopReason: 'Review finished: APPROVE',
     review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true },
   }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
@@ -360,6 +361,9 @@ function startConsole() {
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
+      // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
+      // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data.
+      ...(process.env.DEV_CONSOLE_HOMES_DIR ? { WOODSHED_LOCAL_HOMES_DIR: process.env.DEV_CONSOLE_HOMES_DIR } : {}),
       ...tlsAskPort,
       // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so Console settings shows its GitHub webhooks switch.
       // Polling is off here, so the receiver never listens and nothing arrives.
