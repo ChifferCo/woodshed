@@ -36,3 +36,13 @@ test('Mine holds your private sessions and the shared ones you started or have, 
   for (const [s, mine, why] of cases) assert.equal(W.inMine(s, 'allen'), mine, why);
   assert.equal(W.inMine({ owner: null, startedBy: null, assignee: null }, null), false, 'no login, no shared session is anyone\'s');
 });
+
+test('a review or QA the console ran on a pull request is no one\'s to take: it goes to its own zone, never Unassigned', () => {
+  const W = common();
+  const shared = { owner: null, startedBy: 'allen', assignee: null, kind: 'pr', status: 'running', state: 'working' };
+  assert.equal(W.isPullCheck({ ...shared, trigger: 'review' }), true, 'a review session');
+  assert.equal(W.isPullCheck({ ...shared, trigger: 'qa' }), true, 'a QA session');
+  assert.equal(W.isPullCheck({ ...shared, trigger: 'label' }), false, 'a label starts work, not a check');
+  assert.equal(W.isUnassigned({ ...shared, trigger: 'review' }), false, 'nobody takes a review');
+  assert.equal(W.isUnassigned({ ...shared, trigger: 'label' }), true, 'a label nobody has is still Unassigned');
+});
