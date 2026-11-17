@@ -380,7 +380,8 @@ URL on top of each env file's Repo settings values
 - **Sessions on one repo do not start, saying `<repo>'s project file asks for a Mongo database, and this console only
   runs Postgres`, or New session shows that repo's Needs setup card.** That repo's own project file names an engine
   the installation does not host: add it to `databases` in Terraform (or the local provider's `WOODSHED_LOCAL_DB_*` and
-  session env), or take that database out of the project file. Each repo is checked on its own (`console/databaseGate.mjs`),
+  session env), or take that database out of the project file. On AWS the deploy's plan job can catch it first
+  (`providers/aws/databases.mjs`, its README's "The deploy workflow"). Each repo is checked on its own (`console/databaseGate.mjs`),
   so the others still start; Console settings' Repos card says Needs setup or Ready on each. The console reads each
   repo's default branch's file and logs `console: project databases not hosted` with the `project`, `needs` and
   `hosted`, then `fleet: session refused, its project is not ready` for each start it refused (`fleet: trigger

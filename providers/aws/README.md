@@ -135,7 +135,7 @@ because it names where Woodshed comes from (a fork, a pinned commit or this repo
 | --- | --- | --- |
 | resolve | none | Turns the Woodshed ref being deployed into one commit, which every job below checks out, so a merge during the run cannot mix versions |
 | check | none | Runs Woodshed's reusable `.github/workflows/project-check.yml` at that commit on the repo's project file, before anything touches AWS |
-| plan | `<prefix>-plan`, `WOODSHED_CLOUD_PLAN_ROLE_ARN` | `terraform init` with the installation's `backend.hcl` and `-lockfile=readonly`, then `terraform plan -var-file=<its terraform.tfvars> -out=... -detailed-exitcode`. It writes the plan to the run summary, with anything it destroys or replaces first, and uploads the plan file with `providers/aws/terraform/.build/` (the Lambda zip the plan was made with) |
+| plan | `<prefix>-plan`, `WOODSHED_CLOUD_PLAN_ROLE_ARN` | Checks the project file's databases against the tfvars' `databases` (below), then `terraform init` with the installation's `backend.hcl` and `-lockfile=readonly`, then `terraform plan -var-file=<its terraform.tfvars> -out=... -detailed-exitcode`. It writes the plan to the run summary, with anything it destroys or replaces first, and uploads the plan file with `providers/aws/terraform/.build/` (the Lambda zip the plan was made with) |
 | apply | `<prefix>-infra`, `WOODSHED_CLOUD_INFRA_ROLE_ARN` | Waits for a reviewer, then applies exactly the uploaded plan. Skipped when the plan has no changes. One at a time (a `concurrency` group, never cancelled) |
 | console | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the console image, then runs the `<prefix>-redeploy-console` SSM document on the base box (`WOODSHED_CLOUD_BASE_BOX_ID`), then `<prefix>-refresh-services` with the project file's services ("The project's services", below) |
 | session | `<prefix>-images`, `WOODSHED_CLOUD_AWS_ROLE_ARN` | Builds and pushes the session image with the repo checked out in it, adds its SOCI index (`session/addSociIndex.sh`), and builds the database template again when its `paths` changed |
@@ -148,6 +148,25 @@ expects. When to run
 it is the installation's choice: by hand from the default branch, on a schedule so the session image picks up the
 repo's newest dependencies, or both. Tagging each image with the Woodshed commit it was built from lets the next run
 say what changed since the last deploy.
+
+The tfvars' `databases` decides what the installation pays for (RDS, Mongo on the base box, the db-admin task), so it
+stays there, and a project-file change never plans to make or destroy a database. What the plan job checks first, on
+its checkout of the default branch, is that the two agree:
+
+```yaml
+      - name: Check the project file's databases against the tfvars
+        env:
+          TFVARS: .woodshed/install/aws/terraform.tfvars
+        run: |
+          # Every engine the default branch's project file needs is one the tfvars hosts (providers/aws/databases.mjs)
+          node woodshed/providers/aws/databases.mjs check --tfvars "$TFVARS"
+```
+
+It reads the one `databases = [...]` line (or list over several lines) from the tfvars, and refuses one it cannot read
+that way. A project file that needs an engine the tfvars leaves out stops the run before the plan, naming the engine
+and the `databases` to set; without the step, a session on it says the same when it starts. An engine the tfvars hosts
+and the file does not use is only a warning: another project's file may use it, and taking it out destroys its data
+at the apply.
 
 ## Using it day to day
 
@@ -219,6 +238,10 @@ contents and log events (people's Claude homes, the session logs), and takes
 the state lock. The infra role is an administrator of the account, which is
 why its environment needs a reviewer, and why that environment must never be
 given to a Claude workflow.
+
+Adding a database to the project file, or an engine to it: add the engine to `databases` in the tfvars in the same
+change (with `postgres`, `database_name` and `database_user` too), then run the deploy workflow. Its plan job's check
+("The deploy workflow", above) stops a run whose project file needs an engine the tfvars leaves out, before the plan.
 
 Updating the console: the deploy workflow's console job does it. After the push it runs
 the `<prefix>-redeploy-console` SSM document on the base box, which pulls
