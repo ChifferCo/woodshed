@@ -1066,7 +1066,9 @@
   // What the bar used to spell out beside the name: the branch, who started it and how, how long, whose Claude, and
   // who can see it.
   function sessionDetails(s) {
-    const trigger = s.trigger === 'label' ? `with the ${data.label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
+    // The label of the session's own repo, which its settings may name differently from the default's.
+    const label = (s.project && data.projects?.find((p) => p.name === s.project)?.label) || data.label;
+    const trigger = s.trigger === 'label' ? `with the ${label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
     const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';

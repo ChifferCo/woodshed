@@ -40,6 +40,7 @@ import { createGitHubUser } from './githubUser.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
 import { createProjectReader } from './projectFile.mjs';
 import { createRepoSettings } from './repoSettings.mjs';
+import { createRepoTriggers } from './repoTriggers.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createViewPrefs } from './viewPrefs.mjs';
 import { createGitHubPeople } from './githubPeople.mjs';
@@ -289,6 +290,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   });
   const userSettings = createUserSettings({ store, secrets });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
+  // A repo's label may not be its QA label, which its project file names.
+  const repoTriggers = createRepoTriggers({ store, config, qaLabelOf: async (name) => (await readerOf(name).pullRequests())?.qa?.label ?? null });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
   const members = trusted ? null : createMembers({ store });
@@ -318,6 +321,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     // The App that posts a QA session's check, so the brief trusts it.
     ownApp: () => appIdentity.known(),
     reviewerApp,
+    repoTriggers,
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -383,7 +387,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     config, fleet, settings, events, webhookSwitch, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects, projectColors, repoSettings,
+    databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
@@ -398,7 +402,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
   }) : null;
-  const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
+  const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
 
   // Neither the poll nor the webhooks start without an App key: a message read then would fail its three tries and

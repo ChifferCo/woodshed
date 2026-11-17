@@ -644,9 +644,10 @@ async function readBody(req, limit = MAX_BODY_BYTES) {
  *          slackOf?: ((project: string) => {channel: string, consoleChannel: string, canPost: boolean}|null)|null}} deps
  *   `slackOf` is the repo's own Slack channel and the console's, for the admin's page; it is saved through
  *   `POST /api/console-settings/projects/slack-channel`, as the Repos card saved it. `myView` is My settings' view of a
- *   person (userSettings.mjs), which the old own files route answers with
+ *   person (userSettings.mjs), which the old own files route answers with. `triggersOf` is the repo's label and its
+ *   switches (repoTriggers.mjs), saved through `POST /api/console-settings/projects/triggers`
  */
-export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null, myView = null }) {
+export function createRepoSettingsApi({ repoSettings, config, projectAccess = null, slackOf = null, triggersOf = null, myView = null }) {
   async function canWrite(login, name) {
     if (projectAccess) return Boolean(await projectAccess.forStart(login, name));
     return projectNamed(config, name)?.default === true;
@@ -659,7 +660,7 @@ export function createRepoSettingsApi({ repoSettings, config, projectAccess = nu
   }
 
   async function adminView(project) {
-    return { ...(await repoSettings.view(project)), slack: slackOf?.(project) ?? null };
+    return { ...(await repoSettings.view(project)), slack: slackOf?.(project) ?? null, triggers: triggersOf?.(project) ?? null };
   }
 
   async function admin(req, res, { project, key, remove, instructions }, by) {
