@@ -226,9 +226,18 @@
     return isPaused(s) || (!s.owner && group(s) === 'waiting');
   }
 
+  /**
+   * A session the console started to review or QA a pull request (pullRequests.review or .qa with runner: woodshed). It
+   * runs by itself and stops when it reports, so nobody takes it: the rail keeps these in a zone of their own, folded.
+   * @returns {boolean}
+   */
+  function isPullCheck(s) {
+    return s.trigger === 'review' || s.trigger === 'qa';
+  }
+
   /** @returns {boolean}  a shared session nobody has, that still has something to do: Unassigned on Everyone */
   function isUnassigned(s) {
-    return !s.owner && s.kind !== 'ask' && !s.assignee && !['ended', 'merged', 'finished'].includes(group(s));
+    return !s.owner && s.kind !== 'ask' && !isPullCheck(s) && !s.assignee && !['ended', 'merged', 'finished'].includes(group(s));
   }
 
   /** @returns {Array}  who started a session, then → who has it when that is someone else; the Shared page */
@@ -1442,7 +1451,7 @@
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

@@ -624,7 +624,7 @@
       return {};
     }
   }
-  const folded = { needs: false, unassigned: false, active: false, stopped: true, merged: true, ended: true, ...readZones() };
+  const folded = { needs: false, unassigned: false, active: false, stopped: true, merged: true, ended: true, checks: true, ...readZones() };
   function toggleZone(key) {
     folded[key] = !folded[key];
     try {
@@ -900,8 +900,11 @@
     // ones waiting on you first (their card says so), then the shared ones whose pull request is in Slack, then the rest
     // that stopped.
     // Everyone: what nobody has, then the shed's groups.
-    const unassigned = railMine() ? [] : listed.filter(W.isUnassigned);
-    const rest = railMine() ? listed : listed.filter((s) => !W.isUnassigned(s));
+    // Reviews and QA the console ran on pull requests come last, in a zone of their own folded until opened.
+    const checks = listed.filter(W.isPullCheck);
+    const work = listed.filter((s) => !W.isPullCheck(s));
+    const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
+    const rest = railMine() ? work : work.filter((s) => !W.isUnassigned(s));
     const zones = railMine()
       ? [zone('needs', 'Needs you', rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))),
         zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a)))),
@@ -916,6 +919,8 @@
         setupNotice(),
         empty,
         zones,
+        // A status chip picked on the phone shows the reviews and QA of that status, as its count says.
+        zone('checks', 'Reviews and QA', status === 'all' ? checks : checks.filter((s) => W.group(s) === status)),
         railMine() && pullsZone(onProject)),
     ].filter(Boolean);
   }
