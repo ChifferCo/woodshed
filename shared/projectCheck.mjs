@@ -170,6 +170,16 @@ function databaseProblems(project, repoDir) {
   });
 }
 
+// Each service's files must be in the repo, where its readers take them from; and its variable is the installation's to
+// set, so the project's env setting it would hide the URL.
+function serviceProblems(project, repoDir) {
+  return project.services.flatMap((service, i) => [
+    ...Object.entries(service.files).filter(([, source]) => !readRepoFile(repoDir, source))
+      .map(([target, source]) => `services[${i}].files.${target} is ${source}, which is not in the checkout or on the default branch`),
+    ...(Object.hasOwn(project.env, service.variable) ? [`env.${service.variable} is services[${i}]'s variable, which its URL arrives in: leave it to the service`] : []),
+  ]);
+}
+
 // An `app.paths` entry is a prefix: `web/` is a folder, and `web` also matches `webhooks.md`, so something in the
 // checkout must start with it.
 function prefixExists(repoDir, prefix) {
@@ -261,7 +271,7 @@ export function repoProblems(project, repoDir) {
   }
   return [
     ...problems, ...envProblems(project), ...envFileProblems(project, repoDir), ...installProblems(project, repoDir),
-    ...databaseProblems(project, repoDir), ...appProblems(project, repoDir), ...pullRequestProblems(project, repoDir),
+    ...databaseProblems(project, repoDir), ...serviceProblems(project, repoDir), ...appProblems(project, repoDir), ...pullRequestProblems(project, repoDir),
   ];
 }
 
@@ -273,10 +283,10 @@ function installVariables(project, repoDir) {
 }
 
 // The variables the env and the env files' overrides take from the session that neither the project's env nor its
-// databases give: the installation's shared services, the app's key, and the like.
+// databases or services give: the installation's own services, the app's key, and the like.
 function takenFromSession(project) {
   const texts = [...Object.values(project.env), ...project.envFiles.flatMap((f) => f.overrides)];
-  const given = new Set([...Object.keys(project.env), ...Object.keys(databaseEnv({ project, env: { PGSSLMODE: 'x' } }))]);
+  const given = new Set([...Object.keys(project.env), ...Object.keys(databaseEnv({ project, env: { PGSSLMODE: 'x' } })), ...project.services.map((s) => s.variable)]);
   return [...new Set(texts.flatMap(placeholderNames))].filter((name) => !given.has(name) && !isSessionVariable(name));
 }
 
@@ -337,6 +347,7 @@ export function checkSummary(project, repoDir) {
     `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
     `install variables: ${list(installVariables(project, repoDir))}`,
     `databases: ${list(project.databases.map((d) => d.engine))}`,
+    `services: ${list(project.services.map((s) => `${s.name} in ${s.variable}`))}`,
     `env files: ${list(project.envFiles.map(envFileLine))}${sharedKeys(project)}`,
     `from the session: ${list(takenFromSession(project))}`,
     appLine(project),

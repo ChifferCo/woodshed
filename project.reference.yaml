@@ -91,6 +91,30 @@ databases:
     user: app_user
     name: app
 
+# Default: [] (none). The containers sessions need beside them, such as a fake S3, each reached at its URL in its
+# `variable` (a session gets WOODSHED_SERVICES, the list of those variables, too). Where they run is the installation's:
+# the base box for every session on AWS, the compose stack on a local install, each session's own VM on Woodshed Cloud.
+# Each reader takes the default branch's, so a branch cannot change what runs.
+services:
+  - # Required. Lowercase letters, digits and dashes, at most 32: the container's name, and its host on the sessions'
+    # network. Not postgres, mongo, console or caddy, which Woodshed runs.
+    name: localstack
+    # Required. With its version, a tag or a digest, and never latest.
+    image: localstack/localstack:4.14.0
+    # Required. What it listens on. Not 80, 443, 5432, 7691 or 27017.
+    port: 4566
+    # Required. Where its URL arrives, in capitals ending in _URL or _ENDPOINT, each service its own.
+    variable: S3_ENDPOINT
+    # Default: {}. The container's environment. Quote numbers.
+    environment:
+      SERVICES: s3
+    # Default: {}. Files put in the container, read-only and executable, such as an init script: the path there, then
+    # the file in the repo it is read from.
+    files:
+      /etc/localstack/init/ready.d/create-bucket.sh: .woodshed/services/create-bucket.sh
+    # Default: 768m. Its memory limit, in m or g.
+    memory: 1g
+
 # Default: null (no app: no Start app, no ports probed, and no pull request refused for an untested app).
 app:
   # Required. Starts the app; statusd's Start app runs it.

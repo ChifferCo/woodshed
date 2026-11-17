@@ -181,6 +181,10 @@ variable "database_env_secrets" {
 }
 
 variable "shared_services" {
+  # The project file's `services`, which the deploy workflow's plan job writes as a var file of their own
+  # (`node shared/project.mjs services-tfvars`, docs/reference.md, "The shared services"), each file's text read from the
+  # repo. An installation may still set it in its tfvars, which that file replaces. shared/project.mjs takes the same
+  # names, ports and variables as these validations (test/projectServices.test.mjs).
   description = "Containers the base box runs for every session, such as a fake S3, by name. Each listens on `port` (the same on the box), reaches sessions and the db-admin task as http://<the box>:<port> in `variable`, and gets `environment`. Each of `files` (path in the container = text) is mounted there read-only and executable, for an init script. {} for none."
   type = map(object({
     image       = string
@@ -192,16 +196,16 @@ variable "shared_services" {
   }))
 
   validation {
-    condition     = alltrue([for name, s in var.shared_services : can(regex("^[a-z][a-z0-9-]*$", name)) && !contains(["mongo", "console", "caddy"], name)])
-    error_message = "A shared service's name is lowercase letters, digits and dashes, and not mongo, console or caddy, which the base box runs (mongo, with mongo in databases)."
+    condition     = alltrue([for name, s in var.shared_services : can(regex("^[a-z][a-z0-9-]*$", name)) && !contains(["postgres", "mongo", "console", "caddy"], name)])
+    error_message = "A shared service's name is lowercase letters, digits and dashes, and not postgres, mongo, console or caddy, which Woodshed runs beside it (shared/project.mjs, RESERVED_SERVICE_NAMES)."
   }
   validation {
     condition     = alltrue([for s in var.shared_services : can(regex("^[A-Z][A-Z0-9_]*_(URL|ENDPOINT)$", s.variable))]) && length(distinct([for s in var.shared_services : s.variable])) == length(var.shared_services)
     error_message = "Each shared service's variable is a different capital name ending in _URL or _ENDPOINT, as S3_ENDPOINT: the db-admin task refuses any other (session/dbAdmin.mjs)."
   }
   validation {
-    condition     = alltrue([for s in var.shared_services : !contains([80, 443, 7691, 27017], s.port)]) && length(distinct([for s in var.shared_services : s.port])) == length(var.shared_services)
-    error_message = "Each shared service has a port of its own, and not 80, 443, 7691 or 27017, which Caddy, the session API and Mongo use."
+    condition     = alltrue([for s in var.shared_services : !contains([80, 443, 5432, 7691, 27017], s.port)]) && length(distinct([for s in var.shared_services : s.port])) == length(var.shared_services)
+    error_message = "Each shared service has a port of its own, and not 80, 443, 5432, 7691 or 27017, which Caddy, Postgres, the session API and Mongo use."
   }
   validation {
     condition     = alltrue(flatten([for s in var.shared_services : [for path in keys(s.files) : startswith(path, "/") && !strcontains(path, ":")]]))
