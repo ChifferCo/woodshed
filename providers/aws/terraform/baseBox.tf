@@ -254,7 +254,9 @@ resource "aws_eip" "base_box" {
 locals {
   # What the box keeps for itself before the project file's services (providers/aws/services.mjs): the OS and Docker,
   # the console's 512 MB, Caddy's 128 MB and Mongo's 1 GB. <prefix>-services refuses services that need more than the rest.
-  base_box_reserved_mib   = 1024 + 512 + 128 + (local.mongo ? 1024 : 0)
+  # The OS and Docker take about 300 MB on Amazon Linux; 512 leaves them room, where 1024 refused a t3.medium the two
+  # services it already ran beside Mongo.
+  base_box_reserved_mib   = 512 + 512 + 128 + (local.mongo ? 1024 : 0)
   # shared_services as <prefix>-services takes them (services.mjs, legacyServices), base64 in the script.
   legacy_services_json = jsonencode([for name, s in var.shared_services : { name = name, variable = s.variable, port = s.port, memory = s.mem_limit }])
   base_box_needs_4gb      = local.mongo || length(var.shared_services) > 0

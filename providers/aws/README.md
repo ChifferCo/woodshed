@@ -195,7 +195,7 @@ stops what ran.
 For now, only stateless services: one with `data` stops the spec (`keeps data ..., which the AWS provider does not
 run yet`), before anything changes on the box, and stays in Terraform's `shared_services` meanwhile. The services
 share the box's memory with the console, Caddy and Mongo: the box refuses services that need more than it has left,
-which on the default `t3.small` is next to nothing, so set `base_box_instance_type` (`t3.medium` leaves about 2 GB).
+which on the default `t3.small` is about 700 MB, or 0 with Mongo, so set `base_box_instance_type`: `t3.medium` leaves about 2.7 GB, or 1.7 GB with Mongo.
 
 Moving from `shared_services`: the two run side by side, and `WOODSHED_SERVICES` lists both, but a service of the
 project file's may not take a name or variable one of `shared_services` has, nor may one of those listen on 42000 to
