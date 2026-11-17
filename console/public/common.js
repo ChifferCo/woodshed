@@ -787,6 +787,11 @@
         notify(setupAppToast(sent, s));
         onDone();
       } catch (err) {
+        // Closed with Esc or Cancel while the call was out: the dialog is gone, so the failure is a toast.
+        if (!dialog.open) {
+          notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
+          return;
+        }
         error.replaceChildren(`Could not set up the app: ${err.message}`);
         error.hidden = false;
         go.disabled = false;

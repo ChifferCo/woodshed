@@ -107,7 +107,7 @@ change to the stage by the workflow's run, about the time the build takes.
    renderer, nor codex's alternate screen, so the conversation stays in tmux's history and the browser's scrollback), with the task as its first message and the rules
    in `prompt.md` with `appAddress.md` (the app's `https://<SESSION_ID>.<SESSION_APP_DOMAIN>/` address, since the person
    cannot reach the session's localhost) and, for a repo whose project file has no app or that has none, `noApp.md`
-   (what Set up app does, for claude to offer it in a private session and to do it to prove a change in a shared one;
+   (what Set up app does, for claude to offer it in a private session, and in a shared one to run the app for its proof without committing the file;
    `appRules`), then the project's own (`.woodshed/rules.md` here), then the installation's instructions for the
    repo and the private session's owner's own from the repo settings, with which of them win (`Instructions added to
    the rules` in the log, with their sizes), as a system prompt, then `ttyd` on 7681 and `statusd` on 7682. Auto mode runs

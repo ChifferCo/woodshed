@@ -156,7 +156,7 @@ test('a repo with no app, or no project file, has its rules say what Set up app 
   for (const field of ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'howToProve']) assert.match(own, new RegExp(`\`${field}\``), `names ${field}`);
   assert.doesNotMatch(own, /\{\{/);
   const shared = writePrompt({ attachments: false, kind: 'shared' }).rules;
-  assert.match(shared, /When proving the change needs the app running, set it up yourself/);
+  assert.match(shared, /When proving the change needs the app running, you may .* keep it out of every commit/);
   assert.doesNotMatch(shared, /offer once/);
 
   // No project file at all: the default branch has none either.
