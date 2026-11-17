@@ -91,6 +91,42 @@ databases:
     user: app_user
     name: app
 
+# Default: [] (none). The containers sessions need beside them, such as a fake S3 or a PDF renderer, each reached at
+# its URL in its `variable` (a session and the seed get WOODSHED_SERVICES, the list of those variables, too). Where they
+# run is the installation's, one place for all its sessions: the base box on AWS, the compose stack on a local install,
+# the org's services VM on Woodshed Cloud. A service with no `data` is stateless, so one copy serves everyone; one with
+# `data` gets a copy for each person. Each reader takes the default branch's, so a branch cannot change what runs.
+services:
+  - # Required. Lowercase letters, digits and dashes, at most 32: the container's name, and its host on the sessions'
+    # network. Not postgres, mongo, console or caddy, which Woodshed runs.
+    name: localstack
+    # Required. With its version, a tag or a digest, and never latest.
+    image: localstack/localstack:4.14.0
+    # Required. What it listens on. Not 80, 443, 5432, 7691 or 27017.
+    port: 4566
+    # Required. Where its URL arrives, in capitals ending in _URL or _ENDPOINT, each service its own. Not REDIS_URL,
+    # the session's own Redis, nor another of Woodshed's (PG_URL, WOODSHED_*).
+    variable: S3_ENDPOINT
+    # Default: {}. The container's environment. Quote numbers.
+    environment:
+      SERVICES: s3
+      PERSISTENCE: '1'
+    # Default: {}. Files put in the container, read-only and executable, such as an init script: the path there, then
+    # the file in the repo it is read from, the repo's own and never a symlink.
+    files:
+      /etc/localstack/init/ready.d/create-bucket.sh: .woodshed/services/create-bucket.sh
+    # Default: 768m. Its memory limit, in m or g.
+    memory: 1g
+    # Default: null (stateless: it keeps nothing worth keeping, and one copy serves every session). What it keeps.
+    data:
+      # Required. The folder in the container it keeps its data in.
+      dir: /var/lib/localstack
+      # Required. person: a private session's data is its owner's, the same in each of their sessions and kept between
+      # them, and a shared session (an issue's, a review's, QA's) gets its own, empty, gone when it ends. session:
+      # every session's starts empty and goes when it ends. An init script in `files` runs at each start, so it must
+      # be safe to run again on data it made before.
+      keep: person
+
 # Default: null (no app: no Start app, no ports probed, and no pull request refused for an untested app).
 app:
   # Required. Starts the app; statusd's Start app runs it.

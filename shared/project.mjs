@@ -35,6 +35,7 @@ import path from 'node:path';
 import { ENGINE_NAMES } from './databases/engines.mjs';
 import { defaultBranchOf } from './defaultBranch.mjs';
 import { envValue } from './envNames.mjs';
+import { isSessionVariable } from './reservedNames.mjs';
 import { parseYaml } from './yamlLite.mjs';
 import { isMain } from './isMain.mjs';
 import { envKeyTable, instructionsText, layeredEnvText, sessionWiring } from './repoSettings.mjs';
@@ -57,13 +58,15 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'services', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'defaults', 'overrides'],
   databases: ['engine', 'dir', 'migrate', 'seed', 'envFiles', 'paths', 'migrations', 'migrationsTable', 'dump', 'user', 'name'],
   'databases.migrationsTable': ['table', 'column'],
   'databases.dump': ['skip', 'extensions'],
+  services: ['name', 'image', 'port', 'variable', 'environment', 'files', 'memory', 'data'],
+  'services.data': ['dir', 'keep'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   pullRequests: ['review', 'suites', 'qa', 'mergeRisk'],
@@ -302,6 +305,91 @@ function databases(value, keys) {
   return all;
 }
 
+// A service's name is its container's, and the host every reader gives it on the sessions' network: these are taken
+// there already, by the databases (shared/databases/), and the base box's console and Caddy (providers/aws).
+export const RESERVED_SERVICE_NAMES = Object.freeze(['postgres', 'mongo', 'console', 'caddy']);
+// What listens beside a service wherever it runs: Caddy, Postgres, the session API and Mongo.
+export const RESERVED_SERVICE_PORTS = Object.freeze([80, 443, 5432, 7691, 27017]);
+const SERVICE_NAME = /^[a-z][a-z0-9-]{0,31}$/;
+// The variable its URL reaches sessions and the seed in: the db-admin task takes no other (session/dbAdmin.mjs,
+// sharedServices), since a run's overrides could otherwise name one bash or Node acts on.
+export const SERVICE_VARIABLE = /^[A-Z][A-Z0-9_]*_(URL|ENDPOINT)$/;
+// An image with its version: a tag, a digest or both, so a session's service changes only when the file does.
+const IMAGE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/;
+const MEMORY = /^[1-9][0-9]*[mg]$/;
+
+function serviceImage(value, field) {
+  string(value, field);
+  if (!IMAGE.test(value)) fail(`${field} must be an image, as localstack/localstack:4.14.0`);
+  const last = value.split('@')[0].split('/').pop();
+  if (!value.includes('@') && !last.includes(':')) fail(`${field} must name its version, a tag or a digest (${value}:<tag>)`);
+  if (/:latest$/.test(value.split('@')[0])) fail(`${field} must name its version, not latest: one that moves changes every session's service unseen`);
+  return value;
+}
+
+// Each file is put in the container at its path, read-only and executable, such as an init script: the key is that path,
+// the value the file in the repo it is read from (on the default branch, as the rest of the services).
+function serviceFiles(value, field) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail(`${field} must be a mapping of a path in the container to a file in the repo (write {} for none)`);
+  for (const [target, source] of Object.entries(value)) {
+    if (!target.startsWith('/') || target.includes(':') || target.split('/').includes('..')) fail(`${field} has ${target}, which must be an absolute path in the container, with no colon or ..`);
+    repoPath(source, `${field}.${target}`);
+  }
+  return value;
+}
+
+// Whose a stateful service's data is. `person`: a private session's is its owner's, the same in each of their sessions
+// and kept between them; a shared session (an issue's, a review's, QA's) is no one's, so it gets data of its own that
+// starts empty and goes when it ends. `session`: every session's starts empty and goes when it ends.
+export const SERVICE_KEEPS = Object.freeze(['person', 'session']);
+
+// A service with no `data` keeps nothing worth keeping, so one copy may serve every session. One with `data` keeps its
+// `dir`, whose `keep` says for whom.
+function serviceData(value, field) {
+  const d = fields(value, field, PROJECT_FIELDS['services.data']);
+  // Checked once its trailing slashes are gone, so `//` is refused as `/` is, never read as an empty path.
+  const dir = string(d.dir, `${field}.dir`).replace(/\/+$/, '');
+  if (!dir.startsWith('/') || dir.includes(':') || dir.split('/').includes('..')) {
+    fail(`${field}.dir must be an absolute folder in the container, not /, with no colon or ..`);
+  }
+  if (!SERVICE_KEEPS.includes(d.keep)) fail(`${field}.keep must be one of ${SERVICE_KEEPS.join(', ')} (it is ${JSON.stringify(d.keep)})`);
+  return { dir, keep: d.keep };
+}
+
+function service(value, field) {
+  const s = fields(value, field, PROJECT_FIELDS.services, { environment: {}, files: {}, memory: '768m', data: null });
+  if (typeof s.name !== 'string' || !SERVICE_NAME.test(s.name)) fail(`${field}.name must be lowercase letters, digits and dashes, starting with a letter, at most 32`);
+  if (RESERVED_SERVICE_NAMES.includes(s.name)) fail(`${field}.name is ${s.name}, which Woodshed runs beside the services itself`);
+  const p = port(s.port, `${field}.port`);
+  if (RESERVED_SERVICE_PORTS.includes(p)) fail(`${field}.port is ${p}, which Woodshed listens on beside the services (it keeps ${RESERVED_SERVICE_PORTS.join(', ')})`);
+  if (typeof s.variable !== 'string' || !SERVICE_VARIABLE.test(s.variable)) fail(`${field}.variable must be a name in capitals ending in _URL or _ENDPOINT, as S3_ENDPOINT`);
+  if (isSessionVariable(s.variable)) fail(`${field}.variable is ${s.variable}, one of Woodshed's own session variables`);
+  // A project whose env mentions REDIS_URL gets the session's own Redis there (session/entrypoint.sh, usesVariable).
+  if (s.variable === 'REDIS_URL') fail(`${field}.variable is REDIS_URL, the session's own Redis: name the service's otherwise`);
+  const environment = stringMap(s.environment, `${field}.environment`);
+  for (const name of Object.keys(environment)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) fail(`${field}.environment.${name} is not a variable name`);
+  if (typeof s.memory !== 'string' || !MEMORY.test(s.memory)) fail(`${field}.memory must be megabytes or gigabytes, as 768m or 2g`);
+  return {
+    name: s.name, image: serviceImage(s.image, `${field}.image`), port: p, variable: s.variable, environment,
+    files: serviceFiles(s.files, `${field}.files`), memory: s.memory, data: nullable(s.data, `${field}.data`, serviceData),
+  };
+}
+
+// The containers the repo's sessions need beside them, such as a fake S3 or a PDF renderer, each reached at its URL in
+// its variable. Where they run is the installation's, one place for all of its sessions: the base box (AWS), the
+// machine's compose stack (local) or the org's services VM (Woodshed Cloud), with one copy of a stateless service for
+// everyone and one of a stateful one for each person (`data`). Every reader takes the default branch's, never a
+// branch's: a branch cannot change what runs beside the console.
+function services(value) {
+  const all = list(value, 'services', service);
+  for (const key of ['name', 'port', 'variable']) {
+    const values = all.map((s) => s[key]);
+    const twice = values.filter((v, i) => values.indexOf(v) !== i);
+    if (twice.length) fail(`services has the ${key} ${[...new Set(twice)].join(', ')} more than once: each service needs its own`);
+  }
+  return all;
+}
+
 // One word: the manifest (installsManifest) separates a list's items with spaces.
 function word(value, field) {
   string(value, field);
@@ -465,7 +553,7 @@ function pullRequests(value) {
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: null, editor: false, consoleLinks: true, githubAccess: 'full',
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: null, editor: false, consoleLinks: true, githubAccess: 'full',
   rules: null, setup: null, pullRequests: null,
 };
 
@@ -474,6 +562,8 @@ const TOP_DEFAULTS = {
  * @returns {{version: number, dependencies: {installs: {dir: string, files: string[], command: string,
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, key: string, defaults: string[], overrides: string[]}[], databases: object[],
+ *   services: {name: string, image: string, port: number, variable: string, environment: Record<string, string>,
+ *   files: Record<string, string>, memory: string, data: {dir: string, keep: 'person'|'session'}|null}[],
  *   app: object|null,
  *   apps: {name: string, label: string}[],
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
@@ -492,6 +582,7 @@ export function parseProject(raw) {
     env: stringMap(project.env, 'env'),
     envFiles,
     databases: databases(project.databases, envFiles.map((f) => f.key)),
+    services: services(project.services),
     ...projectApps(project),
     editor: boolean(project.editor, 'editor'),
     consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
@@ -504,7 +595,7 @@ export function parseProject(raw) {
 
 /** What a repo with no project file gets: Woodshed's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
-  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], app: null, apps: [], editor: false, consoleLinks: true,
+  version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: [], editor: false, consoleLinks: true,
   githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 
