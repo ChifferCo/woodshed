@@ -667,7 +667,9 @@ secrets.
 - **A QA comment stays at Running.** The session's terminal shows the run (`[qa …]` lines). `fleet: QA finished`
   with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
   the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
-  lifetime) never sent one: label the pull request again.
+  lifetime) never sent one: label the pull request again. An approval its review held for it goes out on the next tick,
+  saying QA did not finish: the console logs `fleet: held approval released, QA stopped without a report` with the
+  `reason`, then `fleet: held approval released` with the verdict.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
   `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the
