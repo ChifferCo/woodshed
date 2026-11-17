@@ -51,6 +51,19 @@ export function messageToTrigger(message, { label }) {
  *   events log. It resolves true when the source may forget the message, false to have it come back for a retry.
  *   `alive` is called on each receive, so the fleet knows webhooks are arriving.
  */
+/**
+ * What a GitHub message would have started that the poll never does, so it stops while GitHub's webhooks are off: a
+ * session's Needs a human comment (its assignee's message), a QA label, and on a pull request's change QA after a
+ * review, the QA label on a new pull request and the review a commit's tag starts.
+ * @returns {string|null}  null for what the poll finds by itself: the label, /woodshed comments, anything else
+ */
+export function pollMisses(body, label) {
+  if (body?.type === 'needsHuman') return 'Needs a human';
+  if (body?.type === 'label' && body.kind === 'pr' && body.label !== label) return 'QA label';
+  if (body?.type === 'pr') return 'QA and review steps';
+  return null;
+}
+
 // The pull request events that may need the QA label added (fleet.qaAutoLabel).
 const AUTO_LABEL_EVENTS = new Set(['pull request opened', 'pull request ready_for_review']);
 
@@ -83,9 +96,10 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return true;
     }
     if (body?.source === 'slack') return dispatchSlack(body, attempt);
-    // Turned off on Console settings (webhookSwitch.mjs): the poll finds what this would have.
+    // Turned off on Console settings (webhookSwitch.mjs). The poll finds `label` labels and /woodshed comments, and
+    // reads pull requests again at full speed; what else a message would have started stops (pollMisses).
     if (body?.source === 'github' && webhookSwitch?.off('github')) {
-      webhookSwitch.dropped('github');
+      webhookSwitch.dropped('github', pollMisses(body, label));
       return true;
     }
     if (body?.source === 'github') {

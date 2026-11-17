@@ -658,11 +658,13 @@
 
   // Each source of webhooks, switched off on its own (webhookSwitch.mjs). No typed confirm: a switch is undone by
   // turning it back, and is logged with who turned it. Only where webhooks reach the console at all, or while one is off.
+  // What only a GitHub webhook starts: the poll finds none of it (webhookDispatch.pollMisses).
+  const WEBHOOK_ONLY = 'QA labels, QA after a review, the automatic QA label, reviews started by a commit\'s tag and Needs a human messages to the assignee';
   const WEBHOOK_SWITCHES = [
     {
       source: 'github', label: 'GitHub webhooks',
-      on: 'On: labels, comments and pull request changes reach the console within seconds. Off, the console drops them and polls GitHub instead.',
-      off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so a label or comment takes up to a minute.`,
+      on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
+      off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
     },
     {
       source: 'slack', label: 'Slack questions',

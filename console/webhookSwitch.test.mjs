@@ -93,3 +93,33 @@ test('forget puts the pull request readers back on their full speed at once', ()
   pulls.forget();
   assert.equal(pulls.flowing(), false);
 });
+
+test('GitHub\'s off, what only a webhook starts is named in the log once per kind, and never reaches the fleet', async () => {
+  const sw = createWebhookSwitch({ store: memoryStore() });
+  const reached = [];
+  const fleet = {
+    async handleNeedsHuman() { reached.push('needsHuman'); return { outcome: 'sent' }; },
+    async handleQaLabel() { reached.push('qa'); return { outcome: 'started' }; },
+    async qaAfterReview() { reached.push('qaAfterReview'); },
+    webhooksAlive() {},
+  };
+  const appIdentity = { available: true, login: async () => 'woodshed[bot]' };
+  const dispatch = createWebhookDispatch({ label: 'woodshed', fleet, appIdentity, webhookSwitch: sw });
+  const warned = [];
+  const warn = console.warn;
+  console.warn = (msg, fields) => warned.push([msg, fields?.kind]);
+  try {
+    sw.set({ source: 'github', off: true, by: 'joel' });
+    await dispatch.dispatch({ text: JSON.stringify({ source: 'github', type: 'needsHuman', number: 3, login: 'woodshed[bot]' }) });
+    await dispatch.dispatch({ text: JSON.stringify({ source: 'github', type: 'needsHuman', number: 4, login: 'woodshed[bot]' }) });
+    await dispatch.dispatch({ text: JSON.stringify({ ...label, kind: 'pr', label: 'qa' }) });
+    await dispatch.dispatch({ text: JSON.stringify({ source: 'github', type: 'pr', number: 5, what: 'review submitted' }) });
+    await dispatch.dispatch({ text: JSON.stringify(label) });
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(reached, []);
+  assert.deepEqual(warned.map(([, kind]) => kind), ['Needs a human', 'QA label', 'QA and review steps'], 'each kind once; the poll finds the label');
+  assert.ok(warned.every(([msg]) => msg === 'webhooks: off, dropped a delivery the poll does not cover'));
+  assert.equal(sw.view().github.dropped, 5);
+});

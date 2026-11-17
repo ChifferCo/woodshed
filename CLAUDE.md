@@ -178,9 +178,12 @@ secrets.
   `issueTracking: assignee put on the issue`, `taken off the issue` or `already on the issue`. `fleet: issue in progress
   failed` or `fleet: issue assignee failed` with `Resource not accessible by integration` means the GitHub App lacks
   the org's Projects write or the repo's Issues write permission, or the org has not accepted it yet.
-- **Labels and comments take a minute, and the Webhook events list stays empty.** Someone turned GitHub webhooks off
-  on Console settings' Webhooks card: it says since when and by whom, and the console logs `webhooks: switched` with `source`,
-  `off` and `by`. Turn the switch back on.
+- **Labels and comments take a minute, the Webhook events list stays empty, and QA labels, QA after a review, the
+  automatic QA label, reviews started by a commit's tag or Needs a human messages do nothing.** Someone turned GitHub
+  webhooks off on Console settings' Webhooks card: it says since when and by whom, and the console logs `webhooks:
+  switched` with `source`, `off` and `by`, then `webhooks: off, dropped a delivery the poll does not cover` with the
+  `kind` the first time each of those is dropped. The poll finds only the label and `/woodshed` comments. Turn the
+  switch back on.
 - **A label takes up to 5 minutes to start a session.** Webhooks are not
   arriving and the fallback poll found it. The webhook card on the Secrets &
   webhooks tab says which of its four checks fails; **Check again** opens the

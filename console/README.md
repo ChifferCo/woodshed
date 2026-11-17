@@ -806,6 +806,12 @@ you out.
   its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
   at full speed (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does.
+  The poll finds only the session label and `/woodshed` comments, so what only
+  a webhook starts stops until it is on again: QA labels, QA after a review
+  approves, `qa.autoLabel`, review sessions started by a commit's tag, and the
+  assignee's message for a session's `Needs a human:` comment. The console logs
+  `webhooks: off, dropped a delivery the poll does not cover` with its `kind`
+  at the first of each.
   **Slack questions** (only on a console that answers them) off, it drops each
   mention of its bot, which nothing else brings, and lists it as ignored. Each
   is kept in `state.json` under `webhooks.<source>`, with who turned it and
