@@ -2601,6 +2601,28 @@ test('a QA run that stopped before its conversation was deleted at its stop has 
   assert.equal(removed.length, 2, 'deleted once');
 });
 
+test('an ended review stays on the list while its approval is held for QA, then as long as a kept one did, so its commit is not reviewed again', async () => {
+  const retention = { afterCloseMs: 3 * 24 * HOUR, withoutPrMs: 7 * 24 * HOUR, openPrMs: 14 * 24 * HOUR, slackGiveUpMs: 7 * 24 * HOUR, removeAfterDeleteMs: 0 };
+  const { fleet, store, advance } = reviewSetup({ retention });
+  const held = { sha: 'a'.repeat(40), summary: 's', inlineComments: [], resolved: [] };
+  store.state.sessions.push({
+    id: 'e0e0e0e0', repo: 'o/r', kind: 'pr', number: 7, title: 'Review: x', startedBy: 'joel', trigger: 'review', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+    homeDeletePending: false, review: { sha: 'a'.repeat(40), base: 'main', conclusion: 'APPROVE', reported: true, held },
+  });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'its held approval waits for QA on the record, even with Take off the list at 0');
+
+  store.state.sessions[0].review.held = null;
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'released, it stays as long as a kept review stayed');
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'so a pull request event does not review the commit again');
+
+  advance(7 * 24 * HOUR);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'then it goes');
+});
+
 test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {
   const submitted = [];
   const reviewerApp = { configured: () => true, async submitReview(args) { submitted.push(args); return 1; } };

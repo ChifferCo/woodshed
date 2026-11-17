@@ -913,10 +913,13 @@ export function createFleet({
   // Off the list once it has shown as Deleted for the Console settings page's number of days. A question waits until
   // its thread has been told it went unanswered, and a Claude home still being deleted until it is gone, since
   // nothing retries it once the session is off the list.
+  // An ended review stays while the approval it holds for QA waits on its record (heldApproval), then as long as a
+  // kept review lasted: its record is what tells reviewOnTag that its commit was reviewed.
   function dropIfDue(session) {
-    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt)) return;
+    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt) || session.review?.held) return;
     const from = Date.parse(session.cleanedAt ?? session.stoppedAt ?? session.createdAt);
-    const ms = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const removeMs = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const ms = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
   }
