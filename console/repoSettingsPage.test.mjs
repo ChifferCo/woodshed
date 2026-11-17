@@ -394,7 +394,7 @@ test('someone who is not an admin is told the page is an admin\'s, with no setti
 
 test('a project the console does not have says so', async () => {
   const { app } = await loadPage({ project: 'nope' });
-  assert.match(textOf(app), /There is no project called nope\. Repos on Console settings lists the ones there are\./);
+  assert.match(textOf(app), /There is no project called nope\. Repos in Settings lists the ones there are\./);
 });
 
 test('a console with no secret store says nothing can be saved, and turns the editor off', async () => {
@@ -415,7 +415,7 @@ test('the Slack card says what the channel is for, how to find its ID and to inv
   const card = cardOf(app, 'slack');
   const text = textOf(card);
   assert.match(text, /When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post's thread\./);
-  assert.match(text, /With no channel here, it goes to the channel on Console settings' Slack card\./);
+  assert.match(text, /With no channel here, it goes to the channel on Settings' Slack card\./);
   assert.match(text, /the ID \(C…\) is at the bottom of its About tab/);
   assert.match(text, /Invite the Woodshed bot to the channel first/);
   assert.match(text, /a question asked in Slack is answered in its own thread/);

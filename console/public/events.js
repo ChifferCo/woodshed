@@ -58,13 +58,13 @@
       h('td', { class: 'mono meta-cell', title: e.deliveryId || '' }, (e.deliveryId || '').slice(0, 8)));
   }
 
-  // A source switched off on Console settings (webhookSwitch.mjs): said here, since its deliveries stop showing.
+  // A source switched off in Settings (webhookSwitch.mjs): said here, since its deliveries stop showing.
   function offNote() {
     const off = [['github', 'GitHub webhooks'], ['slack', 'Slack questions']].filter(([k]) => data.webhooks?.[k]?.off);
     if (!off.length) return null;
     return h('p', { class: 'webhooks-off', role: 'status' },
       `${off.map(([, label]) => label).join(' and ')} are switched off on `,
-      h('a', { href: '/console-settings#webhooks' }, 'Console settings'), ', so the console drops them.');
+      h('a', { href: '/console-settings#webhooks' }, 'Settings'), ', so the console drops them.');
   }
 
   function render() {

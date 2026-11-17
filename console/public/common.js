@@ -1152,12 +1152,22 @@
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
   // which only an admin sees (the console refuses their calls to anyone else).
   const MY_LINKS = [{ href: '/settings', label: 'My settings' }];
+  // Settings comes first and holds the console's own tabs (settingsTabs), so it stays current on each of them.
   const CONSOLE_LINKS = [
+    { href: '/console-settings', label: 'Settings', also: ['/secrets'] },
     { href: '/people', label: 'People' },
-    { href: '/secrets', label: 'Secrets & webhooks' },
     { href: '/events', label: 'Webhook events' },
-    { href: '/console-settings', label: 'Console settings' },
   ];
+  const isCurrent = (link, current) => link.href === current || Boolean(link.also?.includes(current));
+  // The tabs under Settings' title: the page's own cards, and the secrets. Links, as the rail's Mine | Everyone are.
+  const SETTINGS_TABS = [
+    { href: '/console-settings', label: 'General' },
+    { href: '/secrets', label: 'Secrets & webhooks' },
+  ];
+  function settingsTabs(current) {
+    return h('nav', { class: 'rail-seg settings-tabs', 'aria-label': 'Settings' }, SETTINGS_TABS.map((tab) =>
+      h('a', { class: 'rail-seg-link', href: tab.href, 'aria-current': tab.href === current ? 'page' : null }, tab.label)));
+  }
   // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page.
   function consoleLinks(me) {
     return me?.hosted ? CONSOLE_LINKS.filter((link) => link.href !== '/people') : CONSOLE_LINKS;
@@ -1199,7 +1209,7 @@
         // Under the name, what a program embedding the console says the person is in (server.mjs, menuOf).
         me.menuSubtitle && h('span', { class: 'user-sub' }, me.menuSubtitle)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
-    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, waitingOn(link, me));
+    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': isCurrent(link, current) ? 'page' : null }, link.label, waitingOn(link, me));
     const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
@@ -1271,7 +1281,7 @@
   // The settings list's Console group, filled once /api/me says you are an admin. One node, like userSlot.
   const consoleSlot = h('div', { class: 'side-console' });
   function fillConsoleSlot() {
-    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': link.href === navCurrent ? 'page' : null },
+    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': isCurrent(link, navCurrent) ? 'page' : null },
       h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label, waitingOn(link, meNow));
     consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...consoleLinks(meNow).map(item)] : []));
   }
@@ -1450,7 +1460,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

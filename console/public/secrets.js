@@ -10,7 +10,7 @@
   const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. The first sign-in that works makes it required on every page; '
     + 'until then nothing changes, so a wrong Callback URL in the App’s settings locks nobody out.';
 
-  const SLACK_EFFECT = 'The next pull request a session opens is posted with this bot, to the channel on the Console settings page.';
+  const SLACK_EFFECT = 'The next pull request a session opens is posted with this bot, to the channel on the Settings page.';
 
   const RECEIVER = W.providerWords.webhookReceiver ?? 'the webhook receiver';
   const SLACK_SIGNING_EFFECT = `${W.capitalised(RECEIVER)} checks each Slack event with it, from its next request: a mention of the bot then asks a question.`;
@@ -350,7 +350,8 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Secrets & webhooks'),
+        h('h1', { class: 'title' }, 'Settings'),
+        W.settingsTabs('/secrets'),
         h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`)));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
