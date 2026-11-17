@@ -487,8 +487,7 @@
   /** @returns {{el: HTMLElement, update: (me: object) => void}} */
   function createLauncher() {
     const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
-    const name = h('input', { id: 'l-name', class: 'field', autocomplete: 'off', placeholder: 'billing-currency' });
-    const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: '#25812, PR #26030 or a branch' });
+    const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
     const agent = select('l-agent', AGENTS);
     const model = select('l-model', MODELS);
     const effort = select('l-effort', EFFORTS);
@@ -590,11 +589,10 @@
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
-      field('l-prompt', 'Prompt', promptWrap, 'optional with a PR or branch below: opens its review'),
+      field('l-prompt', 'Prompt', promptWrap, 'optional when continuing a PR or branch: opens its review'),
       attachments.el, attachments.chips,
-      h('div', { class: 'lgrid2' },
-        field('l-name', 'Name', name, 'optional: Haiku names it from the prompt otherwise'),
-        field('l-on', 'Work on', pulls.el, 'optional: type to search the open PRs, or pick one from \u25be')),
+      // No name to give: the console names the session from its prompt, and its page offers a rename once it has.
+      field('l-on', 'Continue a PR or branch', pulls.el, 'optional: leave empty to start a new branch'),
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
@@ -640,13 +638,12 @@
       error.hidden = true;
       try {
         const session = await W.postJson('/api/my/sessions', {
-          prompt: prompt.value, name: name.value, workOn: workOn.value, agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value,
+          prompt: prompt.value, workOn: workOn.value, agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value,
           ...(projects.value() ? { project: projects.value() } : {}),
           attachments: attachments.ids(),
         });
         // The page stays: the form is emptied for the next one, whose files those were not.
         prompt.value = '';
-        name.value = '';
         workOn.value = '';
         pulls.refresh();
         attachments.clear();

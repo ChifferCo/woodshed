@@ -955,20 +955,30 @@ test('a private session with no name starts on its prompt\'s first line, and tak
   answers['Fix the currency\nrounding too']('Billing rounding');
   await new Promise(setImmediate);
   assert.equal(fleet.find(fix.id).title, 'Billing rounding');
+  assert.ok(fleet.find(fix.id).namedAt, 'the page is told the naming is over, for its rename offer');
 
   const look = await fleet.startPrivate({ owner: 'joel', prompt: 'Look at it' });
   answers['Look at it']('');
   await new Promise(setImmediate);
   assert.equal(fleet.find(look.id).title, 'Look at it', 'no name keeps the first line');
+  assert.ok(fleet.find(look.id).namedAt, 'the rename is offered on the first line too');
 
   const renamed = await fleet.startPrivate({ owner: 'joel', prompt: 'Tidy up' });
   fleet.rename(renamed, 'My own name');
   answers['Tidy up']('Haiku name');
   await new Promise(setImmediate);
   assert.equal(fleet.find(renamed.id).title, 'My own name', 'a rename on the rail before the answer is kept');
+  assert.equal(fleet.find(renamed.id).namedAt, undefined, 'and no rename is offered after one');
+
+  const failed = await fleet.startPrivate({ owner: 'joel', prompt: 'Break it' });
+  answers['Break it'](Promise.reject(new Error('Anthropic not reached')));
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.equal(fleet.find(failed.id).title, 'Break it');
+  assert.ok(fleet.find(failed.id).namedAt, 'a failed naming offers the rename too');
 
   assert.equal((await fleet.startPrivate({ owner: 'joel', prompt: 'Fix x', name: 'Mine' })).title, 'Mine');
-  assert.deepEqual(named, ['Fix the currency\nrounding too', 'Look at it', 'Tidy up'], 'a name given is not asked for');
+  assert.deepEqual(named, ['Fix the currency\nrounding too', 'Look at it', 'Tidy up', 'Break it'], 'a name given is not asked for');
 });
 
 test('a /woodshed comment on an issue with a private session starts its own shared one', async () => {

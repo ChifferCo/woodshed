@@ -234,6 +234,103 @@
     refresh();
   }
 
+  // New session asks for no name: once the console has named a session (`namedAt`, Haiku's name or the prompt's first
+  // line), its page offers a rename under the title for 10 s. A click or focus inside keeps it open until it is saved
+  // or closed. Offered once per naming, to a page that saw the session unnamed or opened it within 30 s of the naming.
+  const RENAME_OFFER_MS = 10_000;
+  const namingSeen = new Map();
+  let offer = null;
+  function closeRenameOffer() {
+    if (!offer) return;
+    clearTimeout(offer.timer);
+    offer.el.remove();
+    offer = null;
+  }
+  function placeRenameOffer() {
+    if (!offer) return;
+    const title = slots.head.querySelector('.ptitle');
+    const anchor = title?.getClientRects().length ? title : slots.head;
+    const r = anchor.getBoundingClientRect();
+    const width = offer.el.offsetWidth;
+    offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
+    offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
+  }
+  function offerRenameOnce(s) {
+    if (offer && offer.id !== s?.id) closeRenameOffer();
+    if (!s) return;
+    if (!s.namedAt) {
+      namingSeen.set(s.id, null);
+      return;
+    }
+    const was = namingSeen.get(s.id);
+    if (was === s.namedAt) {
+      if (offer) {
+        if (!offer.editing) offer.name.textContent = s.title;
+        placeRenameOffer();
+      }
+      return;
+    }
+    namingSeen.set(s.id, s.namedAt);
+    if (was !== null && Date.now() - Date.parse(s.namedAt) > 30_000) return;
+    showRenameOffer(s);
+  }
+  function showRenameOffer(s) {
+    closeRenameOffer();
+    const name = h('b', null, s.title);
+    const keep = () => {
+      if (!offer || offer.kept) return;
+      offer.kept = true;
+      clearTimeout(offer.timer);
+      el.classList.add('is-kept');
+    };
+    const edit = () => {
+      keep();
+      if (offer.editing) return;
+      offer.editing = true;
+      const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
+      const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
+      const form = h('form', { class: 'rename-offer-form' }, input, save,
+        h('button', { type: 'button', class: 'btn btn-quiet btn-sm', onclick: closeRenameOffer }, 'Cancel'));
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = input.value.replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!title) return input.focus();
+        if (title === currentSession?.title) return closeRenameOffer();
+        save.disabled = true;
+        try {
+          await W.postJson(`/api/sessions/${s.id}/rename`, { title });
+          W.shell.toast(`Renamed to ${title}`);
+          closeRenameOffer();
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not renamed: ${err.message}`, { ms: 6000 });
+          save.disabled = false;
+        }
+      });
+      body.replaceChildren(form);
+      placeRenameOffer();
+      input.focus();
+      input.select();
+    };
+    const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
+      h('span', { class: 'rename-offer-line' }, 'Named ', name),
+      h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
+      body,
+      h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
+      h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
+    el.addEventListener('pointerdown', keep);
+    el.addEventListener('focusin', keep);
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      closeRenameOffer();
+    });
+    document.body.append(el);
+    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    placeRenameOffer();
+  }
+
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
   function starButton(s) {
     const pinned = isPinned(s);
@@ -1772,6 +1869,7 @@
     if (!hasShell) shellPool.hide();
     else if (tab === 'terminal') shellPool.show(s);
     if (!s) {
+      offerRenameOnce(null);
       slots.plain.hidden = true;
       slots.body.hidden = tabPage;
       slots.head.replaceChildren();
@@ -1789,6 +1887,7 @@
     if (tab === 'terminal' && !hasShell) tab = 'agent';
     if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'agent';
     slots.head.replaceChildren(paneBar(s));
+    offerRenameOnce(s);
     renderKeyBar(s);
     // A phone's message box, for claude on the Agent tab; the Terminal tab's shell takes the keyboard straight in.
     messageBox.show(narrow.matches && s.status === 'running' && tab === 'agent' ? s : null);

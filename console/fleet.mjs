@@ -1232,7 +1232,8 @@ export function createFleet({
     if (reviewOnly) console.log('fleet: private session starts as a review, no prompt given', { owner, on: on.kind });
     // With no prompt there is nothing for Haiku to name from, so a branch is named for itself.
     const given = String(name ?? '').trim().slice(0, TITLE_CHARS) || target.title || (reviewOnly ? `Review ${target.branch}` : '');
-    const naming = given ? null : autoName?.(text);
+    // With no namer the first line stays, and the page offers the rename all the same.
+    const naming = given ? null : (autoName?.(text) ?? Promise.resolve(null));
     const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
@@ -1251,14 +1252,18 @@ export function createFleet({
   }
 
   // The session starts on its prompt's first line, and the rail shows Haiku's name on its next poll. A name the person
-  // gave it on the rail meanwhile is theirs to keep.
+  // gave it on the rail meanwhile is theirs to keep. `namedAt` says the naming is over, named or not: the session's page
+  // then offers a rename for a few seconds, since New session asks for no name.
   function renameWhenNamed(session, naming) {
     const startedAs = session.title;
-    naming.then((name) => {
-      if (!name || !find(session.id) || session.title !== startedAs) return;
-      update(session, { title: name });
-      console.log('fleet: session named', { id: session.id });
-    }).catch((err) => console.warn('fleet: session not renamed', { id: session.id, message: firstLine(err) }));
+    naming.catch((err) => {
+      console.warn('fleet: session not renamed', { id: session.id, message: firstLine(err) });
+      return null;
+    }).then((name) => {
+      if (!find(session.id) || session.title !== startedAs) return;
+      update(session, { ...(name ? { title: name } : {}), namedAt: nowIso() });
+      console.log('fleet: session named', { id: session.id, named: Boolean(name) });
+    }).catch((err) => console.warn('fleet: session name not saved', { id: session.id, message: firstLine(err) }));
   }
 
   /**

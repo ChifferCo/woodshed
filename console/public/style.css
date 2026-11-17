@@ -822,6 +822,20 @@ table.layer-table { width: 100%; min-width: 460px; border-collapse: collapse; fo
 /* A card's ⋯ and the menu it opens, after the shed's: each action with a line on what it does. */
 .rmenu { display: inline-grid; place-items: center; width: 22px; height: 20px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font-size: 14px; line-height: 1; cursor: pointer; }
 .rmenu:hover, .rmenu[aria-expanded="true"] { background: var(--line-soft); color: var(--ink); }
+.rename-offer { position: fixed; z-index: 45; display: flex; align-items: center; gap: 6px; max-width: calc(100vw - 16px); padding: 8px 6px 10px 12px; overflow: hidden; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); font-size: 13px; color: var(--ink); }
+.rename-offer-body { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: pointer; }
+.rename-offer-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); }
+.rename-offer-line b { color: var(--ink); font-weight: 600; }
+.rename-offer .btn { flex: none; }
+.rename-offer-form { display: flex; align-items: center; gap: 6px; cursor: auto; }
+.rename-offer-form .field { width: min(320px, calc(100vw - 180px)); min-height: 28px; padding: 3px 8px; font-size: 13px; }
+.rename-offer-close { flex: none; display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--meta); font: inherit; font-size: 16px; cursor: pointer; }
+.rename-offer-close:hover { background: var(--stopped); color: var(--ink); }
+/* What is left of the 10 s: gone once a click keeps the offer. */
+.rename-offer-timer { position: absolute; left: 0; bottom: 0; height: 2px; width: 100%; background: var(--slate); transform-origin: left; animation: rename-offer-time linear forwards; }
+.rename-offer.is-kept .rename-offer-timer { display: none; }
+@keyframes rename-offer-time { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) { .rename-offer-timer { animation: none; } }
 .card-menu { position: fixed; z-index: 40; width: 320px; max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; display: flex; flex-direction: column; background: var(--ground); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(27, 34, 50, 0.18); }
 .card-menu[hidden] { display: none; }
 /* Its rows keep their height when it is held to the screen's: it scrolls instead. */

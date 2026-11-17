@@ -108,10 +108,18 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Work on
 
-- New session's Work on is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
+- New session's Work on, labelled **Continue a PR or branch** with `optional: leave empty to start a new branch`, is a combobox over the project's open pull requests (`components/PullPicker`): type to narrow
   them, or open the quiet ▾ for all. Each row is enough to pick from without GitHub: number, title, Draft, author,
   branch and last update. A pick writes `PR #123` and is named under the field. Anything typed still goes as typed.
 - The list is a `menu` surface with rows on `slate-tint` when picked or hovered, never a status color.
+
+## Naming a session
+
+- New session asks for no name. Once the console has named the session, its page shows a rename offer under the title:
+  a `menu` surface (`ground`, `line` border, `menu` shadow) with `Named` in `sub` and the name in `ink` 600, a
+  `btn-plain` **Rename** and a quiet ×. A 2px `slate` line along its foot runs down over 10 s, when it goes. A click
+  anywhere on it keeps it and drops the line; **Rename** turns it into a field with a `btn-plain` Save and a quiet
+  Cancel. Never orange: renaming is not the session's primary action.
 
 ## Commands to copy
 
