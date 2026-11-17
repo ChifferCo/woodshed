@@ -340,8 +340,9 @@ An installation works on one repo, and nothing in this folder names one. To set 
   reaches a session as its name in capitals. Each is legacy: a session and the seed read it only for a file with no
   value in Repo settings (console/README.md, "Repo settings"), where each repo's env files are set now, the
   installation's on Console settings and each person's own on My settings. The console copies each secret, and each
-  person's own lines for it, into the default project's Repo settings at start; the Secrets page lists the secrets
-  under "Moved to Repo settings" and refuses a Replace once Repo settings hold the file, and My settings' old route for
+  person's own lines for it, into the default project's Repo settings at start; the Secrets page lists a secret
+  under "Not in Repo settings yet" only while Repo settings have no value for its file, and the console refuses a
+  Replace once they do, and My settings' old route for
   own lines writes the new names. With this, the fallback release is complete: every edit reaches sessions through Repo
   settings, and the Terraform secrets are read only for a file nobody has set there. The fallback (these secrets,
   `database_env_secrets`, the session's `WARNING: … from the legacy env file secret` and the old route) stays at least
