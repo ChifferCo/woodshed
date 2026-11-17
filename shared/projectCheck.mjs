@@ -170,12 +170,23 @@ function databaseProblems(project, repoDir) {
   });
 }
 
-// Each service's files must be in the repo, where its readers take them from; and its variable is the installation's to
-// set, so the project's env setting it would hide the URL.
+// A symlink, or a folder on the way that is one, in the checkout: what it names is read as the file, which can be anything
+// the reader may read (a CI runner's environment, a file in the machine owner's home).
+function symlinkOnPath(repoDir, file) {
+  const parts = file.split('/');
+  return parts.some((_, i) => fs.lstatSync(path.join(repoDir, ...parts.slice(0, i + 1)), { throwIfNoEntry: false })?.isSymbolicLink() ?? false);
+}
+
+// Each service's files must be in the repo, where its readers take them from, and each a file of the repo's own, never
+// a symlink, whose text could be any file of the reader's; and its variable is the installation's to set, so the
+// project's env setting it would hide the URL.
 function serviceProblems(project, repoDir) {
   return project.services.flatMap((service, i) => [
-    ...Object.entries(service.files).filter(([, source]) => !readRepoFile(repoDir, source))
-      .map(([target, source]) => `services[${i}].files.${target} is ${source}, which is not in the checkout or on the default branch`),
+    ...Object.entries(service.files).flatMap(([target, source]) => {
+      const at = `services[${i}].files.${target}`;
+      if (symlinkOnPath(repoDir, source)) return [`${at} is ${source}, which is a symlink, or under one, in the checkout: a service's file must be the repo's own`];
+      return readRepoFile(repoDir, source) ? [] : [`${at} is ${source}, which is not in the checkout or on the default branch`];
+    }),
     ...(Object.hasOwn(project.env, service.variable) ? [`env.${service.variable} is services[${i}]'s variable, which its URL arrives in: leave it to the service`] : []),
   ]);
 }

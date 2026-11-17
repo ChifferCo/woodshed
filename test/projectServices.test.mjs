@@ -46,6 +46,7 @@ test('services refuse what would collide with Woodshed, or change unseen', () =>
     [{ variable: 'S3' }, /ending in _URL or _ENDPOINT/],
     [{ variable: 'PG_URL' }, /PG_URL, one of Woodshed's own session variables/],
     [{ variable: 'WOODSHED_CONSOLE_URL' }, /one of Woodshed's own session variables/],
+    [{ variable: 'REDIS_URL' }, /REDIS_URL, the session's own Redis/],
     [{ environment: { PORT: 1 } }, /environment\.PORT must be a string/],
     [{ environment: { 'A-B': 'x' } }, /environment\.A-B is not a variable name/],
     [{ files: { 'etc/x': 'x.sh' } }, /must be an absolute path in the container/],
@@ -70,6 +71,7 @@ test('data: what a stateful service keeps, and for whom; none is stateless', () 
     [{ dir: '/data' }, /data is missing keep/],
     [{ dir: 'data', keep: 'person' }, /data\.dir must be an absolute folder/],
     [{ dir: '/', keep: 'person' }, /data\.dir must be an absolute folder/],
+    [{ dir: '//', keep: 'person' }, /data\.dir must be an absolute folder/],
     [{ dir: '/a/../b', keep: 'person' }, /data\.dir must be an absolute folder/],
     [{ dir: '/data', keep: 'person', size: '1g' }, /data has size, which is not a field/],
   ]) assert.throws(() => parse([{ ...LOCALSTACK, data }]), error, JSON.stringify(data));
@@ -89,3 +91,19 @@ test('check names each service, a file of one that is missing, and an env that w
     [`services[0].files.${INIT} is .woodshed/services/create-bucket.sh, which is not in the checkout or on the default branch`]);
 });
 
+// A reader of the files (a deploy's runner, an install on someone's machine) would read whatever a symlink names: its
+// own environment, the owner's home. check refuses one, and a folder on the way that is one.
+test('check refuses a service\'s file that is a symlink, or under a symlinked folder', () => {
+  const dir = checkout();
+  const project = { ...parse([LOCALSTACK]), from: 'checkout' };
+  const file = path.join(dir, '.woodshed/services/create-bucket.sh');
+  fs.rmSync(file);
+  fs.symlinkSync('/proc/self/environ', file);
+  assert.deepEqual(repoProblems(project, dir),
+    [`services[0].files.${INIT} is .woodshed/services/create-bucket.sh, which is a symlink, or under one, in the checkout: a service's file must be the repo's own`]);
+  fs.rmSync(path.join(dir, '.woodshed/services'), { recursive: true });
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-services-outside-'));
+  fs.writeFileSync(path.join(outside, 'create-bucket.sh'), 'x');
+  fs.symlinkSync(outside, path.join(dir, '.woodshed/services'));
+  assert.match(repoProblems(project, dir).join('\n'), /which is a symlink, or under one/);
+});

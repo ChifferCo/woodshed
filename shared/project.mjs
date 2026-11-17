@@ -347,12 +347,13 @@ export const SERVICE_KEEPS = Object.freeze(['person', 'session']);
 // `dir`, whose `keep` says for whom.
 function serviceData(value, field) {
   const d = fields(value, field, PROJECT_FIELDS['services.data']);
-  string(d.dir, `${field}.dir`);
-  if (!d.dir.startsWith('/') || d.dir === '/' || d.dir.includes(':') || d.dir.split('/').includes('..')) {
+  // Checked once its trailing slashes are gone, so `//` is refused as `/` is, never read as an empty path.
+  const dir = string(d.dir, `${field}.dir`).replace(/\/+$/, '');
+  if (!dir.startsWith('/') || dir.includes(':') || dir.split('/').includes('..')) {
     fail(`${field}.dir must be an absolute folder in the container, not /, with no colon or ..`);
   }
   if (!SERVICE_KEEPS.includes(d.keep)) fail(`${field}.keep must be one of ${SERVICE_KEEPS.join(', ')} (it is ${JSON.stringify(d.keep)})`);
-  return { dir: d.dir.replace(/\/+$/, ''), keep: d.keep };
+  return { dir, keep: d.keep };
 }
 
 function service(value, field) {
@@ -363,6 +364,8 @@ function service(value, field) {
   if (RESERVED_SERVICE_PORTS.includes(p)) fail(`${field}.port is ${p}, which Woodshed listens on beside the services (it keeps ${RESERVED_SERVICE_PORTS.join(', ')})`);
   if (typeof s.variable !== 'string' || !SERVICE_VARIABLE.test(s.variable)) fail(`${field}.variable must be a name in capitals ending in _URL or _ENDPOINT, as S3_ENDPOINT`);
   if (isSessionVariable(s.variable)) fail(`${field}.variable is ${s.variable}, one of Woodshed's own session variables`);
+  // A project whose env mentions REDIS_URL gets the session's own Redis there (session/entrypoint.sh, usesVariable).
+  if (s.variable === 'REDIS_URL') fail(`${field}.variable is REDIS_URL, the session's own Redis: name the service's otherwise`);
   const environment = stringMap(s.environment, `${field}.environment`);
   for (const name of Object.keys(environment)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) fail(`${field}.environment.${name} is not a variable name`);
   if (typeof s.memory !== 'string' || !MEMORY.test(s.memory)) fail(`${field}.memory must be megabytes or gigabytes, as 768m or 2g`);

@@ -104,14 +104,15 @@ services:
     image: localstack/localstack:4.14.0
     # Required. What it listens on. Not 80, 443, 5432, 7691 or 27017.
     port: 4566
-    # Required. Where its URL arrives, in capitals ending in _URL or _ENDPOINT, each service its own.
+    # Required. Where its URL arrives, in capitals ending in _URL or _ENDPOINT, each service its own. Not REDIS_URL,
+    # the session's own Redis, nor another of Woodshed's (PG_URL, WOODSHED_*).
     variable: S3_ENDPOINT
     # Default: {}. The container's environment. Quote numbers.
     environment:
       SERVICES: s3
       PERSISTENCE: '1'
     # Default: {}. Files put in the container, read-only and executable, such as an init script: the path there, then
-    # the file in the repo it is read from.
+    # the file in the repo it is read from, the repo's own and never a symlink.
     files:
       /etc/localstack/init/ready.d/create-bucket.sh: .woodshed/services/create-bucket.sh
     # Default: 768m. Its memory limit, in m or g.
