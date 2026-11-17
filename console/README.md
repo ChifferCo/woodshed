@@ -776,6 +776,9 @@ part. The session cannot write to GitHub, so it writes files and the console pos
   in `resolved.txt`, and after an APPROVE the console resolves them and the review's outdated threads, never a
   person's (`fleet: review threads resolved`).
 - **The merge risk** is the Merge risk check and the `merge risk: low|medium|high` label, the other two taken off.
+- **The PR comment** says `⏳ Reviewing` as soon as the session starts, and becomes the review's comment when it ends.
+  A session that ends without a review turns it into `The review did not finish` with the reason
+  (`fleet: review ended without a report`).
 
 ### The approval waits for QA
 

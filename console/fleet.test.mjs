@@ -3014,3 +3014,24 @@ test('QA the console labelled on a pull request its own session opened runs as t
   const session = t.fleet.sessions().find((s) => s.qa);
   assert.deepEqual([session.startedBy, session.qa.teamKey], ['joel', undefined]);
 });
+
+test('a review comments that it started, and that comment becomes the review\'s comment, or says it did not finish', async () => {
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [running] = calls.comments;
+  assert.ok(running.body.startsWith('⏳ **Reviewing**'));
+  await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
+  assert.deepEqual(calls.comments.at(-1), { id: 9001, body: REVIEW_RESULT.comment }, 'the review edits its started comment');
+
+  const silent = reviewSetup();
+  await silent.fleet.reviewOnTag({ number: 7 });
+  await silent.fleet.reviewFinished(silent.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: null, comment: null });
+  assert.match(silent.calls.comments.at(-1).body, /did not finish.*no verdict/);
+
+  const died = reviewSetup();
+  await died.fleet.reviewOnTag({ number: 7 });
+  died.store.state.sessions[0].status = 'failed';
+  died.store.state.sessions[0].error = 'CannotPullContainerError: no image';
+  await died.fleet.tick();
+  assert.match(died.calls.comments.at(-1).body, /did not finish.*CannotPullContainerError/);
+});

@@ -12,6 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
+import { reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
@@ -818,6 +819,7 @@ export function createFleet({
       await startQueued();
       // Before retention, which can take an ended QA run off the list at once.
       for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
+      for (const session of [...state.sessions]) await safely('review ended without a report', () => reviewEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
       await sweepDatabases();
       await announcer.check();
@@ -1767,6 +1769,8 @@ export function createFleet({
       },
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
+    await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project) }));
+    update(session, { review: { ...session.review, runningPosted: true } });
     return { outcome: 'started', sessionId: session.id };
   }
 
@@ -1818,7 +1822,10 @@ export function createFleet({
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
     const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
-    if (!conclusion) console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
+    if (!conclusion) {
+      console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
+      await postReviewEnded(session, project, 'the session wrote no verdict');
+    }
     const held = hold && ours ? { sha, summary, inlineComments, resolved } : null;
     update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
@@ -1984,6 +1991,23 @@ export function createFleet({
       id: session.id, number: session.number, threads: threads.length, own: mine.length, outdated: mine.filter((t) => t.isOutdated).length,
       given: fixed.size, picked: picked.length, resolved,
     });
+  }
+
+  // A review session that stopped or failed before reporting (reviewFinished) would leave its comment saying it is
+  // still reviewing. Checked once per run, on a tick.
+  async function reviewEndedUnreported(session) {
+    if (!isReview(session) || session.review.reported || session.review.endChecked) return;
+    if (session.status !== 'stopped' && session.status !== 'failed') return;
+    update(session, { review: { ...session.review, endChecked: true } });
+    const reason = firstLine(session.stopReason ?? session.error ?? '') || 'it stopped without a report';
+    console.log('fleet: review ended without a report', { id: session.id, number: session.number, reason });
+    await postReviewEnded(session, projectFor(config, session), reason);
+  }
+
+  async function postReviewEnded(session, project, reason) {
+    // Only a run that posted its own running comment: an older run's comment id may hold an earlier review.
+    if (!session.review.runningPosted || !session.review.commentId) return;
+    await postReviewComment(session, githubOf(project), reviewEndedComment({ reason, sessionUrl: await qaSessionUrl(session, project) }));
   }
 
   async function postReviewComment(session, gh, body) {

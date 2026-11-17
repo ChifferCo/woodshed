@@ -31,6 +31,24 @@ function resolvedOf(raw) {
  *   mergeRisk: {tier: string|null, reason: string, summary: string}, inlineComments: {path: string, line: number, body: string}[],
  *   resolved: number[], sha: string, costUsd: number|null}}
  */
+/**
+ * @param {{sessionUrl: string|null}} args
+ * @returns {string}  the review's comment while its session runs, replaced by the review's own comment when it ends
+ */
+export function reviewRunningComment({ sessionUrl }) {
+  const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
+  return `⏳ **Reviewing** in ${where}: the review and its merge risk follow here when it ends.\n`;
+}
+
+/**
+ * @param {{reason: string, sessionUrl: string|null}} args
+ * @returns {string}  the review's comment when its session ended without a review
+ */
+export function reviewEndedComment({ reason, sessionUrl }) {
+  const where = sessionUrl ? ` ([session](${sessionUrl}))` : '';
+  return `⚠️ **The review did not finish**${where}: ${reason}. A new commit starts another.\n`;
+}
+
 export function parseReviewReport(raw) {
   let body;
   try {
