@@ -1769,7 +1769,9 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    approves its head, as whoever added the label (the issue events' last `labeled`), once for each commit.
    With `qa.autoLabel` the console adds the label itself when a same-repo pull request opens or is marked ready
    (`qaAutoLabel`); a label its own App added stands for the pull request's author, on the team key when the author
-   fails the checks above.
+   fails the checks above. When the author is the console's own App (a pull request one of its sessions opened), the
+   review and QA stand for the person who started that session instead, so they run on that person's plan
+   (`fleet: pull request opened by a session, run as its starter`).
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.
