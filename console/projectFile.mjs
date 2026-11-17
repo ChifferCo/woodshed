@@ -67,8 +67,7 @@ export function createProjectReader({ github, installationFile = () => null, now
     }
   }
 
-  // One read at a time, shared: My settings asks for each file at once, and a second caller must wait for the first's
-  // answer, not see none.
+  // One read at a time, shared: a second caller asking at once must wait for the first's answer, not see none.
   function read() {
     // The default project's client follows the console's default repo, which changes when the first one is added.
     if (!pending || now() - readAt >= keepMs || github.repo !== readFrom) {
