@@ -42,6 +42,8 @@ export function messageToTrigger(message, { label }) {
  *   `events` keeps what happened to each message (webhookEvents.mjs); without `asks`, a Slack mention is dropped, and
  *   without `pulls` a pull request change; a result with `unrecorded` is left out of `events`. `appIdentity`
  *   (appIdentity.mjs) says whose comment a session's "Needs a human:" must be; without one, those are dropped.
+ *   `webhookSwitch` (webhookSwitch.mjs) drops every GitHub message, and keeps `alive` from the fleet, while GitHub's is
+ *   off, and every Slack mention while Slack's is.
  *   `config` names the console's projects: a GitHub message about a repo that is no project's is dropped, and one
  *   about another project's repo is handed on naming that project (`project`), so it acts on that repo's numbers
  * @returns {{dispatch: (message: {text: string, id?: string|null, attempt?: string|null}) => Promise<boolean>, alive: () => void}}
@@ -49,10 +51,23 @@ export function messageToTrigger(message, { label }) {
  *   events log. It resolves true when the source may forget the message, false to have it come back for a retry.
  *   `alive` is called on each receive, so the fleet knows webhooks are arriving.
  */
+/**
+ * What a GitHub message would have started that the poll never does, so it stops while GitHub's webhooks are off: a
+ * session's Needs a human comment (its assignee's message), a QA label, and on a pull request's change QA after a
+ * review, the QA label on a new pull request and the review a commit's tag starts.
+ * @returns {string|null}  null for what the poll finds by itself: the label, /woodshed comments, anything else
+ */
+export function pollMisses(body, label) {
+  if (body?.type === 'needsHuman') return 'Needs a human';
+  if (body?.type === 'label' && body.kind === 'pr' && body.label !== label) return 'QA label';
+  if (body?.type === 'pr') return 'QA and review steps';
+  return null;
+}
+
 // The pull request events that may need the QA label added (fleet.qaAutoLabel).
 const AUTO_LABEL_EVENTS = new Set(['pull request opened', 'pull request ready_for_review']);
 
-export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null }) {
+export function createWebhookDispatch({ label, config = null, fleet, asks = null, pulls = null, events = { record() {} }, appIdentity = null, webhookSwitch = null }) {
   // Every GitHub message below acts on an issue or pull request number, which means nothing without its repo: another
   // project's #12 is not the default project's #12. So a message about another project's repo carries that project's
   // name from here on (`project`), and one about a repo that is no project's is dropped. A message with no repo was
@@ -81,6 +96,12 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
       return true;
     }
     if (body?.source === 'slack') return dispatchSlack(body, attempt);
+    // Turned off on Console settings (webhookSwitch.mjs). The poll finds `label` labels and /woodshed comments, and
+    // reads pull requests again at full speed; what else a message would have started stops (pollMisses).
+    if (body?.source === 'github' && webhookSwitch?.off('github')) {
+      webhookSwitch.dropped('github', pollMisses(body, label));
+      return true;
+    }
     if (body?.source === 'github') {
       body = routed(body);
       if (!body) return true;
@@ -158,6 +179,12 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
   }
 
   function dispatchSlack(body, attempt) {
+    // Kept in the events log: a mention is someone waiting for an answer that will not come.
+    if (body.type === 'mention' && webhookSwitch?.off('slack')) {
+      webhookSwitch.dropped('slack');
+      events.record(body, { outcome: 'ignored', reason: 'Slack questions are switched off on Console settings' });
+      return true;
+    }
     if (!asks || body.type !== 'mention') {
       console.log('webhooks: Slack message not for the console, deleted', { type: body.type ?? null, asks: Boolean(asks) });
       if (body.type === 'mention') events.record(body, { outcome: 'ignored', reason: 'Slack questions are off on this console' });
@@ -182,5 +209,6 @@ export function createWebhookDispatch({ label, config = null, fleet, asks = null
     return true;
   }
 
-  return { dispatch, alive: () => fleet.webhooksAlive() };
+  // Off, the fleet hears nothing, so its poll goes back to full speed within a minute.
+  return { dispatch, alive: () => { if (!webhookSwitch?.off('github')) fleet.webhooksAlive(); } };
 }

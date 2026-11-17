@@ -798,7 +798,28 @@ you out.
   `state.json`; the page shows the last 7 days, and a sweep every 12 hours
   (`webhookEvents: swept` with how many it kept) takes older lines out. A
   delivery the Lambda refused never reaches the queue: GitHub's Recent
-  Deliveries page shows those.
+  Deliveries page shows those. When a source is switched off on Console
+  settings (below), the page says so above the list.
+- **Webhooks** card on Console settings (`/console-settings#webhooks`): two
+  switches, shown where webhooks reach the console (a queue, the local
+  receiver, or the program it is embedded in), that turn each source off on
+  its own. **GitHub webhooks** off, the console drops
+  each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
+  at full speed (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does.
+  The poll finds only the session label and `/woodshed` comments, so what only
+  a webhook starts stops until it is on again: QA labels, QA after a review
+  approves, `qa.autoLabel`, review sessions started by a commit's tag, and the
+  assignee's message for a session's `Needs a human:` comment. The console logs
+  `webhooks: off, dropped a delivery the poll does not cover` with its `kind`
+  at the first of each.
+  **Slack questions** (only on a console that answers them) off, it drops each
+  mention of its bot, which nothing else brings, and lists it as ignored. Each
+  is kept in `state.json` under `webhooks.<source>`, with who turned it and
+  when; the console logs `webhooks: switched` with `source`, `off` and `by`,
+  then `webhooks: off, deliveries dropped from now on` with the `source` at the
+  first delivery it drops, and at start `console: GitHub webhooks are switched
+  off on Console settings, polling` or `console: Slack questions are switched
+  off on Console settings`.
 - **Secrets & webhooks** (`/secrets`): each secret's state and when it last
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
