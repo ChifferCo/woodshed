@@ -290,12 +290,14 @@ and project, so a person just given write access waits up to 10 minutes for it t
 another one saves it (`POST /api/my/projects/default`, kept per person in `viewPrefs`), as does
 the **Default project** card on My settings; `?project=<name>` picks one for that visit. Resume asks again, so a session on a project whose repo you can no longer write
 to does not start (403). The form
-asks for a prompt and, optionally:
-- a name. Left empty, the session starts named after the prompt's first line,
-  and the console asks Claude Haiku for a better one on the team's Anthropic
-  key (`console/autoName.mjs`). The rail shows it a second or so later; if the
-  call fails, the first line stays;
-- what to work on: `#123` for an issue or PR, `PR #123`, or a branch name. The field lists the project's open pull
+asks for a prompt and, optionally, the rest below. It asks for no name: the session starts named after the prompt's
+first line, and the console asks Claude Haiku for a better one on the team's Anthropic key (`console/autoName.mjs`).
+The rail shows it a second or so later; if the call fails, the first line stays. Either way the console then sets the
+session's `namedAt`, and a page that saw the session before it (or opens it within 30 s) shows a small **Named …
+Rename** offer under its title for 10 s: a click on it keeps it open, and **Rename** turns it into a field that saves
+with Enter, as the title's own rename does. `POST /api/my/sessions` still takes a `name`, which skips all of this.
+- **Continue a PR or branch**: `#123` for an issue or PR, `PR #123`, or a branch name. Left empty, the session starts a
+  new branch from the default branch. The field lists the project's open pull
   requests (`GET /api/pulls`, the 100 updated last, read by the console in one GraphQL call and kept a minute per
   project): typing narrows them by number, title, branch or author, ▾ or ↓ shows them all, and a pick writes `PR #123`
   and names it under the field. The console logs `console: open pull requests read` with the count, or `console: open
