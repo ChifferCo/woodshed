@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES } from './qaSessions.mjs';
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
@@ -368,6 +369,53 @@ test('a QA session gets a read-only token, and sends its report once through /qa
   assert.equal((await report('Bearer qa-token', { verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 })).status, 204);
   assert.equal((await report('Bearer qa-token', { verdict, report: 'again', sha })).status, 409);
   assert.deepEqual(finished, [{ id: 'aaaaaaaa', verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 }]);
+});
+
+test('a QA session sends its WebM videos through /qa-video before its report; nothing else, and no other session, can', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
+  const saved = [];
+  let refuse = false;
+  const fleet = {
+    sessions: () => sessions,
+    async qaVideo(session, video) {
+      if (refuse) throw new Error('HTTP 403: Resource not accessible by integration');
+      saved.push(video);
+      session.qa.videos = [...(session.qa.videos ?? []), { url: `u${saved.length}`, bytes: video.length }];
+      return { url: `u${saved.length}` };
+    },
+  };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(1000, 7)]);
+  const send = (authorization, body, headers = {}) => request(port, { path: '/qa-video', authorization, body, headers });
+
+  assert.equal((await send('Bearer pr-token', webm)).status, 404, 'only a QA session has videos');
+  assert.equal((await send('Bearer qa-token', Buffer.from('<html>not a video</html>'))).status, 400);
+  // Said up front, refused before a byte is read: the client never has to send it all.
+  const tooBig = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/qa-video',
+      headers: { authorization: 'Bearer qa-token', 'content-length': String(MAX_QA_VIDEO_BYTES + 1) } }, (res) => {
+      resolve(res.statusCode);
+      req.destroy();
+    });
+    req.on('error', reject);
+    req.write(webm);
+  });
+  assert.equal(tooBig, 413);
+  assert.deepEqual(await send('Bearer qa-token', webm), { status: 200, body: { url: 'u1' } });
+  assert.ok(saved[0].equals(webm), 'the bytes as sent');
+  refuse = true;
+  assert.equal((await send('Bearer qa-token', webm)).status, 502, 'GitHub refusing it is the console\'s failure');
+  refuse = false;
+  qa.qa.videos = Array.from({ length: MAX_QA_VIDEOS }, () => ({ url: 'u', bytes: 1 }));
+  assert.equal((await send('Bearer qa-token', webm)).status, 409, 'at most MAX_QA_VIDEOS');
+  qa.qa.videos = [];
+  qa.qa.conclusion = 'success';
+  assert.equal((await send('Bearer qa-token', webm)).status, 409, 'not once the report is in');
 });
 
 test('a review session gets a read-only token, and sends its verdict once through /review-report', async (t) => {

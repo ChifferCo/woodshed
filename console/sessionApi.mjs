@@ -33,6 +33,10 @@
 //   POST /qa-report      {"verdict", "report", "sha", "costUsd"}  ->  204: a QA session's result (session/qa.sh), written
 //                        into the pull request's QA comment, after which the console stops the session
 //                        (qaSessions.mjs). 404 for any other session, 409 for a second report
+//   POST /qa-video       a WebM body  ->  {"url"}: one of a QA session's browser recordings, sent before its report,
+//                        committed to a ref of the repo for the QA comment to link (fleet.qaVideo). 404 for any other
+//                        session, 409 once the report is in or past MAX_QA_VIDEOS, 413 past MAX_QA_VIDEO_BYTES, 400
+//                        for anything but WebM, 502 when GitHub refused it
 //
 // A session's git credential helper and its `gh` wrapper call /github-token, so a
 // session only ever holds a token that expires within hours: an installation
@@ -56,7 +60,7 @@ import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
-import { MAX_REPORT_CHARS, parseQaReport } from './qaSessions.mjs';
+import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES, MAX_REPORT_CHARS, isWebm, parseQaReport } from './qaSessions.mjs';
 import { ACTIVE_STATUSES, START_STEPS, isAsk, isQa, isReview } from './sessions.mjs';
 import { parseReviewReport } from './reviewSessions.mjs';
 
@@ -164,7 +168,7 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/review-report'];
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/review-report'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -177,6 +181,7 @@ export function createSessionApi({
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
     if (pathname === '/answer') return answerReply(req, res, session, asks);
     if (pathname === '/qa-report') return qaReportReply(req, res, session, fleet);
+    if (pathname === '/qa-video') return qaVideoReply(req, res, session, fleet);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
@@ -427,6 +432,36 @@ function qaReportReply(req, res, session, fleet) {
   return reportReply(req, res, session, {
     kind: 'QA', mine: isQa(session), sent: Boolean(session.qa?.conclusion), parse: parseQaReport, finish: fleet.qaFinished,
   });
+}
+
+// One of a QA session's browser recordings, read whole and handed to the fleet, which commits it for the QA comment.
+async function qaVideoReply(req, res, session, fleet) {
+  const refuse = (code, error) => {
+    req.resume();
+    return reply(res, code, { error });
+  };
+  if (!isQa(session) || !fleet.qaVideo) return refuse(404, 'only a QA session has videos to send');
+  if (session.qa?.conclusion) return refuse(409, 'this session already sent its report');
+  if ((session.qa?.videos?.length ?? 0) >= MAX_QA_VIDEOS) return refuse(409, `a QA run keeps at most ${MAX_QA_VIDEOS} videos`);
+  if (Number(req.headers['content-length']) > MAX_QA_VIDEO_BYTES) return refuse(413, 'too large');
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of req) {
+    bytes += chunk.length;
+    if (bytes > MAX_QA_VIDEO_BYTES) return reply(res, 413, { error: 'too large' });
+    chunks.push(chunk);
+  }
+  const video = Buffer.concat(chunks);
+  if (!isWebm(video)) {
+    console.warn('sessionApi: a QA video refused, not WebM', { sessionId: session.id, bytes });
+    return reply(res, 400, { error: 'the body must be a WebM video' });
+  }
+  try {
+    return reply(res, 200, await fleet.qaVideo(session, video));
+  } catch (err) {
+    console.warn('sessionApi: a QA video not saved', { sessionId: session.id, bytes, message: String(err?.message ?? err).split('\n')[0] });
+    return reply(res, 502, { error: 'GitHub did not take the video' });
+  }
 }
 
 function reviewReportReply(req, res, session, fleet) {

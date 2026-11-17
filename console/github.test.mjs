@@ -171,3 +171,44 @@ test('the repo\'s open pull requests are read in one call, each with its branch 
   assert.ok(asked.includes('owner=acme') && asked.includes('name=api'));
   assert.match(asked.find((a) => a.startsWith('query=')), /pullRequests\(states: OPEN, first: 100, orderBy: \{field: UPDATED_AT, direction: DESC\}\)/);
 });
+
+test('a file is committed to a ref that is not a branch: made with its first file, then moved on top of it', async () => {
+  const fs = await import('node:fs');
+  const asked = [];
+  let refAt = null;
+  const run = async (_cmd, args) => {
+    const method = args.includes('--method') ? args[args.indexOf('--method') + 1] : 'GET';
+    const endpoint = args.find((a) => a.startsWith('repos/'));
+    const body = args.includes('--input') ? JSON.parse(fs.readFileSync(args[args.indexOf('--input') + 1], 'utf8')) : null;
+    asked.push({ method, endpoint, body });
+    if (endpoint.endsWith('/git/ref/woodshed-qa/7-s1')) {
+      if (!refAt) throw Object.assign(new Error('gh: Not Found (HTTP 404)'), { stderr: 'gh: Not Found (HTTP 404)' });
+      return { stdout: JSON.stringify({ object: { sha: refAt } }) };
+    }
+    if (method === 'GET' && endpoint.includes('/git/commits/')) return { stdout: JSON.stringify({ tree: { sha: 'tree-of-c1' } }) };
+    if (endpoint.endsWith('/git/blobs')) return { stdout: JSON.stringify({ sha: 'blob1' }) };
+    if (endpoint.endsWith('/git/trees')) return { stdout: JSON.stringify({ sha: 'tree1' }) };
+    if (endpoint.endsWith('/git/commits')) return { stdout: JSON.stringify({ sha: refAt ? 'c2' : 'c1' }) };
+    if (endpoint.endsWith('/git/refs') || endpoint.endsWith('/git/refs/woodshed-qa/7-s1')) {
+      refAt = body.sha;
+      return { stdout: '{}' };
+    }
+    throw new Error(`unexpected ${method} ${endpoint}`);
+  };
+  const github = createGitHub({ repo: 'acme/api', run });
+  const content = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0xff]);
+  const first = await github.commitFileToRef({ ref: 'refs/woodshed-qa/7-s1', path: 'qa-1.webm', content, message: 'one' });
+  assert.deepEqual(first, { commit: 'c1', url: 'https://github.com/acme/api/raw/c1/qa-1.webm' });
+  const posted = (endpoint) => asked.filter((a) => a.endpoint === `repos/acme/api/${endpoint}`).map((a) => [a.method, a.body]);
+  assert.deepEqual(posted('git/blobs'), [['POST', { content: content.toString('base64'), encoding: 'base64' }]]);
+  assert.deepEqual(posted('git/trees'), [['POST', { tree: [{ path: 'qa-1.webm', mode: '100644', type: 'blob', sha: 'blob1' }] }]]);
+  assert.deepEqual(posted('git/commits'), [['POST', { message: 'one', tree: 'tree1', parents: [] }]]);
+  assert.deepEqual(posted('git/refs'), [['POST', { ref: 'refs/woodshed-qa/7-s1', sha: 'c1' }]]);
+
+  asked.length = 0;
+  const second = await github.commitFileToRef({ ref: 'refs/woodshed-qa/7-s1', path: 'qa-2.webm', content, message: 'two' });
+  assert.equal(second.url, 'https://github.com/acme/api/raw/c2/qa-2.webm');
+  assert.equal(posted('git/trees')[0][1].base_tree, 'tree-of-c1', 'the first file stays');
+  assert.deepEqual(posted('git/commits')[0][1].parents, ['c1'], 'the first link keeps working');
+  assert.deepEqual(posted('git/refs/woodshed-qa/7-s1'), [['PATCH', { sha: 'c2', force: false }]]);
+});

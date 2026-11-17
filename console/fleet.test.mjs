@@ -2437,6 +2437,27 @@ test('a QA check GitHub refuses still leaves the report in the comment and stops
   assert.equal(session.status, 'stopped');
 });
 
+test('a QA session\'s videos are committed to its own ref, one after another, and its comment links them', async () => {
+  const { fleet, calls, github } = qaSetup();
+  const commits = [];
+  github.commitFileToRef = async (file) => {
+    commits.push(file);
+    return { commit: `c${commits.length}`, url: `https://github.com/o/r/raw/c${commits.length}/${file.path}` };
+  };
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  const video = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
+  assert.deepEqual(await fleet.qaVideo(session, video), { url: 'https://github.com/o/r/raw/c1/qa-1.webm' });
+  await fleet.qaVideo(session, video);
+  assert.deepEqual(commits.map((c) => [c.ref, c.path]), [[`refs/woodshed-qa/7-${session.id}`, 'qa-1.webm'], [`refs/woodshed-qa/7-${session.id}`, 'qa-2.webm']]);
+  assert.ok(commits[0].content.equals(video));
+
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.match(calls.comments.at(-1).body, /🎥 \*\*Recording\*\*.*\[page 1\]\(https:\/\/github.com\/o\/r\/raw\/c1\/qa-1.webm\).*\[page 2\]\(https:\/\/github.com\/o\/r\/raw\/c2\/qa-2.webm\)/);
+  assert.equal(session.qa.videos.length, 2, 'kept past the report');
+});
+
 test('a QA report naming another commit posts no check, though its comment is still written', async () => {
   const { fleet, calls } = qaSetup();
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });

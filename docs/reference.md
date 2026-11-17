@@ -478,9 +478,13 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
 
 - The session gets its own databases, as any session does, and a GitHub token that only reads. `session/qa.sh` runs in
   its terminal in place of claude: it plans with the same prompts as the actions (`shared/qa/`), starts the app with
-  the project file's `app.start` when there is something to test, and runs the plan in the image's browser.
+  the project file's `app.start` when there is something to test, and runs the plan in the image's browser, which
+  records a video of each page it opens.
 - The console posts the QA comment as its GitHub App when the session starts (`Running`, linking the session) and writes
-  the report into it when the session ends. Each later run writes over that comment. It also posts the
+  the report into it when the session ends, with a link to the browser's recording (WebM, which downloads and plays in
+  any browser; GitHub plays only videos attached by hand). The console commits the recording to
+  `refs/woodshed-qa/<pull request>-<session id>`, a ref of the repo that is not a branch, so clones never fetch it, one
+  for each run, which nothing deletes yet. Each later run writes over that comment. It also posts the
   `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
   session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
   An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check

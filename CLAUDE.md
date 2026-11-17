@@ -669,6 +669,11 @@ URL on top of each env file's Repo settings values
   lifetime) never sent one: label the pull request again. An approval its review held for it goes out on the next tick,
   saying QA did not finish: the console logs `fleet: held approval released, QA stopped without a report` with the
   `reason`, then `fleet: held approval released` with the verdict.
+- **A QA comment has no recording.** The session's terminal says `Video sent to the console (… KB, status: …)` for each
+  page, or `Video not sent` with why (over 50 MB, past 5); none of those lines means the browser wrote no video
+  (`ls .qa/video` in the checkout, and `qaBrowser: the browser did not close` in the run's output means it was cut
+  short). The console logs `fleet: QA video saved` with the `ref`, or `sessionApi: a QA video not saved` with GitHub's
+  error: a 403 means the App lacks Contents write.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
   `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the

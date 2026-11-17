@@ -3,6 +3,8 @@
 # and sends the report to the console, which posts it on the pull request (POST /qa-report, console/sessionApi.mjs).
 # The prompts and the verdict are the QA actions' own (shared/qa/qa.mjs), so a repo gets the same QA in its CI or here.
 # Runs in claude's pane, so the session's terminal shows it; statusd calls the session working while /tmp/qa-running is there.
+# The browser the tests drive records a video of each page, which goes to the console (POST /qa-video) before the
+# report, for the QA comment to link.
 #
 #   qa.sh        the whole run, once; the entrypoint starts it after statusd's port is open
 set -uo pipefail
@@ -14,6 +16,11 @@ RUNNING=${QA_RUNNING:-/tmp/qa-running}
 STATUSD=http://127.0.0.1:${STATUSD_PORT:-7682}
 NOTES=${QA_NOTES:-.woodshed/qa.md}
 APP_WAIT_SECONDS=${QA_APP_WAIT_SECONDS:-900}
+PLAYWRIGHT_MCP=${QA_PLAYWRIGHT_MCP:-playwright-mcp}
+QA_BROWSER=${QA_BROWSER:-$SESSION_DIR/qaBrowser.mjs}
+# What the console takes (console/qaSessions.mjs): a bigger video is kept in the session and not sent.
+MAX_VIDEO_BYTES=$((50 * 1024 * 1024))
+MAX_VIDEOS=5
 
 say() { printf '\n[qa %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -38,6 +45,32 @@ runClaude() {
 gatherContext() {
   gh pr view "$PR" --json title,body --jq '"# Pull request: \(.title)\n\n\(.body)\n"' > "$DIR/logs/pr-context.md" 2>/dev/null || true
   : > "$DIR/logs/past-fixes.md"
+}
+
+# The tests' own Playwright MCP, as the image adds it for claude (session/Dockerfile) but recording each page into
+# $DIR/video, behind qaBrowser.mjs, which closes the browser when claude ends so that each video is written whole.
+writeMcpConfig() {
+  jq -n --arg dir "$DIR/video" '{browser: {contextOptions: {recordVideo: {dir: $dir, size: {width: 1280, height: 720}}}}}' \
+    > "$DIR/playwright.json"
+  jq -n --arg proxy "$QA_BROWSER" --arg cmd "$PLAYWRIGHT_MCP" --arg config "$DIR/playwright.json" \
+    '{mcpServers: {playwright: {command: "node", args: [$proxy, $cmd, "--headless", "--browser", "chromium", "--config", $config]}}}' \
+    > "$DIR/mcp.json"
+}
+
+# Each page's video, oldest first, to the console, which puts it where the pull request's QA comment can link it.
+sendVideos() {
+  local file bytes code sent=0
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    bytes=$(stat -c %s "$file")
+    if [ "$sent" -ge "$MAX_VIDEOS" ]; then say "Video not sent, past $MAX_VIDEOS: $file"; continue; fi
+    if [ "$bytes" -gt "$MAX_VIDEO_BYTES" ]; then say "Video not sent, over 50 MB ($bytes bytes): $file"; continue; fi
+    code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+      | curl -sS --max-time 300 -o /tmp/qa-video-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: video/webm' \
+        --data-binary "@$file" "$WOODSHED_CONSOLE_URL/qa-video") || code=000
+    say "Video sent to the console ($((bytes / 1024)) KB, status: $code)"
+    [ "$code" = 200 ] && sent=$((sent + 1))
+  done < <(ls -1tr "$DIR"/video/*.webm 2>/dev/null)
 }
 
 waitForApp() {
@@ -79,7 +112,7 @@ finish() {
 
 main() {
   touch "$RUNNING"
-  mkdir -p "$DIR/logs" "$DIR/plan" "$DIR/screenshots"
+  mkdir -p "$DIR/logs" "$DIR/plan" "$DIR/screenshots" "$DIR/video"
   cd "$REPO_DIR" || exit 1
   # The run's files stay out of the Diff tab: they are the run's, not changes to the branch.
   grep -qx '/.qa/' .git/info/exclude 2>/dev/null || echo '/.qa/' >> .git/info/exclude
@@ -116,8 +149,11 @@ main() {
     finish 'the app did not start'
   fi
 
-  say "Running the tests at $appUrl"
-  runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright"
+  say "Running the tests at $appUrl, recording the browser"
+  writeMcpConfig
+  runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
+    --mcp-config "$DIR/mcp.json" --strict-mcp-config
+  sendVideos
   finish ''
 }
 

@@ -11,7 +11,7 @@ import { labelTriggers, commandTriggers, rememberSeen } from './github.mjs';
 import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
-import { finishedComment, runningComment } from './qaSessions.mjs';
+import { finishedComment, qaVideoRef, runningComment } from './qaSessions.mjs';
 import { reviewDoneComment, reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
@@ -1686,11 +1686,32 @@ export function createFleet({
    * @param {{verdict: {conclusion: string, title: string, status: string, total: number}, report: string, sha: string,
    *   costUsd: number|null}} result  from parseQaReport
    */
+  /**
+   * One of a QA session's videos, sent before its report: committed to the run's own ref of the repo (qaVideoRef), as
+   * the App, for the QA comment to link. Throws when GitHub refuses it.
+   * @param {object} session
+   * @param {Buffer} video  WebM
+   * @returns {Promise<{url: string}>}
+   */
+  async function qaVideo(session, video) {
+    const project = projectFor(config, session);
+    const gh = githubOf(project);
+    const videos = session.qa.videos ?? [];
+    const ref = qaVideoRef(session);
+    const { url } = await gh.commitFileToRef({
+      ref, path: `qa-${videos.length + 1}.webm`, content: video,
+      message: `QA recording ${videos.length + 1} of pull request #${session.number}, session ${session.id}`,
+    });
+    update(session, { qa: { ...session.qa, videos: [...videos, { url, bytes: video.length }] } });
+    console.log('fleet: QA video saved', { id: session.id, number: session.number, ref, bytes: video.length, videos: videos.length + 1 });
+    return { url };
+  }
+
   async function qaFinished(session, { verdict, report, sha, costUsd }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const sessionUrl = await qaSessionUrl(session, project);
-    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl }));
+    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl, videos: session.qa.videos ?? [] }));
     // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
     // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
     const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
@@ -2229,7 +2250,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

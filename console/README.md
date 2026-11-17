@@ -1764,10 +1764,13 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.
-4. `session/qa.sh` runs in the session's terminal, and statusd reports the session working until it is done. It sends
-   the verdict, the report, the commit it tested and the cost to the session API's `POST /qa-report`
-   (`qaSessions.mjs` checks it), once.
-5. The fleet writes the report into the QA comment, posts the QA check on the commit tested with the verdict and the
+4. `session/qa.sh` runs in the session's terminal, and statusd reports the session working until it is done. Its
+   tests drive Playwright's MCP with `recordVideo` on, behind `session/qaBrowser.mjs`, which closes the browser when
+   claude ends so Playwright writes each page's video whole. It sends each video (up to 5, 50 MB each, WebM only) to
+   `POST /qa-video`, where the fleet commits it to `refs/woodshed-qa/<pull request>-<session id>` with the Git data
+   API (`qaVideo`; the App's Contents write), then the verdict, the report, the commit it tested and the cost to
+   `POST /qa-report` (`qaSessions.mjs` checks it), once.
+5. The fleet writes the report into the QA comment, with the recordings' links, posts the QA check on the commit tested with the verdict and the
    report (the decision brief reads the report from there, since sessions can comment as the App but not post a
    check), and stops the session with `QA finished: <verdict>`. It pushes nothing and is not kept, so its databases go
    at the next sweep.

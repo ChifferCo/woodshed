@@ -17,6 +17,9 @@ if [ ! -f .qa/plan/plan.md ]; then
   echo '{"type":"result","total_cost_usd":0.5}'
 else
   printf '## TC-1: signs in ✅\\n## TC-2: saves ❌\\n' > .qa/report.md
+  # The browser's recording, where the MCP config claude was given says to write it.
+  for a in "$@"; do [ "\${prev:-}" = --mcp-config ] && cp "$a" .qa/mcp-seen.json; prev=$a; done
+  printf '\\x1a\\x45\\xdf\\xa3webm' > .qa/video/page@1.webm
   echo '{"type":"result","total_cost_usd":1.25}'
 fi
 `;
@@ -46,10 +49,17 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
     res.end(JSON.stringify(req.url === '/status' ? { app, appServers: { frontendPort: 3999 } } : { started: true }));
   });
   const reports = [];
+  const videos = [];
   const consoleServer = await listen((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    const chunks = [];
+    req.on('data', (c) => { chunks.push(c); });
     req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (req.url === '/qa-video') {
+        videos.push({ authorization: req.headers.authorization, type: req.headers['content-type'], body, before: reports.length });
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{"url":"u"}');
+        return;
+      }
       reports.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(body) });
       res.writeHead(204).end();
     });
@@ -69,7 +79,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
     child.on('error', reject);
     child.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`qa.sh exited ${code}: ${out}`))));
   });
-  return { reports, statusdCalls, output, repo, running: path.join(dir, 'qa-running') };
+  return { reports, videos, statusdCalls, output, repo, running: path.join(dir, 'qa-running') };
 }
 
 test('a QA run plans, starts the app, tests and sends the verdict, the report, the commit and the cost', async (t) => {
@@ -85,6 +95,19 @@ test('a QA run plans, starts the app, tests and sends the verdict, the report, t
   assert.ok(statusdCalls.includes('POST /app/start Bearer tok'));
   assert.match(fs.readFileSync(path.join(repo, '.qa', 'plan-prompt.md'), 'utf8'), /http:\/\/localhost:3999[\s\S]*Sign in as demo\./);
   assert.equal(fs.existsSync(running), false, 'the session reads as done');
+});
+
+test('the tests run on a browser that records, and its video goes to the console before the report', async (t) => {
+  const { reports, videos, repo } = await runQa(t);
+  const mcp = JSON.parse(fs.readFileSync(path.join(repo, '.qa', 'mcp-seen.json'), 'utf8')).mcpServers.playwright;
+  assert.equal(mcp.command, 'node');
+  assert.match(mcp.args[0], /qaBrowser\.mjs$/, 'behind the proxy that closes the browser, so the video is whole');
+  assert.deepEqual(mcp.args.slice(1, 5), ['playwright-mcp', '--headless', '--browser', 'chromium']);
+  const config = JSON.parse(fs.readFileSync(mcp.args.at(-1), 'utf8'));
+  assert.equal(config.browser.contextOptions.recordVideo.dir, path.join(repo, '.qa', 'video'));
+  assert.equal(videos.length, 1);
+  assert.deepEqual([videos[0].authorization, videos[0].type, videos[0].body.toString('latin1'), videos[0].before], ['Bearer tok', 'video/webm', '\x1a\x45\xdf\xa3webm', 0]);
+  assert.equal(reports.length, 1);
 });
 
 test('a plan with nothing to test sends a neutral verdict and never starts the app', async (t) => {
