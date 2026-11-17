@@ -191,17 +191,6 @@ function pairsOf(value) {
 }
 
 /**
- * `WOODSHED_ENV_FILES` and `WOODSHED_DB_ENV_SECRETS` named the Terraform secrets that held the repo's env files. Those
- * are Repo settings now (repoSettings.mjs): an installation that still sets them is told so, and they are not read.
- * @returns {string[]}  the ones set
- */
-export function ignoredEnvFileSettings(env) {
-  const set = ['ENV_FILES', 'DB_ENV_SECRETS'].filter((name) => envValue(env, name));
-  if (set.length) console.warn('console: ignored: env files are Repo settings now', { settings: set.map(currentName) });
-  return set;
-}
-
-/**
  * `WOODSHED_INSTALL_SECRET_PAIRS`: the secrets the repo's dependency installs read, as `secret=VARIABLE` pairs, each
  * the variable a session gets it in (`registry-token=REGISTRY_TOKEN`). Terraform sets it from `install_secrets`.
  * @param {NodeJS.ProcessEnv} env
@@ -296,7 +285,6 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   const broker = githubBroker(env);
   const identitySecret = trustedIdentitySecret(env);
   const databases = envValue(env, 'DATABASES');
-  ignoredEnvFileSettings(env);
   return {
     // What the pages, the installed app and the console's GitHub comments call this console.
     consoleName: consoleName(env),
@@ -325,6 +313,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     // The Woodshed clone the Console settings page's Update follows (woodshedUpdate.mjs): the console's own, unless set.
     checkout: envValue(env, 'CHECKOUT') || null,
     label: envValue(env, 'LABEL') || 'woodshed',
+    // The keys of the env files the databases' commands read (their `envFiles` in the project file): the local
+    // provider's db-admin run is given the default project's repo settings for them.
+    dbEnvSecrets: (envValue(env, 'DB_ENV_SECRETS') || '').split(',').map((s) => s.trim()).filter(Boolean),
     // The secrets the repo's installs read, each with the variable a session gets it in. None when it has none.
     installSecrets: installSecrets(env),
     pollGitHub: envValue(env, 'POLL_GITHUB') !== '0',

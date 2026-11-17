@@ -7,9 +7,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { databaseEnv, ENGINES } from './databases/index.mjs';
-import { PROJECT_FILE, SINGLE_APP_NAME, envFileKeys, readRepoFile, usesOldOverridesName } from './project.mjs';
+import { PROJECT_FILE, SINGLE_APP_NAME, envFileKeys, readRepoFile, secretEnvName, usesOldOverridesName } from './project.mjs';
 import { envKeys } from './repoSettings.mjs';
-import { isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
+import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
 
 const PLACEHOLDER = /^[A-Z_][A-Z0-9_]*\??$/;
@@ -118,6 +118,10 @@ function envFileProblems(project, repoDir) {
   for (const p of repeated(files.map((f) => f.path))) problems.push(`envFiles has ${p} more than once: one entry a file`);
   files.forEach((file, i) => {
     const at = `envFiles[${i}]`;
+    if (file.secret && CONSOLE_SECRETS.includes(file.secret)) problems.push(`${at}.secret is ${file.secret}, one of the console's own secrets, which no session is handed`);
+    if (file.secret && isSessionVariable(secretEnvName(file.secret))) {
+      problems.push(`${at}.secret ${file.secret} reaches the session as ${secretEnvName(file.secret)}, one of Woodshed's own session variables: name it otherwise`);
+    }
     if (file.path.split('/')[0] === '.git' || file.path === PROJECT_FILE) problems.push(`${at}.path is ${file.path}, which a session cannot write over`);
     else if (isDir(repoDir, file.path)) problems.push(`${at}.path is ${file.path}, which is a folder in the checkout`);
     else {
@@ -164,6 +168,44 @@ function databaseProblems(project, repoDir) {
     for (const name of ['migrate', 'seed']) if (db[name]) problems.push(...commandProblems(db[name], { repoDir, dir: db.dir, field: `${at}.${name}` }));
     return problems;
   });
+}
+
+// What a service's file is in the checkout, without following a symlink: `symlink` for one, or a folder on the way that
+// is one (what it names is read as the file, which can be anything the reader may read: a CI runner's environment, a
+// file in the machine owner's home); `file` for the repo's own file; `missing` when the checkout has none, so the
+// default branch's is read; `other` for a folder, or a path through a file (`README.md/init.sh`).
+function checkoutEntry(repoDir, file) {
+  const parts = file.split('/');
+  for (let i = 1; i <= parts.length; i += 1) {
+    let stat;
+    try {
+      stat = fs.lstatSync(path.join(repoDir, ...parts.slice(0, i)), { throwIfNoEntry: false });
+    } catch (err) {
+      if (err.code === 'ENOTDIR') return 'other';
+      throw err;
+    }
+    if (!stat) return 'missing';
+    if (stat.isSymbolicLink()) return 'symlink';
+    if (i < parts.length && !stat.isDirectory()) return 'other';
+    if (i === parts.length) return stat.isFile() ? 'file' : 'other';
+  }
+  return 'other';
+}
+
+// Each service's files must be in the repo, where its readers take them from, and each a file of the repo's own, never
+// a symlink, whose text could be any file of the reader's; and its variable is the installation's to set, so the
+// project's env setting it would hide the URL.
+export function serviceProblems(project, repoDir) {
+  return project.services.flatMap((service, i) => [
+    ...Object.entries(service.files).flatMap(([target, source]) => {
+      const at = `services[${i}].files.${target}`;
+      const entry = checkoutEntry(repoDir, source);
+      if (entry === 'symlink') return [`${at} is ${source}, which is a symlink, or under one, in the checkout: a service's file must be the repo's own`];
+      if (entry === 'other') return [`${at} is ${source}, which is not a file in the checkout`];
+      return entry === 'file' || readRepoFile(repoDir, source) ? [] : [`${at} is ${source}, which is not in the checkout or on the default branch`];
+    }),
+    ...(Object.hasOwn(project.env, service.variable) ? [`env.${service.variable} is services[${i}]'s variable, which its URL arrives in: leave it to the service`] : []),
+  ]);
 }
 
 // An `app.paths` entry is a prefix: `web/` is a folder, and `web` also matches `webhooks.md`, so something in the
@@ -257,7 +299,7 @@ export function repoProblems(project, repoDir) {
   }
   return [
     ...problems, ...envProblems(project), ...envFileProblems(project, repoDir), ...installProblems(project, repoDir),
-    ...databaseProblems(project, repoDir), ...appProblems(project, repoDir), ...pullRequestProblems(project, repoDir),
+    ...databaseProblems(project, repoDir), ...serviceProblems(project, repoDir), ...appProblems(project, repoDir), ...pullRequestProblems(project, repoDir),
   ];
 }
 
@@ -269,10 +311,10 @@ function installVariables(project, repoDir) {
 }
 
 // The variables the env and the env files' overrides take from the session that neither the project's env nor its
-// databases give: the installation's shared services, the app's key, and the like.
+// databases or services give: the installation's own services, the app's key, and the like.
 function takenFromSession(project) {
   const texts = [...Object.values(project.env), ...project.envFiles.flatMap((f) => f.overrides)];
-  const given = new Set([...Object.keys(project.env), ...Object.keys(databaseEnv({ project, env: { PGSSLMODE: 'x' } }))]);
+  const given = new Set([...Object.keys(project.env), ...Object.keys(databaseEnv({ project, env: { PGSSLMODE: 'x' } })), ...project.services.map((s) => s.variable)]);
   return [...new Set(texts.flatMap(placeholderNames))].filter((name) => !given.has(name) && !isSessionVariable(name));
 }
 
@@ -307,8 +349,8 @@ function appLine({ apps }) {
 
 // An env file as the summary names it: its path, its secret or the key made from its path, and its defaults.
 function envFileLine(file) {
-  // The key names its values in Repo settings, whether a `secret` gave it or the path made it.
-  return `${file.path} (key ${file.key})${file.defaults.length ? `, ${file.defaults.length} default${file.defaults.length > 1 ? 's' : ''}` : ''}`;
+  const from = file.secret ? ` from ${file.secret}` : ` (key ${file.key})`;
+  return `${file.path}${from}${file.defaults.length ? `, ${file.defaults.length} default${file.defaults.length > 1 ? 's' : ''}` : ''}`;
 }
 
 // The keys more than one env file names, whose values each of them is written.
@@ -333,6 +375,7 @@ export function checkSummary(project, repoDir) {
     `installs: ${list(project.dependencies.installs.map((i) => i.dir))}`,
     `install variables: ${list(installVariables(project, repoDir))}`,
     `databases: ${list(project.databases.map((d) => d.engine))}`,
+    `services: ${list(project.services.map((s) => `${s.name} in ${s.variable}`))}`,
     `env files: ${list(project.envFiles.map(envFileLine))}${sharedKeys(project)}`,
     `from the session: ${list(takenFromSession(project))}`,
     appLine(project),

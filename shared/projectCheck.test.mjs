@@ -143,14 +143,15 @@ test('pullRequests: a suite\'s workflow has an on: section the console can read 
     /^pullRequests\.suites\[0\]\.workflow \.github\/workflows\/ci\.yml's on: section is not read \(.*anchor.*\): the console reads its paths-ignore from it$/);
 });
 
-test('envFiles: one entry a file and a key; a secret is only a key now, whatever its name', (t) => {
+test('envFiles: one entry a file and a secret, and no secret Woodshed keeps for itself', (t) => {
   const file = PROJECT.envFiles[0];
   const files = (...list) => ({ project: { envFiles: list, databases: [] } });
   assertProblem(t, files(file, { ...file, secret: 'web-env' }), /^envFiles has api\/\.env more than once: one entry a file$/);
   assert.throws(() => problems(t, { project: { envFiles: [{ ...file, secret: null }, { ...file, path: 'web/.env' }], databases: [] }, files: { '.gitignore': 'api/.env\nweb/.env\n' } }),
     /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env: give one a secret, or give both the same secret to share its values$/, 'a key made from a path is one file\'s, as a start reads it');
-  // It names the file's values under repos/<project>/env/<key>, and no session variable or Terraform secret.
-  for (const secret of ['github-app-key', 'gh-token', 'woodshed-x']) assert.deepEqual(problems(t, files({ ...file, secret })), [], secret);
+  assertProblem(t, files({ ...file, secret: 'github-app-key' }), /^envFiles\[0\]\.secret is github-app-key, one of the console's own secrets, which no session is handed$/);
+  assertProblem(t, files({ ...file, secret: 'gh-token' }), /^envFiles\[0\]\.secret gh-token reaches the session as GH_TOKEN, one of Woodshed's own session variables/);
+  assertProblem(t, files({ ...file, secret: 'woodshed-x' }), /reaches the session as WOODSHED_X/);
 });
 
 test('check hints at each env file\'s overrides with no {{…}}, the same in every session, and still passes', (t) => {
@@ -160,7 +161,7 @@ test('check hints at each env file\'s overrides with no {{…}}, the same in eve
   ] }, files: { '.gitignore': 'api/.env\napi/.env.test\napi/node_modules/\n' } });
   const run = cli(dir);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^env files: 2 \(api\/\.env \(key api-env\), api\/\.env\.test \(key api-env-test\), 1 default\)$/m);
+  assert.match(run.stdout, /^env files: 2 \(api\/\.env from api-env, api\/\.env\.test \(key api-env-test\), 1 default\)$/m);
   const hints = run.stdout.split('\n').filter((line) => line.startsWith('hint: '));
   assert.deepEqual(hints, ['hint: envFiles[0] (api/.env) overrides set FEATURE_PREVIEW, PORT with no {{…}}: an override with none is the same in every session, and always wins, so move it to defaults if a person may change it']);
   assert.doesNotMatch(cli(checkout(t)).stdout, /^hint: /m, 'every line of the passing file has a placeholder');
@@ -183,7 +184,7 @@ test('check passes two env files that name one secret, and says they share its v
   ], databases: [{ ...DB, envFiles: ['app-env'] }] }, files: { '.gitignore': 'api/.env\nworker/.env\napi/node_modules/\n' } });
   const run = cli(dir);
   assert.equal(run.status, 0, run.stderr);
-  assert.match(run.stdout, /^env files: 2 \(api\/\.env \(key app-env\), worker\/\.env \(key app-env\), 1 default\); api\/\.env and worker\/\.env share app-env$/m);
+  assert.match(run.stdout, /^env files: 2 \(api\/\.env from app-env, worker\/\.env from app-env, 1 default\); api\/\.env and worker\/\.env share app-env$/m);
 });
 
 test('envFiles: each default is NAME=value or a comment', (t) => {

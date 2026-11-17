@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
+import { appNamed, checkoutDir, EMPTY_PROJECT, envFileKey, envFileKeys, envFileText, expandPath, exportLines, installationProjectFile, installsManifest, loadProject, neededDatabases, parseProject, PROJECT_FIELDS, renderLine, repoOf, secretEnvName, unsetPlaceholders, usesOldOverridesName, usesVariable, writeEnvFiles } from './project.mjs';
 import { fixtureApp, fixtureCheckout, fixtureProject, fixtureProjectFiles } from './projectFixture.mjs';
 
 const SCRIPT = path.join(import.meta.dirname, 'project.mjs');
@@ -274,6 +274,13 @@ test('pullRequests names the repo\'s own review, suites, QA and Merge risk check
   assert.deepEqual(parseProject({ ...EMPTY_PROJECT, pullRequests: none }).pullRequests, none);
 });
 
+test('pullRequests.runsOn names the console that does the automatic work, and is left out when not set', () => {
+  const parsed = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests }).pullRequests;
+  assert.equal(parsed({ ...PULL_REQUESTS, runsOn: 'woodshed-cloud[bot]' }).runsOn, 'woodshed-cloud[bot]');
+  assert.equal(Object.hasOwn(parsed(PULL_REQUESTS), 'runsOn'), false);
+  assert.throws(() => parsed({ ...PULL_REQUESTS, runsOn: 7 }), /pullRequests\.runsOn/);
+});
+
 test('review.runner: defaults to actions and needs a workflow, woodshed may leave the workflow out', () => {
   const full = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests });
   const { runner, ...noRunner } = REVIEW;
@@ -422,7 +429,7 @@ test('the CLI writes the env files from the repo settings, never the old secrets
   assert.equal(cli(['get', 'app.start']), '');
   assert.equal(cli(['env'], { PORT: '1' }), "export PORT='8080'\nexport URL='http://localhost:1'\n",
     'a value is filled in from the variables as they were, before any of these is set');
-  assert.throws(() => cli(['secret-vars']), /unknown command: secret-vars/, 'an env file has no variable of its own now');
+  assert.equal(cli(['secret-vars']), 'API_ENV\n');
   assert.equal(cli(['file', 'rules']), '- Run `make check`.\n');
   assert.equal(cli(['file', 'setup']), '');
   // The old Terraform secret's variable and own lines, which a task definition from before repo settings may still pass,
@@ -467,7 +474,7 @@ test('check prints what a session takes from the project file, and fails as a st
   const out = cli(['check']);
   assert.match(out, /^\.woodshed\/project\.yaml: read from the checkout\n/);
   assert.match(out, /^installs: 1 \(api\)$/m);
-  assert.match(out, /^env files: 1 \(api\/\.env \(key api-env\)\)$/m);
+  assert.match(out, /^env files: 1 \(api\/\.env from api-env\)$/m);
   assert.match(out, /^app: `.+`, frontend on \d+$/m);
   fs.rmSync(path.join(dir, '.woodshed/rules.md'));
   assert.throws(() => cli(['check']), (err) => /not in the checkout/.test(err.stderr), 'a rules file that is not there fails the check');

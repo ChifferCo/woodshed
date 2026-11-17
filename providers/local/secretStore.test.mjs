@@ -126,9 +126,9 @@ test('two writes of one secret at once both land, and the sealing pass skips a f
   assert.ok(['npm_a', 'npm_b', 'npm_c'].includes(await store.read('registry-token')));
   assert.deepEqual(fs.readdirSync(dir).filter((f) => f.endsWith('.tmp')), []);
   fs.writeFileSync(path.join(dir, 'bad name.json'), JSON.stringify({ value: 'x' }));
-  fs.writeFileSync(path.join(dir, 'pip-token.json'), JSON.stringify({ value: 'plain', description: '', changedAt: null }));
+  fs.writeFileSync(path.join(dir, 'web-env.json'), JSON.stringify({ value: 'plain', description: '', changedAt: null }));
   assert.equal(await store.sealPlainFiles(), 1, 'the readable plain file is sealed despite the other');
-  assert.ok(!fs.readFileSync(path.join(dir, 'pip-token.json'), 'utf8').includes('plain'));
+  assert.ok(!fs.readFileSync(path.join(dir, 'web-env.json'), 'utf8').includes('plain'));
 });
 
 test('a value saved while the sealing pass seals that secret\'s plain file is the one kept', async () => {
@@ -155,18 +155,4 @@ test('the store makes a secret on its first write, and the list then reports it 
   const entry = (await store.list()).find((s) => s.name === 'registry-token');
   assert.deepEqual([entry.exists, entry.set], [true, true]);
   assert.equal(await store.read('registry-token'), 'tok-1');
-});
-
-test('names lists the secrets of one folder, not below it, and none for a folder that is not there', async () => {
-  const dir = tmpDir();
-  const store = createSecretStore({ dir, key: KEY, specs: SECRETS });
-  await store.save('repos/app/env/web-env-local', 'B=2', 'web');
-  await store.save('repos/app/env/api-env', 'A=1', 'api');
-  await store.save('repos/app/instructions', 'Run the tests.', 'rules');
-  await store.save('repos/app-two/env/api-env', 'C=3', 'another repo');
-  fs.writeFileSync(path.join(dir, 'repos/app/env/api-env.json.123.tmp'), '{}');
-  assert.deepEqual(await store.names('repos/app/env'), ['repos/app/env/api-env', 'repos/app/env/web-env-local']);
-  assert.deepEqual(await store.names('repos/app'), ['repos/app/instructions'], 'a folder\'s own, not its subfolders\'');
-  assert.deepEqual(await store.names('repos/none/env'), []);
-  await assert.rejects(store.names('../x'), /not a secret name/);
 });

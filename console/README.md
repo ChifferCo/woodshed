@@ -16,7 +16,7 @@ A card shows the title and its tag (on Everyone, and on Mine for a session you s
 CPU and memory badge are in the pane bar, not on the card. **Assigned sessions.** The person who adds the `woodshed` label, or writes the first `/woodshed` comment, has the shared session
 if they *Can be assigned* (a switch per member on People, off for a new member, which needs Sessions from GitHub; an admin
 turns it on, see "Sign-in"). A starter who cannot be assigned leaves it unassigned. **Mine** lists your private sessions and the shared ones you
-started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and have no Take it. A console one person uses has one list of
+started (your label or `/woodshed` comment, on your Claude plan when your switch is on) or that are assigned to you: **Needs you** (stopped sessions waiting on you; **Move to Stopped** in a card's ⋯ menu marks one stopped by you, which moves it to Stopped and leaves Resume as it was), then **Active** (those waiting on you first), **Finished** (assigned shared sessions whose pull request is in Slack) and **Stopped**; **Everyone** lists every shared session with **Unassigned** at the top. Both end with **Reviews and QA**, folded until opened: the review and QA sessions the console starts on pull requests, which run by themselves, so they are never Unassigned and cannot be assigned: no Take it, and no Assign in their ⋯ menu. A console one person uses has one list of
 every session, with no switch, and its head reads **My sessions** (`/all` opens it): one nobody signs in to (it listens on
 loopback alone), one whose People list has a single member, or one whose `WOODSHED_ONE_PERSON` is `1`. The setting
 decides when set, `0` keeping the two views (the dev console sets it, `DEV_CONSOLE_ONE_PERSON=1` for the one list);
@@ -723,6 +723,15 @@ console logs `console: gh not installed, GitHub calls will fail` at start. The p
 
 The page and its calls are an admin's like the Secrets page. A console with no sign-in has no admin to tell apart, which
 is why it is only for a console nobody else can reach, until the App exists and sign-in can be switched on.
+
+### Which console does the automatic work
+
+A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org, and each hears
+the same GitHub events. Without more, each starts its own session from the label or a comment, and its own review and
+QA. `pullRequests.runsOn` in the project file names the one that does, by the login its GitHub App acts as
+(`woodshed-cloud[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
+starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
+act as the same App all match it, so it cannot pick between two Woodshed Cloud orgs.
 
 ### The reviewer App
 
@@ -1746,7 +1755,9 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    approves its head, as whoever added the label (the issue events' last `labeled`), once for each commit.
    With `qa.autoLabel` the console adds the label itself when a same-repo pull request opens or is marked ready
    (`qaAutoLabel`); a label its own App added stands for the pull request's author, on the team key when the author
-   fails the checks above.
+   fails the checks above. When the author is the console's own App (a pull request one of its sessions opened), the
+   review and QA stand for the person who started that session instead, so they run on that person's plan
+   (`fleet: pull request opened by a session, run as its starter`).
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.
@@ -1990,7 +2001,7 @@ Remove My Woodshed.
 | `WOODSHED_STATE_DIR` | `/var/lib/woodshed-cloud` | Holds `state.json` (sessions, their tokens, the polling cursors) and `webhookEvents.jsonl` (the Webhook events tab) |
 | `WOODSHED_REPO`, `WOODSHED_LABEL` | none (`owner/name`), `woodshed` | The one repo this installation works on, and the label of every repo that does not name its own on its settings page ("How sessions start"). Unset, with no `WOODSHED_PROJECTS`, the console starts with no repo, and the first one an admin adds on the Repos card is the default ("Sign-in" says who may sign in until then). The local provider's installer sets it only when given `WOODSHED_REPO`, and then builds the session image from it; without, the console starts with no repo, on `woodshed-session:generic`, an image with no checkout, and every session clones its repo at start |
 | `WOODSHED_PROJECTS` | one project, `WOODSHED_REPO` | The repos this installation works on, as JSON: `[{"name": "app", "repo": "owner/app", "default": true}, …]`. A name is lowercase words of letters and digits joined by single dashes, at most 32 long; a project may give `installationId`, the GitHub App installation on its repo's account, when that is not `WOODSHED_GITHUB_APP_INSTALLATION_ID`'s; names and repos are each used once; with more than one project, exactly one is `default`. Unset, the one project is `WOODSHED_REPO`, named after its repo; set beside it, `WOODSHED_REPO` must be the default's repo. A session records its project's name beside its `repo`, and its GitHub token (`/github-token`) reaches that project's repo alone (`projectTokens.mjs`). A My Woodshed session can start on any project you can write to (New session's **Project**); every project runs in the default project's session image for now, and a session on another one gets `PROJECT_REPO` and clones that repo at start (`session/entrypoint.sh`, `useProjectRepo`). A label or `/woodshed` comment on another project's issue starts or reaches a shared session on that project, with its write access, reactions, comments, the issue's assignee and board, and its pull request's chip, Slack post and gates (that repo's own project file) read on its repo; a webhook about a repo that is no project's is dropped (`webhooks: message from a repo that is not a project, dropped`). New session's `/` list and the Review tab follow the session's project too. The poll (the fallback for a lost webhook) reads every project's repo too. Questions from Slack still run on the default project; each project's own file is checked for its databases. A list that is wrong stops the console with what is wrong. Repos an admin adds on the Console settings page's Repos card are appended to this list while the console runs |
-| `WOODSHED_ENV_FILES`, `WOODSHED_DB_ENV_SECRETS` | none | Not read: a repo's env files are its Repo settings, and the local provider's db-admin run is given every value the default project's repo settings hold. Set, the console logs `console: ignored: env files are Repo settings now` and starts. Remove them |
+| `WOODSHED_DB_ENV_SECRETS` | none | On the local provider: the keys of the env files the databases' commands read (every `envFiles` of the project file's `databases`), comma-separated; a db-admin run is given the default project's repo settings for them. `install.sh` sets it from the project file. `WOODSHED_ENV_FILES`, from before Repo settings, is read no more |
 | `WOODSHED_INSTALL_SECRET_PAIRS` | none | The secrets the repo's dependency installs read, as `secret=VARIABLE` pairs (`registry-token=REGISTRY_TOKEN`): each is a secret on the Secrets page, and reaches a session in its variable as it is, with `WOODSHED_INSTALL_SECRETS` listing the variables. A variable that is one of Woodshed's own (`SESSION_VARIABLES` in `shared/reservedNames.mjs`, or `WOODSHED_*`) stops the start. Terraform sets it from `install_secrets` |
 | `WOODSHED_POLL_GITHUB` | on | `0` turns polling off; sessions then start only from `start-session.mjs` |
 | `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |

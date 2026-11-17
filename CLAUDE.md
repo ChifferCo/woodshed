@@ -169,8 +169,9 @@ URL on top of each env file's Repo settings values
   session assigned` with `from`, `to`, `by` and `how` (`label`, `comment`, `console`, `take it`, `hand over`, `unassign`) on every
   change. Someone who can be assigned commenting on an unassigned session takes it; a later comment on an assigned one does not move it.
   `members: can be assigned changed` and `members: sessions from GitHub changed` say who turned a switch. Assign answers 409
-  `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session and a
-  question from Slack cannot be assigned.
+  `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session, a
+  question from Slack, and a review or QA run the console started cannot be assigned (`a review or QA run has
+  nobody to assign`).
 - **A label or /woodshed comment got a "can't start Woodshed sessions from GitHub yet" reply.** Their Sessions from
   GitHub is off on People: the console logs `fleet: trigger ignored, no sessions from GitHub`, and `fleet: label removal
   failed` when GitHub kept the label. The same person sees no Everyone tab, and a shared session's link answers 404 for them.
@@ -665,7 +666,9 @@ URL on top of each env file's Repo settings values
 - **A QA comment stays at Running.** The session's terminal shows the run (`[qa …]` lines). `fleet: QA finished`
   with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
   the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
-  lifetime) never sent one: label the pull request again.
+  lifetime) never sent one: label the pull request again. An approval its review held for it goes out on the next tick,
+  saying QA did not finish: the console logs `fleet: held approval released, QA stopped without a report` with the
+  `reason`, then `fleet: held approval released` with the verdict.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
   `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the

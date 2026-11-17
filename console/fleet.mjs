@@ -572,9 +572,22 @@ export function createFleet({
     update(session, { status: 'stopped', stoppedAt: nowIso(), endpoint: null, ...keptFields(session) });
   }
 
-  // A shared session that ran keeps its conversation and databases once stopped, however it stopped.
+  // A shared session that ran keeps its conversation and databases once stopped, however it stopped. A QA or review
+  // run is never resumed: the next commit gets a run of its own, so it ends when it stops, and the conversation its
+  // stop saved is deleted on the next tick.
   function keptFields(session) {
-    return session.owner || isQa(session) ? {} : { kept: true };
+    if (session.owner) return {};
+    return isQa(session) || isReview(session) ? { homeDeletePending: Boolean(homes) } : { kept: true };
+  }
+
+  // A QA run that stopped before its stop deleted its conversation left it saved, with nothing to delete it: its
+  // homeDeletePending was never set. Marked once, so the delete is tried as for any other. Its trigger names it too,
+  // for a run whose qa or review fields are missing.
+  function endedRunHome(session) {
+    const run = isQa(session) || isReview(session) || session.trigger === 'qa' || session.trigger === 'review';
+    if (session.owner || session.kept || session.homeDeletePending !== undefined || !run) return;
+    if (ACTIVE_STATUSES.has(session.status) || session.status === 'stopping') return;
+    update(session, { homeDeletePending: Boolean(homes) });
   }
 
   async function finishInterruptedStop(session) {
@@ -803,6 +816,8 @@ export function createFleet({
         }
       }
       await startQueued();
+      // Before retention, which can take an ended QA run off the list at once.
+      for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
       await sweepDatabases();
       await announcer.check();
@@ -834,6 +849,7 @@ export function createFleet({
   }
 
   async function retain(session) {
+    endedRunHome(session);
     if (session.homeDeletePending) await deleteHome(session);
     if (isGone(session)) return dropIfDue(session);
     if (session.owner || !session.kept || ACTIVE_STATUSES.has(session.status)) return;
@@ -904,10 +920,13 @@ export function createFleet({
   // Off the list once it has shown as Deleted for the Console settings page's number of days. A question waits until
   // its thread has been told it went unanswered, and a Claude home still being deleted until it is gone, since
   // nothing retries it once the session is off the list.
+  // An ended review stays while the approval it holds for QA waits on its record (heldApproval), then as long as a
+  // kept review lasted: its record is what tells reviewOnTag that its commit was reviewed.
   function dropIfDue(session) {
-    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt)) return;
+    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt) || session.review?.held) return;
     const from = Date.parse(session.cleanedAt ?? session.stoppedAt ?? session.createdAt);
-    const ms = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const removeMs = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const ms = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
   }
@@ -1056,6 +1075,7 @@ export function createFleet({
     const session = find(id);
     if (!session || session.owner) throw shown('no shared session with that id');
     if (session.kind === 'ask') throw shown('a question from Slack has nobody to assign');
+    if (isQa(session) || isReview(session)) throw shown('a review or QA run has nobody to assign: it runs by itself and ends');
     if (!members?.isAssignable(by)) throw shown('only someone who can be assigned sessions can assign one');
     const target = to ? findLogin(members.assignables(), to) : null;
     if (to && !target) throw shown(`@${to} cannot be assigned sessions`);
@@ -1392,6 +1412,9 @@ export function createFleet({
     const route = routeTrigger({ sessions, number, trigger: trigger.trigger, kind: trigger.kind, text: trigger.text });
     console.log('fleet: trigger routed', { number, login, trigger: trigger.trigger, action: route.action, reason: route.reason, ...projectField(project) });
     if (route.action === 'ignore') return { outcome: 'ignored', reason: route.reason };
+    if (route.action === 'start' && runsElsewhere(await pullRequests(project.name), project, number, trigger.trigger)) {
+      return { outcome: 'ignored', reason: 'pullRequests.runsOn names another console' };
+    }
     if (members && !members.hasGithubSessions(login)) return refuseFromGitHub(trigger, gh, project);
     if (route.action === 'send') {
       await send(find(route.sessionId), trigger.text);
@@ -1579,7 +1602,7 @@ export function createFleet({
     if (qa.autoLabel && appLogin && login === appLogin) {
       const autoPull = known ?? await gh.pull(number);
       if (autoPull.head?.repo?.full_name && autoPull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
-      login = autoPull.user?.login ?? '';
+      login = authorOf(project, number, autoPull.user?.login ?? '', autoPull.head?.ref);
       teamKeyWhy = await teamKeyReason(login);
       console.log('fleet: QA label added by the console, run as the author', { number, login, teamKey: Boolean(teamKeyWhy), ...projectField(project) });
     } else {
@@ -1589,6 +1612,7 @@ export function createFleet({
     }
     const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
     if (route.action === 'ignore') return ignored(route.reason);
+    if (runsElsewhere(gates, project, number, 'qa')) return ignored('pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open') return ignored('the pull request is not open');
     if (gates.review) {
@@ -1625,6 +1649,8 @@ export function createFleet({
     const gates = project ? await pullRequests(project.name) : null;
     const qa = gates?.qa;
     if (!qa?.autoLabel || qa.runner !== 'woodshed') return { unrecorded: true };
+    // The label's author is whose QA it is: another console's would read to the one runsOn names as a stranger's.
+    if (runsElsewhere(gates, project, number, 'qa label')) return { unrecorded: true };
     const gh = githubOf(project);
     const pull = await gh.pull(number);
     if (pull.state !== 'open' || pull.draft || (pull.labels ?? []).some((l) => l.name === qa.label)) return { unrecorded: true };
@@ -1706,7 +1732,7 @@ export function createFleet({
       const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
       if (!message || !message.includes(review.rerun)) return { unrecorded: true };
     }
-    return startReview({ project, gates, number, login: pull.user?.login ?? '', pull });
+    return startReview({ project, gates, number, login: authorOf(project, number, pull.user?.login ?? '', pull.head?.ref), pull });
   }
 
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
@@ -1719,6 +1745,7 @@ export function createFleet({
       console.log('fleet: review not started', { number, login, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
+    if (runsElsewhere(gates, project, number, 'review')) return ignored('pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
     // The session runs on the author's Claude plan only when they pass the label trigger's identity checks: a reused
@@ -1741,6 +1768,34 @@ export function createFleet({
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
     return { outcome: 'started', sessionId: session.id };
+  }
+
+  // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
+  // review, QA) in pullRequests.runsOn, by the login its App acts as. The others still start sessions by hand.
+  function runsElsewhere(gates, project, number, what) {
+    const runsOn = gates?.runsOn ?? null;
+    if (!runsOn) return false;
+    const login = ownApp()?.login ?? null;
+    if (login === runsOn) return false;
+    console.log('fleet: skipped, pullRequests.runsOn names another console', { number, what, runsOn, login, ...projectField(project) });
+    return true;
+  }
+
+  // A pull request this console's own session opened has the App as its author, which has no Claude plan: its review
+  // and QA stand for the person who started that session instead, so they run on that person's plan as the session did.
+  // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
+  function authorOf(project, number, author, branch = null) {
+    const appLogin = ownApp()?.login ?? null;
+    if (!appLogin || author !== appLogin) return author;
+    const opener = state.sessions
+      .filter((s) => !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1);
+    const starter = opener?.startedBy ?? null;
+    if (!starter || starter.endsWith('[bot]')) {
+      console.log('fleet: pull request opened by the App, no session starter to stand for', { number, found: Boolean(opener), ...projectField(project) });
+      return author;
+    }
+    console.log('fleet: pull request opened by a session, run as its starter', { number, sessionId: opener.id, starter, ...projectField(project) });
+    return starter;
   }
 
   async function teamKeyReason(login) {
@@ -1805,6 +1860,32 @@ export function createFleet({
    * QA finished on a commit whose approval was held for it: the approval goes to GitHub with QA's result in it, or, when
    * QA failed, the verdict becomes REQUEST_CHANGES. Not when the head moved since: that commit gets its own review.
    */
+  /**
+   * A QA run that ended without its report (paused when idle or at its lifetime, stopped by someone, or failed to
+   * start) never reaches qaFinished, so the approval its review holds for it would wait for good. Once it has ended,
+   * that approval goes out saying QA did not finish, unless another QA run on the same commit is still going, which
+   * will report on it. A commit approved meanwhile, while this run held QA, gets its own run, as qaFinished starts it.
+   * Checked once per run, on a tick.
+   * @param {object} session
+   */
+  async function qaEndedUnreported(session) {
+    if (!isQa(session) || session.qa.conclusion || session.qa.endChecked) return;
+    if (session.status !== 'stopped' && session.status !== 'failed') return;
+    const project = projectFor(config, session);
+    const { sha } = session.qa;
+    const same = (s) => s !== session && isQa(s) && s.number === session.number && onProject(s, project);
+    if (state.sessions.some((s) => same(s) && s.qa.sha === sha && (ACTIVE_STATUSES.has(s.status) || s.status === 'stopping'))) return;
+    update(session, { qa: { ...session.qa, endChecked: true } });
+    const holding = state.sessions.filter((s) => isReview(s) && s.number === session.number && onProject(s, project) && s.review.held);
+    if (!holding.length) return;
+    const reason = firstLine(session.stopReason ?? session.error ?? '') || 'it stopped without a report';
+    if (heldApproval(project, session.number, sha)) {
+      console.log('fleet: held approval released, QA stopped without a report', { id: session.id, number: session.number, sha, reason });
+      await releaseHeldApproval(project, session.number, { sha, failed: false, qaLine: `QA did not finish: ${reason}.` });
+    }
+    if (holding.some((s) => s.review.held?.sha !== sha)) await qaAfterReview({ number: session.number, project: project.name });
+  }
+
   async function releaseHeldApproval(project, number, { sha, failed, qaLine }) {
     const review = heldApproval(project, number, sha);
     if (!review) return;
@@ -1926,7 +2007,7 @@ export function createFleet({
     if (String(body).includes(GAVE_UP_TEXT)) return { outcome: 'ignored', reason: 'the console\'s own comment, already messaged' };
     const project = projectOfEvent(projectName);
     const session = project && state.sessions
-      .filter((s) => !s.owner && !isQa(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
+      .filter((s) => !s.owner && !isQa(s) && !isReview(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
     if (!session) {
       console.log('fleet: a Needs a human comment with no shared session on it', { number, ...(projectName ? { project: projectName } : {}) });
       return { outcome: 'ignored', reason: 'no shared session works on this issue or pull request' };

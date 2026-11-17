@@ -172,11 +172,14 @@ useProjectRepo() {
   log "Project repo cloned" "(dir: $REPO_DIR, seconds: $((SECONDS - start)))"
 }
 
-# A session on another project's repo gets none of the installation's install secrets: they are the default project's,
-# whose repo the image holds. Names only are logged, never values.
+# A session on another project's repo gets none of the installation's secrets: the install secrets, and the env files'
+# old Terraform secrets a task definition from before repo settings may still pass, are the default project's, whose
+# repo the image holds. Their names are read from the image's checkout, so this runs while REPO_DIR is still it. Names
+# only are logged, never values.
 withholdInstallationSecrets() {
-  local name names=()
-  for name in ${WOODSHED_INSTALL_SECRETS:-}; do
+  local name secretVars names=()
+  secretVars=$(project secret-vars) || die "the installation's secret variables could not be read"
+  for name in ${WOODSHED_INSTALL_SECRETS:-} $secretVars; do
     unset "$name"
     names+=("$name")
   done
@@ -956,7 +959,11 @@ runAsk() {
   configureGitCredentials
   findDefaultBranch
   configureGitIdentity
-  local name
+  # The task definition's own secrets go whatever the project file says; its names are added on top. A command
+  # substitution in a for list does not stop the script under set -e, so it is read on its own first.
+  local name secretVars
+  secretVars=$(project secret-vars) || die "the project's secret variables could not be read"
+  for name in $secretVars; do unset "$name"; done
   # The installation's install secrets, by the variables they arrive in: an ask installs nothing.
   for name in ${WOODSHED_INSTALL_SECRETS:-}; do unset "$name"; done
   for name in $(databases secret-vars); do unset "$name"; done

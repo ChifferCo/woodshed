@@ -78,18 +78,10 @@ test('a console other machines reach will not start without sign-in required', (
   assert.doesNotThrow(at('0.0.0.0', { WOODSHED_REQUIRE_SIGN_IN: '1' }), 'sign-in from the first request: as the base box runs');
 });
 
-test('WOODSHED_ENV_FILES and WOODSHED_DB_ENV_SECRETS are not read any more: a console that still has them says so, and starts', (t) => {
-  const warned = [];
-  t.mock.method(console, 'warn', (...args) => warned.push(args));
-  const config = loadConfig({ GH_TOKEN: 'x' });
-  assert.equal('envFiles' in config || 'dbEnvSecrets' in config, false);
-  assert.equal(warned.length, 0, 'nothing to say without them');
-  // Even a value that was never a pair: it is not read, so it cannot stop the start, and it is never repeated.
-  const old = loadConfig({ GH_TOKEN: 'x', WOODSHED_ENV_FILES: 'api-env=api/.env,ghp_pastedValue123', WOODSHED_CLOUD_DB_ENV_SECRETS: 'api-env' });
-  assert.equal('envFiles' in old, false);
-  const said = warned.filter(([message]) => message === 'console: ignored: env files are Repo settings now');
-  assert.deepEqual(said.map(([, fields]) => fields), [{ settings: ['WOODSHED_ENV_FILES', 'WOODSHED_DB_ENV_SECRETS'] }]);
-  assert.ok(!JSON.stringify(warned).includes('ghp_'));
+test('the env files are no setting of the console: an old WOODSHED_ENV_FILES is ignored, whatever it holds', async () => {
+  const config = await import('../console/config.mjs');
+  assert.equal(config.envFiles, undefined);
+  assert.equal(loadConfig({ GH_TOKEN: 'x', WOODSHED_ENV_FILES: 'api-env=api/.env,ghp_pastedValue123' }).envFiles, undefined);
 });
 
 test('the install secrets are secret=VARIABLE pairs, from WOODSHED_INSTALL_SECRET_PAIRS, in none of Woodshed\'s own variables', async () => {

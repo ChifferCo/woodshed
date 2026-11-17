@@ -165,7 +165,7 @@ variable "install_secrets" {
 }
 
 variable "shared_services" {
-  description = "Containers the base box runs for every session, such as a fake S3, by name. Each listens on `port` (the same on the box), reaches sessions and the db-admin task as http://<the box>:<port> in `variable`, and gets `environment`. Each of `files` (path in the container = text) is mounted there read-only and executable, for an init script. {} for none."
+  description = "Being replaced by the project file's services (README.md, \"The project's services\"): keep here only one that keeps data, until the provider runs those. Containers the base box runs for every session, such as a fake S3, by name. Each listens on `port` (the same on the box), reaches sessions and the db-admin task as http://<the box>:<port> in `variable`, and gets `environment`. Each of `files` (path in the container = text) is mounted there read-only and executable, for an init script. {} for none."
   type = map(object({
     image       = string
     port        = number

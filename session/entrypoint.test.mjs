@@ -409,20 +409,19 @@ test('a default plugin list that cannot be read leaves the start going', () => {
   assert.match(installDefaultPlugins({ kind: 'private', brokenList: true }).out, /WARNING: the default plugins could not be read, none installed/);
 });
 
-test('an ask session clears the install secrets and the fixed ones, whatever the project file says', (t) => {
+test('an ask session clears the env files\' secrets and the install secrets, and stops when the project file cannot say which', (t) => {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-ask-'));
   t.after(() => fs.rmSync(repoDir, { recursive: true, force: true }));
   // The lines of runAsk that clear the secrets, run as they are written there.
   const body = fn('runAsk');
-  const clearing = body.slice(body.indexOf('  local name\n'), body.indexOf('  local restoring'));
+  const clearing = body.slice(body.indexOf('  local name secretVars'), body.indexOf('  local restoring'));
   const run = () => spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
-    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
-    'f() {', clearing, 'env | grep -E "^(REGISTRY_TOKEN|OTHER_TOKEN|GH_TOKEN)=" || echo cleared', '}', 'f',
+    'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'f() {', clearing, 'env | grep -E "^(API_ENV|REGISTRY_TOKEN|OTHER_TOKEN|GH_TOKEN)=" || echo cleared', '}', 'f',
   ].join('\n')], {
     encoding: 'utf8',
     env: {
-      PATH: process.env.PATH, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, GH_TOKEN: 's',
+      PATH: process.env.PATH, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, API_ENV: 's', GH_TOKEN: 's',
       WOODSHED_INSTALL_SECRETS: 'OTHER_TOKEN REGISTRY_TOKEN', REGISTRY_TOKEN: 's', OTHER_TOKEN: 's',
     },
   });
@@ -430,8 +429,12 @@ test('an ask session clears the install secrets and the fixed ones, whatever the
   fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), fixtureProject({
     envFiles: [{ path: 'api/.env', secret: 'api-env', overrides: [] }],
   }));
-  assert.equal(run().stdout, 'cleared\n', 'each install secret WOODSHED_INSTALL_SECRETS lists, and the fixed ones');
-  assert.doesNotMatch(clearing, /project secret-vars/, 'an env file is no task secret, so there is no variable of its to clear');
+  assert.equal(run().stdout, 'cleared\n', 'the project\'s secret, each install secret WOODSHED_INSTALL_SECRETS lists, and the fixed ones');
+  fs.writeFileSync(path.join(repoDir, '.woodshed/project.yaml'), '{ not json');
+  const broken = run();
+  assert.equal(broken.status, 1);
+  assert.match(broken.stdout, /ERROR: the project's secret variables could not be read/);
+  assert.doesNotMatch(broken.stdout, /API_ENV=/);
 });
 
 // A repo with one install, whose command stands in for a package manager and counts its runs, and the image's record
@@ -824,11 +827,11 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
     'die() { log "ERROR: $*"; exit 1; }',
     'configureGitCredentials() { log "credentials"; }',
     // The default project's env files' secrets, as project.mjs names them from the image's checkout.
-    'project() { :; }',
+    'project() { [ "$1" = secret-vars ] && [ "$REPO_DIR" = "$IMAGE_DIR" ] && echo API_ENV; }',
     fn('useProjectRepo').replace('"https://github.com/$PROJECT_REPO.git"', `"${remotes}/$PROJECT_REPO.git"`),
     fn('withholdInstallationSecrets'),
     'useProjectRepo',
-    'echo "secrets: npm=${NPM_TOKEN:-unset} other=${OTHER_VAR:-unset}"',
+    'echo "secrets: npm=${NPM_TOKEN:-unset} api=${API_ENV:-unset} other=${OTHER_VAR:-unset}"',
     'echo "session link: ${SESSION_URL:-unset}"',
     'echo "REPO_DIR=$REPO_DIR"',
     'git -C "$REPO_DIR" log -1 --format=%s',
@@ -839,7 +842,7 @@ function useProjectRepo({ projectRepo, imageOrigin }) {
       encoding: 'utf8',
       env: {
         PATH: process.env.PATH, HOME: tmp, GIT_CONFIG_NOSYSTEM: '1', REPO_DIR: imageDir, IMAGE_DIR: imageDir,
-        WOODSHED_INSTALL_SECRETS: 'NPM_TOKEN', NPM_TOKEN: 'npm-s3cret', OTHER_VAR: 'kept',
+        WOODSHED_INSTALL_SECRETS: 'NPM_TOKEN', NPM_TOKEN: 'npm-s3cret', API_ENV: 'api-s3cret', OTHER_VAR: 'kept',
         SESSION_URL: 'https://console.example/s/0a1b2c3d',
         ...(projectRepo ? { PROJECT_REPO: projectRepo } : {}),
       },
@@ -856,8 +859,8 @@ test('a session on another project clones its repo next to the image\'s checkout
   assert.match(run.stdout, /Cloning the project's repo \(repo: acme\/tools, image: acme\/app\)/);
   assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/tools\\n`));
   assert.match(run.stdout, /acme\/tools\n$/, 'the project\'s own files');
-  assert.match(run.stdout, /Installation secrets withheld \(another project\) \(variables: NPM_TOKEN\)/);
-  assert.match(run.stdout, /secrets: npm=unset other=kept/, 'the installation\'s install secrets are gone');
+  assert.match(run.stdout, /Installation secrets withheld \(another project\) \(variables: NPM_TOKEN API_ENV\)/);
+  assert.match(run.stdout, /secrets: npm=unset api=unset other=kept/, 'the installation\'s install and env file secrets are gone');
   assert.doesNotMatch(run.stdout, /s3cret/, 'no value is ever printed');
   assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'the project file decides the link, in writeRules');
 });
@@ -868,7 +871,7 @@ test('a session on the image\'s own repo, or with no project named, keeps the im
     assert.equal(run.status, 0, run.stderr);
     assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/app\\n`), String(projectRepo));
     assert.doesNotMatch(run.stdout, /Cloning|withheld/);
-    assert.match(run.stdout, /secrets: npm=npm-s3cret other=kept/, 'the default project keeps them, as before');
+    assert.match(run.stdout, /secrets: npm=npm-s3cret api=api-s3cret/, 'the default project keeps them, as before');
     assert.match(run.stdout, /session link: https:\/\/console\.example\/s\/0a1b2c3d/, 'and links the session from its pull requests');
   }
 });
@@ -880,7 +883,7 @@ test('an image with no checkout clones the session\'s repo, the default project\
   assert.match(run.stdout, new RegExp(`REPO_DIR=${run.work}/app\\n`), 'at /work/<name>, beside the empty folder');
   assert.match(run.stdout, /acme\/app\n$/);
   assert.doesNotMatch(run.stdout, /withheld/, 'no image repo for them to belong to instead');
-  assert.match(run.stdout, /secrets: npm=npm-s3cret other=kept/);
+  assert.match(run.stdout, /secrets: npm=npm-s3cret api=api-s3cret other=kept/);
 
   const none = useProjectRepo({ projectRepo: null, imageOrigin: null });
   assert.equal(none.status, 1);

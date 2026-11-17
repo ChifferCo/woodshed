@@ -55,11 +55,13 @@ data "aws_iam_policy_document" "github_images" {
     resources = ["*"]
   }
 
-  # Only the two fixed documents, only on the base box: no arbitrary commands.
+  # Only the fixed documents, only on the base box: no arbitrary commands. refresh-services takes the project file's
+  # services, which the box checks (providers/aws/services.mjs) and runs beside the console, as this role's console
+  # image already runs there.
   statement {
     sid       = "RedeployTheConsole"
     actions   = ["ssm:SendCommand"]
-    resources = concat([aws_ssm_document.redeploy_console.arn], aws_ssm_document.refresh_db_template[*].arn, [aws_instance.base_box.arn])
+    resources = concat([aws_ssm_document.redeploy_console.arn, aws_ssm_document.refresh_services.arn], aws_ssm_document.refresh_db_template[*].arn, [aws_instance.base_box.arn])
   }
 
   # Neither action supports resource-level permissions.
@@ -104,6 +106,37 @@ resource "aws_ssm_document" "redeploy_console" {
   })
 }
 
+# The project file's services onto the base box (providers/aws/services.mjs): the deploy workflow's checkout makes the
+# spec, and the box's <prefix>-services script checks it, pulls the images and swaps the containers. Base64 only, so
+# the parameter meets no quoting; the script trusts nothing else in it either.
+resource "aws_ssm_document" "refresh_services" {
+  name            = "${local.p}-refresh-services"
+  document_type   = "Command"
+  document_format = "JSON"
+  content = jsonencode({
+    schemaVersion = "2.2"
+    description   = "Run the project file's services on the Woodshed base box, from the spec the deploy workflow made."
+    parameters = {
+      spec = {
+        type           = "String"
+        description    = "node woodshed/providers/aws/services.mjs spec, run in the installation's checkout of its default branch"
+        allowedPattern = "^[A-Za-z0-9+/]+={0,2}$"
+      }
+    }
+    mainSteps = [{
+      action = "aws:runShellScript"
+      name   = "refreshServices"
+      inputs = {
+        timeoutSeconds = "900"
+        runCommand = [
+          "set -euo pipefail",
+          "printf '%s' '{{ spec }}' | /usr/local/bin/${local.p}-services",
+        ]
+      }
+    }]
+  })
+}
+
 # Runs the db-admin task's `template` from the base box, whose role may already run it, and waits for its exit code:
 # every session's databases are then copied from the image just built. Sessions starting meanwhile copy the old
 # template, or wait the moment it is swapped. Only with the db-admin task, which exists only with a database.
@@ -123,7 +156,10 @@ resource "aws_ssm_document" "refresh_db_template" {
         timeoutSeconds = "1800"
         runCommand = [
           "set -euo pipefail",
-          "task=$(${local.db_admin_run} --started-by db-admin-template --propagate-tags TASK_DEFINITION --overrides '{\"containerOverrides\":[{\"name\":\"db-admin\",\"command\":[\"template\"]}]}' --query 'tasks[0].taskArn' --output text)",
+          "# With the project file's services, the seed gets their URLs as a seed run from the console does (<prefix>-services writes them).",
+          "overrides='{\"containerOverrides\":[{\"name\":\"db-admin\",\"command\":[\"template\"]}]}'",
+          "if [ -f /var/lib/${local.p}/services/template-overrides.json ]; then overrides=file:///var/lib/${local.p}/services/template-overrides.json; fi",
+          "task=$(${local.db_admin_run} --started-by db-admin-template --propagate-tags TASK_DEFINITION --overrides \"$overrides\" --query 'tasks[0].taskArn' --output text)",
           "echo \"db-admin task $task\"",
           "for _ in $(seq 170); do",
           "  [ \"$(aws ecs describe-tasks --region ${var.region} --cluster ${aws_ecs_cluster.main.name} --tasks \"$task\" --query 'tasks[0].lastStatus' --output text)\" = STOPPED ] && break",
