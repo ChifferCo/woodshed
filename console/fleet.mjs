@@ -1075,6 +1075,7 @@ export function createFleet({
     const session = find(id);
     if (!session || session.owner) throw shown('no shared session with that id');
     if (session.kind === 'ask') throw shown('a question from Slack has nobody to assign');
+    if (isQa(session) || isReview(session)) throw shown('a review or QA run has nobody to assign: it runs by itself and ends');
     if (!members?.isAssignable(by)) throw shown('only someone who can be assigned sessions can assign one');
     const target = to ? findLogin(members.assignables(), to) : null;
     if (to && !target) throw shown(`@${to} cannot be assigned sessions`);

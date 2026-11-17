@@ -347,9 +347,10 @@
     }, svg);
   }
 
-  // How someone who can be assigned moves a shared session on from its card: take it, hand it over, or unassign it.
+  // How someone who can be assigned moves a shared session on from its card: take it, hand it over, or unassign it. A
+  // review or QA run the console started has nobody to assign: it runs by itself and ends.
   function assignActions(s) {
-    if (!data.assignable || W.isPrivate(s) || s.kind === 'ask') return [];
+    if (!data.assignable || W.isPrivate(s) || s.kind === 'ask' || W.isPullCheck(s)) return [];
     const mine = W.sameLogin(s.assignee, data.login);
     return [
       !mine && { label: 'Assign to me', note: s.assignee ? `Take it from ${W.personText(s.assignee)}` : 'Nobody has it: take it', run: () => assignTo(s, data.login) },

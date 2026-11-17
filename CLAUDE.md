@@ -171,8 +171,9 @@ secrets.
   session assigned` with `from`, `to`, `by` and `how` (`label`, `comment`, `console`, `take it`, `hand over`, `unassign`) on every
   change. Someone who can be assigned commenting on an unassigned session takes it; a later comment on an assigned one does not move it.
   `members: can be assigned changed` and `members: sessions from GitHub changed` say who turned a switch. Assign answers 409
-  `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session and a
-  question from Slack cannot be assigned.
+  `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session, a
+  question from Slack, and a review or QA run the console started cannot be assigned (`a review or QA run has
+  nobody to assign`).
 - **A label or /woodshed comment got a "can't start Woodshed sessions from GitHub yet" reply.** Their Sessions from
   GitHub is off on People: the console logs `fleet: trigger ignored, no sessions from GitHub`, and `fleet: label removal
   failed` when GitHub kept the label. The same person sees no Everyone tab, and a shared session's link answers 404 for them.
