@@ -1782,6 +1782,17 @@ test('a private session and a question from Slack cannot be assigned', async () 
   assert.throws(() => fleet.assign({ id: 'bbbb2222', by: 'joel', to: 'joel' }), /nobody to assign/);
 });
 
+test('a review or QA run the console started on a pull request cannot be assigned: it runs by itself and ends', async () => {
+  const { fleet, store } = setup({ assignables: ['joel'] });
+  store.state.sessions.push(
+    { id: 'cccc3333', owner: null, kind: 'pr', number: 7, trigger: 'review', review: { sha: 'a' } },
+    { id: 'dddd4444', owner: null, kind: 'pr', number: 7, trigger: 'qa', qa: { sha: 'a' } },
+  );
+  assert.throws(() => fleet.assign({ id: 'cccc3333', by: 'joel', to: 'joel' }), /a review or QA run has nobody to assign/);
+  assert.throws(() => fleet.assign({ id: 'dddd4444', by: 'joel', to: 'joel' }), /a review or QA run has nobody to assign/);
+  assert.equal(store.state.sessions[0].assignee, undefined);
+});
+
 test('assigning is case-blind, the members list spells the assignee, and sessions go back when someone can no longer be assigned', async () => {
   const { fleet, store } = setup({ writers: ['Octocat', 'ana'], assignables: ['octocat', 'ana'] });
   await fleet.handleTrigger({ number: 42, login: 'Octocat', trigger: 'label', title: 'x', kind: 'issue' });
