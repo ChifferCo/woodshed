@@ -1,7 +1,7 @@
 // A review session's report, as session/review.sh sends it to the console (POST /review-report): the verdict the
 // console submits as a formal review, and the merge-risk the console posts as the Merge risk check. The session has
 // already read these from its files with shared/codeReview/codeReview.mjs; this only validates what arrived.
-import { MAX_REPORT_CHARS } from './qaSessions.mjs';
+import { MAX_REPORT_CHARS, SPINNER_HTML } from './qaSessions.mjs';
 
 const CONCLUSIONS = new Set(['APPROVE', 'REQUEST_CHANGES', 'COMMENT']);
 const TIERS = new Set(['Low', 'Medium', 'High']);
@@ -37,7 +37,7 @@ function resolvedOf(raw) {
  */
 export function reviewRunningComment({ sessionUrl }) {
   const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
-  return `⏳ **Reviewing** in ${where}: the review and its merge risk follow here when it ends.\n`;
+  return `**Reviewing** in ${where}: the review and its merge risk follow here when it ends. ${SPINNER_HTML}\n`;
 }
 
 /**

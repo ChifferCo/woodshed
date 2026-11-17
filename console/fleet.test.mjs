@@ -2410,7 +2410,7 @@ test('the QA label on a pull request starts a QA session on its branch, read onl
   const { env } = calls.started[0];
   assert.deepEqual([env.SESSION_MODE, env.PR, env.QA_BASE, env.GH_TOKEN], ['qa', '7', 'main', undefined]);
   assert.equal(calls.comments.length, 1);
-  assert.match(calls.comments[0].body, /^## QA\n\n⏳ \*\*Running\*\*/);
+  assert.match(calls.comments[0].body, /^## QA\n\n\*\*Running\*\*/);
   assert.match(calls.comments[0].body, new RegExp(`https://console.test/s/${session.id}`));
   assert.equal(session.qa.commentId, 9001);
 });
@@ -3019,7 +3019,7 @@ test('a review comments that it started, and that comment becomes the review\'s 
   const { fleet, calls } = reviewSetup();
   await fleet.reviewOnTag({ number: 7 });
   const [running] = calls.comments;
-  assert.ok(running.body.startsWith('⏳ **Reviewing**'));
+  assert.ok(running.body.startsWith('**Reviewing**') && running.body.includes('<img'));
   await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
   assert.deepEqual(calls.comments.at(-1), { id: 9001, body: REVIEW_RESULT.comment }, 'the review edits its started comment');
 

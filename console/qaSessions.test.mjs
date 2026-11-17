@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { MAX_REPORT_CHARS, finishedComment, parseQaReport, runningComment } from './qaSessions.mjs';
+import { MAX_REPORT_CHARS, SPINNER_HTML, finishedComment, parseQaReport, runningComment } from './qaSessions.mjs';
 
 const VERDICT = { conclusion: 'neutral', title: 'Not covered: nothing to test', status: '⏭️ **Not covered**: Docs only', total: 0 };
 const SHA = 'c'.repeat(40);
 
 test('the QA comment says it is running, then gives the verdict, the report when it has test cases, and the session', () => {
-  assert.equal(runningComment({ heading: '## QA', sessionUrl: null }), '## QA\n\n⏳ **Running** in a Woodshed session: planning the tests, then running them in a browser.\n');
+  assert.equal(runningComment({ heading: '## QA', sessionUrl: null }), `## QA\n\n**Running** in a Woodshed session: planning the tests, then running them in a browser. ${SPINNER_HTML}\n`);
   const skipped = finishedComment({ heading: '## QA', verdict: VERDICT, report: '', sessionUrl: 'https://c/s/1' });
   assert.equal(skipped, '## QA\n\n⏭️ **Not covered**: Docs only\n\n---\n\nRun in [a Woodshed session](https://c/s/1), whose terminal shows the run.\n');
   const passed = finishedComment({ heading: '## QA', verdict: { ...VERDICT, total: 1, status: '✅ **Pass**' }, report: '## TC-1: a ✅\n', sessionUrl: null });

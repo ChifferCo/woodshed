@@ -6,6 +6,8 @@
 // GitHub caps a comment at 65536 characters; the report is cut to leave room for the heading and the footer.
 export const MAX_REPORT_CHARS = 60_000;
 const CONCLUSIONS = new Set(['success', 'failure', 'neutral']);
+// The spinner Claude's GitHub Action shows while it works, so a running review or QA looks the same as one in Actions.
+export const SPINNER_HTML = '<img src="https://github.com/user-attachments/assets/5ac382c7-e004-429b-8e35-7feb3e8f9c6f" width="14px" height="14px" style="vertical-align: middle; margin-left: 4px;" />';
 
 /**
  * @param {{heading: string, sessionUrl: string|null}} args
@@ -13,7 +15,7 @@ const CONCLUSIONS = new Set(['success', 'failure', 'neutral']);
  */
 export function runningComment({ heading, sessionUrl }) {
   const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
-  return `${heading}\n\n⏳ **Running** in ${where}: planning the tests, then running them in a browser.\n`;
+  return `${heading}\n\n**Running** in ${where}: planning the tests, then running them in a browser. ${SPINNER_HTML}\n`;
 }
 
 /**
