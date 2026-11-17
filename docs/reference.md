@@ -254,10 +254,9 @@ each, naming its field:
   the console takes its path filters from it; and some job of the suite's workflow has check runs whose names start
   with its `jobs`: the job's `name`, or its id without one, a matrix's ` (…)` and a called workflow's ` / …` after it,
   and for a name with an expression, its text before the expression or a name quoted in it.
-- `envFiles`: one entry a path; no secret is one of the console's own (`github-app-key` and the rest), or
-  reaches the session in one of Woodshed's own variables (`gh-token` would be `GH_TOKEN`); each path is a file that git
-  ignores and does not track, since it holds its secret's text, and not a folder, `.git/` or the project file; each line
-  and each default is `NAME=value` or a `#` comment; and a placeholder that is almost one (`{{ PGHOST }}`, `{{pgHost}}`), which would be written as it is,
+- `envFiles`: one entry a path; no secret reaches the session in one of Woodshed's own variables (`gh-token` would be
+  `GH_TOKEN`); each path is a file that git ignores and does not track, since it holds its secret's text, and not a
+  folder, `.git/` or the project file; each line and each default is `NAME=value` or a `#` comment; and a placeholder that is almost one (`{{ PGHOST }}`, `{{pgHost}}`), which would be written as it is,
   is refused. `env` the same: a variable name, not one of Woodshed's own, and no such placeholder. Two entries that
   name one `secret` share it (the summary says so: `api/.env and worker/.env share app-env`); two whose key (below) is
   made from their paths, or one's path and the other's secret, are refused as a session's start refuses them, naming both.

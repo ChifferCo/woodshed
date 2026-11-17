@@ -9,7 +9,7 @@ import path from 'node:path';
 import { databaseEnv, ENGINES } from './databases/index.mjs';
 import { PROJECT_FILE, SINGLE_APP_NAME, envFileKeys, readRepoFile, secretEnvName, usesOldOverridesName } from './project.mjs';
 import { envKeys } from './repoSettings.mjs';
-import { CONSOLE_SECRETS, isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
+import { isSessionVariable, SESSION_PORTS } from './reservedNames.mjs';
 import { jobMatches, pullRequestFilters, workflowJobs } from './workflowFile.mjs';
 
 const PLACEHOLDER = /^[A-Z_][A-Z0-9_]*\??$/;
@@ -118,7 +118,6 @@ function envFileProblems(project, repoDir) {
   for (const p of repeated(files.map((f) => f.path))) problems.push(`envFiles has ${p} more than once: one entry a file`);
   files.forEach((file, i) => {
     const at = `envFiles[${i}]`;
-    if (file.secret && CONSOLE_SECRETS.includes(file.secret)) problems.push(`${at}.secret is ${file.secret}, one of the console's own secrets, which no session is handed`);
     if (file.secret && isSessionVariable(secretEnvName(file.secret))) {
       problems.push(`${at}.secret ${file.secret} reaches the session as ${secretEnvName(file.secret)}, one of Woodshed's own session variables: name it otherwise`);
     }
