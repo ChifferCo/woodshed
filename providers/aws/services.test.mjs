@@ -58,6 +58,8 @@ test('the spec carries each service with its files\' text, and the box makes one
 test('the spec refuses a service that keeps data, and a file check refuses, before the deploy touches AWS', () => {
   const stateful = { ...MAIL, data: { dir: '/data', keep: 'person' } };
   assert.throws(() => specOf(checkout([PDF, stateful])), /mail keeps data \(data\.keep: person\), which the AWS provider does not run yet: leave it in Terraform's shared_services/);
+  // One that starts containers keeps data too, so the base box never hands its Docker to a service.
+  assert.throws(() => specOf(checkout([PDF, { ...stateful, data: { dir: '/data', keep: 'session' }, docker: true }])), /mail keeps data \(data\.keep: session\)/);
   const dir = checkout([PDF]);
   fs.rmSync(path.join(dir, '.woodshed/services/fonts.sh'));
   fs.symlinkSync('/proc/self/environ', path.join(dir, '.woodshed/services/fonts.sh'));
@@ -76,6 +78,7 @@ test('the box trusts nothing in the spec: the project file\'s rules, and no fiel
     [encode({ ...good, services: [{ ...good.services[0], name: 'console' }] }), /name is console/],
     [encode({ ...good, services: [{ ...good.services[0], image: 'example/pdf:latest' }] }), /not latest/],
     [encode({ ...good, services: [{ ...good.services[0], data: { dir: '/d', keep: 'person' } }] }), /keeps data/],
+    [encode({ ...good, services: [{ ...good.services[0], docker: true }] }), /docker runs containers/],
     [encode({ ...good, services: [{ ...good.services[0], files: { [INIT]: '%%%' } }] }), /is not base64/],
     [encode({ ...good, services: [{ ...good.services[0], files: { '/a:b': '' } }] }), /must be an absolute path in the container/],
     [encode({ ...good, services: [{ ...good.services[0], variable: 'SESSION_URL' }] }), /ending in _URL or _ENDPOINT|Woodshed's own/],
