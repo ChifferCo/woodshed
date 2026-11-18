@@ -1766,8 +1766,8 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    posts the QA comment saying it is running.
 4. `session/qa.sh` runs in the session's terminal, and statusd reports the session working until it is done. Its
    tests drive Playwright's MCP with `recordVideo` on, behind `session/qaBrowser.mjs`, which closes the browser when
-   claude ends so Playwright writes each page's video whole. It sends each video (up to 5, 50 MB each, WebM only) to
-   `POST /qa-video`, where the fleet commits it to `refs/woodshed-qa/<pull request>-<session id>` with the Git data
+   claude ends so Playwright writes each page's video whole. Once the browser's processes are gone it sends each video (up to 5, 25 MB each,
+   WebM only, one at a time) to `POST /qa-video`, where the fleet commits it to `refs/woodshed-qa/<pull request>-<session id>` with the Git data
    API (`qaVideo`; the App's Contents write), then the verdict, the report, the commit it tested and the cost to
    `POST /qa-report` (`qaSessions.mjs` checks it), once.
 5. The fleet writes the report into the QA comment, with the recordings' links, posts the QA check on the commit tested with the verdict and the

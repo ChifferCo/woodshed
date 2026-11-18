@@ -418,6 +418,62 @@ test('a QA session sends its WebM videos through /qa-video before its report; no
   assert.equal((await send('Bearer qa-token', webm)).status, 409, 'not once the report is in');
 });
 
+// A slow upload, its head and first bytes sent, held open until `finish` sends the rest.
+function startUpload(port, token, body) {
+  let finish;
+  const done = new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/qa-video',
+      headers: { authorization: `Bearer ${token}`, 'content-length': String(body.length) } }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: text ? JSON.parse(text) : null }));
+    });
+    req.on('error', reject);
+    req.write(body.subarray(0, 10));
+    finish = () => req.end(body.subarray(10));
+  });
+  return { done, finish: () => finish() };
+}
+
+test('a QA session sends one video at a time, and one that lands after its report is refused', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const saved = [];
+  const fleet = {
+    sessions: () => [qa],
+    async qaVideo(session, video) {
+      saved.push(video);
+      session.qa.videos = [...(session.qa.videos ?? []), { url: `u${saved.length}`, bytes: video.length }];
+      return { url: `u${saved.length}` };
+    },
+  };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(1000, 7)]);
+  const send = (body) => request(port, { path: '/qa-video', authorization: 'Bearer qa-token', body });
+
+  // While one is on its way, the next is refused before its body is read: sent at once, they could pass MAX_QA_VIDEOS
+  // together and fill the console's memory.
+  const first = startUpload(port, 'qa-token', webm);
+  await new Promise((r) => setTimeout(r, 50));
+  const second = await send(webm);
+  assert.equal(second.status, 409);
+  assert.match(second.body.error, /one at a time/);
+  first.finish();
+  assert.deepEqual(await first.done, { status: 200, body: { url: 'u1' } });
+  assert.equal((await send(webm)).status, 200, 'the next one goes once the first is in');
+
+  // The report comes in while a video is on its way: its comment is written, so the video is not kept.
+  const late = startUpload(port, 'qa-token', webm);
+  await new Promise((r) => setTimeout(r, 50));
+  qa.qa.conclusion = 'success';
+  late.finish();
+  assert.equal((await late.done).status, 409);
+  assert.equal(saved.length, 2, 'never committed');
+});
+
 test('a review session gets a read-only token, and sends its verdict once through /review-report', async (t) => {
   const review = { id: 'rrrrrrrr', status: 'running', token: 'review-token', kind: 'pr', number: 7, review: { base: 'main' } };
   const sessions = [review, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];

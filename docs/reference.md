@@ -484,7 +484,9 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
   the report into it when the session ends, with a link to the browser's recording (WebM, which downloads and plays in
   any browser; GitHub plays only videos attached by hand). The console commits the recording to
   `refs/woodshed-qa/<pull request>-<session id>`, a ref of the repo that is not a branch, so clones never fetch it, one
-  for each run, which nothing deletes yet. Each later run writes over that comment. It also posts the
+  for each run, which nothing deletes yet. A ref is as visible as the repo: on a public repo the recordings of the app
+  are public from the first push, and on a private one the link opens only for someone signed in to GitHub who can
+  read the repo. Each later run writes over that comment. It also posts the
   `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
   session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
   An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check

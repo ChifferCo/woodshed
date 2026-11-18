@@ -8,9 +8,10 @@
 // GitHub caps a comment at 65536 characters; the report is cut to leave room for the heading and the footer.
 export const MAX_REPORT_CHARS = 60_000;
 const CONCLUSIONS = new Set(['success', 'failure', 'neutral']);
-// A QA run's videos: the browser's recording of each page the tests opened, as Playwright writes them (WebM). GitHub
-// takes a file of up to 100 MB; base64 makes one a third bigger on the way.
-export const MAX_QA_VIDEO_BYTES = 50 * 1024 * 1024;
+// A QA run's videos: the browser's recording of each page the tests opened, as Playwright writes them (WebM), about
+// 2 MB a minute at 1280x720. The console holds one whole in memory on its way to GitHub (its container has 512 MB), so
+// the cap is kept to a quarter-hour page, and a session sends one at a time.
+export const MAX_QA_VIDEO_BYTES = 25 * 1024 * 1024;
 export const MAX_QA_VIDEOS = 5;
 const WEBM_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
 // The spinner Claude's GitHub Action shows while it works, so a running review or QA looks the same as one in Actions.

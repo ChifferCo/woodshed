@@ -19,7 +19,9 @@ APP_WAIT_SECONDS=${QA_APP_WAIT_SECONDS:-900}
 PLAYWRIGHT_MCP=${QA_PLAYWRIGHT_MCP:-playwright-mcp}
 QA_BROWSER=${QA_BROWSER:-$SESSION_DIR/qaBrowser.mjs}
 # What the console takes (console/qaSessions.mjs): a bigger video is kept in the session and not sent.
-MAX_VIDEO_BYTES=$((50 * 1024 * 1024))
+MAX_VIDEO_BYTES=$((25 * 1024 * 1024))
+# How long the browser may take to close after claude ends: qaBrowser.mjs gives it 30 s.
+BROWSER_CLOSE_WAIT_SECONDS=${QA_BROWSER_CLOSE_WAIT_SECONDS:-40}
 MAX_VIDEOS=5
 
 say() { printf '\n[qa %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
@@ -57,6 +59,19 @@ writeMcpConfig() {
     > "$DIR/mcp.json"
 }
 
+# claude can end before qaBrowser.mjs has closed the browser, and Playwright writes a video only at the close: wait for
+# the proxy and its server, the processes that carry this run's Playwright config in their command lines, to be gone.
+waitForBrowser() {
+  local deadline=$((SECONDS + BROWSER_CLOSE_WAIT_SECONDS))
+  while pgrep -f -- "$DIR/playwright.json" > /dev/null; do
+    if [ $SECONDS -ge $deadline ]; then
+      say "The browser did not close in ${BROWSER_CLOSE_WAIT_SECONDS}s, its video may be cut short"
+      return
+    fi
+    sleep 1
+  done
+}
+
 # Each page's video, oldest first, to the console, which puts it where the pull request's QA comment can link it.
 sendVideos() {
   local file bytes code sent=0
@@ -64,7 +79,7 @@ sendVideos() {
     [ -n "$file" ] || continue
     bytes=$(stat -c %s "$file")
     if [ "$sent" -ge "$MAX_VIDEOS" ]; then say "Video not sent, past $MAX_VIDEOS: $file"; continue; fi
-    if [ "$bytes" -gt "$MAX_VIDEO_BYTES" ]; then say "Video not sent, over 50 MB ($bytes bytes): $file"; continue; fi
+    if [ "$bytes" -gt "$MAX_VIDEO_BYTES" ]; then say "Video not sent, over $((MAX_VIDEO_BYTES / 1024 / 1024)) MB ($bytes bytes): $file"; continue; fi
     code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
       | curl -sS --max-time 300 -o /tmp/qa-video-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: video/webm' \
         --data-binary "@$file" "$WOODSHED_CONSOLE_URL/qa-video") || code=000
@@ -153,6 +168,7 @@ main() {
   writeMcpConfig
   runClaude "$DIR/test-prompt.md" "$DIR/logs/test.jsonl" 200 --allowedTools "Bash,Read,Write,Edit,Glob,Grep,mcp__playwright" \
     --mcp-config "$DIR/mcp.json" --strict-mcp-config
+  waitForBrowser
   sendVideos
   finish ''
 }

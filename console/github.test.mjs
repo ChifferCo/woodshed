@@ -206,7 +206,11 @@ test('a file is committed to a ref that is not a branch: made with its first fil
   assert.deepEqual(posted('git/refs'), [['POST', { ref: 'refs/woodshed-qa/7-s1', sha: 'c1' }]]);
 
   asked.length = 0;
-  const second = await github.commitFileToRef({ ref: 'refs/woodshed-qa/7-s1', path: 'qa-2.webm', content, message: 'two' });
+  // Bigger than one of the pieces the blob's base64 is written in, and not a multiple of 3: it must still read back whole.
+  const big = Buffer.alloc(2 * 1024 * 1024 + 1, 0);
+  for (let i = 0; i < big.length; i++) big[i] = (i * 31) % 251;
+  const second = await github.commitFileToRef({ ref: 'refs/woodshed-qa/7-s1', path: 'qa-2.webm', content: big, message: 'two' });
+  assert.ok(Buffer.from(posted('git/blobs')[0][1].content, 'base64').equals(big), 'the blob is the whole file');
   assert.equal(second.url, 'https://github.com/acme/api/raw/c2/qa-2.webm');
   assert.equal(posted('git/trees')[0][1].base_tree, 'tree-of-c1', 'the first file stays');
   assert.deepEqual(posted('git/commits')[0][1].parents, ['c1'], 'the first link keeps working');

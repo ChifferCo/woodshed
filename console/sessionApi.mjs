@@ -35,8 +35,8 @@
 //                        (qaSessions.mjs). 404 for any other session, 409 for a second report
 //   POST /qa-video       a WebM body  ->  {"url"}: one of a QA session's browser recordings, sent before its report,
 //                        committed to a ref of the repo for the QA comment to link (fleet.qaVideo). 404 for any other
-//                        session, 409 once the report is in or past MAX_QA_VIDEOS, 413 past MAX_QA_VIDEO_BYTES, 400
-//                        for anything but WebM, 502 when GitHub refused it
+//                        session, 409 once the report is in, past MAX_QA_VIDEOS or while another of its videos is on
+//                        its way, 413 past MAX_QA_VIDEO_BYTES, 400 for anything but WebM, 502 when GitHub refused it
 //
 // A session's git credential helper and its `gh` wrapper call /github-token, so a
 // session only ever holds a token that expires within hours: an installation
@@ -71,6 +71,10 @@ const MAX_CODEX_AUTH_BYTES = 40_000;
 const MAX_ANSWER_BYTES = MAX_ANSWER_CHARS * 6;
 // The report, cut to MAX_REPORT_CHARS by the console, plus the verdict: the same six-fold for escapes.
 const MAX_QA_REPORT_BYTES = MAX_REPORT_CHARS * 6 + 10_000;
+// The QA sessions with a video on its way: one at a time each, taken before the body is read, so videos sent at once
+// can neither pass MAX_QA_VIDEOS together nor fill the console's memory (a QA session runs the pull request's code,
+// which holds its token).
+const qaVideosSending = new Set();
 
 function reply(res, code, body) {
   res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store' });
@@ -444,23 +448,32 @@ async function qaVideoReply(req, res, session, fleet) {
   if (session.qa?.conclusion) return refuse(409, 'this session already sent its report');
   if ((session.qa?.videos?.length ?? 0) >= MAX_QA_VIDEOS) return refuse(409, `a QA run keeps at most ${MAX_QA_VIDEOS} videos`);
   if (Number(req.headers['content-length']) > MAX_QA_VIDEO_BYTES) return refuse(413, 'too large');
-  const chunks = [];
-  let bytes = 0;
-  for await (const chunk of req) {
-    bytes += chunk.length;
-    if (bytes > MAX_QA_VIDEO_BYTES) return reply(res, 413, { error: 'too large' });
-    chunks.push(chunk);
-  }
-  const video = Buffer.concat(chunks);
-  if (!isWebm(video)) {
-    console.warn('sessionApi: a QA video refused, not WebM', { sessionId: session.id, bytes });
-    return reply(res, 400, { error: 'the body must be a WebM video' });
-  }
+  if (qaVideosSending.has(session.id)) return refuse(409, 'another video of this session is on its way: send them one at a time');
+  qaVideosSending.add(session.id);
   try {
-    return reply(res, 200, await fleet.qaVideo(session, video));
-  } catch (err) {
-    console.warn('sessionApi: a QA video not saved', { sessionId: session.id, bytes, message: String(err?.message ?? err).split('\n')[0] });
-    return reply(res, 502, { error: 'GitHub did not take the video' });
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of req) {
+      bytes += chunk.length;
+      if (bytes > MAX_QA_VIDEO_BYTES) return reply(res, 413, { error: 'too large' });
+      chunks.push(chunk);
+    }
+    const video = Buffer.concat(chunks);
+    chunks.length = 0;
+    if (!isWebm(video)) {
+      console.warn('sessionApi: a QA video refused, not WebM', { sessionId: session.id, bytes });
+      return reply(res, 400, { error: 'the body must be a WebM video' });
+    }
+    // The report may have come in while the body was on its way: its comment is written, and would never link this one.
+    if (session.qa?.conclusion) return reply(res, 409, { error: 'this session already sent its report' });
+    try {
+      return reply(res, 200, await fleet.qaVideo(session, video));
+    } catch (err) {
+      console.warn('sessionApi: a QA video not saved', { sessionId: session.id, bytes, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'GitHub did not take the video' });
+    }
+  } finally {
+    qaVideosSending.delete(session.id);
   }
 }
 

@@ -1681,12 +1681,6 @@ export function createFleet({
   }
 
   /**
-   * A QA session's report (POST /qa-report): written into the pull request's QA comment, then the session stops.
-   * @param {object} session
-   * @param {{verdict: {conclusion: string, title: string, status: string, total: number}, report: string, sha: string,
-   *   costUsd: number|null}} result  from parseQaReport
-   */
-  /**
    * One of a QA session's videos, sent before its report: committed to the run's own ref of the repo (qaVideoRef), as
    * the App, for the QA comment to link. Throws when GitHub refuses it.
    * @param {object} session
@@ -1707,6 +1701,12 @@ export function createFleet({
     return { url };
   }
 
+  /**
+   * A QA session's report (POST /qa-report): written into the pull request's QA comment, then the session stops.
+   * @param {object} session
+   * @param {{verdict: {conclusion: string, title: string, status: string, total: number}, report: string, sha: string,
+   *   costUsd: number|null}} result  from parseQaReport
+   */
   async function qaFinished(session, { verdict, report, sha, costUsd }) {
     const project = projectFor(config, session);
     const gh = githubOf(project);

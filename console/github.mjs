@@ -488,7 +488,18 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
         return ghApi(['--method', 'POST', `repos/${repo}/${endpoint}`, '--input', input]);
       };
       try {
-        const blob = await post('git/blobs', { content: content.toString('base64'), encoding: 'base64' });
+        // The blob's JSON is written in pieces, never as one string: a video's base64 and its JSON would each be a third
+        // bigger than the video, held at once in a console with little memory.
+        const fd = fs.openSync(input, 'w');
+        try {
+          fs.writeSync(fd, '{"encoding":"base64","content":"');
+          const piece = 3 * 256 * 1024;
+          for (let at = 0; at < content.length; at += piece) fs.writeSync(fd, content.subarray(at, at + piece).toString('base64'));
+          fs.writeSync(fd, '"}');
+        } finally {
+          fs.closeSync(fd);
+        }
+        const blob = await ghApi(['--method', 'POST', `repos/${repo}/git/blobs`, '--input', input]);
         const tree = await post('git/trees', { ...(baseTree ? { base_tree: baseTree } : {}), tree: [{ path: filePath, mode: '100644', type: 'blob', sha: blob.sha }] });
         const commit = await post('git/commits', { message, tree: tree.sha, parents: parent ? [parent] : [] });
         if (parent) {

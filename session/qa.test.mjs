@@ -19,7 +19,10 @@ else
   printf '## TC-1: signs in ✅\\n## TC-2: saves ❌\\n' > .qa/report.md
   # The browser's recording, where the MCP config claude was given says to write it.
   for a in "$@"; do [ "\${prev:-}" = --mcp-config ] && cp "$a" .qa/mcp-seen.json; prev=$a; done
-  printf '\\x1a\\x45\\xdf\\xa3webm' > .qa/video/page@1.webm
+  # Playwright writes it only as the browser closes, which qaBrowser.mjs may still be doing after claude has gone: a
+  # stand-in that carries the run's config in its command line, as the proxy does, and writes the video a second later.
+  cfg=$(jq -r '.mcpServers.playwright.args[-1]' .qa/mcp-seen.json)
+  nohup bash -c 'sleep 1; printf "\\x1a\\x45\\xdf\\xa3webm" > .qa/video/page@1.webm' qaBrowser "$cfg" > /dev/null 2>&1 &
   echo '{"type":"result","total_cost_usd":1.25}'
 fi
 `;
