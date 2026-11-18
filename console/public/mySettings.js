@@ -196,7 +196,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       return h('section', { class: 'set-card', id: 'my-github' },
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${bot}`)),
         h('p', { class: 'sub' }, `Connect to have your My Woodshed sessions commit, push and open pull requests as you, marked “via ${via}”. It is the same GitHub sign-in again; this time the console keeps the token, and only your private sessions get it, a few minutes at a time.`),
-        h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-open', href: '/auth/connect' }, 'Connect GitHub')),
+        h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-open', href: me.githubConnectHref ?? '/auth/connect' }, 'Connect GitHub')),
         githubStatus);
     }
     if (document.activeElement !== gitName && !gitTyped) gitName.value = gh.name ?? '';

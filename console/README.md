@@ -1466,6 +1466,17 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
+- `githubConnect: {clientId(), clientSecret(), href}`, behind `trusted` only: Connect GitHub on My settings through
+  the program's GitHub App, for a console with no sign-in of its own. Connect sends the person to `href` (a path),
+  where the program signs them in with its App's user authorization and hands GitHub's answer to the code to the
+  installation's `connectGitHub({login, answer})`, then sends them to `/settings?connected=1`; `login` is who signed in
+  here, and GitHub must say it is them. From there it is the Connect GitHub above (`githubUser.mjs`): kept in
+  `provider.secrets` at `users/<login>/github`, refreshed and ended with `clientId()` and `clientSecret()`, and handed
+  to that person's private sessions alone. The program's App is installed beyond this console's repos, so the token is
+  always scoped by GitHub to the session's repo, whatever the project file's `githubAccess` says (`sessionApi:
+  github access for a private session` logs `repo`); a session that gets no scoped token pushes as the App. The
+  installation's `disconnectGitHub(login)` is Disconnect, for when the person leaves. Without a secret store it is off
+  (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s

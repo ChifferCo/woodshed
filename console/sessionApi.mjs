@@ -122,6 +122,9 @@ export function sessionForToken(given, sessions) {
  *          repoSettings?: {forSession: (session: object) => Promise<object|null>,
  *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null}} opts
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
+ *   `scopeOwnerTokens`: every private session gets its owner's token scoped to its project's repo, whatever the
+ *   project file says, for a console whose GitHub App is installed beyond its own repos (a host's, installation.mjs's
+ *   `githubConnect`): the person's own token would reach all of them
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>}
@@ -129,6 +132,7 @@ export function sessionForToken(given, sessions) {
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
   attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null,
+  scopeOwnerTokens = false,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -146,6 +150,10 @@ export function createSessionApi({
   // `full` or `repo`, from the session's project file. One that cannot be read errs toward less: `full` on the default
   // project, as before the setting, and `repo` on any other, whose repo may be public.
   async function accessFor(session, own) {
+    if (scopeOwnerTokens) {
+      logAccess(session, own, 'repo');
+      return 'repo';
+    }
     const fallback = !own || own.default ? 'full' : 'repo';
     let access = fallback;
     if (githubAccess && own) {
@@ -197,7 +205,7 @@ export function createSessionApi({
     const readOnly = isAsk(session) || isQa(session) || isReview(session);
     const access = session.owner && githubUser && !readOnly ? await accessFor(session, own) : null;
     const ownerToken = access === 'full';
-    if (access === 'repo' && githubUser.scopedTokenFor) {
+    if (access === 'repo' && githubUser.scopedTokenFor && own?.repo) {
       let scopedToken;
       try {
         scopedToken = await githubUser.scopedTokenFor(session.owner, { repo: own?.repo, permissions: own?.permissions });

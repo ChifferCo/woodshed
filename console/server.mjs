@@ -558,7 +558,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, githubConnectHref = null,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -1193,6 +1193,8 @@ export function createHandler({
       reviewerSetupNeeded: Boolean(config.githubApp && secrets && reviewerApp && !reviewerApp.configured() && isAdmin({ login })),
       // Whether My settings offers Connect GitHub: only with the App's own sign-in to connect through.
       githubConnect: Boolean(githubUser),
+      // Where Connect GitHub starts: the console's own sign-in, or the host's page for a console behind one.
+      githubConnectHref: githubConnectHref ?? '/auth/connect',
       // Who sessions push as without the person's own GitHub, `<slug>[bot]`: each installation names its App.
       app: appIdentity?.known() ?? null,
       // With no App, sessions push with this machine's gh login, as its owner.
