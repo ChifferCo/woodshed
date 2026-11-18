@@ -212,7 +212,7 @@ variable "console_name" {
 }
 
 variable "console_workflow_links" {
-  description = "The console menu's GitHub Actions links, label to workflow file in the repo (such as its deploy workflow). None leaves the group out."
+  description = "The console menu's GitHub Actions links, label to workflow file in the repo (such as its deploy workflow), for a repo whose project file leaves out workflowLinks, which wins. None leaves the group out."
   type        = map(string)
   default     = {}
 
