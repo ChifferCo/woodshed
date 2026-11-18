@@ -68,6 +68,8 @@ function withFoldedComments(body, comments) {
 
 // What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
 // the session image, so they are named here.
+const SESSION_BRANCH_PREFIX = 'woodshed/';
+
 export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
   + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
   + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
@@ -1600,11 +1602,13 @@ export function createFleet({
     // A person who added the label must pass the identity checks. A label the console's own App added (qa.autoLabel)
     // stands for the pull request's author, on a same-repo head, on the team key when the author fails the checks.
     let teamKeyWhy = null;
+    let owner = null;
     const appLogin = ownApp()?.login ?? null;
     if (qa.autoLabel && appLogin && login === appLogin) {
       const autoPull = known ?? await gh.pull(number);
       if (autoPull.head?.repo?.full_name && autoPull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
-      login = authorOf(project, number, autoPull.user?.login ?? '', autoPull.head?.ref);
+      owner = pullOwner(project, autoPull, number);
+      login = owner.login;
       teamKeyWhy = await teamKeyReason(login);
       console.log('fleet: QA label added by the console, run as the author', { number, login, teamKey: Boolean(teamKeyWhy), ...projectField(project) });
     } else {
@@ -1614,7 +1618,7 @@ export function createFleet({
     }
     const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
     if (route.action === 'ignore') return ignored(route.reason);
-    if (runsElsewhere(gates, project, number, 'qa')) return ignored('pullRequests.runsOn names another console');
+    if (runsElsewhere(gates, project, number, 'qa', owner)) return ignored(owner?.elsewhere ? 'another console\'s session opened it' : 'pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open') return ignored('the pull request is not open');
     if (gates.review) {
@@ -1651,10 +1655,10 @@ export function createFleet({
     const gates = project ? await pullRequests(project.name) : null;
     const qa = gates?.qa;
     if (!qa?.autoLabel || qa.runner !== 'woodshed') return { unrecorded: true };
-    // The label's author is whose QA it is: another console's would read to the one runsOn names as a stranger's.
-    if (runsElsewhere(gates, project, number, 'qa label')) return { unrecorded: true };
     const gh = githubOf(project);
     const pull = await gh.pull(number);
+    // The label's author is whose QA it is: another console's would read to the one that runs it as a stranger's.
+    if (runsElsewhere(gates, project, number, 'qa label', pullOwner(project, pull, number))) return { unrecorded: true };
     if (pull.state !== 'open' || pull.draft || (pull.labels ?? []).some((l) => l.name === qa.label)) return { unrecorded: true };
     if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return { unrecorded: true };
     await gh.addLabel(number, qa.label);
@@ -1734,20 +1738,21 @@ export function createFleet({
       const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
       if (!message || !message.includes(review.rerun)) return { unrecorded: true };
     }
-    return startReview({ project, gates, number, login: authorOf(project, number, pull.user?.login ?? '', pull.head?.ref), pull });
+    const owner = pullOwner(project, pull, number);
+    return startReview({ project, gates, number, login: owner.login, owner, pull });
   }
 
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
   // the verdict and the Merge risk check here (reviewFinished), as its own App. One review session per commit.
-  async function startReview({ project, gates, number, login, pull: known = null }) {
+  async function startReview({ project, gates, number, login, owner = null, pull: known = null }) {
     const { review, mergeRisk } = gates;
     const gh = githubOf(project);
     const ignored = (reason) => {
       console.log('fleet: review not started', { number, login, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
-    if (runsElsewhere(gates, project, number, 'review')) return ignored('pullRequests.runsOn names another console');
+    if (runsElsewhere(gates, project, number, 'review', owner)) return ignored(owner?.elsewhere ? 'another console\'s session opened it' : 'pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
     // The session runs on the author's Claude plan only when they pass the label trigger's identity checks: a reused
@@ -1776,7 +1781,9 @@ export function createFleet({
 
   // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
   // review, QA) in pullRequests.runsOn, by the login its App acts as. The others still start sessions by hand.
-  function runsElsewhere(gates, project, number, what) {
+  function runsElsewhere(gates, project, number, what, owner = null) {
+    if (owner?.own) return false;
+    if (owner?.elsewhere) return true;
     const runsOn = gates?.runsOn ?? null;
     if (!runsOn) return false;
     const login = ownApp()?.login ?? null;
@@ -1785,22 +1792,32 @@ export function createFleet({
     return true;
   }
 
-  // A pull request this console's own session opened has the App as its author, which has no Claude plan: its review
-  // and QA stand for the person who started that session instead, so they run on that person's plan as the session did.
+  // Each console runs review and QA of the pull requests its own sessions opened, as the person who started the session,
+  // on their plan; every other console leaves them alone. The App that opened one is its author, and has no plan.
   // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
-  function authorOf(project, number, author, branch = null) {
+  // A bot-authored session branch this console has no session for is another console's (Cloud orgs share one App), and
+  // is skipped: a branch name can only make a console skip, never spend someone's plan.
+  function pullOwner(project, pull, number) {
+    const author = pull.user?.login ?? '';
+    const branch = pull.head?.ref ?? '';
     const appLogin = ownApp()?.login ?? null;
-    if (!appLogin || author !== appLogin) return author;
-    const opener = state.sessions
-      .filter((s) => !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1);
+    const sessionBranch = branch.startsWith(SESSION_BRANCH_PREFIX);
+    if (!author.endsWith('[bot]') || !(author === appLogin || sessionBranch)) return { login: author };
+    const opener = author === appLogin ? state.sessions
+      .filter((s) => !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1) : null;
     const starter = opener?.startedBy ?? null;
-    if (!starter || starter.endsWith('[bot]')) {
-      console.log('fleet: pull request opened by the App, no session starter to stand for', { number, found: Boolean(opener), ...projectField(project) });
-      return author;
+    if (starter && !starter.endsWith('[bot]')) {
+      console.log('fleet: pull request opened by a session, run as its starter', { number, sessionId: opener.id, starter, ...projectField(project) });
+      return { login: starter, own: true };
     }
-    console.log('fleet: pull request opened by a session, run as its starter', { number, sessionId: opener.id, starter, ...projectField(project) });
-    return starter;
+    if (sessionBranch) {
+      console.log('fleet: pull request opened by another console\'s session, left to it', { number, author, found: Boolean(opener), ...projectField(project) });
+      return { login: author, elsewhere: true };
+    }
+    console.log('fleet: pull request opened by the App, no session starter to stand for', { number, found: Boolean(opener), ...projectField(project) });
+    return { login: author };
   }
+
 
   async function teamKeyReason(login) {
     if (login.endsWith('[bot]')) return null;

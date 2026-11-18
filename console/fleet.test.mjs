@@ -3044,3 +3044,36 @@ test('a review comments that it started, and that comment becomes the review\'s 
   await died.fleet.tick();
   assert.match(died.calls.comments.at(-1).body, /did not finish.*CannotPullContainerError/);
 });
+
+test('a session pull request is reviewed by the console that ran the session, whatever runsOn names, and skipped by the others', async () => {
+  const internal = { login: 'woodshed-internal[bot]' };
+  const cloud = { login: 'woodshed-cloud[bot]' };
+  const gates = { ...REVIEW_GATES, runsOn: internal.login };
+  const sessionPull = { ...REVIEW_PULL, user: { login: cloud.login }, head: { ...REVIEW_PULL.head, ref: 'woodshed/ada-0b34fee6' } };
+
+  const onCloud = reviewSetup({ ownApp: () => cloud, gates });
+  onCloud.github.pull = async () => sessionPull;
+  onCloud.store.state.sessions.push({
+    id: '0b34fee6', repo: 'o/r', kind: 'task', number: null, title: 'qa video', startedBy: 'ada', status: 'running',
+    branch: 'woodshed/ada-0b34fee6', prUrl: null, createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.equal((await onCloud.fleet.reviewOnTag({ number: 7 })).outcome, 'started', 'its own session: runsOn does not stop it');
+  assert.equal(onCloud.fleet.sessions().find((s) => s.review).startedBy, 'ada');
+
+  const onInternal = reviewSetup({ ownApp: () => internal, gates });
+  onInternal.github.pull = async () => sessionPull;
+  assert.deepEqual(await onInternal.fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'another console\'s session opened it' });
+
+  const otherCloudOrg = reviewSetup({ ownApp: () => cloud, gates: REVIEW_GATES });
+  otherCloudOrg.github.pull = async () => sessionPull;
+  assert.equal((await otherCloudOrg.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a Cloud org with no such session leaves it to the one that has it');
+
+  const person = reviewSetup({ ownApp: () => cloud, gates });
+  assert.equal((await person.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a person\'s pull request still follows runsOn');
+});
+
+test('QA of another console\'s session pull request is neither labelled nor run here', async () => {
+  const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  t.github.pull = async () => ({ ...QA_PULL, user: { login: 'woodshed-cloud[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
+  assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
+});
