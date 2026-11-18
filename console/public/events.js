@@ -73,7 +73,7 @@ window.Woodshed.settingsPage('/events', (app, life) => {
         h('h1', { class: 'title' }, 'Webhook events ', W.scopePill('/events')),
         h('p', { class: 'sub' }, 'Every delivery the console took off the queue, and what it did with it.')));
     if (!data) {
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/events'), head,
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/events'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load events: ${loadError}` : 'Loading events…')));
       return;
     }
@@ -85,7 +85,7 @@ window.Woodshed.settingsPage('/events', (app, life) => {
         h('tbody', null, visible.map(row))))
       : h('p', { class: 'empty' }, data.events.length ? 'No events match this filter.' : 'No webhook events yet.');
     app.replaceChildren(h('div', { class: 'page' },
-      W.nav('/events'),
+      life.nav('/events'),
       head,
       offNote(),
       h('div', { class: 'filters' },

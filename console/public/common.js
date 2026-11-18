@@ -1342,7 +1342,8 @@
   // all on each settings address, and a click on a link to another of them shows it in place: the address changes, the
   // side list stays, and only the page's own part is drawn again, as session.js moves between the rail's pages.
   // `start(app, life)` draws into `app`, a node of its own each time it is shown, so a load still answering for a page
-  // left behind draws where nobody sees it; `life` gives it timers and listeners that end when another page is shown.
+  // left behind draws where nobody sees it; `life` gives it the side list (`life.nav`, never W.nav) and timers and
+  // listeners, all of which end when another page is shown.
   const settingsPages = [];
   let shownPage = null;
   function settingsPage(match, start) {
@@ -1361,15 +1362,19 @@
     shownPage?.stop();
     const ends = [];
     const life = {
+      ended: false,
       interval(fn, ms) { const id = setInterval(fn, ms); ends.push(() => clearInterval(id)); return id; },
       timeout(fn, ms) { const id = setTimeout(fn, ms); ends.push(() => clearTimeout(id)); return id; },
       on(target, type, fn) { target.addEventListener(type, fn); ends.push(() => target.removeEventListener(type, fn)); },
+      // The side list, for as long as the page is shown. A page left behind can still draw, when a read it made answers
+      // late: it gets none then, so it can neither take the list off the page shown nor move its mark back.
+      nav: (current) => (life.ended ? null : nav(current)),
     };
     // The side list goes up before the page starts, so a page that draws only once its read answers never leaves the
     // screen empty in between: until it draws, its own part is blank and the list stays where it was.
     const app = h('div', { class: 'settings-view' }, h('div', { class: 'page' }, nav(settingsNavFor(location.pathname))));
     document.getElementById('app').replaceChildren(app);
-    shownPage = { pathname: location.pathname, search: location.search, stop: () => ends.splice(0).forEach((end) => end()) };
+    shownPage = { pathname: location.pathname, search: location.search, stop: () => { life.ended = true; ends.splice(0).forEach((end) => end()); } };
     // A page that fails to start says so on itself, and the others stay a click away, in place.
     try {
       page.start(app, life);

@@ -233,7 +233,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
     dbRefresh = life.timeout(() => W.getJson('/api/my').then((answer) => { me = answer; render(); }, () => watchDatabases()), 10_000);
   }
 
-  const restore = window.WoodshedRestore.createRestore({ getMe: () => me, setMe: (answer) => { me = answer; }, render });
+  const restore = window.WoodshedRestore.createRestore({ getMe: () => me, setMe: (answer) => { me = answer; }, render, life });
 
   // From your computer: a token for woodshed-db.mjs, shown once, since the console keeps only its hash.
   let tunnelToken = null;
@@ -542,13 +542,13 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   function render() {
     if (!me) {
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
       return;
     }
     // The page is rebuilt on each answer (the projects, a save): a box being typed in keeps its focus.
     const focused = document.activeElement;
     app.replaceChildren(h('div', { class: 'page settings-page' },
-      W.nav('/settings'),
+      life.nav('/settings'),
       h('header', { class: 'page-head' }, h('div', null,
         h('h1', { class: 'title' }, 'My settings ', W.scopePill('/settings')),
         h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),

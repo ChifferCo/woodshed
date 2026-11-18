@@ -153,10 +153,11 @@
   const P = window.WoodshedRestoreParts;
 
   /**
-   * @param {{getMe: () => object, setMe: (me: object) => void, render: () => void}} page  mySettings.js's state
+   * @param {{getMe: () => object, setMe: (me: object) => void, render: () => void, life?: {interval: Function, timeout: Function}}} page
+   *   mySettings.js's state; `life` is the page's (common.js, settingsPage), so the clock and the poll stop when it is left
    * @returns {{section: () => HTMLElement|null, busy: () => boolean}}
    */
-  function createRestore({ getMe, setMe, render }) {
+  function createRestore({ getMe, setMe, render, life = { interval: setInterval, timeout: setTimeout } }) {
     const note = h('p', { class: 'form-note', role: 'status' });
     const picker = h('input', { type: 'file', accept: '.dump,.backup,.pgdump,.archive,.gz,application/octet-stream,application/gzip', hidden: true });
     let sending = null;
@@ -180,9 +181,9 @@
         tick = null;
         return;
       }
-      tick ??= setInterval(render, 1_000);
+      tick ??= life.interval(render, 1_000);
       if (sending || refresh) return;
-      refresh = setTimeout(() => W.getJson('/api/my').then((answer) => {
+      refresh = life.timeout(() => W.getJson('/api/my').then((answer) => {
         refresh = null;
         setMe(answer);
         render();

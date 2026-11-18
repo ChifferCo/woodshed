@@ -742,11 +742,11 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         W.settingsTabs('/console-settings'),
         h('p', { class: 'sub' }, 'For every shared session on this console, and only admins can change them. A change applies on the console\'s next check, and is logged with who made it. Your own settings, for your My Woodshed sessions, are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
     if (!data) {
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head,
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
   }
 
   async function load() {

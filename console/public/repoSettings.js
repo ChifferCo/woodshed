@@ -410,7 +410,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   }
 
   function page(...body) {
-    return h('div', { class: 'page' }, W.nav('/console-settings'),
+    return h('div', { class: 'page' }, life.nav('/console-settings'),
       h('header', { class: 'page-head' },
         h('div', null,
           h('p', { class: 'crumb' }, h('a', { href: '/console-settings#card-projects' }, '‹ Settings · Repos')),
