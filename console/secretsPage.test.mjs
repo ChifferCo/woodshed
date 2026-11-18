@@ -42,7 +42,7 @@ async function loadPage(secrets) {
   };
   const answers = { '/api/secrets-manager': { canChoose: false, configured: true, kind: 'aws' }, '/api/secrets': { repo: 'acme/app', secrets, webhook: null } };
   const W = {
-    h, nav: () => element('nav'), settingsTabs: () => element('nav'), when: (iso) => `at ${iso}`, providerWords: {}, capitalised: (s) => s,
+    h, nav: () => element('nav'), settingsTabs: () => element('nav'), scopePill: () => element('span'), when: (iso) => `at ${iso}`, providerWords: {}, capitalised: (s) => s,
     getJson: async (path) => answers[path],
   };
   const context = vm.createContext({ window: { Woodshed: W }, document: { getElementById: () => app }, setTimeout });

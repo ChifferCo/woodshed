@@ -52,7 +52,7 @@
 
   function requestsCard() {
     if (!data.requests.length) return null;
-    return h('section', { class: 'people-card is-asking' },
+    return h('section', { class: 'people-card is-asking', id: 'requests' },
       h('div', { class: 'set-head' }, h('b', null, `Asking to join · ${data.requests.length}`)),
       data.requests.map((r) => h('div', { class: 'person-row' },
         who(r.login, `asked ${W.ago(r.askedAt)}`),
@@ -63,7 +63,7 @@
   function inviteCard() {
     const button = h('button', { type: 'submit', class: 'btn btn-stop' }, 'Invite');
     return h('form', {
-      class: 'field-block',
+      class: 'field-block', id: 'invite-card',
       onsubmit: async (e) => {
         e.preventDefault();
         inviteError.hidden = true;
@@ -207,7 +207,7 @@
   }
 
   function membersCard() {
-    return h('section', { class: 'people-card' },
+    return h('section', { class: 'people-card', id: 'members' },
       h('div', { class: 'set-head' }, h('b', null, `Members · ${data.members.length}`),
         h('span', { class: 'foot' }, 'A tick is on. Each change saves at once; new members start with all of them off.')),
       h('div', { class: 'table-scroll' }, h('table', { class: 'people-table' },
@@ -223,7 +223,7 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'People'),
+        h('h1', { class: 'title' }, 'People ', W.scopePill('/people')),
         h('p', { class: 'sub' }, 'Only these people can sign in, and each still needs write access to the repository. Admins choose what each member can do.')));
     const body = data ? [requestsCard(), inviteCard(), membersCard()]
       : h('p', { class: 'empty' }, loadError ? `Could not load the list: ${loadError}` : 'Loading…');

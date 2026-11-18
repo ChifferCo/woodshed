@@ -1308,6 +1308,8 @@
       h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
     return h('aside', { class: 'settings-side', 'aria-label': 'Settings' },
       h('div', { class: 'side-head' }, h('a', { class: 'side-back', href: '/' }, '‹ ', h('b', null, 'Back to sessions')), userSlot),
+      // The settings search (settingsSearch.js), the same box on every settings page, kept between redraws.
+      window.Woodshed.settingsSearch?.(),
       h('nav', { class: 'side-list' },
         h('div', { class: 'side-group' }, 'You'), MY_LINKS.map(item),
         consoleSlot,

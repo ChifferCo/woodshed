@@ -36,6 +36,11 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions you started or have whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups. Both end with Reviews and QA (sessions the console started to review or QA a pull request), folded until opened: they run by themselves, so they are never Unassigned and carry no **Take it**, nor Assign to me, Hand over to or Unassign in their ⋯ menu. A status chip on the phone's Everyone shows those of that status in it.
 - A shared session someone has carries the Assigned tag: on Mine the word Assigned when it is yours, and the name of whoever has it for one you started and handed over; on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch, nor has anyone on a console one person uses: the rail head reads My sessions. Mine holds the shared sessions you started as well as those assigned to you. **People** on Everyone filters by assignee. A resume keeps the assignee.
 
+## Settings pages
+
+- Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
+  Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".
+
 ## Menus and presses
 
 - A ⋯ menu is a `ground` panel with the `menu` shadow beside its button on a desktop, and a sheet from the bottom of the
