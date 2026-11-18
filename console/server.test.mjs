@@ -464,7 +464,7 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
     '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/console-settings/projects/triggers', '/api/people/invite',
-    '/api/console-settings/updates/check', '/api/console-settings/updates/update', '/api/console-settings/webhooks'];
+    '/api/console-settings/updates/check', '/api/console-settings/updates/update', '/api/console-settings/webhooks', '/api/console-settings/reviews'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -1560,6 +1560,33 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
   const settingsPage = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
   assert.deepEqual([settingsPage.webhooks.receiving, settingsPage.webhooks.github.off, settingsPage.webhooks.slack.off], [true, true, true], 'Console settings shows the switches');
   assert.equal((await get()).webhooks.github.off, true, 'and Webhook events says what is off');
+});
+
+test('Console settings\' Reviews card asks for Codex beside Claude Code only while both are connected, and says who did', async (t) => {
+  const { createReviewAgents } = await import('./reviewAgents.mjs');
+  const store = { state: {}, save() {} };
+  const keys = { claude: true, codex: false };
+  const reviewAgents = createReviewAgents({ store, connected: async () => ({ ...keys }) });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, reviewAgents, consoleSettings: createConsoleSettings({ store, config }) });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const page = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
+  assert.deepEqual(page.reviews, { agents: 'claude', by: null, at: null, connected: { claude: true, codex: false } });
+  const refused = await post(port, '/api/console-settings/reviews', { agents: 'both' });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /set openai-api-key on Secrets & webhooks first/);
+  keys.codex = true;
+  const on = await post(port, '/api/console-settings/reviews', { agents: 'both' });
+  assert.equal(on.status, 200);
+  assert.deepEqual([on.body.reviews.agents, on.body.reviews.by, on.body.reviews.connected.codex], ['both', 'console', true]);
+  assert.equal((await post(port, '/api/console-settings/reviews', { agents: 'everyone' })).status, 400);
+  assert.equal((await post(port, '/api/console-settings/reviews', { agents: 'claude' })).body.reviews.agents, 'claude');
 });
 
 test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {

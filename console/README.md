@@ -794,6 +794,24 @@ part. The session cannot write to GitHub, so it writes files and the console pos
   A session that ends without a review turns it into `The review did not finish` with the reason
   (`fleet: review ended without a report`).
 
+### Claude Code and Codex together
+
+Console settings' **Reviews** card (`reviewAgents.mjs`, kept in `state.json` under `reviewAgents`) has one switch,
+**Review with Claude Code and Codex**. It turns on only while both are connected: the console has its team
+`anthropic-api-key` and `openai-api-key`. Codex runs on the team's OpenAI key, never on anyone's own Codex sign-in,
+since a review session is a shared one. While it is on, each review that starts gets `review.agents: ['claude',
+'codex']` and `REVIEW_AGENTS`. `session/review.sh` then runs `codex exec` beside Claude, with the same prompt and
+context in `.review/codex/`, through the console's OpenAI proxy. That proxy lets in such a review session and no
+other. The two verdicts become one (`codeReview.mjs merge`): the stricter conclusion and the higher merge risk win,
+so a pull request is approved only when both approve. The comment and summary have a section from each, each inline
+comment says whose it is, and an earlier comment is resolved only when both found it fixed. When one writes no
+verdict, the other's goes out alone and says so. The PR comment says `Reviewing with Claude Code and Codex`.
+
+The console logs `reviewAgents: changed` with who changed it, and `fleet: review session started` with its `agents`.
+A review that started while the switch was on but the OpenAI key was gone logs `fleet: review runs on Claude Code alone,
+though Console settings ask for Codex too` with `why`. In the session's pane, `Codex ended (exit=…)`, with codex's own
+log at `.review/logs/codex.jsonl`. The proxy logs `openaiProxy: first call on the team key` with `review: true`.
+
 ### The approval waits for QA
 
 When QA runs here (`pullRequests.qa.runner: woodshed`) and the pull request carries the QA label, the review's APPROVE

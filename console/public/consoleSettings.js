@@ -1,5 +1,5 @@
 // The Settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
-// typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
+// typed confirm; the reviews and webhook switches, each applied as it is turned; then the sessions holding data, and anything
 // stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
 // change survives.
 (function () {
@@ -714,6 +714,58 @@
       h('div', { class: 'webhook-switches' }, rows));
   }
 
+  // Who reviews a pull request in a review session (pullRequests.review.runner: woodshed). Codex beside Claude Code needs
+  // both team keys, since a review session is a shared one and never gets anyone's own sign-in: the switch turns on only
+  // while both are connected, and stays where it is when one goes, the review then running on Claude Code alone.
+  let reviewSaving = false;
+  let reviewError = null;
+
+  async function setReviewAgents(agents) {
+    reviewSaving = true;
+    reviewError = null;
+    render();
+    try {
+      data = { ...data, ...(await W.postJson('/api/console-settings/reviews', { agents })) };
+    } catch (err) {
+      reviewError = err.message;
+    }
+    reviewSaving = false;
+    render();
+  }
+
+  function connection(name, on) {
+    return h('span', { class: 'review-agent' }, `${name} `, h('span', { class: `pill ${on ? 'is-ok' : 'is-warn'}` }, on ? 'Connected' : 'Not connected'));
+  }
+
+  function reviewsCard() {
+    const r = data.reviews;
+    if (!r) return null;
+    const both = r.agents === 'both';
+    const ready = r.connected.claude && r.connected.codex;
+    const since = r.at ? ` Since ${W.when(r.at)}${r.by && r.by !== 'console' ? `, by ${r.by}` : ''}.` : '';
+    const sub = both
+      ? (ready
+        ? `On: Codex reviews each pull request beside Claude Code, and the two become one review. The stricter verdict and the higher merge risk win, so a pull request is approved only when both approve.${since}`
+        : `On, but Codex is not connected, so reviews run on Claude Code alone until it is.${since}`)
+      : (ready
+        ? 'Off: Claude Code reviews each pull request alone.'
+        : 'Off: Claude Code reviews each pull request alone. Codex can review beside it once both are connected.');
+    return h('section', { class: 'settings-card', id: 'reviews', 'aria-labelledby': 'card-reviews' },
+      h('h2', { id: 'card-reviews', class: 'label' }, 'Reviews'),
+      h('p', { class: 'sub' }, 'The review sessions this console runs on pull requests, for repos whose project file says ', h('code', null, 'pullRequests.review.runner: woodshed'), '. They run on the team\u2019s keys, set on ',
+        h('a', { href: '/secrets' }, 'Secrets & webhooks'), ' (anthropic-api-key and openai-api-key). A change applies to the next review, and is logged with who made it.'),
+      h('p', { class: 'review-agents' }, connection('Claude Code', r.connected.claude), connection('Codex', r.connected.codex)),
+      h('div', { class: `toggle-row${both ? '' : ' is-off'}` },
+        h('button', {
+          type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(both), 'aria-labelledby': 'reviews-switch-both',
+          disabled: reviewSaving || (!both && !ready),
+          onclick: () => setReviewAgents(both ? 'claude' : 'both'),
+        }),
+        h('span', { class: 'toggle-label', id: 'reviews-switch-both' }, 'Review with Claude Code and Codex'),
+        h('p', { class: 'sub' }, sub),
+        reviewError ? h('p', { class: 'form-error', role: 'alert' }, reviewError) : null));
+  }
+
   // Fields render as they are typed in, so a Save turns on before the field loses focus: the page is drawn again with
   // the same field focused, its caret where it was. A render that starts inside another (a blur the swap fired) is
   // skipped, since the outer one draws the same state.
@@ -747,7 +799,7 @@
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), reviewsCard(), webhooksCard(), dataCard()));
   }
 
   async function load() {

@@ -55,6 +55,8 @@
       words: 'delete cleanup clean up days keep kept resume merged closed expire old databases storage' },
     { page: '/console-settings', id: 'card-slack', title: 'Slack channel for pull requests', note: 'Where finished pull requests are posted.',
       words: 'slack channel post notify announce pr pull request review qa brief channel id' },
+    { page: '/console-settings', id: 'card-reviews', title: 'Reviews', note: 'Review pull requests with Claude Code, or with Claude Code and Codex together.',
+      words: 'review reviewer codex openai claude code both two agents second opinion verdict approve merge risk pull request pr' },
     { page: '/console-settings', id: 'card-webhooks', title: 'Webhooks', note: 'Turn GitHub\'s and Slack\'s webhooks off, so the console polls instead.',
       words: 'webhook github slack events off on switch poll polling deliveries mentions questions' },
     { page: '/console-settings', id: 'card-data', title: 'Sessions holding data', note: 'Databases and Claude homes kept by stopped sessions.',

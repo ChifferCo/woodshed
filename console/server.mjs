@@ -84,6 +84,7 @@
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/webhooks  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
+//   POST /api/console-settings/reviews   {"agents": "claude"|"both"}   who reviews in a review session (reviewAgents.mjs)
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
@@ -548,7 +549,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
  *   `settings` only where the Secrets page works (AWS); `people` gives the pages each handle's display name
  */
 export function createHandler({
-  config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, auth = null, review = null, userSettings = null, github = null,
+  config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, reviewAgents = null, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
@@ -1614,6 +1615,7 @@ export function createHandler({
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
       webhooks: webhookState(),
+      reviews: reviewAgents ? await reviewAgents.view() : null,
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '', blocker: blockers[p.name] ?? null })) ?? null,
       // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
       repoNames: addedProjects ? addedProjects.names !== false : null,
@@ -1659,6 +1661,23 @@ export function createHandler({
       throw err;
     }
     return reply(res, 200, { webhooks: webhookState() });
+  }
+
+  async function reviewAgentsWrite(req, res, login) {
+    if (!reviewAgents) return reply(res, 404, { error: 'this console runs no review sessions' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      await reviewAgents.set({ agents: body?.agents, by: login ?? 'console' });
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      throw err;
+    }
+    return reply(res, 200, { reviews: await reviewAgents.view() });
   }
 
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
@@ -1797,6 +1816,7 @@ export function createHandler({
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    if (pathname === '/api/console-settings/reviews') return reviewAgentsWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)

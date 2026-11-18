@@ -9,6 +9,8 @@ const SESSIONS = [
   { id: 'aaaaaaaa', status: 'running', token: 'codex-private', owner: 'joel', options: { agent: 'codex' } },
   { id: 'bbbbbbbb', status: 'running', token: 'claude-private', owner: 'joel', options: { agent: 'claude' } },
   { id: 'cccccccc', status: 'stopped', token: 'stopped', owner: 'joel', options: { agent: 'codex' } },
+  { id: 'dddddddd', status: 'running', token: 'review-both', trigger: 'review', review: { base: 'main', agents: ['claude', 'codex'] } },
+  { id: 'eeeeeeee', status: 'running', token: 'review-claude', trigger: 'review', review: { base: 'main', agents: ['claude'] } },
 ];
 
 function listen(server) {
@@ -54,6 +56,14 @@ test('only an active Codex session may use the team key', async (t) => {
   assert.equal((await call('stopped')).status, 401, 'a stopped session');
   assert.equal((await call(null)).status, 401, 'no token');
   assert.equal(seen.length, 0, 'nothing reached OpenAI');
+});
+
+test('a review session reaches the team key only when Codex reviews in it too', async (t) => {
+  const { seen, call } = await setup(t);
+  assert.equal((await call('review-both')).status, 200, 'Codex beside Claude Code');
+  assert.equal(seen[0].headers.authorization, 'Bearer sk-team');
+  assert.equal((await call('review-claude')).status, 403, 'Claude Code alone');
+  assert.equal(seen.length, 1);
 });
 
 test('with no team key saved the session is told where to save one', async (t) => {

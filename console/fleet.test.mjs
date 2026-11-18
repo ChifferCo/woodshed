@@ -15,7 +15,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -104,7 +104,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2551,6 +2551,24 @@ test('the review tag on the head starts a review session, once for the commit, o
   const actions = setup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, runner: 'actions' } } });
   actions.github.pull = async () => REVIEW_PULL;
   assert.deepEqual(await actions.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the actions runner stays in CI');
+});
+
+test('a review started while Console settings ask for Codex too runs both, and says so on the pull request', async () => {
+  const both = { forReview: async () => ({ agents: ['claude', 'codex'], why: null }) };
+  const { fleet, calls } = reviewSetup({ reviewAgents: both });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.agents, ['claude', 'codex']);
+  await fleet.tick();
+  assert.equal(calls.started[0].env.REVIEW_AGENTS, 'claude codex');
+  assert.match(calls.comments[0].body, /Reviewing\*\* with Claude Code and Codex/);
+
+  const alone = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], why: 'the console has no OpenAI key' }) } });
+  await alone.fleet.reviewOnTag({ number: 7 });
+  await alone.fleet.tick();
+  assert.deepEqual(alone.fleet.sessions()[0].review.agents, ['claude']);
+  assert.equal(alone.calls.started[0].env.REVIEW_AGENTS, undefined, 'Claude alone, as before the setting');
+  assert.doesNotMatch(alone.calls.comments[0].body, /Codex/);
 });
 
 test('a head without the review tag starts nothing', async () => {

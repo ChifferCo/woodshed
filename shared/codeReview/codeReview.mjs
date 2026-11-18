@@ -10,6 +10,9 @@
 //       prints {conclusion, summary, comment, mergeRisk: {tier, reason, summary}, inlineComments, resolved} as JSON, or
 //       exits 3 when the session
 //       wrote no verdict
+//   node codeReview.mjs merge <dir> <codexDir>
+//       the same, for a review by Claude Code (<dir>) and Codex (<codexDir>) together (mergeVerdicts); exits 3 when
+//       neither wrote a verdict
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
@@ -92,11 +95,44 @@ export function verdictIn(dir) {
   };
 }
 
-function main([command, dir]) {
-  const { values } = parseArgs({
+const STRICTNESS = { APPROVE: 0, COMMENT: 1, REQUEST_CHANGES: 2 };
+const TIER_ORDER = { Low: 0, Medium: 1, High: 2 };
+// As many inline comments as the console posts in one review (console/reviewSessions.mjs).
+const MAX_INLINE_COMMENTS = 30;
+
+/**
+ * One review from two reviewers' verdicts, each `{name, verdict}` with a verdict as verdictIn reads it. The strictest
+ * conclusion wins (REQUEST_CHANGES, then COMMENT, then APPROVE) and the higher merge risk, so a pull request is approved
+ * only when both approve. The comment and summary keep a section from each, the inline comments say whose they are, and
+ * an earlier comment is resolved only when both found it fixed. A reviewer that wrote no verdict is left out, and the
+ * comment says so; with neither, the conclusion is null.
+ * @param {{name: string, verdict: ReturnType<typeof verdictIn>}[]} reviews
+ */
+export function mergeVerdicts(reviews) {
+  const done = reviews.filter((r) => r.verdict.conclusion);
+  const missing = reviews.filter((r) => !r.verdict.conclusion).map((r) => r.name);
+  if (!done.length) return { ...reviews[0].verdict, conclusion: null };
+  const missingNote = missing.length ? `${missing.join(' and ')} wrote no verdict, so this is ${done.map((r) => r.name).join(' and ')}'s alone.` : '';
+  const conclusion = done.map((r) => r.verdict.conclusion).reduce((a, b) => (STRICTNESS[b] > STRICTNESS[a] ? b : a));
+  const risky = done.filter((r) => r.verdict.mergeRisk.tier)
+    .reduce((a, b) => (!a || TIER_ORDER[b.verdict.mergeRisk.tier] > TIER_ORDER[a.verdict.mergeRisk.tier] ? b : a), null);
+  const mergeRisk = risky ? { ...risky.verdict.mergeRisk } : { tier: null, reason: '', summary: '' };
+  if (risky && done.length > 1) mergeRisk.summary = `${mergeRisk.summary}\n\n(The higher of the reviewers' tiers: ${risky.name}'s.)`;
+  const sections = (field) => done.length === 1
+    ? [done[0].verdict[field], missingNote].filter(Boolean).join('\n\n')
+    : done.filter((r) => r.verdict[field]).map((r) => `### ${r.name}: ${r.verdict.conclusion}\n\n${r.verdict[field]}`).join('\n\n');
+  const perReviewer = Math.max(1, Math.floor(MAX_INLINE_COMMENTS / done.length));
+  const inlineComments = done.flatMap((r) => r.verdict.inlineComments.slice(0, perReviewer)
+    .map((c) => ({ ...c, body: done.length > 1 ? `**${r.name}:** ${c.body}` : c.body })));
+  const resolved = done.map((r) => r.verdict.resolved).reduce((a, b) => a.filter((id) => b.includes(id)));
+  return { conclusion, summary: sections('summary'), comment: sections('comment'), mergeRisk, inlineComments, resolved };
+}
+
+function main([command, dir, other]) {
+  const { values } = command === 'prompt' ? parseArgs({
     args: process.argv.slice(4),
     options: { pr: { type: 'string' }, head: { type: 'string' }, server: { type: 'string' }, repo: { type: 'string' }, reviewer: { type: 'string' } },
-  });
+  }) : { values: {} };
   if (command === 'prompt' && dir && values.pr && values.head && values.server && values.repo) {
     writePrompt({ dir, pr: values.pr, head: values.head, server: values.server, repo: values.repo, reviewer: values.reviewer ?? '' });
     return;
@@ -107,7 +143,13 @@ function main([command, dir]) {
     process.stdout.write(`${JSON.stringify(verdict)}\n`);
     return;
   }
-  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] | verdict <dir>');
+  if (command === 'merge' && dir && other) {
+    const verdict = mergeVerdicts([{ name: 'Claude Code', verdict: verdictIn(dir) }, { name: 'Codex', verdict: verdictIn(other) }]);
+    if (!verdict.conclusion) process.exit(3);
+    process.stdout.write(`${JSON.stringify(verdict)}\n`);
+    return;
+  }
+  throw new Error('usage: codeReview.mjs prompt <dir> --pr --head --server --repo [--reviewer] | verdict <dir> | merge <dir> <codexDir>');
 }
 
 if (isMain(import.meta.url)) {

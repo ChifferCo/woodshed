@@ -5,10 +5,12 @@
 //
 //   /openai/<path>   Authorization: Bearer <SESSION_TOKEN>  ->  api.openai.com/<path>, on the team key
 //
-// Only a Codex session may use it: any other kind of session has no business with the key.
+// Only a Codex session may use it, and a review session whose Codex reviews beside Claude (Console settings' Reviews
+// card, reviewAgents.mjs): any other kind of session has no business with the key.
 
 import http from 'node:http';
 import https from 'node:https';
+import { isReview } from './sessions.mjs';
 
 const PREFIX = '/openai';
 const TEAM_KEY_SECRET = 'openai-api-key';
@@ -88,7 +90,7 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
       console.warn('openaiProxy: refused, no active session has that token', { from: req.socket.remoteAddress });
       return refuse(res, 401, 'not an active Woodshed session');
     }
-    if (session.options?.agent !== 'codex') {
+    if (session.options?.agent !== 'codex' && !(isReview(session) && session.review.agents?.includes('codex'))) {
       req.resume();
       console.warn('openaiProxy: refused, not a Codex session', { sessionId: session.id });
       return refuse(res, 403, 'only a Codex session may use the team\'s OpenAI key');
@@ -109,7 +111,7 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
     }
     if (!routed.has(session.id)) {
       routed.add(session.id);
-      console.log('openaiProxy: first call on the team key', { sessionId: session.id });
+      console.log('openaiProxy: first call on the team key', { sessionId: session.id, review: isReview(session) });
     }
     return forward(req, res, key);
   }

@@ -23,12 +23,27 @@ echo '[{"path":"README.md","line":1,"body":"Say what it is for."}]' > "$dir/inli
 echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total_cost_usd":0.25}'
 `;
 
+// A fake codex that asks for changes, so the merged verdict is visibly the stricter one. It reviews only when run on
+// the team key, through the console, as session/bin/codex does with WOODSHED_CODEX_AUTH=key.
+const FAKE_CODEX = `#!/bin/bash
+[ "$1" = exec ] && [ "$2" = --skip-git-repo-check ] && [ "$WOODSHED_CODEX_AUTH" = key ] || exit 2
+prompt=$6
+case "$prompt" in "You are Codex"*) ;; *) exit 3 ;; esac
+dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
+[ -s "$dir/context.md" ] || exit 4
+echo REQUEST_CHANGES > "$dir/verdict.txt"
+echo 'The link is wrong.' > "$dir/summary.md"
+printf 'MEDIUM\\nA link people follow.\\n' > "$dir/merge-risk.md"
+echo '[{"path":"README.md","line":1,"body":"This link 404s."}]' > "$dir/inline-comments.json"
+echo '{"type":"turn.completed"}'
+`;
+
 function listen(handler) {
   const server = http.createServer(handler);
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git' } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -37,6 +52,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git' } =
   fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
+  fs.writeFileSync(path.join(sessionDir, 'bin', 'codex'), codex, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
   execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add -A &&
     git -c user.email=t@t -c user.name=t commit -qm base ${origin ? `&& git remote add origin "${origin}"` : ''}`]);
@@ -56,6 +72,8 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git' } =
     REVIEW_RUNNING: path.join(dir, 'running'), REVIEW_AUTHOR: 'rev[bot]', GIT_ALLOW_PROTOCOL: 'file',
   };
   delete env.GITHUB_REPOSITORY;
+  delete env.WOODSHED_CODEX_AUTH;
+  if (agents) env.REVIEW_AGENTS = agents;
   let output = '';
   await new Promise((resolve) => {
     const child = spawn('bash', [REVIEW_SH], { env });
@@ -80,4 +98,30 @@ test('a review that cannot name its repo says so and reports no verdict, rather 
   const { reports, output } = await runReview(t, { origin: null });
   assert.match(output, /Could not write the review prompt/);
   assert.equal(reports[0].body.conclusion, null);
+});
+
+test('with Codex beside Claude Code, both review the same diff and the stricter verdict is reported', async (t) => {
+  const { reports, output } = await runReview(t, { agents: 'claude codex' });
+  assert.match(output, /Reviewing the diff of Acme\/widgets with Claude Code and Codex/);
+  assert.match(output, /Codex ended \(exit=0\)/);
+  assert.equal(reports.length, 1);
+  const { body } = reports[0];
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.equal(body.mergeRisk.tier, 'Medium');
+  assert.equal(body.costUsd, 0.25, 'Claude\'s cost, which codex does not report');
+  assert.deepEqual(body.inlineComments.map((c) => c.body), ['**Claude Code:** Say what it is for.', '**Codex:** This link 404s.']);
+});
+
+test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote none', async (t) => {
+  const { reports, output } = await runReview(t, { agents: 'claude codex', codex: '#!/bin/bash\necho "the console has no OpenAI key" >&2\nexit 1\n' });
+  assert.match(output, /Codex ended \(exit=1\)/);
+  assert.equal(reports[0].body.conclusion, 'APPROVE');
+  assert.match(reports[0].body.summary, /Codex wrote no verdict/);
+});
+
+test('with Claude Code alone, codex is never run', async (t) => {
+  const { reports, output } = await runReview(t, { codex: '#!/bin/bash\ntouch "$REPO_DIR/codex-ran"\nexit 1\n' });
+  assert.doesNotMatch(output, /Codex/);
+  assert.equal(reports[0].body.conclusion, 'APPROVE');
+  assert.deepEqual(reports[0].body.inlineComments, [{ path: 'README.md', line: 1, body: 'Say what it is for.' }]);
 });

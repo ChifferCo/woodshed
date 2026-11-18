@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn } from './codeReview.mjs';
+import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn, mergeVerdicts } from './codeReview.mjs';
 import { parseYaml } from '../yamlLite.mjs';
 
 function dir(t) {
@@ -84,4 +84,53 @@ test('the session\'s review prompt is the Actions review\'s, apart from where th
     .replaceAll('/D/resolved.txt', '/tmp/claude-resolved.txt')
     .replace('The console puts it', 'The next step puts it').replace('so the console submits them', 'so the next steps submit them');
   assert.equal(session, actions);
+});
+
+const verdictOf = (conclusion, { tier = 'Low', comments = [], resolved = [], text = conclusion } = {}) => ({
+  conclusion, summary: `${text} summary`, comment: `${text} comment`,
+  mergeRisk: tier ? { tier, reason: `${tier} reason`, summary: `${tier.toUpperCase()}\n${tier} reason` } : { tier: null, reason: '', summary: '' },
+  inlineComments: comments, resolved,
+});
+
+test('two reviews become one: the stricter verdict and the higher merge risk win, each keeps its section', () => {
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('APPROVE', { tier: 'Low', comments: [{ path: 'a.js', line: 1, body: 'Fine.' }], resolved: [1, 2] }) },
+    { name: 'Codex', verdict: verdictOf('REQUEST_CHANGES', { tier: 'High', comments: [{ path: 'b.js', line: 2, body: 'Broken.' }], resolved: [2, 3] }) },
+  ]);
+  assert.equal(merged.conclusion, 'REQUEST_CHANGES');
+  assert.equal(merged.mergeRisk.tier, 'High');
+  assert.match(merged.mergeRisk.summary, /^HIGH\nHigh reason\n\n\(The higher of the reviewers' tiers: Codex's\.\)$/);
+  assert.equal(merged.comment, '### Claude Code: APPROVE\n\nAPPROVE comment\n\n### Codex: REQUEST_CHANGES\n\nREQUEST_CHANGES comment');
+  assert.match(merged.summary, /### Claude Code: APPROVE\n\nAPPROVE summary/);
+  assert.deepEqual(merged.inlineComments, [{ path: 'a.js', line: 1, body: '**Claude Code:** Fine.' }, { path: 'b.js', line: 2, body: '**Codex:** Broken.' }]);
+  assert.deepEqual(merged.resolved, [2], 'an earlier comment is resolved only when both found it fixed');
+});
+
+test('a pull request is approved only when both approve; COMMENT beats APPROVE', () => {
+  const both = (a, b) => mergeVerdicts([{ name: 'Claude Code', verdict: verdictOf(a) }, { name: 'Codex', verdict: verdictOf(b) }]).conclusion;
+  assert.equal(both('APPROVE', 'APPROVE'), 'APPROVE');
+  assert.equal(both('COMMENT', 'APPROVE'), 'COMMENT');
+  assert.equal(both('REQUEST_CHANGES', 'COMMENT'), 'REQUEST_CHANGES');
+});
+
+test('a reviewer that wrote no verdict is left out and named; with neither there is no verdict', () => {
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('APPROVE', { comments: [{ path: 'a.js', line: 1, body: 'Fine.' }], resolved: [4] }) },
+    { name: 'Codex', verdict: verdictOf(null, { tier: null }) },
+  ]);
+  assert.equal(merged.conclusion, 'APPROVE');
+  assert.equal(merged.comment, 'APPROVE comment\n\nCodex wrote no verdict, so this is Claude Code\'s alone.');
+  assert.deepEqual(merged.inlineComments, [{ path: 'a.js', line: 1, body: 'Fine.' }], 'not marked when one reviewer wrote them all');
+  assert.deepEqual(merged.resolved, [4]);
+  assert.equal(merged.mergeRisk.summary, 'LOW\nLow reason');
+  assert.equal(mergeVerdicts([{ name: 'Claude Code', verdict: verdictOf(null) }, { name: 'Codex', verdict: verdictOf(null) }]).conclusion, null);
+});
+
+test('the inline comments stay within what the console posts, half each when both wrote many', () => {
+  const many = (n) => Array.from({ length: n }, (_, i) => ({ path: 'a.js', line: i + 1, body: `c${i}` }));
+  const merged = mergeVerdicts([
+    { name: 'Claude Code', verdict: verdictOf('COMMENT', { comments: many(40) }) },
+    { name: 'Codex', verdict: verdictOf('COMMENT', { comments: many(3) }) },
+  ]);
+  assert.equal(merged.inlineComments.length, 18);
 });
