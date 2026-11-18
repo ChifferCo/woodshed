@@ -37,6 +37,7 @@ import { createHeldData } from './heldData.mjs';
 import { ACTIVE_STATUSES } from './sessions.mjs';
 import { APP_KEY_SECRET, createSettings } from './settings.mjs';
 import { createGitHubUser } from './githubUser.mjs';
+import { createHostedGitHubUser } from './githubBroker.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
 import { createProjectReader } from './projectFile.mjs';
 import { createRepoSettings } from './repoSettings.mjs';
@@ -355,6 +356,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
   const githubUser = auth?.githubUser ?? null;
+  // What private sessions push as: the person's Connect GitHub on a console of its own, and on one a program hosts the
+  // program's token source, when it lends people's own (githubBroker.mjs, createHostedGitHubUser). Only the session
+  // API gets the host's: My settings' Connect GitHub card and its Disconnect stay Connect GitHub's alone.
+  const sessionGitHubUser = githubUser ?? createHostedGitHubUser({ source: config.githubBroker?.source ?? null });
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
   const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => !auth?.enabled() || members.isMember(login) });
   const dbRestore = createDbRestore({
@@ -399,7 +404,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
   const sessionApi = config.sessionApi.host ? createSessionApi({
-    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
+    fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser: sessionGitHubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });

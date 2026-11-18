@@ -600,6 +600,50 @@ test('the project file\'s githubAccess decides how far a private session\'s toke
   assert.equal(await tokenOf('ask-on-locked'), 'ghs_locked_read', 'a question: the read-only App token');
 });
 
+test('a host that lends people\'s GitHub: an owner\'s session gets their token scoped to its repo, whatever the project file says, and their name on commits', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const sessions = [
+    { id: 'aaaaaaaa', status: 'running', token: 'mine-on-app', owner: 'mia', project: 'app', repo: 'acme/app' },
+    { id: 'bbbbbbbb', status: 'running', token: 'anas-on-app', owner: 'ana', project: 'app', repo: 'acme/app' },
+    { id: 'cccccccc', status: 'running', token: 'shared-on-app', project: 'app', repo: 'acme/app' },
+    { id: 'dddddddd', status: 'running', token: 'review-on-app', project: 'app', repo: 'acme/app', kind: 'pr', trigger: 'review', review: {}, owner: 'mia' },
+  ];
+  const source = (token) => ({ token: async () => ({ token, expiresAt: Date.parse('2026-11-10T13:00:00Z') }) });
+  const permissions = { contents: 'write', pull_requests: 'write' };
+  const byProject = { app: { project: 'app', default: true, repo: 'acme/app', permissions, sessions: source('ghs_app'), asks: source('ghs_app_read') } };
+  const scopedAsks = [];
+  // As createHostedGitHubUser makes it: scoped tokens only, and no full one to fall back to.
+  const githubUser = {
+    scopedOnly: true,
+    scopedTokenFor: async (login, scope) => {
+      scopedAsks.push([login, scope]);
+      return login === 'mia' ? { token: `ghu_${login}_scoped_${scope.repo}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') } : null;
+    },
+    identity: async (login) => (login === 'mia' ? { name: 'Mia', email: '7+mia@users.noreply.github.com' } : null),
+  };
+  const userSettings = { claudeToken: async () => 'sk-ant-x', ownFiles: async () => ({}), gitIdentity: () => null };
+  const handle = createSessionApi({
+    fleet: { sessions: () => sessions }, tokens: source('unused'), githubUser, userSettings, tokensFor: (session) => byProject[session.project],
+    // A project file saying full is not read: the host's access is never wider than the repo.
+    githubAccess: async () => 'full',
+  });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const tokenOf = async (bearer) => (await request(port, { authorization: `Bearer ${bearer}` })).body.token;
+
+  assert.equal(await tokenOf('mine-on-app'), 'ghu_mia_scoped_acme/app', 'the owner\'s, scoped to the project\'s repo, even on the default project');
+  assert.deepEqual(scopedAsks[0], ['mia', { repo: 'acme/app', permissions }]);
+  assert.equal(await tokenOf('anas-on-app'), 'ghs_app', 'nothing lent for the owner: the App\'s token');
+  assert.equal(await tokenOf('shared-on-app'), 'ghs_app', 'a shared session: the App\'s token');
+  assert.equal(await tokenOf('review-on-app'), 'ghs_app_read', 'a review: the read-only App token, never a person\'s');
+  assert.deepEqual(scopedAsks.map(([login]) => login), ['mia', 'ana'], 'no one\'s token is asked for a shared or review session');
+  assert.deepEqual((await request(port, { path: '/settings', authorization: 'Bearer mine-on-app' })).body.git, { name: 'Mia', email: '7+mia@users.noreply.github.com' },
+    'commits say who the host says the owner is');
+  assert.equal((await request(port, { path: '/settings', authorization: 'Bearer anas-on-app' })).body.git, null, 'and woodshed-bot for one it lends nothing for');
+});
+
 test('a private session\'s GitHub access is logged when decided and when it changes, not on every token', async (t) => {
   const sessions = [{ id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', project: 'app', repo: 'acme/app' }];
   const source = (token) => ({ token: async () => ({ token, expiresAt: Date.parse('2026-11-10T13:00:00Z') }) });

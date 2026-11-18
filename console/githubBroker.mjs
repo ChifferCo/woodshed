@@ -14,9 +14,14 @@
 
 import fs from 'node:fs';
 
+import { checkIdentity } from './userSettings.mjs';
+
 // A token handed out is good for at least this long, so a push started with it does not fail halfway.
 const REFRESH_MARGIN_MS = 5 * 60_000;
 const TIMEOUT_MS = 15_000;
+// A person's own token is asked for again this often at most, so one they took back at the host stops reaching their
+// sessions within minutes, as a Disconnect does on a console of its own (githubUser.mjs).
+const OWNER_CACHE_MS = 4 * 60_000;
 // GitHub's levels, least first; `admin` is above anything a token here is asked for.
 const LEVELS = ['read', 'write', 'admin'];
 
@@ -153,4 +158,68 @@ export function createInProcessBroker({ source, now = Date.now }) {
     }
   }
   return createTokenBroker({ ask, now, kind: 'source' });
+}
+
+/**
+ * A person's own GitHub access, lent by the program that hosts the console (`config.githubBroker.source.userToken`).
+ * Where the program signs people in itself the console has no Connect GitHub of its own (installation.mjs, `trusted`),
+ * so this is how a private session there pushes and opens pull requests as its owner rather than as the App.
+ *
+ * The host answers a token GitHub scoped to the one repo asked for, never the person's whole token: the program may
+ * host consoles for several organizations, and the person's token reaches all of theirs. So the session API asks for
+ * it as it does for a `githubAccess: repo` project (`scopedOnly`), whatever the project file says. An answer of null
+ * means the person lent nothing (not connected at the host, or GitHub refused); the session then gets the App's token.
+ * A token said to do more than was asked is not used, as with the App's.
+ * @param {{source: {userToken?: (args: {login: string, repo: string, permissions: Record<string, string>|null}) =>
+ *            Promise<{token: string, expiresAt: string|number|Date, permissions?: object}|null>,
+ *          userIdentity?: (login: string) => Promise<{name: string, email: string}|null>}|null, now?: () => number}} opts
+ * @returns {{scopedOnly: true, scopedTokenFor: Function, identity: Function}|null}  null when the source lends no one's
+ */
+export function createHostedGitHubUser({ source, now = Date.now }) {
+  if (typeof source?.userToken !== 'function') return null;
+  const cached = new Map();
+  return {
+    scopedOnly: true,
+    /** @returns {Promise<{token: string, expiresAt: number}|null>} */
+    async scopedTokenFor(login, { repo, permissions = null } = {}) {
+      if (!login || !repo) return null;
+      const key = `${String(login).toLowerCase()}\n${keyOf(repo, permissions)}`;
+      const kept = cached.get(key);
+      if (kept && kept.keepUntil > now()) return kept.token;
+      cached.delete(key);
+      let answer;
+      try {
+        answer = await source.userToken({ login, repo, permissions });
+      } catch (err) {
+        console.warn('githubBroker: owner token not lent', { login, repo, error: String(err?.message ?? err).split('\n')[0].slice(0, 200) });
+        return null;
+      }
+      if (!answer) return null;
+      const expiresAt = expiryOf(answer.expiresAt);
+      if (typeof answer.token !== 'string' || !answer.token || !Number.isFinite(expiresAt)) {
+        console.warn('githubBroker: owner token not used', { login, repo, why: 'no token or expiry in the answer' });
+        return null;
+      }
+      const wider = permissions ? widerThanAsked(permissions, answer.permissions) : null;
+      if (wider) {
+        console.warn('githubBroker: owner token not used', { login, repo, why: wider });
+        return null;
+      }
+      const token = { token: answer.token, expiresAt };
+      cached.set(key, { token, keepUntil: Math.min(expiresAt - REFRESH_MARGIN_MS, now() + OWNER_CACHE_MS) });
+      console.log('githubBroker: owner token borrowed', { login, repo, expiresAt: new Date(expiresAt).toISOString() });
+      return token;
+    },
+    /** @returns {Promise<{name: string, email: string}|null>}  what the person's commits say, from the host */
+    async identity(login) {
+      if (typeof source.userIdentity !== 'function') return null;
+      try {
+        const given = await source.userIdentity(login);
+        return given ? checkIdentity(given) : null;
+      } catch (err) {
+        console.warn('githubBroker: owner identity not read', { login, error: String(err?.message ?? err).split('\n')[0].slice(0, 200) });
+        return null;
+      }
+    },
+  };
 }

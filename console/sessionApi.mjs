@@ -114,7 +114,10 @@ export function sessionForToken(given, sessions) {
  *                          ownFiles: (login: string, opts?: {repo?: string}) => Promise<Record<string, string|null>>,
  *                          gitIdentity: (login: string) => {name: string, email: string}|null}|null,
  *          anthropic?: ReturnType<typeof import('./anthropicProxy.mjs').createAnthropicProxy>|null,
- *          githubUser?: {tokenFor: (login: string) => Promise<{token: string, expiresAt: number}|null>}|null,
+ *          githubUser?: {tokenFor?: (login: string) => Promise<{token: string, expiresAt: number}|null>,
+ *                        scopedTokenFor?: (login: string, scope: {repo: string, permissions: object|null}) =>
+ *                          Promise<{token: string, expiresAt: number}|null>,
+ *                        scopedOnly?: boolean, identity?: (login: string) => Promise<{name: string, email: string}|null>}|null,
  *          askTokens?: {token: () => Promise<{token: string, expiresAt: number}>}|null,
  *          tokensFor?: ((session: object) => {project: string, default: boolean, sessions: object, asks: object})|null,
  *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
@@ -157,6 +160,11 @@ export function createSessionApi({
     return access;
   }
 
+  function scopedOnly(session, own) {
+    logAccess(session, own, 'repo');
+    return 'repo';
+  }
+
   return async function handle(req, res) {
     const pathname = new URL(req.url, 'http://console').pathname;
     if (anthropic?.isProxyPath(pathname)) {
@@ -171,7 +179,7 @@ export function createSessionApi({
       console.warn('sessionApi: request refused, no active session has that token', { pathname, from: req.socket.remoteAddress });
       return reply(res, 401, { error: 'unauthorized' });
     }
-    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1' });
+    if (pathname === '/settings') return settingsReply(res, session, userSettings, databases, repoSettings, { planOnly: req.headers[PLAN_ONLY_HEADER] === '1', githubUser });
     if (pathname === '/repo-settings') return repoSettingsReply(req, res, session, repoSettings);
     if (pathname === '/codex-auth') return codexAuthReply(req, res, session, userSettings);
     if (pathname === '/progress') return progressReply(req, res, session, fleet);
@@ -195,7 +203,8 @@ export function createSessionApi({
     // project file's githubAccess says whether the session gets it as it is (`full`) or scoped by GitHub to the project's
     // repo (`repo`), for a repo whose content outsiders write. Read from its default branch, as the console's other gates are.
     const readOnly = isAsk(session) || isQa(session) || isReview(session);
-    const access = session.owner && githubUser && !readOnly ? await accessFor(session, own) : null;
+    // Access a host lends (githubBroker.mjs, createHostedGitHubUser) is only ever scoped to the session's repo.
+    const access = session.owner && githubUser && !readOnly ? (githubUser.scopedOnly ? scopedOnly(session, own) : await accessFor(session, own)) : null;
     const ownerToken = access === 'full';
     if (access === 'repo' && githubUser.scopedTokenFor) {
       let scopedToken;
@@ -297,7 +306,7 @@ async function repoSettingsReply(req, res, session, repoSettings) {
 
 // The owner's settings and no one else's: the session is found by its own token, and its owner was fixed when
 // the console created it.
-async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false } = {}) {
+async function settingsReply(res, session, userSettings, databases, repoSettings, { planOnly = false, githubUser = null } = {}) {
   // A review session has no databases; it asks /settings only for the plan it runs on.
   if (isReview(session)) {
     const onPlan = Boolean(await starterToken(session, userSettings));
@@ -327,7 +336,9 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
   // A Codex session runs on its owner's own sign-in when they saved one, and otherwise on the team's key through /openai.
   const codexAuth = codex ? await userSettings.codexAuth(session.owner) : null;
   if (codex) console.log('sessionApi: Codex sign-in decided', { sessionId: session.id, owner: session.owner, own: Boolean(codexAuth) });
-  return reply(res, 200, { files, ownFiles, git: userSettings.gitIdentity(session.owner), database, claudeToken, ...(codex ? { codexAuth } : {}) });
+  // Their name on commits: Connect GitHub's, or what a host that lends their GitHub says (createHostedGitHubUser).
+  const git = userSettings.gitIdentity(session.owner) ?? await githubUser?.identity?.(session.owner) ?? null;
+  return reply(res, 200, { files, ownFiles, git, database, claudeToken, ...(codex ? { codexAuth } : {}) });
 }
 
 // Whether the login a session sends back was refreshed before the saved one: a refresh token rotates, so the older is dead.

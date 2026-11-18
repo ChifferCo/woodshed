@@ -1418,7 +1418,15 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `trusted: {userFor(headers)}`: who the request is from, where the program signs people in itself, as a hosted-mode
   proxy's header says on a single console.
 - `config.githubBroker.source`: a GitHub token source called in the process (`createInProcessBroker`), with the HTTP
-  broker's checks and cache.
+  broker's checks and cache. It may also lend people's own GitHub, in place of the Connect GitHub such a console does
+  not have: `userToken({login, repo, permissions})` answers `{token, expiresAt, permissions}`, a token GitHub scoped to
+  that one repo (never the person's whole token), or `null` when it lends nothing for them; `userIdentity(login)`
+  answers `{name, email}` for their commits, or `null`. A private session then pushes and opens pull requests as its
+  owner on its own repo alone, whatever its project file's `githubAccess` (`createHostedGitHubUser`, in
+  `githubBroker.mjs`), and gets the App's token when nothing is lent or the hook throws. Reviews, QA and shared sessions
+  never get one. The console asks again every few minutes, so a token taken back at the host leaves sessions soon after.
+  It logs `githubBroker: owner token borrowed`, `owner token not lent` (the hook threw) and `owner token not used` (wider than
+  asked).
 - `userMenu(headers)`: a line under the person's name and groups of links at the top of the user menu (`menuOf` in
   `server.mjs`, `designSystem/components/MenuGroups`).
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,

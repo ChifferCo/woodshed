@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { createGitHubBroker, createInProcessBroker } from './githubBroker.mjs';
+import { createGitHubBroker, createHostedGitHubUser, createInProcessBroker } from './githubBroker.mjs';
 import { SESSION_PERMISSIONS, createProjectTokens } from './projectTokens.mjs';
 
 const BEARER = 'brk_s3cret-bearer-value';
@@ -223,4 +223,48 @@ test('a token source in the process is narrowed and cached as the HTTP broker is
   assert.equal(asked.length, 1, 'cached until near its expiry');
   await assert.rejects(broker.tokenSource({ repo: 'acme/wide', permissions: { contents: 'write' }, label: 'sessions' }).token(), /more than was asked: workflows/);
   await assert.rejects(broker.tokenSource({ repo: 'acme/down', label: 'console' }).token(), /the token source gave no GitHub token \(console\): source down/);
+});
+
+test('a host\'s source that lends people\'s GitHub makes a scoped-only user, kept a few minutes, checked as the App\'s token is', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const warned = [];
+  t.mock.method(console, 'warn', (...args) => warned.push(args));
+  assert.equal(createHostedGitHubUser({ source: { token: async () => ({}) } }), null, 'a source that lends only the App\'s: no user');
+  assert.equal(createHostedGitHubUser({ source: null }), null);
+  let clock = Date.parse('2026-11-18T00:00:00Z');
+  const asked = [];
+  const user = createHostedGitHubUser({
+    now: () => clock,
+    source: {
+      async userToken({ login, repo, permissions }) {
+        asked.push({ login, repo, permissions });
+        if (login === 'nobody') return null;
+        if (login === 'broken') throw new Error('GitHub refused the refresh');
+        if (repo === 'acme/wide') return { token: 'ghu_wide', expiresAt: clock + 8 * 3_600_000, permissions: { contents: 'write', workflows: 'write' } };
+        return { token: `ghu_${login}_${repo}`, expiresAt: new Date(clock + 8 * 3_600_000).toISOString(), permissions };
+      },
+      async userIdentity(login) {
+        if (login === 'odd') return { name: 'a <b>', email: 'x@y.z' };
+        return login === 'mia' ? { name: 'Mia', email: '7+mia@users.noreply.github.com' } : null;
+      },
+    },
+  });
+  assert.equal(user.scopedOnly, true);
+  const permissions = { contents: 'write' };
+  assert.equal((await user.scopedTokenFor('mia', { repo: 'acme/app', permissions })).token, 'ghu_mia_acme/app');
+  await user.scopedTokenFor('Mia', { repo: 'acme/app', permissions });
+  assert.equal(asked.length, 1, 'kept, whatever the login\'s case');
+  clock += 5 * 60_000;
+  await user.scopedTokenFor('mia', { repo: 'acme/app', permissions });
+  assert.equal(asked.length, 2, 'asked again within minutes, so taking it back at the host takes it from sessions');
+  assert.equal(await user.scopedTokenFor('mia', { repo: null, permissions }), null, 'no repo, nothing to scope to: not asked');
+  assert.equal(asked.length, 2);
+  assert.equal(await user.scopedTokenFor('nobody', { repo: 'acme/app', permissions }), null, 'nothing lent');
+  assert.equal(await user.scopedTokenFor('broken', { repo: 'acme/app', permissions }), null, 'a source that throws lends nothing, and the session gets the App\'s');
+  assert.equal(await user.scopedTokenFor('mia', { repo: 'acme/wide', permissions }), null, 'wider than asked: not used');
+  assert.ok(warned.some(([line, fields]) => line === 'githubBroker: owner token not used' && /workflows/.test(fields.why)));
+  assert.ok(!JSON.stringify(warned).includes('ghu_'), 'no token is logged');
+  assert.deepEqual(await user.identity('mia'), { name: 'Mia', email: '7+mia@users.noreply.github.com' });
+  assert.equal(await user.identity('ana'), null);
+  assert.equal(await user.identity('odd'), null, 'an identity git would choke on is not used');
 });
