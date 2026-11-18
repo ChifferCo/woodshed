@@ -300,8 +300,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   return {
     // What the pages, the installed app and the console's GitHub comments call this console.
     consoleName: consoleName(env),
-    // Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn:
-    // <app>/<name>` (fleet.mjs, runsElsewhere). Null is none.
+    // This console's name among those sharing one GitHub App, such as one per team or environment: a repo connected to
+    // several of them picks the one that does its automatic work with `pullRequests.runsOn: <app>/<name>` (fleet.mjs,
+    // runsElsewhere). With none (null), only a `runsOn` naming the App alone matches this console.
     runsOnName: runsOnName(env),
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,
