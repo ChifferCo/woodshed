@@ -107,6 +107,9 @@ test('nothing in woodshed/ names the repo it grew up in, its app or its CI, beyo
   const found = {};
   for (const file of files) {
     if (rel(file) === 'test/layout.test.mjs') continue;
+    // This repo's own .woodshed/ is its project file and rules for the one installation it is developed on, as any
+    // repo's is (which console runs its review, say): what Woodshed ships for every repo is the rest.
+    if (rel(file).startsWith('.woodshed/')) continue;
     const terms = [...new Set((fs.readFileSync(file, 'utf8').match(NAMED_OR_CONVENTION) ?? []).map((t) => t.toLowerCase()))];
     if (terms.length) found[rel(file)] = terms;
   }

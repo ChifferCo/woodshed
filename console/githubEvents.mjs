@@ -14,8 +14,9 @@ const COMMAND_PREFIX = /^\s*\/woodshed\b/i;
 // against its App's login (console/appIdentity.mjs), because each installation names its App itself.
 const NEEDS_HUMAN_PREFIX = /^\s*Needs a human:/i;
 // What can change a pull request's chip, its review or its checks: the console reads the pull request again when it
-// is one a session opened. A workflow run lists the pull requests of its branch.
-const PULL_ACTIONS = new Set(['closed', 'reopened', 'synchronize', 'edited', 'ready_for_review', 'converted_to_draft', 'enqueued', 'dequeued']);
+// is one a session opened. One just opened also gets its review and QA label from `opened` (webhookDispatch.mjs). A
+// workflow run lists the pull requests of its branch.
+const PULL_ACTIONS = new Set(['opened', 'closed', 'reopened', 'synchronize', 'edited', 'ready_for_review', 'converted_to_draft', 'enqueued', 'dequeued']);
 const REVIEW_ACTIONS = new Set(['submitted', 'dismissed']);
 const MAX_PULLS_PER_RUN = 10;
 

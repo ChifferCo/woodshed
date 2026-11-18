@@ -1173,8 +1173,8 @@
     return me?.hosted ? CONSOLE_LINKS.filter((link) => link.href !== '/people') : CONSOLE_LINKS;
   }
 
-  // The workflows that build the images and apply the infrastructure, in the installation's repo, as its
-  // WOODSHED_ACTIONS_WORKFLOWS names them; each has a Run workflow button.
+  // The workflows that build the images and apply the infrastructure, in the installation's repo, as its project file's
+  // workflowLinks (or else its WOODSHED_ACTIONS_WORKFLOWS) names them; each has a Run workflow button.
   function workflowLinks(me) {
     if (!me.repo) return [];
     return (me.workflows ?? []).map(({ label, file }) => ({ href: `https://github.com/${me.repo}/actions/workflows/${encodeURIComponent(file)}`, label: `${label} ↗` }));
@@ -1429,9 +1429,10 @@
   }
 
   // Writes carry x-woodshed, which a cross-site form cannot send. The error is the console's own sentence.
-  async function postJson(path, body) {
+  /** @param {{ signal?: AbortSignal }} [opts]  a signal that gives up on the call */
+  async function postJson(path, body, { signal } = {}) {
     const res = await fetch(path, {
-      method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
+      method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal,
     });
     const answer = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status }, answer.link && { link: answer.link });

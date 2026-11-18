@@ -59,7 +59,7 @@ export function checkoutDir(repo) {
 
 // Each section's fields, by its path ('' is the file): project.reference.yaml writes each one, which a test checks.
 export const PROJECT_FIELDS = Object.freeze({
-  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'services', 'app', 'apps', 'editor', 'consoleLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
+  '': ['version', 'dependencies', 'env', 'envFiles', 'databases', 'services', 'app', 'apps', 'editor', 'consoleLinks', 'workflowLinks', 'githubAccess', 'rules', 'setup', 'pullRequests'],
   dependencies: ['installs'],
   'dependencies.installs': ['dir', 'files', 'command', 'output'],
   envFiles: ['path', 'secret', 'defaults', 'overrides'],
@@ -75,6 +75,7 @@ export const PROJECT_FIELDS = Object.freeze({
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
   'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
   'pullRequests.mergeRisk': ['check'],
+  workflowLinks: ['label', 'workflow'],
 });
 
 const PLACEHOLDER = /\{\{([A-Z_][A-Z0-9_]*)(\?)?\}\}/g;
@@ -319,6 +320,9 @@ export const SERVICE_VARIABLE = /^[A-Z][A-Z0-9_]*_(URL|ENDPOINT)$/;
 // An image with its version: a tag, a digest or both, so a session's service changes only when the file does.
 const IMAGE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/;
 const MEMORY = /^[1-9][0-9]*[mg]$/;
+// pullRequests.runsOn: an App's login (`<slug>[bot]`), and after a slash, which no login has, one of its consoles.
+export const RUNS_ON_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const RUNS_ON = /^[A-Za-z0-9][A-Za-z0-9-]*\[bot\](\/[a-z0-9][a-z0-9-]{0,62})?$/;
 
 function serviceImage(value, field) {
   string(value, field);
@@ -378,10 +382,10 @@ function service(value, field) {
 }
 
 // The containers the repo's sessions need beside them, such as a fake S3 or a PDF renderer, each reached at its URL in
-// its variable. Where they run is the installation's, one place for all of its sessions: the base box (AWS), the
-// machine's compose stack (local) or the org's services VM (Woodshed Cloud), with one copy of a stateless service for
-// everyone and one of a stateful one for each person (`data`). Every reader takes the default branch's, never a
-// branch's: a branch cannot change what runs beside the console.
+// its variable. Where they run is the installation's: the base box (AWS), the machine's compose stack (local), or beside
+// each session on a host that gives every session a machine of its own. A stateless service can share one copy, and
+// `data` says whose a stateful one's data is. Every reader takes the default branch's, never a branch's: a branch cannot
+// change what runs beside the console.
 function services(value) {
   const all = list(value, 'services', service);
   for (const key of ['name', 'port', 'variable']) {
@@ -550,15 +554,43 @@ function pullRequests(value) {
     if (!review) fail('pullRequests.mergeRisk needs pullRequests.review: only the review\'s own workflow may post it');
     return { check: string(f.check, 'pullRequests.mergeRisk.check') };
   });
-  // Left out, every console the repo is connected to does its automatic work, as before.
+  // Left out, every console the repo is connected to does its automatic work, as before. `<app>/<console>` names one of
+  // the consoles that act as one App, by the name it is given (WOODSHED_RUNS_ON_NAME).
   const runsOn = p.runsOn === null ? null : string(p.runsOn, 'pullRequests.runsOn');
+  if (runsOn !== null && !RUNS_ON.test(runsOn)) {
+    fail(`pullRequests.runsOn must be a GitHub App's login, as acme-woodshed[bot], or one of its consoles, as acme-woodshed[bot]/staging (it is ${JSON.stringify(runsOn)})`);
+  }
   return { review, suites, qa, mergeRisk, ...(runsOn ? { runsOn } : {}) };
+}
+
+// GitHub runs a workflow only from this folder, never one under it, and its page is named after the file alone.
+const WORKFLOW_FILE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
+// A menu item's text: one line, short enough for the avatar menu.
+const LINK_LABEL = /^\P{C}{1,40}$/u;
+
+function workflowLink(value, field) {
+  const l = fields(value, field, PROJECT_FIELDS.workflowLinks);
+  if (typeof l.label !== 'string' || l.label.trim() !== l.label || !LINK_LABEL.test(l.label)) {
+    fail(`${field}.label must be 1 to 40 printable characters, without spaces around it`);
+  }
+  if (typeof l.workflow !== 'string' || !WORKFLOW_FILE.test(l.workflow)) fail(`${field}.workflow must be a workflow file, as .github/workflows/deploy.yml`);
+  return { label: l.label, workflow: l.workflow };
+}
+
+// The console menu's links to the repo's GitHub Actions workflows, such as its deploy. null (left out) leaves the menu
+// to the installation's WOODSHED_ACTIONS_WORKFLOWS, which named them before this field did; [] is none.
+function workflowLinks(value) {
+  const all = list(value, 'workflowLinks', workflowLink);
+  const labels = all.map((l) => l.label);
+  const twice = labels.filter((v, i) => labels.indexOf(v) !== i);
+  if (twice.length) fail(`workflowLinks has the label ${[...new Set(twice)].join(', ')} more than once: each link needs its own`);
+  return all;
 }
 
 // Only `version` must be written: everything else left out is none.
 const TOP_DEFAULTS = {
-  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: null, editor: false, consoleLinks: true, githubAccess: 'full',
-  rules: null, setup: null, pullRequests: null,
+  dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: null, editor: false, consoleLinks: true, workflowLinks: null,
+  githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 };
 
 /**
@@ -570,7 +602,8 @@ const TOP_DEFAULTS = {
  *   files: Record<string, string>, memory: string, data: {dir: string, keep: 'person'|'session'}|null}[],
  *   app: object|null,
  *   apps: {name: string, label: string}[],
- *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
+ *   editor: boolean, consoleLinks: boolean, workflowLinks: {label: string, workflow: string}[]|null, githubAccess: 'full'|'repo',
+ *   rules: string|null, setup: string|null, pullRequests: object|null}}
  * @throws {Error}  naming the field that is wrong or missing
  */
 export function parseProject(raw) {
@@ -590,6 +623,7 @@ export function parseProject(raw) {
     ...projectApps(project),
     editor: boolean(project.editor, 'editor'),
     consoleLinks: boolean(project.consoleLinks, 'consoleLinks'),
+    workflowLinks: nullable(project.workflowLinks, 'workflowLinks', workflowLinks),
     githubAccess: githubAccess(project.githubAccess),
     rules: nullable(project.rules, 'rules', repoPath),
     setup: nullable(project.setup, 'setup', repoPath),
@@ -600,7 +634,7 @@ export function parseProject(raw) {
 /** What a repo with no project file gets: Woodshed's own rules, and nothing else. */
 export const EMPTY_PROJECT = Object.freeze({
   version: PROJECT_VERSION, dependencies: { installs: [] }, env: {}, envFiles: [], databases: [], services: [], app: null, apps: [], editor: false, consoleLinks: true,
-  githubAccess: 'full', rules: null, setup: null, pullRequests: null,
+  workflowLinks: null, githubAccess: 'full', rules: null, setup: null, pullRequests: null,
 });
 
 // The default branch's copy, or null when it has no such file. Anything else git fails on (no remote branch, not a

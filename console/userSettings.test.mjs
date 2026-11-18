@@ -254,3 +254,16 @@ test('the own-files request body limit follows the store\'s limit, and never dro
   assert.equal(ownFilesBodyLimit(1_048_576), 2_621_440);
   assert.equal(ownFilesBodyLimit(1e12), 16 * 1024 * 1024);
 });
+
+// A pull request a console's App opened has the App as its author (`<slug>[bot]`), and review asks for its plan. An App
+// has no sign-ins of its own, and `[bot]` is no name a secret store takes: Secrets Manager refused it with an error.
+test('an App\'s login has no stored sign-ins, and its store is never asked', async () => {
+  const asked = [];
+  const secrets = { ...fakeSecrets(), read: async (name) => { asked.push(name); if (/\[|\]/.test(name)) throw new Error('ValidationException: Invalid name'); return null; } };
+  const settings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  assert.equal(await settings.claudeToken('acme-woodshed[bot]'), null);
+  assert.equal(await settings.codexAuth('acme-woodshed[bot]'), null);
+  assert.deepEqual(asked, [], 'no read for a bot');
+  await settings.claudeToken('octocat');
+  assert.ok(asked.includes(userSecretName('octocat', 'claude-token')), 'a person\'s is still read');
+});

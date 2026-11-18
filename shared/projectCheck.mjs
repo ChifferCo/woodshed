@@ -286,6 +286,12 @@ function pullRequestProblems(project, repoDir) {
   return problems;
 }
 
+// Each link opens its workflow's page on GitHub, which has one only for a file on the default branch.
+function workflowLinkProblems(project, repoDir) {
+  return (project.workflowLinks ?? []).flatMap((link, i) => (readRepoFile(repoDir, link.workflow)
+    ? [] : [`workflowLinks[${i}].workflow is ${link.workflow}, which is not in the checkout or on the default branch`]));
+}
+
 /**
  * Everything the checkout must have for the project file to work, beyond what parseProject reads in the file alone.
  * @returns {string[]}  each problem, naming its field; none when the file is right
@@ -299,6 +305,7 @@ export function repoProblems(project, repoDir) {
   return [
     ...problems, ...envProblems(project), ...envFileProblems(project, repoDir), ...installProblems(project, repoDir),
     ...databaseProblems(project, repoDir), ...serviceProblems(project, repoDir), ...appProblems(project, repoDir), ...pullRequestProblems(project, repoDir),
+    ...workflowLinkProblems(project, repoDir),
   ];
 }
 
@@ -380,6 +387,7 @@ export function checkSummary(project, repoDir) {
     appLine(project),
     `pull requests: ${gates ? `review ${gates.review ? gates.review.workflow ?? 'in a session' : 'none'}, suites ${list(gates.suites.map((s) => `${s.name} in ${s.workflow}`))}` : 'none'}`,
     `rules: ${project.rules ?? 'none'}, setup: ${project.setup ?? 'none'}`,
+    `workflow links: ${project.workflowLinks ? list(project.workflowLinks.map((l) => `${l.label} to ${l.workflow}`)) : "the installation's (WOODSHED_ACTIONS_WORKFLOWS)"}`,
     ...oldNameHints(project),
     ...literalLineHints(project),
   ];

@@ -26,11 +26,11 @@ test('a failed read answers null and is tried again; with no App there is nothin
 });
 
 test('an App the host lends is the host\'s to name, asked each time, so a rename shows at once', async () => {
-  let login = 'woodshed-cloud[bot]';
+  let login = 'acme-woodshed[bot]';
   const identity = hostAppIdentity(() => login);
   assert.equal(identity.available, true);
-  assert.equal(await identity.login(), 'woodshed-cloud[bot]');
-  assert.deepEqual(identity.known(), { slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' });
+  assert.equal(await identity.login(), 'acme-woodshed[bot]');
+  assert.deepEqual(identity.known(), { slug: 'acme-woodshed', login: 'acme-woodshed[bot]' });
   login = 'acme-cloud[bot]';
   assert.deepEqual(identity.known(), { slug: 'acme-cloud', login: 'acme-cloud[bot]' });
   login = null;

@@ -21,6 +21,10 @@ const EVENTS = [
   ['issue_comment', { action: 'created', sender, repository, issue: { number: 8 }, comment: { id: 12, body: 'Needs a human: the tests', user: { login: 'woodshed-app[bot]' }, html_url: 'https://github.com/acme/app/issues/8#c12' } }],
   ['issue_comment', { action: 'edited', sender, repository, issue: { number: 9 }, comment: { id: 13, body: '/woodshed x' } }],
   ['pull_request', { action: 'closed', sender, repository, pull_request: { number: 10 } }],
+  // A pull request opened ready gets its review and QA label from this event alone: a later push is the next.
+  ['pull_request', { action: 'opened', sender, repository, pull_request: { number: 15 } }],
+  ['pull_request', { action: 'synchronize', sender, repository, pull_request: { number: 16 } }],
+  ['pull_request', { action: 'ready_for_review', sender, repository, pull_request: { number: 17 } }],
   ['pull_request', { action: 'review_requested', sender, repository, pull_request: { number: 11 } }],
   ['pull_request_review', { action: 'submitted', sender, repository, pull_request: { number: 12 } }],
   ['workflow_run', { action: 'completed', sender, repository, workflow_run: { name: 'CI', conclusion: 'failure', pull_requests: [{ number: 13 }, { number: 14 }] } }],
@@ -42,6 +46,10 @@ test('the console\'s copy is the Lambda\'s code, line for line', () => {
   };
   const from = 'export function toMessage(';
   assert.equal(body('./githubEvents.mjs', from, '\n}\n\n/** @returns'), body('../providers/aws/webhooks/index.mjs', from, '\n}\n\n/** @returns'));
+  // And the actions they act on, which the functions read: a list that drifted dropped every pull request opened.
+  for (const list of ['const PULL_ACTIONS = ', 'const REVIEW_ACTIONS = ']) {
+    assert.equal(body('./githubEvents.mjs', list, '\n'), body('../providers/aws/webhooks/index.mjs', list, '\n'), list);
+  }
   const pulls = 'function changedPulls(';
   assert.equal(body('./githubEvents.mjs', pulls, '\n}\n'), body('../providers/aws/webhooks/index.mjs', pulls, '\n}\n'));
 });

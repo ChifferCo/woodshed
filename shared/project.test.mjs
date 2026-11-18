@@ -276,9 +276,13 @@ test('pullRequests names the repo\'s own review, suites, QA and Merge risk check
 
 test('pullRequests.runsOn names the console that does the automatic work, and is left out when not set', () => {
   const parsed = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests }).pullRequests;
-  assert.equal(parsed({ ...PULL_REQUESTS, runsOn: 'woodshed-cloud[bot]' }).runsOn, 'woodshed-cloud[bot]');
+  assert.equal(parsed({ ...PULL_REQUESTS, runsOn: 'acme-woodshed[bot]' }).runsOn, 'acme-woodshed[bot]');
   assert.equal(Object.hasOwn(parsed(PULL_REQUESTS), 'runsOn'), false);
   assert.throws(() => parsed({ ...PULL_REQUESTS, runsOn: 7 }), /pullRequests\.runsOn/);
+  assert.equal(parsed({ ...PULL_REQUESTS, runsOn: 'acme-woodshed[bot]/acme-2' }).runsOn, 'acme-woodshed[bot]/acme-2', 'one of the App\'s consoles');
+  for (const bad of ['joel', 'acme-woodshed[bot]/', 'acme-woodshed[bot]/Acme', 'acme-woodshed[bot]/a/b', 'acme-woodshed[bot] /acme']) {
+    assert.throws(() => parsed({ ...PULL_REQUESTS, runsOn: bad }), /pullRequests\.runsOn must be a GitHub App's login/, bad);
+  }
 });
 
 test('review.runner: defaults to actions and needs a workflow, woodshed may leave the workflow out', () => {

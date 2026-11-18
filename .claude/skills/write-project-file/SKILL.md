@@ -51,6 +51,10 @@ Look for, and note the file each answer came from:
   needs it`) rather than a page that never loads. AWS sessions never have Docker: say so when the installation is on
   AWS.
 - **CI**: the workflow that runs the tests on pull requests, and its job names, for `pullRequests.suites`.
+- **Workflows people run by hand**: a deploy, an image build, a `workflow_dispatch` the team starts from GitHub. Each
+  can be a `workflowLinks` entry (`project.reference.yaml`), a label and its file in `.github/workflows/`, for a link
+  in the console's avatar menu. Leave the field out where the installation already names them in
+  `WOODSHED_ACTIONS_WORKFLOWS` and the person has not asked to move them.
 
 If something cannot be told from the repository (which env values are secret, whether a seed needs a service it does
 not run), leave it out and say so at the end, rather than guess.

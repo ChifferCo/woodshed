@@ -1177,6 +1177,20 @@ test('Console settings: the Woodshed card reads, checks and starts an update, an
   assert.match(await getBody(nonePort, '/api/console-settings/updates'), /does not run from a git clone/);
 });
 
+test('Console settings: with no Woodshed update service, as an embedding program\'s woodshedUpdate: false, there is no card nor count', async (t) => {
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, woodshedUpdate: null });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/console-settings/updates`)).status, 404);
+  assert.equal((await post(port, '/api/console-settings/updates/check', {})).status, 404);
+  assert.equal((await post(port, '/api/console-settings/updates/update', {})).status, 404);
+  const me = await (await fetch(`http://127.0.0.1:${port}/api/me`)).json();
+  assert.equal('updates' in me, false, 'no dot on the avatar');
+});
+
 test('Console settings: a repo is added and removed on the page, with its sessions counted, and a refused one says why', async (t) => {
   const store = { state: { sessions: [] }, save() {} };
   const config = liveConfig({
