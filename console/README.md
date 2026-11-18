@@ -41,7 +41,7 @@ The settings pages (My settings, Settings with its General and Secrets &
 webhooks tabs, People and Webhook events) keep the same frame: a list of them takes the rail's place,
 with **‹ Back to sessions** and the avatar menu above it.
 Each page opens with a **tag for whose sessions it changes** (`Only you`: your My Woodshed sessions; `Everyone`: shared
-sessions and the console) and a **search** under its title (`public/settingsSearch.js`, `settingsIndex.cjs`). The search
+sessions and the console), and the side list has a **search** at its top (`public/settingsSearch.js`, `settingsIndex.cjs`). The search
 lists every section of every page you can open, narrows as you type (`repo`, `token`, `timeout`, `slack`…) and takes
 you to the section, on its page. A new card on a settings page needs an entry in `settingsIndex.cjs`
 (`settingsIndex.test.mjs` fails when its id is not on the page). Where a name appears on both sides, the card says

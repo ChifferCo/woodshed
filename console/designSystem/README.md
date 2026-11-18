@@ -38,7 +38,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Settings pages
 
-- Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and a search under it (`components/SettingsSearch`).
+- Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
   Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".
 
 ## Menus and presses

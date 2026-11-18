@@ -1,4 +1,4 @@
-// The search at the top of every settings page: it lists every section of every settings page, narrows as you type
+// The search at the top of the settings pages' rail: it lists every section of every settings page, narrows as you type
 // (settingsIndex.cjs says what each is called and what people call it), and takes you to the section, on its page.
 (function () {
   'use strict';
@@ -67,7 +67,7 @@
     let results = [];
     const input = h('input', {
       id: 'settings-search', class: 'field ssearch-input', type: 'search', autocomplete: 'off', spellcheck: 'false',
-      placeholder: 'Find a setting: token, repo, timeout, slack, database…', role: 'combobox', 'aria-expanded': 'false',
+      placeholder: 'Find a setting…', role: 'combobox', 'aria-expanded': 'false',
       'aria-controls': 'settings-search-list', 'aria-label': 'Find a setting',
     });
     const list = h('div', { id: 'settings-search-list', class: 'ssearch-list', role: 'listbox', hidden: true });

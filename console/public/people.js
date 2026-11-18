@@ -227,7 +227,7 @@
         h('p', { class: 'sub' }, 'Only these people can sign in, and each still needs write access to the repository. Admins choose what each member can do.')));
     const body = data ? [requestsCard(), inviteCard(), membersCard()]
       : h('p', { class: 'empty' }, loadError ? `Could not load the list: ${loadError}` : 'Loading…');
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/people'), head, W.settingsSearch(), body));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/people'), head, body));
   }
 
   async function load() {

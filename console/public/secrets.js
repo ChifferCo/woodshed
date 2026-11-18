@@ -362,7 +362,6 @@
     app.replaceChildren(h('div', { class: 'page' },
       W.nav('/secrets'),
       head,
-      W.settingsSearch(),
       managerCard(),
       // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
       data.webhook && webhookCard(),

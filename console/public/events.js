@@ -88,7 +88,6 @@
     app.replaceChildren(h('div', { class: 'page' },
       W.nav('/events'),
       head,
-      W.settingsSearch(),
       offNote(),
       h('div', { class: 'filters' },
         h('p', { class: 'foot' }, data.queue ? 'Newest first. The last 7 days are kept.' : 'No webhooks reach this console, so it only polls GitHub.'),

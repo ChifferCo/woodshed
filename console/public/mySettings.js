@@ -553,7 +553,6 @@
       h('header', { class: 'page-head' }, h('div', null,
         h('h1', { class: 'title' }, 'My settings ', W.scopePill('/settings')),
         h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
-      W.settingsSearch(),
       tokenCard(),
       codexCard(),
       projectCard(),

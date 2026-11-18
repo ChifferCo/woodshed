@@ -1,11 +1,13 @@
-The settings search sits under the title of every settings page (My settings, Settings and its Secrets & webhooks tab,
-People, Webhook events). It lists every section of every page the person can open, narrows as they type, and takes
+The settings search sits at the top of the settings pages' rail, under Back to sessions, the same box on every settings
+page (My settings, Settings and its Secrets & webhooks tab, Repo settings, People, Webhook events); on a phone it sits
+above the row of pages. It lists every section of every page the person can open, narrows as they type, and takes
 them to the section, on its page, outlined for a moment. `public/settingsSearch.js` draws it; `public/settingsIndex.cjs`
 says what each section is called and what people call it (`repo`, `token`, `timeout`), so a new card on a settings page
 is added there too.
 
-- The box is wide (640px max), 16px type, `radius-lg`, with the `amber` focus ring. It is not a primary action: no `action` fill.
-- The list opens on focus, under the box, on `ground` with a `line` border and the menu shadow, 60vh at most. With nothing
+- The box fills the rail's width, 14px type, `radius`, with the `amber` focus ring. It is not a primary action: no `action` fill.
+- The list opens on focus, under the box, wider than the rail (480px, over the page beside it), on `ground` with a `line`
+  border and the menu shadow, 70vh at most. With nothing
   typed it is every section, grouped by page; typed, it is a flat list, best match first, each with its page and scope.
 - A row: the section's name (600), a quiet tag with its page and `only you` or `everyone`, and one line of what it holds in
   `sub`. The current row has `slate-tint` and the `amber` edge, as the settings list's current page does.
