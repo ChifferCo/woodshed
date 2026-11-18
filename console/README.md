@@ -814,8 +814,10 @@ run in a session's container: bubblewrap needs user namespaces, which Docker and
 - each changed text file whole, with its folder's README, never through a link out of the checkout.
 
 Codex answers in JSON (`--output-schema`), which `codeReview.mjs codex-answer` writes as the files Claude writes.
-Claude's own tools are scoped to match (`claudeAllowed`, `claudeDenied` in `review.sh`). It reads only the checkout,
-writes only its own files in `.review/`, and is refused Codex's folder and the author's Codex sign-in. Codex
+Claude's own tools are scoped to match (`claudeAllowed`, `claudeDenied` in `review.sh`). It has no shell, web fetch or
+web search, and reads the diff from `.review/pr.diff`. It reads only the checkout, writes only its own files in
+`.review/`, and is refused Codex's folder and the author's Codex sign-in. A review's `/codex-auth` accepts only a
+refresh of the same ChatGPT account (`sessionApi: Codex sign-in refused, not the same ChatGPT account`). Codex
 gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and Claude's verdict goes out alone.
 
 The two verdicts become one (`codeReview.mjs merge`):
