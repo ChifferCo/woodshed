@@ -244,3 +244,11 @@ pullRequests:
   # automatic work, meaning sessions from the label or a comment, the review and QA. Other consoles skip it and still
   # start sessions by hand. Consoles that act as the same App (Woodshed Cloud orgs) all match it.
   runsOn: woodshed-cloud[bot]
+  # Default: []. The logins of other consoles' GitHub Apps, for a repo connected to more than one console. A pull
+  # request one of them opened from a session's branch (`woodshed/<login>-<id>`) is reviewed and QA'd here as that
+  # login, on their Claude plan, when they are a member of the org that owns the repo (for a repo a person owns, that
+  # person or someone with write access to it). This console's App needs Organization permissions, Members: read, to
+  # ask. Anyone who can push a branch can name it after someone else in the org: their plan is spent on the review,
+  # nothing more.
+  sessionApps:
+    - other-console[bot]

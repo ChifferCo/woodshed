@@ -70,7 +70,7 @@ export const PROJECT_FIELDS = Object.freeze({
   'services.data': ['dir', 'keep'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
-  pullRequests: ['review', 'suites', 'qa', 'mergeRisk', 'runsOn'],
+  pullRequests: ['review', 'suites', 'qa', 'mergeRisk', 'runsOn', 'sessionApps'],
   'pullRequests.review': ['author', 'heading', 'workflow', 'rerun', 'commentAuthor', 'runner'],
   'pullRequests.suites': ['name', 'workflow', 'jobs', 'rerun'],
   'pullRequests.qa': ['check', 'label', 'heading', 'author', 'runner', 'autoLabel'],
@@ -505,7 +505,7 @@ export function appNamed(project, name) {
 // the review whose verdict counts, the suites whose jobs must pass, and the QA and Merge risk checks the brief quotes.
 // The console has no names of its own for any of them (console/prAnnouncer.mjs, decisionBrief.mjs).
 function pullRequests(value) {
-  const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null, runsOn: null });
+  const p = fields(value, 'pullRequests', PROJECT_FIELDS.pullRequests, { review: null, suites: [], qa: null, mergeRisk: null, runsOn: null, sessionApps: [] });
   const review = nullable(p.review, 'pullRequests.review', (r) => {
     const f = fields(r, 'pullRequests.review', PROJECT_FIELDS['pullRequests.review'], { rerun: null, commentAuthor: null, runner: 'actions', workflow: null, author: null });
     if (!QA_RUNNERS.includes(f.runner)) fail(`pullRequests.review.runner must be one of ${QA_RUNNERS.join(', ')} (it is ${JSON.stringify(f.runner)})`);
@@ -552,7 +552,13 @@ function pullRequests(value) {
   });
   // Left out, every console the repo is connected to does its automatic work, as before.
   const runsOn = p.runsOn === null ? null : string(p.runsOn, 'pullRequests.runsOn');
-  return { review, suites, qa, mergeRisk, ...(runsOn ? { runsOn } : {}) };
+  // Other consoles' Apps, whose pull requests stand for the person their session branch names (console/README.md,
+  // "Which console does the automatic work"). Only an App's login: a person's pull request is already theirs.
+  const sessionApps = list(p.sessionApps, 'pullRequests.sessionApps', (app, where) => {
+    if (!string(app, where).endsWith('[bot]')) fail(`${where} must be a GitHub App's login, ending in [bot] (it is ${JSON.stringify(app)})`);
+    return app;
+  });
+  return { review, suites, qa, mergeRisk, ...(runsOn ? { runsOn } : {}), ...(sessionApps.length ? { sessionApps } : {}) };
 }
 
 // Only `version` must be written: everything else left out is none.

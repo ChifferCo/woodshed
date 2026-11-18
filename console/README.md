@@ -733,6 +733,19 @@ QA. `pullRequests.runsOn` in the project file names the one that does, by the lo
 starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
 act as the same App all match it, so it cannot pick between two Woodshed Cloud orgs.
 
+A pull request another console's session opened is that console's App's, which has no Claude plan here, so its review
+and QA would run on the team key. `pullRequests.sessionApps` lists the Apps whose pull requests stand for a person
+instead: every console names a private session's branch `woodshed/<login>-<id>` for whoever started it, and when the
+author is a listed App and that login is an active member of the org that owns the repo (for a repo a person owns: that
+person, or someone with write access to it), the review and QA run as that login, on their plan, after the same identity
+checks a human author passes. The org is asked with the App's token (`GET /orgs/<org>/memberships/<login>`), so the App
+needs Organization permissions, Members: read. A branch is only a name, which anyone who can push may choose, so someone
+in the org can spend another member's plan on a review: that is all it gives, and the org is the only check. Anything
+short of it runs as the App, on the team key, as before: the console logs `fleet: pull request opened by another
+console's session, run as the login its branch names`, `fleet: pull request opened by another console's App, run as the
+App` with the reason (an App not listed, a login outside the org), or `its login could not be checked` with GitHub's
+error and, for a 403, the permission to give the App.
+
 ### The reviewer App
 
 GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
@@ -1760,7 +1773,9 @@ A project whose file says `pullRequests.qa.runner: woodshed` runs its QA here ra
    (`qaAutoLabel`); a label its own App added stands for the pull request's author, on the team key when the author
    fails the checks above. When the author is the console's own App (a pull request one of its sessions opened), the
    review and QA stand for the person who started that session instead, so they run on that person's plan
-   (`fleet: pull request opened by a session, run as its starter`).
+   (`fleet: pull request opened by a session, run as its starter`). One another console's session opened stands for
+   the login its branch names when the project file lists that App (`pullRequests.sessionApps`, "Which console does
+   the automatic work").
 3. The fleet starts a `pr` session with a `qa` field (base branch, head commit, heading, comment): `SESSION_MODE=qa`,
    `PR` and `QA_BASE` in its environment, its own databases, and the read-only GitHub token an ask session gets. It
    posts the QA comment saying it is running.

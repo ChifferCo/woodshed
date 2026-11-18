@@ -281,6 +281,15 @@ test('pullRequests.runsOn names the console that does the automatic work, and is
   assert.throws(() => parsed({ ...PULL_REQUESTS, runsOn: 7 }), /pullRequests\.runsOn/);
 });
 
+test('pullRequests.sessionApps lists other consoles\' Apps, and is left out when none', () => {
+  const parsed = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests }).pullRequests;
+  assert.deepEqual(parsed({ ...PULL_REQUESTS, sessionApps: ['woodshed-cloud[bot]'] }).sessionApps, ['woodshed-cloud[bot]']);
+  assert.equal(Object.hasOwn(parsed(PULL_REQUESTS), 'sessionApps'), false);
+  assert.equal(Object.hasOwn(parsed({ ...PULL_REQUESTS, sessionApps: [] }), 'sessionApps'), false);
+  assert.throws(() => parsed({ ...PULL_REQUESTS, sessionApps: 'woodshed-cloud[bot]' }), /pullRequests\.sessionApps must be a list/);
+  assert.throws(() => parsed({ ...PULL_REQUESTS, sessionApps: ['joel'] }), /pullRequests\.sessionApps\[0\] must be a GitHub App's login/);
+});
+
 test('review.runner: defaults to actions and needs a workflow, woodshed may leave the workflow out', () => {
   const full = (pullRequests) => parseProject({ ...EMPTY_PROJECT, pullRequests });
   const { runner, ...noRunner } = REVIEW;

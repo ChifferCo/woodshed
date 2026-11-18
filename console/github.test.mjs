@@ -123,6 +123,23 @@ test('other gh failures pass through as they were', async () => {
   assert.equal(await github.canWrite('sid'), false, 'a 404 still reads as not a collaborator');
 });
 
+test('orgMember is an active membership, a 404 is not one, and a refusal to say is thrown, not read as no', async () => {
+  const asked = [];
+  const answers = { ada: { state: 'active' }, bo: { state: 'pending' } };
+  const github = createGitHub({ repo: 'o/r', run: async (cmd, args) => {
+    asked.push(args[1]);
+    const login = args[1].split('/').pop();
+    if (login === 'nobody') throw Object.assign(new Error('Command failed'), { code: 1, stderr: 'gh: Not Found (HTTP 404)' });
+    if (login === 'cannot') throw Object.assign(new Error('Command failed'), { code: 1, stderr: 'gh: Resource not accessible by integration (HTTP 403)' });
+    return { stdout: JSON.stringify(answers[login]) };
+  } });
+  assert.equal(await github.orgMember('acme', 'ada'), true);
+  assert.equal(await github.orgMember('acme', 'bo'), false, 'an invitation not yet accepted');
+  assert.equal(await github.orgMember('acme', 'nobody'), false);
+  await assert.rejects(github.orgMember('acme', 'cannot'), /HTTP 403|Command failed/);
+  assert.equal(asked[0], 'orgs/acme/memberships/ada');
+});
+
 test('a client given a getter follows the repo it names, the default branch read once for each', async () => {
   let repo = 'acme/api';
   const asked = [];

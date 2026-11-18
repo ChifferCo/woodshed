@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { sharedHomeName } from './homes.mjs';
 
-import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
+import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, sessionBranchLogin, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
 const APPROVAL_GRACE_MS = 5 * 60_000;
 const HOUR = 3_600_000;
@@ -3013,6 +3013,117 @@ test('QA the console labelled on a pull request its own session opened runs as t
   assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
   const session = t.fleet.sessions().find((s) => s.qa);
   assert.deepEqual([session.startedBy, session.qa.teamKey], ['joel', undefined]);
+});
+
+// A pull request another console's session opened: its App is the author, and the branch names the session's starter.
+const OTHER_APP = 'woodshed-cloud[bot]';
+const SESSION_APP_GATES = { ...REVIEW_GATES, sessionApps: [OTHER_APP] };
+const ORG_OWNER = { login: 'o', type: 'Organization' };
+const otherConsolePull = ({ ref = 'woodshed/joel-68011f9c', owner = ORG_OWNER } = {}) => ({
+  ...REVIEW_PULL, user: { login: OTHER_APP }, head: { ...REVIEW_PULL.head, ref, repo: { full_name: 'o/r' } }, base: { ref: 'main', repo: { owner } },
+});
+function sessionAppSetup({ gates = SESSION_APP_GATES, pull = otherConsolePull(), members = ['joel'], ...options } = {}) {
+  const t = reviewSetup({ gates, ownApp: () => ({ login: 'woodshed-internal[bot]' }), ...options });
+  t.asked = [];
+  t.github.pull = async () => pull;
+  t.github.orgMember = async (org, login) => { t.asked.push([org, login]); return members.includes(login); };
+  return t;
+}
+async function reviewedAs(t) {
+  await t.fleet.reviewOnTag({ number: 7 });
+  return t.fleet.sessions().find((s) => s.review);
+}
+
+test('a pull request another console\'s session opened is reviewed on the plan of the org member its branch names', async () => {
+  const t = sessionAppSetup({ userSettings: ownTokens(), databases: madeDatabases() });
+  const session = await reviewedAs(t);
+  assert.deepEqual([session.startedBy, session.plan, session.review.teamKey], ['joel', 'joel', undefined]);
+  assert.deepEqual(t.asked, [['o', 'joel']], 'asked of the org that owns the repo');
+});
+
+test('another console\'s pull request stays the App\'s for a branch naming someone outside the org', async () => {
+  const t = sessionAppSetup({ members: [] });
+  assert.equal((await reviewedAs(t)).startedBy, OTHER_APP);
+  assert.deepEqual(t.asked, [['o', 'joel']]);
+});
+
+test('another console\'s pull request stays the App\'s on a branch no session is named for, without asking GitHub', async () => {
+  for (const ref of ['joel/gtm', 'woodshed/42-68011f9c', 'woodshed/joel-gtm', 'woodshed/-joel-68011f9c']) {
+    const t = sessionAppSetup({ pull: otherConsolePull({ ref }) });
+    assert.equal((await reviewedAs(t)).startedBy, OTHER_APP, ref);
+    assert.deepEqual(t.asked, [], ref);
+  }
+});
+
+test('another console\'s pull request stays the App\'s when the project file does not list the App', async () => {
+  const t = sessionAppSetup({ gates: REVIEW_GATES });
+  assert.equal((await reviewedAs(t)).startedBy, OTHER_APP);
+  const other = sessionAppSetup({ gates: { ...REVIEW_GATES, sessionApps: ['someone-else[bot]'] } });
+  assert.equal((await reviewedAs(other)).startedBy, OTHER_APP);
+  assert.deepEqual([...t.asked, ...other.asked], []);
+});
+
+test('another console\'s pull request stays the App\'s when the org\'s members cannot be read', async () => {
+  const t = sessionAppSetup();
+  t.github.orgMember = async () => { throw Object.assign(new Error('Command failed'), { stderr: 'gh: Resource not accessible by integration (HTTP 403)' }); };
+  const session = await reviewedAs(t);
+  assert.equal(session.startedBy, OTHER_APP, 'the review still runs, on the team key');
+});
+
+test('on a repo a person owns, the branch\'s login counts when it is the owner or can write to the repo', async () => {
+  const user = { login: 'o', type: 'User' };
+  const owner = sessionAppSetup({ pull: otherConsolePull({ ref: 'woodshed/o-68011f9c', owner: user }), writers: ['joel', 'o'] });
+  assert.equal((await reviewedAs(owner)).startedBy, 'o');
+  const writer = sessionAppSetup({ pull: otherConsolePull({ owner: user }) });
+  assert.equal((await reviewedAs(writer)).startedBy, 'joel');
+  const stranger = sessionAppSetup({ pull: otherConsolePull({ ref: 'woodshed/sam-68011f9c', owner: user }) });
+  assert.equal((await reviewedAs(stranger)).startedBy, OTHER_APP);
+  assert.deepEqual([...owner.asked, ...writer.asked, ...stranger.asked], [], 'no org to ask about');
+  // A pull request that does not say what owns its repo: GitHub is asked.
+  const unsaid = sessionAppSetup({ pull: { ...otherConsolePull(), base: { ref: 'main' } } });
+  unsaid.github.user = async (login) => ({ login, type: 'Organization' });
+  assert.equal((await reviewedAs(unsaid)).startedBy, 'joel');
+});
+
+test('the branch\'s login still passes the identity checks, as a human author does', async () => {
+  const reused = sessionAppSetup({ people: { check: async () => false }, userSettings: ownTokens(), databases: madeDatabases() });
+  const session = await reviewedAs(reused);
+  assert.deepEqual([session.startedBy, session.review.teamKey, session.plan], ['joel', true, null]);
+});
+
+test('this console\'s own App is still found through its own session, even when the project file lists it', async () => {
+  const t = sessionAppSetup({ gates: { ...REVIEW_GATES, sessionApps: [OTHER_APP] }, ownApp: () => ({ login: OTHER_APP }) });
+  t.store.state.sessions.push({
+    id: 'c0d1c0d1', repo: 'o/r', kind: 'task', number: null, title: 'gtm', startedBy: 'ada', status: 'stopped',
+    branch: 'woodshed/joel-68011f9c', prUrl: null, createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.equal((await reviewedAs(t)).startedBy, 'ada', 'the session that opened it, not the branch\'s name');
+  assert.deepEqual(t.asked, []);
+});
+
+test('QA the console labelled on another console\'s pull request runs as the org member its branch names', async () => {
+  const gates = { ...AUTO_GATES, sessionApps: [OTHER_APP] };
+  const pull = { ...QA_PULL, ...otherConsolePull({ ref: 'woodshed/joel-68011f9c' }), labels: [{ name: 'qa' }] };
+  const t = qaSetup({ gates, ownApp: () => APP });
+  t.github.pull = async () => pull;
+  t.github.labeledBy = async () => APP.login;
+  t.github.orgMember = async (org, login) => login === 'joel';
+  assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  assert.deepEqual([t.fleet.sessions()[0].startedBy, t.fleet.sessions()[0].qa.teamKey], ['joel', undefined]);
+  const outside = qaSetup({ gates, ownApp: () => APP });
+  outside.github.pull = async () => pull;
+  outside.github.labeledBy = async () => APP.login;
+  outside.github.orgMember = async () => false;
+  assert.equal((await outside.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  assert.equal(outside.fleet.sessions()[0].startedBy, OTHER_APP);
+});
+
+test('sessionBranchLogin reads the starter from a private session\'s branch, and no one from an issue\'s', () => {
+  assert.equal(sessionBranchLogin('woodshed/sikakkar-68011f9c'), 'sikakkar');
+  assert.equal(sessionBranchLogin('woodshed/mary-jane-68011f9c'), 'mary-jane');
+  for (const branch of ['woodshed/155-2bc584ca', 'woodshed/joel-68011F9C', 'woodshed/joel--68011f9c', 'woodshed/joel', 'joel/gtm', null]) {
+    assert.equal(sessionBranchLogin(branch), null, String(branch));
+  }
 });
 
 test('a review comments that it started, and that comment becomes the review\'s comment, or says it did not finish', async () => {

@@ -36,6 +36,7 @@ test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s t
     qa: { check: 'QA', label: 'woodshed-qa', heading: '## QA', author: null, runner: 'woodshed', autoLabel: true },
     mergeRisk: { check: 'Merge risk' },
     runsOn: 'woodshed-internal[bot]',
+    sessionApps: ['woodshed-cloud[bot]'],
   });
 });
 

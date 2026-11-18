@@ -298,6 +298,20 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
         return false;
       }
     },
+    /**
+     * Needs the App's Organization permissions, Members: read: without it GitHub refuses the read (403), which is
+     * thrown, so a caller can tell "not a member" from "could not ask".
+     * @returns {Promise<boolean>}  whether `login` is an active member of `org` (an invitation not yet accepted is not)
+     */
+    async orgMember(org, login) {
+      try {
+        const membership = await ghApi([`orgs/${encodeURIComponent(org)}/memberships/${encodeURIComponent(login)}`]);
+        return membership?.state === 'active';
+      } catch (err) {
+        if (!/HTTP 404/.test(`${err?.stderr ?? ''}${err?.message ?? ''}`)) throw err;
+        return false;
+      }
+    },
     /** @returns {Promise<{id: number, login: string, name: string|null}>}  the account that holds the handle now */
     user(login) {
       return ghApi([`users/${encodeURIComponent(login)}`]);

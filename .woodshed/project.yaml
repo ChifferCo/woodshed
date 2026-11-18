@@ -34,6 +34,10 @@ pullRequests:
   # or comment and runs review and QA, so a ticket gets one session and one set of comments. Sessions started by hand
   # still run on any console.
   runsOn: woodshed-internal[bot]
+  # A pull request a Woodshed Cloud session opens is that App's, with no Claude plan: its review and QA run on the plan
+  # of the ChifferCo member its branch names instead, as one Internal's own session opened does.
+  sessionApps:
+    - woodshed-cloud[bot]
   review:
     # The review runs as a Woodshed session on each new commit of a ready pull request, with no tag. The verdict is the
     # reviewer App's, since GitHub never lets the console App approve a pull request it opened. The PR comment with its

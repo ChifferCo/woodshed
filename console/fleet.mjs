@@ -60,6 +60,20 @@ function sameAccount(a, b) {
   return Boolean(a && b) && key(a) === key(b);
 }
 
+// A GitHub login: letters, digits and single hyphens, neither first nor last, at most 39.
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+/**
+ * The login a private session's branch is named for (createSession: `woodshed/<owner>-<id>`), on any console, since
+ * every console names them so. An issue's branch (`woodshed/<number>-<id>`) names no one.
+ * @param {string|null|undefined} branch
+ * @returns {string|null}
+ */
+export function sessionBranchLogin(branch) {
+  const login = /^woodshed\/(.+)-[0-9a-f]{8}$/.exec(String(branch ?? ''))?.[1] ?? null;
+  return login && GITHUB_LOGIN.test(login) && !/^\d+$/.test(login) ? login : null;
+}
+
 // A review's inline comments as lines of its body, for when GitHub would not take them on the diff's lines.
 function withFoldedComments(body, comments) {
   const lines = comments.map((c) => `- \`${c.path}:${c.line}\`: ${c.body.replace(/\s*\n\s*/g, ' ')}`);
@@ -1604,7 +1618,7 @@ export function createFleet({
     if (qa.autoLabel && appLogin && login === appLogin) {
       const autoPull = known ?? await gh.pull(number);
       if (autoPull.head?.repo?.full_name && autoPull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
-      login = authorOf(project, number, autoPull.user?.login ?? '', autoPull.head?.ref);
+      login = await authorOf(project, gates, number, autoPull);
       teamKeyWhy = await teamKeyReason(login);
       console.log('fleet: QA label added by the console, run as the author', { number, login, teamKey: Boolean(teamKeyWhy), ...projectField(project) });
     } else {
@@ -1734,7 +1748,7 @@ export function createFleet({
       const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
       if (!message || !message.includes(review.rerun)) return { unrecorded: true };
     }
-    return startReview({ project, gates, number, login: authorOf(project, number, pull.user?.login ?? '', pull.head?.ref), pull });
+    return startReview({ project, gates, number, login: await authorOf(project, gates, number, pull), pull });
   }
 
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
@@ -1788,8 +1802,12 @@ export function createFleet({
   // A pull request this console's own session opened has the App as its author, which has no Claude plan: its review
   // and QA stand for the person who started that session instead, so they run on that person's plan as the session did.
   // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
-  function authorOf(project, number, author, branch = null) {
+  // One another console's session opened (pullRequests.sessionApps) stands for the login its branch names.
+  async function authorOf(project, gates, number, pull) {
+    const author = pull.user?.login ?? '';
+    const branch = pull.head?.ref ?? null;
     const appLogin = ownApp()?.login ?? null;
+    if (author.endsWith('[bot]') && author !== appLogin) return sessionAppAuthor(project, gates, number, pull);
     if (!appLogin || author !== appLogin) return author;
     const opener = state.sessions
       .filter((s) => !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1);
@@ -1800,6 +1818,47 @@ export function createFleet({
     }
     console.log('fleet: pull request opened by a session, run as its starter', { number, sessionId: opener.id, starter, ...projectField(project) });
     return starter;
+  }
+
+  // Another console's session is not in this console's state, but every console names a private session's branch for
+  // the person who started it (sessionBranchLogin). A branch is only a name, which anyone who can push may choose, so
+  // it stands for that person only when the project file lists the App and the login is in the org that owns the repo
+  // (or, for a repo a person owns, is that person or can write to it): what it spends is their plan on a review or QA
+  // run. Short of that, or when GitHub cannot say, it runs as the App, on the team key, as before.
+  async function sessionAppAuthor(project, gates, number, pull) {
+    const author = pull.user.login;
+    const branch = pull.head?.ref ?? null;
+    const login = sessionBranchLogin(branch);
+    // Not a session's branch (a dependency bot's, say), or a console that leaves this pull request to another (runsOn),
+    // which says so itself when it skips it.
+    if (!login || (gates?.runsOn && gates.runsOn !== ownApp()?.login)) return author;
+    const fields = { number, author, branch, login, ...projectField(project) };
+    const declined = (reason) => {
+      console.log('fleet: pull request opened by another console\'s App, run as the App', { ...fields, reason });
+      return author;
+    };
+    if (!(gates?.sessionApps ?? []).some((app) => app.toLowerCase() === author.toLowerCase())) {
+      return declined('the App is not in the project file\'s pullRequests.sessionApps');
+    }
+    const gh = githubOf(project);
+    const owner = pull.base?.repo?.owner?.login ?? project.repo.split('/')[0];
+    let type = pull.base?.repo?.owner?.type ?? null;
+    let same;
+    try {
+      type ??= (await gh.user(owner))?.type ?? null;
+      if (type === 'Organization') same = await gh.orgMember(owner, login);
+      else if (type === 'User') same = owner.toLowerCase() === login.toLowerCase() || await gh.canWrite(login);
+      else return declined(`GitHub did not say what kind of account ${owner} is`);
+    } catch (err) {
+      const members = type === 'Organization' && /HTTP 403/.test(`${err?.stderr ?? ''}${err?.message ?? ''}`);
+      console.warn('fleet: pull request opened by another console\'s App, run as the App, its login could not be checked', {
+        ...fields, owner, message: firstLine(err), ...(members ? { fix: 'give the GitHub App Organization permissions, Members: read' } : {}),
+      });
+      return author;
+    }
+    if (!same) return declined(type === 'Organization' ? `not a member of ${owner}` : `neither ${owner} nor a writer to the repo`);
+    console.log('fleet: pull request opened by another console\'s session, run as the login its branch names', { ...fields, owner, type });
+    return login;
   }
 
   async function teamKeyReason(login) {
