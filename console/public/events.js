@@ -107,6 +107,8 @@ window.Woodshed.settingsPage('/events', (app, life) => {
     render();
   }
 
+  // Drawn at once, saying it loads, so the page never sits empty while the list is on its way.
+  render();
   refresh();
   life.interval(refresh, REFRESH_MS);
 });

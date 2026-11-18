@@ -1351,6 +1351,10 @@
   function settingsPageAt(pathname) {
     return settingsPages.find(({ match }) => (typeof match === 'string' ? match === pathname : match.test(pathname))) ?? null;
   }
+  // Which side-list item a settings address is under: a repo's own settings are Settings'.
+  function settingsNavFor(pathname) {
+    return pathname.startsWith('/console-settings/') ? '/console-settings' : pathname;
+  }
   function showSettingsPage() {
     const page = settingsPageAt(location.pathname);
     if (!page) return false;
@@ -1361,7 +1365,9 @@
       timeout(fn, ms) { const id = setTimeout(fn, ms); ends.push(() => clearTimeout(id)); return id; },
       on(target, type, fn) { target.addEventListener(type, fn); ends.push(() => target.removeEventListener(type, fn)); },
     };
-    const app = h('div', { class: 'settings-view' });
+    // The side list goes up before the page starts, so a page that draws only once its read answers never leaves the
+    // screen empty in between: until it draws, its own part is blank and the list stays where it was.
+    const app = h('div', { class: 'settings-view' }, h('div', { class: 'page' }, nav(settingsNavFor(location.pathname))));
     document.getElementById('app').replaceChildren(app);
     shownPage = { pathname: location.pathname, search: location.search, stop: () => ends.splice(0).forEach((end) => end()) };
     // A page that fails to start says so on itself, and the others stay a click away, in place.

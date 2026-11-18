@@ -776,6 +776,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     render();
   }
 
+  // Drawn at once, saying it loads, so the page never sits empty while the settings are on its way.
+  render();
   load();
   life.interval(refreshData, DATA_REFRESH_MS);
   // Back from GitHub, where the App may have been given another repo.
