@@ -735,11 +735,11 @@ is why it is only for a console nobody else can reach, until the App exists and 
 A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org, and each hears
 the same GitHub events. Without more, each starts its own session from the label or a comment, and its own review and
 QA. `pullRequests.runsOn` in the project file names the one that does, by the login its GitHub App acts as
-(`woodshed-cloud[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
+(`acme-woodshed[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
 starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
 act as the same App all match a login alone; `<login>/<name>` picks one of them by the name each is given
-(`WOODSHED_RUNS_ON_NAME`, lowercase letters, digits and dashes), so `woodshed-cloud[bot]/acme` is the Woodshed Cloud org
-whose console Woodshed Cloud named `acme`, and a console with no name matches no such line.
+(`WOODSHED_RUNS_ON_NAME`, lowercase letters, digits and dashes), so `acme-woodshed[bot]/staging` is that App's console
+named `staging`, and a console with no name matches no such line.
 
 A pull request one of a console's own sessions opened is the exception: that console reviews and QAs it as the person
 who started the session, on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
@@ -2006,7 +2006,7 @@ Remove My Woodshed.
 | --- | --- | --- |
 | `WOODSHED_HOST`, `WOODSHED_PORT` | `127.0.0.1`, `7690` | |
 | `WOODSHED_CONSOLE_NAME` | `Woodshed` | What the console calls itself: the pages' title, the sign-in page's heading, the installed app's name (the manifest and the Apple title) and the console's GitHub comments. 1 to 40 printable characters, trimmed, without `< > " '` or a backtick; any other value gives the default, with a warning once. Set on the base box from Terraform's `console_name`. An installed app keeps the name it was installed with until it is installed again |
-| `WOODSHED_RUNS_ON_NAME` | none | Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn: <app login>/<name>` ("Which console does the automatic work"). Lowercase letters, digits and dashes, at most 63; anything else stops the console at start. Woodshed Cloud gives each org's console its org's slug |
+| `WOODSHED_RUNS_ON_NAME` | none | Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn: <app login>/<name>` ("Which console does the automatic work"). Lowercase letters, digits and dashes, at most 63; anything else stops the console at start |
 | `WOODSHED_PUBLIC_URL` | `http://localhost:<port>` | The base of the link posted on GitHub; its host is accepted |
 | `WOODSHED_HOSTS` | none | More names to accept, comma-separated |
 | `WOODSHED_APP_DOMAIN` | none | Session apps answer at `<id>.<this>` ("Session apps"); none turns them off, unless `WOODSHED_APP_PORTS` is set |

@@ -1781,7 +1781,7 @@ export function createFleet({
 
   // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
   // review, QA) in pullRequests.runsOn, by the login its App acts as, and after a slash which of that App's consoles
-  // (config.runsOnName): Woodshed Cloud's orgs all act as one App. The others still start sessions by hand.
+  // (config.runsOnName), for a host that runs several on one App. The others still start sessions by hand.
   function runsElsewhere(gates, project, number, what, owner = null) {
     if (owner?.own) return false;
     if (owner?.elsewhere) return true;

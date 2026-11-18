@@ -301,7 +301,7 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     // What the pages, the installed app and the console's GitHub comments call this console.
     consoleName: consoleName(env),
     // Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn:
-    // <app>/<name>` (fleet.mjs, runsElsewhere): Woodshed Cloud names each org's console by its org. Null is none.
+    // <app>/<name>` (fleet.mjs, runsElsewhere). Null is none.
     runsOnName: runsOnName(env),
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,

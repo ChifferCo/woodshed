@@ -555,10 +555,10 @@ function pullRequests(value) {
     return { check: string(f.check, 'pullRequests.mergeRisk.check') };
   });
   // Left out, every console the repo is connected to does its automatic work, as before. `<app>/<console>` names one of
-  // the consoles that act as one App (Woodshed Cloud's orgs), by the name it is given (WOODSHED_RUNS_ON_NAME).
+  // the consoles that act as one App, by the name it is given (WOODSHED_RUNS_ON_NAME).
   const runsOn = p.runsOn === null ? null : string(p.runsOn, 'pullRequests.runsOn');
   if (runsOn !== null && !RUNS_ON.test(runsOn)) {
-    fail(`pullRequests.runsOn must be a GitHub App's login, as woodshed-cloud[bot], or one of its consoles, as woodshed-cloud[bot]/acme (it is ${JSON.stringify(runsOn)})`);
+    fail(`pullRequests.runsOn must be a GitHub App's login, as acme-woodshed[bot], or one of its consoles, as acme-woodshed[bot]/staging (it is ${JSON.stringify(runsOn)})`);
   }
   return { review, suites, qa, mergeRisk, ...(runsOn ? { runsOn } : {}) };
 }
