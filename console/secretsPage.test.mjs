@@ -43,6 +43,7 @@ async function loadPage(secrets) {
   const answers = { '/api/secrets-manager': { canChoose: false, configured: true, kind: 'aws' }, '/api/secrets': { repo: 'acme/app', secrets, webhook: null } };
   const W = {
     h, nav: () => element('nav'), settingsTabs: () => element('nav'), when: (iso) => `at ${iso}`, providerWords: {}, capitalised: (s) => s,
+    settingsPage: (_match, start) => start(app, { interval: (fn, ms) => context.setInterval?.(fn, ms), timeout: (fn, ms) => context.setTimeout(fn, ms), on: (target, type, fn) => target.addEventListener?.(type, fn) }),
     getJson: async (path) => answers[path],
   };
   const context = vm.createContext({ window: { Woodshed: W }, document: { getElementById: () => app }, setTimeout });

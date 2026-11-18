@@ -136,6 +136,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   };
   const W = {
     h, nav: () => element('nav'), when: (iso) => `at ${iso}`,
+    settingsPage: (_match, start) => start(app, { interval: (fn, ms) => context.setInterval?.(fn, ms), timeout: (fn, ms) => context.setTimeout(fn, ms), on: (target, type, fn) => target.addEventListener?.(type, fn) }),
     getJson: (path) => consoleCall('GET', path),
     postJson: (path, body) => consoleCall('POST', path, body),
     confirmChange: (opts) => { confirms.push(opts); },

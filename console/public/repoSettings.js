@@ -5,7 +5,7 @@
 // API refuses anyone else, and the page says so. Values stay hidden until Show, as on Secrets & webhooks, and never
 // reach the table, which names keys alone. ?file=<key> opens one env file's tab, and #slack the Slack card, so a link
 // can point at them.
-(function () {
+window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/, (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -430,7 +430,6 @@
 
   // A redraw replaces the page; the editors are the same nodes, so the one being typed in keeps its caret.
   function render() {
-    const app = document.getElementById('app');
     const focused = document.activeElement;
     let caret = null;
     try { caret = [focused.selectionStart, focused.selectionEnd]; } catch { /* nothing focused */ }
@@ -466,4 +465,4 @@
   }
 
   load();
-})();
+});

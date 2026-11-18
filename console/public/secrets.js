@@ -1,7 +1,7 @@
 // The Secrets & webhooks page. Values stay hidden until Show; every change
 // opens a dialog that says what it changes and needs the name typed to go
 // ahead. No timed refresh: it would wipe a half-filled form.
-(function () {
+window.Woodshed.settingsPage('/secrets', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -347,7 +347,6 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
         h('h1', { class: 'title' }, 'Settings'),
@@ -374,4 +373,4 @@
   }
 
   reload();
-})();
+});

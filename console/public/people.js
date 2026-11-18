@@ -1,7 +1,7 @@
 // The People page: who may sign in, on top of write access to the repository. An admin can invite a handle, accept
 // or decline someone asking to join, and remove another member; nobody else can open it. Read again every 30 seconds, so a
 // request shows without a reload; the invite field keeps what is typed.
-(function () {
+window.Woodshed.settingsPage('/people', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -220,7 +220,6 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
         h('h1', { class: 'title' }, 'People'),
@@ -245,5 +244,5 @@
 
   render();
   load();
-  setInterval(load, REFRESH_MS);
-})();
+  life.interval(load, REFRESH_MS);
+});

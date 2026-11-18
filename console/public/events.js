@@ -1,6 +1,6 @@
 // The Webhook events page: what the console did with each message the webhooks
 // queue brought, newest first. The filter lives in the URL (?show=acted|problems).
-(function () {
+window.Woodshed.settingsPage('/events', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -68,7 +68,6 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
         h('h1', { class: 'title' }, 'Webhook events'),
@@ -109,5 +108,5 @@
   }
 
   refresh();
-  setInterval(refresh, REFRESH_MS);
-})();
+  life.interval(refresh, REFRESH_MS);
+});

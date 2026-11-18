@@ -2,7 +2,7 @@
 // typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
 // stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
 // change survives.
-(function () {
+window.Woodshed.settingsPage('/console-settings', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -540,7 +540,7 @@
       awaitingRestart = true;
       restartSince ??= Date.now();
     }
-    updatesTimer = setTimeout(async () => {
+    updatesTimer = life.timeout(async () => {
       const answered = await loadUpdates();
       if (following && answered && updates && !updates.job) {
         location.reload();
@@ -736,7 +736,6 @@
   }
 
   function draw() {
-    const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
         h('h1', { class: 'title' }, 'Settings'),
@@ -778,9 +777,9 @@
   }
 
   load();
-  setInterval(refreshData, DATA_REFRESH_MS);
+  life.interval(refreshData, DATA_REFRESH_MS);
   // Back from GitHub, where the App may have been given another repo.
-  document.addEventListener?.('visibilitychange', () => {
+  life.on(document, 'visibilitychange', () => {
     if (document.visibilityState === 'visible' && data?.projects && !repoForm.busy) loadRepoChoices();
   });
-})();
+});

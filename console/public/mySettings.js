@@ -1,6 +1,6 @@
 // My settings: what the signed-in person's own My Woodshed sessions are given. Only they see this page's values,
 // and the token is write-only: once saved, the console never shows it again, not even to them.
-(function () {
+window.Woodshed.settingsPage('/settings', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -230,7 +230,7 @@
   function watchDatabases() {
     clearTimeout(dbRefresh);
     if (me.databases?.status !== 'working') return;
-    dbRefresh = setTimeout(() => W.getJson('/api/my').then((answer) => { me = answer; render(); }, () => watchDatabases()), 10_000);
+    dbRefresh = life.timeout(() => W.getJson('/api/my').then((answer) => { me = answer; render(); }, () => watchDatabases()), 10_000);
   }
 
   const restore = window.WoodshedRestore.createRestore({ getMe: () => me, setMe: (answer) => { me = answer; }, render });
@@ -541,7 +541,6 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
     if (!me) {
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
       return;
@@ -583,5 +582,5 @@
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
   W.getJson('/api/my/projects').then((answer) => { projects = answer; if (me) render(); }, () => {});
   render();
-  window.addEventListener('woodshed:me', render);
-})();
+  life.on(window, 'woodshed:me', render);
+});
