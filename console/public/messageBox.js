@@ -52,8 +52,15 @@
 
     const field = h('textarea', {
       class: 'mb-field', rows: '1', placeholder: 'Message claude', 'aria-label': 'Message claude', enterkeyhint: 'enter',
-      oninput: () => { keepDraft(sessionId, field.value); fit(); draw(); },
+      oninput: changed, onkeyup: changed, onchange: changed, oncompositionend: changed, onblur: changed,
     });
+    // Each way iOS may tell of new text, since its dictation and predictive text can skip the input event.
+    function changed() {
+      keepDraft(sessionId, field.value);
+      fit();
+      draw();
+    }
+    document.addEventListener('selectionchange', () => { if (document.activeElement === field) changed(); });
     const picker = h('input', { type: 'file', multiple: true, hidden: true, onchange: () => { attach([...picker.files]); picker.value = ''; } });
     const attachButton = iconButton('attach', { title: 'Add a photo or a file', 'aria-label': 'Add a photo or a file', onclick: () => picker.click() });
     const micButton = iconButton('mic', { title: 'Dictate', 'aria-label': 'Dictate', onclick: () => (recognition ? recognition.stop() : listen()) });
@@ -83,7 +90,9 @@
       micButton.hidden = !mic;
       micButton.classList.toggle('is-live', Boolean(recognition));
       sendButton.hidden = mic;
-      sendButton.disabled = sending.has(sessionId) || !something || mine().some((f) => f.busy);
+      // Not greyed for an empty box: iOS can put text in the field with no input event (its keyboard's dictation, a
+      // predictive-text pick), which would leave Send grey over text. A Send with nothing in the box does nothing.
+      sendButton.disabled = sending.has(sessionId) || mine().some((f) => f.busy);
       listening.hidden = !recognition;
     }
 
