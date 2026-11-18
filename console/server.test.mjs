@@ -463,8 +463,8 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   const reads = ['/api/people', '/api/people/slack-search?q=ana', '/api/secrets', '/api/webhook/deliveries', '/api/webhook-events', '/api/console-settings', '/api/console-settings/updates', '/api/console-settings/repos/app'];
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
-    '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/people/invite',
-    '/api/console-settings/updates/check', '/api/console-settings/updates/update'];
+    '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/console-settings/projects/triggers', '/api/people/invite',
+    '/api/console-settings/updates/check', '/api/console-settings/updates/update', '/api/console-settings/webhooks'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -1396,6 +1396,63 @@ test('Console settings: a repo\'s own Slack channel, for the installation\'s rep
   assert.deepEqual(store.state.settings.projectSlackChannels, {}, 'a removed repo\'s channel goes with it');
 });
 
+test('Console settings: a repo\'s label and its switches for labels and comments, an admin\'s alone', async (t) => {
+  const { createMembers } = await import('./members.mjs');
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const store = {
+    state: {
+      sessions: [],
+      members: { 'mia-dev': { addedBy: null, addedAt: '2026-10-01T00:00:00.000Z', how: 'first to sign in', admin: true }, 'sam-ops': { addedBy: 'mia-dev', addedAt: '2026-10-02T00:00:00.000Z', how: 'invited' } },
+      addedProjects: [{ name: 'api', repo: 'o/api', default: false, addedBy: 'mia-dev', addedAt: '2026-10-03T00:00:00.000Z' }],
+    },
+    save() {},
+  };
+  const members = createMembers({ store });
+  const config = liveConfig({
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, projects: [{ name: 'r', repo: 'o/r', default: true }],
+  }, store);
+  const addedProjects = createAddedProjects({ store, config, check: async () => ({ installationId: null }) });
+  const auth = {
+    enabled: () => true,
+    available: () => true,
+    sessionFor: async (cookie) => {
+      const login = /woodshed_session=(\w[\w-]*)/.exec(String(cookie))?.[1];
+      return members.isMember(login) ? { login } : null;
+    },
+  };
+  const repoTriggers = createRepoTriggers({ store, config, qaLabelOf: async (name) => (name === 'api' ? 'qa' : null) });
+  const repoSettings = { view: async (project) => ({ project, envFiles: [] }), forget: async () => {} };
+  const fleet = { sessions: () => [] };
+  const handle = createHandler({ config, fleet, auth, members, consoleSettings: createConsoleSettings({ store, config }), addedProjects, repoSettings, repoTriggers });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const mia = { cookie: 'woodshed_session=mia-dev' };
+  const sam = { cookie: 'woodshed_session=sam-ops' };
+  const path = '/api/console-settings/projects/triggers';
+  const repoView = async (name, who = mia) => {
+    const res = await fetch(`http://127.0.0.1:${port}/api/console-settings/repos/${name}`, { headers: { host: `localhost:${port}`, ...who } });
+    return { status: res.status, body: await res.json() };
+  };
+
+  assert.deepEqual((await repoView('api')).body.triggers, { label: 'woodshed', labels: true, comments: true, labelSet: false, consoleLabel: 'woodshed' });
+  assert.equal((await post(port, path, { name: 'api', labels: false }, sam)).status, 403, 'not an admin');
+  assert.equal(store.state.repoTriggers, undefined, 'nothing kept from a refused call');
+  const saved = await post(port, path, { name: 'api', label: 'agent', comments: false }, mia);
+  assert.equal(saved.status, 200);
+  assert.deepEqual(saved.body.triggers, { label: 'agent', labels: true, comments: false, labelSet: true, consoleLabel: 'woodshed' });
+  assert.equal((await post(port, path, { name: 'api', label: 'QA' }, mia)).status, 400, 'the repo\'s QA label');
+  assert.deepEqual(await post(port, path, { name: 'nope', labels: false }, mia), { status: 400, body: { error: 'There is no project called nope.' } });
+  assert.equal((await post(port, path, { name: 'r', labels: false }, { ...mia, origin: 'https://evil.example' })).status, 403);
+  assert.equal((await post(port, path, { name: 'r', labels: false }, mia)).status, 200, 'the installation\'s own repo');
+  assert.equal((await repoView('api', sam)).status, 403);
+  const sessions = await (await fetch(`http://127.0.0.1:${port}/api/sessions`, { headers: { host: `localhost:${port}`, ...mia } })).json();
+  assert.deepEqual(sessions.projects.map((p) => [p.name, p.label]), [['r', 'woodshed'], ['api', 'agent']], 'each session names its repo\'s label');
+  await post(port, '/api/console-settings/projects/remove', { name: 'api' }, mia);
+  assert.equal(store.state.repoTriggers.api, undefined, 'a removed repo\'s settings go with it');
+});
+
 test('the switch for shared sessions is set for the signed-in person alone, behind the same write checks', async (t) => {
   const done = [];
   const userSettings = {
@@ -1469,6 +1526,70 @@ test('the pages get the display name of each handle they show: the signed-in per
   assert.ok(asked.at(-1).includes('nameless'), 'a handle with no name is asked too, so a name set later shows');
   assert.deepEqual((await get('/api/me')).names, { 'mia-dev': 'Mia' });
   assert.deepEqual((await get('/api/webhook-events')).names, { octo: 'Octo Cat' });
+});
+
+test('Console settings turns each source\'s webhooks off and on, says who did, and whether any reach the console', async (t) => {
+  const { createWebhookSwitch } = await import('./webhookSwitch.mjs');
+  const store = { state: {}, save() {} };
+  const webhookSwitch = createWebhookSwitch({ store });
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, webhookSwitch, asks: { names: () => ({}) }, consoleSettings: createConsoleSettings({ store, config }) });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const get = async () => (await fetch(`http://127.0.0.1:${port}/api/webhook-events`)).json();
+
+  assert.equal((await get()).queue, false, 'nothing said webhooks arrive');
+  webhookSwitch.receiving('delivered');
+  const before = await get();
+  assert.equal(before.queue, true, 'a console its host hands webhooks to says so, with no queue of its own');
+  assert.equal(before.webhooks.github.off, false);
+  assert.equal(before.webhooks.slack.off, false);
+  const off = await post(port, '/api/console-settings/webhooks', { source: 'slack', off: true });
+  assert.equal(off.status, 200);
+  assert.equal(off.body.webhooks.slack.off, true);
+  assert.equal(off.body.webhooks.slack.by, 'console');
+  assert.equal(off.body.webhooks.github.off, false);
+  assert.equal(webhookSwitch.off('slack'), true);
+  assert.equal((await post(port, '/api/console-settings/webhooks', { source: 'github', off: 'please' })).status, 400);
+  assert.equal((await post(port, '/api/console-settings/webhooks', { off: true })).status, 400, 'a source is named');
+  assert.equal((await post(port, '/api/console-settings/webhooks', { source: 'github', off: true })).body.webhooks.github.off, true);
+  const settingsPage = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
+  assert.deepEqual([settingsPage.webhooks.receiving, settingsPage.webhooks.github.off, settingsPage.webhooks.slack.off], [true, true, true], 'Console settings shows the switches');
+  assert.equal((await get()).webhooks.github.off, true, 'and Webhook events says what is off');
+});
+
+test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {
+  const { createWebhookSwitch } = await import('./webhookSwitch.mjs');
+  const base = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 }, webhookQueue: 'https://sqs.example/queue',
+  };
+  async function webhooksOf(config, setUp = () => {}) {
+    const store = { state: {}, save() {} };
+    const webhookSwitch = createWebhookSwitch({ store });
+    setUp(webhookSwitch);
+    const handle = createHandler({ config, fleet: { sessions: () => [] }, webhookSwitch, consoleSettings: createConsoleSettings({ store, config }) });
+    const server = http.createServer((req, res) => { handle(req, res); });
+    const port = await listen(server);
+    t.after(() => server.close());
+    const settings = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
+    const events = await (await fetch(`http://127.0.0.1:${port}/api/webhook-events`)).json();
+    return { settings: settings.webhooks, queue: events.queue };
+  }
+
+  const own = await webhooksOf(base);
+  assert.equal(own.settings.receiving, true, 'a queue with no broker is read once the App key loads');
+  const borrowed = await webhooksOf({ ...base, githubBroker: { url: 'https://host.example' } });
+  assert.equal(borrowed.settings.receiving, false, 'a broker console never reads its queue, so the card hides its switches');
+  assert.equal(borrowed.queue, false, 'and Webhook events says no webhooks reach it');
+  const delivered = await webhooksOf({ ...base, githubBroker: { url: 'https://host.example' } }, (sw) => sw.receiving('delivered'));
+  assert.equal(delivered.settings.receiving, true, 'one its host hands webhooks to still shows them');
+  const offBefore = await webhooksOf({ ...base, githubBroker: { url: 'https://host.example' } }, (sw) => sw.set({ source: 'github', off: true, by: 'joel' }));
+  assert.equal(offBefore.settings.github.off, true, 'a switch already off is still there to turn back on');
 });
 
 test('Remove on a private session acts for the signed-in person, from the console\'s own origin', async (t) => {

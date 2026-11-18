@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 
 import { seedEnv, seedEnvFiles } from './dbAdmin.mjs';
 import { loadProject } from '../shared/project.mjs';
-import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
+import { fixtureApp, fixtureCheckout, fixtureProject } from '../shared/projectFixture.mjs';
 
 const SESSION_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ENTRYPOINT = fs.readFileSync(path.join(SESSION_DIR, 'entrypoint.sh'), 'utf8');
@@ -35,7 +35,7 @@ fs.writeFileSync(path.join(REPO, '.woodshed/rules.md'), `- ${PROJECT_RULE}\n`);
 // The notes' title and the blank line after it, which a shared session's inline copy drops.
 fs.writeFileSync(path.join(REPO, '.woodshed/setup.md'), `Environment notes:\n\n- ${PROJECT_NOTE}\n`);
 
-function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null }) {
+function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDir = REPO, defaultBranch = 'main', sessionUrl = null, hostDocker = null, appDomain = null }) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-prompt-'));
   const script = [
     'set -euo pipefail',
@@ -46,6 +46,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
     // The function writes and reads under /tmp; point both at this test's own folder.
     fn('writePrompt').replaceAll('/tmp/', `${tmp}/`),
     fn('leaveOutConsoleLinks'),
+    fn('appRules'),
     fn('writeRules').replaceAll('/tmp/', `${tmp}/`),
     'writePrompt',
     'writeRules',
@@ -55,7 +56,7 @@ function writePrompt({ attachments, kind = 'private', reviewOnly = false, repoDi
   try {
     const out = execFileSync('bash', ['-c', script], {
       encoding: 'utf8',
-      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}) },
+      env: { PATH: process.env.PATH, PROMPT: reviewOnly ? '' : 'Fix the export button', STARTED_BY: 'octocat', BRANCH: 'woodshed/x', DEFAULT_BRANCH: defaultBranch, SESSION_DIR, SHARED_DIR, REPO_DIR: repoDir, SESSION_KIND: kind, ...(reviewOnly ? { REVIEW_ONLY: '1' } : {}), ...(sessionUrl ? { SESSION_URL: sessionUrl } : {}), ...(hostDocker !== null ? { WOODSHED_SESSION_DOCKER: hostDocker, SESSION_ID: '0a1b2c3d' } : {}), ...(appDomain !== null ? { SESSION_APP_DOMAIN: appDomain, SESSION_ID: '0a1b2c3d' } : {}) },
     });
     return {
       out,
@@ -134,6 +135,42 @@ test('a project of several apps has its rules name each, with how it starts and 
   assert.match(out, /Rules written .*apps: 2\)/);
   fs.writeFileSync(path.join(repo, '.woodshed/project.yaml'), fixtureProject({ app: fixtureApp() }));
   assert.doesNotMatch(writePrompt({ attachments: false, repoDir: repo }).rules, /several apps/);
+});
+
+test('the rules give the app\'s address the person can open, never localhost, only where the console serves session apps', () => {
+  const { rules } = writePrompt({ attachments: false, appDomain: 'apps.example.com' });
+  assert.match(rules, /^- The person is not on this machine: a `localhost` or `127\.0\.0\.1` address means nothing to them/m);
+  assert.match(rules, /This session's app is theirs at https:\/\/0a1b2c3d\.apps\.example\.com\/, which the console forwards to `127\.0\.0\.1:<frontendPort>` here/);
+  assert.match(rules, /--baseURL https:\/\/0a1b2c3d\.apps\.example\.com\/ --appendPort=false/);
+  assert.doesNotMatch(rules, /\{\{/);
+  assert.doesNotMatch(writePrompt({ attachments: false }).rules, /The person is not on this machine/, 'no app domain, no address');
+});
+
+test('a repo with no app, or no project file, has its rules say what Set up app does: a private session offers it, a shared one does it to prove a change', () => {
+  // REPO's project file has no app.
+  const own = writePrompt({ attachments: false }).rules;
+  assert.match(own, /^- This repo's `\.woodshed\/project\.yaml` has no `app` section, so Woodshed does not know how to start this repo's app: the console shows \*\*Set up app\*\*/m);
+  assert.match(own, /offer once to set it up, and say what that means/);
+  assert.match(own, /Do not write it unasked\./);
+  assert.doesNotMatch(own, /When proving the change needs the app running/);
+  for (const field of ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'howToProve']) assert.match(own, new RegExp(`\`${field}\``), `names ${field}`);
+  assert.doesNotMatch(own, /\{\{/);
+  const shared = writePrompt({ attachments: false, kind: 'shared' }).rules;
+  assert.match(shared, /When proving the change needs the app running, you may .* keep it out of every commit/);
+  assert.doesNotMatch(shared, /offer once/);
+
+  // No project file at all: the default branch has none either.
+  const bare = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-bare-'));
+  after(() => fs.rmSync(bare, { recursive: true, force: true }));
+  fixtureCheckout(bare);
+  assert.match(writePrompt({ attachments: false, repoDir: bare }).rules, /^- This repo has no `\.woodshed\/project\.yaml`, so Woodshed does not know how to start this repo's app/m);
+
+  // An app: nothing of the kind.
+  const withApp = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-app-'));
+  after(() => fs.rmSync(withApp, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(withApp, '.woodshed'));
+  fs.writeFileSync(path.join(withApp, '.woodshed/project.yaml'), fixtureProject({ app: fixtureApp() }));
+  assert.doesNotMatch(writePrompt({ attachments: false, repoDir: withApp }).rules, /Set up app/);
 });
 
 test('a project with a review tag tells its sessions to end each push\'s last commit with it; one with none says nothing', () => {
@@ -230,7 +267,7 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   // What claude is told: Woodshed's rules for each kind of session, the notes' pointer, and the dependencies' status,
   // which the project's notes have claude wait for.
   const told = [
-    ...['prompt.md', 'ask.md', 'hostDocker.md', 'ownDocker.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
+    ...['prompt.md', 'ask.md', 'hostDocker.md', 'ownDocker.md', 'appAddress.md', 'noApp.md'].map((f) => fs.readFileSync(path.join(SESSION_DIR, f), 'utf8')),
     fn('writeRules').split('\n').find((line) => line.includes('Environment notes (')),
   ].join('\n');
   const paths = [...new Set([...told.matchAll(/\/tmp\/[\w.\-/]+/g)].map((m) => m[0]))];
@@ -244,6 +281,21 @@ test('every file outside the repo that Woodshed points claude at is one claude r
   const reads = hooks.permissions.allow.filter((rule) => rule.startsWith('Read('));
   assert.deepEqual(reads.sort(), paths.map((p) => `Read(/${p})`).sort());
   assert.ok(!hooks.permissions.allow.some((rule) => /^(Edit|Write)\(/.test(rule)));
+});
+
+// Claude Code asks "Adding a new directory: … Is this a directory you trust?" at start for each --add-dir folder no
+// project entry in ~/.claude.json trusts, which held every session before its first prompt (Claude Code 2.1.326).
+test('claude starts trusting the checkout and every folder it is given with --add-dir, so no trust dialog opens', (t) => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-home-'));
+  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(home, '.claude.json'), JSON.stringify({ projects: { '/tmp/uploads': { allowedTools: ['Bash'] } } }));
+  execFileSync('bash', ['-c', `set -euo pipefail\n${fn('configureClaude')}\nconfigureClaude`], {
+    env: { PATH: process.env.PATH, HOME: home, REPO_DIR: REPO, SESSION_KIND: 'private', WOODSHED_CLAUDE_AUTH: 'own' },
+  });
+  const config = JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8'));
+  const addDirs = [...fn('claudeFlags').matchAll(/--add-dir %s' "\$\{UPLOADS_DIR:-([^}]+)\}"/g)].map((m) => m[1]);
+  for (const dir of [REPO, ...addDirs]) assert.equal(config.projects[dir]?.hasTrustDialogAccepted, true, `${dir} is trusted`);
+  assert.deepEqual(config.projects['/tmp/uploads'].allowedTools, ['Bash'], 'what the home already held for the folder stays');
 });
 
 test('a session given this machine\'s Docker is told so, with its own id to name stacks by, and one without is told nothing', () => {
@@ -685,7 +737,7 @@ async function seedEnvFilesWritten(t, { secretValues, project = 'app', envFiles 
   const found = await seedEnvFiles({ flags, project: loadProject(repoDir), secrets: { get: async (name) => secretValues[name] ?? null } });
   const settingsFile = found.settings && path.join(repoDir, 'settings.json');
   if (settingsFile) fs.writeFileSync(settingsFile, JSON.stringify(found.settings), { mode: 0o600 });
-  const env = seedEnv({ flags, env: {}, databases: [PG], user: 'woodshed__seed', name: 'next', password: 'ab', files: found.files, settingsFile });
+  const env = seedEnv({ flags, env: {}, databases: [PG], user: 'woodshed__seed', name: 'next', password: 'ab', settingsFile });
   const result = spawnSync('bash', ['-c', [
     'set -euo pipefail', 'log() { echo "[woodshed] $*"; }', 'die() { log "ERROR: $*"; exit 1; }',
     'project() { node "$SHARED_DIR/project.mjs" "$@"; }', 'databases() { node "$SHARED_DIR/databases/index.mjs" "$@"; }',
@@ -710,13 +762,13 @@ test('the seed writes its env files from the default project\'s repo settings, a
   assert.match(seeded.log, /Templates ready for the swap \(mode: seed, commands: 1\)/);
 });
 
-test('the seed falls back to an env file\'s legacy secret with the session\'s warning, and writes one with neither from the repo alone', async (t) => {
+test('the seed writes an env file with no repo settings value from the repo alone, whatever old secret the store holds', async (t) => {
   const seeded = await seedEnvFilesWritten(t, { secretValues: { 'p/api-env': 'API_KEY=old\n' } });
-  assert.equal(seeded.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.equal(seeded.api, `\n\n# Woodshed overrides\n${SEED_URL}\n`);
   assert.equal(seeded.web, '# From the repo (.woodshed/project.yaml)\nPUBLIC_MODE=dev\n\n# Woodshed overrides\n\n');
-  assert.match(seeded.log, /WARNING: api\/\.env from the legacy env file secret api-env: set it on Console settings → Repos/);
-  assert.match(seeded.log, /api\/\.env \(layers: installation session, installation: 12 bytes from the legacy secret,/);
-  assert.deepEqual(seeded.read, [{ key: 'api-env', paths: ['api/.env'], from: 'legacy secret' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
+  assert.doesNotMatch(seeded.log, /WARNING|legacy/);
+  assert.match(seeded.log, /api\/\.env \(layers: session, installation: 0 bytes,/);
+  assert.deepEqual(seeded.read, [{ key: 'api-env', paths: ['api/.env'], from: 'none' }, { key: 'web-env-local', paths: ['web/.env.local'], from: 'none' }]);
 });
 
 test('the seed writes a key two env files name to both, each with its own lines', async (t) => {
@@ -728,13 +780,13 @@ test('the seed writes a key two env files name to both, each with its own lines'
   assert.deepEqual(seeded.read, [{ key: 'app-env', paths: ['api/.env', 'worker/.env'], from: 'repo settings' }]);
 });
 
-test('a seed with no --project writes the env files from the legacy secrets as before, byte for byte', async (t) => {
+test('a seed with no --project writes the env files from the repo alone, in the log line from before repo settings', async (t) => {
   const values = { 'p/api-env': 'API_KEY=old\n', 'p/repos/app/env/api-env': 'API_KEY=new\n' };
-  const legacy = await seedEnvFilesWritten(t, { secretValues: values, project: null });
-  assert.equal(legacy.api, `API_KEY=old\n\n\n# Woodshed overrides\n${SEED_URL}\n`);
-  assert.match(legacy.log, /Env files written \(api\/\.env \(base: 12 bytes\), web\/\.env\.local \(base: 0 bytes, defaults: 1\)\)/, 'the line from before repo settings');
-  const fromSettings = await seedEnvFilesWritten(t, { secretValues: { ...values, 'p/repos/app/env/api-env': 'API_KEY=old\n' } });
-  assert.deepEqual([fromSettings.api, fromSettings.web], [legacy.api, legacy.web], 'the same text from either name gives the same bytes');
+  const bare = await seedEnvFilesWritten(t, { secretValues: values, project: null });
+  assert.equal(bare.api, `\n\n# Woodshed overrides\n${SEED_URL}\n`);
+  assert.match(bare.log, /Env files written \(api\/\.env \(base: 0 bytes\), web\/\.env\.local \(base: 0 bytes, defaults: 1\)\)/, 'the line from before repo settings');
+  const empty = await seedEnvFilesWritten(t, { secretValues: { 'p/api-env': 'API_KEY=old\n' } });
+  assert.deepEqual([empty.api, empty.web], [bare.api, bare.web], 'repo settings with no value give the same bytes');
 });
 
 test('a Codex session starts codex with the picked flags, and the rules go in codex\'s own AGENTS.md', () => {

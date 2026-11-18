@@ -97,10 +97,10 @@ function channelCall(slack, body) {
  * `slack` is the console's Slack settings, {consoleChannel, channels: {<project>: channel}}; left out, it has none.
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, envFiles = [{ secret: 'api-env', path: 'api/.env' }], admin = true, before = null, confirmAnswer = true, slack: slackSettings = null } = {}) {
+async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
-  const config = { projects: PROJECTS, repo: 'acme/app', envFiles };
+  const config = { projects: PROJECTS, repo: 'acme/app' };
   const readerOf = () => ({
     async repoLayer() {
       if (file instanceof Error) throw file;
@@ -260,7 +260,7 @@ test('a saved value stays hidden until Show and edit, which reads it from the co
   assert.equal(editorOf(app, 'env-api-env'), undefined);
 });
 
-test('Clear asks first, says the Terraform secret is read again, and empties the layer', async () => {
+test('Clear asks first, says sessions get the repo\'s defaults alone, and empties the layer', async () => {
   const { app, calls, asked, secrets } = await loadPage({
     before: ({ repoSettings }) => repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'A=1\n', by: 'mia-dev' }),
   });
@@ -268,25 +268,25 @@ test('Clear asks first, says the Terraform secret is read again, and empties the
   await settle();
   button(app, 'Clear').listeners.click();
   await settle();
-  assert.deepEqual(asked, ['Clear this installation\'s values for api/.env? Sessions then read the Terraform secret api-env again.']);
+  assert.deepEqual(asked, ['Clear this installation\'s values for api/.env?']);
   assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/repos/app/env/api-env', body: { text: '' } });
   assert.equal(secrets.values.has('repos/app/env/api-env'), false);
-  assert.match(textOf(app), /Cleared\. Sessions read the Terraform secret api-env again\./);
-  assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
+  assert.match(textOf(app), /Cleared\. Sessions get the repo's defaults alone\./);
+  assert.doesNotMatch(textOf(app), /Terraform secret/);
 });
 
-test('an env file copied from its Terraform secret says so, with the date', async () => {
+test('a value the old start-time copy saved still says it was copied from Terraform, and names no secret sessions read', async () => {
   const { app } = await loadPage({
-    before: async ({ secrets, repoSettings }) => {
-      secrets.values.set('api-env', 'A=1\n');
-      await repoSettings.migrate();
+    before: async ({ repoSettings, store }) => {
+      await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: 'A=1\n', by: 'mia-dev' });
+      store.state.repoSettings.app.env['api-env'].by = 'terraform env_files';
     },
   });
-  assert.match(textOf(app), /Copied from the Terraform secret api-env on at 20\d\d-.*\. Sessions read this one now\./);
   assert.match(textOf(app), /copied from Terraform/);
+  assert.doesNotMatch(textOf(app), /Terraform secret/);
 });
 
-test('an env file with no Terraform secret behind it has no legacy note, and its tab is deep-linked', async () => {
+test('an env file\'s tab is deep-linked, with no note of a Terraform secret', async () => {
   const { app, history } = await loadPage({ search: '?file=web-env-local' });
   assert.deepEqual(buttons(app, 'web/.env.local').map((b) => b.attrs['aria-pressed']), ['true']);
   assert.doesNotMatch(textOf(app), /Terraform/);
@@ -394,26 +394,13 @@ test('someone who is not an admin is told the page is an admin\'s, with no setti
 
 test('a project the console does not have says so', async () => {
   const { app } = await loadPage({ project: 'nope' });
-  assert.match(textOf(app), /There is no project called nope\. Repos on Console settings lists the ones there are\./);
+  assert.match(textOf(app), /There is no project called nope\. Repos in Settings lists the ones there are\./);
 });
 
 test('a console with no secret store says nothing can be saved, and turns the editor off', async () => {
   const { app } = await loadPage({ before: ({ secrets }) => { secrets.configured = () => false; } });
   assert.match(textOf(app), /This console has no secret store, so nothing can be saved here\./);
   assert.equal(editorOf(app, 'env-api-env').disabled, true);
-});
-
-test('a copied value, cleared, says sessions read the Terraform secret again, not that they read the copy', async () => {
-  const { app } = await loadPage({
-    before: async ({ secrets, repoSettings }) => {
-      secrets.values.set('api-env', 'A=1\n');
-      await repoSettings.migrate();
-      await repoSettings.saveInstallation({ project: 'app', key: 'api-env', text: '', by: 'mia-dev' });
-      await repoSettings.migrate();
-    },
-  });
-  assert.match(textOf(app), /No values yet: sessions still read the Terraform secret api-env\./);
-  assert.doesNotMatch(textOf(app), /Sessions read this one now/);
 });
 
 const channelField = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel');
@@ -428,7 +415,7 @@ test('the Slack card says what the channel is for, how to find its ID and to inv
   const card = cardOf(app, 'slack');
   const text = textOf(card);
   assert.match(text, /When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post's thread\./);
-  assert.match(text, /With no channel here, it goes to the channel on Console settings' Slack card\./);
+  assert.match(text, /With no channel here, it goes to the channel on Settings' Slack card\./);
   assert.match(text, /the ID \(C…\) is at the bottom of its About tab/);
   assert.match(text, /Invite the Woodshed bot to the channel first/);
   assert.match(text, /a question asked in Slack is answered in its own thread/);

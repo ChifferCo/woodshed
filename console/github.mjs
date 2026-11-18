@@ -9,6 +9,7 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 
 import { reduceChecks } from './prChips.mjs';
+import { sameLabel } from './repoTriggers.mjs';
 import { parseCommand } from './sessions.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -196,7 +197,8 @@ export function canWrite(answer) {
  */
 export function labelTriggers(events, { label, afterId }) {
   return events
-    .filter((e) => e.event === 'labeled' && e.label?.name === label && e.id > afterId && e.issue)
+    // GitHub matches a label's name whatever its case, as the repo's settings do (repoTriggers.mjs).
+    .filter((e) => e.event === 'labeled' && sameLabel(e.label?.name, label) && e.id > afterId && e.issue)
     .sort((a, b) => a.id - b.id)
     .map((e) => ({
       id: e.id,

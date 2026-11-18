@@ -252,6 +252,13 @@ resource "aws_eip" "base_box" {
 # The box's size from what it runs (baseBoxStack.sh.tftpl's mem_limits): the console's 512 MB and Caddy's 128 MB fit
 # 2 GB with the OS, Docker and Caddy's build on the box; Mongo's 1 GB or a shared service's 768 MB does not.
 locals {
+  # What the box keeps for itself before the project file's services (providers/aws/services.mjs): the OS and Docker,
+  # the console's 512 MB, Caddy's 128 MB and Mongo's 1 GB. <prefix>-services refuses services that need more than the rest.
+  # The OS and Docker take about 300 MB on Amazon Linux; 512 leaves them room, where 1024 refused a t3.medium the two
+  # services it already ran beside Mongo.
+  base_box_reserved_mib   = 512 + 512 + 128 + (local.mongo ? 1024 : 0)
+  # shared_services as <prefix>-services takes them (services.mjs, legacyServices), base64 in the script.
+  legacy_services_json = jsonencode([for name, s in var.shared_services : { name = name, variable = s.variable, port = s.port, memory = s.mem_limit }])
   base_box_needs_4gb      = local.mongo || length(var.shared_services) > 0
   base_box_instance_type  = coalesce(var.base_box_instance_type, local.base_box_needs_4gb ? "t3.medium" : "t3.small")
   base_box_min_memory_mib = local.base_box_needs_4gb ? 4096 : 2048
@@ -325,8 +332,8 @@ locals {
     repo               = var.sessions_on_github_repo ? var.github_repo : ""
     projects           = local.projects_json
     services           = var.shared_services
-    env_files          = join(",", [for name, path in var.env_files : "${name}=${path}"])
-    db_env_secrets     = join(",", var.database_env_secrets)
+    reserved_mib       = local.base_box_reserved_mib
+    legacy_services    = local.legacy_services_json
     install_secrets    = join(",", [for name, env_name in var.install_secrets : "${name}=${env_name}"])
     max_sessions       = var.max_sessions
     console_name       = var.console_name

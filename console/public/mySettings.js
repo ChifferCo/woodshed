@@ -7,8 +7,7 @@
 
   let me = null;
   let loadError = null;
-  // Your own tmux config. /api/my still lists the Terraform env files' own lines beside it, for pages from before
-  // Repo settings, which hold those now (myRepoSettings.js).
+  // Your own tmux config. Your own lines for the repo's env files are Repo settings (myRepoSettings.js).
   const fileKeys = () => Object.keys(me?.files ?? {}).filter((key) => key === 'tmux-conf');
   const files = {};
   let fileKey = null;
@@ -500,7 +499,7 @@
     const custom = Object.keys(own).length > 0;
     return h('section', { class: 'set-card', id: 'my-timeouts' },
       h('div', { class: 'set-head' }, h('h2', null, 'My session timeouts'), h('span', { class: custom ? 'pill is-ok' : 'pill' }, custom ? 'Your own' : 'Console defaults')),
-      h('p', { class: 'sub' }, 'How long your My Woodshed sessions wait for you before they pause, and how long one that works may run before it is stopped. Either way its work is pushed first, and Resume picks it up. Leave a box empty to use the console\'s number, shown in it. Sessions already running use the new numbers within a few seconds. The console\'s own numbers, for shared sessions, are the Sessions card on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Console settings') : 'Console settings (admins)', '.'),
+      h('p', { class: 'sub' }, 'How long your My Woodshed sessions wait for you before they pause, and how long one that works may run before it is stopped. Either way its work is pushed first, and Resume picks it up. Leave a box empty to use the console\'s number, shown in it. Sessions already running use the new numbers within a few seconds. The console\'s own numbers, for shared sessions, are the Sessions card on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Settings') : 'Settings (admins)', '.'),
       h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause a session waiting for input after (hours, 0.25 to 24)')),
       limitInputs.idleHours,
       h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop a working session after (hours, 1 to 24)')),
@@ -553,7 +552,7 @@
       W.nav('/settings'),
       h('header', { class: 'page-head' }, h('div', null,
         h('h1', { class: 'title' }, 'My settings ', W.scopePill('/settings')),
-        h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Console settings') : 'Console settings (admins)', '.'))),
+        h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
       W.settingsSearch(),
       tokenCard(),
       codexCard(),

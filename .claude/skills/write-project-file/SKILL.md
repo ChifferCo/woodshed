@@ -1,6 +1,6 @@
 ---
 name: write-project-file
-description: Write or fix a repository's .woodshed/project.yaml, the file that tells Woodshed sessions how to install the repo's dependencies, copy its databases, write its env files and start its app. Use when setting Woodshed up for a repo, when `shared/project.mjs check` fails, when a session stops at start with `.woodshed/project.yaml: …`, or when asked to add an app, a database or pull request gates to the project file.
+description: Write or fix a repository's .woodshed/project.yaml, the file that tells Woodshed sessions how to install the repo's dependencies, copy its databases, name the shared services it needs, write its env files and start its app. Use when setting Woodshed up for a repo, when `shared/project.mjs check` fails, when a session stops at start with `.woodshed/project.yaml: …`, or when asked to add an app, a database, a shared service or pull request gates to the project file.
 ---
 
 # Write a repository's project file
@@ -22,16 +22,26 @@ Look for, and note the file each answer came from:
 - **Databases**: docker compose services, env examples (`.env.example`), ORM config (Prisma, Drizzle, Knex, Alembic,
   Django, Rails, Mongoose), the migration and seed commands, the migrations folder, and the table the migration tool
   records runs in. Only `postgres` and `mongo` are engines; one database an engine.
-- **Env files**: each file the app reads that git ignores, and which of its lines are secret (go in an env file's
-  `secret`, set later on the console) and which are derived (go in its `overrides`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
+- **Env files**: each file the app reads that git ignores, and which of its lines are secret (set later on the
+  console's Repo settings, never in the file) and which are derived (go in its `overrides`, from `{{PGHOST}}`, `{{MONGODB_URI}}`
   and the rest, `project.reference.yaml`'s `databases` comment), which always win. A plain value a person may change
   goes in its `defaults`. Write `overrides`, never its deprecated old name `lines`.
 - **The app**: how it starts in dev (one command that returns once it is up, or a script that backgrounds it), how it
   stops, its frontend and backend ports, its log files, and the folders whose change is an app change.
   A repo with more than one app (a second frontend, an admin site) writes `apps` instead of `app`: a list of the same
   fields, each with a `name` and an optional `label`, the first the default. Give each app its own log file.
-- **Services in Docker**: a `supabase/` folder (Supabase local), or a compose file of services the app needs (a queue,
-  a search engine, a Postgres the Woodshed databases do not stand in for). On the local provider, sessions have
+- **Shared services**: a container the app talks to over HTTP that is not a database Woodshed copies: a fake S3
+  (localstack), a PDF renderer, a mail catcher, often in the repo's compose file with its URL in `.env.example`. Each
+  is a `services` entry (`project.reference.yaml`): its image pinned to a tag or digest, the port it listens on, and
+  the variable the app reads its URL from, which an env file's `overrides` take (`S3_ENDPOINT={{S3_ENDPOINT}}`).
+  Decide `data` by asking whether the app expects what it wrote to be there next time: a renderer or converter keeps
+  nothing (leave `data` out, and one copy serves everyone); an object store or a queue does (`data` with the folder it
+  keeps, and `keep: person` so each person's private sessions see their own, or `keep: session` for a fresh one each
+  time). An init script, such as one creating a bucket, is a file in the repo (`.woodshed/services/`) named in `files`,
+  and must be safe to run again on data it made before. Where the services run is the installation's: the file says
+  only what the sessions need.
+- **Services in Docker**: a `supabase/` folder (Supabase local), or a compose file of services the app needs that are
+  not shared services above (a search engine, a Postgres the Woodshed databases do not stand in for). On the local provider, sessions have
   Docker: their own where the machine has Sysbox, else the machine's on one person's console (and on a shared one with
   `WOODSHED_SESSION_DOCKER=1`), so the app's `start` can bring them up: `supabase start`,
   or `docker compose -p <name> up -d --wait`. Name them after the session (`$SESSION_ID`, in a compose project name or
@@ -67,8 +77,8 @@ either, it checks whichever repository the shell is in, which from here is Woods
 
 It reads the file as a session's start does and checks it against the checkout: a script, folder, workflow, port or
 env file it names that is not there, or an env file git would not ignore, fails it with the field named. Fix each line
-it prints and run it again. **Done when** it exits 0 with a line for each part you meant (installs, databases, env
-files, app, pull requests). Read its `install variables` and `from the session` lines: each is something the
+it prints and run it again. **Done when** it exits 0 with a line for each part you meant (installs, databases,
+services, env files, app, pull requests). Read its `install variables` and `from the session` lines: each is something the
 installation must provide, so list them for the person.
 
 ## 4. Hand it over
@@ -78,8 +88,10 @@ installation must provide, so list them for the person.
   default branch, so a file on another branch is not read by the install.
 - Offer the CI check from `docs/self-host.md`, "Before any of them: the project file", step 4: a workflow of the
   repository's own calling Woodshed's reusable `project-check.yml`.
-- List what the installation must still provide: each env file `secret` (set on the console's Secrets & webhooks
-  page), each install variable, each `from the session` variable, and Docker when the app's `start` needs it.
+- List what the installation must still provide: each env file's secret values (set on the console's Repo settings:
+  Console settings, Repos, the repo's **Settings**), each install variable, each `from the session` variable, the
+  `services` where it does not run them from the file yet (`docs/reference.md`, "Using it on another repo"), and Docker
+  when the app's `start` needs it.
 
 ## When a session refused the file
 

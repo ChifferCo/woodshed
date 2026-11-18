@@ -110,20 +110,18 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | `slack-bot-token` | The console only, to post each pull request a session opens to its project's channel on the Console settings page (or the Slack card's), and to answer questions from Slack in their threads. Write-only on the Secrets tab. Never in a session | The console logs `slack: no bot token yet, nothing sent`, or `slack: call refused` with the method and Slack's error: `not_in_channel` means the bot was not invited, `invalid_auth` a wrong token, `channel_not_found` a name where the ID belongs, `missing_scope` a scope console/README.md's "Questions from Slack" lists (`app_mentions:read`, `chat:write`, `reactions:write`, `users:read`, `users:read.email`) and the app lacks. |
 | `slack-signing-secret` | The webhooks Lambda only, to check each Slack event (`/slack`). Set on the Secrets tab, write-only there | Every mention is refused: the Lambda logs `webhooks: bad or missing Slack signature`, and Slack's Event Subscriptions page says the Request URL failed. With no value at all the Lambda fails the read, and Slack sees a 502 |
 | `github-app-client-secret` | The console only, to sign people in with GitHub. Write-only on the Secrets tab. Never in a session | The base box's console always requires sign-in, so with no value or a wrong one nobody gets in: GitHub refuses each sign-in code and the console logs `auth: GitHub refused the sign-in code`. console/README.md, "Sign-in", sets it from a shell |
-| Each env file's secret (the project file's `envFiles` with a `secret`, such as `api-env`) | Legacy: copied into the default project's Repo settings at each start, and read by a session only for a file with no value there (with a `WARNING`). The Secrets tab lists it under "Moved to Repo settings" and refuses a Replace once Repo settings hold the file | Change the values on Console settings → Repos → *repo* → Settings instead: sessions read those. What each file must hold is the installation's: its `.woodshed/install/README.md` |
 | `users/<login>/claude-token` | The Claude plan of one person's My Woodshed sessions, and the shared sessions they start while their switch for it is on. Made by the console on My settings, never by Terraform; write-only there. Handed to that person's private sessions alone, in the `/settings` answer, for claude to call Anthropic with directly (the Artifact tool needs a real token). Never handed to a shared session: the console's Anthropic proxy adds it to the calls of a shared session whose `plan` is that login and who started it | The session's log says `could not get the owner's settings` and it fails. The console logs `sessionApi: no Claude token for the owner`, or `anthropicProxy: no Claude token saved for the plan` when it was removed mid-session from a shared session's starter. A running private session keeps the token it started with until it stops. claude asks to log in when the token was revoked: save a new one |
 | `users/<login>/codex-auth` | One person's Codex sign-in from My settings: an OpenAI API key, or `~/.codex/auth.json`. Handed to their private Codex sessions alone, in the `/settings` answer; a session writes a refreshed ChatGPT login back at stop (`POST /codex-auth`) since OpenAI rotates it | The console logs `sessionApi: Codex sign-in decided` with `own`, and `Codex sign-in kept` or `refused` at stop; statusd logs `statusd: Codex sign-in sent back` with the status. codex asking to log in means the saved login expired or a session never stopped cleanly to save the rotated one: save a new one |
-| `repos/<project>/env/<key>`, `repos/<project>/instructions`, `users/<login>/repos/<project>/...` | Repo settings (`console/repoSettings.mjs`, console/README.md "Repo settings"): the installation's values for each env file of a repo and its instructions, and each person's own. Made, read and deleted by the console; copied at start from each env file's secret and each person's own lines, never over a value already there, and each name once: one cleared on the page stays cleared. Handed out by the session API's `POST /repo-settings`, the personal ones to that person's private sessions alone, which write them into the env files and the rules. The db-admin task's seed reads the default project's `repos/<project>/env/<key>` for its databases' env files itself (its entryPoint's `--project`; on AWS its role reads that project's and no other's) | The console logs `repoSettings: handed out` with the keys each layer gave, `legacy copy checked` with what the start copied, `legacy copy failed` when the store refused one. The session logs `Repo settings fetched` with the keys and sizes it got, `Env files written` with each file's layers, and `WARNING: <path> from the legacy env file secret` for a file read from its old secret because the console has no value for it; `Repo settings not offered by the console` means a console from before them. The db-admin task logs `Seed env files read` with where each key came from (`repo settings`, `legacy secret` or `none`), and its seed the same `Env files written` and `WARNING` lines; `legacy secret` or `none` for a key that Console settings → Repos shows a value for means the entryPoint's `--project` is not the console's default project (Terraform names it from `projects`, else from `github_repo`). Never print a value: these lines carry keys and sizes only |
-| `users/<login>/tmux-conf`, and the legacy `users/<login>/<env secret>` | One person's own lines for tmux config, from My settings' tmux card, written after the image's `tmux.conf` in their private sessions only. The legacy env file ones are the old own lines for each env file's secret: copied into their Repo settings at each start, read by a session only while those are empty, and deleted once they save or clear theirs there; `/api/my/files/<env secret>` writes Repo settings now. Readable by them, since their sessions hold the same text | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (tmux, or the env file under Repo settings) fixes it. The rules above apply to these too: no production credentials |
+| `repos/<project>/env/<key>`, `repos/<project>/instructions`, `users/<login>/repos/<project>/...` | Repo settings (`console/repoSettings.mjs`, console/README.md "Repo settings"): the installation's values for each env file of a repo and its instructions, and each person's own. Made, read and deleted by the console, and the only place an env file's values are kept: no Terraform secret or task definition holds them. What each file must hold is the installation's: its `.woodshed/install/README.md`. Handed out by the session API's `POST /repo-settings`, the personal ones to that person's private sessions alone, which write them into the env files and the rules. The db-admin task's seed reads the default project's `repos/<project>/env/<key>` for its databases' env files itself (its entryPoint's `--project`; on AWS its role reads that project's and no other's) | The console logs `repoSettings: handed out` with the keys each layer gave. The session logs `Repo settings fetched` with the keys and sizes it got, and `Env files written` with each file's layers; `Repo settings not offered by the console` means a console from before them, and its env files get the repo's defaults alone. The db-admin task logs `Seed env files read` with where each key came from (`repo settings` or `none`), and its seed the same `Env files written` line; `none` for a key that Console settings → Repos shows a value for means the entryPoint's `--project` is not the console's default project (Terraform names it from `projects`, else from `github_repo`). Never print a value: these lines carry keys and sizes only |
+| `users/<login>/tmux-conf` | One person's own lines for tmux config, from My settings' tmux card, written after the image's `tmux.conf` in their private sessions only. Readable by them, since their sessions hold the same text. A `users/<login>/<env secret>` left from before Repo settings is read by nothing | A bad line breaks only that person's sessions: the session's log says `Owner's settings fetched` with `own lines in: ...`; **Clear mine** on My settings (tmux, or the env file under Repo settings) fixes it. The rules above apply to these too: no production credentials |
 | `users/<login>/github` | One person's GitHub App user token from Connect GitHub (JSON: the token, its expiry, the refresh token), for their private sessions' git and `gh`. Made and rotated by the console (`githubUser.mjs`); never in a session | Their next push fails with `GitHub no longer accepts @<login>'s authorization`: the console logs `githubUser: GitHub refused the refresh, disconnecting`. Connect GitHub again on My settings. A session whose project file says `githubAccess: repo` gets it scoped to that project's repo (`githubUser: scoped token made`); `githubUser: GitHub refused a scoped token` or `no scoped token, the console has no client secret`, then `sessionApi: no scoped owner token for the session's project`, means it pushes as the App instead |
 | `sessions/<id>/database`, `users/<login>/database` | The password of each database's own user: `woodshed__<id>` for that shared session and the viewers inside it, deleted with its databases; `woodshed_<login>` for that person's private sessions and the viewers inside them. Made by the console. Not on the Secrets tab | See the database symptoms below |
 | RDS's own master secret, `<prefix>-root/mongo` | Each only where the installation runs that database (`databases` in Terraform). Root, for the db-admin task alone, through its execution role. Not the console, not the base box (which writes Mongo's once and cannot read it back), not a session | The db-admin task's log (`/<prefix>/sessions`, stream `db-admin/...`) fails at its first connection. A Mongo root password that could not be saved is in `/root/<prefix>-mongo-root` on the base box: put it in the secret, then delete the file |
 | Each install secret (`install_secrets` in Terraform, such as `registry-token`) | The repo's dependency installs: the image build's (a line of the build's `install_env` secret, which the deploy workflow's session job writes from a repo secret) and a session's, only when a branch changed an install's files since the image was built. A session gets it in the variable `install_secrets` names, which claude's terminal has too; an ask session unsets each variable `WOODSHED_INSTALL_SECRETS` lists | `/tmp/woodshed-deps` says `failed: \`<command>\` in <dir>. Are the install secrets (<variables>) right?`, the log has `ERROR: the install failed` with the dir, and Claude asks for help. The image build logs `deps: install secrets in <variables>`, or `deps: no install secrets` when it got no `install_env`. In a session's Terminal, `[ -n "$<variable>" ] && echo set` |
 
 The entrypoint adds the session's databases, Mongo, Redis (when the project uses it), the shared services, port and
-URL on top of each env file's secret
-(`writeEnvFiles` in `session/entrypoint.sh`), so those never belong in the
-secrets.
+URL on top of each env file's Repo settings values
+(`writeEnvFiles` in `session/entrypoint.sh`), so those never belong in them.
 
 ## By symptom
 
@@ -162,14 +160,18 @@ secrets.
   `fleet: trigger routed` with `action: ignore`. Otherwise `docker compose logs
   console` on the base box. Check it has no `GitHub refused an installation
   token` lines, and that the person is a collaborator with write access: the console ignores
-  anyone else.
+  anyone else. The repo's settings page (Console settings → Repos → Settings, Sessions from GitHub) may turn its label
+  or `/woodshed` comments off, or name its label otherwise than `woodshed`: the console logs `fleet: trigger ignored,
+  the repo turns it off`, and `repoTriggers: changed` with who changed it. A label of another name is not this repo's
+  and starts nothing.
 - **A shared session is Unassigned, or has the wrong person.** The console logs `fleet: session starts unassigned, its
   starter cannot be assigned` when the label or comment came from someone with Can be assigned off (People page), and `fleet:
   session assigned` with `from`, `to`, `by` and `how` (`label`, `comment`, `console`, `take it`, `hand over`, `unassign`) on every
   change. Someone who can be assigned commenting on an unassigned session takes it; a later comment on an assigned one does not move it.
   `members: can be assigned changed` and `members: sessions from GitHub changed` say who turned a switch. Assign answers 409
-  `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session and a
-  question from Slack cannot be assigned.
+  `only someone who can be assigned sessions can assign one` or `@x cannot be assigned sessions`. A private session, a
+  question from Slack, and a review or QA run the console started cannot be assigned (`a review or QA run has
+  nobody to assign`).
 - **A label or /woodshed comment got a "can't start Woodshed sessions from GitHub yet" reply.** Their Sessions from
   GitHub is off on People: the console logs `fleet: trigger ignored, no sessions from GitHub`, and `fleet: label removal
   failed` when GitHub kept the label. The same person sees no Everyone tab, and a shared session's link answers 404 for them.
@@ -178,6 +180,12 @@ secrets.
   `issueTracking: assignee put on the issue`, `taken off the issue` or `already on the issue`. `fleet: issue in progress
   failed` or `fleet: issue assignee failed` with `Resource not accessible by integration` means the GitHub App lacks
   the org's Projects write or the repo's Issues write permission, or the org has not accepted it yet.
+- **Labels and comments take a minute, the Webhook events list stays empty, and QA labels, QA after a review, the
+  automatic QA label, reviews started by a commit's tag or Needs a human messages do nothing.** Someone turned GitHub
+  webhooks off on Console settings' Webhooks card: it says since when and by whom, and the console logs `webhooks:
+  switched` with `source`, `off` and `by`, then `webhooks: off, dropped a delivery the poll does not cover` with the
+  `kind` the first time each of those is dropped. The poll finds only the label and `/woodshed` comments. Turn the
+  switch back on.
 - **A label takes up to 5 minutes to start a session.** Webhooks are not
   arriving and the fallback poll found it. The webhook card on the Secrets &
   webhooks tab says which of its four checks fails; **Check again** opens the
@@ -618,7 +626,9 @@ secrets.
   `slack: decision brief replied in the thread` with `replied`, or `slack: decision brief not replied` with the error. The assignee's mention after it logs `slack: assignee mentioned in the thread` with `tagged`. `<check> not posted` with that `mergeRisk` check on the commit means it was not the
   review's: another app, an older commit, or a run that is not `review.workflow` on this commit (`slack: a merge risk check not
   from the review's workflow, ignored` with the run's `path` and `sameCommit`).
-- **A question in Slack gets no 👀 and no answer.** The Lambda's log has
+- **A question in Slack gets no 👀 and no answer.** First, the Webhook events page: with its Slack questions switch
+  off, each mention is listed there as `Ignored: Slack questions are switched off on Console settings`.
+  Otherwise, the Lambda's log has
   `webhooks: Slack mention queued` for each mention it took, or `Slack event
   ignored` with the event type (a bot, an edit, another workspace). Nothing at
   all means Slack is not sending: the app's Event Subscriptions must be on, with
@@ -656,7 +666,9 @@ secrets.
 - **A QA comment stays at Running.** The session's terminal shows the run (`[qa …]` lines). `fleet: QA finished`
   with the `conclusion` means the report arrived; without it, `sessionApi: a QA report refused` gives `why`, and
   the terminal's last line `Report sent to the console (status: …)` the reply. A session that stopped first (idle or
-  lifetime) never sent one: label the pull request again.
+  lifetime) never sent one: label the pull request again. An approval its review held for it goes out on the next tick,
+  saying QA did not finish: the console logs `fleet: held approval released, QA stopped without a report` with the
+  `reason`, then `fleet: held approval released` with the verdict.
 - **A QA session finished but its pull request has no QA check.** `fleet: QA finished` says `checkPosted: false`, and
   `fleet: QA check failed` gives GitHub's reply: a 403 means the installation has not accepted the App's Checks: write.
   `fleet: QA check skipped, not the pull request's commit` means the report named a commit that was neither the one the
@@ -902,6 +914,8 @@ with `admin: false` from the Playwright browser (`page.route`).
 `DEV_CONSOLE_REPO_SETTINGS=1` gives it a local secret store and two made-up repos, `example-org/example-repo` and
 `example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
 env file values, instructions and Your files, each per repo.
+`DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
+settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
 7690 with `DEV_CONSOLE_SESSION_APP=1` so it also answers under the session's app name, behind **Open app**.
 

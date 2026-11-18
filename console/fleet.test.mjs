@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { sharedHomeName } from './homes.mjs';
 
 import { commentConsoleUrl, createFleet, failedComment, failureReason, refusalComment, resumeComment, SETUP_APP_PROMPT, startComment } from './fleet.mjs';
 
@@ -14,7 +15,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -103,7 +104,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
-    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -278,6 +279,25 @@ test('a stop from the console records who stopped it, an idle pause no one, and 
   await fleet.tick();
   await fleet.stop(session, 'idle for 1 h');
   assert.deepEqual([session.status, session.stoppedBy], ['stopped', null]);
+});
+
+test('stopping a session that paused by itself moves it to Stopped, and only once', async () => {
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  await fleet.stop(session, 'idle for 1 h');
+  const removed = calls.stopped.length;
+  await fleet.stop(session, 'idle for 1 h');
+  assert.equal(session.stoppedBy, null, 'a stop with no person leaves it waiting');
+  await fleet.stop(session, 'stopped from the console', { by: 'joel' });
+  assert.deepEqual([session.status, session.stoppedBy, session.stopReason], ['stopped', 'joel', 'idle for 1 h']);
+  await fleet.stop(session, 'stopped from the console', { by: 'ana' });
+  assert.equal(session.stoppedBy, 'joel');
+  assert.equal(calls.stopped.length, removed, 'nothing is stopped again');
+  await fleet.resumeShared(session, { by: 'joel', why: 'console' });
+  assert.equal(session.stoppedBy, null);
 });
 
 test('a comment on a running session is typed into it', async () => {
@@ -955,20 +975,30 @@ test('a private session with no name starts on its prompt\'s first line, and tak
   answers['Fix the currency\nrounding too']('Billing rounding');
   await new Promise(setImmediate);
   assert.equal(fleet.find(fix.id).title, 'Billing rounding');
+  assert.ok(fleet.find(fix.id).namedAt, 'the page is told the naming is over, for its rename offer');
 
   const look = await fleet.startPrivate({ owner: 'joel', prompt: 'Look at it' });
   answers['Look at it']('');
   await new Promise(setImmediate);
   assert.equal(fleet.find(look.id).title, 'Look at it', 'no name keeps the first line');
+  assert.ok(fleet.find(look.id).namedAt, 'the rename is offered on the first line too');
 
   const renamed = await fleet.startPrivate({ owner: 'joel', prompt: 'Tidy up' });
   fleet.rename(renamed, 'My own name');
   answers['Tidy up']('Haiku name');
   await new Promise(setImmediate);
   assert.equal(fleet.find(renamed.id).title, 'My own name', 'a rename on the rail before the answer is kept');
+  assert.equal(fleet.find(renamed.id).namedAt, undefined, 'and no rename is offered after one');
+
+  const failed = await fleet.startPrivate({ owner: 'joel', prompt: 'Break it' });
+  answers['Break it'](Promise.reject(new Error('Anthropic not reached')));
+  await new Promise(setImmediate);
+  await new Promise(setImmediate);
+  assert.equal(fleet.find(failed.id).title, 'Break it');
+  assert.ok(fleet.find(failed.id).namedAt, 'a failed naming offers the rename too');
 
   assert.equal((await fleet.startPrivate({ owner: 'joel', prompt: 'Fix x', name: 'Mine' })).title, 'Mine');
-  assert.deepEqual(named, ['Fix the currency\nrounding too', 'Look at it', 'Tidy up'], 'a name given is not asked for');
+  assert.deepEqual(named, ['Fix the currency\nrounding too', 'Look at it', 'Tidy up', 'Break it'], 'a name given is not asked for');
 });
 
 test('a /woodshed comment on an issue with a private session starts its own shared one', async () => {
@@ -1752,6 +1782,17 @@ test('a private session and a question from Slack cannot be assigned', async () 
   assert.throws(() => fleet.assign({ id: 'bbbb2222', by: 'joel', to: 'joel' }), /nobody to assign/);
 });
 
+test('a review or QA run the console started on a pull request cannot be assigned: it runs by itself and ends', async () => {
+  const { fleet, store } = setup({ assignables: ['joel'] });
+  store.state.sessions.push(
+    { id: 'cccc3333', owner: null, kind: 'pr', number: 7, trigger: 'review', review: { sha: 'a' } },
+    { id: 'dddd4444', owner: null, kind: 'pr', number: 7, trigger: 'qa', qa: { sha: 'a' } },
+  );
+  assert.throws(() => fleet.assign({ id: 'cccc3333', by: 'joel', to: 'joel' }), /a review or QA run has nobody to assign/);
+  assert.throws(() => fleet.assign({ id: 'dddd4444', by: 'joel', to: 'joel' }), /a review or QA run has nobody to assign/);
+  assert.equal(store.state.sessions[0].assignee, undefined);
+});
+
 test('assigning is case-blind, the members list spells the assignee, and sessions go back when someone can no longer be assigned', async () => {
   const { fleet, store } = setup({ writers: ['Octocat', 'ana'], assignables: ['octocat', 'ana'] });
   await fleet.handleTrigger({ number: 42, login: 'Octocat', trigger: 'label', title: 'x', kind: 'issue' });
@@ -1879,6 +1920,21 @@ test('a session\'s Needs a human comment messages its assignee once, and the con
   assert.equal(own.outcome, 'ignored');
   assert.equal((await fleet.handleNeedsHuman({ number: 999, commentId: 503, url, body: 'Needs a human: x' })).outcome, 'ignored', 'no session on it');
   assert.equal(told.length, 1);
+});
+
+test('a Needs a human comment on a pull request goes to the session working on it, not a review session started after it', async () => {
+  const told = [];
+  const pings = { needsYou: async () => true, gaveUp: async () => true, needsHuman: async (s) => { told.push(s.id); return true; } };
+  const { fleet, store } = setup({ assignables: ['joel'], pings });
+  store.state.sessions.push(
+    { id: 'wwwwwwww', repo: 'o/r', kind: 'issue', number: 3, title: 'w', startedBy: 'joel', assignee: 'joel', status: 'running', prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [] },
+    { id: 'rrrrrrrr', repo: 'o/r', kind: 'pr', number: 7, title: 'Review: w', startedBy: 'joel', trigger: 'review', status: 'running', createdAt: '2026-10-21T09:30:00.000Z', pendingMessages: [], review: { sha: 'a' } },
+  );
+  store.state.github ??= { seenComments: [] };
+  store.state.github.seenComments ??= [];
+  const result = await fleet.handleNeedsHuman({ number: 7, commentId: 601, url: 'https://github.com/o/r/pull/7#issuecomment-601', body: 'Needs a human: x' });
+  assert.deepEqual(result, { outcome: 'sent', sessionId: 'wwwwwwww' });
+  assert.deepEqual(told, ['wwwwwwww']);
 });
 
 test('a webhook about a kept session\'s pull request has it read at the next tick, not 15 minutes later', async () => {
@@ -2354,7 +2410,7 @@ test('the QA label on a pull request starts a QA session on its branch, read onl
   const { env } = calls.started[0];
   assert.deepEqual([env.SESSION_MODE, env.PR, env.QA_BASE, env.GH_TOKEN], ['qa', '7', 'main', undefined]);
   assert.equal(calls.comments.length, 1);
-  assert.match(calls.comments[0].body, /^## QA\n\n⏳ \*\*Running\*\*/);
+  assert.match(calls.comments[0].body, /^## QA\n\n\*\*Running\*\*/);
   assert.match(calls.comments[0].body, new RegExp(`https://console.test/s/${session.id}`));
   assert.equal(session.qa.commentId, 9001);
 });
@@ -2515,6 +2571,82 @@ test('reviewFinished submits the formal review and the Merge risk check as the c
   const risk = calls.checks.find((c) => c.name === 'Merge risk');
   assert.deepEqual([risk.conclusion, risk.title], ['neutral', 'Low: Only a docs page.']);
   assert.equal(fleet.sessions()[0].review.conclusion, 'APPROVE');
+});
+
+test('a finished review session ends: it is not kept, so it never shows Resume and a /woodshed comment does not resume it', async () => {
+  const { fleet, statuses } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working' };
+  await fleet.tick();
+  assert.equal(session.status, 'running');
+
+  await fleet.reviewFinished(session, REVIEW_RESULT);
+  await settle();
+  assert.equal(session.status, 'stopped');
+  assert.match(session.stopReason, /^Review finished: APPROVE/);
+  assert.equal(session.kept, undefined, 'a review is never resumed: the next commit gets a review of its own');
+});
+
+test('a finished review or QA run deletes the conversation it saved at its stop, which nothing would resume', async () => {
+  const removed = [];
+  const homes = { async remove(name) { removed.push(name); } };
+  const review = reviewSetup({ homes });
+  await review.fleet.reviewOnTag({ number: 7 });
+  const [reviewed] = review.fleet.sessions();
+  review.statuses[reviewed.id] = { state: 'working' };
+  await review.fleet.tick();
+  await review.fleet.reviewFinished(reviewed, REVIEW_RESULT);
+  await settle();
+  await review.fleet.tick();
+  assert.deepEqual(removed, [sharedHomeName(reviewed.id)], 'the review\'s saved conversation');
+  assert.equal(reviewed.homeDeletePending, false);
+
+  const qa = qaSetup({ homes });
+  await qa.fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [tested] = qa.fleet.sessions();
+  qa.statuses[tested.id] = { state: 'working' };
+  await qa.fleet.tick();
+  await qa.fleet.qaFinished(tested, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  await qa.fleet.tick();
+  assert.deepEqual(removed.slice(1), [sharedHomeName(tested.id)], 'the QA run\'s saved conversation');
+});
+
+test('a QA run that stopped before its conversation was deleted at its stop has it deleted on the next tick, once', async () => {
+  const removed = [];
+  const { fleet, store } = setup({ homes: { async remove(name) { removed.push(name); } } });
+  const old = (id, extra) => ({
+    id, repo: 'o/r', kind: 'pr', number: 7, title: 'QA: x', startedBy: 'joel', trigger: 'qa', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T10:00:00.000Z', pendingMessages: [], qa: { sha: 'a' }, ...extra,
+  });
+  store.state.sessions.push(old('0a0a0a0a', {}), old('0c0c0c0c', { qa: undefined }), old('0b0b0b0b', { trigger: 'label', qa: undefined, kept: false, cleanedAt: '2026-10-22T10:00:00.000Z', homeDeletePending: false }));
+  await fleet.tick();
+  assert.deepEqual(removed, [sharedHomeName('0a0a0a0a'), sharedHomeName('0c0c0c0c')], 'each QA run\'s, by its trigger too, never a session already cleaned up');
+  await fleet.tick();
+  assert.equal(removed.length, 2, 'deleted once');
+});
+
+test('an ended review stays on the list while its approval is held for QA, then as long as a kept one did, so its commit is not reviewed again', async () => {
+  const retention = { afterCloseMs: 3 * 24 * HOUR, withoutPrMs: 7 * 24 * HOUR, openPrMs: 14 * 24 * HOUR, slackGiveUpMs: 7 * 24 * HOUR, removeAfterDeleteMs: 0 };
+  const { fleet, store, advance } = reviewSetup({ retention });
+  const held = { sha: 'a'.repeat(40), summary: 's', inlineComments: [], resolved: [] };
+  store.state.sessions.push({
+    id: 'e0e0e0e0', repo: 'o/r', kind: 'pr', number: 7, title: 'Review: x', startedBy: 'joel', trigger: 'review', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+    homeDeletePending: false, review: { sha: 'a'.repeat(40), base: 'main', conclusion: 'APPROVE', reported: true, held },
+  });
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'its held approval waits for QA on the record, even with Take off the list at 0');
+
+  store.state.sessions[0].review.held = null;
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'released, it stays as long as a kept review stayed');
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'so a pull request event does not review the commit again');
+
+  advance(7 * 24 * HOUR);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'then it goes');
 });
 
 test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {
@@ -2706,4 +2838,242 @@ test('a QA report for a commit other than the one the session started on release
   other.github.pull = async () => ({ ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'd'.repeat(40) } });
   await other.fleet.qaFinished(started, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'd'.repeat(40), costUsd: 1 });
   assert.deepEqual(other.calls.reviews, [], 'the report named the new head, not the commit it tested');
+});
+
+test('a QA run that stops without its report releases the held approval on the next tick, once, saying it did not finish', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  t.statuses[qa.id] = { state: 'working' };
+  await t.fleet.tick();
+  assert.equal(qa.status, 'running');
+  await t.fleet.stop(qa, 'idle for 2 h');
+  await t.fleet.tick();
+  assert.deepEqual(t.calls.reviews.map((r) => [r.event, r.sha]), [['APPROVE', 'a'.repeat(40)]], 'the approval goes out');
+  assert.match(t.calls.reviews[0].body, /QA did not finish: idle for 2 h\.$/);
+  assert.equal(t.fleet.sessions()[0].review.held, null);
+  await t.fleet.tick();
+  assert.equal(t.calls.reviews.length, 1, 'once');
+});
+
+test('a QA run that never started releases the held approval too, and one that reported releases nothing more', async () => {
+  const failed = heldSetup();
+  failed.launcher.start = async () => { throw new Error('CannotPullContainerError: no image'); };
+  const qa = await approveThenQa(failed, null);
+  await failed.fleet.tick();
+  assert.equal(qa.status, 'failed');
+  await failed.fleet.tick();
+  assert.deepEqual(failed.calls.reviews.map((r) => r.event), ['APPROVE']);
+  assert.match(failed.calls.reviews[0].body, /QA did not finish: /);
+
+  const reported = heldSetup();
+  const ran = await approveThenQa(reported, QA_VERDICT);
+  await settle();
+  await reported.fleet.tick();
+  assert.equal(ran.status, 'stopped');
+  assert.equal(reported.calls.reviews.length, 1, 'released by the report alone');
+});
+
+test('a QA run that stops without its report leaves the approval held while another QA run tests the same commit', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  const second = await t.fleet.createSession({ kind: 'pr', number: 7, title: 'QA: again', startedBy: 'joel', trigger: 'qa', branch: 'b', qa: { ...qa.qa, commentId: null } });
+  t.statuses[qa.id] = { state: 'working' };
+  await t.fleet.tick();
+  await t.fleet.stop(qa, 'stopped by the console');
+  await t.fleet.tick();
+  assert.ok(['queued', 'starting', 'running'].includes(second.status));
+  assert.deepEqual(t.calls.reviews, [], 'the other run will report on it');
+  assert.ok(t.fleet.sessions()[0].review.held);
+  t.statuses[second.id] = { state: 'working' };
+  await t.fleet.tick();
+  await t.fleet.stop(second, 'idle for 2 h');
+  await t.fleet.tick();
+  assert.deepEqual(t.calls.reviews.map((r) => r.event), ['APPROVE'], 'released once neither will report');
+});
+
+test('a commit approved while a QA run held QA gets its own run when that run stops without a report', async () => {
+  const t = heldSetup();
+  const qa = await approveThenQa(t, null);
+  t.statuses[qa.id] = { state: 'working' };
+  await t.fleet.tick();
+  const newer = { ...HELD_PULL, head: { ...HELD_PULL.head, sha: 'b'.repeat(40) } };
+  t.github.pull = async () => newer;
+  await t.fleet.reviewOnTag({ number: 7 });
+  const second = t.fleet.sessions().filter((s) => s.trigger === 'review').at(-1);
+  await t.fleet.reviewFinished(second, { ...REVIEW_RESULT, sha: 'b'.repeat(40) });
+  assert.equal(t.fleet.sessions().filter((s) => s.trigger === 'qa').length, 1, 'QA is already running on the older commit');
+  await t.fleet.stop(qa, 'idle for 2 h');
+  await t.fleet.tick();
+  const runs = t.fleet.sessions().filter((s) => s.trigger === 'qa');
+  assert.deepEqual(runs.map((s) => s.qa.sha), ['a'.repeat(40), 'b'.repeat(40)], 'the newer commit is tested now');
+});
+
+// Each repo's own label and switches (repoTriggers.mjs), set on its settings page.
+test('the poll starts sessions from each repo\'s own label, and skips a label or comment its repo turns off', async () => {
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const repoTriggers = createRepoTriggers({ store: { state: {}, save() {} }, config: { label: 'woodshed' } });
+  await repoTriggers.set({ project: 'tools', label: 'Agent', by: 'mia' });
+  await repoTriggers.set({ project: 'r', comments: false, by: 'mia' });
+  const { fleet, github, tools, toolCalls, calls } = twoProjects({ repoTriggers });
+  pollableTools(tools);
+  await fleet.pollGitHub();
+
+  tools.events = [{ ...toolsLabel(502, 13), label: { name: 'agent' } }, toolsLabel(501, 12)];
+  github.events = [{ id: 101, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 4, title: 'x' } }];
+  github.comments = [{ id: 88, created_at: '2026-10-21T10:00:05Z', updated_at: '2026-10-21T10:00:05Z', body: '/woodshed go', user: { login: 'joel' }, issue_url: 'https://api.github.com/repos/o/r/issues/5' }];
+  await fleet.pollGitHub();
+  assert.deepEqual(fleet.sessions().map((s) => [s.project, s.number]), [['r', 4], ['tools', 13]],
+    'tools starts from its own label, whatever its case, not from woodshed; the default repo\'s comment is off');
+  assert.ok(!calls.comments.some((c) => c.number === 5), 'nothing is posted on an issue whose comment was turned off');
+  assert.equal(toolCalls.comments.length, 1);
+
+  await repoTriggers.set({ project: 'r', labels: false, by: 'mia' });
+  github.events = [{ id: 102, event: 'labeled', created_at: LABELED_AT, label: { name: 'woodshed' }, actor: { login: 'joel' }, issue: { number: 6, title: 'y' } }];
+  github.comments = [];
+  await fleet.pollGitHub();
+  assert.equal(fleet.sessions().length, 2, 'the default repo\'s label is off now');
+});
+
+test('a webhook trigger on a repo that turns it off is ignored with the reason, and claims nothing', async () => {
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const repoTriggers = createRepoTriggers({ store: { state: {}, save() {} }, config: { label: 'woodshed' } });
+  await repoTriggers.set({ project: 'tools', labels: false, comments: false, by: 'mia' });
+  const { fleet, toolCalls } = twoProjects({ repoTriggers });
+  const label = await fleet.handleWebhookTrigger({ number: 9, login: 'joel', trigger: 'label', title: 'x', kind: 'issue', at: LABELED_AT, project: 'tools' });
+  const comment = await fleet.handleWebhookTrigger({ number: 9, login: 'joel', trigger: 'comment', text: 'go', commentId: 66, project: 'tools' });
+  assert.deepEqual(label, { outcome: 'ignored', reason: 'o/tools\'s settings turn its label off' });
+  assert.deepEqual(comment, { outcome: 'ignored', reason: 'o/tools\'s settings turn /woodshed comments off' });
+  assert.deepEqual(toolCalls.comments, []);
+  await repoTriggers.set({ project: 'tools', labels: true, by: 'mia' });
+  const after = await fleet.handleWebhookTrigger({ number: 9, login: 'joel', trigger: 'label', title: 'x', kind: 'issue', at: LABELED_AT, project: 'tools' });
+  assert.equal(after.outcome, 'started', 'the ignored label claimed nothing');
+});
+
+test('the refusal and failure comments name the repo\'s own label', async () => {
+  const { createRepoTriggers } = await import('./repoTriggers.mjs');
+  const repoTriggers = createRepoTriggers({ store: { state: {}, save() {} }, config: { label: 'woodshed' } });
+  await repoTriggers.set({ project: 'r', label: 'agent', by: 'mia' });
+  const { fleet, calls } = setup({ repoTriggers, writers: ['joel', 'sam'], githubSessions: ['joel'], projects: [{ name: 'r', repo: 'o/r', default: true }] });
+  await fleet.handleTrigger({ number: 3, login: 'sam', trigger: 'label', title: 'x', kind: 'issue' });
+  assert.deepEqual(calls.unlabeled, [{ number: 3, label: 'agent' }]);
+  assert.match(calls.comments[0].body, /the `agent` label was taken off/);
+  assert.match(failedComment({ session: { startedBy: 'joel', id: 'aaaa1111' }, publicUrl: null, label: 'agent' }), /Add the `agent` label again/);
+});
+
+test('pullRequests.runsOn keeps label sessions, reviews and QA on the console it names, and a session by hand anywhere', async () => {
+  const elsewhere = { ...REVIEW_GATES, runsOn: 'woodshed-internal[bot]' };
+  const label = setup({ gates: elsewhere, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  assert.equal((await label.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'ignored');
+  assert.deepEqual([label.calls.started.length, label.calls.comments.length], [0, 0]);
+  const review = reviewSetup({ gates: elsewhere, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  assert.equal((await review.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored');
+  const here = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  assert.equal((await here.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+  assert.ok(await label.fleet.startManual({ number: 43, startedBy: 'joel' }), 'by hand, on any console');
+});
+
+test('pullRequests.runsOn keeps the QA label to the console it names, so its own label starts its QA', async () => {
+  const gates = { ...REVIEW_GATES, qa: { ...REVIEW_GATES.qa ?? {}, check: 'QA', label: 'woodshed-qa', heading: '## QA', runner: 'woodshed', autoLabel: true } };
+  const elsewhere = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-internal[bot]' }) });
+  elsewhere.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
+  await elsewhere.fleet.qaAutoLabel({ number: 7 });
+  assert.deepEqual(elsewhere.calls.labeled, []);
+  const here = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  here.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
+  await here.fleet.qaAutoLabel({ number: 7 });
+  assert.deepEqual(here.calls.labeled, [{ number: 7, label: 'woodshed-qa' }]);
+});
+
+test('a pull request the console\'s own session opened is reviewed as the person who started that session', async () => {
+  const app = { login: 'woodshed[bot]' };
+  const t = reviewSetup({ ownApp: () => app });
+  t.github.pull = async () => ({ ...REVIEW_PULL, user: { login: app.login } });
+  t.store.state.sessions.push({
+    id: 'c0d1c0d1', repo: 'o/r', kind: 'issue', number: 3, title: 'gtm', startedBy: 'ada', status: 'stopped',
+    prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  await t.fleet.reviewOnTag({ number: 7 });
+  assert.equal(t.fleet.sessions().find((s) => s.review)?.startedBy, 'ada');
+  const unknown = reviewSetup({ ownApp: () => app });
+  unknown.github.pull = async () => ({ ...REVIEW_PULL, user: { login: app.login } });
+  await unknown.fleet.reviewOnTag({ number: 7 });
+  assert.equal(unknown.fleet.sessions().find((s) => s.review)?.startedBy, app.login, 'no session of its own opened it: as before');
+});
+
+test('QA the console labelled on a pull request its own session opened runs as that session\'s starter, found by branch before its URL is known', async () => {
+  const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  const pull = { ...QA_PULL, user: { login: APP.login } };
+  t.github.pull = async () => pull;
+  t.github.reviews = async () => reviewOn(pull.head.sha);
+  t.github.labeledBy = async () => APP.login;
+  t.store.state.sessions.push({
+    id: 'c0d1c0d1', repo: 'o/r', kind: 'issue', number: 3, title: 'gtm', startedBy: 'joel', status: 'stopped',
+    branch: QA_PULL.head.ref, prUrl: null, createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.equal((await t.fleet.qaAfterReview({ number: 7 })).outcome, 'started');
+  const session = t.fleet.sessions().find((s) => s.qa);
+  assert.deepEqual([session.startedBy, session.qa.teamKey], ['joel', undefined]);
+});
+
+test('a review comments that it started, and that comment becomes the review\'s comment, or says it did not finish', async () => {
+  const { fleet, calls } = reviewSetup();
+  await fleet.reviewOnTag({ number: 7 });
+  const [running] = calls.comments;
+  assert.ok(running.body.startsWith('**Reviewing**') && running.body.includes('<img'));
+  await fleet.reviewFinished(fleet.sessions()[0], REVIEW_RESULT);
+  assert.deepEqual(calls.comments.at(-1), { id: 9001, body: REVIEW_RESULT.comment }, 'the review edits its started comment');
+
+  const silent = reviewSetup();
+  await silent.fleet.reviewOnTag({ number: 7 });
+  await silent.fleet.reviewFinished(silent.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: null, comment: null });
+  assert.match(silent.calls.comments.at(-1).body, /did not finish.*no verdict/);
+
+  const bare = reviewSetup();
+  await bare.fleet.reviewOnTag({ number: 7 });
+  await bare.fleet.reviewFinished(bare.fleet.sessions()[0], { ...REVIEW_RESULT, comment: '' });
+  assert.equal(bare.calls.comments.at(-1).body, '**Review finished**: approved, merge risk Low. Details in the review.\n', 'a verdict with no comment still ends the spinner');
+  const commented = reviewSetup();
+  await commented.fleet.reviewOnTag({ number: 7 });
+  await commented.fleet.reviewFinished(commented.fleet.sessions()[0], { ...REVIEW_RESULT, conclusion: 'COMMENT', comment: '' });
+  assert.match(commented.calls.comments.at(-1).body, /commented, no verdict/);
+
+  const died = reviewSetup();
+  await died.fleet.reviewOnTag({ number: 7 });
+  died.store.state.sessions[0].status = 'failed';
+  died.store.state.sessions[0].error = 'CannotPullContainerError: no image';
+  await died.fleet.tick();
+  assert.match(died.calls.comments.at(-1).body, /did not finish.*CannotPullContainerError/);
+});
+
+test('a session pull request is reviewed by the console that ran the session, whatever runsOn names, and skipped by the others', async () => {
+  const internal = { login: 'woodshed-internal[bot]' };
+  const cloud = { login: 'woodshed-cloud[bot]' };
+  const gates = { ...REVIEW_GATES, runsOn: internal.login };
+  const sessionPull = { ...REVIEW_PULL, user: { login: cloud.login }, head: { ...REVIEW_PULL.head, ref: 'woodshed/ada-0b34fee6' } };
+
+  const onCloud = reviewSetup({ ownApp: () => cloud, gates });
+  onCloud.github.pull = async () => sessionPull;
+  onCloud.store.state.sessions.push({
+    id: '0b34fee6', repo: 'o/r', kind: 'task', number: null, title: 'qa video', startedBy: 'ada', status: 'running',
+    branch: 'woodshed/ada-0b34fee6', prUrl: null, createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.equal((await onCloud.fleet.reviewOnTag({ number: 7 })).outcome, 'started', 'its own session: runsOn does not stop it');
+  assert.equal(onCloud.fleet.sessions().find((s) => s.review).startedBy, 'ada');
+
+  const onInternal = reviewSetup({ ownApp: () => internal, gates });
+  onInternal.github.pull = async () => sessionPull;
+  assert.deepEqual(await onInternal.fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'another console\'s session opened it' });
+
+  const otherCloudOrg = reviewSetup({ ownApp: () => cloud, gates: REVIEW_GATES });
+  otherCloudOrg.github.pull = async () => sessionPull;
+  assert.equal((await otherCloudOrg.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a Cloud org with no such session leaves it to the one that has it');
+
+  const person = reviewSetup({ ownApp: () => cloud, gates });
+  assert.equal((await person.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a person\'s pull request still follows runsOn');
+});
+
+test('QA of another console\'s session pull request is neither labelled nor run here', async () => {
+  const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  t.github.pull = async () => ({ ...QA_PULL, user: { login: 'woodshed-cloud[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
+  assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
 });

@@ -1,4 +1,4 @@
-The settings search sits under the title of every settings page (My settings, Console settings, Secrets & webhooks,
+The settings search sits under the title of every settings page (My settings, Settings and its Secrets & webhooks tab,
 People, Webhook events). It lists every section of every page the person can open, narrows as they type, and takes
 them to the section, on its page, outlined for a moment. `public/settingsSearch.js` draws it; `public/settingsIndex.cjs`
 says what each section is called and what people call it (`repo`, `token`, `timeout`), so a new card on a settings page
@@ -12,3 +12,5 @@ is added there too.
 - Scope is the point of the tag: **Only you** is your My Woodshed sessions, **Everyone** is shared sessions and the console.
   The same tag sits beside each page's title.
 - Keys: ↓ ↑ move, Enter goes, Esc closes. The section it lands on gets a 2px `amber` outline for 2.5 seconds.
+- A page that draws itself again (Webhook events every 5 s, People every 30 s) keeps the box: it keeps its focus, caret and
+  open list across the redraw.

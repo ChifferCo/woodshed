@@ -27,7 +27,7 @@
     const showDb = db?.available && dbHint[db.status] && (db.status !== 'none' || tokenSet);
     return [
       // A console that started with no repo: sessions have nothing to work on until an admin adds one.
-      ...(me.repoNeeded ? [{ key: 'repo', label: 'Add a repo', hint: 'Sessions work on a repo an admin adds on Console settings', done: false }] : []),
+      ...(me.repoNeeded ? [{ key: 'repo', label: 'Add a repo', hint: 'Sessions work on a repo an admin adds in Settings', done: false }] : []),
       ...(me.githubSetupNeeded ? [{ key: 'github', label: 'Connect a GitHub App', hint: 'Sessions push, open pull requests and sign people in through it', done: false }] : []),
       // On one person's own machine sessions push as them, with their gh token: the App is offered, never required.
       ...(me.githubSetupOptional ? [{ key: 'github', label: 'Connect a GitHub App (optional)', hint: 'Sessions push as you with your gh sign-in. An App pushes as a bot, scoped to the repo, and lets teammates sign in', done: false, optional: true }] : []),

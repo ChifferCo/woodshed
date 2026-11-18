@@ -10,7 +10,7 @@ import { secretSpecs } from '../../console/secrets.mjs';
 import { createSecretStore } from './secretStore.mjs';
 
 const KEY = crypto.randomBytes(32);
-const SECRETS = secretSpecs({ envFiles: [{ secret: 'api-env' }, { secret: 'web-env' }], installSecrets: [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }] });
+const SECRETS = secretSpecs({ installSecrets: [{ secret: 'registry-token', variable: 'REGISTRY_TOKEN' }, { secret: 'other-token', variable: 'OTHER_TOKEN' }] });
 
 function tmpDir() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'local-secrets-')), 'secrets');
@@ -23,10 +23,10 @@ test('the Secrets page lists every secret, unset until written, then set with wh
   assert.deepEqual(before.map((s) => s.name), SECRETS.map((s) => s.name));
   assert.ok(before.every((s) => !s.exists && !s.set && s.changedAt === null));
 
-  await store.write('api-env', 'A=1\n');
-  const entry = (await store.list()).find((s) => s.name === 'api-env');
+  await store.write('other-token', 'A=1\n');
+  const entry = (await store.list()).find((s) => s.name === 'other-token');
   assert.deepEqual([entry.exists, entry.set, entry.changedAt, entry.group], [true, true, '2026-11-06T10:00:00.000Z', 'session']);
-  assert.equal(await store.read('api-env'), 'A=1\n');
+  assert.equal(await store.read('other-token'), 'A=1\n');
   assert.equal(await store.read('registry-token'), null);
 });
 
@@ -94,17 +94,17 @@ test('a secret that does not open is listed as not set with why, and replacing i
   const dir = tmpDir();
   const store = createSecretStore({ dir, key: KEY, specs: SECRETS });
   await store.write('registry-token', 'npm_1');
-  await createSecretStore({ dir, key: crypto.randomBytes(32), specs: SECRETS }).write('api-env', 'A=1');
+  await createSecretStore({ dir, key: crypto.randomBytes(32), specs: SECRETS }).write('other-token', 'A=1');
   const listed = await store.list();
-  const broken = listed.find((s) => s.name === 'api-env');
+  const broken = listed.find((s) => s.name === 'other-token');
   assert.deepEqual([broken.exists, broken.set], [true, false]);
   assert.match(broken.error, /does not open/);
   assert.equal(listed.find((s) => s.name === 'registry-token').set, true, 'the others still list');
-  await assert.rejects(store.read('api-env'), /does not open/, 'a read that needs the value still says so');
-  await store.write('api-env', 'A=2');
-  assert.equal(await store.read('api-env'), 'A=2');
-  await store.save('api-env', 'A=3', 'again');
-  assert.equal(await store.read('api-env'), 'A=3');
+  await assert.rejects(store.read('other-token'), /does not open/, 'a read that needs the value still says so');
+  await store.write('other-token', 'A=2');
+  assert.equal(await store.read('other-token'), 'A=2');
+  await store.save('other-token', 'A=3', 'again');
+  assert.equal(await store.read('other-token'), 'A=3');
 });
 
 test('a damaged IV or tag does not open either, rather than throwing something else', async () => {
@@ -145,4 +145,14 @@ test('a value saved while the sealing pass seals that secret\'s plain file is th
 
 test('the store declares how much one value may hold', () => {
   assert.equal(createSecretStore({ dir: tmpDir(), key: KEY, specs: SECRETS }).maxValueBytes, 1_048_576);
+});
+
+test('the store makes a secret on its first write, and the list then reports it set', async () => {
+  const store = createSecretStore({ dir: tmpDir(), key: KEY, specs: SECRETS });
+  assert.equal(store.createsOnWrite, true);
+  assert.equal((await store.list()).find((s) => s.name === 'registry-token').exists, false);
+  await store.write('registry-token', 'tok-1');
+  const entry = (await store.list()).find((s) => s.name === 'registry-token');
+  assert.deepEqual([entry.exists, entry.set], [true, true]);
+  assert.equal(await store.read('registry-token'), 'tok-1');
 });

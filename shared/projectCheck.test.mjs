@@ -143,13 +143,14 @@ test('pullRequests: a suite\'s workflow has an on: section the console can read 
     /^pullRequests\.suites\[0\]\.workflow \.github\/workflows\/ci\.yml's on: section is not read \(.*anchor.*\): the console reads its paths-ignore from it$/);
 });
 
-test('envFiles: one entry a file and a secret, and no secret Woodshed keeps for itself', (t) => {
+test('envFiles: one entry a file and a secret, and no secret reaching the session as one of Woodshed\'s variables', (t) => {
   const file = PROJECT.envFiles[0];
   const files = (...list) => ({ project: { envFiles: list, databases: [] } });
   assertProblem(t, files(file, { ...file, secret: 'web-env' }), /^envFiles has api\/\.env more than once: one entry a file$/);
   assert.throws(() => problems(t, { project: { envFiles: [{ ...file, secret: null }, { ...file, path: 'web/.env' }], databases: [] }, files: { '.gitignore': 'api/.env\nweb/.env\n' } }),
     /envFiles\[0\] \(api\/\.env\) and envFiles\[1\] \(web\/\.env\) both have the key api-env: give one a secret, or give both the same secret to share its values$/, 'a key made from a path is one file\'s, as a start reads it');
-  assertProblem(t, files({ ...file, secret: 'github-app-key' }), /^envFiles\[0\]\.secret is github-app-key, one of the console's own secrets, which no session is handed$/);
+  // Its values are kept under repos/<project>/env/<key>, apart from the console's own secrets, so a name like one is fine.
+  assert.deepEqual(problems(t, files({ ...file, secret: 'github-app-key' })), []);
   assertProblem(t, files({ ...file, secret: 'gh-token' }), /^envFiles\[0\]\.secret gh-token reaches the session as GH_TOKEN, one of Woodshed's own session variables/);
   assertProblem(t, files({ ...file, secret: 'woodshed-x' }), /reaches the session as WOODSHED_X/);
 });

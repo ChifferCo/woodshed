@@ -1,6 +1,7 @@
-// The Console settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
-// typed confirm; then the sessions holding data, and anything stalled, with what fixes it. The data list is read
-// again every minute; the cards are left alone, so a half-typed change survives.
+// The Settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
+// typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
+// stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
+// change survives.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -655,6 +656,64 @@
       h('p', { class: 'sub', style: 'font-size: 12.5px' }, totalsLine(d)));
   }
 
+  // Each source of webhooks, switched off on its own (webhookSwitch.mjs). No typed confirm: a switch is undone by
+  // turning it back, and is logged with who turned it. Only where webhooks reach the console at all, or while one is off.
+  // What only a GitHub webhook starts: the poll finds none of it (webhookDispatch.pollMisses).
+  const WEBHOOK_ONLY = 'QA labels, QA after a review, the automatic QA label, reviews started by a commit\'s tag and Needs a human messages to the assignee';
+  const WEBHOOK_SWITCHES = [
+    {
+      source: 'github', label: 'GitHub webhooks',
+      on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
+      off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
+    },
+    {
+      source: 'slack', label: 'Slack questions',
+      on: 'On: the console answers each mention of its Slack bot in a session of its own. Off, it drops them.',
+      off: (dropped) => `the console drops each mention of its Slack bot${dropped}, so questions in Slack go unanswered. Webhook events lists them as ignored.`,
+    },
+  ];
+  let switching = null;
+  let switchError = null;
+
+  async function flipWebhooks(source, off) {
+    switching = source;
+    switchError = null;
+    render();
+    try {
+      data = { ...data, ...(await W.postJson('/api/console-settings/webhooks', { source, off })) };
+    } catch (err) {
+      switchError = { source, text: err.message };
+    }
+    switching = null;
+    render();
+  }
+
+  function webhookSwitchRow(s) {
+    const state = data.webhooks?.[s.source];
+    if (!state || (!data.webhooks.receiving && !state.off)) return null;
+    const on = !state.off;
+    const since = state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : '';
+    const labelId = `webhooks-switch-${s.source}`;
+    return h('div', { class: `toggle-row webhook-switch${on ? '' : ' is-off'}` },
+      h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': labelId, disabled: Boolean(switching),
+        onclick: () => flipWebhooks(s.source, on),
+      }),
+      h('span', { class: 'toggle-label', id: labelId }, s.label),
+      h('p', { class: 'sub' }, on ? s.on : `Off${since}: ${s.off(state.dropped ? ` (${state.dropped} so far)` : '')}`),
+      switchError?.source === s.source ? h('p', { class: 'form-error', role: 'alert' }, switchError.text) : null);
+  }
+
+  function webhooksCard() {
+    const rows = WEBHOOK_SWITCHES.map(webhookSwitchRow).filter(Boolean);
+    if (!rows.length) return null;
+    return h('section', { class: 'settings-card', id: 'webhooks', 'aria-labelledby': 'card-webhooks' },
+      h('h2', { id: 'card-webhooks', class: 'label' }, 'Webhooks'),
+      h('p', { class: 'sub' }, 'What reaches the console from GitHub and Slack as it happens. Each change applies at once, and is logged with who made it. ',
+        h('a', { href: '/events' }, 'Webhook events'), ' lists what came in.'),
+      h('div', { class: 'webhook-switches' }, rows));
+  }
+
   // Fields render as they are typed in, so a Save turns on before the field loses focus: the page is drawn again with
   // the same field focused, its caret where it was. A render that starts inside another (a blur the swap fired) is
   // skipped, since the outer one draws the same state.
@@ -680,14 +739,15 @@
     const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Console settings ', W.scopePill('/console-settings')),
+        h('h1', { class: 'title' }, 'Settings ', W.scopePill('/console-settings')),
+        W.settingsTabs('/console-settings'),
         h('p', { class: 'sub' }, 'For every shared session on this console, and only admins can change them. A change applies on the console\'s next check, and is logged with who made it. Your own settings, for your My Woodshed sessions, are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, W.settingsSearch(), updatesCard(), projectsCard(), CARDS.map(settingsCard), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, W.settingsSearch(), updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
   }
 
   async function load() {

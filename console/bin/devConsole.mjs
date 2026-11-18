@@ -75,6 +75,17 @@ const sessions = [
   // A finished QA session: it opened no pull request, and tested the one it was started on.
   session('9a9a9a9a', 26334, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'QA finished: Pass: 6 test cases passed', qa: { conclusion: 'success' } }),
   session('9b9b9b9b', 26335, 'QA: Make the GitHub App optional', { trigger: 'qa', prUrl: null, head: '688cc2e', stopReason: 'stopped by the console' }),
+  // A review the console runs on a pull request (pullRequests.review.runner: woodshed), started as its author with
+  // nobody assigned, and one that finished, which is never kept, so it shows as stopped with no Resume. The rail keeps
+  // both in its folded Reviews and QA zone, with no Take it.
+  session('7e7e7e7e', 145, 'Review: fix(session): tell the remote-control login where it stands', {
+    trigger: 'review', prUrl: null, status: 'running', state: 'working', stoppedAt: null, stopReason: null, assignee: null,
+    review: { base: 'main', sha: 'f00d145', heading: null, author: null, check: null, commentId: null },
+  }),
+  session('7f7f7f7f', 144, 'Review: feat(console): pin a session', {
+    trigger: 'review', prUrl: null, stopReason: 'Review finished: APPROVE',
+    review: { base: 'main', sha: 'f00d144', heading: null, author: null, check: null, commentId: null, conclusion: 'APPROVE', reported: true },
+  }),
   // Three pull requests, oldest first: its card shows a merged or closed one only while no newer one came after it.
   // Polling is off, so none has a state here and all three show.
   session('cafe7777', 26330, 'Split the billing page into steps', {
@@ -142,6 +153,8 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
   }),
+  // Paused when idle, so it waits in Mine's Needs you, with Move to Stopped in its ⋯ menu.
+  session('ba5ed001', null, 'A private session paused when idle', { kind: 'task', trigger: 'my-woodshed', owner: 'local', stopReason: 'idle for 1 h', prUrl: null }),
   session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
   // Deleted, so listed under Ended with Remove in its ⋯ menu. The older one has been deleted for longer than the
   // Console setting's days, so the first tick takes it off the list.
@@ -301,15 +314,20 @@ const repoSettingsDev = process.env.DEV_CONSOLE_REPO_SETTINGS === '1' ? devRepoS
 // New session's Work on list reads made-up open pull requests from this gh (devGh.mjs).
 const devGhDir = writeDevGh(path.join(stateDir, 'dev-gh'), { projectFiles: repoSettingsDev?.projectFiles });
 
-function devRepoSettings(dir) {
+// A local secret store, as the local provider keeps one.
+function devSecrets(dir) {
   const secretsDir = path.join(dir, 'secrets');
   const keyFile = path.join(dir, 'secrets.key');
-  fs.mkdirSync(secretsDir);
+  fs.mkdirSync(secretsDir, { recursive: true });
   fs.writeFileSync(keyFile, crypto.randomBytes(32).toString('base64'), { mode: 0o600 });
+  return { WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile };
+}
+
+function devRepoSettings(dir) {
   const file = (envPath) => `version: 1\nenvFiles:\n  - path: ${envPath}\n    defaults:\n      - LOG_LEVEL=info\n`;
   return {
     env: {
-      WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile,
+      ...devSecrets(dir),
       WOODSHED_PROJECTS: JSON.stringify([
         { name: 'example-repo', repo: 'example-org/example-repo', default: true },
         { name: 'example-tools', repo: 'example-org/example-tools' },
@@ -321,6 +339,7 @@ function devRepoSettings(dir) {
 
 // GH_TOKEN stands in for `gh auth token`, and polling is off, so nothing here calls GitHub: the open pull requests come
 // from devGh.mjs's gh.
+const webhookPort = process.env.DEV_CONSOLE_WEBHOOKS === '1' ? await freePort() : null;
 let child = null;
 function startConsole() {
   child = spawn(process.execPath, [server], {
@@ -342,7 +361,13 @@ function startConsole() {
       ...(process.env.DEV_CONSOLE_NO_REPO === '1' ? {}
         : projects ? { WOODSHED_PROJECTS: projects } : { WOODSHED_REPO: 'example-org/example-repo' }),
       ...repoSettingsDev?.env,
+      // DEV_CONSOLE_HOMES_DIR keeps saved Claude homes in that folder (providers/local/homeStore.mjs), as the console's
+      // own at `_sessions/<id>/claude-home.tar.gz`, for Console settings' Sessions holding data.
+      ...(process.env.DEV_CONSOLE_HOMES_DIR ? { WOODSHED_LOCAL_HOMES_DIR: process.env.DEV_CONSOLE_HOMES_DIR } : {}),
       ...tlsAskPort,
+      // DEV_CONSOLE_WEBHOOKS=1 names a webhook receiver, so Console settings shows its GitHub webhooks switch.
+      // Polling is off here, so the receiver never listens and nothing arrives.
+      ...(webhookPort ? { WOODSHED_LOCAL_WEBHOOK_PORT: String(webhookPort), ...(repoSettingsDev ? {} : devSecrets(path.join(stateDir, 'webhook-secrets'))) } : {}),
     },
   });
   child.on('exit', (code) => {

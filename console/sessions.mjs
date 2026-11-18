@@ -113,8 +113,8 @@ export function keptIds(sessions) {
 export function routeTrigger({ sessions, number, trigger, kind = 'issue', text = '' }) {
   if (trigger === 'label' && kind === 'pr') return { action: 'ignore', reason: 'a label on a pull request starts nothing: comment /woodshed <what to do>' };
   // A private session on the same issue is someone's own: GitHub can neither type into it nor resume its branch. A QA
-  // session on the same pull request tests it, and is no session to send work to.
-  const shared = sessions.filter((s) => !s.owner && !isQa(s));
+  // or review session on the same pull request tests or reviews it, and is no session to send work to.
+  const shared = sessions.filter((s) => !s.owner && !isQa(s) && !isReview(s));
   const forTarget = shared.filter((s) => s.number === number || pullNumber(s.prUrl) === number);
   const active = forTarget.find((s) => ACTIVE_STATUSES.has(s.status));
   if (active) {

@@ -226,9 +226,18 @@
     return isPaused(s) || (!s.owner && group(s) === 'waiting');
   }
 
+  /**
+   * A session the console started to review or QA a pull request (pullRequests.review or .qa with runner: woodshed). It
+   * runs by itself and stops when it reports, so nobody takes it: the rail keeps these in a zone of their own, folded.
+   * @returns {boolean}
+   */
+  function isPullCheck(s) {
+    return s.trigger === 'review' || s.trigger === 'qa';
+  }
+
   /** @returns {boolean}  a shared session nobody has, that still has something to do: Unassigned on Everyone */
   function isUnassigned(s) {
-    return !s.owner && s.kind !== 'ask' && !s.assignee && !['ended', 'merged', 'finished'].includes(group(s));
+    return !s.owner && s.kind !== 'ask' && !isPullCheck(s) && !s.assignee && !['ended', 'merged', 'finished'].includes(group(s));
   }
 
   /** @returns {Array}  who started a session, then → who has it when that is someone else; the Shared page */
@@ -764,6 +773,45 @@
     return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
   }
 
+  // Set up app says what it does before it asks the agent: the button's name alone did not, and a phone shows no title.
+  function setupAppDialog(s, onDone = () => {}) {
+    const agent = agentOf(s);
+    const go = h('button', { type: 'button', class: 'btn btn-open' }, 'Set up app');
+    const error = h('p', { class: 'form-error', role: 'alert', hidden: true });
+    const dialog = h('dialog', { class: 'confirm', 'aria-labelledby': 'setup-app-title' },
+      h('h2', { id: 'setup-app-title' }, 'Set up this repo\'s app?'),
+      h('p', null, 'Woodshed does not know how to start this repo\'s app yet, so there is nothing for Start app to run or Open app to open.'),
+      h('p', null, `${agent[0].toUpperCase()}${agent.slice(1)} works out how the app runs, writes it to `, h('code', null, '.woodshed/project.yaml'),
+        ' on this branch and starts it. Open app then opens it here, and once the file is merged every session gets Start app.'),
+      error,
+      h('div', { class: 'dialog-actions' },
+        h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => dialog.close() }, 'Cancel'),
+        go));
+    go.addEventListener('click', async () => {
+      go.disabled = true;
+      error.hidden = true;
+      try {
+        const { sent } = await appAction(s, 'setup');
+        dialog.close();
+        notify(setupAppToast(sent, s));
+        onDone();
+      } catch (err) {
+        // Closed with Esc or Cancel while the call was out: the dialog is gone, so the failure is a toast.
+        if (!dialog.open) {
+          notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
+          return;
+        }
+        error.replaceChildren(`Could not set up the app: ${err.message}`);
+        error.hidden = false;
+        go.disabled = false;
+      }
+    });
+    dialog.addEventListener('close', () => dialog.remove());
+    document.body.append(dialog);
+    dialog.showModal();
+    go.focus();
+  }
+
   /**
    * The app's controls, after the shed's app line: Open app while it runs, Start app otherwise, and Stop app
    * whenever any of it is up or starting. Only a running session has an app. On the rail, the half that is down
@@ -808,18 +856,11 @@
       if (s.kind === 'ask') return null;
       const setup = h('button', {
         type: 'button', class: `btn btn-plain${size}`,
-        title: `This project's .woodshed/project.yaml has no app, so there is nothing to start. Asks ${agentOf(s)} to work out how the app runs and write it there.`,
-        onclick: async (e) => {
+        title: `Woodshed does not know how to start this repo's app yet. Asks ${agentOf(s)} to work it out, save it and start it.`,
+        onclick: (e) => {
           e.preventDefault();
           e.stopPropagation();
-          setup.disabled = true;
-          try {
-            const { sent } = await appAction(s, 'setup');
-            notify(setupAppToast(sent, s));
-          } catch (err) {
-            notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
-          }
-          onDone();
+          setupAppDialog(s, onDone);
         },
       }, 'Set up app');
       const ctl = group(setup);
@@ -1111,12 +1152,22 @@
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
   // which only an admin sees (the console refuses their calls to anyone else).
   const MY_LINKS = [{ href: '/settings', label: 'My settings' }];
+  // Settings comes first and holds the console's own tabs (settingsTabs), so it stays current on each of them.
   const CONSOLE_LINKS = [
+    { href: '/console-settings', label: 'Settings', also: ['/secrets'] },
     { href: '/people', label: 'People' },
-    { href: '/secrets', label: 'Secrets & webhooks' },
     { href: '/events', label: 'Webhook events' },
-    { href: '/console-settings', label: 'Console settings' },
   ];
+  const isCurrent = (link, current) => link.href === current || Boolean(link.also?.includes(current));
+  // The tabs under Settings' title: the page's own cards, and the secrets. Links, as the rail's Mine | Everyone are.
+  const SETTINGS_TABS = [
+    { href: '/console-settings', label: 'General' },
+    { href: '/secrets', label: 'Secrets & webhooks' },
+  ];
+  function settingsTabs(current) {
+    return h('nav', { class: 'rail-seg settings-tabs', 'aria-label': 'Settings' }, SETTINGS_TABS.map((tab) =>
+      h('a', { class: 'rail-seg-link', href: tab.href, 'aria-current': tab.href === current ? 'page' : null }, tab.label)));
+  }
   // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page.
   function consoleLinks(me) {
     return me?.hosted ? CONSOLE_LINKS.filter((link) => link.href !== '/people') : CONSOLE_LINKS;
@@ -1158,7 +1209,7 @@
         // Under the name, what a program embedding the console says the person is in (server.mjs, menuOf).
         me.menuSubtitle && h('span', { class: 'user-sub' }, me.menuSubtitle)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
-    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': link.href === current ? 'page' : null }, link.label, waitingOn(link, me));
+    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': isCurrent(link, current) ? 'page' : null }, link.label, waitingOn(link, me));
     const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
@@ -1230,7 +1281,7 @@
   // The settings list's Console group, filled once /api/me says you are an admin. One node, like userSlot.
   const consoleSlot = h('div', { class: 'side-console' });
   function fillConsoleSlot() {
-    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': link.href === navCurrent ? 'page' : null },
+    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': isCurrent(link, navCurrent) ? 'page' : null },
       h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label, waitingOn(link, meNow));
     consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...consoleLinks(meNow).map(item)] : []));
   }
@@ -1409,8 +1460,8 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, serversTitle, nav, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
-    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };
 })();

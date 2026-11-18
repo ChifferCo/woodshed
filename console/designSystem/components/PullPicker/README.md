@@ -1,4 +1,4 @@
-New session's **Work on**, a combobox over the picked project's open pull requests (`GET /api/pulls`, the 100 updated
+New session's **Work on** (labelled **Continue a PR or branch**), a combobox over the picked project's open pull requests (`GET /api/pulls`, the 100 updated
 last). `launcher.js` draws it (`createPullPicker`); `public/openPulls.cjs` says what matches what is typed.
 
 - **The field**: the form's `field`, in `mono`, with a quiet ▾ at its right end behind a `line` divider: `meta`, and

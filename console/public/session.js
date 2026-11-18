@@ -234,6 +234,103 @@
     refresh();
   }
 
+  // New session asks for no name: once the console has named a session (`namedAt`, Haiku's name or the prompt's first
+  // line), its page offers a rename under the title for 10 s. A click or focus inside keeps it open until it is saved
+  // or closed. Offered once per naming, to a page that saw the session unnamed or opened it within 30 s of the naming.
+  const RENAME_OFFER_MS = 10_000;
+  const namingSeen = new Map();
+  let offer = null;
+  function closeRenameOffer() {
+    if (!offer) return;
+    clearTimeout(offer.timer);
+    offer.el.remove();
+    offer = null;
+  }
+  function placeRenameOffer() {
+    if (!offer) return;
+    const title = slots.head.querySelector('.ptitle');
+    const anchor = title?.getClientRects().length ? title : slots.head;
+    const r = anchor.getBoundingClientRect();
+    const width = offer.el.offsetWidth;
+    offer.el.style.top = `${Math.round(r.bottom + 6)}px`;
+    offer.el.style.left = `${Math.round(Math.max(8, Math.min(r.left, window.innerWidth - width - 8)))}px`;
+  }
+  function offerRenameOnce(s) {
+    if (offer && offer.id !== s?.id) closeRenameOffer();
+    if (!s) return;
+    if (!s.namedAt) {
+      namingSeen.set(s.id, null);
+      return;
+    }
+    const was = namingSeen.get(s.id);
+    if (was === s.namedAt) {
+      if (offer) {
+        if (!offer.editing) offer.name.textContent = s.title;
+        placeRenameOffer();
+      }
+      return;
+    }
+    namingSeen.set(s.id, s.namedAt);
+    if (was !== null && Date.now() - Date.parse(s.namedAt) > 30_000) return;
+    showRenameOffer(s);
+  }
+  function showRenameOffer(s) {
+    closeRenameOffer();
+    const name = h('b', null, s.title);
+    const keep = () => {
+      if (!offer || offer.kept) return;
+      offer.kept = true;
+      clearTimeout(offer.timer);
+      el.classList.add('is-kept');
+    };
+    const edit = () => {
+      keep();
+      if (offer.editing) return;
+      offer.editing = true;
+      const input = h('input', { class: 'field', value: currentSession?.title ?? s.title, maxlength: '120', 'aria-label': 'Session name', autocomplete: 'off' });
+      const save = h('button', { type: 'submit', class: 'btn btn-plain btn-sm' }, 'Save');
+      const form = h('form', { class: 'rename-offer-form' }, input, save,
+        h('button', { type: 'button', class: 'btn btn-quiet btn-sm', onclick: closeRenameOffer }, 'Cancel'));
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const title = input.value.replace(/\s+/g, ' ').trim().slice(0, 120);
+        if (!title) return input.focus();
+        if (title === currentSession?.title) return closeRenameOffer();
+        save.disabled = true;
+        try {
+          await W.postJson(`/api/sessions/${s.id}/rename`, { title });
+          W.shell.toast(`Renamed to ${title}`);
+          closeRenameOffer();
+          refresh();
+        } catch (err) {
+          W.shell.toast(`Not renamed: ${err.message}`, { ms: 6000 });
+          save.disabled = false;
+        }
+      });
+      body.replaceChildren(form);
+      placeRenameOffer();
+      input.focus();
+      input.select();
+    };
+    const body = h('div', { class: 'rename-offer-body', onclick: (e) => { if (!e.target.closest('form')) edit(); } },
+      h('span', { class: 'rename-offer-line' }, 'Named ', name),
+      h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: edit }, 'Rename'));
+    const el = h('div', { class: 'rename-offer', role: 'dialog', 'aria-label': 'Rename this session' },
+      body,
+      h('button', { type: 'button', class: 'rename-offer-close', 'aria-label': 'Close', title: 'Keep this name', onclick: (e) => { e.stopPropagation(); closeRenameOffer(); } }, '\u00d7'),
+      h('span', { class: 'rename-offer-timer', 'aria-hidden': 'true', style: `animation-duration: ${RENAME_OFFER_MS}ms` }));
+    el.addEventListener('pointerdown', keep);
+    el.addEventListener('focusin', keep);
+    el.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      closeRenameOffer();
+    });
+    document.body.append(el);
+    offer = { id: s.id, el, name, kept: false, editing: false, timer: setTimeout(closeRenameOffer, RENAME_OFFER_MS) };
+    placeRenameOffer();
+  }
+
   const STAR = 'M5 1.1 L5.99 3.94 L8.99 4 L6.6 5.82 L7.47 8.7 L5 6.98 L2.53 8.7 L3.4 5.82 L1.01 4 L4.01 3.94 Z';
   function starButton(s) {
     const pinned = isPinned(s);
@@ -250,9 +347,10 @@
     }, svg);
   }
 
-  // How someone who can be assigned moves a shared session on from its card: take it, hand it over, or unassign it.
+  // How someone who can be assigned moves a shared session on from its card: take it, hand it over, or unassign it. A
+  // review or QA run the console started has nobody to assign: it runs by itself and ends.
   function assignActions(s) {
-    if (!data.assignable || W.isPrivate(s) || s.kind === 'ask') return [];
+    if (!data.assignable || W.isPrivate(s) || s.kind === 'ask' || W.isPullCheck(s)) return [];
     const mine = W.sameLogin(s.assignee, data.login);
     return [
       !mine && { label: 'Assign to me', note: s.assignee ? `Take it from ${W.personText(s.assignee)}` : 'Nobody has it: take it', run: () => assignTo(s, data.login) },
@@ -260,6 +358,17 @@
         .map((l) => ({ label: `Hand over to ${W.personText(l)}`, note: `@${l}`, run: () => assignTo(s, l) })),
       s.assignee && { label: 'Unassign', note: 'Nobody has it; anyone who can be assigned can take it', run: () => assignTo(s, null) },
     ].filter(Boolean);
+  }
+
+  // A session that stopped by itself (paused when idle or at its lifetime) waits in Needs you until its person resumes
+  // it; stopping it again marks it stopped by them, which moves it to Stopped (fleet.stop).
+  async function moveToStopped(s) {
+    try {
+      await W.stopSession(s.id);
+    } catch (err) {
+      W.shell.toast(`Not moved: ${err.message}`);
+    }
+    refresh();
   }
 
   // A card's ⋯ menu, after the shed's: what can be done to this session, each with what it does. Ending ones last.
@@ -281,6 +390,10 @@
       ...assignActions(s),
       { label: 'Rename…', note: 'Give it a new name, the one the rail and its page show', run: () => rename(s) },
       { label: isPinned(s) ? 'Unpin' : 'Pin', note: 'Keep it at the top of its group. Only you see your pins', run: () => setPinned(s, !isPinned(s)) },
+      !live && W.needsYou(s) && {
+        label: 'Move to Stopped', note: 'Nothing to do on it now: take it out of Needs you. Resume still picks it up', end: true,
+        run: () => moveToStopped(s),
+      },
       live && {
         label: 'Stop session', note: 'Commit and push its work, then stop it. Resume picks it up again', end: true,
         run: async () => {
@@ -512,7 +625,7 @@
       return {};
     }
   }
-  const folded = { needs: false, unassigned: false, active: false, stopped: true, merged: true, ended: true, ...readZones() };
+  const folded = { needs: false, unassigned: false, active: false, stopped: true, merged: true, ended: true, checks: true, ...readZones() };
   function toggleZone(key) {
     folded[key] = !folded[key];
     try {
@@ -788,8 +901,11 @@
     // ones waiting on you first (their card says so), then the shared ones whose pull request is in Slack, then the rest
     // that stopped.
     // Everyone: what nobody has, then the shed's groups.
-    const unassigned = railMine() ? [] : listed.filter(W.isUnassigned);
-    const rest = railMine() ? listed : listed.filter((s) => !W.isUnassigned(s));
+    // Reviews and QA the console ran on pull requests come last, in a zone of their own folded until opened.
+    const checks = listed.filter(W.isPullCheck);
+    const work = listed.filter((s) => !W.isPullCheck(s));
+    const unassigned = railMine() ? [] : work.filter(W.isUnassigned);
+    const rest = railMine() ? work : work.filter((s) => !W.isUnassigned(s));
     const zones = railMine()
       ? [zone('needs', 'Needs you', rest.filter((s) => !W.isLive(s) && W.needsYou(s)).sort((a, b) => Date.parse(b.stoppedAt ?? b.createdAt) - Date.parse(a.stoppedAt ?? a.createdAt))),
         zone('active', 'Active', rest.filter(W.isLive).sort((a, b) => Number(W.needsYou(b)) - Number(W.needsYou(a)))),
@@ -804,6 +920,8 @@
         setupNotice(),
         empty,
         zones,
+        // A status chip picked on the phone shows the reviews and QA of that status, as its count says.
+        zone('checks', 'Reviews and QA', status === 'all' ? checks : checks.filter((s) => W.group(s) === status)),
         railMine() && pullsZone(onProject)),
     ].filter(Boolean);
   }
@@ -853,6 +971,7 @@
       { group: 'Session', label: 'Rename it', run: () => rename(s) },
       { group: 'Session', label: isPinned(s) ? 'Unpin it' : 'Pin it', run: () => setPinned(s, !isPinned(s)) },
       s.prUrl && { group: 'Elsewhere', label: 'Open its pull request ↗', run: () => window.open(s.prUrl, '_blank', 'noopener') },
+      !W.isLive(s) && W.needsYou(s) && { group: 'Session', label: 'Move it to Stopped', run: () => moveToStopped(s) },
       (s.status === 'running' || s.status === 'starting' || s.status === 'queued') && {
         group: 'Danger', label: 'Stop it', danger: true,
         run: async () => {
@@ -896,15 +1015,8 @@
         group: 'App', label: running ? `Open ${running} ↗` : 'Open app ↗', note: 'The app in this session, in a new tab', href: W.appUrl(s, data.appDomain),
       },
       data.appDomain && none && s.kind !== 'ask' && {
-        group: 'App', label: 'Set up app', note: `The project file has no app: ask ${W.agentOf(s)} to write one`,
-        run: async () => {
-          try {
-            W.notify(W.setupAppToast((await W.appAction(s, 'setup')).sent, s));
-          } catch (err) {
-            W.notify(`Could not set up the app: ${err.message}`, { ms: 6000 });
-          }
-          refresh();
-        },
+        group: 'App', label: 'Set up app', note: `Woodshed does not know how to start this repo's app yet: ${W.agentOf(s)} works it out, saves it and starts it`,
+        run: () => W.setupAppDialog(s, refresh),
       },
       ...choices,
       data.appDomain && !up && !busy && !none && !choices.length && {
@@ -955,7 +1067,9 @@
   // What the bar used to spell out beside the name: the branch, who started it and how, how long, whose Claude, and
   // who can see it.
   function sessionDetails(s) {
-    const trigger = s.trigger === 'label' ? `with the ${data.label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
+    // The label of the session's own repo, which its settings may name differently from the default's.
+    const label = (s.project && data.projects?.find((p) => p.name === s.project)?.label) || data.label;
+    const trigger = s.trigger === 'label' ? `with the ${label} label` : s.trigger === 'comment' ? 'with a /woodshed comment'
       : s.trigger === 'my-woodshed' ? 'from My Woodshed' : s.trigger === 'slack' ? 'with a question in Slack'
         : s.trigger === 'qa' ? 'with the QA label, to test the pull request' : 'from the console';
     const claude = W.agentOf(s) === 'codex' ? 'Your Codex sign-in, or the team\'s OpenAI key without one' : W.isPrivate(s) ? 'Your own Claude plan' : s.plan ? `${W.personText(s.plan)}'s own Claude plan` : 'The team\'s Anthropic key';
@@ -1306,7 +1420,7 @@
       h('h2', null, 'Waiting for a free slot'),
       h('p', null, `${W.lineText(place).replace(/^./, (c) => c.toUpperCase())}. You have ${runningMine()} of ${data.maxPrivate} sessions running. This one starts by itself when one of them stops or is paused.`),
       h('div', { class: 'row' }, W.stopButton(s, refresh, { label: 'Take it out of the line' })),
-      W.isAdmin() && h('p', { class: 'hint' }, 'Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Console settings'), '.'));
+      W.isAdmin() && h('p', { class: 'hint' }, 'Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'));
   }
 
   function terminalBody(s) {
@@ -1714,7 +1828,7 @@
     if (s.status === 'starting') return `${s.id}:starting:${Date.now()}`;
     // A wait with steps counts its seconds, as a start does.
     if (W.waitsForRetry(s) && s.waitProgress) return `${s.id}:waiting:${Date.now()}`;
-    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
+    return s.status === 'running' ? `${termKey(s)}` : `${s.id}:${s.status}:${s.stopReason}:${s.stoppedBy}:${s.head}:${s.prUrl}:${s.kept}:${s.slackPostedAt}:${s.prClosedAt}`;
   }
 
   let currentSession = null;
@@ -1772,6 +1886,7 @@
     if (!hasShell) shellPool.hide();
     else if (tab === 'terminal') shellPool.show(s);
     if (!s) {
+      offerRenameOnce(null);
       slots.plain.hidden = true;
       slots.body.hidden = tabPage;
       slots.head.replaceChildren();
@@ -1789,6 +1904,7 @@
     if (tab === 'terminal' && !hasShell) tab = 'agent';
     if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'agent';
     slots.head.replaceChildren(paneBar(s));
+    offerRenameOnce(s);
     renderKeyBar(s);
     // A phone's message box, for claude on the Agent tab; the Terminal tab's shell takes the keyboard straight in.
     messageBox.show(narrow.matches && s.status === 'running' && tab === 'agent' ? s : null);

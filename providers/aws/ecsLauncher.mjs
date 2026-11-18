@@ -8,6 +8,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { SERVICE_VARIABLE } from '../../shared/project.mjs';
+import { isSessionVariable } from '../../shared/reservedNames.mjs';
+
 const execFileAsync = promisify(execFile);
 
 // Everything else a session needs comes from the task definition.
@@ -104,11 +107,28 @@ export function taskPrivateIp(task) {
  * @returns {{name: string, value: string}[]}  only the per-session keys, the prompt cut to fit
  */
 export function sessionOverrides(env) {
-  return PER_SESSION_ENV.filter((key) => env[key] !== undefined).map((name) => {
+  const services = serviceOverrides(env);
+  // The services' URLs share the cap with the prompt, which gives way: a session is no use without them.
+  const promptChars = MAX_PROMPT_CHARS - JSON.stringify(services).length;
+  const own = PER_SESSION_ENV.filter((key) => env[key] !== undefined).map((name) => {
     const value = String(env[name]);
-    if (name !== 'PROMPT' || value.length <= MAX_PROMPT_CHARS) return { name, value };
-    return { name, value: value.slice(0, MAX_PROMPT_CHARS) + TRUNCATED_NOTE };
+    if (name !== 'PROMPT' || value.length <= promptChars) return { name, value };
+    return { name, value: value.slice(0, promptChars) + TRUNCATED_NOTE };
   });
+  return [...own, ...services];
+}
+
+// The project file's services the base box runs (services.mjs), which the console adds to a session's env at start:
+// WOODSHED_SERVICES and each variable it lists that the env sets, which replace the task definition's. One it lists
+// and does not set is Terraform's shared_services', whose URL the task definition holds. Only a service's variable,
+// never one of Woodshed's own.
+function serviceOverrides(env) {
+  if (env.WOODSHED_SERVICES === undefined) return [];
+  const names = String(env.WOODSHED_SERVICES).split(/\s+/).filter(Boolean);
+  for (const name of names) {
+    if (!SERVICE_VARIABLE.test(name) || isSessionVariable(name)) throw new Error(`WOODSHED_SERVICES names ${name}, which is not a service's variable`);
+  }
+  return [{ name: 'WOODSHED_SERVICES', value: names.join(' ') }, ...names.filter((name) => env[name] !== undefined).map((name) => ({ name, value: String(env[name]) }))];
 }
 
 /**

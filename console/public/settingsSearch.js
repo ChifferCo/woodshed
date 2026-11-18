@@ -43,9 +43,17 @@
   }
 
   let node = null;
-  /** One search for the page, kept between its redraws so what is typed stays. */
+  let keepFocus = null;
+  /**
+   * One search for the page, kept between its redraws so what is typed stays. A redraw takes the box out of the page
+   * and puts it back, which drops its focus; pages that redraw on a timer (Webhook events, People) would close it under
+   * someone typing, so a redraw that finds it focused gives the focus, the caret and the open list back once it is in.
+   */
   function settingsSearch() {
-    if (node) return node;
+    if (node) {
+      if (node.contains(document.activeElement)) keepFocus();
+      return node;
+    }
     let active = -1;
     let results = [];
     const input = h('input', {
@@ -55,6 +63,22 @@
     });
     const list = h('div', { id: 'settings-search-list', class: 'ssearch-list', role: 'listbox', hidden: true });
     node = h('div', { class: 'ssearch' }, input, list);
+    let redrawing = false;
+    keepFocus = () => {
+      if (redrawing) return;
+      redrawing = true;
+      const open = !list.hidden;
+      const { selectionStart, selectionEnd } = input;
+      queueMicrotask(() => {
+        redrawing = false;
+        if (!input.isConnected) return;
+        if (document.activeElement !== input) {
+          input.focus({ preventScroll: true });
+          try { input.setSelectionRange(selectionStart, selectionEnd); } catch { /* a type that has no caret */ }
+        }
+        setOpen(open);
+      });
+    };
 
     function go(entry, event) {
       if (entry.page === window.location.pathname) {
@@ -111,7 +135,7 @@
         go(results[active]);
       }
     });
-    node.addEventListener('focusout', (e) => { if (!node.contains(e.relatedTarget)) setOpen(false); });
+    node.addEventListener('focusout', (e) => { if (!redrawing && !node.contains(e.relatedTarget)) setOpen(false); });
     // A page learns it is an admin's late: the list is drawn again then.
     window.addEventListener('woodshed:me', () => { if (!list.hidden) draw(); });
     return node;

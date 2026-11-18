@@ -22,10 +22,9 @@
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
 //   GET  /api/my/pulls           your open pull requests on every repo you may start on, and those waiting on your review, for the rail
-//   GET  /api/my/files/<file>    the console's shared file for tmux-conf or one of the Terraform env files, and your own lines added after it
-//   POST /api/my/files/<file>    {"text": "..."}   your own lines, for your next sessions; empty clears them
-//   POST /api/my/files/<file>/reset                clears them: the console's file alone again. For an env file these
-//                                                  three are the default project's repo settings (repoSettings.mjs, legacyFileRoute)
+//   GET  /api/my/files/tmux-conf the image's tmux.conf, and your own lines added after it
+//   POST /api/my/files/tmux-conf {"text": "..."}   your own lines, for your next sessions; empty clears them
+//   POST /api/my/files/tmux-conf/reset             clears them: the image's file alone again
 //   GET  /api/my/repos[/<project>[/env/<key>|/instructions|/files]]   your own repo settings, for a repo you can write to (repoSettings.mjs)
 //   POST /api/my/repos/<project>/env/<key>|/instructions   {"text": "..."}   yours; empty clears them
 //   POST /api/my/repos/<project>/files   {"path": "app/.env.production", "text": "..."}   one of your own whole files, which your
@@ -67,7 +66,7 @@
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
 //   Admins only (members.mjs), with 403 for anyone else: /api/people*, /api/secrets*, /api/webhook*,
 //   /api/console-settings*, the API behind People, Secrets & webhooks, Webhook events and Console settings.
-//   GET  /api/webhook-events     what the console did with each queued webhook
+//   GET  /api/webhook-events     what the console did with each queued webhook, and which sources are switched off
 //   GET  /api/secrets            each secret's state (never a value) and the GitHub App's webhook settings
 //   GET/POST /api/secrets-manager  where this console keeps its secrets: {"kind": "local"|"aws", "prefix"}. Only where the
 //                                local provider has no WOODSHED_LOCAL_SECRETS_DIR (providers/local/secretSlot.mjs)
@@ -84,11 +83,14 @@
 //   POST /api/people/slack       {"login": "<handle>", "slack": "U01ABC2DEF3" | "@handle" | ""}   links a member's Slack user by hand (slackPeople.mjs)
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
+//   POST /api/console-settings/webhooks  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
 //   GET  /api/console-settings/repos/<project>[/env/<key>|/instructions]   a repo's settings, the installation's values (repoSettings.mjs)
 //   POST /api/console-settings/repos/<project>/env/<key>[/remove]|/instructions   {"text": "..."}   the installation's; empty clears
+//   POST /api/console-settings/projects/triggers   {"name": "<project>", "label": "woodshed"|null, "labels": bool, "comments": bool}
+//        a repo's session label and whether its label and /woodshed comments start anything (repoTriggers.mjs); each optional
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel, from its settings page
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
@@ -166,7 +168,7 @@ import { createTrustedIdentity } from './trustedIdentity.mjs';
 import projectColorsShared from './public/projectColors.cjs';
 import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 import { readMyPulls } from './myPulls.mjs';
-import { createRepoSettingsApi, legacyFileRoute, repoSettingsRoute } from './repoSettings.mjs';
+import { createRepoSettingsApi, repoSettingsRoute } from './repoSettings.mjs';
 import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
@@ -226,6 +228,7 @@ const UPDATES_CHECK_PATH = `${UPDATES_PATH}/check`;
 const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
+const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -545,14 +548,14 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
  *   `settings` only where the Secrets page works (AWS); `people` gives the pages each handle's display name
  */
 export function createHandler({
-  config, fleet, settings = null, events = { list: () => [] }, auth = null, review = null, userSettings = null, github = null,
+  config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null,
 }) {
-  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, myView: (login) => myView(login) }) : null;
+  const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
   const soloLogin = soloLoginOf(config);
   // A config made in a test or by a program embedding the console may not have been through loadConfig.
@@ -941,8 +944,9 @@ export function createHandler({
     return {
       repo: defaultProject(config).repo,
       // The rail marks each session's project, in its colour, only when there is more than one to tell apart.
-      projects: projectsWithColors().map(({ name, color, default: main }) => ({ name, color, default: main })),
-      label: config.label,
+      // Each with its own label (repoTriggers.mjs), which a session's details name; `label` is the default project's.
+      projects: projectsWithColors().map(({ name, color, default: main }) => ({ name, color, default: main, ...(repoTriggers ? { label: repoTriggers.of(name).label } : {}) })),
+      label: repoTriggers?.of(defaultProject(config).name).label ?? config.label,
       maxRunning: config.maxRunning,
       login,
       // Whether session apps are on: their name's domain, or with app ports the console's own name.
@@ -1588,6 +1592,12 @@ export function createHandler({
     }
   }
 
+  // A repo's label and its switches for labels and /woodshed comments, for its settings page (repoTriggers.mjs).
+  function repoTriggersView(project) {
+    if (!repoTriggers) return null;
+    return { ...repoTriggers.of(project), consoleLabel: config.label };
+  }
+
   // A repo's Slack channel for its settings page: none where PROJECT_CHANNEL_PATH would refuse to set one.
   function repoSlack(project) {
     if (!slack || !addedProjects) return null;
@@ -1603,6 +1613,7 @@ export function createHandler({
     return reply(res, 200, {
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
+      webhooks: webhookState(),
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '', blocker: blockers[p.name] ?? null })) ?? null,
       // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
       repoNames: addedProjects ? addedProjects.names !== false : null,
@@ -1623,6 +1634,33 @@ export function createHandler({
     }
   }
 
+  // `receiving`: whether webhooks reach this console at all, by a queue or from the program it is embedded in. Each
+  // source's switch is null where there is none: Slack's only where Slack questions are answered at all.
+  function webhookState() {
+    const view = webhookSwitch?.view() ?? null;
+    // Until the GitHub start says how (it waits for the App key), a webhook source configured is taken as read, but not
+    // on a console that borrows its GitHub access: that one never reads its own (installation.mjs, startGitHub).
+    const receiving = Boolean(view?.receiving ?? (!config.githubBroker && (config.webhookQueue || config.localWebhooks)));
+    return { receiving, github: view?.github ?? null, slack: view && asks ? view.slack : null };
+  }
+
+  async function webhookSwitchWrite(req, res, login) {
+    if (!webhookSwitch) return reply(res, 404, { error: 'this console has no webhook switch' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      webhookSwitch.set({ source: body?.source, off: body?.off, by: login ?? 'console' });
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      throw err;
+    }
+    return reply(res, 200, { webhooks: webhookState() });
+  }
+
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
@@ -1637,6 +1675,11 @@ export function createHandler({
       if (pathname === PROJECT_COLOR_PATH) {
         if (!projectColors) return reply(res, 404, { error: 'this console keeps no project colours' });
         projectColors.set({ name: body.name, color: body.color, by: login ?? 'console' });
+      } else if (pathname === PROJECT_TRIGGERS_PATH) {
+        if (!repoTriggers) return reply(res, 404, { error: 'this console keeps no settings for its repos\' labels' });
+        if (!allProjects(config).some((p) => p.name === body.name)) return reply(res, 400, { error: `There is no project called ${body.name}.` });
+        await repoTriggers.set({ project: body.name, label: body.label, labels: body.labels, comments: body.comments, by: login ?? 'console' });
+        return reply(res, 200, { triggers: repoTriggersView(body.name) });
       } else if (pathname === PROJECT_CHANNEL_PATH) {
         if (!addedProjects) return reply(res, 404, { error: 'this console keeps no list of repos' });
         if (!slack) return reply(res, 404, { error: 'this console posts nothing to Slack' });
@@ -1653,6 +1696,7 @@ export function createHandler({
           if (addedProjects.view().some((p) => p.name === body.name && p.removable && !p.sessions)) await repoSettings?.forget(body.name);
           await addedProjects.remove({ name: body.name, by });
           projectColors?.forget({ name: body.name });
+          repoTriggers?.forget(body.name);
           // A repo added again later under the same name starts on the console's channel.
           slack?.setProjectChannel({ project: body.name, channel: '', by });
         }
@@ -1747,12 +1791,13 @@ export function createHandler({
     if (pathname === `${REVIEWER_SETUP_PATH}/manifest`) return reviewerSetupWrite(req, res);
     if (pathname === '/api/my/uploads') return stageUpload(req, res, login);
     if (pathname === '/api/my/databases/restore') return restoreUpload(req, res, login);
-    const repoRoute = repoSettingsApi && (repoSettingsRoute(pathname) ?? legacyFileRoute(pathname, config));
+    const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
-    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH) return consoleSettingsWrite(req, res, pathname, login);
+    if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
       || MY_GITHUB_RE.test(pathname) || MY_SESSION_ACTION_RE.test(pathname) || pathname === '/api/my/home/forget' || pathname === '/api/my/databases'
@@ -1886,7 +1931,7 @@ export function createHandler({
     }
     if (req.method === 'POST') return write(req, res, pathname, user.login);
     if (req.method !== 'GET' && req.method !== 'HEAD') return reply(res, 405, { error: 'method not allowed' });
-    const repoRead = repoSettingsApi && (repoSettingsRoute(pathname) ?? legacyFileRoute(pathname, config));
+    const repoRead = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
@@ -1957,7 +2002,8 @@ export function createHandler({
     if (reviewMatch) return reviewReply(res, findFor(reviewMatch[1], user.login));
     if (pathname === '/api/webhook-events') {
       const list = events.list();
-      return reply(res, 200, { repo: defaultProject(config).repo, queue: Boolean(config.webhookQueue || config.localWebhooks), events: list, names: namesFor(list.map((e) => e.login)) });
+      const state = webhookState();
+      return reply(res, 200, { repo: defaultProject(config).repo, queue: state.receiving, webhooks: state, events: list, names: namesFor(list.map((e) => e.login)) });
     }
     if (pathname === '/api/secrets-manager') return reply(res, 200, managerView());
     if (pathname === '/api/secrets') {

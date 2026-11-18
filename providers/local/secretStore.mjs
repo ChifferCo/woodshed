@@ -170,5 +170,5 @@ export function createSecretStore({ dir, key, specs, now = Date.now }) {
   }
 
   // The sealed files have no limit of their own; this is what the console allows in one value.
-  return { list, read, write, save, remove, sealPlainFiles, maxValueBytes: 1_048_576 };
+  return { list, read, write, save, remove, sealPlainFiles, maxValueBytes: 1_048_576, createsOnWrite: true };
 }

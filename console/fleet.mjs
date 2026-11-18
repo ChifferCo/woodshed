@@ -12,6 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
+import { reviewDoneComment, reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
@@ -67,13 +68,18 @@ function withFoldedComments(body, comments) {
 
 // What Set up app types into claude, on one line as a person would. The fields are docs/reference.md's, which is not in
 // the session image, so they are named here.
+const SESSION_BRANCH_PREFIX = 'woodshed/';
+
 export const SETUP_APP_PROMPT = 'Woodshed\'s Start app has nothing to run: .woodshed/project.yaml has no `app` section. '
   + 'Work out from this repo how its app runs in development, then add one: `start` (a command that starts the backend '
   + 'and the frontend in the background and returns once both answer), `stop`, `frontendPort` and `backendPort` (the '
   + 'same port twice for one server), `logs` (a name for each server\'s log file) and `howToProve` (how to check a '
   + 'change in the running app); `start`, both ports and `howToProve` are required. Write .woodshed/project.yaml '
   + 'with `version: 1` if there is none, and check it with `node /opt/woodshed/shared/project.mjs get app`. Run the '
-  + 'start command yourself and check both ports answer, run the stop, then commit the file on this branch. Start app reads the file again, so tell me when to press it.';
+  + 'start command yourself and check both ports answer, run the stop, then start it again and leave it running, and '
+  + 'commit the file on this branch. The console reads the file within seconds and shows Open app once the frontend '
+  + 'answers. Then tell me in a few plain words what you set up and that Open app opens it, at the address your rules '
+  + 'give, never a localhost one, which I cannot reach.';
 
 function firstLine(err) {
   return String(err?.message ?? err).split('\n')[0].slice(0, 300);
@@ -153,8 +159,8 @@ export function commentConsoleUrl({ publicUrl, project, consoleLinks }) {
  *   leaves out every link; `consoleName` is config.consoleName, which every comment here calls the console
  * @returns {string}  the comment posted on the issue or PR when a session is created
  */
-export function startComment({ session, publicUrl, maxRunning, appDomain = '', linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME }) {
-  if (session.status === 'failed') return failedComment({ session, publicUrl, linkQuery, consoleName });
+export function startComment({ session, publicUrl, maxRunning, appDomain = '', linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME, label = 'woodshed' }) {
+  if (session.status === 'failed') return failedComment({ session, publicUrl, linkQuery, consoleName, label });
   const head = session.status === 'queued'
     ? `Queued a session on ${consoleName} for @${session.startedBy}. It starts when one of the ${maxRunning} slots frees up.`
     : `Started a session on ${consoleName} for @${session.startedBy} on \`${session.branch}\`${session.plan ? `, on @${session.plan}'s own Claude plan` : ''}.`;
@@ -206,14 +212,15 @@ export function refusalComment({ login, label, unlabeled, member, publicUrl, con
 
 /**
  * The error itself stays in the console: a launch error can carry the session's tokens.
- * @param {{session: object, publicUrl: string|null}} args  `publicUrl`: null leaves out the link
+ * @param {{session: object, publicUrl: string|null, label?: string}} args  `publicUrl`: null leaves out the link;
+ *   `label` is the repo's own (repoTriggers.mjs)
  * @returns {string}
  */
-export function failedComment({ session, publicUrl, linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME }) {
+export function failedComment({ session, publicUrl, linkQuery = null, consoleName = DEFAULT_CONSOLE_NAME, label = 'woodshed' }) {
   return [
     `The ${consoleName} session for @${session.startedBy} failed to start. The console shows why${publicUrl ? `: ${sessionLink(publicUrl, session.id, linkQuery)}` : '.'}`,
     '',
-    `Add the \`woodshed\` label again, or comment \`/woodshed <message>\`, to try again.`,
+    `Add the \`${label}\` label again, or comment \`/woodshed <message>\`, to try again.`,
   ].join('\n');
 }
 
@@ -232,14 +239,18 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  *   `pullRequests`: the repo's project file's gates for a pull request, from the default branch (projectFile.mjs)
  *   `projectBlocker(project)`: why no session that gets databases can start on that project, a blocker, or null
  *   (databaseGate.mjs)
+ *   `repoTriggers`: each repo's label and its switches for labels and /woodshed comments (repoTriggers.mjs); without
+ *   it, every repo has the console's label and both on
  */
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
   userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
-  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null,
+  consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null,
 }) {
   const { state } = store;
+  // Each repo's label and whether its label and /woodshed comments start anything (repoTriggers.mjs).
+  const triggersOf = (project) => repoTriggers?.of(project?.name ?? null) ?? { label: config.label, labels: true, comments: true };
   const nowIso = () => new Date(now()).toISOString();
   const secondsSince = (iso) => (iso ? Math.round((now() - Date.parse(iso)) / 1000) : null);
   const retention = () => config.retention ?? DEFAULT_RETENTION;
@@ -531,6 +542,14 @@ export function createFleet({
       console.log('fleet: session stopped before it ran', { id: session.id, reason, by });
       return;
     }
+    // One that stopped by itself (paused when idle or at its lifetime, or failed) waits on its person in Needs you;
+    // a person stopping it says it waits on nobody, so it moves to Stopped. Resume still picks it up.
+    if (session.status === 'stopped' || session.status === 'failed') {
+      if (!by || session.stoppedBy) return;
+      update(session, { stoppedBy: by });
+      console.log('fleet: stopped session moved to Stopped', { id: session.id, by, stopReason: session.stopReason });
+      return;
+    }
     if (session.status !== 'starting' && session.status !== 'running') return;
     update(session, { status: 'stopping', stoppingAt: nowIso(), stopReason: reason, stoppedBy: by });
     console.log('fleet: stopping session', { id: session.id, reason, by });
@@ -556,9 +575,22 @@ export function createFleet({
     update(session, { status: 'stopped', stoppedAt: nowIso(), endpoint: null, ...keptFields(session) });
   }
 
-  // A shared session that ran keeps its conversation and databases once stopped, however it stopped.
+  // A shared session that ran keeps its conversation and databases once stopped, however it stopped. A QA or review
+  // run is never resumed: the next commit gets a run of its own, so it ends when it stops, and the conversation its
+  // stop saved is deleted on the next tick.
   function keptFields(session) {
-    return session.owner || isQa(session) ? {} : { kept: true };
+    if (session.owner) return {};
+    return isQa(session) || isReview(session) ? { homeDeletePending: Boolean(homes) } : { kept: true };
+  }
+
+  // A QA run that stopped before its stop deleted its conversation left it saved, with nothing to delete it: its
+  // homeDeletePending was never set. Marked once, so the delete is tried as for any other. Its trigger names it too,
+  // for a run whose qa or review fields are missing.
+  function endedRunHome(session) {
+    const run = isQa(session) || isReview(session) || session.trigger === 'qa' || session.trigger === 'review';
+    if (session.owner || session.kept || session.homeDeletePending !== undefined || !run) return;
+    if (ACTIVE_STATUSES.has(session.status) || session.status === 'stopping') return;
+    update(session, { homeDeletePending: Boolean(homes) });
   }
 
   async function finishInterruptedStop(session) {
@@ -586,7 +618,7 @@ export function createFleet({
   async function announceFailure(session) {
     if (!session.commentId) return;
     const project = projectFor(config, session);
-    const body = failedComment({ session, publicUrl: await consoleUrlOf(project), linkQuery: config.linkQuery, consoleName: config.consoleName });
+    const body = failedComment({ session, publicUrl: await consoleUrlOf(project), linkQuery: config.linkQuery, consoleName: config.consoleName, label: triggersOf(project).label });
     const posted = await safely('failure comment', () => githubOf(project).comment(session.number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -787,6 +819,9 @@ export function createFleet({
         }
       }
       await startQueued();
+      // Before retention, which can take an ended QA run off the list at once.
+      for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
+      for (const session of [...state.sessions]) await safely('review ended without a report', () => reviewEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
       await sweepDatabases();
       await announcer.check();
@@ -818,6 +853,7 @@ export function createFleet({
   }
 
   async function retain(session) {
+    endedRunHome(session);
     if (session.homeDeletePending) await deleteHome(session);
     if (isGone(session)) return dropIfDue(session);
     if (session.owner || !session.kept || ACTIVE_STATUSES.has(session.status)) return;
@@ -888,10 +924,13 @@ export function createFleet({
   // Off the list once it has shown as Deleted for the Console settings page's number of days. A question waits until
   // its thread has been told it went unanswered, and a Claude home still being deleted until it is gone, since
   // nothing retries it once the session is off the list.
+  // An ended review stays while the approval it holds for QA waits on its record (heldApproval), then as long as a
+  // kept review lasted: its record is what tells reviewOnTag that its commit was reviewed.
   function dropIfDue(session) {
-    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt)) return;
+    if (session.homeDeletePending || (isAsk(session) && !session.noticedAt) || session.review?.held) return;
     const from = Date.parse(session.cleanedAt ?? session.stoppedAt ?? session.createdAt);
-    const ms = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const removeMs = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
+    const ms = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
   }
@@ -1040,6 +1079,7 @@ export function createFleet({
     const session = find(id);
     if (!session || session.owner) throw shown('no shared session with that id');
     if (session.kind === 'ask') throw shown('a question from Slack has nobody to assign');
+    if (isQa(session) || isReview(session)) throw shown('a review or QA run has nobody to assign: it runs by itself and ends');
     if (!members?.isAssignable(by)) throw shown('only someone who can be assigned sessions can assign one');
     const target = to ? findLogin(members.assignables(), to) : null;
     if (to && !target) throw shown(`@${to} cannot be assigned sessions`);
@@ -1118,6 +1158,7 @@ export function createFleet({
     const publicUrl = await consoleUrlOf(project);
     const posted = await safely('start comment', () => gh.comment(number, startComment({
       session, publicUrl, maxRunning: config.maxRunning, appDomain: config.appDomain, linkQuery: config.linkQuery, consoleName: config.consoleName,
+      label: triggersOf(project).label,
     })));
     if (posted) {
       update(session, { commentId: posted });
@@ -1232,7 +1273,8 @@ export function createFleet({
     if (reviewOnly) console.log('fleet: private session starts as a review, no prompt given', { owner, on: on.kind });
     // With no prompt there is nothing for Haiku to name from, so a branch is named for itself.
     const given = String(name ?? '').trim().slice(0, TITLE_CHARS) || target.title || (reviewOnly ? `Review ${target.branch}` : '');
-    const naming = given ? null : autoName?.(text);
+    // With no namer the first line stays, and the page offers the rename all the same.
+    const naming = given ? null : (autoName?.(text) ?? Promise.resolve(null));
     const attach = attachments && attachmentIds?.length ? (sessionId) => attachments.claim({ login: owner, ids: attachmentIds, sessionId }) : null;
     const session = await createSession({
       ...target, title: given || titleFrom(text), startedBy: owner, owner, trigger: 'my-woodshed', prompt: text, options, attach, background, reviewOnly, project,
@@ -1251,14 +1293,18 @@ export function createFleet({
   }
 
   // The session starts on its prompt's first line, and the rail shows Haiku's name on its next poll. A name the person
-  // gave it on the rail meanwhile is theirs to keep.
+  // gave it on the rail meanwhile is theirs to keep. `namedAt` says the naming is over, named or not: the session's page
+  // then offers a rename for a few seconds, since New session asks for no name.
   function renameWhenNamed(session, naming) {
     const startedAs = session.title;
-    naming.then((name) => {
-      if (!name || !find(session.id) || session.title !== startedAs) return;
-      update(session, { title: name });
-      console.log('fleet: session named', { id: session.id });
-    }).catch((err) => console.warn('fleet: session not renamed', { id: session.id, message: firstLine(err) }));
+    naming.catch((err) => {
+      console.warn('fleet: session not renamed', { id: session.id, message: firstLine(err) });
+      return null;
+    }).then((name) => {
+      if (!find(session.id) || session.title !== startedAs) return;
+      update(session, { ...(name ? { title: name } : {}), namedAt: nowIso() });
+      console.log('fleet: session named', { id: session.id, named: Boolean(name) });
+    }).catch((err) => console.warn('fleet: session name not saved', { id: session.id, message: firstLine(err) }));
   }
 
   /**
@@ -1370,6 +1416,9 @@ export function createFleet({
     const route = routeTrigger({ sessions, number, trigger: trigger.trigger, kind: trigger.kind, text: trigger.text });
     console.log('fleet: trigger routed', { number, login, trigger: trigger.trigger, action: route.action, reason: route.reason, ...projectField(project) });
     if (route.action === 'ignore') return { outcome: 'ignored', reason: route.reason };
+    if (route.action === 'start' && runsElsewhere(await pullRequests(project.name), project, number, trigger.trigger)) {
+      return { outcome: 'ignored', reason: 'pullRequests.runsOn names another console' };
+    }
     if (members && !members.hasGithubSessions(login)) return refuseFromGitHub(trigger, gh, project);
     if (route.action === 'send') {
       await send(find(route.sessionId), trigger.text);
@@ -1401,8 +1450,9 @@ export function createFleet({
   async function refuseFromGitHub({ number, login, trigger }, gh = github, project = defaultProject(config)) {
     const member = Boolean(members?.isMember?.(login));
     console.log('fleet: trigger ignored, no sessions from GitHub', { number, login, trigger, member });
-    const unlabeled = trigger === 'label' ? await safely('label removal', () => gh.removeLabel(number, config.label)) : null;
-    const body = refusalComment({ login, label: config.label, unlabeled: Boolean(unlabeled), member, publicUrl: await consoleUrlOf(project), consoleName: config.consoleName });
+    const { label } = triggersOf(project);
+    const unlabeled = trigger === 'label' ? await safely('label removal', () => gh.removeLabel(number, label)) : null;
+    const body = refusalComment({ login, label, unlabeled: Boolean(unlabeled), member, publicUrl: await consoleUrlOf(project), consoleName: config.consoleName });
     const posted = await safely('refusal comment', () => gh.comment(number, body));
     if (posted && state.github) {
       state.github.seenComments = rememberSeen(state.github.seenComments, [posted]);
@@ -1413,7 +1463,7 @@ export function createFleet({
 
   // A resume leaves who has the session as it was, assigned or not.
   async function resumeFromGitHub(session, { number, login, trigger, text, commentId }, gh = github) {
-    const message = text || `Carry on with ${session.kind === 'pr' ? 'PR ' : ''}#${session.number}: the ${config.label} label was added again.`;
+    const message = text || `Carry on with ${session.kind === 'pr' ? 'PR ' : ''}#${session.number}: the ${triggersOf(projectFor(config, session)).label} label was added again.`;
     await resumeShared(session, { text: message, by: login, why: trigger });
     await safely('reaction', () => (commentId ? gh.reactToComment(commentId) : gh.reactToIssue(number)));
     const publicUrl = await consoleUrlOf(projectFor(config, session));
@@ -1435,6 +1485,21 @@ export function createFleet({
     state.recentLabels = [...recent, { number, at, ...(project ? { project } : {}) }].slice(-RECENT_LABELS_KEPT);
     store.save();
     return true;
+  }
+
+  /**
+   * Why a label or /woodshed comment is not acted on because its repo's settings turn it off, or null. Logged; nothing
+   * is posted on the issue, since the repo was turned off on purpose.
+   * @returns {string|null}
+   */
+  function switchedOff({ trigger, number, login, project: name = null }) {
+    const project = projectOfEvent(name);
+    if (!project) return null;
+    const t = triggersOf(project);
+    const off = trigger === 'label' ? !t.labels : trigger === 'comment' ? !t.comments : false;
+    if (!off) return null;
+    console.log('fleet: trigger ignored, the repo turns it off', { number, login, trigger, ...projectField(project) });
+    return trigger === 'label' ? `${project.repo}'s settings turn its label off` : `${project.repo}'s settings turn /woodshed comments off`;
   }
 
   function claimComment(commentId) {
@@ -1463,6 +1528,8 @@ export function createFleet({
    * @returns {Promise<{outcome: 'started'|'sent'|'resumed'|'ignored'|'duplicate', sessionId?: string, reason?: string}>}
    */
   async function handleWebhookTrigger(trigger) {
+    const off = switchedOff(trigger);
+    if (off) return { outcome: 'ignored', reason: off };
     const claimed = trigger.trigger === 'comment' ? claimComment(trigger.commentId) : claimLabel(trigger.number, trigger.at, trigger.project ?? null);
     if (!claimed) {
       console.log('fleet: webhook trigger already handled', { number: trigger.number, trigger: trigger.trigger });
@@ -1535,11 +1602,13 @@ export function createFleet({
     // A person who added the label must pass the identity checks. A label the console's own App added (qa.autoLabel)
     // stands for the pull request's author, on a same-repo head, on the team key when the author fails the checks.
     let teamKeyWhy = null;
+    let owner = null;
     const appLogin = ownApp()?.login ?? null;
     if (qa.autoLabel && appLogin && login === appLogin) {
       const autoPull = known ?? await gh.pull(number);
       if (autoPull.head?.repo?.full_name && autoPull.head.repo.full_name !== project.repo) return ignored('the pull request is from a fork');
-      login = autoPull.user?.login ?? '';
+      owner = pullOwner(project, autoPull, number);
+      login = owner.login;
       teamKeyWhy = await teamKeyReason(login);
       console.log('fleet: QA label added by the console, run as the author', { number, login, teamKey: Boolean(teamKeyWhy), ...projectField(project) });
     } else {
@@ -1549,6 +1618,7 @@ export function createFleet({
     }
     const route = routeQa({ sessions: state.sessions.filter((s) => onProject(s, project)), number });
     if (route.action === 'ignore') return ignored(route.reason);
+    if (runsElsewhere(gates, project, number, 'qa', owner)) return ignored(owner?.elsewhere ? 'another console\'s session opened it' : 'pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open') return ignored('the pull request is not open');
     if (gates.review) {
@@ -1587,6 +1657,8 @@ export function createFleet({
     if (!qa?.autoLabel || qa.runner !== 'woodshed') return { unrecorded: true };
     const gh = githubOf(project);
     const pull = await gh.pull(number);
+    // The label's author is whose QA it is: another console's would read to the one that runs it as a stranger's.
+    if (runsElsewhere(gates, project, number, 'qa label', pullOwner(project, pull, number))) return { unrecorded: true };
     if (pull.state !== 'open' || pull.draft || (pull.labels ?? []).some((l) => l.name === qa.label)) return { unrecorded: true };
     if (pull.head?.repo?.full_name && pull.head.repo.full_name !== project.repo) return { unrecorded: true };
     await gh.addLabel(number, qa.label);
@@ -1666,19 +1738,21 @@ export function createFleet({
       const message = await safely('review head commit', () => gh.commitMessage(pull.head.sha));
       if (!message || !message.includes(review.rerun)) return { unrecorded: true };
     }
-    return startReview({ project, gates, number, login: pull.user?.login ?? '', pull });
+    const owner = pullOwner(project, pull, number);
+    return startReview({ project, gates, number, login: owner.login, owner, pull });
   }
 
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
   // the verdict and the Merge risk check here (reviewFinished), as its own App. One review session per commit.
-  async function startReview({ project, gates, number, login, pull: known = null }) {
+  async function startReview({ project, gates, number, login, owner = null, pull: known = null }) {
     const { review, mergeRisk } = gates;
     const gh = githubOf(project);
     const ignored = (reason) => {
       console.log('fleet: review not started', { number, login, reason, ...projectField(project) });
       return { outcome: 'ignored', reason };
     };
+    if (runsElsewhere(gates, project, number, 'review', owner)) return ignored(owner?.elsewhere ? 'another console\'s session opened it' : 'pullRequests.runsOn names another console');
     const pull = known ?? await gh.pull(number);
     if (pull.state !== 'open' || pull.draft) return ignored('the pull request is not open, or is a draft');
     // The session runs on the author's Claude plan only when they pass the label trigger's identity checks: a reused
@@ -1700,8 +1774,50 @@ export function createFleet({
       },
     });
     console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, ...projectField(project) });
+    update(session, { review: { ...session.review, runningPosted: true } });
+    await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project) }));
     return { outcome: 'started', sessionId: session.id };
   }
+
+  // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
+  // review, QA) in pullRequests.runsOn, by the login its App acts as. The others still start sessions by hand.
+  function runsElsewhere(gates, project, number, what, owner = null) {
+    if (owner?.own) return false;
+    if (owner?.elsewhere) return true;
+    const runsOn = gates?.runsOn ?? null;
+    if (!runsOn) return false;
+    const login = ownApp()?.login ?? null;
+    if (login === runsOn) return false;
+    console.log('fleet: skipped, pullRequests.runsOn names another console', { number, what, runsOn, login, ...projectField(project) });
+    return true;
+  }
+
+  // Each console runs review and QA of the pull requests its own sessions opened, as the person who started the session,
+  // on their plan; every other console leaves them alone. The App that opened one is its author, and has no plan.
+  // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
+  // A bot-authored session branch this console has no session for is another console's (Cloud orgs share one App), and
+  // is skipped: a branch name can only make a console skip, never spend someone's plan.
+  function pullOwner(project, pull, number) {
+    const author = pull.user?.login ?? '';
+    const branch = pull.head?.ref ?? '';
+    const appLogin = ownApp()?.login ?? null;
+    const sessionBranch = branch.startsWith(SESSION_BRANCH_PREFIX);
+    if (!author.endsWith('[bot]') || !(author === appLogin || sessionBranch)) return { login: author };
+    const opener = author === appLogin ? state.sessions
+      .filter((s) => !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1) : null;
+    const starter = opener?.startedBy ?? null;
+    if (starter && !starter.endsWith('[bot]')) {
+      console.log('fleet: pull request opened by a session, run as its starter', { number, sessionId: opener.id, starter, ...projectField(project) });
+      return { login: starter, own: true };
+    }
+    if (sessionBranch) {
+      console.log('fleet: pull request opened by another console\'s session, left to it', { number, author, found: Boolean(opener), ...projectField(project) });
+      return { login: author, elsewhere: true };
+    }
+    console.log('fleet: pull request opened by the App, no session starter to stand for', { number, found: Boolean(opener), ...projectField(project) });
+    return { login: author };
+  }
+
 
   async function teamKeyReason(login) {
     if (login.endsWith('[bot]')) return null;
@@ -1723,7 +1839,13 @@ export function createFleet({
     const hold = conclusion === 'APPROVE' && await qaWillRun(project, session.number);
     const ours = conclusion ? await submitReview(session, gh, { conclusion, summary, comment, mergeRisk, inlineComments, sha, hold }) : false;
     if (ours && conclusion === 'APPROVE' && !hold) await resolveFixedThreads(session, gh, resolved);
-    if (!conclusion) console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
+    if (!conclusion) {
+      console.warn('fleet: review session wrote no verdict, nothing submitted', { id: session.id, number: session.number });
+      await postReviewEnded(session, project, 'the session wrote no verdict');
+    } else if (!comment && session.review.runningPosted && session.review.commentId) {
+      console.log('fleet: review wrote no comment, its running comment closed', { id: session.id, number: session.number, conclusion });
+      await postReviewComment(session, gh, reviewDoneComment({ conclusion, tier: mergeRisk?.tier ?? null }));
+    }
     const held = hold && ours ? { sha, summary, inlineComments, resolved } : null;
     update(session, { review: { ...session.review, conclusion, reported: true, reviewedSha: sha, costUsd, held } });
     console.log('fleet: review finished', { id: session.id, number: session.number, conclusion, tier: mergeRisk?.tier ?? null, costUsd, posted: ours, held: Boolean(held) });
@@ -1765,6 +1887,32 @@ export function createFleet({
    * QA finished on a commit whose approval was held for it: the approval goes to GitHub with QA's result in it, or, when
    * QA failed, the verdict becomes REQUEST_CHANGES. Not when the head moved since: that commit gets its own review.
    */
+  /**
+   * A QA run that ended without its report (paused when idle or at its lifetime, stopped by someone, or failed to
+   * start) never reaches qaFinished, so the approval its review holds for it would wait for good. Once it has ended,
+   * that approval goes out saying QA did not finish, unless another QA run on the same commit is still going, which
+   * will report on it. A commit approved meanwhile, while this run held QA, gets its own run, as qaFinished starts it.
+   * Checked once per run, on a tick.
+   * @param {object} session
+   */
+  async function qaEndedUnreported(session) {
+    if (!isQa(session) || session.qa.conclusion || session.qa.endChecked) return;
+    if (session.status !== 'stopped' && session.status !== 'failed') return;
+    const project = projectFor(config, session);
+    const { sha } = session.qa;
+    const same = (s) => s !== session && isQa(s) && s.number === session.number && onProject(s, project);
+    if (state.sessions.some((s) => same(s) && s.qa.sha === sha && (ACTIVE_STATUSES.has(s.status) || s.status === 'stopping'))) return;
+    update(session, { qa: { ...session.qa, endChecked: true } });
+    const holding = state.sessions.filter((s) => isReview(s) && s.number === session.number && onProject(s, project) && s.review.held);
+    if (!holding.length) return;
+    const reason = firstLine(session.stopReason ?? session.error ?? '') || 'it stopped without a report';
+    if (heldApproval(project, session.number, sha)) {
+      console.log('fleet: held approval released, QA stopped without a report', { id: session.id, number: session.number, sha, reason });
+      await releaseHeldApproval(project, session.number, { sha, failed: false, qaLine: `QA did not finish: ${reason}.` });
+    }
+    if (holding.some((s) => s.review.held?.sha !== sha)) await qaAfterReview({ number: session.number, project: project.name });
+  }
+
   async function releaseHeldApproval(project, number, { sha, failed, qaLine }) {
     const review = heldApproval(project, number, sha);
     if (!review) return;
@@ -1865,6 +2013,23 @@ export function createFleet({
     });
   }
 
+  // A review session that stopped or failed before reporting (reviewFinished) would leave its comment saying it is
+  // still reviewing. Checked once per run, on a tick.
+  async function reviewEndedUnreported(session) {
+    if (!isReview(session) || session.review.reported || session.review.endChecked) return;
+    if (session.status !== 'stopped' && session.status !== 'failed') return;
+    update(session, { review: { ...session.review, endChecked: true } });
+    const reason = firstLine(session.stopReason ?? session.error ?? '') || 'it stopped without a report';
+    console.log('fleet: review ended without a report', { id: session.id, number: session.number, reason });
+    await postReviewEnded(session, projectFor(config, session), reason);
+  }
+
+  async function postReviewEnded(session, project, reason) {
+    // Only a run that posted its own running comment: an older run's comment id may hold an earlier review.
+    if (!session.review.runningPosted || !session.review.commentId) return;
+    await postReviewComment(session, githubOf(project), reviewEndedComment({ reason, sessionUrl: await qaSessionUrl(session, project) }));
+  }
+
   async function postReviewComment(session, gh, body) {
     const { commentId } = session.review;
     if (commentId && await safely('review comment', async () => { await gh.updateComment(commentId, body); return true; })) return;
@@ -1886,7 +2051,7 @@ export function createFleet({
     if (String(body).includes(GAVE_UP_TEXT)) return { outcome: 'ignored', reason: 'the console\'s own comment, already messaged' };
     const project = projectOfEvent(projectName);
     const session = project && state.sessions
-      .filter((s) => !s.owner && !isQa(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
+      .filter((s) => !s.owner && !isQa(s) && !isReview(s) && onProject(s, project) && (s.number === number || pullNumber(s.prUrl) === number)).at(-1);
     if (!session) {
       console.log('fleet: a Needs a human comment with no shared session on it', { number, ...(projectName ? { project: projectName } : {}) });
       return { outcome: 'ignored', reason: 'no shared session works on this issue or pull request' };
@@ -2003,9 +2168,11 @@ export function createFleet({
 
     const { events, complete } = await gh.issueEventsSince(cursors.lastEventId);
     if (!complete) console.warn('fleet: more issue events than one poll reads, older ones skipped', { count: events.length, ...on });
-    for (const t of labelTriggers(events, { label: config.label, afterId: cursors.lastEventId })) {
+    const own = triggersOf(project);
+    for (const t of labelTriggers(events, { label: own.label, afterId: cursors.lastEventId })) {
       cursors.lastEventId = t.id;
       store.save();
+      if (switchedOff({ trigger: 'label', number: t.number, login: t.login, ...on })) continue;
       if (!claimLabel(t.number, t.at, on.project ?? null)) {
         console.log('fleet: polled label already handled by a webhook', { number: t.number, ...on });
         continue;
@@ -2023,6 +2190,7 @@ export function createFleet({
       // Marked before handling, so a trigger that throws is logged once and not retried every 30 seconds.
       state.github.seenComments = rememberSeen(state.github.seenComments, [t.id]);
       store.save();
+      if (switchedOff({ trigger: 'comment', number: t.number, login: t.login, ...on })) continue;
       await handleTrigger({ number: t.number, login: t.login, text: t.text, commentId: t.id, trigger: 'comment', ...on });
     }
     cursors.commentsSince = full

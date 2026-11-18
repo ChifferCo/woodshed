@@ -40,6 +40,7 @@ import { createGitHubUser } from './githubUser.mjs';
 import { createClaudeSettings } from './claudeSettings.mjs';
 import { createProjectReader } from './projectFile.mjs';
 import { createRepoSettings } from './repoSettings.mjs';
+import { createRepoTriggers } from './repoTriggers.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createViewPrefs } from './viewPrefs.mjs';
 import { createGitHubPeople } from './githubPeople.mjs';
@@ -49,6 +50,7 @@ import { createMembers } from './members.mjs';
 import { createAppShares } from './appShares.mjs';
 import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
+import { createWebhookSwitch } from './webhookSwitch.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
@@ -57,7 +59,7 @@ import { createAppPorts } from './appPorts.mjs';
 import { createConsoleUpgrade, createHandler } from './server.mjs';
 import { createReviewerApp } from './reviewerApp.mjs';
 import { withAppLogins } from './reviewLogins.mjs';
-import { allProjects, defaultProject, hasRepo, projectFor, projectForRepo, projectNamed } from './projects.mjs';
+import { allProjects, defaultProject, hasRepo, projectFor, projectNamed } from './projects.mjs';
 
 // A caller that delivers GitHub's webhooks itself (dispatchWebhook) tells the fleet they arrive this often, as the local
 // provider's receiver does, so the GitHub poll slows to its fallback.
@@ -286,10 +288,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     projectDatabases: (project) => readerOf(project.name).databases(), hosted, provider: provider.name ?? null, fix: databasesFix, admins,
     readiness: projectReadiness,
   });
-  // An env file of one repo (an embedding program's `repo`) lists what that repo's project file appends to it.
-  const appendedFor = (secret, repo) => readerOf(repo ? projectForRepo(config, repo)?.name : null).appendedFor(secret);
-  const userSettings = createUserSettings({ store, secrets, envFiles: config.envFiles, appendedFor });
+  const userSettings = createUserSettings({ store, secrets });
   const repoSettings = createRepoSettings({ store, secrets, config, readerOf });
+  // A repo's label may not be its QA label, which its project file names.
+  const repoTriggers = createRepoTriggers({ store, config, qaLabelOf: async (name) => (await readerOf(name).pullRequests())?.qa?.label ?? null });
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
   const members = trusted ? null : createMembers({ store });
@@ -319,6 +321,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     // The App that posts a QA session's check, so the brief trusts it.
     ownApp: () => appIdentity.known(),
     reviewerApp,
+    repoTriggers,
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -326,6 +329,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const asks = slack.canReply && config.sessionApi.host ? createAsks({ store, fleet, slack, publicUrl: config.publicUrl, linkQuery: config.linkQuery ?? null }) : null;
   console.log('console: Slack questions', { available: Boolean(asks) });
   const events = createWebhookEvents({ file: path.join(loaded.stateDir, 'webhookEvents.jsonl'), store });
+  const webhookSwitch = createWebhookSwitch({ store, onOff: (source) => { if (source === 'github') pullWebhooks.forget(); } });
   // Borrowed GitHub access has no App to ask about a repo, nor a gh login of its own: the broker's answer is the check.
   const brokerRead = tokens?.borrowFor
     ? (repo) => createGitHub({ repo, token: async () => (await tokens.borrowFor(repo)).token }).defaultBranch()
@@ -348,7 +352,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   }
   // Borrowed GitHub access has no App key, and the Secrets page then keeps everything but the App's own secrets.
   const settings = secrets && (appKey || config.githubBroker)
-    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value), repoSettings })
+    ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
   const githubUser = auth?.githubUser ?? null;
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
@@ -380,10 +384,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
     token: tokens ? async () => (await tokens.console.token()).token : null,
   });
   const handle = createHandler({
-    config, fleet, settings, events, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
+    config, fleet, settings, events, webhookSwitch, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
-    databaseGate, addedProjects, projectColors, repoSettings,
+    databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
@@ -398,7 +402,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
   }) : null;
-  const webhookDispatch = createWebhookDispatch({ label: config.label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity });
+  const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
 
   // Neither the poll nor the webhooks start without an App key: a message read then would fail its three tries and
@@ -412,10 +416,17 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (loops.stopped()) return;
     loops.every(config.pollMs, 'github poll', () => fleet.pollGitHub());
     appIdentity.login();
-    if (deliveredWebhooks) loops.every(DELIVERED_WEBHOOKS_ALIVE_MS, 'webhooks alive', () => webhookDispatch.alive());
+    if (deliveredWebhooks) {
+      webhookSwitch.receiving('delivered');
+      loops.every(DELIVERED_WEBHOOKS_ALIVE_MS, 'webhooks alive', () => webhookDispatch.alive());
     // Nobody points a webhook at a single console with no App of its own: it polls.
-    else if (webhooks && config.githubBroker) console.log('console: webhooks off, GitHub access is borrowed', { pollSeconds: config.pollMs / 1000 });
-    else if (webhooks) webhooks.run(webhookDispatch);
+    } else if (webhooks && config.githubBroker) console.log('console: webhooks off, GitHub access is borrowed', { pollSeconds: config.pollMs / 1000 });
+    else if (webhooks) {
+      webhookSwitch.receiving('queue');
+      webhooks.run(webhookDispatch);
+    }
+    if (webhookSwitch.off('github')) console.log('console: GitHub webhooks are switched off on Console settings, polling', { pollSeconds: config.pollMs / 1000 });
+    if (webhookSwitch.off('slack')) console.log('console: Slack questions are switched off on Console settings');
   }
 
   /**
@@ -427,8 +438,6 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (config.launcher.kind === 'docker' && !tokens && !config.sessionEnv.GH_TOKEN) {
       console.warn('console: sessions push with the console\'s own gh token; set GH_TOKEN in the session env file to give them a narrower one');
     }
-    // The Terraform env file secrets into Repo settings' names, never over a value already there: safe at every start.
-    repoSettings.migrate().catch((err) => console.error('repoSettings: legacy copy failed', { message: String(err?.message ?? err).split('\n')[0] }));
     repoSettings.moveOwnFiles().catch((err) => console.error('repoSettings: own files not moved', { message: String(err?.message ?? err).split('\n')[0] }));
     loops.every(60 * 60_000, 'attachments sweep', () => attachments.sweep());
     loops.every(EVENTS_SWEEP_MS, 'webhook events sweep', () => events.sweep());

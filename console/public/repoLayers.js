@@ -1,5 +1,5 @@
 // The parts of a repo's layered settings that both of its pages draw (designSystem/components/LayeredFile): a repo's
-// page on Console settings (repoSettings.js) and the Repo settings card on My settings (myRepoSettings.js). Each layer
+// page under Settings (repoSettings.js) and the Repo settings card on My settings (myRepoSettings.js). Each layer
 // is a row with its word as a tag; the table names keys, never a value.
 (function () {
   'use strict';

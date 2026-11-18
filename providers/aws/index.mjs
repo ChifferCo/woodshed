@@ -6,6 +6,7 @@ import { awsCli, ecsLauncher } from './ecsLauncher.mjs';
 import { createHomeStore } from './homeStore.mjs';
 import { secretSpecs } from '../../console/secrets.mjs';
 import { createSecretStore } from './secretStore.mjs';
+import { serviceUrlReader, sessionServiceEnv } from './services.mjs';
 import { createWebhookQueue } from './webhookQueue.mjs';
 import { createWebhookUrl } from './webhookUrl.mjs';
 
@@ -52,13 +53,24 @@ export function awsDatabases({ dbAdminTaskDefinition = null, databases = null })
 }
 
 /**
- * @param {{launcher: {ecs: {dbAdminTaskDefinition?: string|null, databases?: string[]|null}}, secrets: {prefix: string}|null,
- *          homesBucket: string|null, webhookQueue: string, webhookFunction: string, envFiles: {secret: string}[]}} config
+ * @param {{launcher: {ecs: {dbAdminTaskDefinition?: string|null, databases?: string[]|null}}, secrets: {prefix: string}|null, stateDir: string,
+ *          homesBucket: string|null, webhookQueue: string, webhookFunction: string}} config
  *   loadConfig()'s
  */
+/**
+ * The launcher, with each session on the default project given the base box's services (services.mjs). A file the box
+ * left that cannot be read stops the start: a session without its services would fail later, and less plainly.
+ * @param {ReturnType<typeof ecsLauncher>} launcher
+ * @param {ReturnType<typeof serviceUrlReader>} services
+ */
+export function withServices(launcher, services) {
+  return { ...launcher, start: (sessionId, env) => launcher.start(sessionId, { ...env, ...sessionServiceEnv(services(), env) }) };
+}
+
 export function awsProvider(config) {
   const { ecs } = config.launcher;
   const databases = awsDatabases(ecs);
+  const services = serviceUrlReader(config.stateDir);
   return {
     name: 'aws',
     words: {
@@ -67,10 +79,10 @@ export function awsProvider(config) {
       ...(config.webhookFunction && { webhookLog: `aws logs tail /aws/lambda/${config.webhookFunction}` }),
     },
     databases,
-    launcher: ecsLauncher(ecs),
-    secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ envFiles: config.envFiles, installSecrets: config.installSecrets }) }) : null,
+    launcher: withServices(ecsLauncher(ecs), services),
+    secrets: config.secrets ? createSecretStore({ prefix: config.secrets.prefix, aws: awsCli, specs: secretSpecs({ installSecrets: config.installSecrets }) }) : null,
     homes: config.homesBucket ? createHomeStore({ bucket: config.homesBucket, aws: awsCli }) : null,
-    dbAdmin: ecs.dbAdminTaskDefinition ? createDbAdminRunner({ ecs, aws: awsCli }) : null,
+    dbAdmin: ecs.dbAdminTaskDefinition ? createDbAdminRunner({ ecs, aws: awsCli, services }) : null,
     webhooks: config.webhookQueue ? createWebhookQueue({ queue: config.webhookQueue, aws: awsCli }) : null,
     webhookUrl: config.webhookFunction ? createWebhookUrl({ functionName: config.webhookFunction, aws: awsCli }) : null,
   };

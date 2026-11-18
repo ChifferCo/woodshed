@@ -13,7 +13,7 @@
   // sessions alone, `everyone` the console's. `words` are what people type that the title and note do not say.
   const PAGES = {
     '/settings': { label: 'My settings', scope: 'you' },
-    '/console-settings': { label: 'Console settings', scope: 'everyone', admin: true },
+    '/console-settings': { label: 'Settings', scope: 'everyone', admin: true },
     '/secrets': { label: 'Secrets & webhooks', scope: 'everyone', admin: true },
     '/people': { label: 'People', scope: 'everyone', admin: true },
     '/events': { label: 'Webhook events', scope: 'everyone', admin: true },
@@ -42,7 +42,7 @@
     { page: '/settings', id: 'my-remove', title: 'Remove My Woodshed', note: 'Stop your private sessions and delete everything saved for you.',
       words: 'delete leave wipe reset account remove everything uninstall clean up' },
 
-    // Console settings (admins)
+    // Settings, General (admins)
     { page: '/console-settings', id: 'card-updates', title: 'Update Woodshed', note: 'Newer Woodshed commits, and the Update button.',
       words: 'upgrade version git pull restart release check now commits' },
     { page: '/console-settings', id: 'card-projects', title: 'Repos the console runs sessions on', note: 'Add a repo, pick the default, set each repo\'s colour. Each repo\'s Settings has its env files and instructions.',
@@ -55,10 +55,12 @@
       words: 'delete cleanup clean up days keep kept resume merged closed expire old databases storage' },
     { page: '/console-settings', id: 'card-slack', title: 'Slack channel for pull requests', note: 'Where finished pull requests are posted.',
       words: 'slack channel post notify announce pr pull request review qa brief channel id' },
+    { page: '/console-settings', id: 'card-webhooks', title: 'Webhooks', note: 'Turn GitHub\'s and Slack\'s webhooks off, so the console polls instead.',
+      words: 'webhook github slack events off on switch poll polling deliveries mentions questions' },
     { page: '/console-settings', id: 'card-data', title: 'Sessions holding data', note: 'Databases and Claude homes kept by stopped sessions.',
       words: 'stalled drop delete cleanup storage homes databases kept' },
 
-    // Secrets & webhooks (admins)
+    // Settings, Secrets & webhooks (admins)
     { page: '/secrets', id: 'group-manager', title: 'Secrets manager', note: 'Where the console keeps its secrets.',
       words: 'aws secrets manager store vault prefix keys storage' },
     { page: '/secrets', id: 'group-session', title: 'Session secrets', note: 'What every session reads when it starts.',
@@ -67,8 +69,6 @@
       words: 'anthropic openai api key github app key client secret slack bot token signing secret team key password rotate' },
     { page: '/secrets', id: 'hook-title', title: 'GitHub webhook', note: 'Whether GitHub\'s webhooks reach the console.',
       words: 'webhook github events deliveries label comment lambda queue app check again reconnect' },
-    { page: '/secrets', id: 'group-moved', title: 'Secrets moved to Repo settings', note: 'Old env file secrets, now set per repo.',
-      words: 'legacy env file api-env repo settings moved' },
 
     // People (admins)
     { page: '/people', id: 'invite-card', title: 'Invite someone', note: 'Let a GitHub user sign in.',

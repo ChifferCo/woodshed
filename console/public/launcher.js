@@ -339,7 +339,7 @@
   /**
    * The Project field: which repo the session works on, among those the person may start on (GET /api/my/projects),
    * with their default marked and Make my default beside any other. With one project it names it as text, with a way
-   * to add another (an admin's link to Console settings, a line for anyone else). It never hides for a blocked repo:
+   * to add another (an admin's link to Settings, a line for anyone else). It never hides for a blocked repo:
    * those stay in the list marked `needs setup`, and New session opens on the person's default only while it is not
    * blocked, else on the first that is not (`projectBlockers` in /api/my, databaseGate.mjs).
    * @param {() => void} changed  called when the pick, the projects or their blockers change
@@ -383,8 +383,8 @@
       only.textContent = one ? `${projects[0].name} \u00b7 ${projects[0].repo}${blockerOf(projects[0].name) ? ' \u2014 needs setup' : ''}` : '';
       more.hidden = !one;
       more.replaceChildren(...(!one ? [] : W.isAdmin()
-        ? ['The only repo on this console. ', h('a', { href: '/console-settings#card-projects' }, 'Add a repo'), ' on Console settings to start sessions on another.']
-        : ['The only repo on this console. An admin can connect another one on Console settings.']));
+        ? ['The only repo on this console. ', h('a', { href: '/console-settings#card-projects' }, 'Add a repo'), ' in Settings to start sessions on another.']
+        : ['The only repo on this console. An admin can connect another one in Settings.']));
       const was = picker.value;
       const picked = (chosen && was) || asked || opening(projects);
       picker.replaceChildren(...projects.map((p) => h('option', { value: p.name },
@@ -487,8 +487,7 @@
   /** @returns {{el: HTMLElement, update: (me: object) => void}} */
   function createLauncher() {
     const prompt = h('textarea', { id: 'l-prompt', class: 'field', rows: '5', placeholder: 'What should Claude do? Type / for the repo\'s skills.' });
-    const name = h('input', { id: 'l-name', class: 'field', autocomplete: 'off', placeholder: 'billing-currency' });
-    const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: '#25812, PR #26030 or a branch' });
+    const workOn = h('input', { id: 'l-on', class: 'field mono', autocomplete: 'off', placeholder: 'Search open PRs, or type PR #123 or a branch' });
     const agent = select('l-agent', AGENTS);
     const model = select('l-model', MODELS);
     const effort = select('l-effort', EFFORTS);
@@ -590,11 +589,10 @@
     // Where a blocked repo's fix card goes, in place of the rest of the form: the picker above stays.
     const blockedSlot = h('div', { class: 'launch-setup', hidden: true });
     const body = h('div', { class: 'launch-body' },
-      field('l-prompt', 'Prompt', promptWrap, 'optional with a PR or branch below: opens its review'),
+      field('l-prompt', 'Prompt', promptWrap, 'optional when continuing a PR or branch: opens its review'),
       attachments.el, attachments.chips,
-      h('div', { class: 'lgrid2' },
-        field('l-name', 'Name', name, 'optional: Haiku names it from the prompt otherwise'),
-        field('l-on', 'Work on', pulls.el, 'optional: type to search the open PRs, or pick one from \u25be')),
+      // No name to give: the console names the session from its prompt, and its page offers a rename once it has.
+      field('l-on', 'Continue a PR or branch', pulls.el, 'optional: leave empty to start a new branch'),
       options,
       error,
       h('div', { class: 'launch-actions' }, start, note));
@@ -640,13 +638,12 @@
       error.hidden = true;
       try {
         const session = await W.postJson('/api/my/sessions', {
-          prompt: prompt.value, name: name.value, workOn: workOn.value, agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value,
+          prompt: prompt.value, workOn: workOn.value, agent: agent.value, model: model.value, effort: effort.value, permissionMode: mode.value,
           ...(projects.value() ? { project: projects.value() } : {}),
           attachments: attachments.ids(),
         });
         // The page stays: the form is emptied for the next one, whose files those were not.
         prompt.value = '';
-        name.value = '';
         workOn.value = '';
         pulls.refresh();
         attachments.clear();
@@ -698,7 +695,7 @@
       startWords.textContent = full() ? 'Start when one frees up' : 'Start';
       note.replaceChildren(...(full()
         ? [`${me.running} of ${me.limit} running: this one waits in line and starts by itself when one stops.`,
-          ...(W.isAdmin() ? [' Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Console settings'), '.'] : [])]
+          ...(W.isAdmin() ? [' Need more at once? ', h('a', { href: '/console-settings' }, 'Raise the limit in Settings'), '.'] : [])]
         : [`Runs on your ${agent.value === 'codex' ? 'Codex sign-in or the team key' : 'Claude plan'}, from ${projects.repo() ? `${projects.repo()}\u2019s` : 'the'} default branch unless you name a branch.`]));
     }
     // New session pressed on its own screen: show what is missing, or focus the prompt, so the button always answers.

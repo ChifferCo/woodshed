@@ -43,10 +43,10 @@ test('each section has a card with its id in its page, so the link lands on it',
   const source = { '/settings': ['mySettings.js', 'myRepoSettings.js'], '/console-settings': ['consoleSettings.js'], '/secrets': ['secrets.js'], '/people': ['people.js'], '/events': ['events.js'] };
   for (const e of ENTRIES) {
     assert.ok(PAGES[e.page], `${e.id}: unknown page ${e.page}`);
-    if (e.page === '/events') continue; // the whole page is the section
     const text = source[e.page].map((f) => readFileSync(new URL(`./public/${f}`, import.meta.url), 'utf8')).join('\n');
-    const id = e.id.replace(/^group-/, '');
-    const literal = text.includes(`id: '${e.id}'`) || text.includes(`id: \`${e.id.replace(/^(card|group)-.*/, '$1')}-\${`) || (e.id.startsWith('group-') && text.includes(`id: '${id}'`));
+    // A card drawn from a list carries `card-${card.id}` (or `group-…`): the list must have that id.
+    const drawn = e.id.match(/^(card|group)-(.+)$/);
+    const literal = text.includes(`id: '${e.id}'`) || Boolean(drawn && text.includes(`id: \`${drawn[1]}-\${`) && text.includes(`id: '${drawn[2]}'`));
     assert.ok(literal, `${e.page} draws no element with id ${e.id}`);
   }
 });
