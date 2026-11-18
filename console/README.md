@@ -733,6 +733,12 @@ QA. `pullRequests.runsOn` in the project file names the one that does, by the lo
 starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
 act as the same App all match it, so it cannot pick between two Woodshed Cloud orgs.
 
+A pull request one of a console's own sessions opened is the exception: that console reviews and QAs it as the person
+who started the session, on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
+starter`). Any other console skips a bot-authored pull request on a session branch (`woodshed/…`) it has no session for
+(`fleet: pull request opened by another console's session, left to it`), which also keeps two Woodshed Cloud orgs off
+each other's. So a session's pull request never falls to a team key because another console heard it first.
+
 ### The reviewer App
 
 GitHub never lets a pull request's author approve it, Apps included, and a pull request a shared session opens is the
