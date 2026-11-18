@@ -279,6 +279,10 @@ test('pullRequests.runsOn names the console that does the automatic work, and is
   assert.equal(parsed({ ...PULL_REQUESTS, runsOn: 'woodshed-cloud[bot]' }).runsOn, 'woodshed-cloud[bot]');
   assert.equal(Object.hasOwn(parsed(PULL_REQUESTS), 'runsOn'), false);
   assert.throws(() => parsed({ ...PULL_REQUESTS, runsOn: 7 }), /pullRequests\.runsOn/);
+  assert.equal(parsed({ ...PULL_REQUESTS, runsOn: 'woodshed-cloud[bot]/acme-2' }).runsOn, 'woodshed-cloud[bot]/acme-2', 'one of the App\'s consoles');
+  for (const bad of ['joel', 'woodshed-cloud[bot]/', 'woodshed-cloud[bot]/Acme', 'woodshed-cloud[bot]/a/b', 'woodshed-cloud[bot] /acme']) {
+    assert.throws(() => parsed({ ...PULL_REQUESTS, runsOn: bad }), /pullRequests\.runsOn must be a GitHub App's login/, bad);
+  }
 });
 
 test('review.runner: defaults to actions and needs a workflow, woodshed may leave the workflow out', () => {

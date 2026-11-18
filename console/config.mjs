@@ -5,6 +5,7 @@ import fs from 'node:fs';
 
 import { ENGINE_NAMES } from '../shared/databases/index.mjs';
 import { currentName, envValue } from '../shared/envNames.mjs';
+import { RUNS_ON_NAME } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { parseAppPorts } from './appPorts.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
@@ -59,6 +60,17 @@ function githubApp(env) {
     throw new Error('WOODSHED_GITHUB_APP_ID needs WOODSHED_GITHUB_APP_INSTALLATION_ID, and WOODSHED_GITHUB_APP_KEY_FILE without a secret store (AWS, or WOODSHED_LOCAL_SECRETS_DIR)');
   }
   return { appId, installationId, keyFile, keyFromSecret };
+}
+
+/**
+ * @returns {string|null}  WOODSHED_RUNS_ON_NAME, or null when it is unset
+ * @throws {Error}  when it is set and is not lowercase letters, digits and dashes: a project file could name no other
+ */
+export function runsOnName(env) {
+  const value = envValue(env, 'RUNS_ON_NAME');
+  if (value === undefined || value === '') return null;
+  if (!RUNS_ON_NAME.test(value)) throw new Error(`WOODSHED_RUNS_ON_NAME must be lowercase letters, digits and dashes, at most 63 (it is ${JSON.stringify(value)})`);
+  return value;
 }
 
 /** @returns {string}  `WOODSHED_CONSOLE_NAME` trimmed, or the default when it is unset or not a name the console shows */
@@ -288,6 +300,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   return {
     // What the pages, the installed app and the console's GitHub comments call this console.
     consoleName: consoleName(env),
+    // Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn:
+    // <app>/<name>` (fleet.mjs, runsElsewhere): Woodshed Cloud names each org's console by its org. Null is none.
+    runsOnName: runsOnName(env),
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,
     publicUrl: (envValue(env, 'PUBLIC_URL') || `http://localhost:${port}`).replace(/\/+$/, ''),

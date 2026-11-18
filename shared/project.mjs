@@ -319,6 +319,9 @@ export const SERVICE_VARIABLE = /^[A-Z][A-Z0-9_]*_(URL|ENDPOINT)$/;
 // An image with its version: a tag, a digest or both, so a session's service changes only when the file does.
 const IMAGE = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)*(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[a-f0-9]{64})?$/;
 const MEMORY = /^[1-9][0-9]*[mg]$/;
+// pullRequests.runsOn: an App's login (`<slug>[bot]`), and after a slash, which no login has, one of its consoles.
+export const RUNS_ON_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const RUNS_ON = /^[A-Za-z0-9][A-Za-z0-9-]*\[bot\](\/[a-z0-9][a-z0-9-]{0,62})?$/;
 
 function serviceImage(value, field) {
   string(value, field);
@@ -550,8 +553,12 @@ function pullRequests(value) {
     if (!review) fail('pullRequests.mergeRisk needs pullRequests.review: only the review\'s own workflow may post it');
     return { check: string(f.check, 'pullRequests.mergeRisk.check') };
   });
-  // Left out, every console the repo is connected to does its automatic work, as before.
+  // Left out, every console the repo is connected to does its automatic work, as before. `<app>/<console>` names one of
+  // the consoles that act as one App (Woodshed Cloud's orgs), by the name it is given (WOODSHED_RUNS_ON_NAME).
   const runsOn = p.runsOn === null ? null : string(p.runsOn, 'pullRequests.runsOn');
+  if (runsOn !== null && !RUNS_ON.test(runsOn)) {
+    fail(`pullRequests.runsOn must be a GitHub App's login, as woodshed-cloud[bot], or one of its consoles, as woodshed-cloud[bot]/acme (it is ${JSON.stringify(runsOn)})`);
+  }
   return { review, suites, qa, mergeRisk, ...(runsOn ? { runsOn } : {}) };
 }
 
