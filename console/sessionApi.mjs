@@ -348,6 +348,16 @@ function isOlderLogin({ incoming, current }) {
   }
 }
 
+// The ChatGPT account a login is for, or null for an API key or anything else.
+function chatgptAccount(text) {
+  try {
+    const id = JSON.parse(text)?.tokens?.account_id;
+    return typeof id === 'string' && id ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 // A private Codex session's refreshed login: ChatGPT's refresh token rotates, so the copy saved on My settings would
 // stop working once a session used it. Only the owner's own sign-in is ever replaced, and only by their own session,
 // or by a review of their pull request whose Codex ran on it (review.codexLogin).
@@ -367,6 +377,12 @@ async function codexAuthReply(req, res, session, userSettings) {
   if (!current) {
     console.log('sessionApi: Codex sign-in not kept, the owner has none saved', { sessionId: session.id, owner });
     return reply(res, 409, { error: 'the owner saved no Codex sign-in' });
+  }
+  // A review reads what others push, so it may only send back a refresh of the same ChatGPT account: never an API key,
+  // and never a login of someone else's that would put the author's sessions on another account.
+  if (isReview(session) && (!chatgptAccount(current) || chatgptAccount(text) !== chatgptAccount(current))) {
+    console.warn('sessionApi: Codex sign-in refused, not the same ChatGPT account', { sessionId: session.id, owner });
+    return reply(res, 409, { error: 'a review only sends back a refresh of the same ChatGPT account' });
   }
   if (isOlderLogin({ incoming: text, current })) {
     console.log('sessionApi: Codex sign-in not kept, the saved one is newer', { sessionId: session.id, owner });

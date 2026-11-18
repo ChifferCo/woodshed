@@ -39,21 +39,27 @@ repoOfCheckout() {
 
 # Claude's tools, scoped to the checkout: it reads the repository and writes only its own files in .review/, never
 # Codex's beside them, and never reads the author's Codex sign-in, wherever it is. Anything else asks, and -p refuses.
+# No shell at all: git log, show and diff write anywhere with --output, and Claude Code runs some read-only commands
+# unasked, whose options read any file (wc --files0-from prints its lines). The diff is in .review/pr.diff instead.
 # A path rule starting // is absolute (Claude Code's permission rules).
 claudeAllowed() {
-  printf '%s' "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*)"
-  printf ',%s' "Read(/$REPO_DIR/**)" "Grep(/$REPO_DIR/**)" "Glob(/$REPO_DIR/**)" "Write(/$DIR/*)" "Edit(/$DIR/*)"
+  printf '%s' "Read(/$REPO_DIR/**),Grep(/$REPO_DIR/**),Glob(/$REPO_DIR/**),Write(/$DIR/*),Edit(/$DIR/*)"
 }
 claudeDenied() {
-  local p sep=
+  local p
+  printf '%s' "Bash,WebFetch,WebSearch"
   for p in "$CODEX_DIR" "$CODEX_HOME_DIR" "$(dirname "$OWN_CODEX_AUTH_FILE")"; do
-    printf '%s' "$sep"; sep=,
-    printf '%s' "Read(/$p/**),Grep(/$p/**),Glob(/$p/**),Write(/$p/**),Edit(/$p/**)"
+    printf ',%s' "Read(/$p/**)" "Grep(/$p/**)" "Glob(/$p/**)" "Write(/$p/**)" "Edit(/$p/**)"
   done
 }
 
+claudePrompt() {
+  printf '%s\n\n' "You have no shell in this review. The output of \`gh pr diff $PR\` is in \`$DIR/pr.diff\`: read it with the Read tool where the steps below say to run it, and use Read, Grep and Glob for the rest of the repository."
+  cat "$DIR/review-prompt.md"
+}
+
 runClaude() {
-  "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
+  "$SESSION_DIR/bin/claude" --model opus -p "$(claudePrompt)" --max-turns 60 \
     --allowedTools "$(claudeAllowed)" --disallowedTools "$(claudeDenied)" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
     | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
@@ -72,8 +78,7 @@ gatherForCodex() {
   mkdir -p "$CODEX_DIR/files"
   cp -r "$DIR/context.md" "$CODEX_DIR/" 2>/dev/null
   for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
-  gh pr diff "$PR" > "$CODEX_DIR/pr.diff" 2>/dev/null \
-    || git diff "origin/$REVIEW_BASE...HEAD" > "$CODEX_DIR/pr.diff" 2>/dev/null || true
+  cp "$DIR/pr.diff" "$CODEX_DIR/" 2>/dev/null
   git diff --name-only --diff-filter=d "origin/$REVIEW_BASE...HEAD" 2>/dev/null | while IFS= read -r f; do
     for f in "$f" "$(dirname "$f")/README.md"; do
       f=${f#./}
@@ -151,6 +156,8 @@ gatherContext() {
   set +f
   git show "origin/$REVIEW_BASE:$INSTRUCTIONS" > "$DIR/instructions.md" 2>/dev/null || rm -f "$DIR/instructions.md"
   git show "origin/$REVIEW_BASE:$RISK_AREAS" > "$DIR/risk-areas.md" 2>/dev/null || rm -f "$DIR/risk-areas.md"
+  # The diff, for both reviewers, who have no shell.
+  gh pr diff "$PR" > "$DIR/pr.diff" 2>/dev/null || git diff "origin/$REVIEW_BASE...HEAD" > "$DIR/pr.diff" 2>/dev/null || true
 }
 
 sendReport() {

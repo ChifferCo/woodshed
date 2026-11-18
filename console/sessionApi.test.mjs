@@ -655,7 +655,7 @@ test('a review whose Codex runs on its author\'s sign-in gets it from /settings 
   const userSettings = {
     usesOwnTokenForShared: () => false, claudeToken: async () => null,
     usesOwnCodexForReviews: (login) => login === 'ana' && on,
-    codexAuth: async (login) => (login === 'ana' ? '{"tokens":{"refresh_token":"rt"}}' : null),
+    codexAuth: async (login) => (login === 'ana' ? '{"tokens":{"refresh_token":"rt","account_id":"acct-ana"}}' : null),
     setCodexAuth: async (login, text) => { saved.push([login, text]); },
   };
   const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
@@ -664,13 +664,18 @@ test('a review whose Codex runs on its author\'s sign-in gets it from /settings 
   t.after(() => server.close());
   const { port } = server.address();
 
-  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-own' }), { status: 200, body: { codexAuth: '{"tokens":{"refresh_token":"rt"}}' } });
+  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-own' }), { status: 200, body: { codexAuth: '{"tokens":{"refresh_token":"rt","account_id":"acct-ana"}}' } });
   assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-team' }), { status: 200, body: {} }, 'the team key');
   on = false;
   assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-own' }), { status: 200, body: {} }, 'turned off since the review started');
 
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"tokens":{"refresh_token":"rt2"}}' })).status, 200);
-  assert.deepEqual(saved, [['ana', '{"tokens":{"refresh_token":"rt2"}}']], 'kept as the author\'s, the only login it may replace');
+  const other = '{"tokens":{"refresh_token":"x","account_id":"acct-someone-else"}}';
+  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: other })).status, 409, 'another ChatGPT account');
+  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"OPENAI_API_KEY":"sk-x"}' })).status, 409, 'an API key');
+  assert.deepEqual(saved, [], 'neither replaced the author\'s');
+  const refreshed = '{"tokens":{"refresh_token":"rt2","account_id":"acct-ana"}}';
+  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: refreshed })).status, 200);
+  assert.deepEqual(saved, [['ana', refreshed]], 'kept as the author\'s, the only login it may replace');
   assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-team', body: '{}' })).status, 404, 'a review on the team key keeps nobody\'s');
 });
 

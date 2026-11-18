@@ -175,6 +175,10 @@ test('Claude\'s tools reach the checkout and its own review files alone, never C
   for (const tool of ['Read', 'Grep', 'Glob']) assert.ok(allowed.includes(`${tool}(/${repo}/**)`), `${tool} in the checkout`);
   for (const tool of ['Write', 'Edit']) assert.ok(allowed.includes(`${tool}(/${repo}/.review/*)`), `${tool} of its own review files`);
   assert.ok(allowed.every((a) => /^[A-Za-z]+\(/.test(a)), 'no tool allowed on every path');
+  assert.ok(!allowed.some((a) => a.startsWith('Bash')), 'no shell: git writes files with --output, and auto-allowed read-only commands read any file');
+  for (const tool of ['Bash', 'WebFetch', 'WebSearch']) assert.ok(denied.includes(tool), `${tool} denied outright`);
+  assert.match(args[args.indexOf('-p') + 1], /^You have no shell in this review\. The output of `gh pr diff 7` is in `\S+\/\.review\/pr\.diff`/);
+  assert.equal(fs.readFileSync(path.join(repo, '.review', 'pr.diff'), 'utf8'), '# Pull request: Add GTM\n', 'the diff is there for it');
   for (const p of [`${repo}/.review/codex`, codexHome, path.dirname(given)]) {
     for (const tool of ['Read', 'Grep', 'Glob', 'Write', 'Edit']) assert.ok(denied.includes(`${tool}(/${p}/**)`), `${tool} denied in ${p}`);
   }
