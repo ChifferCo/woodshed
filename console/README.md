@@ -813,7 +813,9 @@ run in a session's container: bubblewrap needs user namespaces, which Docker and
 - `gh pr diff`;
 - each changed text file whole, with its folder's README, never through a link out of the checkout.
 
-Codex answers in JSON (`--output-schema`), which `codeReview.mjs codex-answer` writes as the files Claude writes. Codex
+Codex answers in JSON (`--output-schema`), which `codeReview.mjs codex-answer` writes as the files Claude writes.
+Claude's own tools are scoped to match (`claudeAllowed`, `claudeDenied` in `review.sh`). It reads only the checkout,
+writes only its own files in `.review/`, and is refused Codex's folder and the author's Codex sign-in. Codex
 gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and Claude's verdict goes out alone.
 
 The two verdicts become one (`codeReview.mjs merge`):

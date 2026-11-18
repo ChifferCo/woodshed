@@ -13,6 +13,7 @@ const REVIEW_MJS = path.join(HERE, '../shared/codeReview/codeReview.mjs');
 // A fake claude that reviews only when it is given a prompt naming the repo, as the real one needs a prompt at all.
 const FAKE_CLAUDE = `#!/bin/bash
 prompt=$4
+[ -n "$CLAUDE_ARGS_COPY" ] && printf '%s\\n' "$@" > "$CLAUDE_ARGS_COPY"
 if [ -z "$prompt" ]; then echo '{"type":"result","subtype":"error_during_execution","is_error":true}'; exit 1; fi
 case "$prompt" in *Acme/widgets/blob/*) ;; *) echo '{"type":"result","subtype":"wrong_repo","is_error":true}'; exit 1 ;; esac
 dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
@@ -54,7 +55,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, ownLogin = null, promptCopy = null, codexMinutes = null } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, ownLogin = null, promptCopy = null, codexMinutes = null, claudeArgs = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -100,6 +101,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   if (agents) env.REVIEW_AGENTS = agents;
   if (promptCopy) env.CODEX_PROMPT_COPY = promptCopy;
   if (codexMinutes) env.REVIEW_CODEX_MINUTES = codexMinutes;
+  if (claudeArgs) env.CLAUDE_ARGS_COPY = claudeArgs;
   let output = '';
   await new Promise((resolve) => {
     const child = spawn('bash', [REVIEW_SH], { env });
@@ -107,7 +109,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
     child.stderr.on('data', (c) => { output += c; });
     child.on('close', resolve);
   });
-  return { reports, output };
+  return { reports, output, repo, codexHome, given };
 }
 
 test('a review in a session, where GitHub Actions\' variables are not set, finds its repo from the checkout and reports the verdict', async (t) => {
@@ -160,6 +162,22 @@ test('a Codex that takes too long is stopped, and Claude Code\'s review goes out
   assert.match(output, /Codex took longer than 0\.02 minutes and was stopped/);
   assert.equal(reports[0].body.conclusion, 'APPROVE');
   assert.match(reports[0].body.summary, /Codex wrote no verdict/);
+});
+
+test('Claude\'s tools reach the checkout and its own review files alone, never Codex\'s files or the author\'s Codex sign-in', async (t) => {
+  const claudeArgs = path.join(os.tmpdir(), `claude-args-${process.pid}-${Date.now()}.txt`);
+  t.after(() => fs.rmSync(claudeArgs, { force: true }));
+  const { repo, codexHome, given } = await runReview(t, { agents: 'claude codex', claudeArgs });
+  const args = fs.readFileSync(claudeArgs, 'utf8').split('\n');
+  const list = (flag) => args[args.indexOf(flag) + 1].split(',');
+  const allowed = list('--allowedTools');
+  const denied = list('--disallowedTools');
+  for (const tool of ['Read', 'Grep', 'Glob']) assert.ok(allowed.includes(`${tool}(/${repo}/**)`), `${tool} in the checkout`);
+  for (const tool of ['Write', 'Edit']) assert.ok(allowed.includes(`${tool}(/${repo}/.review/*)`), `${tool} of its own review files`);
+  assert.ok(allowed.every((a) => /^[A-Za-z]+\(/.test(a)), 'no tool allowed on every path');
+  for (const p of [`${repo}/.review/codex`, codexHome, path.dirname(given)]) {
+    for (const tool of ['Read', 'Grep', 'Glob', 'Write', 'Edit']) assert.ok(denied.includes(`${tool}(/${p}/**)`), `${tool} denied in ${p}`);
+  }
 });
 
 test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote none', async (t) => {

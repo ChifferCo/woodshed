@@ -37,9 +37,24 @@ repoOfCheckout() {
   printf '%s\n' "${url#*github.com[:/]}"
 }
 
+# Claude's tools, scoped to the checkout: it reads the repository and writes only its own files in .review/, never
+# Codex's beside them, and never reads the author's Codex sign-in, wherever it is. Anything else asks, and -p refuses.
+# A path rule starting // is absolute (Claude Code's permission rules).
+claudeAllowed() {
+  printf '%s' "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*)"
+  printf ',%s' "Read(/$REPO_DIR/**)" "Grep(/$REPO_DIR/**)" "Glob(/$REPO_DIR/**)" "Write(/$DIR/*)" "Edit(/$DIR/*)"
+}
+claudeDenied() {
+  local p sep=
+  for p in "$CODEX_DIR" "$CODEX_HOME_DIR" "$(dirname "$OWN_CODEX_AUTH_FILE")"; do
+    printf '%s' "$sep"; sep=,
+    printf '%s' "Read(/$p/**),Grep(/$p/**),Glob(/$p/**),Write(/$p/**),Edit(/$p/**)"
+  done
+}
+
 runClaude() {
   "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
-    --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read,Grep,Glob,Write,Edit" \
+    --allowedTools "$(claudeAllowed)" --disallowedTools "$(claudeDenied)" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
     | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
     || true
