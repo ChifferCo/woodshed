@@ -1781,7 +1781,7 @@ export function createFleet({
 
   // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
   // review, QA) in pullRequests.runsOn, by the login its App acts as, and after a slash which of that App's consoles
-  // (config.runsOnName): Woodshed Cloud's orgs all act as one App. The others still start sessions by hand.
+  // (config.runsOnName), for a host that runs several on one App. The others still start sessions by hand.
   function runsElsewhere(gates, project, number, what, owner = null) {
     if (owner?.own) return false;
     if (owner?.elsewhere) return true;
@@ -1797,7 +1797,7 @@ export function createFleet({
   // Each console runs review and QA of the pull requests its own sessions opened, as the person who started the session,
   // on their plan; every other console leaves them alone. The App that opened one is its author, and has no plan.
   // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
-  // A bot-authored session branch this console has no session for is another console's (Cloud orgs share one App), and
+  // A bot-authored session branch this console has no session for is another console's (consoles may share one App), and
   // is skipped: a branch name can only make a console skip, never spend someone's plan.
   function pullOwner(project, pull, number) {
     const author = pull.user?.login ?? '';

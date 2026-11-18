@@ -1,13 +1,13 @@
 // What the console reads from the repo's project file (.woodshed/project.yaml, docs/reference.md, "The project file"): its
-// env files with their defaults and overrides for Repo settings (repoSettings.mjs), the gates a
-// pull request waits for before it is posted (`pullRequests`, prAnnouncer.mjs), and the databases whose engines the
-// installation must host before a session starts (`databases`), and where a database keeps its migrations, which Restore
-// a dump counts a copy's against (`databases[].migrations`, with the table it records them in, what its dump commands
-// leave out and its migrate command, dbRestore.mjs). Read from the repo's default branch, or the installation's file for a
-// repo with none there or one whose own file does not parse (WOODSHED_PROJECT_FILES_DIR, shared/project.mjs), and kept
-// for a while. A file that cannot
-// be read leaves Repo settings showing the saved values alone, and holds the pull requests until it can be
-// read: an unread file is not a file with no gates.
+// env files with their defaults and overrides for Repo settings (repoSettings.mjs), the gates a pull request waits for
+// before it is posted (`pullRequests`, prAnnouncer.mjs), the avatar menu's workflow links (`workflowLinks`, server.mjs's
+// /api/me), and the databases whose engines the installation must host before a session starts (`databases`), and where
+// a database keeps its migrations, which Restore a dump counts a copy's against (`databases[].migrations`, with the table
+// it records them in, what its dump commands leave out and its migrate command, dbRestore.mjs). Read from the repo's
+// default branch, or the installation's file for a repo with none there or one whose own file does not parse
+// (WOODSHED_PROJECT_FILES_DIR, shared/project.mjs), and kept for a while. A file that cannot be read leaves Repo settings
+// showing the saved values alone, and holds the pull requests until it can be read: an unread file is not a file with no
+// gates.
 import { parseYaml } from '../shared/yamlLite.mjs';
 import { parseProject } from '../shared/project.mjs';
 
@@ -111,6 +111,16 @@ export function createProjectReader({ github, installationFile = () => null, now
       const { project, error } = await read();
       if (error) return null;
       return project?.consoleLinks ?? true;
+    },
+    /**
+     * @returns {Promise<{label: string, file: string}[]|null>}  the avatar menu's GitHub Actions links (`workflowLinks`),
+     *   each by its file's name, which is how GitHub names a workflow's page; null when the file leaves the field out, there
+     *   is no file, or it could not be read, which leaves the menu to the installation's WOODSHED_ACTIONS_WORKFLOWS
+     */
+    async workflowLinks() {
+      const { project, error } = await read();
+      if (error || !project?.workflowLinks) return null;
+      return project.workflowLinks.map(({ label, workflow }) => ({ label, file: workflow.split('/').pop() }));
     },
     /**
      * @returns {Promise<'full'|'repo'|null>}  how far a private session's GitHub token reaches (`githubAccess`, full with no
