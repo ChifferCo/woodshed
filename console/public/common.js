@@ -1429,9 +1429,10 @@
   }
 
   // Writes carry x-woodshed, which a cross-site form cannot send. The error is the console's own sentence.
-  async function postJson(path, body) {
+  /** @param {{ signal?: AbortSignal }} [opts]  a signal that gives up on the call */
+  async function postJson(path, body, { signal } = {}) {
     const res = await fetch(path, {
-      method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}),
+      method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal,
     });
     const answer = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status }, answer.link && { link: answer.link });
