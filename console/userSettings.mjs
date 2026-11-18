@@ -166,7 +166,9 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
    * @param {{force?: boolean}} [opts]  true asks now, for a start or resume that needs the answer
    */
   async function refresh(login, { force = false } = {}) {
-    if (!login || !secrets || secrets.configured?.() === false) return;
+    // An App (`<slug>[bot]`, the author of a pull request a console's App opened) has no sign-ins of its own, and a
+    // secret store may refuse the name: Secrets Manager does, `[` and `]` being no characters it takes.
+    if (!login || login.endsWith('[bot]') || !secrets || secrets.configured?.() === false) return;
     const key = loginKey(login);
     const record = recordFor(login);
     if (!force && now() - (askedAt.get(key) ?? -Infinity) < FRESH_MS) return;
