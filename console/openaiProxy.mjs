@@ -7,21 +7,40 @@
 //
 // Only a Codex session may use it, and a review session whose Codex reviews beside Claude (Console settings' Reviews
 // card, reviewAgents.mjs): any other kind of session has no business with the key.
+//
+// A review of a pull request whose author turned on "Also use it for reviews of my pull requests" (My settings) runs
+// its Codex on that author's own sign-in (`review.codexLogin`), added here as the team key is, so the sign-in never
+// enters the review session, which reads what anyone who can push to the pull request wrote:
+//
+//   /openai/<path>                Authorization: Bearer <SESSION_TOKEN>  ->  api.openai.com/<path>, on the author's key
+//   /chatgpt/backend-api/<path>   Authorization: Bearer <SESSION_TOKEN>  ->  chatgpt.com/backend-api/<path>, on the
+//                                 author's ChatGPT login (its access token and account), for codex/* and the account check
+//
+// The session's codex holds a stand-in ChatGPT login whose access token is its SESSION_TOKEN (session/review.sh). The
+// console never refreshes a ChatGPT login (codexModels.mjs says why): one whose access token has expired is refused,
+// and the review's Codex says so.
 
 import http from 'node:http';
 import https from 'node:https';
 import { isReview } from './sessions.mjs';
+import { credentialOf } from './codexModels.mjs';
 
 const PREFIX = '/openai';
+const CHATGPT_PREFIX = '/chatgpt';
+// What of ChatGPT's backend a review's codex may reach: Codex's own API, and the account check codex makes before it.
+const CHATGPT_PATH_RE = /^\/backend-api\/(?:codex\/[A-Za-z0-9/_.-]*|wham\/accounts\/check)(?:\?[^#]*)?$/;
 const TEAM_KEY_SECRET = 'openai-api-key';
 // A key replaced on the Secrets page reaches sessions within this.
 const TEAM_KEY_TTL_MS = 5 * 60_000;
 // Ours to set, or the connection's own: never passed on.
-const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key']);
+const DROPPED_HEADERS = new Set(['host', 'connection', 'keep-alive', 'proxy-connection', 'authorization', 'x-api-key',
+  'chatgpt-account-id', 'cookie']);
+
+const under = (pathname, prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`);
 
 /** @returns {boolean}  whether a session API path is this proxy's */
 export function isOpenAiPath(pathname) {
-  return pathname === PREFIX || pathname.startsWith(`${PREFIX}/`);
+  return under(pathname, PREFIX) || under(pathname, CHATGPT_PREFIX);
 }
 
 function refuse(res, code, message) {
@@ -37,14 +56,15 @@ export function bearerOf(headers) {
 /**
  * @param {{secrets?: {read: (name: string) => Promise<string|null>}|null,
  *          teamKey?: string|null,  the key itself, where there is no Secrets Manager (the docker launcher's env file)
- *          upstream?: string, now?: () => number}} opts
+ *          userSettings?: {usesOwnCodexForReviews: (login: string) => boolean, codexAuth: (login: string) => Promise<string|null>}|null,
+ *          upstream?: string, chatgptUpstream?: string, now?: () => number}} opts
  * @returns {{isProxyPath: (pathname: string) => boolean,
  *            handle: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, session: object|null) => Promise<void>,
  *            teamCredential: () => Promise<string|null>}}
  */
-export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = 'https://api.openai.com', now = Date.now }) {
-  const target = new URL(upstream);
-  const transport = target.protocol === 'http:' ? http : https;
+export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings = null, upstream = 'https://api.openai.com',
+  chatgptUpstream = 'https://chatgpt.com', now = Date.now }) {
+  const targets = { openai: new URL(upstream), chatgpt: new URL(chatgptUpstream) };
   let team = null;
   let teamRead = null;
   const routed = new Set();
@@ -63,13 +83,26 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
     return teamRead;
   }
 
-  function forward(req, res, key) {
+  /**
+   * The author's own sign-in for a review that runs on it, read at each call: one turned off or removed since the
+   * review started stops being used at once.
+   * @returns {Promise<{headers: Record<string, string>, apiKey: boolean}|{refused: string}>}
+   */
+  async function authorCredential(login) {
+    if (!userSettings?.usesOwnCodexForReviews(login)) return { refused: `@${login} no longer has their Codex sign-in on for reviews` };
+    const cred = credentialOf(await userSettings.codexAuth(login), now());
+    if (!cred) return { refused: `@${login}'s saved Codex sign-in has no access token` };
+    if (cred.expired) return { refused: `@${login}'s saved Codex sign-in has expired: a Codex session of theirs refreshes it, or they save a new one` };
+    return cred;
+  }
+
+  function forward(req, res, { target, path, headers: added }) {
+    const transport = target.protocol === 'http:' ? http : https;
     const headers = {};
     for (const [name, value] of Object.entries(req.headers)) if (!DROPPED_HEADERS.has(name)) headers[name] = value;
-    Object.assign(headers, { authorization: `Bearer ${key}`, host: target.host });
+    Object.assign(headers, added, { host: target.host });
     const out = transport.request({
-      protocol: target.protocol, hostname: target.hostname, port: target.port || undefined,
-      method: req.method, path: req.url.slice(PREFIX.length) || '/', headers,
+      protocol: target.protocol, hostname: target.hostname, port: target.port || undefined, method: req.method, path, headers,
     }, (answer) => {
       res.writeHead(answer.statusCode, answer.headers);
       answer.pipe(res);
@@ -84,6 +117,12 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
     req.pipe(out);
   }
 
+  function firstCall(session, via) {
+    if (routed.has(session.id)) return;
+    routed.add(session.id);
+    console.log(`openaiProxy: first call on ${via}`, { sessionId: session.id, review: isReview(session) });
+  }
+
   async function handle(req, res, session) {
     if (!session) {
       req.resume();
@@ -94,6 +133,43 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
       req.resume();
       console.warn('openaiProxy: refused, not a Codex session', { sessionId: session.id });
       return refuse(res, 403, 'only a Codex session may use the team\'s OpenAI key');
+    }
+    const chatgpt = under(new URL(req.url, 'http://console').pathname, CHATGPT_PREFIX);
+    const author = isReview(session) ? session.review.codexLogin ?? null : null;
+    let cred;
+    try {
+      cred = author ? await authorCredential(author) : null;
+    } catch (err) {
+      req.resume();
+      console.warn('openaiProxy: credential not read', { sessionId: session.id, message: err?.message });
+      return refuse(res, 502, 'the console could not read the credential for this call');
+    }
+    if (cred?.refused) {
+      req.resume();
+      console.warn('openaiProxy: refused, the author\'s sign-in not usable', { sessionId: session.id, author, why: cred.refused });
+      return refuse(res, 403, cred.refused);
+    }
+    if (chatgpt) {
+      const path = req.url.slice(CHATGPT_PREFIX.length);
+      if (!cred || cred.apiKey) {
+        req.resume();
+        console.warn('openaiProxy: refused, ChatGPT is only for a review on its author\'s ChatGPT login', { sessionId: session.id });
+        return refuse(res, 403, 'only a review on its author\'s own ChatGPT login reaches ChatGPT');
+      }
+      if (!CHATGPT_PATH_RE.test(path)) {
+        req.resume();
+        return refuse(res, 404, 'not something a review\'s codex needs');
+      }
+      firstCall(session, 'the author\'s ChatGPT login');
+      return forward(req, res, { target: targets.chatgpt, path, headers: cred.headers });
+    }
+    if (cred) {
+      if (!cred.apiKey) {
+        req.resume();
+        return refuse(res, 403, 'this review\'s Codex runs on its author\'s ChatGPT login, through /chatgpt');
+      }
+      firstCall(session, 'the author\'s key');
+      return forward(req, res, { target: targets.openai, path: req.url.slice(PREFIX.length) || '/', headers: cred.headers });
     }
     let key;
     try {
@@ -109,11 +185,8 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, upstream = '
       console.warn('openaiProxy: no team key saved', { sessionId: session.id });
       return refuse(res, 503, 'the console has no OpenAI key: save your own Codex sign-in on My settings, or set openai-api-key on the Secrets page');
     }
-    if (!routed.has(session.id)) {
-      routed.add(session.id);
-      console.log('openaiProxy: first call on the team key', { sessionId: session.id, review: isReview(session) });
-    }
-    return forward(req, res, key);
+    firstCall(session, 'the team key');
+    return forward(req, res, { target: targets.openai, path: req.url.slice(PREFIX.length) || '/', headers: { authorization: `Bearer ${key}` } });
   }
 
   return { isProxyPath: isOpenAiPath, handle, teamCredential };

@@ -688,40 +688,6 @@ test('a hosted engine but a console that makes no databases: the plan alone keep
   assert.match(hosted.stdout, /db=none plan=allen calls=\/settings \n/);
 });
 
-// A review whose Codex runs on its author's own sign-in finds it in the /settings answer, beside the plan.
-test('a review session writes its author\'s Codex sign-in into codex\'s home, and keeps the copy as given', (t) => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'woodshed-review-codex-'));
-  t.after(() => fs.rmSync(home, { recursive: true, force: true }));
-  const run = (body) => spawnSync('bash', ['-c', [
-    'set -euo pipefail', 'log() { echo "[woodshed] $*"; }',
-    `consoleCall() { printf '%s' '${body}' > "$2"; printf 200; }`,
-    `SETTINGS_ANSWER=${home}/settings.json`, "PLAN_ONLY_HEADER='X-Woodshed-Plan-Only: 1'",
-    `OWN_CODEX_AUTH_FILE=${home}/given`, `CODEX_HOME_DIR=${home}/codex`,
-    fn('reviewCodexAuth'), fn('fetchStarterPlan'), fn('fetchSessionDatabases'), 'fetchSessionDatabases',
-    'echo "plan=${STARTER_PLAN:-none}"',
-  ].join('\n')], { encoding: 'utf8', env: { PATH: process.env.PATH, SHARED_DIR, WOODSHED_CONSOLE_URL: 'http://console:7691', SESSION_MODE: 'review' } });
-
-  const login = '{"tokens":{"refresh_token":"rt"}}';
-  const own = run(JSON.stringify({ plan: 'ana', codexAuth: login }));
-  assert.equal(own.status, 0, own.stdout + own.stderr);
-  assert.match(own.stdout, /The review's Codex runs on the author's own Codex sign-in, directly/);
-  assert.match(own.stdout, /plan=ana/);
-  assert.equal(fs.readFileSync(path.join(home, 'codex/auth.json'), 'utf8'), login);
-  assert.equal(fs.readFileSync(path.join(home, 'given'), 'utf8'), login);
-  assert.equal(fs.statSync(path.join(home, 'codex/auth.json')).mode & 0o077, 0, 'readable by the session\'s user alone');
-
-  fs.rmSync(path.join(home, 'codex'), { recursive: true });
-  const key = run(JSON.stringify({ codexAuth: 'sk-ana' }));
-  assert.equal(key.status, 0, key.stdout + key.stderr);
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, 'codex/auth.json'), 'utf8')), { OPENAI_API_KEY: 'sk-ana' });
-
-  fs.rmSync(path.join(home, 'codex'), { recursive: true });
-  const team = run('{}');
-  assert.equal(team.status, 0, team.stdout + team.stderr);
-  assert.doesNotMatch(team.stdout, /Codex/);
-  assert.equal(fs.existsSync(path.join(home, 'codex/auth.json')), false, 'the team key: codex goes through the console');
-});
-
 // The db-admin task's `seed` and `migrate`: every database's commands, in the list's order, each in its dir, with the
 // variables db-admin gave (seedEnv) and no console.
 test('the template commands run each database\'s migrate, then its seed for a new template, in the list\'s order', (t) => {

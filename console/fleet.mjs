@@ -344,7 +344,12 @@ export function createFleet({
       // Whose earlier inline comments are the review's own, for the session to check whether the head fixes them.
       if (session.review.author) env.REVIEW_AUTHOR = session.review.author;
       // Codex reviews beside Claude when Console settings asked for it as the review started (reviewAgents.mjs).
-      if (session.review.agents?.includes('codex')) env.REVIEW_AGENTS = session.review.agents.join(' ');
+      // How its codex reaches OpenAI, through the console either way: the author's ChatGPT login, or a key.
+      if (session.review.agents?.includes('codex')) {
+        env.REVIEW_AGENTS = session.review.agents.join(' ');
+        env.REVIEW_CODEX_AUTH = session.review.codexVia === 'chatgpt' ? 'chatgpt' : 'key';
+        if (env.REVIEW_CODEX_AUTH === 'chatgpt' && session.review.codexAccount) env.REVIEW_CODEX_ACCOUNT = session.review.codexAccount;
+      }
     } else if (session.kind === 'pr') env.PR = String(session.number);
     else {
       if (session.kind === 'issue') env.ISSUE = String(session.number);
@@ -1770,17 +1775,18 @@ export function createFleet({
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
     // Codex on the author's own sign-in only for someone who passed the same checks as their Claude plan; never a bot's.
     const ownCodexLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, codexLogin = null, why: agentsWhy } = reviewAgents ? await reviewAgents.forReview({ login: ownCodexLogin }) : { agents: ['claude'], why: null };
-    if (agentsWhy) console.warn('fleet: review runs on Claude Code alone, though Console settings ask for Codex too', { number, why: agentsWhy, ...projectField(project) });
+    const { agents, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy } = reviewAgents ? await reviewAgents.forReview({ login: ownCodexLogin }) : { agents: ['claude'], why: null };
+    if (agentsWhy && !agents.includes('codex')) console.warn('fleet: review runs on Claude Code alone, though Console settings ask for Codex too', { number, why: agentsWhy, ...projectField(project) });
+    else if (agentsWhy) console.warn('fleet: review\'s Codex runs on the team key, not the author\'s sign-in', { number, why: agentsWhy, ...projectField(project) });
     const session = await createSession({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
-        agents, ...(codexLogin ? { codexLogin } : {}),
+        agents, ...(codexLogin ? { codexLogin } : {}), ...(codexVia ? { codexVia } : {}), ...(codexAccount ? { codexAccount } : {}),
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });
-    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, codex: agents.includes('codex') ? (codexLogin ? 'own' : 'team key') : null, ...projectField(project) });
+    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null, ...projectField(project) });
     update(session, { review: { ...session.review, runningPosted: true } });
     await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents }));
     return { outcome: 'started', sessionId: session.id };

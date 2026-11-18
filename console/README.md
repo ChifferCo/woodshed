@@ -801,24 +801,9 @@ part. The session cannot write to GitHub, so it writes files and the console pos
 Console settings' **Reviews** card (`reviewAgents.mjs`, kept in `state.json` under `reviewAgents`) has one switch,
 **Review with Claude Code and Codex**. While it is on, each review that starts gets `review.agents: ['claude',
 'codex']` and `REVIEW_AGENTS`, and `session/review.sh` runs `codex exec` beside Claude with the same prompt and
-context, in `.review/codex/`.
-
-Codex reviews with **no tools**: no shell, no patches (`--sandbox read-only`), no web search, apps, browser or hooks, so
-the model is offered nothing to call. A pull request's text therefore cannot make it read the author's sign-in in its
-home, reach the network, or touch Claude's verdict files. Codex's own sandbox would be the usual answer, but it cannot
-run in a session's container: bubblewrap needs user namespaces, which Docker and Fargate do not give. Instead
-`review.sh` puts what Claude reads into Codex's prompt (`codeReview.mjs codex-prompt`, up to about 900 KB):
-
-- the context, the rules, the instructions and the risk areas;
-- `gh pr diff`;
-- each changed text file whole, with its folder's README, never through a link out of the checkout.
-
-Codex answers in JSON (`--output-schema`), which `codeReview.mjs codex-answer` writes as the files Claude writes.
-Claude's own tools are scoped to match (`claudeAllowed`, `claudeDenied` in `review.sh`). It has no shell, web fetch or
-web search, and reads the diff from `.review/pr.diff`. It reads only the checkout, writes only its own files in
-`.review/`, and is refused Codex's folder and the author's Codex sign-in. A review's `/codex-auth` accepts only a
-refresh of the same ChatGPT account (`sessionApi: Codex sign-in refused, not the same ChatGPT account`). Codex
-gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and Claude's verdict goes out alone.
+context, in `.review/codex/`. Codex works as in a Codex session: it reads the checkout, runs what it likes (the
+container is the sandbox) and writes its verdict's files itself. It gets `REVIEW_CODEX_MINUTES` (20 by default), then
+is stopped, and Claude's verdict goes out alone.
 
 The two verdicts become one (`codeReview.mjs merge`):
 
@@ -829,18 +814,30 @@ The two verdicts become one (`codeReview.mjs merge`):
 
 The PR comment says `Reviewing with Claude Code and Codex`.
 
-Codex runs on one of two credentials:
+No sign-in ever enters the review session, which reads what anyone who can push to the pull request wrote. The
+console's OpenAI proxy (`openaiProxy.mjs`) adds one of these to each of codex's calls, as the Anthropic proxy does for
+claude:
 
 - **The author's own Codex sign-in.** Each person turns this on for themselves, on My settings' Codex card, with **Also
   use it for reviews of my pull requests**. It is off by default, and needs the same checks as running a shared session
-  on their Claude plan (`teamKeyReason`); a bot author never has it. Unlike the Claude token, which the console adds to
-  each call, the sign-in itself goes into the review session (`review.codexLogin`). The console hands it out in the
-  review's `/settings` answer while the switch is still on, and the entrypoint writes it into codex's home
-  (`reviewCodexAuth`), as for a private Codex session. Since ChatGPT logins rotate, `review.sh` sends a login codex
-  refreshed back (`POST /codex-auth`), which only that author's login can be replaced by. The switch says on the page
-  what it means: the review session is everyone's on the console, and reads what others push to the pull request.
-- **The team's `openai-api-key`**, through the console's OpenAI proxy, which lets in a review session with Codex and no
-  other non-Codex session.
+  on their Claude plan (`teamKeyReason`); a bot author never has it. The review keeps `review.codexLogin` and
+  `review.codexVia`, and the session gets `REVIEW_CODEX_AUTH`:
+  - `chatgpt` for a ChatGPT login, with `REVIEW_CODEX_ACCOUNT`, the login's account id (an id, no credential).
+    `review.sh` gives codex a stand-in login for that account whose access token is the session's `SESSION_TOKEN`,
+    refreshed just now so codex never refreshes it. codex talks to a ChatGPT backend only over https, so it is pointed
+    (`chatgpt_base_url`, `openai_base_url`) at `session/chatgptRelay.mjs` on 127.0.0.1, with a certificate made for
+    the run from a CA whose key is deleted at once and which only this codex trusts (`CODEX_CA_CERTIFICATE`). The
+    relay passes each call on to the console's `/chatgpt/backend-api/`, where the proxy puts the author's access token
+    and account on Codex's API (`codex/…`) and the account check (`wham/accounts/check`), and refuses the rest of
+    ChatGPT, such as the author's chats. The console never refreshes the login (`codexModels.mjs` says why): one whose
+    access token has expired is not used. codex first tries a websocket, which the relay does not carry, and falls
+    back to https after five tries, a few seconds.
+  - `key` for an API key, which the proxy puts on `/openai` in place of the team key.
+
+  The proxy checks the switch and the sign-in at each call, so one turned off or expired mid-review stops being used
+  at once.
+- **The team's `openai-api-key`**, on `/openai`, for everyone else (`REVIEW_CODEX_AUTH=key`), and for an author whose
+  saved ChatGPT login has expired.
 
 With neither, the review runs on Claude Code alone. The admin switch needs no team OpenAI key, since authors' own
 sign-ins can carry it.
@@ -849,14 +846,15 @@ The console logs:
 
 - `reviewAgents: changed` with who changed it;
 - `userSettings: own Codex sign-in for reviews` on each person's switch;
-- `fleet: review session started` with its `agents` and `codex` (`own` or `team key`);
+- `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`);
+- `fleet: review's Codex runs on the team key, not the author's sign-in` with `why`;
 - `fleet: review runs on Claude Code alone, though Console settings ask for Codex too` with `why`;
-- `sessionApi: review settings handed out` with `codex`.
+- `openaiProxy: first call on the author's ChatGPT login`, `on the author's key` or `on the team key`;
+- `openaiProxy: refused, the author's sign-in not usable` with `why`.
 
-In the session's pane: `Codex reviews on the author's own Codex sign-in` or `on the team's OpenAI key`, `with no
-tools`, then `Codex ended (exit=…)`. It also says `Codex took longer than … minutes and was stopped`, or `Codex's
-answer was not the JSON asked for`, when either happens. Codex's own log is at `.review/logs/codex.jsonl`, and its
-prompt and answer are in `.review/codex/`.
+In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
+the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
+when it did. Codex's own log is at `.review/logs/codex.jsonl`.
 
 ### The approval waits for QA
 

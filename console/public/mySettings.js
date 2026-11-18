@@ -111,7 +111,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: 'codex-reviews-label' }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? 'On: when Settings has Codex review beside Claude Code, the review of a pull request you opened runs Codex on your plan. Your sign-in goes into that review session, which everyone on this console can open and which reads what others push to the pull request.'
+        ? 'On: when Settings has Codex review beside Claude Code, the review of a pull request you opened runs Codex on your plan. The console adds your sign-in to Codex\u2019s calls; it never goes into the review session. A ChatGPT sign-in that has expired is not used: a Codex session of yours refreshes it.'
         : 'Off: when Settings has Codex review beside Claude Code, it runs on the team\u2019s OpenAI key, or not at all without one.'),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }

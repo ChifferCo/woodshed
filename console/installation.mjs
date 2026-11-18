@@ -302,7 +302,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const appShares = createAppShares({ store, secure: loaded.publicUrl.startsWith('https:') });
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
-  const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null });
+  const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });

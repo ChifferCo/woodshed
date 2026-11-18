@@ -4,9 +4,10 @@
 # Merge risk check (POST /review-report, console/sessionApi.mjs). The prompt and verdict are shared/codeReview's, so
 # the verdict matches the Actions review (review.yml). Runs in claude's pane; the review changes nothing on the branch.
 # With REVIEW_AGENTS naming codex (Console settings' Reviews card), Codex reviews the same diff with the same prompt
-# beside Claude, with no tools, from .review/codex/, on the author's own Codex sign-in when they turned that on for
-# reviews, or on the team's OpenAI key through the console, and the two verdicts become one
-# (codeReview.mjs merge): the strictest conclusion and the higher merge risk.
+# beside Claude, in .review/codex/, and the two verdicts become one (codeReview.mjs merge): the strictest conclusion and
+# the higher merge risk. Codex reaches OpenAI through the console either way (console/openaiProxy.mjs), so the session
+# holds no one's sign-in: on a key (REVIEW_CODEX_AUTH=key, the author's or the team's), or on the author's ChatGPT login
+# (=chatgpt), for which codex holds a stand-in whose access token is the SESSION_TOKEN.
 #
 #   review.sh    the whole run, once; the entrypoint starts it
 set -uo pipefail
@@ -21,9 +22,10 @@ RISK_AREAS=${REVIEW_RISK_AREAS:-.woodshed/riskAreas.md}
 SERVER=${GITHUB_SERVER_URL:-https://github.com}
 AGENTS=${REVIEW_AGENTS:-claude}
 CODEX_DIR=$DIR/codex
-CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
-# The author's Codex sign-in as the console gave it, which the entrypoint keeps (reviewCodexAuth).
-OWN_CODEX_AUTH_FILE=${REVIEW_CODEX_GIVEN:-$HOME/.config/woodshed/codex-auth}
+# Codex's home for a review on the author's ChatGPT login: the stand-in login, and nothing else.
+CODEX_REVIEW_HOME=${REVIEW_CODEX_HOME:-$HOME/.codex-review}
+# The HTTPS front codex reaches the console's /chatgpt through (chatgptRelay.mjs).
+RELAY=${REVIEW_CHATGPT_RELAY:-/opt/woodshed/session/chatgptRelay.mjs}
 # How long Codex may take: Claude is held to its turns, and the verdict waits for both.
 CODEX_MINUTES=${REVIEW_CODEX_MINUTES:-20}
 
@@ -37,30 +39,9 @@ repoOfCheckout() {
   printf '%s\n' "${url#*github.com[:/]}"
 }
 
-# Claude's tools, scoped to the checkout: it reads the repository and writes only its own files in .review/, never
-# Codex's beside them, and never reads the author's Codex sign-in, wherever it is. Anything else asks, and -p refuses.
-# No shell at all: git log, show and diff write anywhere with --output, and Claude Code runs some read-only commands
-# unasked, whose options read any file (wc --files0-from prints its lines). The diff is in .review/pr.diff instead.
-# A path rule starting // is absolute (Claude Code's permission rules).
-claudeAllowed() {
-  printf '%s' "Read(/$REPO_DIR/**),Grep(/$REPO_DIR/**),Glob(/$REPO_DIR/**),Write(/$DIR/*),Edit(/$DIR/*)"
-}
-claudeDenied() {
-  local p
-  printf '%s' "Bash,WebFetch,WebSearch"
-  for p in "$CODEX_DIR" "$CODEX_HOME_DIR" "$(dirname "$OWN_CODEX_AUTH_FILE")"; do
-    printf ',%s' "Read(/$p/**)" "Grep(/$p/**)" "Glob(/$p/**)" "Write(/$p/**)" "Edit(/$p/**)"
-  done
-}
-
-claudePrompt() {
-  printf '%s\n\n' "You have no shell in this review. The output of \`gh pr diff $PR\` is in \`$DIR/pr.diff\`: read it with the Read tool where the steps below say to run it, and use Read, Grep and Glob for the rest of the repository."
-  cat "$DIR/review-prompt.md"
-}
-
 runClaude() {
-  "$SESSION_DIR/bin/claude" --model opus -p "$(claudePrompt)" --max-turns 60 \
-    --allowedTools "$(claudeAllowed)" --disallowedTools "$(claudeDenied)" \
+  "$SESSION_DIR/bin/claude" --model opus -p "$(cat "$DIR/review-prompt.md")" --max-turns 60 \
+    --allowedTools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(git log:*),Bash(git diff:*),Bash(git show:*),Bash(git grep:*),Bash(ls:*),Bash(wc:*),Read,Grep,Glob,Write,Edit" \
     --output-format stream-json --verbose 2>&1 | tee "$DIR/logs/review.jsonl" \
     | jq -rR --unbuffered 'fromjson? | select(.type == "assistant") | .message.content[]? | select(.type == "text") | .text' \
     || true
@@ -71,65 +52,82 @@ runClaude() {
 
 withCodex() { [[ " $AGENTS " == *" codex "* ]]; }
 
-# What Codex reads, put in its own folder, since it reviews with no tools (codeReview.mjs, codexPrompt): the context and
-# rules Claude reads, the pull request's diff, and each changed file whole with its folder's README, as at the head.
-gatherForCodex() {
-  local f d
-  mkdir -p "$CODEX_DIR/files"
-  cp -r "$DIR/context.md" "$CODEX_DIR/" 2>/dev/null
-  for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
-  cp "$DIR/pr.diff" "$CODEX_DIR/" 2>/dev/null
-  git diff --name-only --diff-filter=d "origin/$REVIEW_BASE...HEAD" 2>/dev/null | while IFS= read -r f; do
-    for f in "$f" "$(dirname "$f")/README.md"; do
-      f=${f#./}
-      # Text files in the checkout only, never through a link out of it.
-      [ -f "$f" ] && [ ! -e "$CODEX_DIR/files/$f" ] && grep -Iq . "$f" 2>/dev/null || continue
-      case "$(realpath -e "$f" 2>/dev/null)" in "$(realpath "$REPO_DIR")"/*) ;; *) continue ;; esac
-      d=$(dirname "$CODEX_DIR/files/$f")
-      mkdir -p "$d" && cp "$f" "$d/"
-    done
-  done
+# Codex is told how the prompt's tool names map to its own, and reads what Claude reads, from its own copy.
+codexPrompt() {
+  printf '%s\n\n' "You are Codex, reviewing beside another reviewer whose verdict is combined with yours. Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
+  cat "$CODEX_DIR/review-prompt.md"
+}
+
+# A ChatGPT login in codex's shape that holds nothing of anyone's: its access token is this session's token, which the
+# console's proxy swaps for the author's at each call. last_refresh is now, so codex never tries to refresh it. The
+# account is the author's (REVIEW_CODEX_ACCOUNT, an id and no credential), since codex looks for it in ChatGPT's list.
+writeStandInLogin() {
+  local part claims account=${REVIEW_CODEX_ACCOUNT:-woodshed-stand-in}
+  part() { printf '%s' "$1" | base64 -w0 | tr '+/' '-_' | tr -d '='; }
+  claims=$(jq -cn --arg a "$account" '{"https://api.openai.com/auth": {chatgpt_account_id: $a, chatgpt_plan_type: "plus"}}')
+  mkdir -p "$CODEX_REVIEW_HOME" && chmod 700 "$CODEX_REVIEW_HOME"
+  # The token goes to jq on stdin, never in its arguments.
+  printf '%s' "$SESSION_TOKEN" | (umask 077 && jq -Rn \
+    --arg id "$(part '{"alg":"none"}').$(part "$claims").stand-in" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg a "$account" \
+    '{auth_mode: "chatgpt", OPENAI_API_KEY: null, last_refresh: $at,
+      tokens: {id_token: $id, access_token: input, refresh_token: "woodshed-stand-in", account_id: $a}}' \
+    > "$CODEX_REVIEW_HOME/auth.json")
+}
+
+# codex reaches a ChatGPT backend only over https, and the console's session port is http: the relay is an https front
+# on 127.0.0.1, with a certificate made for this run that only this codex trusts. Sets RELAY_PORT and RELAY_PID.
+startRelay() {
+  local tls=$CODEX_REVIEW_HOME/relay
+  mkdir -p "$tls" && chmod 700 "$tls"
+  # A CA made and thrown away here, and the relay's own certificate from it: codex's TLS refuses a CA as the server's.
+  {
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 2 -subj '/CN=Woodshed review relay CA' \
+      -keyout "$tls/ca-key.pem" -out "$tls/ca.pem" &&
+    openssl req -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -subj '/CN=127.0.0.1' \
+      -keyout "$tls/key.pem" -out "$tls/relay.csr" &&
+    printf 'subjectAltName=IP:127.0.0.1\nbasicConstraints=critical,CA:FALSE\nextendedKeyUsage=serverAuth\n' > "$tls/ext.cnf" &&
+    openssl x509 -req -in "$tls/relay.csr" -CA "$tls/ca.pem" -CAkey "$tls/ca-key.pem" -CAcreateserial -days 2 \
+      -extfile "$tls/ext.cnf" -out "$tls/cert.pem"
+  } > /dev/null 2>&1 || return 1
+  rm -f "$tls/ca-key.pem"
+  coproc RELAY_PROC { node "$RELAY" "$tls/cert.pem" "$tls/key.pem" "$WOODSHED_CONSOLE_URL" 2>&1; }
+  RELAY_PID=$RELAY_PROC_PID
+  read -r -t 10 RELAY_PORT <&"${RELAY_PROC[0]}" && [[ "$RELAY_PORT" =~ ^[0-9]+$ ]]
 }
 
 runCodex() {
-  local code answer=$CODEX_DIR/answer.json
-  gatherForCodex
-  node "$REVIEW" codex-prompt "$CODEX_DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$1" \
+  local code f via=${REVIEW_CODEX_AUTH:-key}
+  mkdir -p "$CODEX_DIR"
+  cp -r "$DIR/context.md" "$CODEX_DIR/" 2>/dev/null
+  for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
+  node "$REVIEW" prompt "$CODEX_DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$1" \
     --reviewer "${REVIEW_AUTHOR:-}" || { say "Could not write Codex's review prompt"; return 0; }
-  # On the author's own sign-in when the entrypoint wrote it into codex's home (reviewCodexAuth); otherwise the session
-  # holds no OpenAI key, and session/bin/codex goes through the console's proxy, which adds the team's.
-  local auth=key
-  [ -s "$CODEX_HOME_DIR/auth.json" ] && auth=own
-  say "Codex reviews on $([ "$auth" = own ] && echo "the author's own Codex sign-in" || echo "the team's OpenAI key"), with no tools"
-  # No tools: no shell, no patches (read-only), no web search, apps, browser or hooks. Codex's sandbox cannot run in this
-  # container (bubblewrap has no user namespaces here), so the model gets nothing to run; the pull request's text can
-  # then neither read the sign-in beside it, reach the network nor touch Claude's files. It answers in JSON alone.
-  WOODSHED_CODEX_AUTH=$auth timeout --kill-after=30 "$CODEX_MINUTES"m "$SESSION_DIR/bin/codex" exec --skip-git-repo-check --ephemeral \
-    --sandbox read-only --disable shell_tool --disable unified_exec --disable apps --disable browser_use \
-    --disable computer_use --disable hooks --disable goals -c 'web_search="disabled"' \
-    --output-schema "$CODEX_DIR/answer-schema.json" -o "$answer" --json - \
-    < "$CODEX_DIR/review-prompt.md" > "$DIR/logs/codex.jsonl" 2>&1
-  code=$?
+  # The container is the sandbox, as for a Codex session; the review's GitHub token is read-only, and no sign-in is here.
+  if [ "$via" = chatgpt ]; then
+    say "Codex reviews on the author's ChatGPT login, which the console adds to its calls"
+    writeStandInLogin
+    if ! startRelay; then
+      say "Could not start the relay to the console, so Codex does not review"
+      return 0
+    fi
+    WOODSHED_CODEX_AUTH=own CODEX_HOME=$CODEX_REVIEW_HOME CODEX_CA_CERTIFICATE=$CODEX_REVIEW_HOME/relay/ca.pem \
+      timeout --kill-after=30 "$CODEX_MINUTES"m "$SESSION_DIR/bin/codex" \
+      -c "chatgpt_base_url=\"https://127.0.0.1:$RELAY_PORT/backend-api\"" \
+      -c "openai_base_url=\"https://127.0.0.1:$RELAY_PORT/backend-api/codex\"" \
+      exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
+    code=$?
+    kill "$RELAY_PID" 2>/dev/null
+  else
+    say "Codex reviews on a key the console adds to its calls (the author's or the team's)"
+    WOODSHED_CODEX_AUTH=key timeout --kill-after=30 "$CODEX_MINUTES"m "$SESSION_DIR/bin/codex" \
+      exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
+    code=$?
+  fi
   [ "$code" = 124 ] && say "Codex took longer than $CODEX_MINUTES minutes and was stopped"
   say "Codex ended (exit=$code)"
-  [ -s "$answer" ] && { node "$REVIEW" codex-answer "$CODEX_DIR" "$answer" || say "Codex's answer was not the JSON asked for"; }
-  [ "$auth" = own ] && keepCodexAuth
+  # What the console refused, in the pane: an author's sign-in turned off or expired since the review started.
+  grep -o '"message":"[^"]*sign-in[^"]*"' "$DIR/logs/codex.jsonl" 2>/dev/null | tail -1 | while read -r why; do say "Codex: $why"; done
   return 0
-}
-
-# ChatGPT's refresh token rotates: a login codex refreshed goes back to the console, which keeps it for the author's
-# next session, or the copy on My settings would stop working. Only a changed one, as statusd does for a Codex session.
-keepCodexAuth() {
-  local code
-  [ -s "$OWN_CODEX_AUTH_FILE" ] && [[ "$(head -c 3 "$OWN_CODEX_AUTH_FILE")" != sk- ]] || return 0
-  if [ "$(jq -cS . "$OWN_CODEX_AUTH_FILE" 2>/dev/null)" = "$(jq -cS . "$CODEX_HOME_DIR/auth.json" 2>/dev/null)" ]; then
-    say "The author's Codex sign-in is unchanged, not sent back"
-    return 0
-  fi
-  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-    | curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -X POST -K - --data-binary "@$CODEX_HOME_DIR/auth.json" \
-      "$WOODSHED_CONSOLE_URL/codex-auth") || code=000
-  say "The author's refreshed Codex sign-in sent back (status: $code)"
 }
 
 # The pull request's context and the repo's rules, from the base branch so a pull request cannot soften its own review.
@@ -156,8 +154,6 @@ gatherContext() {
   set +f
   git show "origin/$REVIEW_BASE:$INSTRUCTIONS" > "$DIR/instructions.md" 2>/dev/null || rm -f "$DIR/instructions.md"
   git show "origin/$REVIEW_BASE:$RISK_AREAS" > "$DIR/risk-areas.md" 2>/dev/null || rm -f "$DIR/risk-areas.md"
-  # The diff, for both reviewers, who have no shell.
-  gh pr diff "$PR" > "$DIR/pr.diff" 2>/dev/null || git diff "origin/$REVIEW_BASE...HEAD" > "$DIR/pr.diff" 2>/dev/null || true
 }
 
 sendReport() {

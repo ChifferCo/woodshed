@@ -2563,6 +2563,16 @@ test('a review started while Console settings ask for Codex too runs both, and s
   await fleet.tick();
   assert.equal(calls.started[0].env.REVIEW_AGENTS, 'claude codex');
   assert.match(calls.comments[0].body, /Reviewing\*\* with Claude Code and Codex/);
+  assert.equal(calls.started[0].env.REVIEW_CODEX_AUTH, 'key', 'the team key, through the console');
+  assert.equal(calls.started[0].env.REVIEW_CODEX_ACCOUNT, undefined);
+
+  const own = reviewSetup({ reviewAgents: { forReview: async ({ login }) => ({ agents: ['claude', 'codex'], codexLogin: login, codexVia: 'chatgpt', codexAccount: 'acct-joel', why: null }) } });
+  await own.fleet.reviewOnTag({ number: 7 });
+  await own.fleet.tick();
+  const ownEnv = own.calls.started[0].env;
+  assert.equal(ownEnv.REVIEW_CODEX_AUTH, 'chatgpt');
+  assert.equal(ownEnv.REVIEW_CODEX_ACCOUNT, 'acct-joel', 'the account, an id the stand-in login names');
+  assert.ok(!Object.keys(ownEnv).some((k) => /CODEX_AUTH_JSON|OPENAI_API_KEY/.test(k)), 'no sign-in in the session');
 
   const alone = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], why: 'the console has no OpenAI key' }) } });
   await alone.fleet.reviewOnTag({ number: 7 });

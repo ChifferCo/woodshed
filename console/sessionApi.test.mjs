@@ -645,40 +645,6 @@ test('a review session gets the plan from /settings, no database, and the team k
   assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-team' }), { status: 200, body: {} }, 'no plan recorded, so the team key');
 });
 
-test('a review whose Codex runs on its author\'s sign-in gets it from /settings while their switch is on, and alone may send it back', async (t) => {
-  const sessions = [
-    { id: 'rrrrrrrr', status: 'running', token: 'review-own', kind: 'pr', number: 7, review: { base: 'main', agents: ['claude', 'codex'], codexLogin: 'ana' }, plan: null, startedBy: 'ana' },
-    { id: 'tttttttt', status: 'running', token: 'review-team', kind: 'pr', number: 8, review: { base: 'main', agents: ['claude', 'codex'] }, plan: null, startedBy: 'bo' },
-  ];
-  const saved = [];
-  let on = true;
-  const userSettings = {
-    usesOwnTokenForShared: () => false, claudeToken: async () => null,
-    usesOwnCodexForReviews: (login) => login === 'ana' && on,
-    codexAuth: async (login) => (login === 'ana' ? '{"tokens":{"refresh_token":"rt","account_id":"acct-ana"}}' : null),
-    setCodexAuth: async (login, text) => { saved.push([login, text]); },
-  };
-  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
-  const server = http.createServer((req, res) => { handle(req, res); });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => server.close());
-  const { port } = server.address();
-
-  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-own' }), { status: 200, body: { codexAuth: '{"tokens":{"refresh_token":"rt","account_id":"acct-ana"}}' } });
-  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-team' }), { status: 200, body: {} }, 'the team key');
-  on = false;
-  assert.deepEqual(await request(port, { path: '/settings', authorization: 'Bearer review-own' }), { status: 200, body: {} }, 'turned off since the review started');
-
-  const other = '{"tokens":{"refresh_token":"x","account_id":"acct-someone-else"}}';
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: other })).status, 409, 'another ChatGPT account');
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"OPENAI_API_KEY":"sk-x"}' })).status, 409, 'an API key');
-  assert.deepEqual(saved, [], 'neither replaced the author\'s');
-  const refreshed = '{"tokens":{"refresh_token":"rt2","account_id":"acct-ana"}}';
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: refreshed })).status, 200);
-  assert.deepEqual(saved, [['ana', refreshed]], 'kept as the author\'s, the only login it may replace');
-  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-team', body: '{}' })).status, 404, 'a review on the team key keeps nobody\'s');
-});
-
 test('/repo-settings answers for the calling session\'s own project, a private one with its owner\'s layer, an ask session nothing', async (t) => {
   const { createRepoSettings } = await import('./repoSettings.mjs');
   const values = new Map([
@@ -768,4 +734,26 @@ test('two repos that both have an api-env: each session writes its own repo\'s r
   const onApp = await envFileOn('on-app');
   assert.equal(onApp.includes('api-settings'), false, 'the other repo\'s session never gets them');
   assert.equal(onApp.includes('FROM=terraform'), false, 'nor the Terraform secret');
+});
+
+test('a review whose Codex runs on its author\'s sign-in is never handed that sign-in, and cannot replace it', async (t) => {
+  const sessions = [
+    { id: 'rrrrrrrr', status: 'running', token: 'review-own', kind: 'pr', number: 7, review: { base: 'main', agents: ['claude', 'codex'], codexLogin: 'ana', codexVia: 'chatgpt' }, plan: null, startedBy: 'ana' },
+  ];
+  const saved = [];
+  const userSettings = {
+    usesOwnTokenForShared: () => false, claudeToken: async () => null, usesOwnCodexForReviews: () => true,
+    codexAuth: async () => '{"tokens":{"access_token":"at","refresh_token":"rt","account_id":"acct-ana"}}',
+    setCodexAuth: async (login, text) => { saved.push([login, text]); },
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const settings = await request(port, { path: '/settings', authorization: 'Bearer review-own' });
+  assert.equal(settings.status, 200);
+  assert.ok(!JSON.stringify(settings.body).includes('rt'), 'the console\'s proxy adds it to the calls instead');
+  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"tokens":{"refresh_token":"x"}}' })).status, 404);
+  assert.deepEqual(saved, []);
 });

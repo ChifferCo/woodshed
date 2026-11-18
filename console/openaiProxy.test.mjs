@@ -11,13 +11,22 @@ const SESSIONS = [
   { id: 'cccccccc', status: 'stopped', token: 'stopped', owner: 'joel', options: { agent: 'codex' } },
   { id: 'dddddddd', status: 'running', token: 'review-both', trigger: 'review', review: { base: 'main', agents: ['claude', 'codex'] } },
   { id: 'eeeeeeee', status: 'running', token: 'review-claude', trigger: 'review', review: { base: 'main', agents: ['claude'] } },
+  { id: 'ffffffff', status: 'running', token: 'review-ana', trigger: 'review', review: { base: 'main', agents: ['claude', 'codex'], codexLogin: 'ana', codexVia: 'chatgpt' } },
+  { id: '11111111', status: 'running', token: 'review-cy', trigger: 'review', review: { base: 'main', agents: ['claude', 'codex'], codexLogin: 'cy', codexVia: 'key' } },
 ];
+
+const jwt = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
+const NOW = Date.parse('2026-11-18T10:00:00Z');
+const SIGN_INS = {
+  ana: JSON.stringify({ tokens: { access_token: jwt(NOW / 1000 + 86400), refresh_token: 'rt-ana', account_id: 'acct-ana' } }),
+  cy: 'sk-cy',
+};
 
 function listen(server) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
 }
 
-async function setup(t, { teamKey = 'sk-team' } = {}) {
+async function setup(t, { teamKey = 'sk-team', own = ['ana', 'cy'], signIns = SIGN_INS } = {}) {
   const seen = [];
   const upstream = http.createServer((req, res) => {
     let body = '';
@@ -29,7 +38,8 @@ async function setup(t, { teamKey = 'sk-team' } = {}) {
     });
   });
   const upPort = await listen(upstream);
-  const openai = createOpenAiProxy({ teamKey, upstream: `http://127.0.0.1:${upPort}` });
+  const userSettings = { usesOwnCodexForReviews: (login) => own.includes(login), codexAuth: async (login) => signIns[login] ?? null };
+  const openai = createOpenAiProxy({ teamKey, userSettings, upstream: `http://127.0.0.1:${upPort}`, chatgptUpstream: `http://127.0.0.1:${upPort}`, now: () => NOW });
   const handle = createSessionApi({ fleet: { sessions: () => SESSIONS }, tokens: { token: async () => ({}) }, openai });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
@@ -37,7 +47,10 @@ async function setup(t, { teamKey = 'sk-team' } = {}) {
   const call = (token) => fetch(`http://127.0.0.1:${port}/openai/v1/responses`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: '{"model":"gpt-5.5"}',
   });
-  return { seen, call };
+  const chatgpt = (token, p = '/backend-api/codex/responses', headers = {}) => fetch(`http://127.0.0.1:${port}/chatgpt${p}`, {
+    method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers }, body: '{"model":"gpt-6.1-sol"}',
+  });
+  return { seen, call, chatgpt };
 }
 
 test('a Codex session\'s call goes out on the team key, and its session token never reaches OpenAI', async (t) => {
@@ -71,4 +84,45 @@ test('with no team key saved the session is told where to save one', async (t) =
   const res = await call('codex-private');
   assert.equal(res.status, 503);
   assert.match((await res.json()).error.message, /openai-api-key/);
+});
+
+test('a review on its author\'s ChatGPT login reaches ChatGPT with that login, which never reaches the session', async (t) => {
+  const { seen, chatgpt } = await setup(t);
+  const res = await chatgpt('review-ana', '/backend-api/codex/responses', { 'chatgpt-account-id': 'woodshed-stand-in', cookie: 'x=1' });
+  assert.equal(res.status, 200);
+  assert.equal(seen[0].url, '/backend-api/codex/responses', 'the console\'s prefix is dropped');
+  assert.equal(seen[0].headers.authorization, `Bearer ${JSON.parse(SIGN_INS.ana).tokens.access_token}`);
+  assert.equal(seen[0].headers['chatgpt-account-id'], 'acct-ana', 'the author\'s account, not the stand-in\'s');
+  assert.equal(seen[0].headers.cookie, undefined);
+  assert.ok(!JSON.stringify(seen[0].headers).includes('review-ana'), 'the session token stays here');
+  assert.ok(!JSON.stringify(seen[0].headers).includes('rt-ana'), 'the refresh token never leaves the console');
+  assert.equal((await chatgpt('review-ana', '/backend-api/wham/accounts/check')).status, 200, 'codex\'s account check');
+});
+
+test('ChatGPT is only Codex\'s API, and only for a review on its author\'s ChatGPT login', async (t) => {
+  const { seen, chatgpt } = await setup(t);
+  assert.equal((await chatgpt('review-ana', '/backend-api/conversations')).status, 404, 'the author\'s chats are not Codex\'s');
+  assert.equal((await chatgpt('review-ana', '/backend-api/ps/plugins/installed')).status, 404);
+  assert.equal((await chatgpt('review-both')).status, 403, 'a review on the team key');
+  assert.equal((await chatgpt('review-cy')).status, 403, 'a review on its author\'s API key');
+  assert.equal((await chatgpt('codex-private')).status, 403, 'a private Codex session');
+  assert.equal(seen.length, 0, 'nothing reached ChatGPT');
+});
+
+test('a review on its author\'s API key goes to OpenAI on that key, not the team\'s', async (t) => {
+  const { seen, call } = await setup(t);
+  assert.equal((await call('review-cy')).status, 200);
+  assert.equal(seen[0].headers.authorization, 'Bearer sk-cy');
+});
+
+test('an author who turned it off, or whose login expired, since the review started is refused at the next call', async (t) => {
+  const off = await setup(t, { own: [] });
+  const res = await off.chatgpt('review-ana');
+  assert.equal(res.status, 403);
+  assert.match((await res.json()).error.message, /no longer has their Codex sign-in on for reviews/);
+  const expired = await setup(t, { signIns: { ana: JSON.stringify({ tokens: { access_token: jwt(NOW / 1000 - 60), account_id: 'acct-ana' } }) } });
+  const old = await expired.chatgpt('review-ana');
+  assert.equal(old.status, 403);
+  assert.match((await old.json()).error.message, /has expired/);
+  assert.equal(off.seen.length + expired.seen.length, 0);
 });
