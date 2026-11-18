@@ -33,7 +33,9 @@ function loadSearch() {
       blur() { if (document.activeElement === this) { document.activeElement = null; this.dispatch('focusout', { relatedTarget: null }); } },
       setSelectionRange(a, b) { this.selectionStart = a; this.selectionEnd = b; },
       querySelectorAll() { return []; },
-      scrollIntoView() {},
+      scrollIntoView() { this.scrolled = true; },
+      closest() { return null; },
+      classList: { names: new Set(), add(c) { this.names.add(c); }, remove(c) { this.names.delete(c); } },
     };
     return el;
   };
@@ -49,12 +51,26 @@ function loadSearch() {
     for (const c of children.flat(Infinity)) if (c !== null && c !== undefined && c !== false) el.append(typeof c === 'object' ? c : String(c));
     return el;
   };
-  const W = { h, isAdmin: () => true, consoleLinks: () => [{ href: '/console-settings' }, { href: '/secrets' }, { href: '/people' }, { href: '/events' }] };
-  const window = { Woodshed: W, WoodshedSettingsIndex: Index, location: { pathname: '/events', hash: '' }, addEventListener() {}, history: { replaceState() {} } };
-  vm.runInContext(source, vm.createContext({ window, document, queueMicrotask, setTimeout, console }));
+  // Where the search sent the page (common.js, goToSettings, which shows a settings page in place).
+  const went = [];
+  const W = { h, isAdmin: () => true, consoleLinks: () => [{ href: '/console-settings' }, { href: '/secrets' }, { href: '/people' }, { href: '/events' }], goToSettings: (href) => went.push(href) };
+  const heard = {};
+  const location = { pathname: '/events', hash: '' };
+  const window = { Woodshed: W, WoodshedSettingsIndex: Index, location, addEventListener(type, fn) { (heard[type] ??= []).push(fn); }, history: { replaceState() {} } };
+  // The section a search result names, found by its id in what the page drew.
+  const byId = (id, n = app) => (n.attrs?.id === id ? n : (n.children ?? []).map((c) => byId(id, c)).find(Boolean) ?? null);
+  document.getElementById = (id) => byId(id);
+  class MutationObserver { observe() {} disconnect() {} }
+  vm.runInContext(source, vm.createContext({ window, document, queueMicrotask, setTimeout, console, MutationObserver }));
   // A page that redraws on a timer, as Webhook events does every 5 s.
   const redraw = () => app.replaceChildren(h('div', { class: 'page' }, h('nav'), W.settingsSearch(), h('table')));
-  return { W, document, redraw };
+  // A settings page shown, on load or in place: what common.js says once it is (woodshed:settings-shown).
+  const shown = (path, hash, ...children) => {
+    Object.assign(location, { pathname: path, hash });
+    app.replaceChildren(h('div', { class: 'page' }, ...children));
+    for (const fn of heard['woodshed:settings-shown'] ?? []) fn();
+  };
+  return { W, h, document, redraw, went, shown };
 }
 
 const settle = () => new Promise((r) => setImmediate(r));
@@ -94,4 +110,29 @@ test('a redraw does not take the focus to the search when it was elsewhere, and 
   redraw();
   await settle();
   assert.equal(document.activeElement, null, 'a box left with Esc is not focused again');
+});
+
+test('Enter on a result on another page shows it in place, through goToSettings, and closes the list', () => {
+  const { W, redraw, went } = loadSearch();
+  redraw();
+  const [input, list] = W.settingsSearch().children;
+  input.focus();
+  input.value = 'members';
+  input.dispatch('input');
+  const [first] = Index.search('members', { allowed: () => true });
+  assert.equal(first.page, '/people', 'a result on another page than Webhook events');
+  input.dispatch('keydown', { key: 'Enter' });
+  assert.deepEqual(went, [first.href]);
+  assert.equal(list.hidden, true);
+});
+
+test('a page shown with a section in its address has that section outlined and scrolled to', () => {
+  const { h, shown } = loadSearch();
+  const members = h('section', { id: 'members' });
+  shown('/people', '#members', members);
+  assert.equal(members.classList.names.has('is-found'), true);
+  assert.equal(members.scrolled, true);
+  const other = h('section', { id: 'members' });
+  shown('/people', '', other);
+  assert.equal(other.classList.names.has('is-found'), false, 'no section in the address: nothing outlined');
 });
