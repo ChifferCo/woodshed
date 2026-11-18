@@ -1466,6 +1466,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
+- `woodshedUpdate: false`: no Woodshed card on Console settings, no dot on the avatar for it (`updates` is left out of
+  `/api/me`), and no update check, for a program that deploys Woodshed itself. Its update routes
+  (`/api/console-settings/updates`, `/check`, `/update`) answer 404, as on a console that runs from no git clone (below,
+  "Console settings").
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
@@ -1830,7 +1834,8 @@ App's token as `GH_TOKEN`; its output goes to `woodshed-update.log` in the state
 then **Restart the console**, which exits with code 75 for its supervisor (`supervisorOf`, as the GitHub App setup's
 Restart). A failed step puts the clone back on the commit it was on (`git reset --keep`), so the console runs as it
 did. New code that passes the start check and still fails after the restart leaves nothing answering: after two
-minutes the page says so, with the `git -C <clone> reset --keep <from>` that goes back. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image),
+minutes the page says so, with the `git -C <clone> reset --keep <from>` that goes back. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image), or
+where the program embedding the console passed `woodshedUpdate: false` ("Embedding the console"),
 `/api/console-settings/updates` answers 404 and there is no card. `state.json` keeps the last update under
 `woodshedUpdate` (from, to, who, when, and whether the image was built), which the card says after the restart. The
 console logs `woodshedUpdate: following` with the clone, its branch and remote at start, `woodshedUpdate: checked` with
