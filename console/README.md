@@ -732,7 +732,7 @@ is why it is only for a console nobody else can reach, until the App exists and 
 
 ### Which console does the automatic work
 
-A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org, and each hears
+A repo can be connected to more than one console, such as your own and one on a hosted service, and each hears
 the same GitHub events. Without more, each starts its own session from the label or a comment, and its own review and
 QA. `pullRequests.runsOn` in the project file names the one that does, by the login its GitHub App acts as
 (`acme-woodshed[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
@@ -744,7 +744,7 @@ named `staging`, and a console with no name matches no such line.
 A pull request one of a console's own sessions opened is the exception: that console reviews and QAs it as the person
 who started the session, on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
 starter`). Any other console skips a bot-authored pull request on a session branch (`woodshed/…`) it has no session for
-(`fleet: pull request opened by another console's session, left to it`), which also keeps two Woodshed Cloud orgs off
+(`fleet: pull request opened by another console's session, left to it`), which also keeps two consoles of one App off
 each other's. So a session's pull request never falls to a team key because another console heard it first. Once a
 session's record is gone (removed from its ⋯ menu, or cleared a few days after it was deleted), every console skips
 its pull request, which then gets no review or QA until it is replaced.

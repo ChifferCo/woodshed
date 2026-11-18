@@ -248,8 +248,8 @@ test('an App\'s login has no stored sign-ins, and its store is never asked', asy
   const asked = [];
   const secrets = { ...fakeSecrets(), read: async (name) => { asked.push(name); if (/\[|\]/.test(name)) throw new Error('ValidationException: Invalid name'); return null; } };
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets });
-  assert.equal(await settings.claudeToken('woodshed-cloud[bot]'), null);
-  assert.equal(await settings.codexAuth('woodshed-cloud[bot]'), null);
+  assert.equal(await settings.claudeToken('acme-woodshed[bot]'), null);
+  assert.equal(await settings.codexAuth('acme-woodshed[bot]'), null);
   assert.deepEqual(asked, [], 'no read for a bot');
   await settings.claudeToken('octocat');
   assert.ok(asked.includes(userSecretName('octocat', 'claude-token')), 'a person\'s is still read');

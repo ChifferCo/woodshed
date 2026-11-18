@@ -325,8 +325,8 @@ An installation works on one repo, and nothing in this folder names one. To set 
   `dependencies.installs` (`session/stageDeps.sh`), so the image runs those installs and no others, in any language.
   The optional build secret `install_env` is `NAME=value` lines, the install secrets below under their variables, which
   `deps.sh` exports before the installs; the deploy workflow's session job writes it from repo secrets of the installation's choosing,
-  and `install.sh` passes the file `WOODSHED_INSTALL_ENV_FILE` names (a host that builds images for others, such as
-  Woodshed Cloud, writes it from its own store).
+  and `install.sh` passes the file `WOODSHED_INSTALL_ENV_FILE` names (a host that builds images for others writes it from its
+  own store).
 - **Install secrets:** what the installs read that is secret, such as a private registry's token. `install_secrets` in
   Terraform (`WOODSHED_INSTALL_SECRET_PAIRS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
   variable the repo's tools read it from (`{ "registry-token" = "REGISTRY_TOKEN" }`, the one its `.npmrc` names, say).
@@ -348,9 +348,9 @@ An installation works on one repo, and nothing in this folder names one. To set 
   there ("Databases" below). An engine left out has no resources at all (RDS, Mongo on the base box, their secrets and
   security group rules), and with none there is no db-admin task either. With Postgres, `database_name` and
   `database_user` are the database and master user RDS starts with, which nothing else uses; a change replaces RDS.
-- **The shared services:** the project file's `services` names them, and each installation runs them in one place
-  for all its sessions: one copy of a stateless service, and one of a service with `data` for each person whose
-  private sessions use it (and for each shared session). The AWS provider runs the stateless ones on its base box, from
+- **The shared services:** the project file's `services` names them, and each installation decides where they run:
+  in one place for all its sessions, or beside each session on a host that gives every session a machine of its own.
+  `data` says whose a copy's data is: a person's, across their private sessions, or a session's. The AWS provider runs the stateless ones on its base box, from
   the deploy workflow (`providers/aws/README.md`, "The project's services"); one with `data` stays in Terraform's
   `shared_services` until it runs those too, the containers the base box runs for every session, each with its image,
   port and the variable its URL reaches sessions in. The local provider takes a compose file of the installation's own,

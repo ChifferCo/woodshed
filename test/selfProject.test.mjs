@@ -27,9 +27,9 @@ test('Woodshed\'s project file parses, with no dependencies or databases, and it
 });
 
 test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s test job and the review\'s Merge risk', () => {
-  // Which of the Cloud App's consoles does the automatic work is .woodshed/'s alone to name.
+  // Which console does this repo's automatic work is .woodshed/'s alone to name.
   const { runsOn, ...gates } = selfProject().pullRequests;
-  assert.match(runsOn, /^woodshed-cloud\[bot\]\/[a-z0-9][a-z0-9-]*$/);
+  assert.match(runsOn, /^[a-z0-9-]+\[bot\]\/[a-z0-9][a-z0-9-]*$/);
   assert.deepEqual(gates, {
     review: {
       author: null, heading: '## Claude review', workflow: null,

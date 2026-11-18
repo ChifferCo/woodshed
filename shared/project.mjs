@@ -382,10 +382,10 @@ function service(value, field) {
 }
 
 // The containers the repo's sessions need beside them, such as a fake S3 or a PDF renderer, each reached at its URL in
-// its variable. Where they run is the installation's, one place for all of its sessions: the base box (AWS), the
-// machine's compose stack (local) or the org's services VM (Woodshed Cloud), with one copy of a stateless service for
-// everyone and one of a stateful one for each person (`data`). Every reader takes the default branch's, never a
-// branch's: a branch cannot change what runs beside the console.
+// its variable. Where they run is the installation's: the base box (AWS), the machine's compose stack (local), or beside
+// each session on a host that gives every session a machine of its own. A stateless service can share one copy, and
+// `data` says whose a stateful one's data is. Every reader takes the default branch's, never a branch's: a branch cannot
+// change what runs beside the console.
 function services(value) {
   const all = list(value, 'services', service);
   for (const key of ['name', 'port', 'variable']) {

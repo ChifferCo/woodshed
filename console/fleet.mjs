@@ -1797,7 +1797,7 @@ export function createFleet({
   // Each console runs review and QA of the pull requests its own sessions opened, as the person who started the session,
   // on their plan; every other console leaves them alone. The App that opened one is its author, and has no plan.
   // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
-  // A bot-authored session branch this console has no session for is another console's (Cloud orgs share one App), and
+  // A bot-authored session branch this console has no session for is another console's (consoles may share one App), and
   // is skipped: a branch name can only make a console skip, never spend someone's plan.
   function pullOwner(project, pull, number) {
     const author = pull.user?.login ?? '';
