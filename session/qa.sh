@@ -23,6 +23,8 @@ MAX_VIDEO_BYTES=$((25 * 1024 * 1024))
 # How long the browser may take to close after claude ends: qaBrowser.mjs gives it 30 s.
 BROWSER_CLOSE_WAIT_SECONDS=${QA_BROWSER_CLOSE_WAIT_SECONDS:-40}
 MAX_VIDEOS=5
+# The ffmpeg Playwright records with, for the still the QA comment shows: the image ships it beside its Chromium.
+QA_FFMPEG=${QA_FFMPEG:-$(ls -1d "${PLAYWRIGHT_BROWSERS_PATH:-$HOME/.cache/ms-playwright}"/ffmpeg-*/ffmpeg-linux 2>/dev/null | tail -1)}
 
 say() { printf '\n[qa %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -72,20 +74,43 @@ waitForBrowser() {
   done
 }
 
-# Each page's video, oldest first, to the console, which puts it where the pull request's QA comment can link it.
+# Each page's video, oldest first, to the console, which keeps them for the pull request's QA comment to link, then a
+# still from the first one's last second, which the comment shows. One at a time: the console takes no more.
 sendVideos() {
-  local file bytes code sent=0
+  local file bytes code sent=0 first=''
   while IFS= read -r file; do
     [ -n "$file" ] || continue
     bytes=$(stat -c %s "$file")
     if [ "$sent" -ge "$MAX_VIDEOS" ]; then say "Video not sent, past $MAX_VIDEOS: $file"; continue; fi
     if [ "$bytes" -gt "$MAX_VIDEO_BYTES" ]; then say "Video not sent, over $((MAX_VIDEO_BYTES / 1024 / 1024)) MB ($bytes bytes): $file"; continue; fi
-    code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
-      | curl -sS --max-time 300 -o /tmp/qa-video-reply.json -w '%{http_code}' -X POST -K - -H 'content-type: video/webm' \
-        --data-binary "@$file" "$WOODSHED_CONSOLE_URL/qa-video") || code=000
+    code=$(sendRecording /qa-video video/webm "$file")
     say "Video sent to the console ($((bytes / 1024)) KB, status: $code)"
-    [ "$code" = 200 ] && sent=$((sent + 1))
+    if [ "$code" = 200 ]; then
+      sent=$((sent + 1))
+      [ -n "$first" ] || first=$file
+    fi
   done < <(ls -1tr "$DIR"/video/*.webm 2>/dev/null)
+  [ -n "$first" ] && sendPoster "$first"
+  return 0
+}
+
+sendPoster() {
+  if [ -z "$QA_FFMPEG" ]; then say "No still sent: Playwright's ffmpeg is not in this image"; return; fi
+  if ! "$QA_FFMPEG" -hide_banner -loglevel error -y -sseof -1 -i "$1" -frames:v 1 -vf scale=800:-2 "$DIR/poster.png" \
+    || [ ! -s "$DIR/poster.png" ]; then
+    say "No still sent: ffmpeg made none from $1"
+    return
+  fi
+  say "Still sent to the console (status: $(sendRecording /qa-poster image/png "$DIR/poster.png"))"
+}
+
+# @returns the console's status code, 000 when it was not reached
+sendRecording() {
+  local path=$1 type=$2 file=$3 code
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+    | curl -sS --max-time 300 -o /tmp/qa-recording-reply.json -w '%{http_code}' -X POST -K - -H "content-type: $type" \
+      --data-binary "@$file" "$WOODSHED_CONSOLE_URL$path") || code=000
+  echo "$code"
 }
 
 waitForApp() {

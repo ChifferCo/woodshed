@@ -2,15 +2,18 @@
 // request starts a session on its branch (fleet.handleQaLabel), which runs session/qa.sh with the same prompts and
 // verdict as the QA actions (shared/qa/qa.mjs), then sends its report to POST /qa-report (sessionApi.mjs). The console
 // writes the report into the pull request's QA comment and stops the session (fleet.qaFinished). Before the report,
-// the session sends the browser's video of each page the tests opened (POST /qa-video), which the console commits to a
-// ref of the repo's own, never a branch (fleet.qaVideo), for the comment to link.
+// the session sends the browser's video of each page the tests opened (POST /qa-video) and a still from the first
+// (POST /qa-poster), which the console keeps for QA_RECORDING_DAYS where its provider keeps files, never in the repo
+// (qaRecordings.mjs), for the comment to show and link.
+
+import { QA_RECORDING_DAYS } from './qaRecordings.mjs';
 
 // GitHub caps a comment at 65536 characters; the report is cut to leave room for the heading and the footer.
 export const MAX_REPORT_CHARS = 60_000;
 const CONCLUSIONS = new Set(['success', 'failure', 'neutral']);
 // A QA run's videos: the browser's recording of each page the tests opened, as Playwright writes them (WebM), about
-// 2 MB a minute at 1280x720. The console holds one whole in memory on its way to GitHub (its container has 512 MB), so
-// the cap is kept to a quarter-hour page, and a session sends one at a time.
+// 2 MB a minute at 1280x720. The console holds one whole in memory on its way to the store (its container has 512 MB),
+// so the cap is kept to a quarter-hour page, and a session sends one at a time.
 export const MAX_QA_VIDEO_BYTES = 25 * 1024 * 1024;
 export const MAX_QA_VIDEOS = 5;
 const WEBM_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
@@ -32,39 +35,32 @@ export function isWebm(buffer) {
 }
 
 /**
- * Where a QA session's videos are kept: a ref of the repo that is not a branch, so clones never fetch it, one for each
- * run so that an older QA comment's links keep working.
- * @param {{id: string, number: number}} session
+ * @param {{url: string, bytes: number}[]} videos  each on the console, behind its sign-in
+ * @param {string|null} poster  a still from the first, at a public address, shown linking to it
+ * @returns {string}  the comment's lines for the recordings, empty with none
  */
-export function qaVideoRef(session) {
-  return `refs/woodshed-qa/${Number(session.number)}-${session.id}`;
-}
-
-/**
- * @param {{url: string, bytes: number}[]} videos
- * @returns {string}  the comment's line linking the recordings, empty with none
- */
-export function videoLine(videos = []) {
+export function videoLine(videos = [], poster = null) {
   if (!videos.length) return '';
   const size = (bytes) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  // Links download the file: GitHub plays a video only when it was attached by hand in the browser.
   const links = videos.length === 1
-    ? `[download](${videos[0].url}) (${size(videos[0].bytes)})`
+    ? `[watch](${videos[0].url}) (${size(videos[0].bytes)})`
     : videos.map((v, i) => `[page ${i + 1}](${v.url}) (${size(v.bytes)})`).join(' · ');
   const what = videos.length === 1 ? 'the browser during the tests' : 'the browser during the tests, a video for each page it opened';
-  return `🎥 **Recording** of ${what}, WebM, which any browser plays once downloaded: ${links}`;
+  const line = `🎥 **Recording** of ${what}, on the console for ${QA_RECORDING_DAYS} days (sign in to watch): ${links}`;
+  // GitHub plays no video an app links, so the comment shows a still that opens the first.
+  return poster ? `[![The QA run's recording](${poster})](${videos[0].url})\n\n${line}` : line;
 }
 
 /**
  * The QA comment once the run is over, as the QA actions write it: the verdict's line, then the report when it has
  * test cases, and a link to the browser's recording when the session sent one.
  * @param {{heading: string, verdict: {status: string, total: number}, report: string, sessionUrl: string|null,
- *   videos?: {url: string, bytes: number}[]}} args
+ *   videos?: {url: string, bytes: number}[], poster?: string|null}} args
  * @returns {string}
  */
-export function finishedComment({ heading, verdict, report, sessionUrl, videos = [] }) {
+export function finishedComment({ heading, verdict, report, sessionUrl, videos = [], poster = null }) {
   const body = verdict.total > 0 && report.trim() ? `${report.trim()}\n\n` : '';
-  const video = videos.length ? `${videoLine(videos)}\n\n` : '';
+  const video = videos.length ? `${videoLine(videos, poster)}\n\n` : '';
   const footer = sessionUrl ? `---\n\nRun in [a Woodshed session](${sessionUrl}), whose terminal shows the run.\n` : '';
   return `${heading}\n\n${verdict.status}\n\n${video}${body}${footer}`;
 }

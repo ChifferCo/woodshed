@@ -481,12 +481,13 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
   the project file's `app.start` when there is something to test, and runs the plan in the image's browser, which
   records a video of each page it opens.
 - The console posts the QA comment as its GitHub App when the session starts (`Running`, linking the session) and writes
-  the report into it when the session ends, with a link to the browser's recording (WebM, which downloads and plays in
-  any browser; GitHub plays only videos attached by hand). The console commits the recording to
-  `refs/woodshed-qa/<pull request>-<session id>`, a ref of the repo that is not a branch, so clones never fetch it, one
-  for each run, which nothing deletes yet. A ref is as visible as the repo: on a public repo the recordings of the app
-  are public from the first push, and on a private one the link opens only for someone signed in to GitHub who can
-  read the repo. Each later run writes over that comment. It also posts the
+  the report into it when the session ends, with the browser's recording: a still from it, which opens the video on the
+  console. The console keeps the recordings where its provider keeps files (the Claude homes' S3 bucket on AWS, under
+  `_qa/`; the state folder on a local install), never in the repo, and deletes them 14 days after the run
+  (`console/qaRecordings.mjs`). A video plays for whoever is signed in to the console and may open the QA session. The
+  still alone needs no sign-in, since GitHub fetches a comment's images with none: it sits at a name nobody can guess,
+  and shows as a broken image once deleted. GitHub plays no video an app links, only one attached by hand. Each later
+  run writes over that comment. It also posts the
   `pullRequests.qa.check` check on the commit tested, with the verdict and the report. The decision brief reads a QA
   session's report from that check, never from a comment: sessions comment as the same App, but cannot post a check.
   An installation that has not accepted the App's Checks: write gets no check (the console logs `fleet: QA check

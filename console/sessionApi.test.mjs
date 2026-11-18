@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { MAX_QA_POSTER_BYTES } from './qaRecordings.mjs';
 import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES } from './qaSessions.mjs';
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
@@ -416,6 +417,31 @@ test('a QA session sends its WebM videos through /qa-video before its report; no
   qa.qa.videos = [];
   qa.qa.conclusion = 'success';
   assert.equal((await send('Bearer qa-token', webm)).status, 409, 'not once the report is in');
+});
+
+test('a QA session sends one PNG still through /qa-poster; nothing else, and not twice', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const posters = [];
+  const fleet = {
+    sessions: () => [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }],
+    qaVideo: async () => ({ n: 1 }),
+    async qaPoster(session, png) { posters.push(png); session.qa.poster = '/qa-poster/aaaaaaaa/x.png'; return { saved: true }; },
+  };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100, 1)]);
+  const send = (authorization, body) => request(port, { path: '/qa-poster', authorization, body });
+
+  assert.equal((await send('Bearer pr-token', png)).status, 404, 'only a QA session');
+  assert.equal((await send('Bearer qa-token', Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5]))).status, 400, 'a still is a PNG');
+  assert.equal((await send('Bearer qa-token', Buffer.alloc(MAX_QA_POSTER_BYTES + 1, 0x89))).status, 413);
+  assert.deepEqual(await send('Bearer qa-token', png), { status: 200, body: { saved: true } });
+  assert.ok(posters[0].equals(png));
+  assert.equal((await send('Bearer qa-token', png)).status, 409, 'one still for a run');
+  assert.equal(posters.length, 1);
 });
 
 // A slow upload, its head and first bytes sent, held open until `finish` sends the rest.

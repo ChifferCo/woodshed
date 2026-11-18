@@ -463,56 +463,6 @@ export function createGitHub({ repo: repoOrGetter, token, run = execFileAsync })
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/check-runs`, ...fields]);
       return created?.html_url ?? null;
     },
-    /**
-     * Commits one file to a ref that need not be a branch, such as refs/woodshed-qa/…, on top of what the ref holds,
-     * with the Git data API: the console has no clone. The App needs Contents write.
-     * @param {{ref: string, path: string, content: Buffer, message: string}} file
-     * @returns {Promise<{commit: string, url: string}>}  the new commit, and the file's raw link at it, which a
-     *   browser downloads: GitHub shows no page for a video in a repo
-     */
-    async commitFileToRef({ ref, path: filePath, content, message }) {
-      const repo = currentRepo();
-      const short = ref.replace(/^refs\//, '');
-      let parent = null;
-      try {
-        parent = (await ghApi([`repos/${repo}/git/ref/${short}`]))?.object?.sha ?? null;
-      } catch (err) {
-        if (!/HTTP 404/.test(`${err?.stderr ?? ''}${err?.message ?? ''}`)) throw err;
-      }
-      const baseTree = parent ? (await ghApi([`repos/${repo}/git/commits/${parent}`]))?.tree?.sha : null;
-      // A JSON file, since the base64 is far too big for an argument.
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'blob-'));
-      const input = path.join(dir, 'body.json');
-      const post = async (endpoint, body) => {
-        fs.writeFileSync(input, JSON.stringify(body));
-        return ghApi(['--method', 'POST', `repos/${repo}/${endpoint}`, '--input', input]);
-      };
-      try {
-        // The blob's JSON is written in pieces, never as one string: a video's base64 and its JSON would each be a third
-        // bigger than the video, held at once in a console with little memory.
-        const fd = fs.openSync(input, 'w');
-        try {
-          fs.writeSync(fd, '{"encoding":"base64","content":"');
-          const piece = 3 * 256 * 1024;
-          for (let at = 0; at < content.length; at += piece) fs.writeSync(fd, content.subarray(at, at + piece).toString('base64'));
-          fs.writeSync(fd, '"}');
-        } finally {
-          fs.closeSync(fd);
-        }
-        const blob = await ghApi(['--method', 'POST', `repos/${repo}/git/blobs`, '--input', input]);
-        const tree = await post('git/trees', { ...(baseTree ? { base_tree: baseTree } : {}), tree: [{ path: filePath, mode: '100644', type: 'blob', sha: blob.sha }] });
-        const commit = await post('git/commits', { message, tree: tree.sha, parents: parent ? [parent] : [] });
-        if (parent) {
-          fs.writeFileSync(input, JSON.stringify({ sha: commit.sha, force: false }));
-          await ghApi(['--method', 'PATCH', `repos/${repo}/git/refs/${short}`, '--input', input]);
-        } else {
-          await post('git/refs', { ref, sha: commit.sha });
-        }
-        return { commit: commit.sha, url: `https://github.com/${repo}/raw/${commit.sha}/${filePath.split('/').map(encodeURIComponent).join('/')}` };
-      } finally {
-        fs.rmSync(dir, { recursive: true, force: true });
-      }
-    },
     async comment(number, body) {
       const created = await ghApi(['--method', 'POST', `repos/${currentRepo()}/issues/${number}/comments`, '-f', `body=${body}`]);
       return created?.id ?? null;

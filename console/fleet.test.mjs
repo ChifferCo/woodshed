@@ -15,7 +15,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, qaRecordings = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -103,7 +103,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     ...(appDomain ? { appDomain } : {}),
   };
   const fleet = createFleet({
-    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
+    config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
     pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
@@ -2437,25 +2437,40 @@ test('a QA check GitHub refuses still leaves the report in the comment and stops
   assert.equal(session.status, 'stopped');
 });
 
-test('a QA session\'s videos are committed to its own ref, one after another, and its comment links them', async () => {
-  const { fleet, calls, github } = qaSetup();
-  const commits = [];
-  github.commitFileToRef = async (file) => {
-    commits.push(file);
-    return { commit: `c${commits.length}`, url: `https://github.com/o/r/raw/c${commits.length}/${file.path}` };
+test('a QA session\'s videos and still are kept by the console, and its comment shows the still linked to them', async () => {
+  const saved = [];
+  const qaRecordings = {
+    async saveVideo(id, n, video) { saved.push(['video', id, n, video]); return { key: `${id}/video-${n}.webm` }; },
+    async savePoster(id, png) { saved.push(['poster', id, png]); return { path: `/qa-poster/${id}/${'e'.repeat(32)}.png` }; },
   };
+  const { fleet, calls } = qaSetup({ qaRecordings });
   await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
   const [session] = fleet.sessions();
   const video = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3]);
-  assert.deepEqual(await fleet.qaVideo(session, video), { url: 'https://github.com/o/r/raw/c1/qa-1.webm' });
-  await fleet.qaVideo(session, video);
-  assert.deepEqual(commits.map((c) => [c.ref, c.path]), [[`refs/woodshed-qa/7-${session.id}`, 'qa-1.webm'], [`refs/woodshed-qa/7-${session.id}`, 'qa-2.webm']]);
-  assert.ok(commits[0].content.equals(video));
+  assert.deepEqual(await fleet.qaVideo(session, video), { n: 1 });
+  assert.deepEqual(await fleet.qaVideo(session, video), { n: 2 });
+  await fleet.qaPoster(session, Buffer.from('png'));
+  assert.deepEqual(saved.map((s) => s.slice(0, 3)), [['video', session.id, 1], ['video', session.id, 2], ['poster', session.id, Buffer.from('png')]]);
+  assert.ok(saved[0][3].equals(video));
 
   await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
   await settle();
-  assert.match(calls.comments.at(-1).body, /🎥 \*\*Recording\*\*.*\[page 1\]\(https:\/\/github.com\/o\/r\/raw\/c1\/qa-1.webm\).*\[page 2\]\(https:\/\/github.com\/o\/r\/raw\/c2\/qa-2.webm\)/);
+  const body = calls.comments.at(-1).body;
+  const base = `https://console.test/qa/${session.id}/video`;
+  assert.ok(body.includes(`[![The QA run's recording](https://console.test/qa-poster/${session.id}/${'e'.repeat(32)}.png)](${base}/1)`), body);
+  assert.ok(body.includes(`[page 1](${base}/1)`) && body.includes(`[page 2](${base}/2)`));
+  assert.doesNotMatch(body, /github\.com\/.*\.webm|refs\/woodshed-qa/, 'nothing in the repo');
   assert.equal(session.qa.videos.length, 2, 'kept past the report');
+});
+
+test('a console that keeps no QA recordings refuses a video, and the comment has no recording line', async () => {
+  const { fleet, calls } = qaSetup();
+  await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  const [session] = fleet.sessions();
+  await assert.rejects(fleet.qaVideo(session, Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1])), /keeps no QA recordings/);
+  await fleet.qaFinished(session, { verdict: QA_VERDICT, report: '## TC-1: a ✅', sha: 'a'.repeat(40), costUsd: 1 });
+  await settle();
+  assert.doesNotMatch(calls.comments.at(-1).body, /Recording/);
 });
 
 test('a QA report naming another commit posts no check, though its comment is still written', async () => {

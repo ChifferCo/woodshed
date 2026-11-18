@@ -11,6 +11,7 @@ import { secretSpecs } from '../../console/secrets.mjs';
 import { createDbAdminRunner } from './dbAdminRunner.mjs';
 import { createDockerLauncher } from './dockerLauncher.mjs';
 import { createHomeStore } from './homeStore.mjs';
+import { createRecordingStore } from './recordingStore.mjs';
 import { readKey } from './secretKey.mjs';
 import { createSecretSlot } from './secretSlot.mjs';
 import { createSecretStore } from './secretStore.mjs';
@@ -149,6 +150,8 @@ export function localProvider(config) {
     launcher: withSessionSecrets({ launcher: docker, secrets, installSecrets: config.installSecrets }),
     secrets,
     homes: config.localHomesDir ? createHomeStore({ dir: config.localHomesDir }) : null,
+    // QA recordings, in the state folder (console/qaRecordings.mjs).
+    recordings: createRecordingStore({ dir: path.join(config.stateDir, 'qa-recordings') }),
     dbAdmin: dbAdmin(config, fixed),
     ...webhooks(config, fixed),
   };
