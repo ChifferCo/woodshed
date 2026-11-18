@@ -1780,15 +1780,17 @@ export function createFleet({
   }
 
   // A repo connected to several consoles names the one that does its automatic work (label and comment sessions,
-  // review, QA) in pullRequests.runsOn, by the login its App acts as. The others still start sessions by hand.
+  // review, QA) in pullRequests.runsOn, by the login its App acts as, and after a slash which of that App's consoles
+  // (config.runsOnName): Woodshed Cloud's orgs all act as one App. The others still start sessions by hand.
   function runsElsewhere(gates, project, number, what, owner = null) {
     if (owner?.own) return false;
     if (owner?.elsewhere) return true;
     const runsOn = gates?.runsOn ?? null;
     if (!runsOn) return false;
     const login = ownApp()?.login ?? null;
-    if (login === runsOn) return false;
-    console.log('fleet: skipped, pullRequests.runsOn names another console', { number, what, runsOn, login, ...projectField(project) });
+    const [app, name = null] = runsOn.split('/');
+    if (login === app && (name === null || name === (config.runsOnName ?? null))) return false;
+    console.log('fleet: skipped, pullRequests.runsOn names another console', { number, what, runsOn, login, name: config.runsOnName ?? null, ...projectField(project) });
     return true;
   }
 

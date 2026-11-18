@@ -15,7 +15,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -101,6 +101,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     sessionEnv: { PGHOST: 'db' }, ghToken, pollMs: 30_000, fallbackPollMs: 300_000, retention, maxPrivatePerPerson,
     ...(projects ? { projects } : {}),
     ...(appDomain ? { appDomain } : {}),
+    ...(runsOnName ? { runsOnName } : {}),
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, now: () => clock,
@@ -2970,6 +2971,22 @@ test('pullRequests.runsOn keeps label sessions, reviews and QA on the console it
   const here = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
   assert.equal((await here.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.ok(await label.fleet.startManual({ number: 43, startedBy: 'joel' }), 'by hand, on any console');
+});
+
+test('pullRequests.runsOn names one of the consoles that act as one App, by the name each is given', async () => {
+  const cloud = () => ({ login: 'woodshed-cloud[bot]' });
+  const gates = { ...REVIEW_GATES, runsOn: 'woodshed-cloud[bot]/beta' };
+  const named = reviewSetup({ gates, ownApp: cloud, runsOnName: 'beta' });
+  assert.equal((await named.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+  const other = reviewSetup({ gates, ownApp: cloud, runsOnName: 'acme' });
+  assert.equal((await other.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'another org of the same App');
+  const label = setup({ gates, ownApp: cloud, runsOnName: 'acme' });
+  assert.equal((await label.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'ignored');
+  assert.equal(label.calls.started.length, 0);
+  const unnamed = reviewSetup({ gates, ownApp: cloud });
+  assert.equal((await unnamed.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a console with no name is not the one named');
+  const any = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'woodshed-cloud[bot]' }, ownApp: cloud, runsOnName: 'acme' });
+  assert.equal((await any.fleet.reviewOnTag({ number: 7 })).outcome, 'started', 'the App alone still matches each of its consoles');
 });
 
 test('pullRequests.runsOn keeps the QA label to the console it names, so its own label starts its QA', async () => {
