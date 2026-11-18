@@ -25,23 +25,27 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total
 
 // A fake codex that asks for changes, so the merged verdict is visibly the stricter one. It reviews only when run on
 // the team key, through the console, as session/bin/codex does with WOODSHED_CODEX_AUTH=key, or on the author's own
-// sign-in in its home, which it refreshes, as codex does with a ChatGPT login.
+// sign-in in its home, which it refreshes, as codex does with a ChatGPT login; and only with no tools, its prompt on
+// stdin and its answer asked for as JSON, written where -o says, as codex does.
 const FAKE_CODEX = `#!/bin/bash
-[ "$1" = exec ] && [ "$2" = --skip-git-repo-check ] || exit 2
+[ "$1" = exec ] || exit 2
+args=" $* "
+for need in "--sandbox read-only" "--disable shell_tool" "--disable unified_exec" "--disable apps" "--disable hooks" 'web_search="disabled"'; do
+  [[ "$args" == *" $need "* ]] || { echo "codex was given a tool: no $need" >&2; exit 6; }
+done
+while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift ;; --output-schema) schema=$2; shift ;; esac; shift; done
+[ -s "$schema" ] && [ -n "$out" ] || exit 7
 case "$WOODSHED_CODEX_AUTH" in
   key) ;;
   own) h=\${CODEX_HOME:-$HOME/.codex}; [ -s "$h/auth.json" ] || exit 5
        echo '{"tokens":{"refresh_token":"rt-2"},"last_refresh":"2026-11-18T11:00:00Z"}' > "$h/auth.json" ;;
   *) exit 2 ;;
 esac
-prompt=$6
+prompt=$(cat)
 case "$prompt" in "You are Codex"*) ;; *) exit 3 ;; esac
-dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
-[ -s "$dir/context.md" ] || exit 4
-echo REQUEST_CHANGES > "$dir/verdict.txt"
-echo 'The link is wrong.' > "$dir/summary.md"
-printf 'MEDIUM\\nA link people follow.\\n' > "$dir/merge-risk.md"
-echo '[{"path":"README.md","line":1,"body":"This link 404s."}]' > "$dir/inline-comments.json"
+[ -n "$CODEX_PROMPT_COPY" ] && printf '%s' "$prompt" > "$CODEX_PROMPT_COPY"
+[[ "$prompt" == *"/context.md ====="* ]] || exit 4
+echo '{"verdict":"REQUEST_CHANGES","summary":"The link is wrong.","mergeRisk":"MEDIUM\\nA link people follow.","comment":"> [!WARNING]","inlineComments":[{"path":"README.md","line":1,"body":"This link 404s."}],"resolved":[]}' > "$out"
 echo '{"type":"turn.completed"}'
 `;
 
@@ -50,7 +54,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, ownLogin = null } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, ownLogin = null, promptCopy = null, codexMinutes = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -68,8 +72,12 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   fs.writeFileSync(path.join(sessionDir, 'bin', 'codex'), codex, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
-  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && git add -A &&
-    git -c user.email=t@t -c user.name=t commit -qm base ${origin ? `&& git remote add origin "${origin}"` : ''}`]);
+  // A branch that changes docs/guide.md and adds a link out of the checkout, against origin/main.
+  execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && echo hi > README.md && mkdir docs &&
+    echo 'Docs folder notes' > docs/README.md && echo old > docs/guide.md && echo 'outside secret' > "${dir}/outside.txt" &&
+    git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git update-ref refs/remotes/origin/main HEAD &&
+    echo 'new guide text' > docs/guide.md && ln -s "${dir}/outside.txt" docs/link.md && git add -A &&
+    git -c user.email=t@t -c user.name=t commit -qm change ${origin ? `&& git remote add origin "${origin}"` : ''}`]);
   const reports = [];
   const consoleServer = await listen((req, res) => {
     let body = '';
@@ -90,6 +98,8 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   env.CODEX_HOME = codexHome;
   env.REVIEW_CODEX_GIVEN = given;
   if (agents) env.REVIEW_AGENTS = agents;
+  if (promptCopy) env.CODEX_PROMPT_COPY = promptCopy;
+  if (codexMinutes) env.REVIEW_CODEX_MINUTES = codexMinutes;
   let output = '';
   await new Promise((resolve) => {
     const child = spawn('bash', [REVIEW_SH], { env });
@@ -126,6 +136,30 @@ test('with Codex beside Claude Code, both review the same diff and the stricter 
   assert.equal(body.mergeRisk.tier, 'Medium');
   assert.equal(body.costUsd, 0.25, 'Claude\'s cost, which codex does not report');
   assert.deepEqual(body.inlineComments.map((c) => c.body), ['**Claude Code:** Say what it is for.', '**Codex:** This link 404s.']);
+});
+
+test('Codex, with no tools, gets what Claude reads in its prompt: the context, the diff, each changed file and its folder\'s README, never a link out', async (t) => {
+  const promptCopy = path.join(os.tmpdir(), `codex-prompt-${process.pid}-${Date.now()}.md`);
+  t.after(() => fs.rmSync(promptCopy, { force: true }));
+  const { output } = await runReview(t, { agents: 'claude codex', promptCopy });
+  assert.match(output, /Codex ended \(exit=0\)/, 'the fake codex runs only with no tools');
+  const prompt = fs.readFileSync(promptCopy, 'utf8');
+  assert.match(prompt, /^You are Codex/);
+  assert.match(prompt, /you have no tools/);
+  assert.match(prompt, /===== FILE: \S+\/codex\/context\.md =====\n# Pull request #7\n# Pull request: Add GTM/);
+  assert.match(prompt, /===== FILE: \S+\/codex\/pr\.diff =====/);
+  assert.match(prompt, /===== FILE: \S+\/codex\/files\/docs\/guide\.md =====\nnew guide text/);
+  assert.match(prompt, /===== FILE: \S+\/codex\/files\/docs\/README\.md =====\nDocs folder notes/);
+  assert.doesNotMatch(prompt, /outside secret/, 'a link out of the checkout is not followed');
+});
+
+test('a Codex that takes too long is stopped, and Claude Code\'s review goes out alone', async (t) => {
+  const started = Date.now();
+  const { reports, output } = await runReview(t, { agents: 'claude codex', codex: '#!/bin/bash\nsleep 30\n', codexMinutes: '0.02' });
+  assert.ok(Date.now() - started < 20_000, 'it did not wait for codex');
+  assert.match(output, /Codex took longer than 0\.02 minutes and was stopped/);
+  assert.equal(reports[0].body.conclusion, 'APPROVE');
+  assert.match(reports[0].body.summary, /Codex wrote no verdict/);
 });
 
 test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote none', async (t) => {

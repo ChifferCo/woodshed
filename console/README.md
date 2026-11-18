@@ -799,7 +799,22 @@ part. The session cannot write to GitHub, so it writes files and the console pos
 Console settings' **Reviews** card (`reviewAgents.mjs`, kept in `state.json` under `reviewAgents`) has one switch,
 **Review with Claude Code and Codex**. While it is on, each review that starts gets `review.agents: ['claude',
 'codex']` and `REVIEW_AGENTS`, and `session/review.sh` runs `codex exec` beside Claude with the same prompt and
-context, in `.review/codex/`. The two verdicts become one (`codeReview.mjs merge`):
+context, in `.review/codex/`.
+
+Codex reviews with **no tools**: no shell, no patches (`--sandbox read-only`), no web search, apps, browser or hooks, so
+the model is offered nothing to call. A pull request's text therefore cannot make it read the author's sign-in in its
+home, reach the network, or touch Claude's verdict files. Codex's own sandbox would be the usual answer, but it cannot
+run in a session's container: bubblewrap needs user namespaces, which Docker and Fargate do not give. Instead
+`review.sh` puts what Claude reads into Codex's prompt (`codeReview.mjs codex-prompt`, up to about 900 KB):
+
+- the context, the rules, the instructions and the risk areas;
+- `gh pr diff`;
+- each changed text file whole, with its folder's README, never through a link out of the checkout.
+
+Codex answers in JSON (`--output-schema`), which `codeReview.mjs codex-answer` writes as the files Claude writes. Codex
+gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and Claude's verdict goes out alone.
+
+The two verdicts become one (`codeReview.mjs merge`):
 
 - The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
 - The comment and summary have a section from each, and each inline comment says whose it is.
@@ -832,8 +847,10 @@ The console logs:
 - `fleet: review runs on Claude Code alone, though Console settings ask for Codex too` with `why`;
 - `sessionApi: review settings handed out` with `codex`.
 
-In the session's pane: `Codex reviews on the author's own Codex sign-in` or `on the team's OpenAI key`, then `Codex
-ended (exit=…)`; codex's own log is at `.review/logs/codex.jsonl`.
+In the session's pane: `Codex reviews on the author's own Codex sign-in` or `on the team's OpenAI key`, `with no
+tools`, then `Codex ended (exit=…)`. It also says `Codex took longer than … minutes and was stopped`, or `Codex's
+answer was not the JSON asked for`, when either happens. Codex's own log is at `.review/logs/codex.jsonl`, and its
+prompt and answer are in `.review/codex/`.
 
 ### The approval waits for QA
 

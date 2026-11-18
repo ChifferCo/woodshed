@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn, mergeVerdicts } from './codeReview.mjs';
+import { reviewPrompt, writePrompt, verdictIn, mergeRiskIn, mergeVerdicts, codexPrompt, writeCodexPrompt, writeCodexAnswer, CODEX_ANSWER_SCHEMA } from './codeReview.mjs';
 import { parseYaml } from '../yamlLite.mjs';
 
 function dir(t) {
@@ -133,4 +133,44 @@ test('the inline comments stay within what the console posts, half each when bot
     { name: 'Codex', verdict: verdictOf('COMMENT', { comments: many(3) }) },
   ]);
   assert.equal(merged.inlineComments.length, 18);
+});
+
+test('Codex\'s prompt says it has no tools and carries what the shared prompt asks it to read, in order, until the limit', (t) => {
+  const d = dir(t);
+  fs.mkdirSync(path.join(d, 'base-rules'));
+  fs.mkdirSync(path.join(d, 'files', 'src'), { recursive: true });
+  fs.writeFileSync(path.join(d, 'context.md'), 'the intent');
+  fs.writeFileSync(path.join(d, 'base-rules', 'CLAUDE.md'), 'the rules');
+  fs.writeFileSync(path.join(d, 'pr.diff'), '+a line');
+  fs.writeFileSync(path.join(d, 'files', 'src', 'a.mjs'), 'small file');
+  fs.writeFileSync(path.join(d, 'files', 'src', 'b.mjs'), 'x'.repeat(5000));
+  const base = Buffer.byteLength(codexPrompt({ dir: d, pr: 7, head: 'abc', server: 's', repo: 'r', limit: 0 }));
+  const p = codexPrompt({ dir: d, pr: 7, head: 'abc', server: 's', repo: 'r', limit: base + 600 });
+  assert.match(p, /^You are Codex/);
+  assert.match(p, /you have no tools/);
+  assert.match(p, /gh pr diff 7/, 'the shared steps follow');
+  const at = (name) => p.indexOf(`===== FILE: ${d}/${name} =====`);
+  assert.ok(at('context.md') > 0 && at('context.md') < at('base-rules/CLAUDE.md') && at('base-rules/CLAUDE.md') < at('pr.diff') && at('pr.diff') < at('files/src/a.mjs'));
+  assert.equal(at('files/src/b.mjs'), -1, 'too big for what is left');
+  assert.match(p, new RegExp(`===== Left out for size =====\\n${d}/files/src/b\\.mjs`));
+  writeCodexPrompt({ dir: d, pr: 7, head: 'abc', server: 's', repo: 'r' });
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(d, 'answer-schema.json'), 'utf8')), CODEX_ANSWER_SCHEMA);
+});
+
+test('Codex\'s JSON answer becomes the files verdictIn reads; anything else is no verdict', (t) => {
+  const d = dir(t);
+  assert.equal(writeCodexAnswer(d, 'not json'), false);
+  assert.equal(writeCodexAnswer(d, JSON.stringify({ verdict: 'LGTM' })), false);
+  assert.equal(verdictIn(d).conclusion, null);
+  assert.equal(writeCodexAnswer(d, JSON.stringify({
+    verdict: 'REQUEST_CHANGES', summary: 'a.mjs:3 — wrong', mergeRisk: 'MEDIUM\nAn API reply changes.', comment: '> [!WARNING]',
+    inlineComments: [{ path: './a.mjs', line: 3, body: 'Off by one.' }], resolved: [12, 'x', 13],
+  })), true);
+  const v = verdictIn(d);
+  assert.equal(v.conclusion, 'REQUEST_CHANGES');
+  assert.equal(v.summary, 'a.mjs:3 — wrong');
+  assert.equal(v.mergeRisk.tier, 'Medium');
+  assert.equal(v.comment, '> [!WARNING]');
+  assert.deepEqual(v.inlineComments, [{ path: 'a.mjs', line: 3, body: 'Off by one.' }]);
+  assert.deepEqual(v.resolved, [12, 13]);
 });

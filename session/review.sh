@@ -4,8 +4,8 @@
 # Merge risk check (POST /review-report, console/sessionApi.mjs). The prompt and verdict are shared/codeReview's, so
 # the verdict matches the Actions review (review.yml). Runs in claude's pane; the review changes nothing on the branch.
 # With REVIEW_AGENTS naming codex (Console settings' Reviews card), Codex reviews the same diff with the same prompt
-# beside Claude, in .review/codex/, on the author's own Codex sign-in when they turned that on for reviews, or on the
-# team's OpenAI key through the console, and the two verdicts become one
+# beside Claude, with no tools, from .review/codex/, on the author's own Codex sign-in when they turned that on for
+# reviews, or on the team's OpenAI key through the console, and the two verdicts become one
 # (codeReview.mjs merge): the strictest conclusion and the higher merge risk.
 #
 #   review.sh    the whole run, once; the entrypoint starts it
@@ -24,6 +24,8 @@ CODEX_DIR=$DIR/codex
 CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
 # The author's Codex sign-in as the console gave it, which the entrypoint keeps (reviewCodexAuth).
 OWN_CODEX_AUTH_FILE=${REVIEW_CODEX_GIVEN:-$HOME/.config/woodshed/codex-auth}
+# How long Codex may take: Claude is held to its turns, and the verdict waits for both.
+CODEX_MINUTES=${REVIEW_CODEX_MINUTES:-20}
 
 say() { printf '\n[review %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -48,29 +50,49 @@ runClaude() {
 
 withCodex() { [[ " $AGENTS " == *" codex "* ]]; }
 
-# Codex is told how the prompt's tool names map to its own, and reads what Claude reads, from its own copy.
-codexPrompt() {
-  printf '%s\n\n' "You are Codex, reviewing beside another reviewer whose verdict is combined with yours. Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
-  cat "$CODEX_DIR/review-prompt.md"
+# What Codex reads, put in its own folder, since it reviews with no tools (codeReview.mjs, codexPrompt): the context and
+# rules Claude reads, the pull request's diff, and each changed file whole with its folder's README, as at the head.
+gatherForCodex() {
+  local f d
+  mkdir -p "$CODEX_DIR/files"
+  cp -r "$DIR/context.md" "$CODEX_DIR/" 2>/dev/null
+  for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
+  gh pr diff "$PR" > "$CODEX_DIR/pr.diff" 2>/dev/null \
+    || git diff "origin/$REVIEW_BASE...HEAD" > "$CODEX_DIR/pr.diff" 2>/dev/null || true
+  git diff --name-only --diff-filter=d "origin/$REVIEW_BASE...HEAD" 2>/dev/null | while IFS= read -r f; do
+    for f in "$f" "$(dirname "$f")/README.md"; do
+      f=${f#./}
+      # Text files in the checkout only, never through a link out of it.
+      [ -f "$f" ] && [ ! -e "$CODEX_DIR/files/$f" ] && grep -Iq . "$f" 2>/dev/null || continue
+      case "$(realpath -e "$f" 2>/dev/null)" in "$(realpath "$REPO_DIR")"/*) ;; *) continue ;; esac
+      d=$(dirname "$CODEX_DIR/files/$f")
+      mkdir -p "$d" && cp "$f" "$d/"
+    done
+  done
 }
 
 runCodex() {
-  local code
-  mkdir -p "$CODEX_DIR"
-  cp -r "$DIR/context.md" "$CODEX_DIR/" 2>/dev/null
-  for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
-  node "$REVIEW" prompt "$CODEX_DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$1" \
+  local code answer=$CODEX_DIR/answer.json
+  gatherForCodex
+  node "$REVIEW" codex-prompt "$CODEX_DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$1" \
     --reviewer "${REVIEW_AUTHOR:-}" || { say "Could not write Codex's review prompt"; return 0; }
   # On the author's own sign-in when the entrypoint wrote it into codex's home (reviewCodexAuth); otherwise the session
   # holds no OpenAI key, and session/bin/codex goes through the console's proxy, which adds the team's.
-  # The container is the sandbox, as for a Codex session; the review's GitHub token is read-only.
   local auth=key
   [ -s "$CODEX_HOME_DIR/auth.json" ] && auth=own
-  say "Codex reviews on $([ "$auth" = own ] && echo "the author's own Codex sign-in" || echo "the team's OpenAI key")"
-  WOODSHED_CODEX_AUTH=$auth "$SESSION_DIR/bin/codex" exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" \
-    > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
+  say "Codex reviews on $([ "$auth" = own ] && echo "the author's own Codex sign-in" || echo "the team's OpenAI key"), with no tools"
+  # No tools: no shell, no patches (read-only), no web search, apps, browser or hooks. Codex's sandbox cannot run in this
+  # container (bubblewrap has no user namespaces here), so the model gets nothing to run; the pull request's text can
+  # then neither read the sign-in beside it, reach the network nor touch Claude's files. It answers in JSON alone.
+  WOODSHED_CODEX_AUTH=$auth timeout --kill-after=30 "$CODEX_MINUTES"m "$SESSION_DIR/bin/codex" exec --skip-git-repo-check --ephemeral \
+    --sandbox read-only --disable shell_tool --disable unified_exec --disable apps --disable browser_use \
+    --disable computer_use --disable hooks --disable goals -c 'web_search="disabled"' \
+    --output-schema "$CODEX_DIR/answer-schema.json" -o "$answer" --json - \
+    < "$CODEX_DIR/review-prompt.md" > "$DIR/logs/codex.jsonl" 2>&1
   code=$?
+  [ "$code" = 124 ] && say "Codex took longer than $CODEX_MINUTES minutes and was stopped"
   say "Codex ended (exit=$code)"
+  [ -s "$answer" ] && { node "$REVIEW" codex-answer "$CODEX_DIR" "$answer" || say "Codex's answer was not the JSON asked for"; }
   [ "$auth" = own ] && keepCodexAuth
   return 0
 }

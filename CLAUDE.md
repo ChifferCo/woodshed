@@ -18,7 +18,9 @@ is applied (`docs/reference.md` here, then `console/`, `session/` and
   sessions: the default plugins (`session/defaultPlugins.mjs`, Slack's MCP)
   sign in as that person, by their own hand, and the login stays in their saved
   Claude home. A shared session never gets the default plugins or anyone's
-  login, but for one the person turns on themselves: their Codex sign-in, in a review of their own pull request, with
+  login, but for one the person turns on themselves: their Codex sign-in, in a review of their own pull request, where
+  Codex runs with no tools (no shell, no file writes, no web: `session/review.sh`, so the pull request's text cannot
+  reach the sign-in), with
   My settings' "Also use it for reviews of my pull requests" (off by default, and saying there that the review session
   is everyone's and reads what others push). Nothing team-wide (a bot token) goes in any session. An installation's env files set `AWS_ACCESS_KEY_ID=test`
   on purpose when its backend uses localstack: it accepts anything.
