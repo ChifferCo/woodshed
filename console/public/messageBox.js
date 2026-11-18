@@ -10,6 +10,8 @@
   const MAX_FILE_MB = 25;
   // Five lines of the 16px type, after which the box scrolls. 16px, since iOS zooms in on a smaller field it focuses.
   const MAX_FIELD_PX = 5 * 22 + 16;
+  // statusd types a message in well under a second; a call still open after this is one the phone dropped.
+  const SEND_TIMEOUT_MS = 20_000;
   const DRAFT_KEY = (id) => `woodshed-draft:${id}`;
   const ICONS = {
     attach: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg>',
@@ -43,7 +45,8 @@
     // Each session's files, while you write: { name, path, busy }. Its text is in sessionStorage.
     const files = new Map();
     let sessionId = null;
-    let sending = false;
+    // The sessions with a Send on its way: one session's send never holds another's box.
+    const sending = new Set();
     // The dictation listening (dictation.js), for the session it started on.
     let recognition = null;
 
@@ -80,7 +83,7 @@
       micButton.hidden = !mic;
       micButton.classList.toggle('is-live', Boolean(recognition));
       sendButton.hidden = mic;
-      sendButton.disabled = sending || !something || mine().some((f) => f.busy);
+      sendButton.disabled = sending.has(sessionId) || !something || mine().some((f) => f.busy);
       listening.hidden = !recognition;
     }
 
@@ -139,7 +142,7 @@
 
     async function send() {
       const id = sessionId;
-      if (sending) return;
+      if (sending.has(id)) return;
       // The words on screen are the words sent, the ones still settling too.
       if (recognition) {
         const words = abortListening();
@@ -148,10 +151,11 @@
       const paths = mine().filter((f) => f.path).map((f) => f.path);
       const text = [field.value.trim(), ...paths].filter(Boolean).join('\n');
       if (!text) return draw();
-      sending = true;
+      sending.add(id);
       draw();
       try {
-        await W.postJson(`/api/sessions/${id}/send`, { text });
+        // A phone that locks or leaves the page mid-send can leave the call open for good, and Send grey with it.
+        await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         files.delete(id);
         keepDraft(id, '');
         if (id === sessionId) {
@@ -162,10 +166,12 @@
         }
         W.shell.toast('Sent');
       } catch (err) {
-        W.shell.toast(`Not sent: ${err.message}`);
+        W.shell.toast(err.name === 'TimeoutError'
+          ? `No answer in ${SEND_TIMEOUT_MS / 1000} s: check the terminal before sending again`
+          : `Not sent: ${err.message}`);
       } finally {
-        sending = false;
-        draw();
+        sending.delete(id);
+        if (id === sessionId) draw();
       }
     }
 
