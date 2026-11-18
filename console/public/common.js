@@ -1323,6 +1323,8 @@
         h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
       sideNav = h('aside', { class: 'settings-side', 'aria-label': 'Settings' },
         h('div', { class: 'side-head' }, h('a', { class: 'side-back', href: '/' }, '‹ ', h('b', null, 'Back to sessions')), userSlot),
+        // The settings search (settingsSearch.js), the same box on every settings page, kept between redraws.
+        window.Woodshed.settingsSearch?.(),
         h('nav', { class: 'side-list' },
           h('div', { class: 'side-group' }, 'You'), MY_LINKS.map(item),
           consoleSlot,
@@ -1369,6 +1371,8 @@
       console.error('settings page failed to start', err);
       app.replaceChildren(h('div', { class: 'page' }, nav(navCurrent), h('p', { class: 'form-error', role: 'alert' }, `This page could not be drawn: ${err.message}`)));
     }
+    // For what follows a page being shown, on load or in place: the search's section named in the address.
+    window.dispatchEvent(new Event('woodshed:settings-shown'));
     return true;
   }
   function settingsLinkClicked(e) {
@@ -1379,9 +1383,18 @@
     // A link to a place on this same page is the browser's to scroll to.
     if (a.pathname === location.pathname && a.search === location.search && a.hash) return;
     e.preventDefault();
-    if (a.href !== location.href) history.pushState(null, '', a.href);
-    showSettingsPage();
+    goToSettings(a.href);
+  }
+  /** Opens a settings page in place when this is one, and loads it the ordinary way otherwise. */
+  function goToSettings(href) {
+    const url = new URL(href, location.href);
+    if (!shownPage || url.origin !== location.origin || !settingsPageAt(url.pathname)) {
+      location.href = url.href;
+      return;
+    }
+    if (url.href !== location.href) history.pushState(null, '', url.href);
     window.scrollTo(0, 0);
+    showSettingsPage();
   }
   if (typeof document !== 'undefined' && document.addEventListener) {
     // After every script of the page has run, so each settings page has registered.
@@ -1539,7 +1552,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

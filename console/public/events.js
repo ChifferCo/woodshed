@@ -68,9 +68,9 @@ window.Woodshed.settingsPage('/events', (app, life) => {
   }
 
   function render() {
-    const head = h('header', { class: 'page-head' },
+    const head = h('header', { class: 'page-head', id: 'events' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Webhook events'),
+        h('h1', { class: 'title' }, 'Webhook events ', W.scopePill('/events')),
         h('p', { class: 'sub' }, 'Every delivery the console took off the queue, and what it did with it.')));
     if (!data) {
       app.replaceChildren(h('div', { class: 'page' }, W.nav('/events'), head,

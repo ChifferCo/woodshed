@@ -1,0 +1,18 @@
+<!-- @dsCard group="Settings" height=330 subtitle="The search at the top of the settings rail" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ .box{width:282px;box-sizing:border-box;padding:8px 12px;border:1px solid var(--amber);outline:2px solid var(--amber);outline-offset:1px;border-radius:6px;font-size:14px}
+ .list{max-width:480px;margin-top:2px;padding:4px;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px rgba(27,34,50,.2)}
+ .item{display:flex;flex-direction:column;gap:1px;padding:8px 10px;border-radius:6px}
+ .item.on{background:var(--slate-tint);box-shadow:inset 3px 0 0 var(--amber)}
+ .t{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:600}
+ .pill{padding:2px 9px;border-radius:999px;background:var(--stopped);color:var(--sub);font-size:11.5px;font-weight:500}
+ .n{font-size:12.5px;color:var(--sub)}
+</style>
+<div class="box">repo</div>
+<div class="list">
+ <div class="item on"><span class="t">My repo settings <span class="pill">My settings · only you</span></span><span class="n">Your own env file values, instructions and files for each repo, in your private sessions.</span></div>
+ <div class="item"><span class="t">Repos the console runs sessions on <span class="pill">Settings · everyone</span></span><span class="n">Add a repo, pick the default, set each repo's colour.</span></div>
+ <div class="item"><span class="t">My default project <span class="pill">My settings · only you</span></span><span class="n">The repo New session starts on for you.</span></div>
+</div>

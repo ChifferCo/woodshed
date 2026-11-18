@@ -349,7 +349,7 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   function render() {
     const head = h('header', { class: 'page-head' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Settings'),
+        h('h1', { class: 'title' }, 'Settings ', W.scopePill('/secrets')),
         W.settingsTabs('/secrets'),
         h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`)));
     if (!data) {

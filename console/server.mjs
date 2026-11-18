@@ -183,6 +183,8 @@ const STATIC_FILES = {
   'setupSteps.cjs': 'text/javascript; charset=utf-8',
   'inviteLink.cjs': 'text/javascript; charset=utf-8',
   'openPulls.cjs': 'text/javascript; charset=utf-8',
+  'settingsIndex.cjs': 'text/javascript; charset=utf-8',
+  'settingsSearch.js': 'text/javascript; charset=utf-8',
   'keys.cjs': 'text/javascript; charset=utf-8',
   'projectColors.cjs': 'text/javascript; charset=utf-8',
   'common.js': 'text/javascript; charset=utf-8',
@@ -405,7 +407,9 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('inviteLink.cjs')}"></script>
 <script src="${staticUrl('openPulls.cjs')}"></script>
 <script src="${staticUrl('projectColors.cjs')}"></script>
+<script src="${staticUrl('settingsIndex.cjs')}"></script>
 <script src="${staticUrl('common.js')}"></script>
+<script src="${staticUrl('settingsSearch.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
