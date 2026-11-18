@@ -737,7 +737,9 @@ A pull request one of a console's own sessions opened is the exception: that con
 who started the session, on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
 starter`). Any other console skips a bot-authored pull request on a session branch (`woodshed/…`) it has no session for
 (`fleet: pull request opened by another console's session, left to it`), which also keeps two Woodshed Cloud orgs off
-each other's. So a session's pull request never falls to a team key because another console heard it first.
+each other's. So a session's pull request never falls to a team key because another console heard it first. Once a
+session's record is gone (removed from its ⋯ menu, or cleared a few days after it was deleted), every console skips
+its pull request, which then gets no review or QA until it is replaced.
 
 ### The reviewer App
 
