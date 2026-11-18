@@ -1362,7 +1362,13 @@
     const app = h('div', { class: 'settings-view' });
     document.getElementById('app').replaceChildren(app);
     shownPage = { pathname: location.pathname, search: location.search, stop: () => ends.splice(0).forEach((end) => end()) };
-    page.start(app, life);
+    // A page that fails to start says so on itself, and the others stay a click away, in place.
+    try {
+      page.start(app, life);
+    } catch (err) {
+      console.error('settings page failed to start', err);
+      app.replaceChildren(h('div', { class: 'page' }, nav(navCurrent), h('p', { class: 'form-error', role: 'alert' }, `This page could not be drawn: ${err.message}`)));
+    }
     return true;
   }
   function settingsLinkClicked(e) {
@@ -1380,12 +1386,14 @@
   if (typeof document !== 'undefined' && document.addEventListener) {
     // After every script of the page has run, so each settings page has registered.
     document.addEventListener('DOMContentLoaded', () => {
-      if (!showSettingsPage()) return;
+      if (!settingsPageAt(location.pathname)) return;
       document.addEventListener('click', settingsLinkClicked);
       // Back and Forward between settings pages; a page's own replaceState (a filter, a query it consumed) is not one.
       window.addEventListener('popstate', () => {
         if (location.pathname !== shownPage?.pathname || location.search !== shownPage?.search) showSettingsPage();
       });
+      // Listening first, so a page that throws as it starts still leaves the others a click away in place.
+      showSettingsPage();
     });
   }
 
