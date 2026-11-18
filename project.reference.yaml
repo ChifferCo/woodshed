@@ -93,9 +93,9 @@ databases:
 
 # Default: [] (none). The containers sessions need beside them, such as a fake S3 or a PDF renderer, each reached at
 # its URL in its `variable` (a session and the seed get WOODSHED_SERVICES, the list of those variables, too). Where they
-# run is the installation's, one place for all its sessions: the base box on AWS, the compose stack on a local install,
-# the org's services VM on Woodshed Cloud. A service with no `data` is stateless, so one copy serves everyone; one with
-# `data` gets a copy for each person. Each reader takes the default branch's, so a branch cannot change what runs.
+# run is the installation's: the base box on AWS, the compose stack on a local install, or beside each session on a host
+# that gives every session a machine of its own. A service with no `data` is stateless, so a copy can serve everyone;
+# `data` says whose a copy's data is. Each reader takes the default branch's, so a branch cannot change what runs.
 services:
   - # Required. Lowercase letters, digits and dashes, at most 32: the container's name, and its host on the sessions'
     # network. Not postgres, mongo, console or caddy, which Woodshed runs.
@@ -251,6 +251,6 @@ pullRequests:
     check: Merge risk
   # Default: none. For a repo connected to more than one console: the login of the GitHub App whose console does the
   # automatic work, meaning sessions from the label or a comment, the review and QA. Other consoles skip it and still
-  # start sessions by hand. Consoles that act as the same App (Woodshed Cloud orgs) all match it, unless a slash names
-  # one by the name it is given (WOODSHED_RUNS_ON_NAME; a Woodshed Cloud org's is its slug): woodshed-cloud[bot]/acme.
-  runsOn: woodshed-cloud[bot]
+  # start sessions by hand. Consoles that act as the same App all match it, unless a slash names one by the name it is
+  # given (WOODSHED_RUNS_ON_NAME): acme-woodshed[bot]/staging.
+  runsOn: acme-woodshed[bot]

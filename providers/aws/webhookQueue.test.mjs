@@ -182,7 +182,7 @@ test('a Needs a human comment is turned away unless the console\'s own App wrote
 
   const person = await run(comment('joel', 1), APP);
   assert.deepEqual([person.calls, person.events], [['receive-message', 'delete-message'], []], 'a person typing the words: deleted, not logged');
-  const oldName = await run(comment('woodshed-cloud[bot]', 2), APP);
+  const oldName = await run(comment('another-app[bot]', 2), APP);
   assert.deepEqual(oldName.calls, ['receive-message', 'delete-message'], 'another App\'s login is not this console\'s');
   const noApp = await run(comment('acme-woodshed[bot]', 3), { available: false, login: async () => null });
   assert.deepEqual(noApp.calls, ['receive-message', 'delete-message'], 'a console with no App has no session that could have written it');

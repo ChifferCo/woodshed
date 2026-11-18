@@ -312,7 +312,7 @@ quote a number (`PORT: '9000'`).
 | `workflowLinks[]` | the console's avatar menu, from the default branch of the default project's repo | The menu's links to the repo's GitHub Actions workflows, each opening its page and its **Run workflow** button: a `label` (1 to 40 printable characters, each its own) and its `workflow` file, directly in `.github/workflows/` (`.github/workflows/deploy.yml`), which `check` finds in the checkout or on the default branch. Left out (`null`), the menu keeps the installation's `WOODSHED_ACTIONS_WORKFLOWS` (console/README.md), as it does when the file cannot be read; `[]` is none, whatever that says |
 | `githubAccess` | the session API's `/github-token`, from the default branch | `full` or `repo`, default `full`. A private session acts as its owner, whose connected GitHub token it gets. `full` hands it the token as GitHub issued it, reaching every repo the GitHub App is on that the owner can write to. `repo` has GitHub scope it to this repo and the session permissions (`githubUser.scopedTokenFor`; the App's token when GitHub makes none): for a repo whose content outsiders write, such as public issues, where a prompt injection should reach no other repo. Shared sessions and questions use the App's token either way. When the file cannot be read, a session on the installation's default project gets `full` and one on another project `repo`. `repo` is only as strong as the protection on the repo's default branch: the setting lives in the repo it guards, so someone who can change that branch's project file can switch it back to `full` |
 | `rules`, `setup` | `writeRules` | The project's rules, after `prompt.md`, and its environment notes: inline in a shared session's rules, in `/tmp/woodshed-setup.md` for a private one, which claude reads without asking (a `Read` rule in `session/claudeHooks.json`). Notes that point claude at a file outside the repo other than `/tmp/woodshed-deps` make auto mode ask a person once, at its first read (session/README.md, "Why permissions are off"). The installation's instructions for the repo and a private session's owner's own (repo settings) come after all of it, with a paragraph saying which win; with neither, the rules are byte for byte what they were before them |
-| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"): its `review`, test `suites`, `qa` and `mergeRisk` check. Each field is described in `project.reference.yaml`. With none of them, the console posts a pull request once it is out of draft and no check is running or failed. `runsOn`, for a repo connected to more than one console, names the one that starts sessions from a label or a comment and runs review and QA: the login of the App it acts as (`woodshed-cloud[bot]`), or one of that App's consoles by the name it is given (`woodshed-cloud[bot]/acme`, `WOODSHED_RUNS_ON_NAME`; console/README.md, "Which console does the automatic work") |
+| `pullRequests` | the console's pull request announcer, from the default branch's copy | What a pull request waits for before the console posts it (console/README.md, "Slack"): its `review`, test `suites`, `qa` and `mergeRisk` check. Each field is described in `project.reference.yaml`. With none of them, the console posts a pull request once it is out of draft and no check is running or failed. `runsOn`, for a repo connected to more than one console, names the one that starts sessions from a label or a comment and runs review and QA: the login of the App it acts as (`acme-woodshed[bot]`), or one of that App's consoles by the name it is given (`acme-woodshed[bot]/staging`, `WOODSHED_RUNS_ON_NAME`; console/README.md, "Which console does the automatic work") |
 
 ## Using it on another repo
 
@@ -325,8 +325,8 @@ An installation works on one repo, and nothing in this folder names one. To set 
   `dependencies.installs` (`session/stageDeps.sh`), so the image runs those installs and no others, in any language.
   The optional build secret `install_env` is `NAME=value` lines, the install secrets below under their variables, which
   `deps.sh` exports before the installs; the deploy workflow's session job writes it from repo secrets of the installation's choosing,
-  and `install.sh` passes the file `WOODSHED_INSTALL_ENV_FILE` names (a host that builds images for others, such as
-  Woodshed Cloud, writes it from its own store).
+  and `install.sh` passes the file `WOODSHED_INSTALL_ENV_FILE` names (a host that builds images for others writes it from its
+  own store).
 - **Install secrets:** what the installs read that is secret, such as a private registry's token. `install_secrets` in
   Terraform (`WOODSHED_INSTALL_SECRET_PAIRS`, `secret=VARIABLE` pairs, for the console) maps each secret's name to the
   variable the repo's tools read it from (`{ "registry-token" = "REGISTRY_TOKEN" }`, the one its `.npmrc` names, say).
@@ -348,9 +348,9 @@ An installation works on one repo, and nothing in this folder names one. To set 
   there ("Databases" below). An engine left out has no resources at all (RDS, Mongo on the base box, their secrets and
   security group rules), and with none there is no db-admin task either. With Postgres, `database_name` and
   `database_user` are the database and master user RDS starts with, which nothing else uses; a change replaces RDS.
-- **The shared services:** the project file's `services` names them, and each installation runs them in one place
-  for all its sessions: one copy of a stateless service, and one of a service with `data` for each person whose
-  private sessions use it (and for each shared session). The AWS provider runs the stateless ones on its base box, from
+- **The shared services:** the project file's `services` names them, and each installation decides where they run:
+  in one place for all its sessions, or beside each session on a host that gives every session a machine of its own.
+  `data` says whose a copy's data is: a person's, across their private sessions, or a session's. The AWS provider runs the stateless ones on its base box, from
   the deploy workflow (`providers/aws/README.md`, "The project's services"); one with `data` stays in Terraform's
   `shared_services` until it runs those too, the containers the base box runs for every session, each with its image,
   port and the variable its URL reaches sessions in. The local provider takes a compose file of the installation's own,
