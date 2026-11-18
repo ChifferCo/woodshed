@@ -109,7 +109,7 @@ services:
     variable: S3_ENDPOINT
     # Default: {}. The container's environment. Quote numbers.
     environment:
-      SERVICES: s3
+      SERVICES: s3,lambda
       PERSISTENCE: '1'
     # Default: {}. Files put in the container, read-only and executable, such as an init script: the path there, then
     # the file in the repo it is read from, the repo's own and never a symlink.
@@ -126,6 +126,11 @@ services:
       # every session's starts empty and goes when it ends. An init script in `files` runs at each start, so it must
       # be safe to run again on data it made before.
       keep: person
+    # Default: false. true for a service that starts containers of its own, such as LocalStack running Lambda
+    # functions (SERVICES: s3,lambda): it gets a Docker daemon's socket at /var/run/docker.sock, where the installation
+    # can give it one. It runs the code sessions give it, so it needs `data`, and gets a copy for each person or
+    # session. The AWS provider runs no service with `data` yet, so none with this either.
+    docker: true
 
 # Default: null (no app: no Start app, no ports probed, and no pull request refused for an untested app).
 app:

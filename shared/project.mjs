@@ -66,7 +66,7 @@ export const PROJECT_FIELDS = Object.freeze({
   databases: ['engine', 'dir', 'migrate', 'seed', 'envFiles', 'paths', 'migrations', 'migrationsTable', 'dump', 'user', 'name'],
   'databases.migrationsTable': ['table', 'column'],
   'databases.dump': ['skip', 'extensions'],
-  services: ['name', 'image', 'port', 'variable', 'environment', 'files', 'memory', 'data'],
+  services: ['name', 'image', 'port', 'variable', 'environment', 'files', 'memory', 'data', 'docker'],
   'services.data': ['dir', 'keep'],
   app: ['start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
   apps: ['name', 'label', 'start', 'stop', 'frontendPort', 'backendPort', 'logs', 'paths', 'howToProve'],
@@ -362,7 +362,7 @@ function serviceData(value, field) {
 }
 
 function service(value, field) {
-  const s = fields(value, field, PROJECT_FIELDS.services, { environment: {}, files: {}, memory: '768m', data: null });
+  const s = fields(value, field, PROJECT_FIELDS.services, { environment: {}, files: {}, memory: '768m', data: null, docker: false });
   if (typeof s.name !== 'string' || !SERVICE_NAME.test(s.name)) fail(`${field}.name must be lowercase letters, digits and dashes, starting with a letter, at most 32`);
   if (RESERVED_SERVICE_NAMES.includes(s.name)) fail(`${field}.name is ${s.name}, which Woodshed runs beside the services itself`);
   const p = port(s.port, `${field}.port`);
@@ -374,9 +374,14 @@ function service(value, field) {
   const environment = stringMap(s.environment, `${field}.environment`);
   for (const name of Object.keys(environment)) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) fail(`${field}.environment.${name} is not a variable name`);
   if (typeof s.memory !== 'string' || !MEMORY.test(s.memory)) fail(`${field}.memory must be megabytes or gigabytes, as 768m or 2g`);
+  const data = nullable(s.data, `${field}.data`, serviceData);
+  // A service that starts containers (LocalStack's Lambda runs each function in one) runs code the sessions give it, on
+  // whatever Docker it is handed: one copy for every session would run each session's code beside the others', so it
+  // must keep its data for a person or a session, and gets a copy of its own for each.
+  if (boolean(s.docker, `${field}.docker`) && !data) fail(`${field}.docker runs containers with the code sessions give it, so one copy cannot serve every session: give it data, with keep: session or person`);
   return {
     name: s.name, image: serviceImage(s.image, `${field}.image`), port: p, variable: s.variable, environment,
-    files: serviceFiles(s.files, `${field}.files`), memory: s.memory, data: nullable(s.data, `${field}.data`, serviceData),
+    files: serviceFiles(s.files, `${field}.files`), memory: s.memory, data, docker: s.docker,
   };
 }
 
@@ -574,7 +579,7 @@ const TOP_DEFAULTS = {
  *   output: string[]}[]}, env: Record<string, string>,
  *   envFiles: {path: string, secret: string|null, key: string, defaults: string[], overrides: string[]}[], databases: object[],
  *   services: {name: string, image: string, port: number, variable: string, environment: Record<string, string>,
- *   files: Record<string, string>, memory: string, data: {dir: string, keep: 'person'|'session'}|null}[],
+ *   files: Record<string, string>, memory: string, data: {dir: string, keep: 'person'|'session'}|null, docker: boolean}[],
  *   app: object|null,
  *   apps: {name: string, label: string}[],
  *   editor: boolean, consoleLinks: boolean, githubAccess: 'full'|'repo', rules: string|null, setup: string|null, pullRequests: object|null}}
