@@ -2571,6 +2571,19 @@ test('a review started while Console settings ask for Codex too runs both, and s
   assert.doesNotMatch(alone.calls.comments[0].body, /Codex/);
 });
 
+test('a review runs Codex on its author\'s own sign-in only when they pass the checks their Claude plan needs', async () => {
+  const asked = [];
+  const reviewAgents = { forReview: async ({ login }) => { asked.push(login); return { agents: ['claude', 'codex'], codexLogin: login, why: null }; } };
+  const { fleet } = reviewSetup({ reviewAgents });
+  await fleet.reviewOnTag({ number: 7 });
+  assert.equal(fleet.sessions()[0].review.codexLogin, 'joel');
+
+  const outsider = reviewSetup({ reviewAgents, githubSessions: [] });
+  await outsider.fleet.reviewOnTag({ number: 7 });
+  assert.deepEqual(asked, ['joel', null], 'someone without sessions from GitHub: nobody\'s own sign-in');
+  assert.equal(outsider.fleet.sessions()[0].review.codexLogin, undefined);
+});
+
 test('a head without the review tag starts nothing', async () => {
   const { fleet, github } = reviewSetup();
   github.commitMessage = async () => 'feat: no tag here';

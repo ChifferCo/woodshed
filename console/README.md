@@ -797,20 +797,43 @@ part. The session cannot write to GitHub, so it writes files and the console pos
 ### Claude Code and Codex together
 
 Console settings' **Reviews** card (`reviewAgents.mjs`, kept in `state.json` under `reviewAgents`) has one switch,
-**Review with Claude Code and Codex**. It turns on only while both are connected: the console has its team
-`anthropic-api-key` and `openai-api-key`. Codex runs on the team's OpenAI key, never on anyone's own Codex sign-in,
-since a review session is a shared one. While it is on, each review that starts gets `review.agents: ['claude',
-'codex']` and `REVIEW_AGENTS`. `session/review.sh` then runs `codex exec` beside Claude, with the same prompt and
-context in `.review/codex/`, through the console's OpenAI proxy. That proxy lets in such a review session and no
-other. The two verdicts become one (`codeReview.mjs merge`): the stricter conclusion and the higher merge risk win,
-so a pull request is approved only when both approve. The comment and summary have a section from each, each inline
-comment says whose it is, and an earlier comment is resolved only when both found it fixed. When one writes no
-verdict, the other's goes out alone and says so. The PR comment says `Reviewing with Claude Code and Codex`.
+**Review with Claude Code and Codex**. While it is on, each review that starts gets `review.agents: ['claude',
+'codex']` and `REVIEW_AGENTS`, and `session/review.sh` runs `codex exec` beside Claude with the same prompt and
+context, in `.review/codex/`. The two verdicts become one (`codeReview.mjs merge`):
 
-The console logs `reviewAgents: changed` with who changed it, and `fleet: review session started` with its `agents`.
-A review that started while the switch was on but the OpenAI key was gone logs `fleet: review runs on Claude Code alone,
-though Console settings ask for Codex too` with `why`. In the session's pane, `Codex ended (exit=…)`, with codex's own
-log at `.review/logs/codex.jsonl`. The proxy logs `openaiProxy: first call on the team key` with `review: true`.
+- The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
+- The comment and summary have a section from each, and each inline comment says whose it is.
+- An earlier comment is resolved only when both found it fixed.
+- When one writes no verdict, the other's goes out alone and says so.
+
+The PR comment says `Reviewing with Claude Code and Codex`.
+
+Codex runs on one of two credentials:
+
+- **The author's own Codex sign-in.** Each person turns this on for themselves, on My settings' Codex card, with **Also
+  use it for reviews of my pull requests**. It is off by default, and needs the same checks as running a shared session
+  on their Claude plan (`teamKeyReason`); a bot author never has it. Unlike the Claude token, which the console adds to
+  each call, the sign-in itself goes into the review session (`review.codexLogin`). The console hands it out in the
+  review's `/settings` answer while the switch is still on, and the entrypoint writes it into codex's home
+  (`reviewCodexAuth`), as for a private Codex session. Since ChatGPT logins rotate, `review.sh` sends a login codex
+  refreshed back (`POST /codex-auth`), which only that author's login can be replaced by. The switch says on the page
+  what it means: the review session is everyone's on the console, and reads what others push to the pull request.
+- **The team's `openai-api-key`**, through the console's OpenAI proxy, which lets in a review session with Codex and no
+  other non-Codex session.
+
+With neither, the review runs on Claude Code alone. The admin switch needs no team OpenAI key, since authors' own
+sign-ins can carry it.
+
+The console logs:
+
+- `reviewAgents: changed` with who changed it;
+- `userSettings: own Codex sign-in for reviews` on each person's switch;
+- `fleet: review session started` with its `agents` and `codex` (`own` or `team key`);
+- `fleet: review runs on Claude Code alone, though Console settings ask for Codex too` with `why`;
+- `sessionApi: review settings handed out` with `codex`.
+
+In the session's pane: `Codex reviews on the author's own Codex sign-in` or `on the team's OpenAI key`, then `Codex
+ended (exit=…)`; codex's own log is at `.review/logs/codex.jsonl`.
 
 ### The approval waits for QA
 

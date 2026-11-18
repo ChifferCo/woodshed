@@ -94,8 +94,26 @@
             if (window.confirm('Remove your Codex sign-in? Codex sessions then run on the team key, if there is one.')) codexChange('/api/my/codex-auth/remove', {}, 'Removed.', 'Removing…');
           },
         }, 'Remove')),
+      codexReviewsSwitch(),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
       codexStatus);
+  }
+
+  // Whether reviews of your pull requests run Codex on your sign-in, when an admin has Codex review beside Claude Code.
+  // Off unless turned on: unlike the Claude token, the sign-in itself goes into the review session.
+  function codexReviewsSwitch() {
+    const saved = me.codexAuth?.set;
+    const on = Boolean(saved && me.ownCodexForReviews);
+    return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
+      h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': 'codex-reviews-label', disabled: !saved || !me.available || busy.has('codex'),
+        onclick: () => codexChange('/api/my/codex-auth/reviews', { on: !on }, on ? 'Off: reviews of your pull requests run Codex on the team key.' : 'On: reviews of your pull requests run Codex on your sign-in.'),
+      }),
+      h('span', { class: 'toggle-label', id: 'codex-reviews-label' }, 'Also use it for reviews of my pull requests'),
+      h('p', { class: 'sub' }, on
+        ? 'On: when Settings has Codex review beside Claude Code, the review of a pull request you opened runs Codex on your plan. Your sign-in goes into that review session, which everyone on this console can open and which reads what others push to the pull request.'
+        : 'Off: when Settings has Codex review beside Claude Code, it runs on the team\u2019s OpenAI key, or not at all without one.'),
+      !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
 
   // Numbered steps for a card, each { text, command }: a command gets its own box and Copy, so copying one never

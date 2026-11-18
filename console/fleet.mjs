@@ -1768,17 +1768,19 @@ export function createFleet({
       return ignored('a review session is already running on it');
     }
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
-    const { agents, why: agentsWhy } = reviewAgents ? await reviewAgents.forReview() : { agents: ['claude'], why: null };
+    // Codex on the author's own sign-in only for someone who passed the same checks as their Claude plan; never a bot's.
+    const ownCodexLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
+    const { agents, codexLogin = null, why: agentsWhy } = reviewAgents ? await reviewAgents.forReview({ login: ownCodexLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs on Claude Code alone, though Console settings ask for Codex too', { number, why: agentsWhy, ...projectField(project) });
     const session = await createSession({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
       review: {
         base: pull.base.ref, sha: pull.head.sha, heading: review.heading, author: review.author ?? null, check: mergeRisk?.check ?? null, commentId,
-        agents,
+        agents, ...(codexLogin ? { codexLogin } : {}),
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });
-    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, ...projectField(project) });
+    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, codex: agents.includes('codex') ? (codexLogin ? 'own' : 'team key') : null, ...projectField(project) });
     update(session, { review: { ...session.review, runningPosted: true } });
     await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents }));
     return { outcome: 'started', sessionId: session.id };

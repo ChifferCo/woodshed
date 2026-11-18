@@ -303,9 +303,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
-  // Who reviews a pull request in a review session: Claude Code, or with Codex too while both team keys are set.
+  // Who reviews a pull request in a review session: Claude Code, or with Codex too, on the author's own sign-in or the team key.
   const reviewAgents = createReviewAgents({
-    store,
+    store, userSettings,
     connected: async () => {
       const [claude, codex] = await Promise.all([anthropic.teamCredential(), openai.teamCredential()]);
       return { claude: Boolean(claude), codex: Boolean(codex) };

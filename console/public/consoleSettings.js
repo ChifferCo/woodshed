@@ -714,9 +714,9 @@
       h('div', { class: 'webhook-switches' }, rows));
   }
 
-  // Who reviews a pull request in a review session (pullRequests.review.runner: woodshed). Codex beside Claude Code needs
-  // both team keys, since a review session is a shared one and never gets anyone's own sign-in: the switch turns on only
-  // while both are connected, and stays where it is when one goes, the review then running on Claude Code alone.
+  // Who reviews a pull request in a review session (pullRequests.review.runner: woodshed). Codex runs on the author's own
+  // sign-in when they turned that on (My settings, Codex card), and on the team's OpenAI key otherwise, so the switch
+  // stays usable with no team key: a review then runs Codex only for authors who use their own.
   let reviewSaving = false;
   let reviewError = null;
 
@@ -734,31 +734,29 @@
   }
 
   function connection(name, on) {
-    return h('span', { class: 'review-agent' }, `${name} `, h('span', { class: `pill ${on ? 'is-ok' : 'is-warn'}` }, on ? 'Connected' : 'Not connected'));
+    return h('span', { class: 'review-agent' }, `${name} `, h('span', { class: `pill ${on ? 'is-ok' : 'is-warn'}` }, on ? 'Set' : 'Not set'));
   }
 
   function reviewsCard() {
     const r = data.reviews;
     if (!r) return null;
     const both = r.agents === 'both';
-    const ready = r.connected.claude && r.connected.codex;
     const since = r.at ? ` Since ${W.when(r.at)}${r.by && r.by !== 'console' ? `, by ${r.by}` : ''}.` : '';
+    const codexOn = r.connected.codex
+      ? 'on the author\u2019s own Codex sign-in when they turned that on in My settings, and on the team\u2019s OpenAI key otherwise'
+      : 'on the author\u2019s own Codex sign-in when they turned that on in My settings. With no team OpenAI key, other authors\u2019 pull requests get Claude Code alone';
     const sub = both
-      ? (ready
-        ? `On: Codex reviews each pull request beside Claude Code, and the two become one review. The stricter verdict and the higher merge risk win, so a pull request is approved only when both approve.${since}`
-        : `On, but Codex is not connected, so reviews run on Claude Code alone until it is.${since}`)
-      : (ready
-        ? 'Off: Claude Code reviews each pull request alone.'
-        : 'Off: Claude Code reviews each pull request alone. Codex can review beside it once both are connected.');
+      ? `On: Codex reviews each pull request beside Claude Code, ${codexOn}. The two become one review: the stricter verdict and the higher merge risk win, so a pull request is approved only when both approve.${since}`
+      : 'Off: Claude Code reviews each pull request alone.';
     return h('section', { class: 'settings-card', id: 'reviews', 'aria-labelledby': 'card-reviews' },
       h('h2', { id: 'card-reviews', class: 'label' }, 'Reviews'),
-      h('p', { class: 'sub' }, 'The review sessions this console runs on pull requests, for repos whose project file says ', h('code', null, 'pullRequests.review.runner: woodshed'), '. They run on the team\u2019s keys, set on ',
-        h('a', { href: '/secrets' }, 'Secrets & webhooks'), ' (anthropic-api-key and openai-api-key). A change applies to the next review, and is logged with who made it.'),
-      h('p', { class: 'review-agents' }, connection('Claude Code', r.connected.claude), connection('Codex', r.connected.codex)),
+      h('p', { class: 'sub' }, 'The review sessions this console runs on pull requests, for repos whose project file says ', h('code', null, 'pullRequests.review.runner: woodshed'), '. Each runs on its author\u2019s own Claude plan or Codex sign-in when they chose that in My settings, and on the team\u2019s keys otherwise (anthropic-api-key and openai-api-key, on ',
+        h('a', { href: '/secrets' }, 'Secrets & webhooks'), '). A change applies to the next review, and is logged with who made it.'),
+      h('p', { class: 'review-agents' }, connection('Team Anthropic key', r.connected.claude), connection('Team OpenAI key', r.connected.codex)),
       h('div', { class: `toggle-row${both ? '' : ' is-off'}` },
         h('button', {
           type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(both), 'aria-labelledby': 'reviews-switch-both',
-          disabled: reviewSaving || (!both && !ready),
+          disabled: reviewSaving,
           onclick: () => setReviewAgents(both ? 'claude' : 'both'),
         }),
         h('span', { class: 'toggle-label', id: 'reviews-switch-both' }, 'Review with Claude Code and Codex'),

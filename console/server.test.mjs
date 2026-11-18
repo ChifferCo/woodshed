@@ -1481,6 +1481,33 @@ test('the switch for shared sessions is set for the signed-in person alone, behi
   assert.equal(done.length, 1);
 });
 
+test('the switch for reviews on your own Codex sign-in is set for the signed-in person alone', async (t) => {
+  const done = [];
+  const userSettings = {
+    view: () => ({ claudeToken: { set: false, savedAt: null }, codexAuth: { set: true, savedAt: null }, ownCodexForReviews: done.at(-1)?.[1] ?? false, setUp: true, available: true }),
+    setOwnCodexForReviews(login, on) {
+      if (login === 'nobody') throw Object.assign(new Error('save your Codex sign-in first'), { shown: true });
+      done.push([login, on]);
+    },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  const on = await post(port, '/api/my/codex-auth/reviews', { on: true, login: 'joel' }, as);
+  assert.equal(on.status, 200);
+  assert.equal(on.body.ownCodexForReviews, true);
+  assert.deepEqual(done, [['mia-dev', true]], 'the body cannot say whose it is');
+  assert.equal((await post(port, '/api/my/codex-auth/reviews', { on: 'yes' }, as)).status, 400);
+  assert.equal((await post(port, '/api/my/codex-auth/reviews', { on: true }, { ...as, origin: 'https://evil.example' })).status, 403);
+  assert.deepEqual(await post(port, '/api/my/codex-auth/reviews', { on: true }, { cookie: 'woodshed_session=nobody' }),
+    { status: 409, body: { error: 'save your Codex sign-in first' } });
+});
+
 test('a manual start is the signed-in person\'s, whatever login the body names', async (t) => {
   const started = [];
   const fleet = { sessions: () => [], async startManual(args) { started.push(args); return { id: '0a1b2c3d', status: 'queued', title: 't' }; } };
@@ -1562,11 +1589,10 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
   assert.equal((await get()).webhooks.github.off, true, 'and Webhook events says what is off');
 });
 
-test('Console settings\' Reviews card asks for Codex beside Claude Code only while both are connected, and says who did', async (t) => {
+test('Console settings\' Reviews card turns Codex beside Claude Code on and off, says who did, and which team keys are set', async (t) => {
   const { createReviewAgents } = await import('./reviewAgents.mjs');
   const store = { state: {}, save() {} };
-  const keys = { claude: true, codex: false };
-  const reviewAgents = createReviewAgents({ store, connected: async () => ({ ...keys }) });
+  const reviewAgents = createReviewAgents({ store, connected: async () => ({ claude: true, codex: false }) });
   const config = {
     host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
     maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
@@ -1578,13 +1604,9 @@ test('Console settings\' Reviews card asks for Codex beside Claude Code only whi
 
   const page = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
   assert.deepEqual(page.reviews, { agents: 'claude', by: null, at: null, connected: { claude: true, codex: false } });
-  const refused = await post(port, '/api/console-settings/reviews', { agents: 'both' });
-  assert.equal(refused.status, 409);
-  assert.match(refused.body.error, /set openai-api-key on Secrets & webhooks first/);
-  keys.codex = true;
   const on = await post(port, '/api/console-settings/reviews', { agents: 'both' });
-  assert.equal(on.status, 200);
-  assert.deepEqual([on.body.reviews.agents, on.body.reviews.by, on.body.reviews.connected.codex], ['both', 'console', true]);
+  assert.equal(on.status, 200, 'with no team OpenAI key: authors\' own sign-ins can run it');
+  assert.deepEqual([on.body.reviews.agents, on.body.reviews.by], ['both', 'console']);
   assert.equal((await post(port, '/api/console-settings/reviews', { agents: 'everyone' })).status, 400);
   assert.equal((await post(port, '/api/console-settings/reviews', { agents: 'claude' })).body.reviews.agents, 'claude');
 });

@@ -4,7 +4,8 @@
 # Merge risk check (POST /review-report, console/sessionApi.mjs). The prompt and verdict are shared/codeReview's, so
 # the verdict matches the Actions review (review.yml). Runs in claude's pane; the review changes nothing on the branch.
 # With REVIEW_AGENTS naming codex (Console settings' Reviews card), Codex reviews the same diff with the same prompt
-# beside Claude, in .review/codex/, on the team's OpenAI key through the console, and the two verdicts become one
+# beside Claude, in .review/codex/, on the author's own Codex sign-in when they turned that on for reviews, or on the
+# team's OpenAI key through the console, and the two verdicts become one
 # (codeReview.mjs merge): the strictest conclusion and the higher merge risk.
 #
 #   review.sh    the whole run, once; the entrypoint starts it
@@ -20,6 +21,9 @@ RISK_AREAS=${REVIEW_RISK_AREAS:-.woodshed/riskAreas.md}
 SERVER=${GITHUB_SERVER_URL:-https://github.com}
 AGENTS=${REVIEW_AGENTS:-claude}
 CODEX_DIR=$DIR/codex
+CODEX_HOME_DIR=${CODEX_HOME:-$HOME/.codex}
+# The author's Codex sign-in as the console gave it, which the entrypoint keeps (reviewCodexAuth).
+OWN_CODEX_AUTH_FILE=${REVIEW_CODEX_GIVEN:-$HOME/.config/woodshed/codex-auth}
 
 say() { printf '\n[review %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -57,12 +61,33 @@ runCodex() {
   for f in base-rules instructions.md risk-areas.md; do [ -e "$DIR/$f" ] && cp -r "$DIR/$f" "$CODEX_DIR/"; done
   node "$REVIEW" prompt "$CODEX_DIR" --pr "$PR" --head "$(git rev-parse HEAD)" --server "$SERVER" --repo "$1" \
     --reviewer "${REVIEW_AUTHOR:-}" || { say "Could not write Codex's review prompt"; return 0; }
-  # The session holds no OpenAI key: session/bin/codex goes through the console's proxy, which adds the team's.
+  # On the author's own sign-in when the entrypoint wrote it into codex's home (reviewCodexAuth); otherwise the session
+  # holds no OpenAI key, and session/bin/codex goes through the console's proxy, which adds the team's.
   # The container is the sandbox, as for a Codex session; the review's GitHub token is read-only.
-  WOODSHED_CODEX_AUTH=key "$SESSION_DIR/bin/codex" exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" \
+  local auth=key
+  [ -s "$CODEX_HOME_DIR/auth.json" ] && auth=own
+  say "Codex reviews on $([ "$auth" = own ] && echo "the author's own Codex sign-in" || echo "the team's OpenAI key")"
+  WOODSHED_CODEX_AUTH=$auth "$SESSION_DIR/bin/codex" exec --skip-git-repo-check --sandbox danger-full-access --json "$(codexPrompt)" \
     > "$DIR/logs/codex.jsonl" 2>&1 < /dev/null
   code=$?
   say "Codex ended (exit=$code)"
+  [ "$auth" = own ] && keepCodexAuth
+  return 0
+}
+
+# ChatGPT's refresh token rotates: a login codex refreshed goes back to the console, which keeps it for the author's
+# next session, or the copy on My settings would stop working. Only a changed one, as statusd does for a Codex session.
+keepCodexAuth() {
+  local code
+  [ -s "$OWN_CODEX_AUTH_FILE" ] && [[ "$(head -c 3 "$OWN_CODEX_AUTH_FILE")" != sk- ]] || return 0
+  if [ "$(jq -cS . "$OWN_CODEX_AUTH_FILE" 2>/dev/null)" = "$(jq -cS . "$CODEX_HOME_DIR/auth.json" 2>/dev/null)" ]; then
+    say "The author's Codex sign-in is unchanged, not sent back"
+    return 0
+  fi
+  code=$(printf 'header = "Authorization: Bearer %s"\n' "$SESSION_TOKEN" \
+    | curl -sS --max-time 15 -o /dev/null -w '%{http_code}' -X POST -K - --data-binary "@$CODEX_HOME_DIR/auth.json" \
+      "$WOODSHED_CONSOLE_URL/codex-auth") || code=000
+  say "The author's refreshed Codex sign-in sent back (status: $code)"
 }
 
 # The pull request's context and the repo's rules, from the base branch so a pull request cannot soften its own review.

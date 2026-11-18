@@ -18,6 +18,7 @@
 //   POST /api/my/claude-token    {"value": "sk-ant-..."}
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
 //   POST /api/my/codex-auth/remove
+//   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
@@ -221,7 +222,7 @@ const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignabl
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
+const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const UPDATES_PATH = '/api/console-settings/updates';
@@ -1377,6 +1378,11 @@ export function createHandler({
       if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
       const codexMatch = MY_CODEX_AUTH_RE.exec(pathname);
       if (codexMatch) {
+        if (codexMatch[1] === 'reviews') {
+          if (typeof body.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
+          userSettings.setOwnCodexForReviews(login, body.on);
+          return reply(res, 200, myView(login));
+        }
         if (codexMatch[1]) await userSettings.removeCodexAuth(login);
         else {
           await userSettings.setCodexAuth(login, body.value);

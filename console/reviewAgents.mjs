@@ -1,32 +1,26 @@
 // The Reviews card on Console settings: which agents review a pull request in a review session
 // (pullRequests.review.runner: woodshed). Claude Code alone, or Claude Code and Codex together, whose verdicts become one
-// (shared/codeReview/codeReview.mjs, mergeVerdicts). Codex runs on the team's OpenAI key, through the console's proxy
-// (openaiProxy.mjs), never on anyone's own sign-in, since a review session is a shared one. So both are offered only
-// while the console has a way to Claude and an OpenAI key, and a review started without the key runs on Claude alone.
+// (shared/codeReview/codeReview.mjs, mergeVerdicts). Codex runs on the pull request author's own Codex sign-in when
+// they turned that on for reviews on My settings (userSettings.mjs, ownCodexForReviews), and on the team's OpenAI key,
+// through the console's proxy (openaiProxy.mjs), otherwise. A review with neither runs on Claude Code alone.
 // Kept in state.json under `reviewAgents`, so it survives a restart.
 
 export const CHOICES = ['claude', 'both'];
 
 /**
  * @param {{store: {state: object, save: () => void},
- *          connected: () => Promise<{claude: boolean, codex: boolean}>, now?: () => number}} deps
- *   `connected` says whether the console reaches each: Claude by its team Anthropic key (or a Claude plan the review
- *   runs on), Codex by its team OpenAI key
+ *          connected: () => Promise<{claude: boolean, codex: boolean}>,
+ *          userSettings?: {usesOwnCodexForReviews: (login: string) => boolean}|null, now?: () => number}} deps
+ *   `connected` says whether the console reaches each on its team keys: Anthropic's and OpenAI's
  */
-export function createReviewAgents({ store, connected, now = Date.now }) {
+export function createReviewAgents({ store, connected, userSettings = null, now = Date.now }) {
   const saved = () => store.state.reviewAgents ?? {};
   const choice = () => (CHOICES.includes(saved().agents) ? saved().agents : 'claude');
 
   /** @returns {boolean}  whether it changed */
-  async function set({ agents, by }) {
+  function set({ agents, by }) {
     if (!CHOICES.includes(agents)) throw Object.assign(new Error(`agents must be ${CHOICES.join(' or ')}`), { shown: true, status: 400 });
     if (choice() === agents) return false;
-    if (agents === 'both') {
-      const { claude, codex } = await connected();
-      if (!claude || !codex) {
-        throw Object.assign(new Error(`Codex can review beside Claude Code only while both are connected: ${[!claude && 'set anthropic-api-key', !codex && 'set openai-api-key'].filter(Boolean).join(' and ')} on Secrets & webhooks first.`), { shown: true, status: 409 });
-      }
-    }
     store.state.reviewAgents = { agents, by, at: new Date(now()).toISOString() };
     store.save();
     console.log('reviewAgents: changed', { agents, by });
@@ -34,18 +28,23 @@ export function createReviewAgents({ store, connected, now = Date.now }) {
   }
 
   /**
-   * The agents a review starting now runs, and why when Codex was asked for and is left out.
-   * @returns {Promise<{agents: string[], why: string|null}>}
+   * The agents a review of `login`'s pull request runs, starting now; `codexLogin` when Codex runs on that person's own
+   * sign-in, and why when Codex was asked for and is left out.
+   * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
+   * @returns {Promise<{agents: string[], codexLogin: string|null, why: string|null}>}
    */
-  async function forReview() {
-    if (choice() !== 'both') return { agents: ['claude'], why: null };
+  async function forReview({ login = null } = {}) {
+    if (choice() !== 'both') return { agents: ['claude'], codexLogin: null, why: null };
+    if (login && userSettings?.usesOwnCodexForReviews(login)) return { agents: ['claude', 'codex'], codexLogin: login, why: null };
     let codex = false;
     try {
       ({ codex } = await connected());
     } catch (err) {
-      return { agents: ['claude'], why: `the OpenAI key could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
+      return { agents: ['claude'], codexLogin: null, why: `the OpenAI key could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
     }
-    return codex ? { agents: ['claude', 'codex'], why: null } : { agents: ['claude'], why: 'the console has no OpenAI key' };
+    return codex
+      ? { agents: ['claude', 'codex'], codexLogin: null, why: null }
+      : { agents: ['claude'], codexLogin: null, why: 'the author uses no Codex sign-in of their own for reviews, and the console has no OpenAI key' };
   }
 
   async function view() {

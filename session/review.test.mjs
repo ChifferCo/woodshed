@@ -24,9 +24,16 @@ echo '{"type":"result","subtype":"success","is_error":false,"num_turns":3,"total
 `;
 
 // A fake codex that asks for changes, so the merged verdict is visibly the stricter one. It reviews only when run on
-// the team key, through the console, as session/bin/codex does with WOODSHED_CODEX_AUTH=key.
+// the team key, through the console, as session/bin/codex does with WOODSHED_CODEX_AUTH=key, or on the author's own
+// sign-in in its home, which it refreshes, as codex does with a ChatGPT login.
 const FAKE_CODEX = `#!/bin/bash
-[ "$1" = exec ] && [ "$2" = --skip-git-repo-check ] && [ "$WOODSHED_CODEX_AUTH" = key ] || exit 2
+[ "$1" = exec ] && [ "$2" = --skip-git-repo-check ] || exit 2
+case "$WOODSHED_CODEX_AUTH" in
+  key) ;;
+  own) h=\${CODEX_HOME:-$HOME/.codex}; [ -s "$h/auth.json" ] || exit 5
+       echo '{"tokens":{"refresh_token":"rt-2"},"last_refresh":"2026-11-18T11:00:00Z"}' > "$h/auth.json" ;;
+  *) exit 2 ;;
+esac
 prompt=$6
 case "$prompt" in "You are Codex"*) ;; *) exit 3 ;; esac
 dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
@@ -43,11 +50,18 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, ownLogin = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
   const bin = path.join(dir, 'fakebin');
+  const codexHome = path.join(dir, 'codex-home');
+  const given = path.join(dir, 'codex-given');
+  fs.mkdirSync(codexHome);
+  if (ownLogin) {
+    fs.writeFileSync(path.join(codexHome, 'auth.json'), ownLogin);
+    fs.writeFileSync(given, ownLogin);
+  }
   const repo = path.join(dir, 'repo');
   fs.mkdirSync(path.join(sessionDir, 'bin'), { recursive: true });
   fs.mkdirSync(bin);
@@ -61,7 +75,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
     let body = '';
     req.on('data', (c) => { body += c; });
     req.on('end', () => {
-      reports.push({ path: req.url, body: JSON.parse(body) });
+      reports.push({ path: req.url, body: JSON.parse(body), auth: req.headers.authorization });
       res.writeHead(204).end();
     });
   });
@@ -73,6 +87,8 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   };
   delete env.GITHUB_REPOSITORY;
   delete env.WOODSHED_CODEX_AUTH;
+  env.CODEX_HOME = codexHome;
+  env.REVIEW_CODEX_GIVEN = given;
   if (agents) env.REVIEW_AGENTS = agents;
   let output = '';
   await new Promise((resolve) => {
@@ -124,4 +140,22 @@ test('with Claude Code alone, codex is never run', async (t) => {
   assert.doesNotMatch(output, /Codex/);
   assert.equal(reports[0].body.conclusion, 'APPROVE');
   assert.deepEqual(reports[0].body.inlineComments, [{ path: 'README.md', line: 1, body: 'Say what it is for.' }]);
+});
+
+test('a review on the author\'s own Codex sign-in runs codex on it, and sends the login codex refreshed back', async (t) => {
+  const login = '{"tokens":{"refresh_token":"rt-1"},"last_refresh":"2026-11-18T10:00:00Z"}';
+  const { reports, output } = await runReview(t, { agents: 'claude codex', ownLogin: login });
+  assert.match(output, /Codex reviews on the author's own Codex sign-in/);
+  assert.match(output, /Codex ended \(exit=0\)/);
+  assert.match(output, /refreshed Codex sign-in sent back \(status: 204\)/);
+  const back = reports.find((r) => r.path === '/codex-auth');
+  assert.equal(back.body.tokens.refresh_token, 'rt-2', 'the refreshed login, not the one given');
+  assert.equal(back.auth, 'Bearer tok', 'as the session');
+  assert.equal(reports.find((r) => r.path === '/review-report').body.conclusion, 'REQUEST_CHANGES');
+});
+
+test('with no sign-in of the author\'s, codex runs on the team key and nothing is sent back', async (t) => {
+  const { reports, output } = await runReview(t, { agents: 'claude codex' });
+  assert.match(output, /Codex reviews on the team's OpenAI key/);
+  assert.deepEqual(reports.map((r) => r.path), ['/review-report']);
 });

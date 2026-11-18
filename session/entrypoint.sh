@@ -572,9 +572,28 @@ fetchStarterPlan() {
   local code
   code=$(consoleCall /settings "$SETTINGS_ANSWER" --max-time 15 -H "$PLAN_ONLY_HEADER")
   [ "$code" = 200 ] && STARTER_PLAN=$(jq -r '.plan // empty' <<< "$(cat "$SETTINGS_ANSWER" 2>/dev/null)")
+  [ "$code" = 200 ] && [ "${SESSION_MODE:-}" = review ] && reviewCodexAuth "$SETTINGS_ANSWER"
   rm -f "$SETTINGS_ANSWER"
   [ -n "${STARTER_PLAN:-}" ] && log "Runs on the starter's Claude plan" "(plan: $STARTER_PLAN)"
   return 0
+}
+
+# A review whose Codex runs on the pull request author's own sign-in (they turned it on for reviews on My settings):
+# written into codex's home as for their private Codex session, with the copy as given kept beside it, so review.sh
+# sends a login codex refreshed back to the console. With none, review.sh runs codex on the team key, through the console.
+reviewCodexAuth() {
+  local auth
+  auth=$(jq -r '.codexAuth // empty' < "$1" 2>/dev/null)
+  [ -n "$auth" ] || return 0
+  mkdir -p "$(dirname "$OWN_CODEX_AUTH_FILE")" "$CODEX_HOME_DIR"
+  chmod 700 "$CODEX_HOME_DIR"
+  (umask 077 && printf '%s' "$auth" > "$OWN_CODEX_AUTH_FILE")
+  if [[ "$auth" == sk-* ]]; then
+    (umask 077 && jq -n --rawfile key "$OWN_CODEX_AUTH_FILE" '{OPENAI_API_KEY: $key}' > "$CODEX_HOME_DIR/auth.json")
+  else
+    (umask 077 && cp "$OWN_CODEX_AUTH_FILE" "$CODEX_HOME_DIR/auth.json")
+  fi
+  log "The review's Codex runs on the author's own Codex sign-in, directly"
 }
 
 fetchSessionDatabases() {
