@@ -732,19 +732,19 @@ is why it is only for a console nobody else can reach, until the App exists and 
 
 ### Which console does the automatic work
 
-A repo can be connected to more than one console, such as Woodshed Internal and a Woodshed Cloud org, and each hears
+A repo can be connected to more than one console, such as your own and one on a hosted service, and each hears
 the same GitHub events. Without more, each starts its own session from the label or a comment, and its own review and
 QA. `pullRequests.runsOn` in the project file names the one that does, by the login its GitHub App acts as
-(`woodshed-cloud[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
+(`acme-woodshed[bot]`, say). Any other console also leaves the QA label (`qa.autoLabel`) to it, logs `fleet: skipped, pullRequests.runsOn names another console` and
 starts nothing, though sessions started from its page still run. Left out, every console acts, as before. Consoles that
 act as the same App all match a login alone; `<login>/<name>` picks one of them by the name each is given
-(`WOODSHED_RUNS_ON_NAME`, lowercase letters, digits and dashes), so `woodshed-cloud[bot]/acme` is the Woodshed Cloud org
-whose console Woodshed Cloud named `acme`, and a console with no name matches no such line.
+(`WOODSHED_RUNS_ON_NAME`, lowercase letters, digits and dashes), so `acme-woodshed[bot]/staging` is that App's console
+named `staging`, and a console with no name matches no such line.
 
 A pull request one of a console's own sessions opened is the exception: that console reviews and QAs it as the person
 who started the session, on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
 starter`). Any other console skips a bot-authored pull request on a session branch (`woodshed/…`) it has no session for
-(`fleet: pull request opened by another console's session, left to it`), which also keeps two Woodshed Cloud orgs off
+(`fleet: pull request opened by another console's session, left to it`), which also keeps two consoles of one App off
 each other's. So a session's pull request never falls to a team key because another console heard it first. Once a
 session's record is gone (removed from its ⋯ menu, or cleared a few days after it was deleted), every console skips
 its pull request, which then gets no review or QA until it is replaced.
@@ -1466,6 +1466,10 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
+- `woodshedUpdate: false`: no Woodshed card on Console settings, no dot on the avatar for it (`updates` is left out of
+  `/api/me`), and no update check, for a program that deploys Woodshed itself. Its update routes
+  (`/api/console-settings/updates`, `/check`, `/update`) answer 404, as on a console that runs from no git clone (below,
+  "Console settings").
 - `githubConnect: {clientId(), clientSecret(), href}`, behind `trusted` only: Connect GitHub on My settings through
   the program's GitHub App, for a console with no sign-in of its own. Connect sends the person to `href` (a path),
   where the program signs them in with its App's user authorization and hands GitHub's answer to the code to the
@@ -1841,7 +1845,8 @@ App's token as `GH_TOKEN`; its output goes to `woodshed-update.log` in the state
 then **Restart the console**, which exits with code 75 for its supervisor (`supervisorOf`, as the GitHub App setup's
 Restart). A failed step puts the clone back on the commit it was on (`git reset --keep`), so the console runs as it
 did. New code that passes the start check and still fails after the restart leaves nothing answering: after two
-minutes the page says so, with the `git -C <clone> reset --keep <from>` that goes back. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image),
+minutes the page says so, with the `git -C <clone> reset --keep <from>` that goes back. Without a supervisor the card shows the commands instead of the button; with no clone (the AWS console image), or
+where the program embedding the console passed `woodshedUpdate: false` ("Embedding the console"),
 `/api/console-settings/updates` answers 404 and there is no card. `state.json` keeps the last update under
 `woodshedUpdate` (from, to, who, when, and whether the image was built), which the card says after the restart. The
 console logs `woodshedUpdate: following` with the clone, its branch and remote at start, `woodshedUpdate: checked` with
@@ -2017,7 +2022,7 @@ Remove My Woodshed.
 | --- | --- | --- |
 | `WOODSHED_HOST`, `WOODSHED_PORT` | `127.0.0.1`, `7690` | |
 | `WOODSHED_CONSOLE_NAME` | `Woodshed` | What the console calls itself: the pages' title, the sign-in page's heading, the installed app's name (the manifest and the Apple title) and the console's GitHub comments. 1 to 40 printable characters, trimmed, without `< > " '` or a backtick; any other value gives the default, with a warning once. Set on the base box from Terraform's `console_name`. An installed app keeps the name it was installed with until it is installed again |
-| `WOODSHED_RUNS_ON_NAME` | none | Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn: <app login>/<name>` ("Which console does the automatic work"). Lowercase letters, digits and dashes, at most 63; anything else stops the console at start. Woodshed Cloud gives each org's console its org's slug |
+| `WOODSHED_RUNS_ON_NAME` | none | Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn: <app login>/<name>` ("Which console does the automatic work"). Lowercase letters, digits and dashes, at most 63; anything else stops the console at start |
 | `WOODSHED_PUBLIC_URL` | `http://localhost:<port>` | The base of the link posted on GitHub; its host is accepted |
 | `WOODSHED_HOSTS` | none | More names to accept, comma-separated |
 | `WOODSHED_APP_DOMAIN` | none | Session apps answer at `<id>.<this>` ("Session apps"); none turns them off, unless `WOODSHED_APP_PORTS` is set |
@@ -2038,7 +2043,7 @@ Remove My Woodshed.
 | `WOODSHED_WEBHOOK_QUEUE` | `woodshed-cloud-webhooks` with the `ecs` launcher, else none | The webhooks queue's name or URL; `0` turns webhooks off. Set on the base box from Terraform's queue, `<name_prefix>-webhooks`; the default is for a box whose stack predates that, and goes later |
 | `WOODSHED_FALLBACK_POLL_SECONDS` | `300` | How often the poll runs while webhooks arrive, and how often a pull request is read on its own while pull request webhooks arrive |
 | `WOODSHED_CHECKOUT` | the console's own folder | The Woodshed git clone the Console settings page's Woodshed card follows and Update pulls. The dev console points it at a made-up one |
-| `WOODSHED_ACTIONS_WORKFLOWS` | none | The avatar menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the repo's workflows that build the images and apply the infrastructure. None leaves the group out. Set on the base box from Terraform's `console_workflow_links` |
+| `WOODSHED_ACTIONS_WORKFLOWS` | none | The avatar menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the repo's workflows that build the images and apply the infrastructure. None leaves the group out. Set on the base box from Terraform's `console_workflow_links`. The default project's file's `workflowLinks` (docs/reference.md, "The project file") wins over it: this is read only where the file leaves that out or cannot be read, so move the links there and drop this |
 | `WOODSHED_MAX_SESSIONS` | `5` | Shared sessions at once, until the Console settings page says otherwise. Set on the base box from Terraform's `max_sessions` |
 | `WOODSHED_IDLE_HOURS`, `WOODSHED_LIFETIME_HOURS` | `1`, `8` | The same, for the pause and stop times |
 | `WOODSHED_LAUNCHER` | `docker` | `docker` on a dev box, `ecs` in AWS |

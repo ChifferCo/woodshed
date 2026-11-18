@@ -416,7 +416,7 @@ test('the brief is one PR comment, written once and then updated in place, and t
   assert.match(first.slack.posts[0].brief, /\[Full brief →\]\(https:\/\/github\.com\/acme\/app\/pull\/7#issuecomment-1\)$/);
 
   const again = setup();
-  again.github.onPr = [{ id: 42, user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, body: '## 🧭 Decision brief\n\nold' }];
+  again.github.onPr = [{ id: 42, user: { login: 'acme-woodshed[bot]', type: 'Bot' }, body: '## 🧭 Decision brief\n\nold' }];
   await again.announcer.track(again.session);
   await again.announcer.check();
   assert.deepEqual(again.github.comments, [], 'no second comment');

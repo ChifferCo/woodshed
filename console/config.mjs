@@ -232,7 +232,7 @@ export function installSecrets(env) {
 
 // The console menu's GitHub Actions links, as `label=file.yml` pairs, comma-separated: the workflows in the repo that
 // build the images and apply the infrastructure. Each installation names its own; with none, the menu has no such
-// group.
+// group. The default project's file names them now (`workflowLinks`), and wins: this is for a file that leaves them out.
 export function actionsWorkflows(value) {
   return String(value ?? '').split(',').map((pair) => pair.trim()).filter(Boolean).map((pair) => {
     const at = pair.lastIndexOf('=');
@@ -300,8 +300,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
   return {
     // What the pages, the installed app and the console's GitHub comments call this console.
     consoleName: consoleName(env),
-    // Which of the consoles that act as one GitHub App this is, for a project file's `pullRequests.runsOn:
-    // <app>/<name>` (fleet.mjs, runsElsewhere): Woodshed Cloud names each org's console by its org. Null is none.
+    // This console's name among those sharing one GitHub App, such as one per team or environment: a repo connected to
+    // several of them picks the one that does its automatic work with `pullRequests.runsOn: <app>/<name>` (fleet.mjs,
+    // runsElsewhere). With none (null), only a `runsOn` naming the App alone matches this console.
     runsOnName: runsOnName(env),
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,

@@ -913,7 +913,8 @@ blocked one. The dev console has no sign-in, so everyone is an admin: to see the
 with `admin: false` from the Playwright browser (`page.route`).
 `DEV_CONSOLE_REPO_SETTINGS=1` gives it a local secret store and two made-up repos, `example-org/example-repo` and
 `example-org/example-tools`, whose project files its stand-in `gh` answers, so My settings' Repo settings card saves:
-env file values, instructions and Your files, each per repo.
+env file values, instructions and Your files, each per repo. The first's file names a Deploy workflow link, which the
+avatar menu shows over the installation's `WOODSHED_ACTIONS_WORKFLOWS` (Run infrastructure).
 `DEV_CONSOLE_WEBHOOKS=1` names a webhook receiver (which never listens, since polling is off), so the Console
 settings page shows its GitHub webhooks switch (Slack's needs a console that answers Slack questions).
 A Woodshed session on this repo has it as its app: **Start app** runs `scripts/devConsoleApp.sh`, which serves it on
