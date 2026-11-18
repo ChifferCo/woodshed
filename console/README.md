@@ -734,7 +734,8 @@ starts nothing, though sessions started from its page still run. Left out, every
 act as the same App all match it, so it cannot pick between two Woodshed Cloud orgs.
 
 A pull request one of a console's own sessions opened is the exception: that console reviews and QAs it as the person
-who started the session, on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
+who started the session (the issue or task session that opened it; a session started later on the pull request, from
+any console, does not count), on their plan, whatever `runsOn` names (`fleet: pull request opened by a session, run as its
 starter`). Any other console skips a bot-authored pull request on a session branch (`woodshed/…`) it has no session for
 (`fleet: pull request opened by another console's session, left to it`), which also keeps two Woodshed Cloud orgs off
 each other's. So a session's pull request never falls to a team key because another console heard it first. Once a
