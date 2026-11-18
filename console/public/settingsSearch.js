@@ -10,24 +10,33 @@
   // hosting proxy.
   const allowed = (page) => !Index.PAGES[page].admin || (W.isAdmin() && W.consoleLinks().some((link) => link.href === page));
 
-  /** Scrolls to a section's card and outlines it for a moment; once the page has drawn it, since its cards come late. */
+  /**
+   * Scrolls to a section's card and outlines it for a moment; once the page has drawn it, since its cards come late. A
+   * page draws itself again as its reads come back (Settings when its repos arrive), with a new card each time, so the
+   * outline is put on each new one until its moment is over.
+   */
   function reveal(id) {
-    const start = Date.now();
-    const find = () => {
+    let shown = false;
+    const mark = () => {
       const target = document.getElementById(id);
-      if (!target) return false;
+      if (!target) return;
       // Some cards carry the id on their heading.
       const el = target.closest('section, form') ?? target;
-      el.scrollIntoView({ block: 'start' });
       el.classList.add('is-found');
-      setTimeout(() => el.classList.remove('is-found'), 2500);
-      return true;
+      if (shown) return;
+      shown = true;
+      el.scrollIntoView({ block: 'start' });
+      setTimeout(stop, 2500);
     };
-    if (find()) return;
-    const app = document.getElementById('app');
-    const watch = new MutationObserver(() => { if (find() || Date.now() - start > 8000) watch.disconnect(); });
-    watch.observe(app, { childList: true, subtree: true });
-    setTimeout(() => watch.disconnect(), 8000);
+    const watch = new MutationObserver(mark);
+    const stop = () => {
+      watch.disconnect();
+      document.getElementById(id)?.closest('section, form')?.classList.remove('is-found');
+      document.getElementById(id)?.classList.remove('is-found');
+    };
+    watch.observe(document.getElementById('app'), { childList: true, subtree: true });
+    mark();
+    setTimeout(() => { if (!shown) stop(); }, 8000);
   }
 
   // Arriving from the search (or a link) on another page: its section, once drawn.
