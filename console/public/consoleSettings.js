@@ -2,7 +2,7 @@
 // typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
 // stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
 // change survives.
-(function () {
+window.Woodshed.settingsPage('/console-settings', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -540,7 +540,7 @@
       awaitingRestart = true;
       restartSince ??= Date.now();
     }
-    updatesTimer = setTimeout(async () => {
+    updatesTimer = life.timeout(async () => {
       const answered = await loadUpdates();
       if (following && answered && updates && !updates.job) {
         location.reload();
@@ -736,18 +736,17 @@
   }
 
   function draw() {
-    const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/console-settings')),
         W.settingsTabs('/console-settings'),
         h('p', { class: 'sub' }, 'For every shared session on this console, and only admins can change them. A change applies on the console\'s next check, and is logged with who made it. Your own settings, for your My Woodshed sessions, are on ', h('a', { href: '/settings' }, 'My settings'), '.')));
     if (!data) {
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head,
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, W.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
   }
 
   async function load() {
@@ -777,10 +776,12 @@
     render();
   }
 
+  // Drawn at once, saying it loads, so the page never sits empty while the settings are on its way.
+  render();
   load();
-  setInterval(refreshData, DATA_REFRESH_MS);
+  life.interval(refreshData, DATA_REFRESH_MS);
   // Back from GitHub, where the App may have been given another repo.
-  document.addEventListener?.('visibilitychange', () => {
+  life.on(document, 'visibilitychange', () => {
     if (document.visibilityState === 'visible' && data?.projects && !repoForm.busy) loadRepoChoices();
   });
-})();
+});

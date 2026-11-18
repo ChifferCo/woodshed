@@ -1,7 +1,7 @@
 // The Secrets & webhooks page. Values stay hidden until Show; every change
 // opens a dialog that says what it changes and needs the name typed to go
 // ahead. No timed refresh: it would wipe a half-filled form.
-(function () {
+window.Woodshed.settingsPage('/secrets', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -347,7 +347,6 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
     const head = h('header', { class: 'page-head' },
       h('div', null,
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/secrets')),
@@ -355,12 +354,12 @@
         h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`)));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/secrets'), head, managerCard(),
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/secrets'), head, managerCard(),
         h('p', { class: 'empty' }, waiting ?? (loadError ? `Could not load the secrets: ${loadError}` : 'Loading secrets…'))));
       return;
     }
     app.replaceChildren(h('div', { class: 'page' },
-      W.nav('/secrets'),
+      life.nav('/secrets'),
       head,
       managerCard(),
       // A console that borrows its GitHub access from its host has no App, so no webhook: it polls.
@@ -374,4 +373,4 @@
   }
 
   reload();
-})();
+});

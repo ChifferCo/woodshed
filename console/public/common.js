@@ -1299,25 +1299,126 @@
   }
 
   // The settings pages' left column, in the rail's place: back to the sessions, the avatar menu, and a list of every
-  // settings page, as Linear and GitHub keep theirs. Fixed beside the page, which the CSS moves over to make room.
+  // settings page, as Linear and GitHub keep theirs. Fixed beside the page, which the CSS moves over to make room. One
+  // node, like userSlot: each render of each settings page puts the same list back, so moving between them never redraws it.
   const SETTINGS_ICONS = { '/settings': '◉', '/people': '☺', '/secrets': '◇', '/events': '≋', '/console-settings': '⚙' };
+  let sideNav = null;
+  function markCurrent(scope, selector) {
+    for (const a of scope.querySelectorAll(selector)) {
+      const link = [...MY_LINKS, ...CONSOLE_LINKS].find((l) => l.href === a.getAttribute('href'));
+      if (link && isCurrent(link, navCurrent)) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
+    }
+  }
   function nav(current) {
+    const moved = current !== navCurrent;
     navCurrent = current;
-    fillConsoleSlot();
-    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': link.href === current ? 'page' : null },
-      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
-    return h('aside', { class: 'settings-side', 'aria-label': 'Settings' },
-      h('div', { class: 'side-head' }, h('a', { class: 'side-back', href: '/' }, '‹ ', h('b', null, 'Back to sessions')), userSlot),
-      // The settings search (settingsSearch.js), the same box on every settings page, kept between redraws.
-      window.Woodshed.settingsSearch?.(),
-      h('nav', { class: 'side-list' },
-        h('div', { class: 'side-group' }, 'You'), MY_LINKS.map(item),
-        consoleSlot,
-        h('div', { class: 'side-group' }, 'This browser'),
-        h('button', { type: 'button', class: 'side-item', 'data-keys': 'settings', onclick: () => window.Woodshed.shell?.openSettings() },
-          h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '◐'), 'Theme and review files', h('kbd', { class: 'side-hint' }, window.Woodshed.shell?.keyText('settings') ?? '⇧⌘,')),
-        h('button', { type: 'button', class: 'side-item', 'data-keys': 'keys', onclick: () => window.Woodshed.shell?.openKeys() },
-          h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '?'), 'Keyboard shortcuts', h('kbd', { class: 'side-hint' }, '?'))));
+    if (moved) {
+      fillConsoleSlot();
+      // The avatar menu is drawn once /api/me answers; a page shown in place since only moves its current mark.
+      markCurrent(userSlot, 'a.menu-item');
+    }
+    if (!sideNav) {
+      const item = (link) => h('a', { class: 'side-item', href: link.href },
+        h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
+      sideNav = h('aside', { class: 'settings-side', 'aria-label': 'Settings' },
+        h('div', { class: 'side-head' }, h('a', { class: 'side-back', href: '/' }, '‹ ', h('b', null, 'Back to sessions')), userSlot),
+        // The settings search (settingsSearch.js), the same box on every settings page, kept between redraws.
+        window.Woodshed.settingsSearch?.(),
+        h('nav', { class: 'side-list' },
+          h('div', { class: 'side-group' }, 'You'), MY_LINKS.map(item),
+          consoleSlot,
+          h('div', { class: 'side-group' }, 'This browser'),
+          h('button', { type: 'button', class: 'side-item', 'data-keys': 'settings', onclick: () => window.Woodshed.shell?.openSettings() },
+            h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '◐'), 'Theme and review files', h('kbd', { class: 'side-hint' }, window.Woodshed.shell?.keyText('settings') ?? '⇧⌘,')),
+          h('button', { type: 'button', class: 'side-item', 'data-keys': 'keys', onclick: () => window.Woodshed.shell?.openKeys() },
+            h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '?'), 'Keyboard shortcuts', h('kbd', { class: 'side-hint' }, '?'))));
+    }
+    if (moved) markCurrent(sideNav.querySelector('.side-list'), ':scope > a.side-item');
+    return sideNav;
+  }
+
+  // The settings pages are one page. Each page's script registers how it starts (settingsPage), the server loads them
+  // all on each settings address, and a click on a link to another of them shows it in place: the address changes, the
+  // side list stays, and only the page's own part is drawn again, as session.js moves between the rail's pages.
+  // `start(app, life)` draws into `app`, a node of its own each time it is shown, so a load still answering for a page
+  // left behind draws where nobody sees it; `life` gives it the side list (`life.nav`, never W.nav) and timers and
+  // listeners, all of which end when another page is shown.
+  const settingsPages = [];
+  let shownPage = null;
+  function settingsPage(match, start) {
+    settingsPages.push({ match, start });
+  }
+  function settingsPageAt(pathname) {
+    return settingsPages.find(({ match }) => (typeof match === 'string' ? match === pathname : match.test(pathname))) ?? null;
+  }
+  // Which side-list item a settings address is under: a repo's own settings are Settings'.
+  function settingsNavFor(pathname) {
+    return pathname.startsWith('/console-settings/') ? '/console-settings' : pathname;
+  }
+  function showSettingsPage() {
+    const page = settingsPageAt(location.pathname);
+    if (!page) return false;
+    shownPage?.stop();
+    const ends = [];
+    const life = {
+      ended: false,
+      interval(fn, ms) { const id = setInterval(fn, ms); ends.push(() => clearInterval(id)); return id; },
+      timeout(fn, ms) { const id = setTimeout(fn, ms); ends.push(() => clearTimeout(id)); return id; },
+      on(target, type, fn) { target.addEventListener(type, fn); ends.push(() => target.removeEventListener(type, fn)); },
+      // The side list, for as long as the page is shown. A page left behind can still draw, when a read it made answers
+      // late: it gets none then, so it can neither take the list off the page shown nor move its mark back.
+      nav: (current) => (life.ended ? null : nav(current)),
+    };
+    // The side list goes up before the page starts, so a page that draws only once its read answers never leaves the
+    // screen empty in between: until it draws, its own part is blank and the list stays where it was.
+    const app = h('div', { class: 'settings-view' }, h('div', { class: 'page' }, nav(settingsNavFor(location.pathname))));
+    document.getElementById('app').replaceChildren(app);
+    shownPage = { pathname: location.pathname, search: location.search, stop: () => { life.ended = true; ends.splice(0).forEach((end) => end()); } };
+    // A page that fails to start says so on itself, and the others stay a click away, in place.
+    try {
+      page.start(app, life);
+    } catch (err) {
+      console.error('settings page failed to start', err);
+      app.replaceChildren(h('div', { class: 'page' }, nav(navCurrent), h('p', { class: 'form-error', role: 'alert' }, `This page could not be drawn: ${err.message}`)));
+    }
+    // For what follows a page being shown, on load or in place: the search's section named in the address.
+    window.dispatchEvent(new Event('woodshed:settings-shown'));
+    return true;
+  }
+  function settingsLinkClicked(e) {
+    if (!shownPage || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    const a = e.target.closest?.('a[href]');
+    if (!a || (a.target && a.target !== '_self') || a.hasAttribute('download') || a.origin !== location.origin) return;
+    if (!settingsPageAt(a.pathname)) return;
+    // A link to a place on this same page is the browser's to scroll to.
+    if (a.pathname === location.pathname && a.search === location.search && a.hash) return;
+    e.preventDefault();
+    goToSettings(a.href);
+  }
+  /** Opens a settings page in place when this is one, and loads it the ordinary way otherwise. */
+  function goToSettings(href) {
+    const url = new URL(href, location.href);
+    if (!shownPage || url.origin !== location.origin || !settingsPageAt(url.pathname)) {
+      location.href = url.href;
+      return;
+    }
+    if (url.href !== location.href) history.pushState(null, '', url.href);
+    window.scrollTo(0, 0);
+    showSettingsPage();
+  }
+  if (typeof document !== 'undefined' && document.addEventListener) {
+    // After every script of the page has run, so each settings page has registered.
+    document.addEventListener('DOMContentLoaded', () => {
+      if (!settingsPageAt(location.pathname)) return;
+      document.addEventListener('click', settingsLinkClicked);
+      // Back and Forward between settings pages; a page's own replaceState (a filter, a query it consumed) is not one.
+      window.addEventListener('popstate', () => {
+        if (location.pathname !== shownPage?.pathname || location.search !== shownPage?.search) showSettingsPage();
+      });
+      // Listening first, so a page that throws as it starts still leaves the others a click away in place.
+      showSettingsPage();
+    });
   }
 
   async function getJson(path) {
@@ -1462,7 +1563,7 @@
   window.Woodshed = {
     invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
-    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
+    appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
     startProgress, waitProgress, clock, prChip, prChips, shownPrs, prLines, usageBadge, machineDetails, planUsageOf, planUsageFace, planUsageDetails, fmtBytes,
   };

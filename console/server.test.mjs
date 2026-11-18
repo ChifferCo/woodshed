@@ -713,9 +713,13 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
-  // My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const settingsScripts = [...(await getBody(port, '/settings', as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
-  assert.deepEqual(settingsScripts.slice(-3), ['repoLayers.js', 'myRepoSettings.js', 'mySettings.js']);
+  // The settings pages are one page: each address loads every settings page's script, so common.js moves between
+  // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
+  const SETTINGS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+  for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
+    const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
+    assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
+  }
   assert.match(await getBody(port, '/static/repoLayers.js', as('octocat')), /WoodshedRepoLayers = /);
   assert.match(await getBody(port, '/static/myRepoSettings.js', as('octocat')), /WoodshedMyRepoSettings = /);
 

@@ -39,10 +39,13 @@
     setTimeout(() => { if (!shown) stop(); }, 8000);
   }
 
-  // Arriving from the search (or a link) on another page: its section, once drawn.
-  if (window.location.hash && Index.ENTRIES.some((e) => e.page === window.location.pathname && `#${e.id}` === window.location.hash)) {
-    reveal(window.location.hash.slice(1));
-  }
+  // Arriving from the search (or a link) on another page, whether loaded or shown in place (common.js, settingsPage):
+  // its section, once drawn.
+  window.addEventListener('woodshed:settings-shown', () => {
+    if (window.location.hash && Index.ENTRIES.some((e) => e.page === window.location.pathname && `#${e.id}` === window.location.hash)) {
+      reveal(window.location.hash.slice(1));
+    }
+  });
 
   /** @param {string} page  a settings page's path, for the words that say whose sessions it changes */
   function scopePill(page) {
@@ -96,7 +99,8 @@
         setOpen(false);
         reveal(entry.id);
       } else if (!event) {
-        window.location.href = entry.href;
+        setOpen(false);
+        W.goToSettings(entry.href);
       }
     }
     function setOpen(open) {
