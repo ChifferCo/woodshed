@@ -3077,3 +3077,15 @@ test('QA of another console\'s session pull request is neither labelled nor run 
   t.github.pull = async () => ({ ...QA_PULL, user: { login: 'woodshed-cloud[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
   assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
 });
+
+test('a session started later on a pull request does not claim it: only the console whose session opened it reviews', async () => {
+  const cloud = { login: 'woodshed-cloud[bot]' };
+  const sessionPull = { ...REVIEW_PULL, user: { login: cloud.login }, head: { ...REVIEW_PULL.head, ref: 'woodshed/155-2bc584ca' } };
+  const continued = reviewSetup({ ownApp: () => cloud });
+  continued.github.pull = async () => sessionPull;
+  continued.store.state.sessions.push({
+    id: 'f8974a16', repo: 'o/r', kind: 'pr', number: 7, title: 'search', startedBy: 'ada', status: 'running',
+    branch: 'woodshed/155-2bc584ca', prUrl: 'https://github.com/o/r/pull/7', createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.deepEqual(await continued.fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'another console\'s session opened it' });
+});

@@ -1796,7 +1796,8 @@ export function createFleet({
   // on their plan; every other console leaves them alone. The App that opened one is its author, and has no plan.
   // Its branch finds the session too, since GitHub can announce the pull request before the session reports its URL.
   // A bot-authored session branch this console has no session for is another console's (Cloud orgs share one App), and
-  // is skipped: a branch name can only make a console skip, never spend someone's plan.
+  // is skipped: a branch name can only make a console skip, never spend someone's plan. Only the session that opened it
+  // counts, from an issue or a task: one started later on the pull request, maybe from another console, does not claim it.
   function pullOwner(project, pull, number) {
     const author = pull.user?.login ?? '';
     const branch = pull.head?.ref ?? '';
@@ -1804,7 +1805,7 @@ export function createFleet({
     const sessionBranch = branch.startsWith(SESSION_BRANCH_PREFIX);
     if (!author.endsWith('[bot]') || !(author === appLogin || sessionBranch)) return { login: author };
     const opener = author === appLogin ? state.sessions
-      .filter((s) => !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1) : null;
+      .filter((s) => s.kind !== 'pr' && !isQa(s) && !isReview(s) && onProject(s, project) && (pullNumber(s.prUrl) === number || (branch && s.branch === branch))).at(-1) : null;
     const starter = opener?.startedBy ?? null;
     if (starter && !starter.endsWith('[bot]')) {
       console.log('fleet: pull request opened by a session, run as its starter', { number, sessionId: opener.id, starter, ...projectField(project) });
