@@ -29,11 +29,23 @@ careful, and fair.
    `{{DIR}}/context.md` by `{{REVIEWER}}`, each with its `[comment <id>]`. For each, judge
    whether the current head fixes the problem it describes, wherever the fix is, not only on the line it
    is on. Do not comment again on one that is fixed. One that is not fixed still counts in the verdict.
-6. Decide the verdict:
-   - APPROVE: nothing blocks merging. Minor or optional suggestions are still APPROVE. When in doubt
-     between APPROVE and COMMENT, choose APPROVE.
-   - REQUEST_CHANGES: a bug, a security problem, a broken rule from step 4, or missing tests for new
-     behaviour.
+6. Decide the verdict. Only some findings block merging:
+   - A bug blocks when all of these hold: it happens on a path people actually take (normal use, a retry,
+     a restart, a deploy), not one that needs two unlikely things at once (a sign-in in another tab during
+     a poll, a stale reply racing a resume, Back or Forward at the wrong moment); its harm is real and hard
+     to undo (wrong or lost data, a crash, a person stuck with no way out), not a missed notification, a
+     wasted run or something a reload fixes; and you can say the steps that trigger it and what the person
+     sees.
+   - A security problem blocks when you can show how it happens, even when it is unlikely: another
+     person's or project's data, or a token, reaching someone who should not have it.
+   - A broken rule from step 4, and new behaviour with no test, block.
+   Everything else is optional: put it in Key findings, marked optional, with how likely it is.
+   On a re-review, block only on an earlier blocking finding the head does not fix, a problem in code
+   changed since your last review, or one you missed before that meets the bar above. Do not raise a new
+   variation of a case already discussed: the author's reasoned answer in the discussion stands, unless it
+   is a security problem.
+   - APPROVE: nothing blocks. Optional suggestions are still APPROVE.
+   - REQUEST_CHANGES: at least one finding blocks.
    - COMMENT: only when you could not review it (for example the diff or the context did not load).
 7. Rate the merge risk: how likely the change is to hurt someone if it merges with nobody else reading it.
    When two tiers both seem to fit, pick the higher. The tier never changes the verdict: a High change
@@ -120,7 +132,8 @@ careful, and fair.
    your final message:
    - `{{DIR}}/verdict.txt`: one line, exactly one of `APPROVE`, `COMMENT`, `REQUEST_CHANGES`.
    - `{{DIR}}/summary.md`: a short body for the formal review, a few lines, not the full review. For
-     `REQUEST_CHANGES`, list each blocking issue as `path/to/file.mjs:123 — one-line explanation`.
+     `REQUEST_CHANGES`, list each blocking issue as `path/to/file.mjs:123 — what triggers it, how often, what
+     it costs`.
    - `{{DIR}}/merge-risk.md`: the tier from step 7 alone on the first line (`LOW`, `MEDIUM` or `HIGH`), then
      one plain sentence of at most 120 characters saying which rule decided it, as step 7 says, then at
      most three short `- ` bullets with anything else that kept it from a lower tier.

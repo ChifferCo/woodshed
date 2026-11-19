@@ -45,6 +45,7 @@ while [ $# -gt 0 ] && [ "$1" != exec ]; do shift; done
 [ "$2" = --skip-git-repo-check ] && [ "$3" = --sandbox ] && [ "$4" = danger-full-access ] || exit 2
 prompt=$6
 case "$prompt" in "You are Codex"*) ;; *) exit 3 ;; esac
+case "$prompt" in *"Hold to step 6's bar for what blocks"*) ;; *) exit 7 ;; esac
 dir=$(printf '%s' "$prompt" | grep -o '[^ \`]*/context\\.md' | head -1 | sed 's#/context\\.md$##')
 [ -s "$dir/context.md" ] || exit 4
 echo REQUEST_CHANGES > "$dir/verdict.txt"

@@ -60,7 +60,9 @@ codexPrompt() {
   else
     printf '%s ' "You are Codex, the pull request's reviewer."
   fi
-  printf '%s\n\n' "Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
+  printf '%s ' "Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
+  # Codex took every bug it found as a blocker, a narrower one each round, where Claude approved: step 6 is the bar.
+  printf '%s\n\n' "Hold to step 6's bar for what blocks: a bug that needs unlikely timing, or whose harm a reload undoes, is optional, never a reason to request changes."
   cat "$CODEX_DIR/review-prompt.md"
 }
 
