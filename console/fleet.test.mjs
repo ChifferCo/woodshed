@@ -3352,3 +3352,19 @@ test('a My Woodshed session that reports another pull request stops hearing abou
   assert.ok(sent.every((t) => !/PR #9\b/.test(t) || /passed/.test(t)), 'nothing about #9 after it left it');
   assert.ok(sent.some((t) => /e2e suite failed on PR #10/.test(t)));
 });
+
+test('a My Woodshed session\'s pull request on another repo than its project is not watched', async () => {
+  const { fleet, github, statuses, calls, store } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  // Its project is no longer on the console's list, so the console falls back to the default project, whose repo
+  // has a #9 of its own.
+  Object.assign(session, { project: 'gone', repo: 'someone/else' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/someone/else/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending ?? [], []);
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});

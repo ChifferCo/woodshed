@@ -713,6 +713,12 @@ export function createFleet({
     const watch = Boolean(session.owner);
     // A review-only session reads someone's pull request: it is never told to fix and push it.
     if (watch && session.reviewOnly) return;
+    // Its pull request is read on its project's repo by number: one on another repo is not that one.
+    if (watch && !onProjectRepo(session.prUrl, project)) {
+      console.log('fleet: pull request on another repo than the session\'s project, not watched', { id: session.id, project: project.name });
+      update(session, { announcedPrUrl: session.prUrl });
+      return;
+    }
     if (!watch && (!announcer.available || !announcer.postsFor(project))) return;
     const tracked = await safely('pull request read for Slack', async () => {
       await announcer.track(session, project, { watch });
@@ -1059,10 +1065,18 @@ export function createFleet({
   // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
   // nothing but its owner resumes it. A stopping one cannot: a message held for it would be typed in at a later Resume.
   const ownListening = (session) => Boolean(session && ACTIVE_STATUSES.has(session.status) && session.status !== 'stopping');
-  // It listens only for the pull request it reports now: one it closed or left for another is not its work any more.
+  // It listens only for the pull request it reports now, on the item's repo: one it closed or left for another is not
+  // its work any more.
   function prListening(item) {
     const session = find(item.sessionId);
-    return ownListening(session) && pullNumber(session.prUrl) === item.number;
+    const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    return ownListening(session) && pullNumber(session.prUrl) === item.number && onProjectRepo(session.prUrl, project);
+  }
+
+  // Whether a pull request URL is on a project's repo.
+  function onProjectRepo(prUrl, project) {
+    const repo = /github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/i.exec(prUrl ?? '')?.[1];
+    return Boolean(repo && project?.repo && repo.toLowerCase() === project.repo.toLowerCase());
   }
 
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
