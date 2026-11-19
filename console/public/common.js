@@ -1435,7 +1435,7 @@
       method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal,
     });
     const answer = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status }, answer.link && { link: answer.link });
+    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status }, answer.link && { link: answer.link }, answer.typed === true && { typed: true });
     return answer;
   }
 

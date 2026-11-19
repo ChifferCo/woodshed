@@ -115,6 +115,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     },
     statusd: (session, method, path, opts) => {
       if (path === '/send' && fail.send) return Promise.reject(new Error('statusd /send timed out'));
+      if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
       return statusd(session, method, path, opts);
     },
   });
@@ -3232,4 +3233,18 @@ test('QA of another console\'s session pull request is neither labelled nor run 
   const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
   t.github.pull = async () => ({ ...QA_PULL, user: { login: 'acme-woodshed[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
   assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
+});
+
+test('a message statusd typed before a prompt came up is not typed again: it is in the agent\'s box', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendTyped = true;
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'comment', text: 'option 2', commentId: 79 });
+  assert.equal(session.pendingMessages.length, 0, 'not held for a second try');
+  fail.sendTyped = false;
+  await fleet.tick();
+  assert.equal(calls.statusd.filter((c) => c.path === '/send').length, 0, 'never typed again');
 });

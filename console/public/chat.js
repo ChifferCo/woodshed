@@ -269,9 +269,10 @@
         await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         sent.state = 'sent';
       } catch (err) {
-        // Back in the box, to send again.
+        // Back in the box, to send again, unless it is in the agent's box already (a prompt came up as it went in):
+        // sending it again would type it twice.
         pending.set(id, pendingOf(id).filter((p) => p !== sent));
-        if (id === session?.id && !field.value) {
+        if (id === session?.id && !field.value && !err.typed) {
           field.value = text;
           keepDraft(id, text);
           fit();

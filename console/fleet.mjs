@@ -138,7 +138,11 @@ export async function callStatusd(session, method, path, { body, timeoutMs = STA
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!res.ok) throw new Error(`statusd ${path} answered ${res.status}`);
+  if (!res.ok) {
+    // Its answer goes with the error: a 409 from /send with `typed` means the text is in the agent's box already.
+    const body = await res.json().catch(() => null);
+    throw Object.assign(new Error(`statusd ${path} answered ${res.status}`), { status: res.status, body });
+  }
   return res.json();
 }
 
@@ -511,6 +515,14 @@ export function createFleet({
     return session.status === 'running' && session.state && session.state !== 'not-running' && session.state !== 'starting';
   }
 
+  // A send statusd refused after the text went in (a prompt came up as it was typed): typing it again would put it in
+  // the agent's box twice. It is there, for the agent to read once the prompt is answered.
+  function inTheBox(session, err) {
+    if (!(err?.status === 409 && err.body?.typed === true)) return false;
+    console.warn('fleet: message left in the agent\'s box, a prompt came up as it was typed', { id: session.id });
+    return true;
+  }
+
   /** @returns {Promise<'sent'|'queued'>} */
   async function send(session, text) {
     if (!canType(session)) {
@@ -520,6 +532,7 @@ export function createFleet({
     try {
       await statusd(session, 'POST', '/send', { body: { text } });
     } catch (err) {
+      if (inTheBox(session, err)) return 'sent';
       console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
       hold(session, text);
       return 'queued';
@@ -534,8 +547,10 @@ export function createFleet({
       try {
         await statusd(session, 'POST', '/send', { body: { text } });
       } catch (err) {
-        console.warn('fleet: held message not delivered yet', { id: session.id, message: firstLine(err) });
-        return;
+        if (!inTheBox(session, err)) {
+          console.warn('fleet: held message not delivered yet', { id: session.id, message: firstLine(err) });
+          return;
+        }
       }
       update(session, { pendingMessages: rest });
       console.log('fleet: held message sent', { id: session.id, chars: text.length, left: rest.length });
