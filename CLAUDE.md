@@ -926,7 +926,10 @@ chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and 
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its Agent tab live, on this machine's Claude
 credential: `devConsoleApp.sh` turns it on in a private session (`WOODSHED_CLAUDE_AUTH=own`), and
-`DEV_CONSOLE_REAL_CLAUDE=1` (or `0`) anywhere else. It spends that credential's usage.
+`DEV_CONSOLE_REAL_CLAUDE=1` (or `0`) anywhere else. It spends that credential's usage. `/s/c0dea1ed` is the real
+`codex` the same way, once `codex login` has signed this machine in (`DEV_CONSOLE_REAL_CODEX`); with
+`DEV_CONSOLE_REAL_CODEX_MODE=plan` it runs with plan mode's read-only sandbox and asks before it writes, for the Chat
+tab's approvals.
 `DEV_CONSOLE_HOST_REPOS=1` starts it as an embedding program would, with a made-up `repos` hook
 (`scripts/devHostConsole.mjs`): Console settings' Repos card then lists `acme/api`, `acme/web` and `acme/lib`, asks for no
 name, and refuses any other typed repo with a link to give the App access, as a hosted console does. With

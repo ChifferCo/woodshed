@@ -134,7 +134,10 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
     ...(realCodex && { CODEX_HOME: codexHome }) };
   let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
   if (realCodex) {
-    paneCommand = 'codex --sandbox danger-full-access --ask-for-approval on-request';
+    // A session's flags for its permission mode (codexFlags in session/entrypoint.sh): auto, or, with
+    // DEV_CONSOLE_REAL_CODEX_MODE=plan, a read-only sandbox, where codex asks before it writes: the Chat tab's approvals.
+    const sandbox = process.env.DEV_CONSOLE_REAL_CODEX_MODE === 'plan' ? 'read-only' : 'danger-full-access';
+    paneCommand = `codex --sandbox ${sandbox} --ask-for-approval on-request`;
   } else if (real) {
     const settings = path.join(root, 'hooks.json');
     realHooks(settings);
