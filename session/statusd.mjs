@@ -236,6 +236,11 @@ export function paneState(paneText) {
  * @param {string} raw  request body
  * @returns {string}  the text to type
  */
+/** Text as it can be typed: CRLF and CR made newlines, every other control character but the tab left out. */
+export function typeableText(text) {
+  return text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+}
+
 export function parseSendBody(raw) {
   let body;
   try {
@@ -243,7 +248,9 @@ export function parseSendBody(raw) {
   } catch {
     throw new Error('body must be JSON');
   }
-  const text = body?.text;
+  // Control characters are not text to type: an ESC would reach the agent as the Escape key, and tmux cannot pass a NUL.
+  // A CRLF is a newline; the rest are left out.
+  const text = typeof body?.text === 'string' ? typeableText(body.text) : body?.text;
   if (typeof text !== 'string' || !text.trim()) throw new Error('text must be a non-empty string');
   if (text.length > MAX_SEND_CHARS) throw new Error(`text must be at most ${MAX_SEND_CHARS} characters`);
   return text;

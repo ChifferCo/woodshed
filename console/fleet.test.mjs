@@ -3364,3 +3364,16 @@ test('a queued message left in the agent\'s box is noted for the page, by length
   await fleet.tick();
   assert.equal(session.leftInBox, null, 'sent or cleared in the TUI tab');
 });
+
+test('a message is held as statusd can type it: no control characters to block the queue, an empty one dropped', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'fix it\u0000 now\r\nplease'), 'queued');
+  assert.deepEqual(session.pendingMessages, ['fix it now\nplease']);
+  assert.equal(await fleet.send(session, '\u0000\u001b'), 'sent', 'nothing to type: not held to block the rest');
+  assert.deepEqual(session.pendingMessages, ['fix it now\nplease']);
+});

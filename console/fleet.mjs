@@ -560,10 +560,18 @@ export function createFleet({
   }
 
   /**
+   * @param {string} text  typed as statusd types it: CRLF made newlines, other control characters left out
    * @returns {Promise<'sent'|'queued'|'in-box'>}  in-box: typed with no Enter (a prompt came up as it went in), so it sits
    *   in the agent's box unsent, for the person to send or clear in the TUI tab; never typed again
    */
-  async function send(session, text) {
+  async function send(session, raw) {
+    // As statusd will take it (session/statusd.mjs, typeableText), so what is held is what can be typed, and the same
+    // length the page is told of.
+    const text = String(raw).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+    if (!text.trim()) {
+      console.warn('fleet: message dropped, nothing in it to type', { id: session.id });
+      return 'sent';
+    }
     // Behind the ones already waiting, in the order they were sent.
     if (!canType(session) || session.pendingMessages.length) {
       hold(session, text);

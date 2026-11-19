@@ -112,6 +112,7 @@ export function readQuestionPicker(pane) {
   // The picker sits under the rule that ends the conversation above it.
   if (tabLine === -1 || lastIndex(lines, RULE, tabLine) === -1) return null;
   const rows = rowsOf(lines, tabLine + 1, foot);
+  const width = Math.max(...lines.map((l) => l.trimEnd().length));
   if (!rows.length) return null;
   const question = squash(lines.slice(tabLine + 1, rows[0].line).map((l) => l.replace(/^\s*│\s?/, '')).join(' '));
   if (!question) return null;
@@ -125,7 +126,9 @@ export function readQuestionPicker(pane) {
     }
     if (OWN_ROW.test(label)) break;
     const chosen = CHOSEN.test(label);
-    answers.push({ n: row.n, label: label.replace(CHOSEN, '').slice(0, MAX_LINE), highlighted: row.highlighted, chosen });
+    // Cut where the screen wraps it: its row runs to the pane's right edge and goes on under it.
+    const wrapped = row.under.length > 0 && lines[row.line].trimEnd().length >= width - 1;
+    answers.push({ n: row.n, label: label.replace(CHOSEN, '').slice(0, MAX_LINE), highlighted: row.highlighted, chosen, wrapped });
   }
   const at = answers.findIndex((o) => o.highlighted);
   return { step: 'question', question: question.slice(0, 1000), multiSelect, tabs: readTabs(lines[tabLine]), options: answers, highlighted: at === -1 ? null : at };
@@ -251,11 +254,13 @@ export function readPrompt(pane) {
   return approval ? { kind: 'approval', ...approval } : null;
 }
 
-// A label read from the screen against the one claude was given: the screen cuts a long one where it wraps.
-function sameLabel(screen, given) {
+// A label read from the screen against the one claude was given. Only one the screen cut where it wraps may be the start
+// of the given one; any other must be the same, so that a shorter option, whose label starts the one shown, never stands
+// in for it.
+function sameLabel(screen, given, wrapped = false) {
   const a = squash(screen);
   const b = squash(given);
-  return a === b || (a.length >= 8 && b.startsWith(a));
+  return a === b || (wrapped && a.length >= 8 && b.startsWith(a));
 }
 
 /**
@@ -267,7 +272,7 @@ export function matchQuestion(screen, want) {
   if (!screen) return { ok: false, why: 'no-picker' };
   if (screen.step !== 'question' || squash(screen.question) !== squash(want.question)) return { ok: false, why: 'other-question' };
   if (screen.multiSelect) return { ok: false, why: 'multi-select' };
-  if (screen.options.length !== want.options.length || !screen.options.every((o, i) => sameLabel(o.label, want.options[i]))) {
+  if (screen.options.length !== want.options.length || !screen.options.every((o, i) => sameLabel(o.label, want.options[i], o.wrapped))) {
     return { ok: false, why: 'other-options' };
   }
   return { ok: true };
@@ -280,7 +285,7 @@ export function matchQuestion(screen, want) {
 export function matchReview(screen, wants) {
   if (!screen || screen.step !== 'review') return { ok: false, why: 'no-review' };
   if (screen.answers.length !== wants.length) return { ok: false, why: 'other-answers' };
-  const same = wants.every((w, i) => squash(screen.answers[i].question) === squash(w.question) && sameLabel(screen.answers[i].answer, w.options[w.pick]));
+  const same = wants.every((w, i) => squash(screen.answers[i].question) === squash(w.question) && squash(screen.answers[i].answer) === squash(w.options[w.pick]));
   return same ? { ok: true } : { ok: false, why: 'other-answers' };
 }
 

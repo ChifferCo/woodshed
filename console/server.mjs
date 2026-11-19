@@ -1754,7 +1754,7 @@ export function createHandler({
       return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
     }
     if (action === 'send') {
-      if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
+      if (typeof body?.text !== 'string' || !body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\s]/g, '')) return reply(res, 400, { error: 'nothing to send' });
       // statusd takes no more (session/statusd.mjs, MAX_SEND_CHARS): said now, not queued to fail behind the others.
       if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });

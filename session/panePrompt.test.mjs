@@ -33,7 +33,7 @@ test('claude\'s picker is read from a real capture: the question, its options, t
 test('a picker the person moved in: the highlight on the second row, its pick marked, the tab answered', () => {
   const screen = readQuestionPicker(pane('pane-ask-two-moved.txt'));
   assert.equal(screen.highlighted, 1);
-  assert.deepEqual(screen.options[1], { n: 2, label: 'Green', highlighted: true, chosen: true }, 'the ✔ is not part of the label');
+  assert.deepEqual(screen.options[1], { n: 2, label: 'Green', highlighted: true, chosen: true, wrapped: false }, 'the ✔ is not part of the label');
   assert.equal(screen.tabs.questions[0].answered, true);
   assert.deepEqual(planMoves(screen, 0), ['Up']);
   assert.deepEqual(planMoves(screen, 2), ['Down']);
@@ -505,4 +505,19 @@ test('a long draft that runs off the top of the screen is read whole from the sc
   // An earlier frame of the box higher up in the scrollback, then the box now, as capture-pane -S shows them.
   const capture = [rule, '❯ \x1b[2mTry "x"\x1b[0m', rule, '● Done.', '', rule, `❯ ${lines[0]}`, ...lines.slice(1).map((l) => `  ${l}`), rule, '  ⏵⏵ auto mode on (shift+tab to cycle)'].join('\n');
   assert.equal(composerText(capture, 'claude'), lines.join(' '));
+});
+
+test('a stale answer never picks a shorter option whose label starts the one it was given', () => {
+  const picker = (rows) => ['─'.repeat(60), ' ☐ Deploy', '', 'Where should it go?', '', ...rows, '', 'Enter to select · ↑/↓ to navigate · Esc to cancel'].join('\n');
+  const want = { question: 'Where should it go?', options: ['Deploy to staging now', 'Wait'] };
+  // The screen offers "Deploy to staging" (another, shorter option) where "Deploy to staging now" was shown.
+  const other = readQuestionPicker(picker(['❯ 1. Deploy to staging', '  2. Wait']));
+  assert.equal(matchQuestion(other, want).why, 'other-options');
+  assert.ok(matchQuestion(readQuestionPicker(picker(['❯ 1. Deploy to staging now', '  2. Wait'])), want).ok);
+});
+
+test('a label the screen cut where it wraps still matches the one given, from a real capture', () => {
+  const screen = readQuestionPicker(fs.readFileSync(new URL('../shared/__fixtures__/pane-ask-wrapped.txt', import.meta.url), 'utf8'));
+  assert.ok(screen.options.some((o) => o.wrapped), 'the long label runs to the edge and on under it');
+  assert.ok(screen.options.filter((o) => !o.wrapped).length > 0);
 });

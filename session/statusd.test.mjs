@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps } from './statusd.mjs';
+import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -1047,4 +1047,11 @@ test('a typing call that fails after part of the text went in says so, for nothi
   assert.equal(typingError(failed, true).partial, true);
   assert.equal(typingError(failed).partial, false);
   assert.doesNotMatch(typingError(failed, true).message, /secret/);
+});
+
+test('a message\'s control characters are not typed: an ESC would be the Escape key, a NUL cannot pass tmux', () => {
+  assert.equal(typeableText('line one\r\nline two\rthree'), 'line one\nline two\nthree');
+  assert.equal(typeableText('a\u0000b\u001b[2Jc\u007fd\te'), 'ab[2Jcd\te');
+  assert.equal(parseSendBody(JSON.stringify({ text: 'hi\u0000 there' })), 'hi there');
+  assert.throws(() => parseSendBody(JSON.stringify({ text: '\u0000\u001b' })), /non-empty/, 'nothing left to type: refused, and the fleet drops it');
 });
