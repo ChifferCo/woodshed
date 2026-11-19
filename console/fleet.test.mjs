@@ -3596,4 +3596,5 @@ test('a guarded send never lets statusd type past the end of the watch\'s wait',
   const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
   assert.equal(sent.length, 1);
   assert.ok(sent[0].body.withinMs <= 5_000, `withinMs ${sent[0].body.withinMs} is no more than what is left of the wait`);
+  assert.equal(sent[0].body.notAfter, Date.parse('2026-10-21T10:00:00.000Z') + 10 * 60_000 - 5_000 + sent[0].body.withinMs, 'and the same deadline in absolute time');
 });

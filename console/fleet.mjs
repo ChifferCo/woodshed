@@ -1281,7 +1281,8 @@ export function createFleet({
         const withinMs = Math.floor(Math.min(GUARDED_SEND_WITHIN_MS, untilMs()));
         if (withinMs < 1000) return 'later';
         await statusd(session, 'POST', '/send', {
-          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs },
+          // notAfter as well: withinMs counts from statusd getting it, and time in transit must count too.
+          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs, notAfter: now() + withinMs },
           timeoutMs: withinMs + 10_000,
         });
       } catch (err) {

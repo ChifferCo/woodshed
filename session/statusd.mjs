@@ -296,6 +296,20 @@ export function sendWithinMs(raw) {
   }
 }
 
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {number|null}  the time, in ms since the epoch, after which a guarded text is no longer typed (`notAfter`):
+ *   its caller's own deadline, which time in transit counts toward
+ */
+export function sendNotAfter(raw) {
+  try {
+    const at = JSON.parse(raw)?.notAfter;
+    return Number.isFinite(at) && at > 0 ? at : null;
+  } catch {
+    return null;
+  }
+}
+
 /** @returns {boolean}  whether two pull request URLs are the same pull request (GitHub's owner and name ignore case) */
 export function samePrUrl(a, b) {
   return Boolean(a && b) && String(a).toLowerCase() === String(b).toLowerCase();
@@ -1322,7 +1336,8 @@ async function handle(req, res) {
       }
       // GitHub was slow: its caller has given up on this request by now, and will send it again.
       const within = sendWithinMs(raw);
-      if (within && Date.now() - receivedAt > within) {
+      const notAfter = sendNotAfter(raw);
+      if ((within && Date.now() - receivedAt > within) || (notAfter && Date.now() > notAfter)) {
         console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
         return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
       }

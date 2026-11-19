@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { AGENT_PANE_FORMAT, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -874,6 +874,9 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   await onPull('https://github.com/o/r/pull/9');
   const late = await send({ ...forNine, withinMs: 200 });
   assert.deepEqual([late.status, late.body.error], [409, 'too late: the caller has stopped waiting']);
+  // A request that spent its time in transit: its caller's deadline passed before statusd even got it.
+  const delayed = await send({ ...forNine, withinMs: 20_000, notAfter: Date.now() - 1 });
+  assert.deepEqual([delayed.status, delayed.body.error], [409, 'too late: the caller has stopped waiting']);
   // A checkout while gh answers: its answer may be the old branch's, so nothing is typed.
   await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ngit -C "$REPO_DIR" checkout -q -b "other-$$"\ncat ${current}\n`, { mode: 0o755 });
   const raced = await send(forNine);
@@ -917,4 +920,9 @@ test('a guarded send names how long it may still be typed, a minute at most', ()
   assert.equal(sendWithinMs('{"text":"x","withinMs":20000}'), 20000);
   assert.equal(sendWithinMs('{"text":"x","withinMs":999999}'), 60000);
   for (const raw of ['{"text":"x"}', '{"text":"x","withinMs":0}', '{"text":"x","withinMs":"20"}', 'nope']) assert.equal(sendWithinMs(raw), null, raw);
+});
+
+test('a guarded send carries its caller\'s own deadline', () => {
+  assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
+  for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
 });
