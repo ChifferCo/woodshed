@@ -776,8 +776,8 @@
         const url = new URL(window.location.href);
         if (picked.length) url.searchParams.set('by', picked.join(','));
         else url.searchParams.delete('by');
-        // URLSearchParams would write the commas as %2C.
-        window.history.replaceState(null, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
+        // URLSearchParams would write the commas as %2C. The entry keeps its state: its tab and the ?tab it arrived with.
+        window.history.replaceState(window.history.state, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
         render();
       }, { allLabel: 'People' });
       railFrame = {
@@ -921,8 +921,8 @@
   function setRailStatus(next) {
     const url = new URL(window.location.href);
     url.searchParams.set('status', next);
-    // URLSearchParams would write the commas of ?by= as %2C.
-    window.history.replaceState(null, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
+    // URLSearchParams would write the commas of ?by= as %2C. The entry keeps its state: its tab and the ?tab it arrived with.
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search.replace(/%2C/g, ',')}`);
     render();
   }
   function statusChips(listed, status) {
