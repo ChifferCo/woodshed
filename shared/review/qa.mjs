@@ -24,7 +24,8 @@ import { randomBytes } from 'node:crypto';
 
 import { REVIEW_MODEL, clamp } from './analyze.mjs';
 
-const QA_MODEL = process.env.WOODSHED_QA_MODEL || REVIEW_MODEL;
+// The review's own model, so the one setting that picks it (WOODSHED_REVIEW_MODEL, read by the shed's host) picks this too.
+const QA_MODEL = REVIEW_MODEL;
 
 /** Levels of questions: the top level, a follow-up, and a follow-up's follow-up. */
 export const MAX_DEPTH = 3;

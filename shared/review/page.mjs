@@ -2956,19 +2956,25 @@ ${DARK_PALETTE}
       qaView = freshQaView(true);
     }
 
+    // The answers on screen stay until the server has taken the new run: a
+    // refused one (the box busy, say) leaves them, with the reason under them,
+    // rather than clearing them for a read to bring back with the reason gone.
     async function askQaAgain() {
       if (!state.session) return;
-      clearTimeout(qaView.timer);
-      var view = freshQaView(true);
-      qaView = view;
+      var was = qaView;
       try {
         await api('POST', '/reviews/' + state.session + '/qa');
-        if (view !== qaView) return;
-        view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
       } catch (e) {
-        if (view !== qaView) return;
-        view.error = e.message;
+        if (was !== qaView) return;
+        was.error = 'Not asked again: ' + e.message;
+        render();
+        return;
       }
+      if (was !== qaView) return;
+      clearTimeout(was.timer);
+      var view = freshQaView(true);
+      view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+      qaView = view;
       render();
       loadQa(true);
     }
@@ -5137,7 +5143,12 @@ ${DARK_PALETTE}
       // are simply not drawn.
       var lines = [];
       var raw = String(text).split('\\n');
+      // Inside a fence the text is code, drawn as text: JSX and HTML keep their
+      // tags there, or a snippet in an answer loses the very lines it is about.
+      var fenced = false;
       for (var r = 0; r < raw.length; r++) {
+        if (raw[r].slice(0, 3) === '\\u0060\\u0060\\u0060') fenced = !fenced;
+        else if (fenced) { lines.push(raw[r]); continue; }
         // Tags come out wherever they are, not only on lines of their own:
         // GitHub's own review bodies write <summary>Heading</summary> with the
         // words inside, and dropping the whole line would drop the heading
