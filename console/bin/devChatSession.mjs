@@ -12,6 +12,12 @@
 // this branch. Its hooks write to a state file of its own (WOODSHED_CLAUDE_STATE_FILE, session/hookState.mjs), so its
 // state is claude's own and the console reads it as for a real session; and ttyd serves its pane, for the Agent tab.
 // It answers claude's folder-trust question itself, once.
+//
+// With `real` and the codex agent, the pane runs the real `codex` with the flags a session gives it in auto mode
+// (codexFlags in session/entrypoint.sh), on this machine's Codex sign-in (~/.codex/auth.json, from `codex login`):
+// a CODEX_HOME of its own holds a copy, with the clone trusted as a session's checkout is, and the copy goes back at
+// close, since OpenAI rotates a ChatGPT login's refresh token at each use. Codex writes no hooks: its state is the
+// pane's, as in a session.
 
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -85,16 +91,22 @@ async function trustOnce(tmux) {
 
 /**
  * @param {{id: string, token: string, agent: 'codex'|'claude', nextPath: string, real?: boolean, terminalToken?: string}} opts
- *   nextPath: the PATH a `docker` call for any other container goes on with. real: the real claude, with ttyd on
+ *   nextPath: the PATH a `docker` call for any other container goes on with. real: the real agent, with ttyd on
  *   terminalToken
  * @returns {Promise<{port: number, termPort: number|null, ref: string|null, binDir: string|null, close: () => void}|null>}
  */
 export async function startDevChatSession({ id, token, agent, nextPath, real = false, terminalToken = '' }) {
-  if (!onPath('tmux') || (real && (!onPath('claude') || !onPath('ttyd')))) return null;
+  if (!onPath('tmux') || (real && (!onPath(agent) || !onPath('ttyd')))) return null;
+  const ownCodexAuth = path.join(os.homedir(), '.codex', 'auth.json');
+  if (real && agent === 'codex' && !fs.existsSync(ownCodexAuth)) {
+    console.warn('dev console: no real codex, this machine has no Codex sign-in (run codex login)');
+    return null;
+  }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-dev-chat-${real ? 'real-' : ''}${agent}-`));
-  const home = real ? os.homedir() : path.join(root, 'home');
+  const realCodex = real && agent === 'codex';
+  const home = real && !realCodex ? os.homedir() : path.join(root, 'home');
   const repo = path.join(root, 'repo');
-  if (!real) fs.mkdirSync(home);
+  if (!real || realCodex) fs.mkdirSync(home);
   const git = (...args) => execFileSync('git', ['-C', repo, ...AUTHOR, ...args], { stdio: 'ignore' });
   if (real) {
     // This checkout as it is committed, on a branch of its own, with no remote to push to.
@@ -110,17 +122,26 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   }
   const codexHome = path.join(home, '.codex');
   const recordDir = agent === 'codex' ? codexHome : path.join(home, '.claude', 'projects', repo.replace(/[/.]/g, '-'));
+  if (realCodex) {
+    fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
+    fs.copyFileSync(ownCodexAuth, path.join(codexHome, 'auth.json'));
+    fs.chmodSync(path.join(codexHome, 'auth.json'), 0o600);
+    fs.writeFileSync(path.join(codexHome, 'config.toml'), `[projects."${repo}"]\ntrust_level = "trusted"\n`);
+  }
   const stateFile = path.join(root, 'claude-state.json');
   // A tmux server of its own (TMUX_TMPDIR), so it never meets the session's own claude.
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, ...(real && { WOODSHED_CLAUDE_STATE_FILE: stateFile }) };
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, ...(real && { WOODSHED_CLAUDE_STATE_FILE: stateFile }),
+    ...(realCodex && { CODEX_HOME: codexHome }) };
   let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
-  if (real) {
+  if (realCodex) {
+    paneCommand = 'codex --sandbox danger-full-access --ask-for-approval on-request';
+  } else if (real) {
     const settings = path.join(root, 'hooks.json');
     realHooks(settings);
     paneCommand = `claude --settings ${settings} --permission-mode auto`;
   }
   execFileSync('tmux', ['new-session', '-d', '-s', 'claude', '-x', '120', '-y', '30', '-c', repo, paneCommand], { env: tmuxEnv });
-  if (real) await trustOnce(tmuxEnv);
+  if (real && !realCodex) await trustOnce(tmuxEnv);
   let ttyd = null;
   let termPort = null;
   if (real) {
@@ -164,9 +185,17 @@ PATH='${nextPath}' exec docker "$@"
       } catch {
         // Gone already.
       }
+      // codex may have refreshed the login it was lent: the machine keeps the newer one.
+      if (realCodex) {
+        try {
+          fs.copyFileSync(path.join(codexHome, 'auth.json'), ownCodexAuth);
+        } catch (err) {
+          console.warn('dev console: the real codex\'s login not copied back', { message: err.message });
+        }
+      }
       fs.rmSync(root, { recursive: true, force: true });
       // The real claude's transcripts are in the machine's own Claude home, under the clone's name.
-      if (real) fs.rmSync(recordDir, { recursive: true, force: true });
+      if (real && !realCodex) fs.rmSync(recordDir, { recursive: true, force: true });
     },
   };
 }

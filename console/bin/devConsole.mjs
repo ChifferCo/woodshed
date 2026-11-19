@@ -66,6 +66,12 @@ const realClaude = process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
     nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
   : null;
 if (process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
+// DEV_CONSOLE_REAL_CODEX=1: /s/c0dea1ed runs the real codex the same way, on this machine's Codex sign-in.
+const REAL_CODEX_ID = 'c0dea1ed';
+const realCodex = process.env.DEV_CONSOLE_REAL_CODEX === '1'
+  ? await startDevChatSession({ id: REAL_CODEX_ID, token: `t${REAL_CODEX_ID}`, terminalToken: `x${REAL_CODEX_ID}`, agent: 'codex', real: true,
+    nextPath: [realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+  : null;
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -216,6 +222,11 @@ const sessions = [
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {
     kind: 'task', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: false,
     ref: realClaude.ref, endpoint: { host: '127.0.0.1', statusPort: realClaude.port, termPort: realClaude.termPort },
+  })] : []),
+  ...(realCodex ? [session(REAL_CODEX_ID, null, 'Real codex on a clone of this checkout', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, status: 'running', state: 'done', stoppedAt: null,
+    stopReason: null, prUrl: null, hasShell: false, ref: realCodex.ref,
+    endpoint: { host: '127.0.0.1', statusPort: realCodex.port, termPort: realCodex.termPort },
   })] : []),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
@@ -379,7 +390,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
@@ -416,6 +427,7 @@ function startConsole() {
     codexChat?.close();
     claudeChat?.close();
     realClaude?.close();
+    realCodex?.close();
     fs.rmSync(stateDir, { recursive: true, force: true });
     fs.rmSync(path.dirname(devClone), { recursive: true, force: true });
     process.exit(code ?? 0);

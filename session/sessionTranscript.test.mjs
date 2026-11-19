@@ -194,3 +194,23 @@ test("claude's AskUserQuestion keeps each question and its options, and whether 
   assert.equal(entries[1].answered, undefined);
   assert.equal(entries[2].answered, undefined, 'not answered yet');
 });
+
+test("codex's exec script reads as the tools it calls, each failing by its own exit code", () => {
+  const call = (id, input) => line({ timestamp: at, type: 'response_item', payload: { type: 'custom_tool_call', call_id: id, name: 'exec', input } });
+  const out = (id, ...codes) => line({ timestamp: at, type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: id, output: [
+    { type: 'input_text', text: 'Script completed\nWall time 0.1 seconds\nOutput:\n' },
+    ...codes.map((exit_code) => ({ type: 'input_text', text: JSON.stringify({ chunk_id: 'x', exit_code, output: '' }) })),
+  ] } });
+  const entries = parseCodexRollout([
+    // As codex 0.167 wrote it.
+    call('c1', `text(await tools.exec_command({cmd:"find console/ -type f -name '*.mjs' -printf '.' | wc -c"}))\n`), out('c1', 0),
+    call('c2', "const a = await tools.exec_command({ cmd: 'npm test' });\nconst b = await tools.exec_command({cmd:\"ls\"});\ntext(a + b)"), out('c2', 1, 0),
+    call('c3', 'text("hello")'),
+  ].join('\n'));
+  assert.deepEqual(entries.map((e) => [e.tool, e.text, e.error ?? false]), [
+    ['exec_command', "find console/ -type f -name '*.mjs' -printf '.' | wc -c", false],
+    ['exec_command', 'npm test', true],
+    ['exec_command', 'ls', false],
+    ['exec', 'text("hello")', false],
+  ]);
+});

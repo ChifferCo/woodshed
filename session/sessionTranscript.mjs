@@ -146,6 +146,51 @@ function codexFailed(output) {
   return Boolean(match) && match[1] !== '0';
 }
 
+// codex 0.16x runs its tools from a script: one `exec` call whose input is JavaScript such as
+// `text(await tools.exec_command({cmd:"npm test"}))`. Each tool the script calls, with its command or path, so the
+// work log says what was run rather than the script.
+const SCRIPT_CALL = /\btools\.([A-Za-z_][\w]*)\s*\(/g;
+const SCRIPT_ARG = /\b(cmd|command|path|file_path|pattern|query|url)\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`)/;
+
+function scriptValue(literal) {
+  if (literal.startsWith('"')) {
+    try {
+      return JSON.parse(literal);
+    } catch {
+      // Not JSON's escapes: shown as written.
+    }
+  }
+  return literal.slice(1, -1).replace(/\\(['"`\\])/g, '$1');
+}
+
+/** @returns {{tool: string, text: string}[]|null}  the tools an `exec` script calls, or null for any other input */
+export function codexScriptCalls(name, input) {
+  if (name !== 'exec' || typeof input !== 'string') return null;
+  const starts = [...input.matchAll(SCRIPT_CALL)];
+  if (!starts.length) return null;
+  return starts.map((m, i) => {
+    const args = input.slice(m.index + m[0].length, starts[i + 1]?.index ?? input.length);
+    const arg = SCRIPT_ARG.exec(args);
+    return { tool: m[1], text: arg ? scriptValue(arg[2]).split('\n')[0].slice(0, 300) : '' };
+  });
+}
+
+// The exit codes in an `exec` script's output: one JSON part per command it ran, each with its `exit_code`.
+function scriptExitCodes(output) {
+  if (!Array.isArray(output)) return [];
+  const codes = [];
+  for (const part of output) {
+    if (typeof part?.text !== 'string' || !part.text.trimStart().startsWith('{')) continue;
+    try {
+      const code = JSON.parse(part.text)?.exit_code;
+      if (typeof code === 'number') codes.push(code);
+    } catch {
+      // Not one of them.
+    }
+  }
+  return codes;
+}
+
 export function parseCodexRollout(text, { partial = false } = {}) {
   const entries = [];
   const tools = new Map();
@@ -163,12 +208,17 @@ export function parseCodexRollout(text, { partial = false } = {}) {
       if (said) entries.push({ role: item.role, text: cut(said), at });
     } else if (item.type === 'function_call' || item.type === 'custom_tool_call' || item.type === 'local_shell_call') {
       const input = item.arguments ?? item.input ?? item.action;
-      const entry = { role: 'tool', tool: String(item.name || 'shell'), text: toolLine(input), at };
-      if (typeof item.call_id === 'string') tools.set(item.call_id, entry);
-      entries.push(entry);
-    } else if ((item.type === 'function_call_output' || item.type === 'custom_tool_call_output') && codexFailed(item.output)) {
-      const entry = tools.get(item.call_id);
-      if (entry) entry.error = true;
+      const calls = codexScriptCalls(item.name, input);
+      const made = (calls ?? [{ tool: String(item.name || 'shell'), text: toolLine(input) }]).map((c) => ({ role: 'tool', ...c, at }));
+      if (typeof item.call_id === 'string') tools.set(item.call_id, made);
+      entries.push(...made);
+    } else if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
+      const made = tools.get(item.call_id);
+      if (!made) continue;
+      const codes = scriptExitCodes(item.output);
+      // A script's commands in order, each with its own exit code; anything else fails as a whole.
+      if (codes.length) codes.forEach((code, i) => { if (code !== 0) (made[i] ?? made[made.length - 1]).error = true; });
+      else if (codexFailed(item.output)) made[made.length - 1].error = true;
     }
   }
   return entries;

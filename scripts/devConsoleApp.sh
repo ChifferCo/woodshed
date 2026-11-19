@@ -29,7 +29,10 @@ start() {
   if [[ ${WOODSHED_CLAUDE_AUTH:-} == own ]]; then realClaude=1; fi
   if [[ -n ${SESSION_ID:-} ]]; then sessionApp=1; fi
   # In a session, its real claude too (DEV_CONSOLE_REAL_CLAUDE, devConsole.mjs): the owner's app, on the owner's Claude.
-  DEV_CONSOLE_REAL_CLAUDE=${DEV_CONSOLE_REAL_CLAUDE:-$realClaude} DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
+  # And its real codex, once the owner signed codex in here (codex login): devChatSession.mjs lends it that sign-in.
+  local realCodex=0
+  if [[ $realClaude == 1 && -s $HOME/.codex/auth.json ]]; then realCodex=1; fi
+  DEV_CONSOLE_REAL_CODEX=${DEV_CONSOLE_REAL_CODEX:-$realCodex} DEV_CONSOLE_REAL_CLAUDE=${DEV_CONSOLE_REAL_CLAUDE:-$realClaude} DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   for _ in $(seq "$WAIT_STEPS"); do
