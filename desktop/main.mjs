@@ -17,7 +17,7 @@ const READY_MS = 5_000;
 // Settled once the start has made the main window: a second launch or a sign-in link that comes in while the start
 // still waits on the console's ready answer waits for it too, so there is never a second main window.
 let markStarted;
-const started = new Promise((resolve) => { markStarted = resolve; });
+const appStarted = new Promise((resolve) => { markStarted = resolve; });
 
 // --- Settings: the console's address and the window's place, in the app's own folder. ---
 
@@ -245,7 +245,7 @@ async function signInInBrowser(next, inWindow, { again = false } = {}) {
 }
 
 async function finishSignIn(link) {
-  await started;
+  await appStarted;
   const signedIn = parseSignedInLink(link);
   if (!signedIn || !consoleUrl) return;
   // Only the link of the sign-in waiting on the console open now, by its challenge: its code and verifier go to no
@@ -462,7 +462,7 @@ if (!app.requestSingleInstanceLock()) {
   app.on('second-instance', async (event, argv) => {
     const link = linkInArgs(argv);
     if (link) return finishSignIn(link);
-    await started;
+    await appStarted;
     if (!mainWindow) return createMainWindow();
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
