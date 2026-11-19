@@ -572,6 +572,15 @@
         status.replaceChildren(h('span', null, h('b', null, `${W.agentTitle(session)} exited`), ' · the TUI tab shows its terminal'));
         return;
       }
+      // Text waits in the agent's box, unsent: a draft in the TUI tab, or a message a prompt cut off. Messages from here
+      // wait behind it.
+      if (session?.boxText) {
+        status.className = 'chat-status';
+        status.replaceChildren(
+          h('span', null, h('b', null, 'Not sent'), ` · text waits in ${agent()}'s box: send or clear it in the TUI tab, and messages from here follow`),
+          h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'TUI tab'));
+        return;
+      }
       status.className = 'chat-status';
       status.replaceChildren();
     }
@@ -669,6 +678,7 @@
       }, 1000);
       const moved = s.id !== session?.id;
       const was = session?.state;
+      const wasBox = session?.boxText === true;
       session = s;
       if (moved) {
         prompt = null;
@@ -704,6 +714,9 @@
         drawThread(false);
         drawComposer();
         schedule(0);
+      } else if (wasBox !== (s.boxText === true)) {
+        // Text came to wait in the agent's box, or left it: the status line says so.
+        drawStatus();
       }
     }
 

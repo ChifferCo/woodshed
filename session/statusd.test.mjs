@@ -690,11 +690,11 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
     await tmux('kill-server').catch(() => {});
     await fs.rm(dir, { recursive: true, force: true });
   });
-  for (const name of ['claude', 'shell']) {
-    // claude's pane shows its mode footer, as claude at its prompt does.
-    const footer = name === 'claude' ? `printf "\\n${'─'.repeat(40)}\\n❯ \\n${'─'.repeat(40)}\\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n"; ` : '';
-    await tmux('new-session', '-d', '-s', name, `bash --norc -c '${footer}while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`);
-  }
+  // claude's pane: claude at its prompt (standInClaude); the shell's: each line it is sent, written down.
+  await fs.writeFile(path.join(dir, 'claude.cjs'), standInClaude(path.join(dir, 'claude.typed')));
+  await tmux('new-session', '-d', '-s', 'claude', `${process.execPath} ${path.join(dir, 'claude.cjs')}`);
+  await tmux('new-session', '-d', '-s', 'shell', `bash --norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/shell.typed; done'`);
+  for (let i = 0; i < 50 && !/auto mode on/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
   const flags = path.join(dir, 'flags');
   const stateFile = path.join(dir, 'state.json');
   const setState = (state) => fs.writeFile(stateFile, JSON.stringify({ state, event: state === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
@@ -864,6 +864,29 @@ test('POST /send types nothing when the pane cannot be read, which may be showin
 });
 
 // A stand-in claude at its prompt: its mode footer, and each line it is sent written to a file.
+// A stand-in claude at its prompt, in raw mode as claude is: its box between rules, what is typed shown in it (its hint
+// dim when empty), each Enter writing the box's line to `file`. `screen` draws a fixed screen instead. `menuOnInput`
+// brings a menu up as soon as text goes in, before its Enter, as a prompt opening mid-typing would.
+function standInClaude(file, { screen = null, menuOnInput = false } = {}) {
+  return `const fs = require('fs');
+const custom = ${JSON.stringify(screen)};
+let line = '';
+let shown = false;
+const rule = '${'─'.repeat(40)}';
+const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + (custom ?? ('stand-in claude\\n' + rule + '\\n❯\\u00a0' + (line || '\\x1b[2mTry "fix lint"\\x1b[0m') + '\\n' + rule + '\\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n' + (shown ? '\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : ''))));
+process.stdin.setRawMode(true);
+draw();
+process.stdin.on('data', (d) => {
+  for (const ch of d.toString()) {
+    if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(file)}, line + '\\n'); line = ''; }
+    else if (ch === '\\x15') { line = ''; shown = false; }
+    else { line += ch; if (${menuOnInput}) shown = true; }
+  }
+  draw();
+});
+`;
+}
+
 // claude at its prompt: its box between two rules, the box's hint dim, and its mode footer.
 const CLAUDE_IDLE = `\n${'─'.repeat(60)}\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n${'─'.repeat(60)}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
 
@@ -877,25 +900,7 @@ async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false 
   });
   const lines = path.join(dir, 'lines.txt');
   const script = path.join(dir, 'claude.cjs');
-  // menuOnInput: a menu comes up as soon as text goes in, before its Enter, as a prompt opening mid-typing would.
-  await fs.writeFile(script, menuOnInput ? `const fs = require('fs');
-process.stdout.write(${JSON.stringify(screen)});
-process.stdin.setRawMode(true);
-let shown = false;
-let line = '';
-const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + 'stand-in claude\\n' + '${'─'.repeat(40)}\\n❯ ' + line + '\\n${'─'.repeat(40)}\\n  ⏵⏵ auto mode on (shift+tab to cycle)' + (shown ? '\\n\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : '\\n'));
-process.stdin.on('data', (d) => {
-  for (const ch of d.toString()) {
-    if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(lines)}, line + '\\n'); line = ''; }
-    else if (ch === '\\x15') { line = ''; shown = false; }
-    else { line += ch; shown = true; }
-  }
-  draw();
-});
-` : `const fs = require('fs');
-process.stdout.write(${JSON.stringify(screen)});
-require('readline').createInterface({ input: process.stdin }).on('line', (l) => fs.appendFileSync(${JSON.stringify(lines)}, l + '\\n'));
-`);
+  await fs.writeFile(script, standInClaude(lines, { screen: screen === CLAUDE_IDLE ? null : screen, menuOnInput }));
   await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', `${process.execPath} ${script}`);
   const stateFile = path.join(dir, 'state.json');
   const setState = (s) => fs.writeFile(stateFile, JSON.stringify({ state: s, event: s === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
@@ -998,4 +1003,12 @@ test('a draft emptied in the TUI tab no longer blocks the next message', async (
   assert.equal(after.status, 409, 'its menu came up again as this went in: no Enter');
   assert.equal(after.body.typed, true, 'the box empty: typed this time');
   assert.equal(await got(), '', 'and no Enter for any of them');
+});
+
+test('the status says when text waits in the agent\'s box at its prompt, for Chat to say so', async (t) => {
+  const idle = await promptPane(t, 'done');
+  assert.equal((await idle.call('GET', '/status')).body.boxText, false, 'only its dim hint: empty');
+  const rule = '─'.repeat(60);
+  const draft = await promptPane(t, 'done', { screen: `\n${rule}\n❯ half a note\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n` });
+  assert.equal((await draft.call('GET', '/status')).body.boxText, true);
 });

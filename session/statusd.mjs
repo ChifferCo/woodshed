@@ -67,7 +67,7 @@ import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
-import { Refusal, answerApproval, answerQuestions, composerEmpty, readPrompt, typeMessage } from './panePrompt.mjs';
+import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -740,7 +740,17 @@ async function agentState({ strict = false } = {}) {
 
 async function status() {
   const { state, tail, hook } = await agentState();
+  // Text waiting in the agent's box at its prompt: a draft in the TUI tab, or a message left there unsent. Chat says so.
+  let boxText = false;
+  if (state === 'done' && !QA) {
+    try {
+      boxText = !!(composerText((await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout, CODEX ? 'codex' : 'claude'));
+    } catch {
+      // No pane to read: nothing to say about its box.
+    }
+  }
   return {
+    boxText,
     sessionId: process.env.SESSION_ID || null,
     state,
     editor: hasEditor(),
@@ -908,6 +918,8 @@ const paneIo = {
     }
   },
   enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
+  // What the box holds, read with its colours: only the text typed, before the Enter.
+  box: async () => composerText((await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout, CODEX ? 'codex' : 'claude'),
 };
 
 /**
@@ -1354,6 +1366,9 @@ async function handle(req, res) {
     if (!done.sent) {
       const agent = CODEX ? 'codex' : 'claude';
       const ask = done.kind === 'question' ? `${agent} is asking a question` : done.kind === 'menu' ? `${agent} shows a menu to pick from` : `${agent} is waiting for an approval`;
+      if (done.kind === 'box') {
+        return reply(res, 409, { why: 'prompt-open', typed: true, error: `someone typed into ${agent}'s box as this went in: both are there, not sent. Send or clear them in the TUI tab` });
+      }
       return reply(res, 409, {
         why: 'prompt-open', typed: done.typed,
         error: done.typed && !done.kind

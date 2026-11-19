@@ -367,3 +367,10 @@ test('planUsageFrom preserves Codex attribution through status updates', () => {
   assert.deepEqual(planUsageFrom(usage), usage);
   assert.deepEqual(statusUpdate({ ...session({}), owner: 'octocat', options: { agent: 'codex' } }, { state: 'done', planUsage: usage }, 'now').planUsage, usage);
 });
+
+test('statusUpdate keeps whether text waits in the agent\'s box, for Chat to say so, and nothing else as true', () => {
+  const nowIso = '2026-10-21T12:00:00.000Z';
+  assert.equal(statusUpdate(session(), { state: 'done', boxText: true }, nowIso).boxText, true);
+  assert.equal(statusUpdate(session(), { state: 'done', boxText: 'yes' }, nowIso).boxText, false);
+  assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).boxText, false);
+});

@@ -391,3 +391,17 @@ test('a draft that starts with a number, or has a blank line in it, still counts
   // A screen with no box at all.
   assert.equal(composerEmpty('stand-in\n\nnothing here', 'claude'), null);
 });
+
+test('a message gets its Enter only if the box holds just its text: someone typing in the TUI tab meanwhile stops it', async () => {
+  const clear = '╭───╮\n│ > │\n╰───╯\n  ? for shortcuts';
+  const run = async (box) => {
+    const done = [];
+    const io = { capture: async () => clear, type: async () => done.push('type'), enter: async () => done.push('Enter'), box: async () => box };
+    return { result: await typeMessage(io, 'ship   it now'), done };
+  };
+  assert.deepEqual(await run('ship it now'), { result: { sent: true }, done: ['type', 'Enter'] }, 'whitespace as the box wraps it');
+  assert.deepEqual(await run('[Pasted text #1 +3 lines]'), { result: { sent: true }, done: ['type', 'Enter'] }, 'a paste the agent folds');
+  // Their half-typed note, then the message: both in the box, so no Enter, which would send their note.
+  assert.deepEqual(await run('my note ship it now'), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
+  assert.deepEqual(await run(null), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] }, 'no box found: no Enter');
+});

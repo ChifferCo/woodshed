@@ -411,7 +411,8 @@ export async function answerApproval(io, want) {
  * Enter, so a prompt that came up while the text went in gets no Enter either. A read that fails stops it the same way.
  * @param {{capture: () => Promise<string>, type: (text: string) => Promise<void>, enter: () => Promise<void>}} io
  * @param {string} text
- * @returns {Promise<{sent: true}|{sent: false, kind: 'question'|'approval'|'menu'|null, typed: boolean}>}  typed: the text is in
+ * @returns {Promise<{sent: true}|{sent: false, kind: 'question'|'approval'|'menu'|'box'|null, typed: boolean}>}  kind box: the
+ *   box held more than the text once it went in (someone typing in the TUI tab)  typed: the text is in
  *   the agent's box, unsent; kind null: the pane could not be read after it went in
  */
 // A menu on screen that readPrompt does not know (claude's folder-trust prompt, codex's, a picker of a new version):
@@ -435,6 +436,14 @@ function asking(pane, text) {
   return menuOn(pane, text) ? 'menu' : null;
 }
 
+const PASTE_PLACEHOLDER = /^\[Pasted[^\]]*\]$/i;
+
+function holdsOnly(box, text) {
+  if (typeof box !== 'string') return false;
+  const bare = (s) => s.replace(/[\s\u00a0]+/g, '');
+  return bare(box) === bare(text) || PASTE_PLACEHOLDER.test(box.trim());
+}
+
 export async function typeMessage(io, text) {
   const before = asking(await io.capture());
   if (before) return { sent: false, kind: before, typed: false };
@@ -449,6 +458,17 @@ export async function typeMessage(io, text) {
   }
   const after = asking(pane, text);
   if (after) return { sent: false, kind: after, typed: true };
+  // The box holds what was typed, and nothing else: someone typing in the TUI tab between the look before and the
+  // text would have their draft sent with it. A paste the agent folds into a placeholder counts as itself.
+  if (io.box) {
+    let box;
+    try {
+      box = await io.box();
+    } catch {
+      return { sent: false, kind: null, typed: true };
+    }
+    if (!holdsOnly(box, text)) return { sent: false, kind: 'box', typed: true };
+  }
   // An Enter that failed leaves the text in, unsent, as above.
   try {
     await io.enter();
@@ -495,6 +515,15 @@ const BOX_RULE = /^\s*─{10,}\s*$/;
  * @returns {boolean|null}  null when no input box is on screen (a menu, a screen of another program)
  */
 export function composerEmpty(colored, agent) {
+  const text = composerText(colored, agent);
+  return text === null ? null : !text;
+}
+
+/**
+ * The text in the agent's input box, leaving out what it draws dim (its hint), whitespace collapsed.
+ * @returns {string|null}  '' for an empty box; null when no input box is on screen
+ */
+export function composerText(colored, agent) {
   const mark = BOX_MARKS[agent];
   const lines = linesOf(colored);
   const plain = lines.map(PLAIN);
@@ -512,7 +541,7 @@ export function composerEmpty(colored, agent) {
       if (agent === 'claude' ? BOX_RULE.test(plain[j]) : j >= footer) break;
       text += undimmed(lines[j]);
     }
-    return !text.replace(/\u00a0/g, ' ').trim();
+    return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
   }
   return null;
 }

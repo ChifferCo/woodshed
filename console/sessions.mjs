@@ -438,6 +438,8 @@ export function statusUpdate(session, status, nowIso) {
     appName: appsFrom(status.apps)?.some((a) => a.name === status.appName) ? status.appName : null,
     // The project file turns the editor on and the image has it: Editor ↗ shows, and the console lets it through.
     editor: status.editor === true,
+    // Text waits in the agent's box at its prompt, unsent: Chat says so, and points at the TUI tab.
+    boxText: status.boxText === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so
     // still ran it.
     redis: status.redis !== false,
