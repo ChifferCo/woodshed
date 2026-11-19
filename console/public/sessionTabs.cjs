@@ -34,6 +34,22 @@
   }
 
   /**
+   * Which tab a render shows, given the tab asked for and the session as the page has it. Before the route's lookup
+   * answers (`pending`), the session may be a kept snapshot's (starting, where it now runs): a tab it cannot show is
+   * held, Agent shows meanwhile, and the held tab is tried again on the first render after the answer. Only then does a
+   * fallback stand (`fellBack`): the page then takes the tab out of the address and remembers Agent.
+   * @param {{ tab: string, held: string|null, pending: boolean, s: object, hasShell: boolean }} at
+   * @returns {{ tab: string, held: string|null, fellBack: boolean }}
+   */
+  function settle({ tab, held, pending, s, hasShell }) {
+    const wanted = held && !pending ? held : tab;
+    const showable = shown(wanted, s, hasShell);
+    if (showable === wanted) return { tab: wanted, held: pending ? held : null, fellBack: false };
+    if (pending) return { tab: showable, held: wanted, fellBack: false };
+    return { tab: showable, held: null, fellBack: true };
+  }
+
+  /**
    * The tabs kept for `login` in `storage` (sessionStorage), which may be missing or throw.
    * @returns {{ asked(id: string|null, inAddress: string|null): string|null, remember(id: string, tab: string): void }}
    */
@@ -62,5 +78,5 @@
     };
   }
 
-  return { KEY, TABS, known, shown, memory };
+  return { KEY, TABS, known, shown, settle, memory };
 });

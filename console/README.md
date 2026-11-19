@@ -64,7 +64,8 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   With no `?tab`, as from the rail, a session opens on the tab it was last left on in that browser tab
   (`public/sessionTabs.cjs`: sessionStorage, so a reload keeps it too, read only by the login that picked it and
   dropped at sign-out); `?tab=agent` asks for Agent itself, as Open the agent and Resume do. A remembered tab the session
-  cannot show now (Diff once it stopped) opens Agent, and the address and the memory then say Agent too.
+  cannot show now (Diff once it stopped) opens Agent, and the address and the memory then say Agent too; until the
+  route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
 
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.

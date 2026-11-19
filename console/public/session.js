@@ -42,6 +42,7 @@
     const asked = tabMemory.asked(id, params.get('tab'));
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
+    heldTab = null;
     if (id && asked) tabMemory.remember(id, tab);
     if (id && !params.get('tab') && tab !== 'agent') {
       params.set('tab', tab);
@@ -58,6 +59,9 @@
       return SessionTabs.memory({ getItem: () => null, setItem() {} }, login);
     }
   })();
+  // A tab asked for that the session, as the list before this route's lookup has it, cannot show: tried again once the
+  // lookup answers (render).
+  let heldTab = null;
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box.
@@ -1783,6 +1787,7 @@
   }
 
   function setTab(next) {
+    heldTab = null;
     if (tab === next) return;
     tab = next;
     landOnReview = false;
@@ -1917,13 +1922,16 @@
       return;
     }
     openReviewWhenRunning(s);
-    tab = SessionTabs.shown(tab, s, hasShell);
-    // A tab the session cannot show fell back to Agent: the address and the remembered tab say so too.
-    if (tab === 'agent' && new URLSearchParams(window.location.search).has('tab')) {
+    // A tab the session cannot show falls back to Agent. Until this route's lookup answers, the session may be the kept
+    // snapshot's (starting, where it now runs), so the tab asked for is held and tried again; once the answer is in,
+    // the fallback stands and the address and the remembered tab say Agent too.
+    const settled = SessionTabs.settle({ tab, held: heldTab, pending: routePending, s, hasShell });
+    ({ tab, held: heldTab } = settled);
+    if (settled.fellBack) {
       const url = new URL(window.location.href);
       url.searchParams.delete('tab');
       window.history.replaceState(null, '', url);
-      tabMemory.remember(s.id, 'agent');
+      tabMemory.remember(s.id, tab);
     }
     slots.head.replaceChildren(paneBar(s));
     offerRenameOnce(s);

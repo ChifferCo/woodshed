@@ -65,3 +65,30 @@ test('a remembered tab the session cannot show now falls back to Agent', () => {
   assert.equal(tabs.shown('terminal', running, false), 'agent', 'no shell');
   assert.equal(tabs.shown('terminal', running, true), 'terminal');
 });
+
+test('a tab the kept snapshot cannot show is held until the route\'s lookup answers, then shown if it can be', () => {
+  const starting = { status: 'starting', branch: 'woodshed/x' };
+  const running = { status: 'running', branch: 'woodshed/x' };
+  // A reload of ?tab=diff: the rail draws from the snapshot kept in the browser tab, where the session was starting.
+  let at = tabs.settle({ tab: 'diff', held: null, pending: true, s: starting, hasShell: true });
+  assert.deepEqual(at, { tab: 'agent', held: 'diff', fellBack: false }, 'Agent meanwhile, Diff held, nothing rewritten');
+  // Another render before the answer (a timer, the rail) keeps holding it.
+  at = tabs.settle({ tab: at.tab, held: at.held, pending: true, s: starting, hasShell: true });
+  assert.deepEqual(at, { tab: 'agent', held: 'diff', fellBack: false });
+  // The answer: the session runs, so Diff shows.
+  at = tabs.settle({ tab: at.tab, held: at.held, pending: false, s: running, hasShell: true });
+  assert.deepEqual(at, { tab: 'diff', held: null, fellBack: false });
+});
+
+test('once the route\'s lookup answers, a tab the session cannot show falls back to Agent for good', () => {
+  const stopped = { status: 'stopped', branch: 'woodshed/x' };
+  let at = tabs.settle({ tab: 'diff', held: null, pending: true, s: stopped, hasShell: false });
+  assert.deepEqual(at, { tab: 'agent', held: 'diff', fellBack: false });
+  at = tabs.settle({ tab: at.tab, held: at.held, pending: false, s: stopped, hasShell: false });
+  assert.deepEqual(at, { tab: 'agent', held: null, fellBack: true }, 'the page then drops ?tab and remembers Agent');
+  // Moving between sessions: the list is the last answer, the lookup pending, and it can show the tab already.
+  assert.deepEqual(tabs.settle({ tab: 'review', held: null, pending: true, s: stopped, hasShell: false }),
+    { tab: 'review', held: null, fellBack: false });
+  assert.deepEqual(tabs.settle({ tab: 'diff', held: null, pending: false, s: stopped, hasShell: false }),
+    { tab: 'agent', held: null, fellBack: true }, 'with the answer in, at once');
+});
