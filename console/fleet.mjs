@@ -1099,7 +1099,7 @@ export function createFleet({
 
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
   // or resumed with it (a shared one: a stopped My Woodshed session is not). True when the session was told.
-  async function prFeedback(item, text, { stillWanted = () => true } = {}) {
+  async function prFeedback(item, text, { stillWanted = async () => true } = {}) {
     const session = find(item.sessionId);
     if (!session) return false;
     // A My Woodshed session is typed into now or told again at the next check, never held: a held message would be
@@ -1115,7 +1115,7 @@ export function createFleet({
         // its state is read again just before.
         const fresh = await statusd(session, 'GET', '/status');
         // The session may have started stopping, or the watch ended or been renewed, while statusd answered.
-        if (!ownListening(session) || !stillWanted()) return 'later';
+        if (!ownListening(session) || !(await stillWanted()) || !ownListening(session)) return 'later';
         if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting' || fresh.agentOnlySend !== true) return 'later';
         // And it must still be on this pull request.
         if ('prUrl' in fresh && !samePull(fresh.prUrl, item)) return 'later';

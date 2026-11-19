@@ -3557,3 +3557,24 @@ test('a private session on an older image, whose statusd types into its pane unc
   await fleet.tick();
   assert.deepEqual([store.state.slackPending ?? [], calls.statusd.filter((c) => c.path === '/send' && c.id === session.id)], [[], []]);
 });
+
+test('a push while a private session\'s status is read again leaves the old commit\'s feedback untold', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  let head = 'abc';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: head }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  let reads = 0;
+  github.checkRuns = async () => {
+    // The status read just before typing in is the second of this tick: the session pushes while it answers.
+    Object.defineProperty(statuses, session.id, { configurable: true, get() { reads += 1; if (reads === 2) head = 'def'; return { state: 'done', prUrl }; } });
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});

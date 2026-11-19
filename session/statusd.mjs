@@ -341,6 +341,7 @@ export async function prLookupKey(gitRun) {
     ...(branch ? [
       await gitRun('config', '--get', `branch.${branch}.remote`).catch(() => ''),
       await gitRun('config', '--get', `branch.${branch}.merge`).catch(() => ''),
+      await gitRun('config', '--get', `branch.${branch}.pushRemote`).catch(() => ''),
     ] : []),
   ].join(' ');
 }
