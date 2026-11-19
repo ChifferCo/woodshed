@@ -533,7 +533,8 @@ test('the worktree review records its tree and holds it with a ref, or records w
     return res;
   };
   const record = () => JSON.parse(fs.readFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'session.json'), 'utf8'));
-  const held = () => { try { return g(wt, 'rev-parse', '--verify', '-q', `refs/woodshed-qa/${session}`); } catch { return null; } };
+  const heldRefs = () => g(wt, 'for-each-ref', '--format=%(refname) %(objectname)', `refs/woodshed-qa/${session}/`).split('\n').filter(Boolean);
+  const held = () => { const refs = heldRefs(); return refs.length === 1 ? refs[0].split(' ')[1] : refs.length ? refs : null; };
 
   process.env.WOODSHED_TEST_FAIL_WRITE_TREE = '1';
   let failedTake;
@@ -551,8 +552,38 @@ test('the worktree review records its tree and holds it with a ref, or records w
   assert.equal(held(), record().snapshot, 'the ref holds the recorded tree');
   assert.equal(g(wt, 'cat-file', '-t', record().snapshot), 'tree');
 
+  // Two Re-reviews at once, over different trees: whichever writes the record last, its tree is the one held, and
+  // only that one.
+  fs.writeFileSync(path.join(wt, 'b.txt'), 'b\n');
+  const [x, y] = await Promise.all([post(), (async () => { fs.writeFileSync(path.join(wt, 'c.txt'), 'c\n'); return post(); })()]);
+  assert.deepEqual([x.status, y.status], [200, 200]);
+  assert.equal(held(), record().snapshot, 'the tree the record names is held, and no other');
+
   await removeReviewSession({ ctx, sessionName: session });
   assert.equal(held(), null, 'removing the review lets the tree go');
+});
+
+// The rule overlapping Re-reviews rely on, without their timing: every tree is held by a ref of its own, and pruning
+// keeps exactly the one named, whatever order the holds came in.
+test('trees are held one ref each, and pruning keeps only the one named', async () => {
+  const { holdTree, pruneHeldTrees } = await import('./worktree.mjs');
+  const repo = path.join(DIR, 'held');
+  fs.mkdirSync(repo, { recursive: true });
+  const g = (...args) => execFileSync(REAL_GIT, ['-C', repo, ...args], { encoding: 'utf8' }).trim();
+  g('init', '-q');
+  const tree = (text) => { fs.writeFileSync(path.join(repo, 'f.txt'), text); g('add', '-A'); return g('write-tree'); };
+  const a = tree('a\n');
+  const b = tree('b\n');
+  const refs = () => g('for-each-ref', '--format=%(objectname)', 'refs/woodshed-qa/claude-b8b8b8b8/').split('\n').filter(Boolean).sort();
+  // A single ref by the session's name, from before, must not block the per-tree ones.
+  g('update-ref', 'refs/woodshed-qa/claude-b8b8b8b8', a);
+  assert.equal((await holdTree({ worktreePath: repo, sessionName: 'claude-b8b8b8b8', treeSha: b })).ok, true);
+  assert.equal((await holdTree({ worktreePath: repo, sessionName: 'claude-b8b8b8b8', treeSha: a })).ok, true);
+  assert.deepEqual(refs(), [a, b].sort(), 'both held, in whatever order they came');
+  assert.deepEqual(await pruneHeldTrees({ worktreePath: repo, sessionName: 'claude-b8b8b8b8', keep: b }), { ok: true, released: 1 });
+  assert.deepEqual(refs(), [b]);
+  assert.deepEqual(await pruneHeldTrees({ worktreePath: repo, sessionName: 'claude-b8b8b8b8' }), { ok: true, released: 1 });
+  assert.deepEqual(refs(), []);
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {

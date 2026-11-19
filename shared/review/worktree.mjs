@@ -742,24 +742,50 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
 }
 
 /**
- * Hold a worktree review's tree with a ref of its own, so git's gc cannot prune
- * it while the review stands: written by no commit and named by nothing else,
- * the tree would otherwise go after gc's grace period, and the Q&A with it.
- * `refs/woodshed-qa/<session>` is outside refs/heads and refs/tags, so no push
- * carries it; a Re-review moves it, and removing the review deletes it.
+ * Hold a worktree review's tree with a ref, so git's gc cannot prune it while
+ * the review stands: written by no commit and named by nothing else, the tree
+ * would otherwise go after gc's grace period, and the Q&A with it.
+ *
+ * One ref per tree, `refs/woodshed-qa/<session>/<tree>`, made BEFORE the review
+ * record names the tree, and pruned after it (pruneHeldTrees) down to the one
+ * the record names then. Two Re-reviews overlapping can then never leave the
+ * tree the record names unheld, whichever order their steps land in: it was
+ * held before it was written, and only other trees are pruned. Outside
+ * refs/heads and refs/tags, so no push carries them.
  *
  * @returns {Promise<{ok: boolean, error?: string}>}
  */
 export async function holdTree({ worktreePath, sessionName, treeSha }) {
-  const held = await git(worktreePath, ['update-ref', `refs/woodshed-qa/${sessionName}`, treeSha], 30_000);
+  // A single ref by the session's own name, from before one per tree, would
+  // block every ref under that name: git keeps a ref and a folder of refs apart.
+  await git(worktreePath, ['update-ref', '-d', `refs/woodshed-qa/${sessionName}`], 30_000);
+  const held = await git(worktreePath, ['update-ref', `refs/woodshed-qa/${sessionName}/${treeSha}`, treeSha], 30_000);
   return held.status === 0 ? { ok: true } : { ok: false, error: (held.stderr || '').trim().slice(0, 200) || `exit ${held.status}` };
 }
 
-/** Let go of the tree holdTree held. Nothing held is nothing to do. */
-export async function releaseTree({ worktreePath, sessionName }) {
-  if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: true };
-  const gone = await git(worktreePath, ['update-ref', '-d', `refs/woodshed-qa/${sessionName}`], 30_000);
-  return { ok: gone.status === 0 };
+/**
+ * Let go of every tree held for the session but `keep` (none, when the review is
+ * being removed).
+ *
+ * @returns {Promise<{ok: boolean, released: number, error?: string}>}
+ */
+export async function pruneHeldTrees({ worktreePath, sessionName, keep = null }) {
+  if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: true, released: 0 };
+  const listed = await git(worktreePath, ['for-each-ref', '--format=%(refname)', `refs/woodshed-qa/${sessionName}/`], 30_000);
+  if (listed.status !== 0) return { ok: false, released: 0, error: (listed.stderr || '').trim().slice(0, 200) };
+  let released = 0;
+  for (const ref of (listed.stdout || '').split('\n').filter(Boolean)) {
+    if (keep && ref === `refs/woodshed-qa/${sessionName}/${keep}`) continue;
+    const gone = await git(worktreePath, ['update-ref', '-d', ref], 30_000);
+    if (gone.status !== 0) return { ok: false, released, error: (gone.stderr || '').trim().slice(0, 200) };
+    released += 1;
+  }
+  return { ok: true, released };
+}
+
+/** Let go of every tree held for the session, as removing its review does. */
+export function releaseTree({ worktreePath, sessionName }) {
+  return pruneHeldTrees({ worktreePath, sessionName, keep: null });
 }
 
 /**

@@ -32,7 +32,7 @@ import { parseTarget, prBranchFor, reviewBranchFor, describeTarget } from './tar
 import {
   createReviewWorktree, removeReviewWorktree, defaultBranch, branchDiff, commitSubject,
   legacyReviewRefs, deleteLegacyRef, worktreeDiff, worktreeState,
-  fetchTargetHead, dropStagingRef, moveReviewWorktree, pullWorktreeBranch, holdTree, releaseTree,
+  fetchTargetHead, dropStagingRef, moveReviewWorktree, pullWorktreeBranch, holdTree, pruneHeldTrees, releaseTree,
 } from './worktree.mjs';
 import { REVIEW_HTML } from './page.mjs';
 import {
@@ -420,6 +420,13 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     };
   }
 
+  // Held before the record names it: see holdTree for why that order.
+  if (patch.treeSha) {
+    const held = await holdTree({ worktreePath, sessionName, treeSha: patch.treeSha });
+    // Not fatal: the tree is there now, and only gc's grace period later can take it.
+    if (!held.ok) log('review.snapshot_not_held', { reqId, session: sessionName, error: held.error });
+  }
+
   const state = await worktreeState({ worktreePath, baseSha: patch.baseSha });
   const meta = worktreeMeta({ baseRef, state, diff, headSha: patch.headSha });
 
@@ -468,11 +475,11 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
   }
 
   if (patch.treeError) log('review.snapshot_not_recorded', { reqId, session: sessionName, error: patch.treeError });
-  if (patch.treeSha) {
-    const held = await holdTree({ worktreePath, sessionName, treeSha: patch.treeSha });
-    // Not fatal: the tree is there now, and only gc's grace period later can take it.
-    if (!held.ok) log('review.snapshot_not_held', { reqId, session: sessionName, error: held.error });
-  }
+  // The trees held for earlier takes go now, all but the one the record names
+  // at this moment: read again rather than taken from this call, since another
+  // Re-review may have written it since (see holdTree).
+  const pruned = await pruneHeldTrees({ worktreePath, sessionName, keep: readSessionReview(sessionName)?.snapshot ?? null });
+  if (!pruned.ok) log('review.snapshot_refs_not_pruned', { reqId, session: sessionName, error: pruned.error });
   log('review.worktree_prepared', {
     reqId,
     session: sessionName,
@@ -722,7 +729,10 @@ export async function removeReviewSession({ ctx, sessionName }) {
   progressBySession.delete(sessionName);
   qaRuns.delete(sessionName);
   // The ref holding the Q&A's tree goes with the review, whoever owns the worktree.
-  if (review.kind === 'worktree') await releaseTree({ worktreePath: review.worktree, sessionName });
+  if (review.kind === 'worktree') {
+    const released = await releaseTree({ worktreePath: review.worktree, sessionName });
+    if (!released.ok) ctx.log('review.snapshot_refs_not_released', { session: sessionName, error: released.error });
+  }
 
   // A review of a session's OWN worktree owns nothing. The worktree and the
   // branch are the user's work, and the review is a read of them — taking
