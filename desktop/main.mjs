@@ -153,7 +153,14 @@ function zoomBy(step) {
   const win = BrowserWindow.getFocusedWindow();
   const contents = win?.webContents;
   if (!contents) return;
-  contents.setZoomLevel(step === 0 ? 0 : Math.max(-3, Math.min(5, contents.getZoomLevel() + step * 0.5)));
+  let level = step === 0 ? 0 : Math.max(-3, Math.min(5, contents.getZoomLevel() + step * 0.5));
+  // In the main window under the macOS header, no further in than its screen keeps the page 900px wide: past that the
+  // window cannot grow, and the console would take its phone layout under the lights.
+  if (chromeRules && win === mainWindow && step > 0) {
+    const most = screen.getDisplayMatching(win.getBounds()).workAreaSize.width / MAC_MIN_WIDTH;
+    while (level > 0 && 1.2 ** level > most) level -= 0.5;
+  }
+  contents.setZoomLevel(level);
   applyChrome(contents);
 }
 
@@ -316,6 +323,31 @@ async function signInInBrowser(next, inWindow, { again = false } = {}) {
   mainWindow.loadFile(path.join(here, 'signin.html'));
 }
 
+// An overtaken sign-in's session, ended on the console with its own cookie sent by hand: the cookie jar is not touched,
+// so a newer sign-in's cookie stored under the same name meanwhile stays, whatever the order. Left in the jar, the
+// ended session's cookie signs nobody in. A console whose sign-out does not take it (a hosting layer's own) has the
+// cookie removed instead, while it still holds this sign-in's value.
+async function endOvertakenSession(base, cookies) {
+  const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+  let ended = false;
+  try {
+    const res = await session.defaultSession.fetch(new URL('auth/sign-out', base).href, {
+      method: 'POST', credentials: 'omit', redirect: 'manual', headers: { cookie: cookieHeader }, signal: AbortSignal.timeout(ANSWER_MS),
+    });
+    ended = res.status === 303 || res.ok;
+  } catch (err) {
+    // `redirect: 'manual'` reports the console's 303 as an error of its own: the sign-out was answered.
+    ended = /redirect/i.test(err.message);
+  }
+  if (!ended) {
+    for (const cookie of cookies) {
+      const now = await session.defaultSession.cookies.get({ url: cookie.url, name: cookie.name }).catch(() => []);
+      if (now.some((c) => c.value === cookie.value)) await session.defaultSession.cookies.remove(cookie.url, cookie.name).catch(() => {});
+    }
+  }
+  console.log('woodshed-desktop: a sign-in stored after a newer one began, ended', { how: ended ? 'console' : 'cookie removed' });
+}
+
 async function finishSignIn(link) {
   await appStarted;
   const signedIn = parseSignedInLink(link);
@@ -370,15 +402,15 @@ async function finishSignIn(link) {
     try {
       const cookies = setCookies.map((header) => parseSetCookie(header, claimUrl)).filter(Boolean);
       if (!cookies.length) throw new Error('the console sent no session');
-      for (const cookie of cookies) await session.defaultSession.cookies.set(cookie);
-      // A newer sign-in began while it was stored: that one's account is the person's, so this one is taken back out.
+      // Checked just before the store as well as after: a sign-in overtaken already stores nothing.
       if (attempt !== signInAttempt || base !== consoleUrl) {
-        // Only while it is still this sign-in's value: the newer one may have stored its own under the same name.
-        for (const cookie of cookies) {
-          const now = await session.defaultSession.cookies.get({ url: cookie.url, name: cookie.name }).catch(() => []);
-          if (now.some((c) => c.value === cookie.value)) await session.defaultSession.cookies.remove(cookie.url, cookie.name).catch(() => {});
-        }
-        console.log('woodshed-desktop: a sign-in stored after a newer one began, taken back out');
+        console.log('woodshed-desktop: a sign-in overtaken before it was stored, dropped');
+        return;
+      }
+      for (const cookie of cookies) await session.defaultSession.cookies.set(cookie);
+      // A newer sign-in began while it was stored: that one's account is the person's, so this one is ended.
+      if (attempt !== signInAttempt || base !== consoleUrl) {
+        await endOvertakenSession(base, cookies);
         return;
       }
     } catch (err) {
@@ -464,7 +496,9 @@ async function poll() {
     const res = await session.defaultSession.fetch(new URL('api/sessions', base).href, { credentials: 'include', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
     // Signed out, or a page in place of JSON: nothing to count until the person signs in.
     if (res.ok && String(res.headers.get('content-type')).includes('json')) body = await res.json();
-    else signedOut = res.status === 401 || res.status === 302 || res.status === 403 || res.ok;
+    else if (res.status === 401 || res.status === 302 || res.status === 403 || res.ok) signedOut = true;
+    // Anything else (a 502 or 503 from a console or proxy that is down) is a read that failed, as no answer is.
+    else failure = `HTTP ${res.status}`;
   } catch (err) {
     failure = err.name === 'TimeoutError' || err.name === 'AbortError' ? `no answer in ${POLL_TIMEOUT_MS / 1000} s` : err.message;
   } finally {
