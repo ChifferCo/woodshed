@@ -1754,7 +1754,10 @@ export function createHandler({
     if (action === 'send') {
       if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
-      return toStatusd(req, res, session, { method: 'POST', path: '/send', body: { text: body.text } });
+      // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
+      // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.
+      const outcome = await fleet.send(session, body.text);
+      return reply(res, 200, { ok: true, held: outcome === 'queued' });
     }
     return toStatusd(req, res, session, { method: 'POST', path: '/scroll', body: { steps: body?.steps, pane: body?.pane } });
   }

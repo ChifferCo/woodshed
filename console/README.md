@@ -185,7 +185,7 @@ Every 30 seconds it reads the repo's issue events and new comments:
 | --- | --- |
 | `woodshed` label on an issue | A new session, unless one is already active for it, on `woodshed/<issue>-<id>` or the branch of the issue's last session |
 | `woodshed` label on a PR | Nothing: the task would be the PR's own description, and the session would push to its branch. Comment `/woodshed <what to do>` instead |
-| `/woodshed <text>` on an issue or PR with an active session | The text is typed into claude, or held until claude is open |
+| `/woodshed <text>` on an issue or PR with an active session | The text is typed into claude, or held until claude is at its prompt between turns (open, and not working), in the session's saved `pendingMessages` |
 | `/woodshed <text>` with no active session | A new session with the text as its request. On a PR it checks out the PR |
 
 Only people with write access can start or message a session; others are

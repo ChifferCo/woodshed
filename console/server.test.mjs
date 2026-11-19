@@ -1850,7 +1850,10 @@ test('the message box types its text into the owner\'s session, and its files ar
   const statusPort = await listen(statusd);
   t.after(() => statusd.close());
   const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort, shellPort: 1 } };
-  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null) };
+  // The fleet sends it, or holds it in the session's saved pendingMessages while the agent is busy (fleet.mjs).
+  const sent = [];
+  let outcome = 'sent';
+  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), send: async (session, text) => { sent.push({ id: session.id, text }); return outcome; } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'octocat' }) };
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const server = http.createServer(createHandler({ config, fleet, auth }));
@@ -1860,17 +1863,22 @@ test('the message box types its text into the owner\'s session, and its files ar
   const post = (path, body, type) => fetch(`http://localhost:${port}${path}`, { method: 'POST', headers: { ...headers, 'content-type': type }, body });
 
   const text = 'Both. Polling for the watcher\n\nand the app only on Start app';
-  assert.equal((await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text }), 'application/json')).status, 200);
-  assert.deepEqual(seen[0], { method: 'POST', url: '/send', auth: 'Bearer tok', body: JSON.stringify({ text }) }, 'the whole text, newlines kept, as one message');
+  const first = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text }), 'application/json');
+  assert.equal(first.status, 200);
+  assert.deepEqual(await first.json(), { ok: true, held: false });
+  assert.deepEqual(sent, [{ id: mine.id, text }], 'the whole text, newlines kept, as one message, through the fleet');
+  outcome = 'queued';
+  assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'later' }), 'application/json')).json(), { ok: true, held: true }, 'held while the agent is busy');
 
   assert.equal((await post(`/api/sessions/${mine.id}/send`, '{"text":"  "}', 'application/json')).status, 400);
-  assert.equal(seen.length, 1, 'nothing to send reaches nothing');
+  assert.equal(sent.length, 2, 'nothing to send reaches nothing');
+  assert.equal(seen.length, 0, 'the page never types into statusd itself');
 
   const up = await post(`/api/sessions/${mine.id}/upload?name=shot.png&pane=none`, 'png', 'application/octet-stream');
   assert.equal((await up.json()).path, '/tmp/uploads/1-shot.png');
-  assert.equal(seen[1].url, '/upload?name=shot.png', 'no pane, so statusd types nothing');
+  assert.equal(seen[0].url, '/upload?name=shot.png', 'no pane, so statusd types nothing');
   await post(`/api/sessions/${mine.id}/upload?name=shot.png`, 'png', 'application/octet-stream');
-  assert.equal(seen[2].url, '/upload?name=shot.png&pane=agent', 'a paste on the terminal still types its path, as before');
+  assert.equal(seen[1].url, '/upload?name=shot.png&pane=agent', 'a paste on the terminal still types its path, as before');
 });
 
 test('a member links a member to a Slack user on the People page, and the page lists the link', async (t) => {

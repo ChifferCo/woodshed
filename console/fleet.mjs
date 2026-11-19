@@ -507,7 +507,7 @@ export function createFleet({
 
   function hold(session, text) {
     update(session, { pendingMessages: [...session.pendingMessages, text] });
-    console.log('fleet: message held until claude is open', { id: session.id, pending: session.pendingMessages.length });
+    console.log('fleet: message held until the agent is at its prompt', { id: session.id, pending: session.pendingMessages.length });
   }
 
   function canType(session) {
@@ -523,9 +523,19 @@ export function createFleet({
     return true;
   }
 
+  // statusd typed nothing because the agent is not at its prompt for it (working, asking, a message not yet taken):
+  // held, and sent again once it is. Not a failure, so said once per reason, quietly.
+  function busyWhy(err) {
+    if (err?.status !== 409 || typeof err.body?.why !== 'string' || err.body.typed) return null;
+    return err.body.why;
+  }
+  // Why each session's held messages last did not go, so it is logged once per reason.
+  const heldWhy = new Map();
+
   /** @returns {Promise<'sent'|'queued'>} */
   async function send(session, text) {
-    if (!canType(session)) {
+    // Behind the ones already waiting, in the order they were sent.
+    if (!canType(session) || session.pendingMessages.length) {
       hold(session, text);
       return 'queued';
     }
@@ -533,7 +543,9 @@ export function createFleet({
       await statusd(session, 'POST', '/send', { body: { text } });
     } catch (err) {
       if (inTheBox(session, err)) return 'sent';
-      console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
+      const why = busyWhy(err);
+      if (why) console.log('fleet: message held until the agent is at its prompt', { id: session.id, why });
+      else console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
       hold(session, text);
       return 'queued';
     }
@@ -548,10 +560,14 @@ export function createFleet({
         await statusd(session, 'POST', '/send', { body: { text } });
       } catch (err) {
         if (!inTheBox(session, err)) {
-          console.warn('fleet: held message not delivered yet', { id: session.id, message: firstLine(err) });
+          // Busy is the usual answer mid-turn: said once per reason, not on every status read.
+          const why = busyWhy(err) ?? firstLine(err);
+          if (heldWhy.get(session.id) !== why) console.log('fleet: held message not delivered yet', { id: session.id, why });
+          heldWhy.set(session.id, why);
           return;
         }
       }
+      heldWhy.delete(session.id);
       update(session, { pendingMessages: rest });
       console.log('fleet: held message sent', { id: session.id, chars: text.length, left: rest.length });
     }

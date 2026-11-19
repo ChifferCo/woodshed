@@ -330,3 +330,17 @@ test('the page shows every line of an approval it lets the person answer', async
   assert.equal(lines.length, 6);
   assert.ok(lines.includes('$ rm -rf build'), 'the command, its sixth line, is shown: Approve answers nothing the page hid');
 });
+
+test('a menu typeMessage does not know, such as claude\'s folder trust, gets no message and no Enter', async () => {
+  const trust = [
+    ' Do you trust the files in this folder?', '', ' /tmp/fx/repo', '',
+    ' ❯ 1. Yes, proceed', '   2. No, exit', '', ' Enter to confirm · Esc to exit',
+  ].join('\n');
+  const codexTrust = ['  Do you trust the contents of this directory?', '', '› 1. Yes, continue', '  2. No, quit', '', '  Press enter to continue'].join('\n');
+  for (const screen of [trust, codexTrust]) {
+    const done = [];
+    const io = { capture: async () => screen, type: async () => done.push('type'), enter: async () => done.push('Enter') };
+    assert.deepEqual(await typeMessage(io, 'hi'), { sent: false, kind: 'menu', typed: false });
+    assert.deepEqual(done, []);
+  }
+});

@@ -864,7 +864,7 @@ test('POST /send types nothing when the pane cannot be read, which may be showin
 });
 
 // A stand-in claude at its prompt: its mode footer, and each line it is sent written to a file.
-async function promptPane(t, state, { screen = '\n> \n  ⏵⏵ auto mode on (shift+tab to cycle)\n' } = {}) {
+async function promptPane(t, state, { screen = '\n> \n  ⏵⏵ auto mode on (shift+tab to cycle)\n', menuOnInput = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
   const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
@@ -874,7 +874,19 @@ async function promptPane(t, state, { screen = '\n> \n  ⏵⏵ auto mode on (shi
   });
   const lines = path.join(dir, 'lines.txt');
   const script = path.join(dir, 'claude.cjs');
-  await fs.writeFile(script, `const fs = require('fs');
+  // menuOnInput: a menu comes up as soon as text goes in, before its Enter, as a prompt opening mid-typing would.
+  await fs.writeFile(script, menuOnInput ? `const fs = require('fs');
+process.stdout.write(${JSON.stringify(screen)});
+process.stdin.setRawMode(true);
+let shown = false;
+let line = '';
+process.stdin.on('data', (d) => {
+  for (const ch of d.toString()) {
+    if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(lines)}, line + '\\n'); line = ''; } else line += ch;
+  }
+  if (!shown) { shown = true; process.stdout.write('\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n'); }
+});
+` : `const fs = require('fs');
 process.stdout.write(${JSON.stringify(screen)});
 require('readline').createInterface({ input: process.stdin }).on('line', (l) => fs.appendFileSync(${JSON.stringify(lines)}, l + '\\n'));
 `);
@@ -887,29 +899,6 @@ require('readline').createInterface({ input: process.stdin }).on('line', (l) => 
   return { call, setState, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
 }
 
-test('POST /send holds a message while the agent works, and sends it once the turn ends', async (t) => {
-  // A prompt opens only mid-turn, between any last look at the pane and an Enter: so mid-turn, no Enter at all.
-  const { call, setState, got } = await promptPane(t, 'working');
-  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'hello held' }));
-  assert.equal(sent.status, 202);
-  assert.deepEqual(sent.body, { ok: true, held: true });
-  await new Promise((r) => setTimeout(r, 1500));
-  assert.equal(await got(), '', 'nothing typed while it works');
-  await setState('done');
-  let lines = '';
-  for (let i = 0; i < 50 && !lines; i++) {
-    await new Promise((r) => setTimeout(r, 100));
-    lines = await got();
-  }
-  assert.equal(lines, 'hello held\n', 'sent once, at the turn\'s end');
-  // claude takes it, a turn that ends: back at its prompt, a message goes in at once.
-  await setState('working');
-  await new Promise((r) => setTimeout(r, 1200));
-  await setState('done');
-  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'and now' }))).status, 200);
-  for (let i = 0; i < 30 && !(await got()).includes('and now'); i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(await got(), 'hello held\nand now\n');
-});
 
 test('a failed typing call is said again without the message it typed', async () => {
   // As execFile rejects: its message quotes the whole command line, the private draft with it.
@@ -922,57 +911,71 @@ test('a failed typing call is said again without the message it typed', async ()
   assert.doesNotMatch(JSON.stringify({ ...said, message: said.message }), /secret/);
 });
 
-test('held messages go in one per turn, in order, and a send while some wait joins them', async (t) => {
+
+
+
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(check, tries = 60) {
+  for (let i = 0; i < tries && !(await check()); i++) await pause(100);
+}
+
+test('POST /send types nothing while the agent works, and says busy for the console to send it later', async (t) => {
+  // A prompt opens only mid-turn, between any last look at the pane and an Enter: so mid-turn, no Enter at all. The
+  // console holds it in its saved pendingMessages (fleet.mjs), kept across a stop mid-turn.
   const { call, setState, got } = await promptPane(t, 'working');
-  const send = (text) => call('POST', '/send', 'sess', JSON.stringify({ text }));
-  assert.equal((await send('first')).status, 202);
-  assert.equal((await send('second')).status, 202);
-  const wait = async (want) => {
-    for (let i = 0; i < 60 && (await got()) !== want; i++) await new Promise((r) => setTimeout(r, 100));
-    return got();
-  };
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'hello busy' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'working');
+  assert.equal(sent.body.busy, true);
+  await pause(1000);
+  assert.equal(await got(), '', 'nothing typed while it works');
   await setState('done');
-  assert.equal(await wait('first\n'), 'first\n');
-  // Back at its prompt but not yet seen taking it: the second waits, rather than landing in the same box.
-  const queued = await send('third');
-  assert.equal(queued.status, 202, 'behind the ones that wait, even with the agent at its prompt');
-  await new Promise((r) => setTimeout(r, 1500));
-  assert.equal(await got(), 'first\n');
-  // The agent took it (its hooks fire), and its turn ends.
-  await setState('working');
-  await new Promise((r) => setTimeout(r, 1200));
-  await setState('done');
-  assert.equal(await wait('first\nsecond\n'), 'first\nsecond\n');
-  await setState('working');
-  await new Promise((r) => setTimeout(r, 1200));
-  await setState('done');
-  assert.equal(await wait('first\nsecond\nthird\n'), 'first\nsecond\nthird\n', 'in the order sent');
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'hello again' }))).status, 200);
+  await until(async () => (await got()) === 'hello again\n');
+  assert.equal(await got(), 'hello again\n');
 });
 
-test('a second message sent before the agent took the first waits for that turn, rather than landing in it', async (t) => {
-  // Two quick sends at its prompt: the first's Enter starts a turn the hooks have not said yet.
+test('a second message before the agent took the first is busy, rather than landing in the turn the first began', async (t) => {
   const { call, setState, got } = await promptPane(t, 'done');
   const send = (text) => call('POST', '/send', 'sess', JSON.stringify({ text }));
   assert.equal((await send('one')).status, 200);
   const second = await send('two');
-  assert.equal(second.status, 202, 'held, not typed into the turn the first began');
-  await new Promise((r) => setTimeout(r, 1500));
-  for (let i = 0; i < 30 && (await got()) !== 'one\n'; i++) await new Promise((r) => setTimeout(r, 100));
-  assert.equal(await got(), 'one\n');
+  assert.equal(second.status, 409);
+  assert.equal(second.body.why, 'working');
+  await until(async () => (await got()) === 'one\n');
+  // The agent took it, a turn that ends: back at its prompt, the next goes in.
   await setState('working');
-  await new Promise((r) => setTimeout(r, 1200));
+  await pause(300);
   await setState('done');
-  for (let i = 0; i < 60 && (await got()) !== 'one\ntwo\n'; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await send('two')).status, 200);
+  await until(async () => (await got()) === 'one\ntwo\n');
   assert.equal(await got(), 'one\ntwo\n');
 });
 
-test('a stale hook that says done is not enough when claude\'s screen shows its turn running: the message waits', async (t) => {
+test('a stale hook that says done is not enough when claude\'s screen shows its turn running: busy, nothing typed', async (t) => {
   const rule = '─'.repeat(60);
   const running = `\n${rule}\n❯ \n${rule}\n  ✻ Working… (12s · esc to interrupt)\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
   const { call, got } = await promptPane(t, 'done', { screen: running });
   const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'not into this turn' }));
-  assert.equal(sent.status, 202);
-  assert.deepEqual(sent.body, { ok: true, held: true });
-  await new Promise((r) => setTimeout(r, 2000));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'working');
+  await pause(1000);
   assert.equal(await got(), '', 'no text, no Enter, while the screen shows the turn');
+});
+
+test('text left in the box with no Enter blocks the next message until the agent takes it, so two never join', async (t) => {
+  // A menu comes up as the text goes in: no Enter, the text sits in the box (typed), and the next send is busy.
+  const { call, setState, got } = await promptPane(t, 'done', { menuOnInput: true });
+  const first = await call('POST', '/send', 'sess', JSON.stringify({ text: 'first' }));
+  assert.equal(first.status, 409);
+  assert.equal(first.body.typed, true, 'it went in, with no Enter');
+  const second = await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }));
+  assert.equal(second.status, 409);
+  assert.equal(second.body.why, 'draft-in-box', 'not typed onto the end of the first');
+  await pause(500);
+  assert.equal(await got(), '', 'no Enter for either');
+  // Someone answers in the TUI tab and the agent takes the box: a hook fires, and the next can go.
+  await setState('working');
+  const third = await call('POST', '/send', 'sess', JSON.stringify({ text: 'third' }));
+  assert.equal(third.body.why, 'working', 'past the draft, busy only with the turn');
 });

@@ -116,6 +116,10 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     statusd: (session, method, path, opts) => {
       if (path === '/send' && fail.send) return Promise.reject(new Error('statusd /send timed out'));
       if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
+      if (path === '/send' && fail.sendBusy) {
+        calls.statusd.push({ path, body: opts?.body, refused: 'busy' });
+        return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'working', busy: true } }));
+      }
       return statusd(session, method, path, opts);
     },
   });
@@ -3247,4 +3251,26 @@ test('a message statusd typed before a prompt came up is not typed again: it is 
   fail.sendTyped = false;
   await fleet.tick();
   assert.equal(calls.statusd.filter((c) => c.path === '/send').length, 0, 'never typed again');
+});
+
+test('a message statusd says busy for is kept in the session\'s saved pendingMessages, and goes in order once it can', async () => {
+  // Mid-turn statusd types nothing (a prompt could open under the Enter): the console keeps it, saved, so a stop
+  // mid-turn does not lose it, and a later message waits behind it.
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'first'), 'queued');
+  assert.deepEqual(session.pendingMessages, ['first']);
+  assert.equal(await fleet.send(session, 'second'), 'queued', 'behind the one waiting, not tried before it');
+  assert.deepEqual(session.pendingMessages, ['first', 'second']);
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, ['first', 'second'], 'still busy: kept');
+  fail.sendBusy = false;
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && !c.refused).map((c) => c.body.text), ['first', 'second']);
+  assert.deepEqual(session.pendingMessages, []);
 });
