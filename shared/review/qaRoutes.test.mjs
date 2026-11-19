@@ -42,6 +42,9 @@ fs.writeFileSync(path.join(BIN, 'git'), `#!/bin/sh
 if [ "$WOODSHED_TEST_FAIL_WRITE_TREE" = 1 ]; then
   for a in "$@"; do [ "$a" = write-tree ] && { echo "fatal: injected write-tree failure" >&2; exit 128; }; done
 fi
+if [ "$WOODSHED_TEST_SLOW_WRITE_TREE" = 1 ]; then
+  for a in "$@"; do [ "$a" = write-tree ] && sleep 1; done
+fi
 exec ${REAL_GIT} "$@"
 `, { mode: 0o755 });
 process.env.PATH = `${BIN}:${process.env.PATH}`;
@@ -552,12 +555,25 @@ test('the worktree review records its tree and holds it with a ref, or records w
   assert.equal(held(), record().snapshot, 'the ref holds the recorded tree');
   assert.equal(g(wt, 'cat-file', '-t', record().snapshot), 'tree');
 
-  // Two Re-reviews at once, over different trees: whichever writes the record last, its tree is the one held, and
-  // only that one.
-  fs.writeFileSync(path.join(wt, 'b.txt'), 'b\n');
-  const [x, y] = await Promise.all([post(), (async () => { fs.writeFileSync(path.join(wt, 'c.txt'), 'c\n'); return post(); })()]);
-  assert.deepEqual([x.status, y.status], [200, 200]);
-  assert.equal(held(), record().snapshot, 'the tree the record names is held, and no other');
+  // A take in progress refuses a Q&A outright: asked between its new record and its cancelling of old runs, one would
+  // be cancelled and erased with them. The take is slowed (write-tree waits a second) so the ask lands inside it.
+  process.env.WOODSHED_TEST_SLOW_WRITE_TREE = '1';
+  try {
+    fs.writeFileSync(path.join(wt, 'b.txt'), 'b\n');
+    const taking = post();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const asked = await call('POST', `/reviews/${session}/qa`);
+    assert.deepEqual([asked.status, asked.body.code], [409, 'retaking']);
+    assert.equal((await taking).status, 200);
+    assert.equal(readQa(session), null, 'nothing was started');
+
+    // Two takes at once, both slowed: they go one after the other, and the tree the record names is the one held.
+    const [x, y] = await Promise.all([post(), (async () => { fs.writeFileSync(path.join(wt, 'c.txt'), 'c\n'); return post(); })()]);
+    assert.deepEqual([x.status, y.status], [200, 200]);
+    assert.equal(held(), record().snapshot, 'the tree the record names is held, and no other');
+  } finally {
+    delete process.env.WOODSHED_TEST_SLOW_WRITE_TREE;
+  }
 
   await removeReviewSession({ ctx, sessionName: session });
   assert.equal(held(), null, 'removing the review lets the tree go');

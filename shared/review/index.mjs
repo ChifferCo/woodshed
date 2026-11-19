@@ -158,6 +158,29 @@ const chatJobs = new Map();
 const qaRuns = new Map();
 let qaGen = 0;
 
+/**
+ * session -> the take of its review in progress. One at a time per session,
+ * from holding its tree to starting the new analysis: two overlapping takes
+ * could otherwise prune the tree the other is about to record, and a Q&A asked
+ * between a take's new record and its cancelling of old runs would be cancelled
+ * and erased with them. A Q&A asked while a take is in progress is refused.
+ */
+const takes = new Map();
+
+async function oneTakeAtATime(session, take) {
+  const before = takes.get(session) || Promise.resolve();
+  let done;
+  const mine = before.then(() => new Promise((resolve) => { done = resolve; }));
+  takes.set(session, mine);
+  await before;
+  try {
+    return await take();
+  } finally {
+    done();
+    if (takes.get(session) === mine) takes.delete(session);
+  }
+}
+
 // --- what server.mjs calls at launch ----------------------------------------
 
 /**
@@ -508,8 +531,12 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
  */
 export async function ensureWorktreeReview({ ctx, sessionName }) {
   if (readSessionReview(sessionName)) return { ok: true, created: false };
-  const made = await createWorktreeReview({ ctx, sessionName, worktreePath: ctx.worktreePathFor(sessionName) });
-  return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
+  return oneTakeAtATime(sessionName, async () => {
+    // Asked again inside: another opening of the page may have made it meanwhile.
+    if (readSessionReview(sessionName)) return { ok: true, created: false };
+    const made = await createWorktreeReview({ ctx, sessionName, worktreePath: ctx.worktreePathFor(sessionName) });
+    return made.ok ? { ok: true, created: true } : { ok: false, status: made.status, error: made.error };
+  });
 }
 
 /**
@@ -1345,7 +1372,11 @@ async function handleViewedWrite(payload, res, ctx, session) {
   json(res, 200, { ok: true, path: filePath, viewed: !!payload.viewed });
 }
 
-async function handleWorktreeReview(res, ctx, session) {
+function handleWorktreeReview(res, ctx, session) {
+  return oneTakeAtATime(session, () => takeWorktreeReview(res, ctx, session));
+}
+
+async function takeWorktreeReview(res, ctx, session) {
   const { json, log, reqId } = ctx;
   // No existence check here: worktreePathFor only computes a path, and whether
   // anything is at it is worktreeDiff's first question — which answers with a
@@ -1409,7 +1440,11 @@ async function handleWorktreeReview(res, ctx, session) {
  * touches none of it — there is nothing to replace, so nothing is cancelled and
  * no run is paid for.
  */
-async function handleRefreshReview(res, ctx, session) {
+function handleRefreshReview(res, ctx, session) {
+  return oneTakeAtATime(session, () => takeRefreshReview(res, ctx, session));
+}
+
+async function takeRefreshReview(res, ctx, session) {
   const { json, log, reqId } = ctx;
 
   const done = await refreshTargetReview({ ctx, sessionName: session });
@@ -2082,6 +2117,10 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
     });
   }
   if (qaRuns.has(session)) return json(res, 200, { ok: true, status: 'running' });
+  if (takes.has(session)) {
+    log('review.qa_refused_retaking', { reqId, session });
+    return json(res, 409, { ok: false, code: 'retaking', error: 'this review is being taken again: ask once that has finished' });
+  }
   if (first) {
     const had = readQa(session);
     // Whatever its state: ready, failed, or cut off by a restart (still 'running'
