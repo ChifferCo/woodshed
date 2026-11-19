@@ -128,11 +128,12 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
   }
 
   // Who the saved token is, kept in state.json under `slackBot` until the secret changes, so the page does not ask
-  // Slack each time it is drawn.
-  async function botFor(token) {
+  // Slack each time it is drawn. Reinstalling an app with new scopes keeps its token, so the card's Check again asks
+  // Slack anyway (`force`).
+  async function botFor(token, { force = false } = {}) {
     const kept = store.state.slackBot ?? null;
     const changedAt = token?.changedAt ?? null;
-    const fresh = kept && kept.changedAt === changedAt && (changedAt || now() - Date.parse(kept.checkedAt) < RECHECK_MS);
+    const fresh = !force && kept && kept.changedAt === changedAt && (changedAt || now() - Date.parse(kept.checkedAt) < RECHECK_MS);
     if (fresh) return kept;
     const who = await slack.identify();
     if (!who) return null;
@@ -147,7 +148,7 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
   /**
    * @returns {Promise<object>}  what the card and the dialog show; never a value
    */
-  async function view() {
+  async function view({ recheck = false } = {}) {
     const base = { eventsUrl: await readEventsUrl(), install: await installView(), canDisconnect: canDisconnect(), scopes: BOT_SCOPES, channelScopes: CHANNEL_SCOPES };
     base.manifest = slackManifest({ name: consoleName, eventsUrl: base.eventsUrl });
     const channel = slack.view().channel;
@@ -159,7 +160,7 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
     let bot = null;
     if (connected) {
       try {
-        bot = await botFor(token);
+        bot = await botFor(token, { force: recheck });
       } catch (err) {
         console.warn('slack: bot not looked up', { message: String(err?.message ?? err).split('\n')[0] });
       }
@@ -269,5 +270,17 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
     return slack.channels({ query, token });
   }
 
-  return { view, check, save, disconnect, channels, get canDisconnect() { return canDisconnect(); } };
+  /**
+   * The saved token asked about again, for the card's Check again: an app reinstalled with new scopes keeps its token,
+   * which the card would otherwise go on describing as it was when saved. The channel list is read again too.
+   * @returns {Promise<object>}  as view()
+   */
+  async function recheck({ by }) {
+    slack.forgetChannels();
+    const next = await view({ recheck: true });
+    console.log('slack: saved token checked again', { by, ok: next.bot?.ok ?? null, missingScopes: next.missingScopes ?? null });
+    return next;
+  }
+
+  return { view, check, save, disconnect, channels, recheck, get canDisconnect() { return canDisconnect(); } };
 }

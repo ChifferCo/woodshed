@@ -281,6 +281,17 @@ test('Disconnect is offered where the store can make the secrets again, behind t
   assert.match(textOf(cardOf(app, 'slack')), /Not set up/);
 });
 
+test('an app missing scopes offers Check again, which asks Slack about the saved token and says what it found', async () => {
+  const { app, posted } = await loadPage(WITH_SLACK, { slack: { ...SLACK_ON, missingScopes: ['channels:read', 'groups:read'] } });
+  assert.match(textOf(cardOf(app, 'slack')), /The app lacks channels:read, groups:read\. Add them on its OAuth & Permissions page and reinstall it, then Check again\./);
+  posted.reply = () => ({ ...SLACK_ON, missingScopes: [] });
+  buttonIn(cardOf(app, 'slack'), 'Check again').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/slack/recheck', body: {} }]);
+  assert.match(textOf(cardOf(app, 'slack')), /Checked: the app has every scope the console uses\./);
+  assert.doesNotMatch(textOf(cardOf(app, 'slack')), /The app lacks/);
+});
+
 test('a saved token Slack refuses says so on the card', async () => {
   const { app } = await loadPage(WITH_SLACK, { slack: { ...SLACK_ON, bot: { ok: false, error: 'invalid_auth' } } });
   assert.match(textOf(cardOf(app, 'slack')), /Token refused.*Slack refuses the saved token \(invalid_auth\): nothing is posted\./);

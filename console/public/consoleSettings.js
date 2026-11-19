@@ -662,6 +662,30 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     render();
   }
 
+  // Slack keeps an app's token when it is reinstalled with new scopes, so the card asks about the saved one again.
+  async function recheckSlack() {
+    if (saving.has('slack-recheck')) return;
+    saving.add('slack-recheck');
+    render();
+    try {
+      const next = await W.postJson('/api/console-settings/slack/recheck', {});
+      const text = next.bot && !next.bot.ok ? `Checked: Slack still refuses the saved token (${next.bot.error}).`
+        : next.missingScopes?.length ? `Checked: the app still lacks ${next.missingScopes.join(', ')}. Reinstall it after adding ${next.missingScopes.length === 1 ? 'it' : 'them'}.`
+          : 'Checked: the app has every scope the console uses.';
+      slackSaved(next, text);
+    } catch (err) {
+      slackNote.text = err.message;
+      slackNote.bad = true;
+    }
+    saving.delete('slack-recheck');
+    render();
+  }
+
+  function checkAgainButton() {
+    return h('button', { type: 'button', class: 'btn btn-plain btn-sm', disabled: saving.has('slack-recheck'), onclick: recheckSlack },
+      saving.has('slack-recheck') ? 'Checking…' : 'Check again');
+  }
+
   function openSetup(mode) {
     W.openSlackSetup({
       view: slackView, mode,
@@ -771,7 +795,9 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
           installed && v.install.href
             ? h('a', { class: 'btn btn-plain btn-sm', href: v.install.href }, 'Reinstall')
             : h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: () => openSetup('replace') }, 'Replace keys'),
-          v.missingScopes?.length > 0 && h('p', { class: 'cap-note', style: 'grid-column: 1 / -1' }, `The app lacks ${v.missingScopes.join(', ')}. Add ${v.missingScopes.length === 1 ? 'it' : 'them'} on its OAuth & Permissions page, reinstall it, then Replace keys with its new token.`)),
+          (refused || v.missingScopes?.length > 0) && h('p', { class: 'cap-note', style: 'grid-column: 1 / -1' },
+            refused ? 'Fixed it in Slack? ' : `The app lacks ${v.missingScopes.join(', ')}. Add ${v.missingScopes.length === 1 ? 'it' : 'them'} on its OAuth & Permissions page and reinstall it, then `,
+            checkAgainButton(), refused ? '' : '. If Slack gave it a new token, Replace keys with that instead.')),
         slackRow('Pull requests', channelText(v),
           [limitsToggle('slack'), !changing && h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: () => { slackOpen.add('channel'); slackNote.text = null; render(); } }, 'Change channel')],
           changing && h('div', { class: 'slack-more' },
