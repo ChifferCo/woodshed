@@ -476,10 +476,12 @@ export function createAuth({
       return null;
     }
     const id = crypto.randomBytes(32).toString('hex');
-    sessions()[hash(id)] = { login: claimed.login, createdAt: now(), checkedAt: parent.checkedAt, expiresAt: now() + SESSION_MS, desktop: true };
+    // Nor a longer one: the app's session ends when the browser's would, so handing a sign-in to the app never extends it.
+    const expiresAt = Math.min(now() + SESSION_MS, parent.expiresAt);
+    sessions()[hash(id)] = { login: claimed.login, createdAt: now(), checkedAt: parent.checkedAt, expiresAt, desktop: true };
     store.save();
     console.log('auth: desktop signed in', { login: claimed.login });
-    return { login: claimed.login, setCookie: cookie(sessionCookie, id, SESSION_MS / 1000) };
+    return { login: claimed.login, setCookie: cookie(sessionCookie, id, Math.max(1, Math.floor((expiresAt - now()) / 1000))) };
   }
 
   return {

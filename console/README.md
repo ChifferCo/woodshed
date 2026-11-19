@@ -1299,7 +1299,8 @@ the console's own page (Origin checked, the page never framed), makes the code, 
 opens the browser with a challenge of its own and catches `woodshed://` gets nothing without the person's press. The
 page after it opens `woodshed://signed-in?code=&challenge=` with a code that lives two minutes and works once; the
 challenge goes back with it so the app claims only the link of the sign-in it is waiting on. The app claims it at `POST /auth/desktop/claim` with the verifier the challenge was made from (PKCE's S256), for a
-session of its own: signing the browser out leaves the app signed in, and the other way round. `GET
+session of its own, which keeps the browser session's last access check and ends when the browser's would, so
+handing a sign-in to the app never extends it: signing the browser out leaves the app signed in, and the other way round. `GET
 /auth/desktop/ready` says the console does this; a console behind a hosting proxy, which signs people in itself,
 answers none of these, and the app signs in inside its window there, unless the program answers them itself
 ("Embedding the console": `handleDesktopSignIn` with its own sign-in). The ready answer's `signInPaths` are the paths the

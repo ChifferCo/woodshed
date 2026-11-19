@@ -462,3 +462,18 @@ test('the desktop codes refuse a code that is not a string, and do not throw on 
   assert.deepEqual(codes.claim(undefined, verifier), { refused: { known: false, verified: false } });
   assert.deepEqual(codes.claim(code, verifier), { data: { login: 'octo' } }, 'the real code still works after');
 });
+
+test('the desktop app\'s session ends when the browser\'s would, never later', async () => {
+  const ctx = setup();
+  const browser = cookiesFrom((await signIn(ctx)).setCookies);
+  // Eleven hours into the browser's twelve, the app is signed in for the hour the browser has left.
+  ctx.clock.now += 11 * 3_600_000;
+  const { verifier, challenge } = await desktopPair();
+  const claimed = ctx.auth.claimDesktopCode({ code: await ctx.auth.desktopCode({ cookieHeader: browser, challenge }), verifier });
+  assert.match(claimed.setCookie, /Max-Age=3600$/);
+  const app = cookiesFrom(claimed.setCookie);
+  ctx.clock.now += 3_600_000 - 1;
+  assert.equal(await ctx.auth.sessionFor(app).then((u) => u?.login), 'octo');
+  ctx.clock.now += 1;
+  assert.equal(await ctx.auth.sessionFor(app), null, 'gone with the browser\'s');
+});
