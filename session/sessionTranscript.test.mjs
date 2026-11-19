@@ -176,3 +176,21 @@ test('with since, a transcript written no later than the last answer is answered
   assert.equal(next.unchanged, undefined);
   assert.equal(next.entries.at(-1).text, 'One more.');
 });
+
+test("claude's AskUserQuestion keeps each question and its options, and whether it was answered", () => {
+  const ask = (id, question) => line({ type: 'assistant', timestamp: '2026-01-01T00:00:01Z', message: { content: [{
+    type: 'tool_use', id, name: 'AskUserQuestion',
+    input: { questions: [{ question, header: 'Indent', multiSelect: false, options: [{ label: 'Tabs', description: 'Tab characters' }, { label: 'Spaces' }] }] },
+  }] } });
+  const result = (id, isError) => line({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content: 'x' }] } });
+  const entries = parseClaudeTranscript([
+    ask('q1', 'Tabs or spaces?'), result('q1', false),
+    ask('q2', 'Which width?'), result('q2', true),
+    ask('q3', 'Still open?'),
+  ].join('\n'));
+  assert.deepEqual(entries[0], { role: 'tool', tool: 'AskUserQuestion', text: 'Tabs or spaces?', at: '2026-01-01T00:00:01Z',
+    questions: [{ question: 'Tabs or spaces?', options: ['Tabs', 'Spaces'] }], answered: true });
+  assert.equal(entries[1].error, true, 'Esc on the question');
+  assert.equal(entries[1].answered, undefined);
+  assert.equal(entries[2].answered, undefined, 'not answered yet');
+});

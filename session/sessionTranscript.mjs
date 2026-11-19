@@ -57,6 +57,17 @@ function toolLine(input) {
   return '';
 }
 
+// What claude's AskUserQuestion asks, for the Chat tab to show over the work log: each question and its options' labels.
+// Its answer is typed in the terminal (the Agent tab), the one place claude takes it.
+function askedQuestions(block) {
+  const list = block.name === 'AskUserQuestion' && Array.isArray(block.input?.questions) ? block.input.questions : [];
+  const questions = list.filter((q) => typeof q?.question === 'string' && q.question.trim()).slice(0, 4).map((q) => ({
+    question: q.question.trim().slice(0, 500),
+    options: (Array.isArray(q.options) ? q.options : []).map((o) => String(o?.label ?? '').trim().slice(0, 200)).filter(Boolean).slice(0, 8),
+  }));
+  return questions.length ? questions : null;
+}
+
 // Lines of a JSONL text; with `partial`, the first is the end of a line cut by the read and is dropped.
 function records(text, partial) {
   const lines = text.split('\n');
@@ -97,11 +108,14 @@ export function parseClaudeTranscript(text, { partial = false } = {}) {
         entries.push({ role: r.type, text: cut(block.text.trim()), at });
       } else if (block?.type === 'tool_use' && r.type === 'assistant') {
         const entry = { role: 'tool', tool: String(block.name || 'tool'), text: toolLine(block.input), at };
+        const questions = askedQuestions(block);
+        if (questions) Object.assign(entry, { text: questions[0].question, questions });
         if (typeof block.id === 'string') tools.set(block.id, entry);
         entries.push(entry);
-      } else if (block?.type === 'tool_result' && block.is_error === true) {
+      } else if (block?.type === 'tool_result') {
         const entry = tools.get(block.tool_use_id);
-        if (entry) entry.error = true;
+        if (entry && block.is_error === true) entry.error = true;
+        else if (entry?.questions) entry.answered = true;
       }
     }
   }

@@ -34,6 +34,17 @@ test('a work log is summed up by what its tools did, claude\'s names and codex\'
   assert.equal(chat.workSummary([]), '');
 });
 
+test('a question the agent asked is its own item, out of the work log around it', () => {
+  const q = [{ question: 'Tabs or spaces?', options: ['Tabs', 'Spaces'] }];
+  const list = chat.items([
+    { role: 'tool', tool: 'Bash', text: 'ls' },
+    { role: 'tool', tool: 'AskUserQuestion', text: 'Tabs or spaces?', questions: q, answered: true },
+    { role: 'tool', tool: 'Read', text: 'a.js' },
+  ]);
+  assert.deepEqual(list.map((i) => i.kind), ['work', 'ask', 'work']);
+  assert.deepEqual(list[1], { kind: 'ask', questions: q, answered: true, declined: false, at: undefined });
+});
+
 test('markdown reads into blocks: paragraphs, headings, lists, quotes, tables, rules and fenced code', () => {
   const blocks = chat.markdown([
     '## Plan', '', 'First **this**, then `that`.', 'Same paragraph.', '',
@@ -52,6 +63,19 @@ test('markdown reads into blocks: paragraphs, headings, lists, quotes, tables, r
   assert.deepEqual(blocks[6].head.map((c) => c[0].v), ['File', 'Lines']);
   assert.deepEqual(blocks[6].rows, [[[{ t: 'text', v: 'a.js' }], [{ t: 'text', v: '3' }]]]);
   assert.deepEqual(blocks[7], { type: 'code', lang: 'js', text: 'const x = 1;\n\nx++;' });
+});
+
+test('a table cell keeps an escaped pipe, and a pipe inside code, as one cell', () => {
+  // As a real claude wrote it: GFM's `\|` in a code span. Some models leave the pipe in code unescaped.
+  const [table] = chat.markdown([
+    '| What | Source |', '| --- | --- |',
+    "| count | `find console -name '*.mjs' \\| wc -l` |",
+    '| raw | `a | b` and c \\| d |',
+  ].join('\n'));
+  assert.equal(table.head.length, 2);
+  assert.deepEqual(table.rows.map((r) => r.length), [2, 2]);
+  assert.deepEqual(table.rows[0][1], [{ t: 'code', v: "find console -name '*.mjs' | wc -l" }]);
+  assert.deepEqual(table.rows[1][1], [{ t: 'code', v: 'a | b' }, { t: 'text', v: ' and c | d' }]);
 });
 
 test('a fence left open runs to the end, and markup inside code stays text', () => {
@@ -102,6 +126,9 @@ test('a record that moved in the last 90 s and ends on the person or a tool is a
   assert.equal(chat.midTurn(rec('tool', 5_000), now - 2_000, now), false, 'the console said it settled after this was written: Esc stopped it');
   const interrupted = { entries: [{ role: 'tool' }, { role: 'user', text: '[Request interrupted by user]' }], writtenAt: now - 1000 };
   assert.equal(chat.midTurn(interrupted, 0, now), false, 'claude\'s note of an Esc ends the turn');
+  assert.equal(chat.endedByStop(interrupted), true, 'the page stops saying Working before the console reads the state');
+  assert.equal(chat.endedByStop(rec('tool', 5_000)), false);
+  assert.equal(chat.endedByStop(null), false);
   assert.equal(chat.midTurn(null, 0, now), false);
   assert.equal(chat.midTurn({ entries: [], writtenAt: now }, 0, now), false);
 });

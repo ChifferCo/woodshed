@@ -22,6 +22,9 @@
  .rows{padding:7px 12px 9px;border-top:1px solid var(--line-soft);display:flex;flex-direction:column;gap:3px;font:12px "JetBrains Mono",monospace}
  .rows div{display:flex;gap:10px} .rows .n{min-width:5.5em;color:var(--slate)} .rows .t{flex:1;color:var(--sub)}
  .spin{width:10px;height:10px;border-radius:50%;border:2px solid var(--slate);border-right-color:transparent;display:inline-block}
+ .ask{border:1px solid var(--line);border-radius:8px;padding:10px 14px;font-size:14px}
+ .ask-head{display:flex;justify-content:space-between;margin-bottom:6px;font-size:12.5px} .ask-head span{font:11.5px "JetBrains Mono",monospace;color:var(--meta)}
+ .ask p{margin:0 0 4px;font-weight:600} .ask ol{margin:0;padding-left:1.4em;color:var(--sub)}
  .status{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--sub)} .status b{color:var(--slate);font-weight:600}
  .clock{font:11.5px "JetBrains Mono",monospace;color:var(--meta)}
  .needs{border:1px solid var(--wait);border-radius:8px;padding:8px 8px 8px 12px} .needs b{color:var(--wait)}
@@ -43,8 +46,9 @@
  <div class="user pending"><div class="bubble">Add a test for the 45 s step</div><span class="sent">Sent, waiting for claude</span></div>
  <div class="work open"><div class="sum"><span class="caret">▸</span><span class="spin"></span><span class="what">Ran 2 commands</span><span class="failed">1 failed</span></div>
   <div class="rows"><div><span class="n">Bash</span><span class="t">node --test console/webhookDispatch.test.mjs</span><span class="failed">failed</span></div><div><span class="n">Edit</span><span class="t">console/webhookDispatch.test.mjs</span></div></div></div>
+ <div class="ask"><div class="ask-head"><b>claude asks</b><span>Waiting for your answer</span></div><p>Keep the 45 s step, or stop at 15 s?</p><ol><li>Keep 45 s</li><li>Stop at 15 s</li></ol></div>
  <div class="status"><span class="spin"></span><b>Working</b><span class="clock">1m 05s</span></div>
- <div class="status needs"><span><b>Needs you</b> · claude is asking something it shows in its terminal</span><span class="btn">Answer in the Agent tab</span></div>
+ <div class="status needs"><span><b>Needs you</b> · claude asks above; it takes the answer in its terminal</span><span class="btn">Answer in the Agent tab</span></div>
  <div class="composer"><div class="field">Message claude</div>
   <div class="tools"><span class="agent">claude</span><span class="hint">Enter to send · Shift+Enter for a new line</span><span class="ib"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5l-8.6 8.6a5 5 0 0 1-7.1-7.1l8.6-8.6a3.4 3.4 0 0 1 4.8 4.8l-8.6 8.6a1.7 1.7 0 0 1-2.4-2.4l7.9-7.9"/></svg></span><span class="ib stop">■</span><span class="ib send">↑</span></div></div>
 </div>

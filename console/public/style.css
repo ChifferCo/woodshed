@@ -1240,6 +1240,14 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-tool-name { flex: none; min-width: 5.5em; color: var(--slate); }
 .chat-tool-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); }
 .chat-tool-failed { flex: none; color: var(--bad); }
+/* What the agent asked: its own card, out of the work log, answered in the terminal. */
+.chat-ask { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); font-size: 14px; }
+.chat-ask-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 12.5px; color: var(--sub); }
+.chat-ask-head b { color: var(--ink); }
+.chat-ask-state { font-family: var(--mono); font-size: 11.5px; color: var(--meta); }
+.chat-ask-q p { margin: 0 0 4px; font-weight: 600; color: var(--ink); }
+.chat-ask-q ol { margin: 0 0 6px; padding-left: 1.4em; color: var(--sub); }
+.chat-ask-q + .chat-ask-q { margin-top: 8px; }
 .chat-note { margin: 0; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--meta); }
 .chat-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 0; padding: 16vh 0 0; text-align: center; font-size: 14px; color: var(--sub); }
 .chat-empty b { font-size: 16px; color: var(--ink); }

@@ -43,7 +43,33 @@
   const TABLE_ROW = /^\s*\|.*\|\s*$/;
   const TABLE_RULE = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
-  const cells = (line) => line.trim().replace(/^\||\|$/g, '').split('|').map((c) => inline(c.trim()));
+  // A row's cells, split at each pipe that is not escaped (`\|`, as GFM writes one in a cell) nor inside a code span,
+  // which models often leave unescaped (`a | b`).
+  function cells(line) {
+    const row = line.trim().replace(/^\|/, '').replace(/(^|[^\\])\|$/, '$1');
+    const out = [];
+    let cell = '';
+    let tick = 0;
+    for (let i = 0; i < row.length; i++) {
+      const ch = row[i];
+      if (ch === '\\' && row[i + 1] === '|') {
+        cell += '|';
+        i++;
+      } else if (ch === '`') {
+        let n = 1;
+        while (row[i + n] === '`') n++;
+        if (!tick) tick = n;
+        else if (tick === n) tick = 0;
+        cell += row.slice(i, i + n);
+        i += n - 1;
+      } else if (ch === '|' && !tick) {
+        out.push(cell);
+        cell = '';
+      } else cell += ch;
+    }
+    out.push(cell);
+    return out.map((c) => inline(c.trim()));
+  }
 
   /**
    * @returns {object[]}  blocks: {type: 'p'|'h'|'quote', inline, level?}, {type: 'code', lang, text},
@@ -174,7 +200,9 @@
   function items(entries) {
     const out = [];
     entries.forEach((entry, index) => {
-      if (entry.role === 'tool') {
+      if (entry.role === 'tool' && entry.questions) {
+        out.push({ kind: 'ask', questions: entry.questions, answered: !!entry.answered, declined: !!entry.error, at: entry.at });
+      } else if (entry.role === 'tool') {
         const last = out[out.length - 1];
         if (last?.kind === 'work') {
           last.tools.push(entry);
@@ -250,5 +278,14 @@
     return last.role === 'user' || last.role === 'tool';
   }
 
-  return { markdown, inline, items, toolKind, workSummary, stillPending, elapsed, turnStart, midTurn };
+  /**
+   * @returns {boolean}  whether the record ends on claude's note of an Esc: the turn is over, whatever the console's
+   *   state still says until its next read of the agent (a few seconds after a Stop)
+   */
+  function endedByStop(record) {
+    const last = record?.entries?.[record.entries.length - 1];
+    return !!last && last.role === 'user' && INTERRUPTED.test(String(last.text ?? '').trim());
+  }
+
+  return { markdown, inline, items, toolKind, workSummary, stillPending, elapsed, turnStart, midTurn, endedByStop };
 });

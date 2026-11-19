@@ -13,6 +13,10 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
   at the right. Open, each call is a mono row: the tool's name in `slate`, what it was asked in `sub` (cut to a line),
   and `failed` in `bad`. The log of the turn still running is open, with the `slate` ring; once the turn is over it
   folds, unless the person opened or closed it.
+- **A question the agent asked** (claude's AskUserQuestion): its own box, out of the work log, on `ground` with a
+  `line` border (`radius 8`). Its head is `claude asks` in `ink` 600 and, at the right, where it stands in `meta` mono
+  (`Waiting for your answer`, `Answered`, `Not answered`); then each question in `ink` 600 and its options as a
+  numbered list in `sub`. It is read-only: the answer is given in the terminal, which the Needs you line opens.
 - **A note**, such as `Interrupted` or older messages being left out: centred `meta` mono, 11.5px.
 - **The status line**, over the composer: a word, never a colour alone. `Working` in `slate` 600 with the `slate` ring
   and the turn's clock in `meta` mono. `Needs you` is the only `wait`: a `wait` border round the line, the word in

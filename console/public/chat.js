@@ -140,7 +140,14 @@
     const pendingOf = (id) => pending.get(id) ?? [];
     const agent = () => W.agentOf(session);
     // Working: as the console last read the agent, or as its record says, whichever knew first.
-    const working = () => session?.state === 'working' || (session?.state !== 'needs-you' && T.midTurn(record?.id === session?.id ? record : null, settledAt));
+    // The record ends on a question the agent asked and has no answer to yet.
+    const asking = () => {
+      const last = T.items(ownRecord()?.entries ?? []).pop();
+      return last?.kind === 'ask' && !last.answered && !last.declined;
+    };
+    const ownRecord = () => (record?.id === session?.id ? record : null);
+    const working = () => !T.endedByStop(ownRecord())
+      && (session?.state === 'working' || (session?.state !== 'needs-you' && T.midTurn(ownRecord(), settledAt)));
 
     function changed() {
       if (!session) return;
@@ -309,6 +316,16 @@
       return details;
     }
 
+    // What the agent asked, with its options: answered in its terminal, which the Needs you line opens.
+    function askCard(item) {
+      const said = item.answered ? 'Answered' : item.declined ? 'Not answered' : 'Waiting for your answer';
+      return h('div', { class: 'chat-ask' },
+        h('div', { class: 'chat-ask-head' }, h('b', null, `${agent()} asks`), h('span', { class: 'chat-ask-state' }, said)),
+        ...item.questions.map((q) => h('div', { class: 'chat-ask-q' },
+          h('p', null, q.question),
+          q.options.length > 0 && h('ol', null, ...q.options.map((o) => h('li', null, o))))));
+    }
+
     function messageNodes() {
       const nodes = [];
       if (readError && !record) return [h('p', { class: 'chat-empty' }, `Could not read the conversation: ${readError}`)];
@@ -327,6 +344,7 @@
         if (item.kind === 'user') nodes.push(h('div', { class: 'chat-user' }, h('div', { class: 'chat-bubble' }, item.text)));
         else if (item.kind === 'assistant') nodes.push(h('div', { class: 'chat-said' }, markdownNodes(item.text)));
         else if (item.kind === 'note') nodes.push(h('p', { class: 'chat-note' }, item.text));
+        else if (item.kind === 'ask') nodes.push(askCard(item));
         else nodes.push(workLog(item, live && i === list.length - 1));
       });
       for (const p of waiting) {
@@ -354,7 +372,7 @@
       if (state === 'needs-you') {
         status.className = 'chat-status is-needs';
         status.replaceChildren(
-          h('span', null, h('b', null, 'Needs you'), ` · ${agent()} is asking something it shows in its terminal`),
+          h('span', null, h('b', null, 'Needs you'), asking() ? ` · ${agent()} asks above; it takes the answer in its terminal` : ` · ${agent()} is asking something it shows in its terminal`),
           h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, 'Answer in the Agent tab'));
         return;
       }
