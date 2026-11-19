@@ -505,37 +505,52 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       projectStatus);
   }
 
-  // Who reviews the pull requests you open (console/reviewAgents.mjs): a choice is offered only while the team's keys or
-  // your own sign-ins can run it, and with none saved, the most there is runs.
+  // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: Claude Code and Codex on their own
+  // rows, Off and On across the top (designSystem/components/OnOffGrid). Both on is both, both off is no code review.
+  // On is offered only while the team's key or your own sign-in can run it; with nothing saved, the most there is runs.
+  // A pick saves at once.
   let reviews = null;
-  const reviewSelect = h('select', { id: 'my-reviews-choice', class: 'field' });
   const reviewStatus = h('p', { class: 'form-note', role: 'status' });
-  const REVIEW_NAMES = { both: 'Claude Code and Codex', claude: 'Claude Code only', codex: 'Codex only', none: 'No code review' };
+  const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
   const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; if (me) render(); }, () => {});
+
+  function saveReviews(choice, done) {
+    return act({ card: 'reviews', note: reviewStatus, done, call: async () => { reviews = await W.postJson('/api/my/reviews', { choice }); } });
+  }
 
   function reviewsCard() {
     if (!reviews) return null;
     const { available, best, choice } = reviews;
-    const can = { both: available.claude && available.codex, claude: available.claude, codex: available.codex, none: true };
-    const needs = { both: 'needs both', claude: 'needs a Claude token or the team key', codex: 'needs a Codex sign-in or the team key' };
-    if (document.activeElement !== reviewSelect && !busy.has('reviews')) {
-      reviewSelect.replaceChildren(
-        h('option', { value: '' }, `Default: the most there is (now ${REVIEW_NAMES[best]})`),
-        ...['both', 'claude', 'codex', 'none'].map((c) => h('option', { value: c, disabled: !can[c] && c !== choice }, can[c] ? REVIEW_NAMES[c] : `${REVIEW_NAMES[c]} (${needs[c]})`)));
-      reviewSelect.value = choice ?? '';
-    }
-    const runs = choice && !can[choice] ? `${REVIEW_NAMES[choice]} cannot run now, so your reviews get the most there is: ${REVIEW_NAMES[best]}.` : null;
+    const on = new Set(AGENTS_OF[choice ?? best] ?? []);
+    const rows = [
+      ['claude', 'Claude Code', 'Needs a Claude token above, or the team\u2019s Anthropic key.'],
+      ['codex', 'Codex', 'Needs a Codex sign-in above, or the team\u2019s OpenAI key.'],
+    ];
+    const pick = (agent, value) => {
+      const next = new Set(on);
+      if (value) next.add(agent); else next.delete(agent);
+      const chosen = next.has('claude') && next.has('codex') ? 'both' : next.has('claude') ? 'claude' : next.has('codex') ? 'codex' : 'none';
+      saveReviews(chosen, 'Saved. It applies to the next review.');
+    };
+    const radio = (agent, label, value) => h('input', {
+      type: 'radio', name: `reviews-${agent}`, value: value ? 'on' : 'off', checked: on.has(agent) === value,
+      disabled: busy.has('reviews') || (value && !available[agent]), 'aria-label': `${label} ${value ? 'on' : 'off'}`,
+      onchange: () => pick(agent, value),
+    });
+    const cantRun = choice && AGENTS_OF[choice].some((a) => !available[a]);
     return h('section', { class: 'set-card', id: 'my-reviews' },
       h('div', { class: 'set-head' }, h('h2', null, 'Reviews of my pull requests'), h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default')),
-      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With both, the stricter verdict wins, so it is approved only when both approve. With no code review, the Slack post and QA go on without one. A choice needs your own sign-in above or the team\u2019s key; with none saved, the most there is runs.'),
-      h('label', { class: 'field-label', for: 'my-reviews-choice' }, h('span', null, 'Reviewed by')),
-      reviewSelect,
-      runs && h('p', { class: 'why-off' }, runs),
-      h('div', { class: 'set-actions' },
-        h('button', {
-          type: 'button', class: 'btn btn-open', disabled: busy.has('reviews'),
-          onclick: () => act({ card: 'reviews', note: reviewStatus, done: 'Saved. It applies to the next review.', call: async () => { reviews = await W.postJson('/api/my/reviews', { choice: reviewSelect.value || null }); } }),
-        }, 'Save')),
+      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With both on, the stricter verdict wins, so it is approved only when both approve. With both off, there is no code review, and the Slack post and QA go on without one.'),
+      h('table', { class: 'onoff-grid' },
+        h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
+        h('tbody', null, rows.map(([agent, label, needs]) => h('tr', { class: available[agent] ? null : 'is-unavailable' },
+          h('th', { scope: 'row' }, h('span', { class: 'onoff-name' }, label), available[agent] ? null : h('span', { class: 'onoff-note' }, needs)),
+          h('td', null, radio(agent, label, false)),
+          h('td', null, radio(agent, label, true)))))),
+      h('p', { class: 'form-note' }, choice
+        ? (cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
+        : 'Default: the most there is, from your sign-ins and the team\u2019s keys. ',
+      choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
       reviewStatus);
   }
 

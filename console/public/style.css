@@ -568,7 +568,6 @@ dialog.wizard:focus { outline: none; }
 .toggle-row .toggle-label { font-size: 14px; font-weight: 600; }
 .toggle-row .sub { grid-column: 2; margin: 0; font-size: 12.5px; }
 .toggle-row .form-error { grid-column: 2; margin: 0; font-size: 12.5px; color: var(--bad); }
-.review-agents { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 0 0 12px; font-size: 13px; }
 .webhook-switches { display: grid; gap: 8px; }
 .webhooks-off { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--stopped); font-size: 13px; }
 .toggle-row .why-off { grid-column: 2; margin: 0; font-size: 12.5px; color: var(--amber-ink); }
@@ -1179,3 +1178,14 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-ui, sans-serif; }
 /* The section the search took you to, outlined for a moment. */
 .is-found { outline: 2px solid var(--amber); outline-offset: 3px; border-radius: 8px; }
+/* Off and On for each of a few things, as radios in a grid (designSystem/components/OnOffGrid): My settings' Reviews. */
+.onoff-grid { border-collapse: collapse; margin: 4px 0 0; font-size: 14px; }
+.onoff-grid th, .onoff-grid td { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); text-align: center; }
+.onoff-grid thead th { font-size: 12px; font-weight: 600; color: var(--label); border-bottom-color: var(--line); }
+.onoff-grid tbody th { text-align: left; font-weight: 400; padding-left: 0; }
+.onoff-grid tbody tr:last-child > * { border-bottom: 0; }
+.onoff-grid input[type="radio"] { width: 16px; height: 16px; margin: 0; accent-color: var(--green); cursor: pointer; }
+.onoff-grid input[type="radio"]:disabled { cursor: not-allowed; }
+.onoff-name { display: block; font-weight: 600; color: var(--ink); }
+.onoff-note { display: block; margin-top: 2px; font-size: 12.5px; color: var(--meta); }
+.onoff-grid tr.is-unavailable .onoff-name { color: var(--sub); }

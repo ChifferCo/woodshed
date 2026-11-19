@@ -1,0 +1,21 @@
+<!-- @dsCard group="Settings" height=200 subtitle="Off and On for a few things at once, as radios in a grid" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ table{border-collapse:collapse;font-size:14px;width:100%;max-width:520px}
+ th,td{padding:8px 12px;border-bottom:1px solid var(--line-soft);text-align:center}
+ thead th{font-size:12px;font-weight:600;color:var(--label);border-bottom-color:var(--line)}
+ tbody th{text-align:left;font-weight:400;padding-left:0}
+ tbody tr:last-child>*{border-bottom:0}
+ input{width:16px;height:16px;margin:0;accent-color:var(--green)}
+ .name{display:block;font-weight:600;color:var(--ink)}
+ .off .name{color:var(--sub)}
+ .note{display:block;margin-top:2px;font-size:12.5px;color:var(--meta)}
+</style>
+<table>
+ <thead><tr><th></th><th>Off</th><th>On</th></tr></thead>
+ <tbody>
+  <tr><th><span class="name">Claude Code</span></th><td><input type="radio" name="a"></td><td><input type="radio" name="a" checked></td></tr>
+  <tr class="off"><th><span class="name">Codex</span><span class="note">Needs a Codex sign-in above, or the team's OpenAI key.</span></th><td><input type="radio" name="b" checked></td><td><input type="radio" name="b" disabled></td></tr>
+ </tbody>
+</table>
