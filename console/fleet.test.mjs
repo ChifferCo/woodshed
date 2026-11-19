@@ -118,6 +118,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
       // A test's own answer for one send: an error to refuse it with, or a promise to wait on before it goes.
       if (path === '/send' && fail.sendFor) {
+        fail.lastSendOpts = opts;
         const answer = fail.sendFor(opts?.body?.text);
         if (answer instanceof Error) return Promise.reject(answer);
         if (answer) return answer.then(() => statusd(session, method, path, opts));
@@ -3309,4 +3310,38 @@ test('a message held while another goes in stays, and one the session refuses fo
   assert.ok(session.pendingMessages.includes('late') || calls.statusd.some((c) => c.path === '/send' && c.body?.text === 'late' && !c.refused),
     'late is kept, or sent after first: never erased by first\'s acknowledgement');
   assert.ok(!session.pendingMessages.includes('first'));
+});
+
+test('a send that outlives its deadline may have gone in: it is not held, and never typed a second time', async () => {
+  const { sendTimeoutMs } = await import('./fleet.mjs');
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  // 150 short lines, as the review measured: statusd types them a run at a time, longer than the old 5 s.
+  const many = Array.from({ length: 150 }, (_, i) => `l${i}`).join('\n');
+  assert.ok(sendTimeoutMs(many) > 5000 + 150 * 40, 'the deadline covers typing it');
+  const timedOut = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  const asked = [];
+  fail.sendFor = (text) => { asked.push(text); return timedOut(); };
+  assert.equal(await fleet.send(session, many), 'sent', 'it may have gone in: not held to send again');
+  assert.equal(fail.lastSendOpts.timeoutMs, sendTimeoutMs(many), 'the deadline sized to the message, not the 5 s default');
+  assert.deepEqual(session.pendingMessages, []);
+  // A held one whose send times out is let go too, not typed again on the next status read.
+  fail.sendBusy = true;
+  fail.sendFor = null;
+  await fleet.send(session, 'held then timed out');
+  fail.sendBusy = false;
+  fail.sendFor = (text) => { asked.push(text); return timedOut(); };
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, []);
+  fail.sendFor = null;
+  await fleet.tick();
+  assert.deepEqual(asked, [many, 'held then timed out'], 'each tried once');
+  void calls;
+  // A connection refused never reached statusd: held, to try again.
+  fail.sendFor = () => Object.assign(new Error('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  assert.equal(await fleet.send(session, 'refused'), 'queued');
+  assert.deepEqual(session.pendingMessages, ['refused']);
 });

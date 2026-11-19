@@ -435,5 +435,14 @@
     return `Sent, waiting for ${agent}`;
   }
 
-  return { pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * How long the page waits on a send: longer than the console waits on statusd typing it (console/fleet.mjs,
+   * sendTimeoutMs), since statusd types a long claude message a run at a time.
+   */
+  function sendTimeoutMs(text) {
+    const steps = Math.ceil(text.length / 50) + text.split('\n').length;
+    return 15_000 + steps * 60;
+  }
+
+  return { sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

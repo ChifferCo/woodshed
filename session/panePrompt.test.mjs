@@ -394,7 +394,8 @@ test('a draft that starts with a number, or has a blank line in it, still counts
   assert.equal(composerEmpty([`${box}first line`, '›', '', codexFooter].join('\n'), 'codex'), false);
   // A plain `›` that is no box at all, and two boxes at once: nothing certain, so no box.
   assert.equal(composerEmpty(['› looks like one', '', codexFooter].join('\n'), 'codex'), null);
-  assert.equal(composerEmpty([`${box}one`, `${box}two`, '', codexFooter].join('\n'), 'codex'), null);
+  // An earlier frame of the box over it, in the scrollback a long draft needs read: the lowest is the box.
+  assert.equal(composerText([`${box}an old frame`, '', `${box}two`, '', codexFooter].join('\n'), 'codex'), 'two');
   // A screen with no box at all.
   assert.equal(composerEmpty('stand-in\n\nnothing here', 'claude'), null);
 });
@@ -495,4 +496,13 @@ test('the box is read again while the agent is still drawing the text, and not w
   assert.deepEqual(await run(['my note ship it now']), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
   // Never drawn in time: no Enter.
   assert.deepEqual(await run(['']), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
+});
+
+test('a long draft that runs off the top of the screen is read whole from the scrollback', () => {
+  const grey = (t) => `\x1b[38;5;244m${t}\x1b[39m`;
+  const rule = grey('─'.repeat(60));
+  const lines = Array.from({ length: 150 }, (_, i) => `item ${i + 1}`);
+  // An earlier frame of the box higher up in the scrollback, then the box now, as capture-pane -S shows them.
+  const capture = [rule, '❯ \x1b[2mTry "x"\x1b[0m', rule, '● Done.', '', rule, `❯ ${lines[0]}`, ...lines.slice(1).map((l) => `  ${l}`), rule, '  ⏵⏵ auto mode on (shift+tab to cycle)'].join('\n');
+  assert.equal(composerText(capture, 'claude'), lines.join(' '));
 });

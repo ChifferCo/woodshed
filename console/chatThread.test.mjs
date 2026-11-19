@@ -251,3 +251,10 @@ test('a message the console holds says it is not sent yet, and waits as long as 
   const left = chat.stillPending([{ text: 'held one', sentAt: now - hour, state: 'held' }, { text: 'sent one', sentAt: now - hour, state: 'sent' }], [], now);
   assert.deepEqual(left.map((p) => p.text), ['held one'], 'a held one is not let go after ten minutes; a sent one is');
 });
+
+test('the page waits on a send longer than the console waits on statusd typing it', async () => {
+  const { sendTimeoutMs } = await import('./fleet.mjs');
+  for (const text of ['hi', 'x'.repeat(8000), Array.from({ length: 400 }, () => 'a').join('\n')]) {
+    assert.ok(chat.sendTimeoutMs(text) > sendTimeoutMs(text), `${text.length} characters`);
+  }
+});

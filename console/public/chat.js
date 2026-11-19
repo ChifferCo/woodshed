@@ -266,11 +266,18 @@
       drawComposer();
       drawThread(true);
       try {
-        const answer = await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        const answer = await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
         // Held by the console while the agent is busy: nothing has reached it yet, and the bubble says so until the
         // agent's record holds it.
         sent.state = answer?.held ? 'held' : 'sent';
       } catch (err) {
+        // No answer in time: it may have gone in, so it stays as sent, for the agent's record to say, and is not put back
+        // to send again, which could type it twice.
+        if (err.name === 'TimeoutError') {
+          sent.state = 'sent';
+          W.shell.toast('No answer yet: it may still go in. Check the thread before sending it again', { ms: 6000 });
+          return;
+        }
         // Back in the box, to send again, unless it is in the agent's box already (a prompt came up as it went in):
         // sending it again would type it twice.
         pending.set(id, pendingOf(id).filter((p) => p !== sent));
@@ -279,9 +286,7 @@
           keepDraft(id, text);
           fit();
         }
-        W.shell.toast(err.name === 'TimeoutError'
-          ? `No answer in ${SEND_TIMEOUT_MS / 1000} s: check the TUI tab before sending again`
-          : `Not sent: ${err.message}`, { ms: 6000 });
+        W.shell.toast(`Not sent: ${err.message}`, { ms: 6000 });
       } finally {
         sending.delete(id);
         if (id === session?.id) {

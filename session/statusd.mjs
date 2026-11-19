@@ -744,7 +744,7 @@ async function status() {
   let boxText = false;
   if (state === 'done' && !QA) {
     try {
-      boxText = !!(composerText((await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout, CODEX ? 'codex' : 'claude'));
+      boxText = !!(composerText(await captureBox(), CODEX ? 'codex' : 'claude'));
     } catch {
       // No pane to read: nothing to say about its box.
     }
@@ -947,7 +947,8 @@ const paneIo = {
   },
   enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
   // What the box holds, read with its colours: only the text typed, before the Enter.
-  box: async () => composerText((await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout, CODEX ? 'codex' : 'claude'),
+  // A long draft runs off the top of the screen, so the box is read with scrollback enough to hold all of it.
+  box: async (text = '') => composerText(await captureBox(text.split('\n').length + 100), CODEX ? 'codex' : 'claude'),
 };
 
 /**
@@ -978,8 +979,13 @@ let lastSent = null;
 // Enter (a prompt came up, the Enter failed). Its own text would be sent with the message, or the message typed onto
 // its end. The box is read from the screen with its colours (composerEmpty, panePrompt.mjs), so an edited draft still
 // counts and the box's own suggestion, drawn dim, does not.
+// The pane with its colours and `back` lines of scrollback over the screen.
+async function captureBox(back = 200) {
+  return (await run('tmux', ['capture-pane', '-e', '-p', '-S', String(-Math.min(back, 10_000)), '-t', TMUX_TARGET])).stdout;
+}
+
 async function boxEmpty() {
-  const colored = (await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout;
+  const colored = await captureBox();
   // A prompt on screen is typeMessage's to refuse, as the prompt it is. No box found at all is no place to type.
   if (readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) return true;
   return composerEmpty(colored, CODEX ? 'codex' : 'claude') === true;

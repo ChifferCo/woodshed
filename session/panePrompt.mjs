@@ -487,7 +487,7 @@ export async function typeMessage(io, text) {
     for (;;) {
       let box;
       try {
-        box = await io.box();
+        box = await io.box(text);
       } catch {
         return { sent: false, kind: null, typed: true };
       }
@@ -597,8 +597,8 @@ export function composerText(colored, agent) {
   let footer = plain.length - 1;
   while (footer > 0 && !plain[footer].trim()) footer--;
   // Where the box starts, by how the agent draws its mark, never by what a line says: claude's `❯` right under a rule,
-  // codex's `›` in bold. A draft's own line that starts with either mark is plain text. Two such starts, or none, and
-  // the screen says nothing certain about the box: no box.
+  // codex's `›` in bold. A draft's own line that starts with either mark is plain text. A capture with scrollback (a
+  // long draft runs off the top of the screen) can hold the agent's earlier frames above: the box is the lowest start.
   const starts = [];
   for (let i = 0; i < lines.length; i++) {
     if (!mark.test(plain[i])) continue;
@@ -607,8 +607,8 @@ export function composerText(colored, agent) {
     if (HIGHLIGHTED_ROW.test(plain[i]) && plain.slice(i + 1, i + 10).some((l) => MENU_HINT.test(l))) continue;
     starts.push(i);
   }
-  if (starts.length !== 1) return null;
-  const [i] = starts;
+  if (!starts.length) return null;
+  const i = starts[starts.length - 1];
   // The whole draft, blank lines in it too: to the rule under it (claude), or to the footer (codex).
   let text = undimmed(lines[i]).replace(mark, '');
   for (let j = i + 1; j < lines.length; j++) {

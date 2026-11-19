@@ -130,6 +130,16 @@ function titleFrom(prompt) {
  * @param {string} path
  * @param {{body?: object, timeoutMs?: number}} [opts]
  */
+/**
+ * How long statusd may take to type a message and send it: it types claude's in runs of 50 characters 20 ms apart, a
+ * line at a time, then reads the box (session/statusd.mjs, typingSteps), so a long one takes seconds. Each step is
+ * allowed 60 ms (a tmux call and its pause), with the box check's wait and the reads around it on top.
+ */
+export function sendTimeoutMs(text) {
+  const steps = Math.ceil(text.length / 50) + text.split('\n').length;
+  return 10_000 + steps * 60;
+}
+
 export async function callStatusd(session, method, path, { body, timeoutMs = STATUS_TIMEOUT_MS } = {}) {
   const { host, statusPort } = session.endpoint;
   const res = await fetch(`http://${host}:${statusPort}${path}`, {
@@ -515,6 +525,15 @@ export function createFleet({
     return session.status === 'running' && session.state && session.state !== 'not-running' && session.state !== 'starting';
   }
 
+  // A send that got no answer in time may have gone in: statusd may still be typing it, and press its Enter after. Sent
+  // again it could reach the agent twice, so it is not: the agent's record says whether it arrived. Only a timeout is;
+  // a refused connection never reached statusd, and is held to try again.
+  function unknownOutcome(session, err) {
+    if (err?.name !== 'TimeoutError' && err?.name !== 'AbortError') return false;
+    console.warn('fleet: message send timed out, not sent again: it may have gone in', { id: session.id });
+    return true;
+  }
+
   // A send statusd refused after the text went in (a prompt came up as it was typed): typing it again would put it in
   // the agent's box twice. It is there, for the agent to read once the prompt is answered.
   function inTheBox(session, err) {
@@ -548,9 +567,10 @@ export function createFleet({
       return 'queued';
     }
     try {
-      await statusd(session, 'POST', '/send', { body: { text } });
+      await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });
     } catch (err) {
       if (inTheBox(session, err)) return 'in-box';
+      if (unknownOutcome(session, err)) return 'sent';
       // Busy is not a failure: hold() says it is held.
       if (!busyWhy(err)) console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
       hold(session, text);
@@ -565,7 +585,7 @@ export function createFleet({
       const [text] = session.pendingMessages;
       let boxed = false;
       try {
-        await statusd(session, 'POST', '/send', { body: { text } });
+        await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });
       } catch (err) {
         // One statusd will never take (too long, not text) would hold every message behind it: it goes, said so.
         if (err?.status === 400) {
@@ -573,7 +593,7 @@ export function createFleet({
           update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
           continue;
         }
-        boxed = inTheBox(session, err);
+        boxed = inTheBox(session, err) || unknownOutcome(session, err);
         if (!boxed) {
           // Busy is the usual answer mid-turn: said once per reason, not on every status read.
           const why = busyWhy(err) ?? firstLine(err);
