@@ -19,7 +19,9 @@
 - Commit messages and pull request titles are one line in Conventional Commits form, `type(scope): summary` (`feat`,
   `fix`, `docs`, `refactor`, `test`, `chore`, `ci` or `perf`), lowercase and imperative. No body unless a reader
   needs the why, and no trailers: no `Co-Authored-By`, no session links, no generated-by footers. Pull requests are
-  squash-merged with their title as the commit message, so the title is what the history keeps.
+  squash-merged with their title as the commit message, so the title is what the history keeps: the branch's own
+  commits (Woodshed's `WIP:` checkpoints, merges of main, a body or a trailer) never reach main, and a review does not
+  hold them against a pull request.
 - For a change people can see, such as a console page, show it under `## Proof` with screenshots: take them from the
   dev console's made-up sessions, never from a real installation, push them with
   `scripts/prAssets.sh <pr>-<slug> name.png=path …`, and embed the URLs it prints (`![name](url)`). Show before and
