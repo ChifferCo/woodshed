@@ -179,7 +179,9 @@ function fitMinWidth(win) {
   if (width < least) win.setSize(least, height);
 }
 
-function createMainWindow() {
+// `waiting`: the window is made for a sign-in link arriving with none open. It shows the waiting page, not the console:
+// a hosted console's first page would redirect to sign in, and start a second sign-in while this one is claimed.
+function createMainWindow({ waiting = false } = {}) {
   const { bounds } = readSettings();
   mainWindow = new BrowserWindow({
     width: 1440, height: 920, minWidth: 420, minHeight: 480, ...(bounds ?? {}),
@@ -199,8 +201,10 @@ function createMainWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
   guard(mainWindow);
   addChrome(mainWindow.webContents);
+  if (waiting) return mainWindow.loadFile(path.join(here, 'signin.html')).catch(() => {});
   if (consoleUrl) loadConsole(mainWindow, consoleUrl);
   else showSetup();
+  return Promise.resolve();
 }
 
 // Each time setup's form is shown: an answer to a form shown before saves nothing, though the new one has its address.
@@ -393,10 +397,10 @@ async function finishSignIn(link) {
     console.warn('woodshed-desktop: a sign-in link that is not the waiting sign-in\'s, ignored');
     return;
   }
-  // A window made for this link (none was open) is still loading its first page while the claim is out: that is not the
-  // person moving on, so it opens where the sign-in was for.
-  const made = !mainWindow;
-  if (made) createMainWindow();
+  // With no window open, one is made on the waiting page, and the claim starts once it shows: it is then checked as any
+  // window is, so a Change console… opened in it meanwhile stays.
+  if (!mainWindow) await createMainWindow({ waiting: true });
+  if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -460,7 +464,7 @@ async function finishSignIn(link) {
     if (!error) startWatching();
     return;
   }
-  if (mainWindow !== win || win.isDestroyed() || (!made && win.webContents.getURL() !== from)) {
+  if (mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
     if (!error) startWatching();
     return;
