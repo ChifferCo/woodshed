@@ -141,7 +141,12 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   } else if (real) {
     const settings = path.join(root, 'hooks.json');
     realHooks(settings);
-    paneCommand = `claude --settings ${settings} --permission-mode auto`;
+    // A session's permission mode (claudeFlags in session/entrypoint.sh): auto, or, with
+    // DEV_CONSOLE_REAL_CLAUDE_MODE=default, the mode New session's "default" gives, where claude asks before it runs a
+    // command or edits a file: the Chat tab's approvals. A session leaves the flag out for default, since its own
+    // settings name no other; here it is named, so this machine's own defaultMode cannot turn the dialog off.
+    const mode = process.env.DEV_CONSOLE_REAL_CLAUDE_MODE === 'default' ? 'default' : 'auto';
+    paneCommand = `claude --settings ${settings} --permission-mode ${mode}`;
   }
   execFileSync('tmux', ['new-session', '-d', '-s', 'claude', '-x', '120', '-y', '30', '-c', repo, paneCommand], { env: tmuxEnv });
   if (real && !realCodex) await trustOnce(tmuxEnv);

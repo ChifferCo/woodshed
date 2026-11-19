@@ -926,7 +926,9 @@ chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and 
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0dea1` runs the
 real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
 credential: `devConsoleApp.sh` turns it on in a private session (`WOODSHED_CLAUDE_AUTH=own`), and
-`DEV_CONSOLE_REAL_CLAUDE=1` (or `0`) anywhere else. It spends that credential's usage. `/s/c0dea1ed` is the real
+`DEV_CONSOLE_REAL_CLAUDE=1` (or `0`) anywhere else. It spends that credential's usage. With
+`DEV_CONSOLE_REAL_CLAUDE_MODE=default` it runs in default permission mode, as a session New session starts in "default"
+does, and asks before it runs a command or edits a file, for the Chat tab's approvals. `/s/c0dea1ed` is the real
 `codex` the same way, once `codex login` has signed this machine in (`DEV_CONSOLE_REAL_CODEX`); with
 `DEV_CONSOLE_REAL_CODEX_MODE=plan` it runs with plan mode's read-only sandbox and asks before it writes, for the Chat
 tab's approvals.
