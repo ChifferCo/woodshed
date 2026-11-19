@@ -834,6 +834,11 @@ claude:
     back to https after five tries, a few seconds.
   - `key` for an API key, which the proxy puts on `/openai` in place of the team key.
 
+  On a key, the author's or the team's, a review reaches only Codex's own calls on `/openai`: `/v1/responses`,
+  `/v1/responses/compact` and `/v1/models`, in plain form. The key's files, vector stores, fine-tuning and the rest get
+  a 404 (`openaiProxy: refused an OpenAI path a review's codex does not need`), since the pull request's code runs in
+  the review. A private Codex session is its owner's, and reaches all of it as before.
+
   The proxy checks the switch and the sign-in at each call, so one turned off or expired mid-review stops being used
   at once.
 - **The team's `openai-api-key`**, on `/openai`, for everyone else (`REVIEW_CODEX_AUTH=key`), and for an author whose

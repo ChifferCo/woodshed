@@ -30,6 +30,26 @@ const CHATGPT_PREFIX = '/chatgpt';
 // What of ChatGPT's backend a review's codex may reach: Codex's own API, and the account check codex makes before it.
 const CHATGPT_PATH_RE = /^\/backend-api\/(?:codex\/[A-Za-z0-9/_.-]*|wham\/accounts\/check)$/;
 
+// What of api.openai.com a review's codex may reach on a key, the author's or the team's: its turns, the compaction of a
+// long one, and the model list. Not files, vector stores, fine-tuning or anything else the key can do.
+const REVIEW_OPENAI_PATH_RE = /^\/v1\/(?:responses(?:\/compact)?|models)$/;
+
+// A path already in its plain form: no `.` or `..` segment, no empty one, no `%` escape and no backslash.
+const UNPLAIN_PATH_RE = /[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/;
+
+/**
+ * The OpenAI path a review's call may reach, or null; what passes is what is forwarded, query and all.
+ * @param {string} rawPath  the request's path and query, after /openai
+ * @returns {string|null}
+ */
+export function reviewOpenAiPathAllowed(rawPath) {
+  const q = rawPath.indexOf('?');
+  const pathname = q === -1 ? rawPath : rawPath.slice(0, q);
+  const search = q === -1 ? '' : rawPath.slice(q);
+  if (UNPLAIN_PATH_RE.test(pathname) || !REVIEW_OPENAI_PATH_RE.test(pathname) || search.includes('#')) return null;
+  return pathname + search;
+}
+
 /**
  * The ChatGPT path a review's call may reach, or null. Only a path already in its plain form passes: no `.` or `..`
  * segment, no empty one, no `%` escape and no backslash, since chatgpt.com would resolve `codex/../conversations` (or
@@ -40,7 +60,7 @@ const CHATGPT_PATH_RE = /^\/backend-api\/(?:codex\/[A-Za-z0-9/_.-]*|wham\/accoun
 export function chatgptPathAllowed(rawPath) {
   const q = rawPath.indexOf('?');
   const pathname = q === -1 ? rawPath : rawPath.slice(0, q);
-  if (/[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/.test(pathname)) return null;
+  if (UNPLAIN_PATH_RE.test(pathname)) return null;
   if (!CHATGPT_PATH_RE.test(pathname)) return null;
   const search = q === -1 ? '' : rawPath.slice(q);
   return /#/.test(search) ? null : pathname + search;
@@ -181,13 +201,23 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
       firstCall(session, 'the author\'s ChatGPT login');
       return forward(req, res, { target: targets.chatgpt, path: allowed, headers: cred.headers });
     }
+    // A review reads what anyone who can push wrote, and runs it: on a key, its codex reaches Codex's calls alone.
+    let openaiPath = req.url.slice(PREFIX.length) || '/';
+    if (isReview(session)) {
+      openaiPath = reviewOpenAiPathAllowed(openaiPath);
+      if (!openaiPath) {
+        req.resume();
+        console.warn('openaiProxy: refused an OpenAI path a review\'s codex does not need', { sessionId: session.id, path: req.url.slice(0, 120) });
+        return refuse(res, 404, 'not something a review\'s codex needs');
+      }
+    }
     if (cred) {
       if (!cred.apiKey) {
         req.resume();
         return refuse(res, 403, 'this review\'s Codex runs on its author\'s ChatGPT login, through /chatgpt');
       }
       firstCall(session, 'the author\'s key');
-      return forward(req, res, { target: targets.openai, path: req.url.slice(PREFIX.length) || '/', headers: cred.headers });
+      return forward(req, res, { target: targets.openai, path: openaiPath, headers: cred.headers });
     }
     let key;
     try {
@@ -204,7 +234,7 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
       return refuse(res, 503, 'the console has no OpenAI key: save your own Codex sign-in on My settings, or set openai-api-key on the Secrets page');
     }
     firstCall(session, 'the team key');
-    return forward(req, res, { target: targets.openai, path: req.url.slice(PREFIX.length) || '/', headers: { authorization: `Bearer ${key}` } });
+    return forward(req, res, { target: targets.openai, path: openaiPath, headers: { authorization: `Bearer ${key}` } });
   }
 
   return { isProxyPath: isOpenAiPath, handle, teamCredential };

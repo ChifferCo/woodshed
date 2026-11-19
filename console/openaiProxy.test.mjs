@@ -51,11 +51,11 @@ async function setup(t, { teamKey = 'sk-team', own = ['ana', 'cy'], signIns = SI
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers }, body: '{"model":"gpt-6.1-sol"}',
   });
   // As sent, with no tidying of `..` (fetch would resolve it before sending).
-  const raw = (token, p) => new Promise((resolve, reject) => {
-    const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: `/chatgpt${p}`, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } },
+  const raw = (token, p, prefix = '/chatgpt', method = 'POST') => new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port, method, path: `${prefix}${p}`, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } },
       (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
     r.on('error', reject);
-    r.end('{}');
+    r.end(method === 'POST' ? '{}' : undefined);
   });
   return { seen, call, chatgpt, raw };
 }
@@ -144,4 +144,20 @@ test('a path that climbs out of Codex\'s API, plainly or escaped, never reaches 
   assert.equal(seen.length, 0, 'nothing reached ChatGPT');
   assert.equal(await raw('review-ana', '/backend-api/codex/models?client_version=1'), 200);
   assert.equal(seen[0].url, '/backend-api/codex/models?client_version=1', 'what was checked is what is forwarded');
+});
+
+test('a review on a key reaches Codex\'s calls alone, never the key\'s files or anything else, while a private Codex session is unchanged', async (t) => {
+  const { seen, raw } = await setup(t);
+  for (const token of ['review-cy', 'review-both']) {
+    for (const p of ['/v1/files', '/v1/files/file-abc', '/v1/vector_stores', '/v1/fine_tuning/jobs', '/v1/responses/../files',
+      '/v1/%72esponses', '/v1/responses/resp_123', '/v1//responses']) {
+      assert.equal(await raw(token, p, '/openai', p === '/v1/files/file-abc' ? 'DELETE' : 'POST'), 404, `${token} ${p}`);
+    }
+  }
+  assert.equal(seen.length, 0, 'nothing reached OpenAI');
+  assert.equal(await raw('review-cy', '/v1/responses', '/openai'), 200, 'the author\'s key');
+  assert.equal(seen[0].headers.authorization, 'Bearer sk-cy');
+  assert.equal(await raw('review-both', '/v1/responses/compact', '/openai'), 200, 'the team key');
+  assert.equal(await raw('review-both', '/v1/models', '/openai', 'GET'), 200);
+  assert.equal(await raw('codex-private', '/v1/files', '/openai', 'GET'), 200, 'a private Codex session is its owner\'s, as before');
 });
