@@ -67,7 +67,7 @@ import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
-import { Refusal, answerApproval, answerQuestions, readPrompt } from './panePrompt.mjs';
+import { Refusal, answerApproval, answerQuestions, readPrompt, typeMessage } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -804,7 +804,8 @@ async function hasRemoteControlCommand() {
 // Terminal tab's prompt, where the code is pasted. Nothing else may be typed through this route.
 async function startClaudeLogin() {
   if (await hasRemoteControlCommand()) {
-    await send('/woodshed:remote-control');
+    const done = await send('/woodshed:remote-control');
+    if (!done.sent) throw new Error('claude is asking something: answer it first, then sign in again');
     console.log('statusd: Claude login started in claude');
     return { where: 'agent' };
   }
@@ -856,15 +857,29 @@ async function answer(body) {
   }
 }
 
+// The agent's pane, for typeMessage (panePrompt.mjs): read it, type into it, press Enter.
+const paneIo = {
+  capture: () => capturePane(),
+  async type(text) {
+    // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about 100
+    // characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
+    if (CODEX) {
+      await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
+      await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
+    } else await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', text]);
+  },
+  enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
+};
+
+/**
+ * A message typed in and sent, never into a prompt (typeMessage). Throws when the pane could not be read.
+ * @returns {Promise<{sent: true}|{sent: false, kind: string, typed: boolean}>}
+ */
 async function send(text) {
-  // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about 100
-  // characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
-  if (CODEX) {
-    await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
-    await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
-  } else await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', text]);
-  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']);
-  console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
+  const done = await typeMessage(paneIo, text);
+  if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
+  else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
+  return done;
 }
 
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
@@ -1214,28 +1229,26 @@ async function handle(req, res) {
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
-    // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. Nothing is
-    // typed then; the console holds what it sends (fleet.mjs) and the page puts the text back in its box.
-    // A pane that could not be read may be showing one: nothing is typed then either.
-    let pane;
+    // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. No Enter is
+    // sent then (typeMessage); the console holds what it sends (fleet.mjs) and the page puts the text back in its box.
+    // A pane that could not be read may be showing one: no Enter then either.
+    let done;
     try {
-      pane = await capturePane();
+      done = await send(text);
     } catch (err) {
       console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message: String(err?.message ?? err).split('\n')[0] });
-      return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so nothing was typed: try again' });
+      return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so it was not sent: try again' });
     }
-    const open = readPrompt(pane);
-    if (open) {
+    if (!done.sent) {
       const agent = CODEX ? 'codex' : 'claude';
-      console.log('statusd: text not sent, a prompt is open', { kind: open.kind, chars: text.length });
+      const ask = done.kind === 'question' ? `${agent} is asking a question` : `${agent} is waiting for an approval`;
       return reply(res, 409, {
-        why: 'prompt-open',
-        error: open.kind === 'question'
-          ? `${agent} is asking a question: answer it first, then send this`
-          : `${agent} is waiting for an approval: approve or deny it first, then send this`,
+        why: 'prompt-open', typed: done.typed,
+        error: done.typed
+          ? `${ask}, which came up as this was typed: it is in ${agent}'s box, not sent. Answer it, then send it from the TUI tab`
+          : `${ask}: ${done.kind === 'question' ? 'answer it' : 'approve or deny it'} first, then send this`,
       });
     }
-    await send(text);
     return reply(res, 200, { ok: true });
   }
   if (route === 'POST /interrupt') {
@@ -1254,7 +1267,12 @@ async function handle(req, res) {
     return reply(res, done.status, done.body);
   }
   if (route === 'POST /claude-login') {
-    return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });
+    try {
+      return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });
+    } catch (err) {
+      // An open prompt would take the command's Enter; a pane that could not be read might be showing one.
+      return reply(res, 409, { error: err.message });
+    }
   }
   if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
   if (route === 'POST /upload') return uploadReply(req, res);

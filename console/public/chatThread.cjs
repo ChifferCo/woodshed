@@ -375,7 +375,8 @@
     let end = at + 1;
     while (at !== -1 && end < detail.length && !/^\$ /.test(detail[end]) && !/^[A-Z][\w ]{0,20}:/.test(detail[end])) end++;
     const reason = at === -1 ? null : detail.slice(at, end).join(' ');
-    const lines = (at === -1 ? detail : [...detail.slice(0, at), ...detail.slice(end)]).slice(0, 4);
+    // Every line: an approval the page answers is one it shows whole (panePrompt.mjs, `complete`).
+    const lines = at === -1 ? detail : [...detail.slice(0, at), ...detail.slice(end)];
     return { asks: prompt.what ? `${prompt.what}: ${prompt.title}` : prompt.title, lines: reason ? [...lines, reason] : lines };
   }
 

@@ -1,8 +1,8 @@
 // What the agent asks in its pane, read from the screen, and the keys that answer it: the Chat tab answers claude's
 // AskUserQuestion and an approval prompt (claude's permission dialog, codex's approval) without the TUI tab. statusd
 // types the keys (POST /answer); this file never types blind. It reads the pane (`tmux capture-pane -p`), checks the
-// picker on screen is the one being answered (the question's text and its options' labels, or the approval's title
-// and what it asks to run), works out the moves from the row the picker has highlighted, and reads the pane again
+// picker on screen is the one being answered (the question's text and its options' labels, or an approval's key: the
+// hash of all it asks, as drawn), works out the moves from the row the picker has highlighted, and reads the pane again
 // after each step, refusing as soon as the screen is not what the step should have left.
 //
 // The shapes are claude's and codex's own, captured from their panes (shared/__fixtures__/pane-ask-*.txt and
@@ -403,4 +403,23 @@ export async function answerApproval(io, want) {
   const gone = await settle(io, readApproval, (s) => !matchApproval(s, want).ok);
   if (!gone.ok) throw new Refusal('still-there');
   return { moves, agent: screen.agent };
+}
+
+/**
+ * Types a message into the agent's pane and sends it, unless a prompt is on screen: the Enter after a message answers
+ * a prompt (its highlighted option, often Yes). The pane is read before the text and again after it, just before the
+ * Enter, so a prompt that came up while the text went in gets no Enter either. A read that fails stops it the same way.
+ * @param {{capture: () => Promise<string>, type: (text: string) => Promise<void>, enter: () => Promise<void>}} io
+ * @param {string} text
+ * @returns {Promise<{sent: true}|{sent: false, kind: 'question'|'approval', typed: boolean}>}  typed: the text is in the
+ *   agent's box, unsent
+ */
+export async function typeMessage(io, text) {
+  const before = readPrompt(await io.capture());
+  if (before) return { sent: false, kind: before.kind, typed: false };
+  await io.type(text);
+  const after = readPrompt(await io.capture());
+  if (after) return { sent: false, kind: after.kind, typed: true };
+  await io.enter();
+  return { sent: true };
 }

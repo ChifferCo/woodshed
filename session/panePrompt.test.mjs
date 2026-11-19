@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   Refusal, answerApproval, answerQuestions, matchApproval, matchQuestion, matchReview, planMoves, readApproval, readPrompt,
-  readQuestionPicker, readTabs,
+  readQuestionPicker, readTabs, typeMessage,
 } from './panePrompt.mjs';
 import { createPicker } from '../shared/__fixtures__/claudePicker.mjs';
 
@@ -282,4 +282,42 @@ test("real codex 0.167's approval reads with its own options, and the page keeps
     '$ echo hi > hello-from-chat.txt',
     'Reason: May I run the requested command outside the sandbox to create hello-from-chat.txt?',
   ]);
+});
+
+test('a message gets no Enter when a prompt is on screen, before its text or as it went in', async () => {
+  const approval = createPicker({ approval: { title: 'Do you want to proceed?', what: 'Write the date', command: 'date > now.txt' } }).render();
+  const clear = '╭───╮\n│ > │\n╰───╯\n  ? for shortcuts';
+  const io = (screens) => {
+    const done = [];
+    return { done, capture: async () => screens.shift() ?? clear, type: async (t) => { done.push(`type ${t}`); }, enter: async () => { done.push('Enter'); } };
+  };
+  const plain = io([clear, clear]);
+  assert.deepEqual(await typeMessage(plain, 'hi'), { sent: true });
+  assert.deepEqual(plain.done, ['type hi', 'Enter']);
+  const open = io([approval]);
+  assert.deepEqual(await typeMessage(open, 'hi'), { sent: false, kind: 'approval', typed: false });
+  assert.deepEqual(open.done, [], 'nothing typed into it');
+  // The approval came up between the first read and the Enter: the text is in, the Enter is not.
+  const race = io([clear, approval]);
+  assert.deepEqual(await typeMessage(race, 'hi'), { sent: false, kind: 'approval', typed: true });
+  assert.deepEqual(race.done, ['type hi'], 'no Enter, which would have approved it');
+  const unread = { capture: async () => { throw new Error('no server running'); }, type: async () => assert.fail('typed'), enter: async () => assert.fail('entered') };
+  await assert.rejects(typeMessage(unread, 'hi'), /no server running/);
+});
+
+test('the page shows every line of an approval it lets the person answer', async () => {
+  const chat = (await import('../console/public/chatThread.cjs')).default;
+  const screen = [
+    'Would you like to run the following command?', '',
+    ...['  Environment: local', '  Cwd: /tmp/fx/repo', '  Network: off', '  Sandbox: none', '  Timeout: 60s', '  $ rm -rf build'],
+    '',
+    '› 1. Yes, proceed (y)',
+    '  3. No, and tell Codex what to do differently (esc)', '',
+    '  Press enter to confirm or esc to cancel',
+  ].join('\n');
+  const approval = readApproval(screen);
+  assert.equal(approval.complete, true, 'six lines: the most the page shows');
+  const { lines } = chat.approvalText(approval);
+  assert.equal(lines.length, 6);
+  assert.ok(lines.includes('$ rm -rf build'), 'the command, its sixth line, is shown: Approve answers nothing the page hid');
 });
