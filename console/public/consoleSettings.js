@@ -1,6 +1,6 @@
-// The Settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
-// typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
-// stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
+// The Settings page: the limits and retention numbers, one save per card; the Slack card, with its Set up Slack
+// dialog (slackSetup.js), its channel and its questions; the webhook switches, each applied as it is turned; then the
+// sessions holding data, and anything stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
 // change survives.
 window.Woodshed.settingsPage('/console-settings', (app, life) => {
   'use strict';
@@ -9,17 +9,14 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   const DATA_REFRESH_MS = 60_000;
   const CARDS = [
     { id: 'sessions', title: 'Sessions', note: 'How many shared sessions run at once, and when one stops by itself. Its work is pushed first, and Resume picks it up where it was.' },
-    { id: 'questions', title: 'Questions from Slack', note: 'Sessions that answer a mention of the bot. Each reads the default branch and changes nothing, and its conversation is kept for a follow-up in its thread.' },
     { id: 'retention', title: 'Retention', note: 'How long a stopped shared session keeps its conversation and databases, so it can be resumed. After that the branch alone stays, on GitHub, and the card says Deleted until it is taken off the list.' },
-    { id: 'slack', title: 'Slack', note: 'Each pull request a shared session opens is posted once it passed what the repo\'s project file asks of it (pullRequests: its review approved and its suites passed), with its decision brief in the thread of the post once its QA check finished. It goes to its repo\'s own channel when the repo\'s Settings (under Repos) give one, and to the channel below otherwise. The bot token is on Secrets & webhooks.' },
   ];
   const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
   const NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-  const CHANNEL_RE = /^[CG][A-Z0-9]{8,}$/;
 
   let data = null;
   let loadError = null;
-  // What has been typed into each field, by setting key (and `slackChannel`), until it is saved or reloaded.
+  // What has been typed into each field, by setting key, until it is saved or reloaded.
   const typed = new Map();
   // What the last save on each settings card said: {text, bad}.
   const notices = new Map();
@@ -39,11 +36,6 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     return null;
   }
 
-  function channelProblem(raw) {
-    const value = String(raw).trim();
-    return value && !CHANNEL_RE.test(value) ? 'Give the channel\'s ID, such as C0123456789, not its name.' : null;
-  }
-
   // The fields of a card that differ from what is saved, and whether any of them is no good.
   function pending(cardId) {
     const changes = [];
@@ -53,11 +45,6 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       const raw = typed.get(s.key);
       if (problem(s, raw)) bad = true;
       else if (Number(raw) !== s.value) changes.push({ key: s.key, label: s.label, from: `${s.value} ${s.unit}`, to: `${Number(raw)} ${s.unit}`, value: Number(raw) });
-    }
-    if (cardId === 'slack' && data.slack && typed.has('slackChannel')) {
-      const raw = typed.get('slackChannel').trim();
-      if (channelProblem(raw)) bad = true;
-      else if (raw !== data.slack.channel) changes.push({ key: 'slackChannel', label: 'Channel', from: data.slack.channel || 'none', to: raw || 'none', value: raw });
     }
     return { changes, bad };
   }
@@ -81,33 +68,14 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       bad && h('p', { class: 'form-error', role: 'alert' }, bad));
   }
 
-  function channelRow() {
-    const raw = typed.has('slackChannel') ? typed.get('slackChannel') : data.slack.channel;
-    const bad = typed.has('slackChannel') ? channelProblem(raw) : null;
-    const changed = !bad && raw.trim() !== data.slack.channel;
-    return h('div', { class: `set-row${changed ? ' is-changed' : ''}${bad ? ' is-bad' : ''}` },
-      h('div', null,
-        h('label', { class: 'set-name', for: 'set-channel' }, 'Channel'),
-        h('div', { class: 'set-help' }, 'Its ID, at the bottom of the channel\'s About tab. Invite the bot to it first. A repo can have its own, on its Settings under Repos. Empty turns the posts off for repos without one.'),
-        h('div', { class: 'set-bounds' }, data.slack.channel ? `posting to ${data.slack.channel}` : 'nothing is posted')),
-      h('div', { class: 'set-value' },
-        h('input', {
-          id: 'set-channel', class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'C0123456789', value: raw,
-          'aria-invalid': bad ? 'true' : null,
-          oninput: (e) => { typed.set('slackChannel', e.target.value); render(); },
-        })),
-      bad && h('p', { class: 'form-error', role: 'alert' }, bad));
-  }
-
   async function save(card) {
     const { changes } = pending(card.id);
     if (saving.has(card.id) || !changes.length) return;
     saving.add(card.id);
     render();
     try {
-      const values = Object.fromEntries(changes.filter((c) => c.key !== 'slackChannel').map((c) => [c.key, c.value]));
-      const channel = changes.find((c) => c.key === 'slackChannel');
-      data = { ...data, ...(await W.postJson('/api/console-settings', { values, ...(channel ? { slackChannel: channel.value } : {}) })) };
+      const values = Object.fromEntries(changes.map((c) => [c.key, c.value]));
+      data = { ...data, ...(await W.postJson('/api/console-settings', { values })) };
       for (const c of changes) typed.delete(c.key);
       notices.set(card.id, { text: `Saved. ${changes.map((c) => `${c.label}: ${c.from} → ${c.to}`).join('; ')}. Applies on the next check, with no restart.` });
     } catch (err) {
@@ -118,13 +86,19 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
   }
 
   function settingsCard(card) {
-    const rows = data.settings.filter((s) => s.group === card.id);
-    const { changes, bad } = pending(card.id);
     return h('section', { class: 'settings-card', 'aria-labelledby': `card-${card.id}` },
       h('h2', { id: `card-${card.id}`, class: 'label' }, card.title),
       h('p', { class: 'sub' }, card.note),
       card.id === 'sessions' && W.providerWords.capacityNote && h('p', { class: 'cap-note' }, W.providerWords.capacityNote),
-      h('div', { class: 'set-rows' }, rows.map(settingRow), card.id === 'slack' && data.slack && channelRow()),
+      settingsBlock(card));
+  }
+
+  // A group's rows and their Save: a card's whole body, or the Slack card's Limits.
+  function settingsBlock(card) {
+    const rows = data.settings.filter((s) => s.group === card.id);
+    const { changes, bad } = pending(card.id);
+    return [
+      h('div', { class: 'set-rows' }, rows.map(settingRow)),
       h('div', { class: 'card-foot' },
         h('button', { type: 'button', class: 'btn btn-open', disabled: bad || !changes.length || saving.has(card.id), onclick: () => save(card) },
           saving.has(card.id) ? 'Saving…' : changes.length > 1 ? `Save ${changes.length} changes` : 'Save'),
@@ -132,7 +106,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
           ? h('span', { class: 'form-error', role: 'alert' }, notices.get(card.id).text)
           : h('span', { class: 'sub', role: 'status' }, bad ? 'Fix the value in red first.'
             : changes.length ? `${changes.length} changed. Takes effect on the next check, with no restart.`
-              : notices.get(card.id)?.text || 'Saved values. Each change is logged with who made it.')));
+              : notices.get(card.id)?.text || 'Saved values. Each change is logged with who made it.')),
+    ];
   }
 
   // The repos sessions can start on: the installation's own (read-only here), and the ones added on this page.
@@ -795,6 +770,202 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       h('p', { class: 'sub', style: 'font-size: 12.5px' }, totalsLine(d)));
   }
 
+  // The Slack card: one place for the bot, where pull requests are posted and the questions people ask it
+  // (slackSetup.mjs). Read on its own, since it asks the secret store and Slack. `slackView` is null on a console that
+  // posts nothing to Slack, which has no card.
+  let slackView = null;
+  let slackError = null;
+  // Which of the card's parts are open: `limits:slack` and `limits:questions` for their Limits, `channel` for Change
+  // channel's picker.
+  const slackOpen = new Set();
+  let channelPicker = null;
+  const slackNote = { text: null, bad: false };
+
+  async function loadSlack() {
+    try {
+      slackView = await W.getJson('/api/console-settings/slack');
+      slackError = null;
+    } catch (err) {
+      slackView = null;
+      slackError = err.status === 404 ? null : err.message;
+    }
+  }
+
+  function slackSaved(next, text) {
+    slackView = { ...slackView, ...next };
+    if (data?.slack) data = { ...data, slack: { ...data.slack, channel: next.channel ?? '' } };
+    slackOpen.delete('channel');
+    channelPicker = null;
+    slackNote.text = text;
+    slackNote.bad = false;
+    render();
+  }
+
+  // Slack keeps an app's token when it is reinstalled with new scopes, so the card asks about the saved one again.
+  async function recheckSlack() {
+    if (saving.has('slack-recheck')) return;
+    saving.add('slack-recheck');
+    render();
+    try {
+      const next = await W.postJson('/api/console-settings/slack/recheck', {});
+      const text = next.bot && !next.bot.ok ? `Checked: Slack still refuses the saved token (${next.bot.error}).`
+        : next.missingScopes?.length ? `Checked: the app still lacks ${next.missingScopes.join(', ')}. Reinstall it after adding ${next.missingScopes.length === 1 ? 'it' : 'them'}.`
+          : Array.isArray(next.missingScopes) ? 'Checked: the app has every scope the console uses.'
+            : 'Checked, but Slack did not say which scopes the app has.';
+      slackSaved(next, text);
+    } catch (err) {
+      slackNote.text = err.message;
+      slackNote.bad = true;
+    }
+    saving.delete('slack-recheck');
+    render();
+  }
+
+  function checkAgainButton() {
+    return h('button', { type: 'button', class: 'btn btn-plain btn-sm', disabled: saving.has('slack-recheck'), onclick: recheckSlack },
+      saving.has('slack-recheck') ? 'Checking…' : 'Check again');
+  }
+
+  function openSetup(mode) {
+    W.openSlackSetup({
+      view: slackView, mode,
+      onSaved: (next) => slackSaved(next, mode === 'replace' ? 'Saved. The console uses the new keys from its next call to Slack.' : 'Slack is set up.'),
+    });
+  }
+
+  function channelText(v) {
+    if (!v.channel) return 'Not posted: no channel. A repo can post to its own channel instead, on its Settings under Repos.';
+    const named = v.channelName ? `#${v.channelName}` : v.channel;
+    return `Posted to ${named}. A repo can post to its own channel instead, on its Settings under Repos.`;
+  }
+
+  function botText(v) {
+    if (v.bot && !v.bot.ok) return `Slack refuses the saved token (${v.bot.error}): nothing is posted. Replace keys with a new one.`;
+    const who = v.bot?.name ? `@${v.bot.name}` : 'The bot';
+    const how = v.install?.installed ? `installed with ${v.install.label}` : 'your own app';
+    const set = v.bot?.setAt ? ` Set${v.bot.setBy && v.bot.setBy !== 'console' ? ` by @${v.bot.setBy}` : ''} ${W.when(v.bot.setAt)}.` : '';
+    return `${who}, ${how}.${set}`;
+  }
+
+  async function saveChannel() {
+    const channel = channelPicker.value().trim();
+    const bad = channelPicker.problem();
+    if (bad) { slackNote.text = bad; slackNote.bad = true; render(); return; }
+    if (saving.has('slack-channel')) return;
+    saving.add('slack-channel');
+    try {
+      const next = await W.postJson('/api/console-settings/slack', { channel });
+      slackSaved(next, channel ? 'Saved. The next pull request goes to the new channel. Invite the bot to it first.' : 'Saved. Pull requests of repos without a channel of their own are not posted.');
+    } catch (err) {
+      slackNote.text = err.message;
+      slackNote.bad = true;
+      render();
+    }
+    saving.delete('slack-channel');
+  }
+
+  function limitsToggle(group) {
+    const key = `limits:${group}`;
+    const open = slackOpen.has(key);
+    return h('button', {
+      type: 'button', class: 'btn btn-quiet btn-sm', 'aria-expanded': String(open), 'aria-controls': `slack-${key.replace(':', '-')}`,
+      onclick: () => { if (open) slackOpen.delete(key); else slackOpen.add(key); render(); },
+    }, open ? 'Limits ▴' : 'Limits ▾');
+  }
+
+  function limitsBlock(group) {
+    if (!slackOpen.has(`limits:${group}`) || !data.settings.some((s) => s.group === group)) return null;
+    return h('div', { class: 'slack-limits', id: `slack-limits-${group}` }, settingsBlock({ id: group }));
+  }
+
+  function slackRow(name, text, actions, ...more) {
+    return h('div', { class: 'slack-row' },
+      h('p', { class: 'set-name' }, name),
+      h('p', { class: 'sub' }, text),
+      h('div', { class: 'slack-act' }, actions),
+      more);
+  }
+
+  function questionsRow(v) {
+    const state = data.webhooks?.slack;
+    // Only where the console answers questions at all: a Slack bot, and somewhere for a question's session to run.
+    if (!state) return null;
+    const on = !state.off;
+    const reaches = data.webhooks.receiving || state.off;
+    let text;
+    if (!reaches) text = 'Mentions of the bot do not reach this console: it has no webhook receiver.';
+    else if (!on) text = `Off${state.at ? ` since ${W.when(state.at)}${state.by && state.by !== 'console' ? `, by ${state.by}` : ''}` : ''}: ${SLACK_SWITCH.off(state.dropped ? ` (${state.dropped} so far)` : '')}`;
+    else text = `${v.bot?.name ? `Mentions of @${v.bot.name}` : 'Mentions of the bot'} are answered, each in a session that reads the default branch and changes nothing.${v.lastMention ? ` Last one ${W.ago(v.lastMention)}.` : ''}`;
+    const labelId = 'webhooks-switch-slack';
+    return slackRow('Questions', text,
+      [limitsToggle('questions'), reaches && h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-label': SLACK_SWITCH.label, id: labelId, disabled: Boolean(switching),
+        onclick: () => flipWebhooks('slack', on),
+      })],
+      !v.signingSecret && h('p', { class: 'cap-note' }, 'No signing secret is saved, so every mention is refused before it reaches the console: Replace keys to add it.'),
+      !v.eventsUrl && h('p', { class: 'sub', style: 'grid-column: 1 / -1; margin: 0' }, 'This console does not know its events Request URL: the Set up Slack dialog says where to find it.'),
+      switchError?.source === 'slack' && h('p', { class: 'form-error', role: 'alert' }, switchError.text),
+      limitsBlock('questions'));
+  }
+
+  function slackCard() {
+    if (!slackView && !slackError) return null;
+    const v = slackView;
+    const head = (pill) => h('div', { class: 'card-head' }, h('h2', { id: 'card-slack', class: 'label' }, 'Slack'), pill);
+    const shell = (...body) => h('section', { class: 'settings-card', id: 'slack', 'aria-labelledby': 'card-slack' }, body);
+    if (!v) return shell(head(null), h('p', { class: 'form-error', role: 'alert' }, `Could not load it: ${slackError}`));
+    const note = slackNote.text && h('p', { class: slackNote.bad ? 'form-error' : 'sub', role: slackNote.bad ? 'alert' : 'status' }, slackNote.text);
+    if (!v.connected) {
+      return shell(
+        head(h('span', { class: 'pill' }, 'Not set up')),
+        h('p', { class: 'sub' }, 'Post each pull request a shared session opens to a channel, and answer questions people ask the bot.'),
+        v.available
+          ? h('div', null, h('button', { type: 'button', class: 'btn btn-open', onclick: () => openSetup(v.install ? 'choose' : 'own') }, 'Set up Slack'))
+          : h('p', { class: 'cap-note' }, 'This console has no secret store to keep Slack\'s keys in. Choose one on ', h('a', { href: '/secrets' }, 'Secrets & webhooks'), ' first.'),
+        note);
+    }
+    const refused = v.bot && !v.bot.ok;
+    const installed = Boolean(v.install?.installed);
+    const changing = slackOpen.has('channel');
+    if (changing && !channelPicker) channelPicker = W.slackChannelPicker({ value: v.channel, name: v.channelName, id: 'slack-channel-search' });
+    return shell(
+      head(refused ? h('span', { class: 'pill is-bad' }, 'Token refused') : h('span', { class: 'pill is-ok' }, v.bot?.team ? `Connected to ${v.bot.team}` : 'Connected')),
+      h('div', { class: 'slack-rows' },
+        slackRow('Bot', botText(v),
+          installed && v.install.href
+            ? h('a', { class: 'btn btn-plain btn-sm', href: v.install.href }, 'Reinstall')
+            : h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: () => openSetup('replace') }, 'Replace keys'),
+          (refused || v.missingScopes?.length > 0) && h('p', { class: 'cap-note', style: 'grid-column: 1 / -1' },
+            refused ? 'Fixed it in Slack? ' : `The app lacks ${v.missingScopes.join(', ')}. Add ${v.missingScopes.length === 1 ? 'it' : 'them'} on its OAuth & Permissions page and reinstall it, then `,
+            checkAgainButton(), refused ? '' : '. If Slack gave it a new token, Replace keys with that instead.')),
+        slackRow('Pull requests', channelText(v),
+          [limitsToggle('slack'), !changing && h('button', { type: 'button', class: 'btn btn-plain btn-sm', onclick: () => { slackOpen.add('channel'); slackNote.text = null; render(); } }, 'Change channel')],
+          changing && h('div', { class: 'slack-more' },
+            channelPicker.el,
+            h('div', { class: 'card-foot' },
+              h('button', { type: 'button', class: 'btn btn-open', onclick: saveChannel }, 'Save channel'),
+              v.channel && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { channelPicker = W.slackChannelPicker({ value: '', id: 'slack-channel-search' }); render(); } }, 'No channel'),
+              h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { slackOpen.delete('channel'); channelPicker = null; render(); } }, 'Cancel'))),
+          limitsBlock('slack')),
+        questionsRow(v)),
+      note,
+      v.canDisconnect && h('div', { class: 'card-foot' },
+        h('button', {
+          type: 'button', class: 'btn btn-quiet',
+          onclick: () => W.confirmChange({
+            title: 'Disconnect Slack?',
+            before: `the bot${v.bot?.name ? ` @${v.bot.name}` : ''}, with its token and signing secret saved`,
+            after: 'no token and no signing secret',
+            effect: 'Nothing is posted to Slack, and no mention is answered, until Slack is set up again. The channels are kept.',
+            word: 'slack',
+            goLabel: 'Disconnect',
+            run: async () => {
+              slackSaved(await W.postJson('/api/console-settings/slack/disconnect', { confirm: 'slack' }), 'Disconnected. Set up Slack connects it again.');
+            },
+          }),
+        }, 'Disconnect Slack')));
+  }
+
   // Each source of webhooks, switched off on its own (webhookSwitch.mjs). No typed confirm: a switch is undone by
   // turning it back, and is logged with who turned it. Only where webhooks reach the console at all, or while one is off.
   // What only a GitHub webhook starts: the poll finds none of it (webhookDispatch.pollMisses).
@@ -805,12 +976,13 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       on: `On: labels, comments and pull request changes reach the console within seconds. Off, it polls GitHub instead, which finds only the session label and /woodshed comments, within a minute. ${WEBHOOK_ONLY} stop until it is on again.`,
       off: (dropped) => `the console drops each GitHub delivery${dropped} and polls GitHub, so the session label and /woodshed comments take up to a minute. ${WEBHOOK_ONLY} have stopped.`,
     },
-    {
-      source: 'slack', label: 'Slack questions',
-      on: 'On: the console answers each mention of its Slack bot in a session of its own. Off, it drops them.',
-      off: (dropped) => `the console drops each mention of its Slack bot${dropped}, so questions in Slack go unanswered. Webhook events lists them as ignored.`,
-    },
   ];
+  // The Slack card's Questions switch: the same switch as GitHub's, for mentions of the bot.
+  const SLACK_SWITCH = {
+    source: 'slack', label: 'Answer questions',
+    on: 'On: the console answers each mention of its Slack bot in a session of its own. Off, it drops them.',
+    off: (dropped) => `the console drops each mention of its Slack bot${dropped}, so questions in Slack go unanswered. Webhook events lists them as ignored.`,
+  };
   let switching = null;
   let switchError = null;
 
@@ -848,7 +1020,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     if (!rows.length) return null;
     return h('section', { class: 'settings-card', id: 'webhooks', 'aria-labelledby': 'card-webhooks' },
       h('h2', { id: 'card-webhooks', class: 'label' }, 'Webhooks'),
-      h('p', { class: 'sub' }, 'What reaches the console from GitHub and Slack as it happens. Each change applies at once, and is logged with who made it. ',
+      h('p', { class: 'sub' }, 'What reaches the console from GitHub as it happens. Each change applies at once, and is logged with who made it. Slack\'s questions are switched on the Slack card. ',
         h('a', { href: '/events' }, 'Webhook events'), ' lists what came in.'),
       h('div', { class: 'webhook-switches' }, rows));
   }
@@ -885,7 +1057,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), mcpCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), mcpCard(), CARDS.map(settingsCard), slackCard(), webhooksCard(), dataCard()));
   }
 
   async function load() {
@@ -898,6 +1070,10 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     await loadMcp();
     render();
     if (data?.projects) await loadRepoChoices();
+    await loadSlack();
+    render();
+    // A link to the card (the Secrets page's, a repo's) lands on it once it is drawn.
+    if (typeof location !== 'undefined' && ['#slack', '#card-slack'].includes(location.hash)) document.getElementById('slack')?.scrollIntoView?.({ block: 'start' });
     await loadUpdates();
     render();
     scheduleUpdates();

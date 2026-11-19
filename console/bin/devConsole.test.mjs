@@ -123,15 +123,20 @@ test('with DEV_CONSOLE_SESSION_APP=1 the dev console answers under the session\'
   assert.equal(await get(port, { host: 'abcd1234.attacker.example', ...write, headers: { ...write.headers, origin: 'http://abcd1234.attacker.example' } }), 421, 'the session\'s id under another domain');
   assert.equal(await get(port, { host: 'abcd1234.apps.example.com.attacker.example' }), 421, 'the session\'s app name inside another domain');
   assert.equal(await get(port, { host: 'ffff0000.apps.example.com' }), 421, 'another session\'s app name');
+  assert.equal(await get(port, { host: 'xabcd1234.apps.example.com' }), 421, 'a name that only ends with the session\'s app name');
+  assert.equal(await get(port, { host: `[::1]:${port}` }), 200, 'IPv6 loopback');
   assert.equal(await upgradeStatus(port, 'abcd1234.attacker.example'), 421, 'a websocket under another domain');
 });
 
-// A new image under a console from before SESSION_APP_DOMAIN still opens its app.
-test('with no SESSION_APP_DOMAIN the dev console lets in any name whose first label is the session id, and warns once', async (t) => {
+// Without the domain, the app name cannot be told from a DNS-rebound name that starts with the session id.
+test('with no SESSION_APP_DOMAIN the dev console refuses the session\'s app name, lets in loopback, and warns once', async (t) => {
   const { port, child, stderr } = await startSessionApp(t, {});
-  assert.equal(await firstAnswer(port, child, 'abcd1234.apps.example.com'), 200);
-  assert.equal(await get(port, { host: 'ffff0000.apps.example.com' }), 421, 'another session\'s app name');
-  assert.equal(stderr().match(/no SESSION_APP_DOMAIN/g)?.length, 1);
+  assert.equal(await firstAnswer(port, child, `localhost:${port}`), 200, 'a page on loopback');
+  assert.equal(await get(port, { host: `127.0.0.1:${port}` }), 200, 'loopback by address');
+  assert.equal(await get(port, { host: 'abcd1234.apps.example.test' }), 421, 'the session\'s app name');
+  assert.equal(await get(port, { host: 'abcd1234.attacker.example' }), 421, 'the session\'s id under another domain');
+  assert.equal(await upgradeStatus(port, 'abcd1234.attacker.example'), 421, 'a websocket under another domain');
+  assert.equal(stderr().match(/no SESSION_APP_DOMAIN, so the session's app name is refused/g)?.length, 1);
 });
 
 function upgradeStatus(port, host) {

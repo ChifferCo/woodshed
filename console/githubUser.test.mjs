@@ -194,6 +194,18 @@ test('a scoped token reaches one repo with the given permissions, is made once a
   assert.equal(github.scoped.at(-1).access_token, 'ghu_1');
 });
 
+test('a scoped token can reach several of one owner\'s repos, and never another owner\'s', async () => {
+  const { user, github } = setup();
+  await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });
+  const wide = { ...TOOLS, repos: ['acme/App', 'globex/secrets', 'acme/tools', 'acme/api'] };
+  assert.equal((await user.scopedTokenFor('octocat', wide)).token, 'ghu_scoped_1');
+  assert.deepEqual(github.scoped, [{ access_token: 'ghu_first', target: 'acme', repositories: ['api', 'app', 'tools'], permissions: TOOLS.permissions }],
+    'its own repo once, the others of its owner, none of globex');
+  assert.equal((await user.scopedTokenFor('octocat', { ...wide, repos: ['acme/api', 'acme/app'] })).token, 'ghu_scoped_1', 'the same repos in another order: kept');
+  assert.equal((await user.scopedTokenFor('octocat', TOOLS)).token, 'ghu_scoped_2', 'its repo alone is another token');
+  assert.deepEqual(github.scoped.at(-1).repositories, ['tools']);
+});
+
 test('a scoped token GitHub refuses, cannot be reached for, or a console with no client secret, leaves the caller the App', async () => {
   const { user, github } = setup();
   await user.connect({ login: 'octocat', answer: { access_token: 'ghu_first', expires_in: 28800, refresh_token: 'ghr_first' } });

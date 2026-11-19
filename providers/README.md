@@ -34,6 +34,7 @@ it: no Secrets page, no saved Claude homes, no databases of its own, or GitHub's
 | `databases` | The databases `dbAdmin` makes a copy of for each session, `postgres` and `mongo` (which needs `postgres`): the installation's own, `[]` without `dbAdmin` | `console/databases.mjs`, the tunnel, Restore a dump and the session page's Data ▾ |
 | `webhooks` | `run(handler)`, which hands each GitHub or Slack message to `handler.dispatch` | `console/webhookDispatch.mjs` |
 | `webhookUrl` | `() => Promise<string>`, where GitHub should post | The Secrets & webhooks page |
+| `slackEventsUrl` | `() => Promise<string>`, where Slack's Event Subscriptions should post: the receiver's `/slack` | The Set up Slack dialog and the app manifest it gives (Console settings, Slack) |
 
 ### A secret store's limit on one value
 

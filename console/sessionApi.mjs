@@ -150,13 +150,18 @@ export function sessionForToken(given, sessions) {
  *          egress?: {sessionUrl: string|null, caPem: () => Promise<string>}|null}} opts
  *   `mcpRelay` relays sessions' calls to the console's MCP servers, and `egress` is the proxy a tainted session leaves through
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
+ *   `ownerTokenRepos`, for a console whose GitHub App is installed beyond its own repos (a host's, installation.mjs's
+ *   `githubConnect`), gives the console's repos (owner/name): the person's own token would reach all the App's, so a
+ *   private session's is always scoped by GitHub. To these repos, those of its project repo's owner, when its project
+ *   file says `full`; to its project's repo alone when it says `repo` or cannot be read
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
  * @returns {(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => Promise<void>}
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, mcpRelay = null, egress = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null,
+  ownerTokenRepos = null, mcpRelay = null, egress = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -171,16 +176,18 @@ export function createSessionApi({
     console.log('sessionApi: github access for a private session', { sessionId: session.id, project: own?.project ?? null, access });
   }
 
-  // `full` or `repo`, from the session's project file. One that cannot be read errs toward less: `full` on the default
-  // project, as before the setting, and `repo` on any other, whose repo may be public.
+  // `full` or `repo`, from the session's project file; behind a host, `repos` for its `full`. One that cannot be read
+  // errs toward less: `full` on the default project, as before the setting, and `repo` on any other, whose repo may be
+  // public; behind a host `repo` on every project, as there was no time before the setting there.
   async function accessFor(session, own) {
-    const fallback = !own || own.default ? 'full' : 'repo';
+    const fallback = !ownerTokenRepos && (!own || own.default) ? 'full' : 'repo';
     let access = fallback;
     if (githubAccess && own) {
       const read = await githubAccess(own.project).catch(() => null);
       access = read ?? fallback;
       if (!read) console.warn('sessionApi: project file not read, githubAccess from the project', { sessionId: session.id, project: own.project, access });
     }
+    if (ownerTokenRepos && access === 'full') access = 'repos';
     logAccess(session, own, access);
     return access;
   }
@@ -235,10 +242,11 @@ export function createSessionApi({
     const readOnly = isAsk(session) || isQa(session) || isReview(session);
     const access = session.owner && githubUser && !readOnly ? await accessFor(session, own) : null;
     const ownerToken = access === 'full';
-    if (access === 'repo' && githubUser.scopedTokenFor) {
+    if ((access === 'repo' || access === 'repos') && githubUser.scopedTokenFor && own?.repo) {
       let scopedToken;
       try {
-        scopedToken = await githubUser.scopedTokenFor(session.owner, { repo: own?.repo, permissions: own?.permissions });
+        const scope = { repo: own.repo, permissions: own.permissions };
+        scopedToken = await githubUser.scopedTokenFor(session.owner, access === 'repos' ? { ...scope, repos: ownerTokenRepos() } : scope);
       } catch (err) {
         if (!err.shown) throw err;
         return reply(res, 409, { error: err.message });

@@ -79,6 +79,8 @@
       { group: 'Go to', label: 'My Woodshed', run: go('/') },
       { group: 'Go to', label: 'My settings', run: go('/settings') },
       ...(W.isAdmin?.() ? W.consoleLinks().map((link) => ({ group: 'Go to', label: link.label, run: go(link.href) })) : []),
+      // A log, not a menu entry (common.js, CONSOLE_LINKS), so named here to stay a place to go.
+      W.isAdmin?.() && { group: 'Go to', label: 'Webhook events', run: go('/events') },
       { group: 'Commands', label: 'Keyboard shortcuts', meta: '?', run: () => openSheet(keys) },
       { group: 'Commands', label: 'Settings', meta: keyText('settings'), run: () => openSheet(settings) },
       page.toggleRail && { group: 'Commands', label: page.railShown() ? 'Hide the rail' : 'Show the rail', meta: keyText('rail'), run: page.toggleRail },

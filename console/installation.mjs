@@ -20,6 +20,7 @@ import { createDatabaseGate } from './databaseGate.mjs';
 import { createDatabases } from './databases.mjs';
 import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
+import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
@@ -32,7 +33,7 @@ import { createEgressProxy } from './egressProxy.mjs';
 import { GITHUB_HOSTS } from './githubEgress.mjs';
 import { createOidcIssuer } from './oidcIssuer.mjs';
 import { createMcpRelay } from './mcpRelay.mjs';
-import { createMcpServers } from './mcpServers.mjs';
+import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
@@ -54,6 +55,7 @@ import { createGitHubPeople } from './githubPeople.mjs';
 import { createSlackPeople } from './slackPeople.mjs';
 import { createAssigneePings } from './assigneePings.mjs';
 import { createMembers } from './members.mjs';
+import { checkMembersHook, createHostedMembers } from './hostedMembers.mjs';
 import { createAppShares } from './appShares.mjs';
 import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
@@ -215,8 +217,10 @@ async function loadAppKey(config, secrets) {
 // relay adds, its key a secret where there is a store and otherwise a file in the state folder, made the first time a
 // token is signed; and, where a session can be locked down, the certificate authority the egress proxy shows tainted
 // sessions for GitHub.
-function mcpAccess({ loaded, secrets, launcher }) {
-  const issuer = createOidcIssuer({ issuer: loaded.mcp.issuer, secrets, keyFile: secrets ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
+function mcpAccess({ loaded: given, secrets, launcher }) {
+  // A config an embedding program built by hand may have neither: no production server, and no egress proxy.
+  const loaded = { ...given, mcp: given.mcp ?? mcpSettings({}, given.publicUrl ?? 'http://localhost'), egress: given.egress ?? { port: 7693, sessionUrl: null } };
+  const issuer = createOidcIssuer({ issuer: loaded.mcp.issuer, secrets, keyFile: secrets || !loaded.stateDir ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
   const lockdown = () => {
     if (typeof launcher?.lockDown !== 'function') return { available: false, why: 'its launcher cannot move a running session onto a locked network' };
     if ('guardsEgress' in launcher && !launcher.guardsEgress) return { available: false, why: 'on AWS, sessions that may use production start on the guarded network Terraform makes with prod_mcp, and this installation has none' };
@@ -238,36 +242,66 @@ function mcpAccess({ loaded, secrets, launcher }) {
   // Every relying party fetches the keys over https from the issuer's own name.
   if (!loaded.mcp.issuer.startsWith('https://') && environment) console.warn('oidcIssuer: the issuer is not https, which an MCP server may refuse', { issuer: loaded.mcp.issuer });
   if (certs) certs.caPem().catch((err) => console.error('egress: certificate authority not ready', { message: err.message }));
-  return { issuer, certs, lockdown, egress: certs ? { sessionUrl: loaded.egress.sessionUrl, caPem: () => certs.caPem() } : null };
+  return { issuer, certs, lockdown, settings: loaded.mcp, egress: certs ? { sessionUrl: loaded.egress.sessionUrl, caPem: () => certs.caPem() } : null };
 }
 
 /**
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          recordings?: object|null (where QA recordings are kept: qaRecordings.mjs),
- *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
- *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
+ *          webhookUrl?: (() => Promise<string|null>)|null, slackEventsUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
+ *          userMenu?: ((headers: object) => object)|null, settingsTabs?: ((headers: object) => object[])|null,
+ *          signOut?: ((req: object) => Promise<{location?: string, setCookie?: string|string[]}>)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
- *          hostApp?: object|null, woodshedUpdate?: boolean}} args
+ *          hostApp?: object|null, woodshedUpdate?: boolean, slackEventsUrl?: (() => Promise<string|null>)|null,
+ *          slackInstall?: {label: string, description?: string, available?: boolean|(() => boolean|Promise<boolean>),
+ *            href?: string, installed?: () => boolean|Promise<boolean>}|null,
+ *          githubConnect?: {clientId: () => string|Promise<string>, clientSecret: () => string|null, href: string,
+ *                           automatic?: boolean}|null,
+ *          members?: {list: () => Promise<{login: string, role: 'owner'|'member'}[]>,
+ *            add: (args: {login: string, role: 'owner'|'member', by: string}) => Promise<void>,
+ *            remove: (args: {login: string, by: string}) => Promise<void>,
+ *            setRole: (args: {login: string, role: 'owner'|'member', by: string}) => Promise<void>}|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
- *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
- *   (`{subtitle, groups}`, server.mjs's menuOf); `newId` makes a session id, for ids unique beyond this installation.
+ *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu and the settings
+ *   list for that person (`{subtitle, you, groups, sections}`, server.mjs's menuOf), and `settingsTabs(headers)` adds
+ *   tabs of its own pages to Settings (`[{label, href}]`, server.mjs's settingsTabsOf; each page is drawn with
+ *   settingsFrame, as are the menu's own pages). Behind `trusted`,
+ *   `signOut(req)` ends the person's sign-in for the user menu's Sign out, answering where to go and the cookies to
+ *   set (`{location?, setCookie?}`); without it a hosted console has no Sign out; `newId` makes a session
+ *   id, for ids unique beyond this installation.
  *   `repos` is where the program keeps the installation's repo list, which `config.projects` was built from, so the
  *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
  *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`. `projectReadiness` says why
  *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
  *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console").
  *   `woodshedUpdate: false` turns off the Console settings Woodshed card and its check, for a program that deploys
- *   Woodshed itself (README.md "Embedding the console")
+ *   Woodshed itself (README.md "Embedding the console").
+ *   `githubConnect`, behind `trusted` only, is Connect GitHub on the host's GitHub App: My settings' Connect sends
+ *   people to `href`, where the host signs them in with GitHub and hands the answer to `connectGitHub`; the console
+ *   keeps it in `provider.secrets` and refreshes it with the App's `clientId` and `clientSecret` (githubUser.mjs).
+ *   `automatic: true` says the host connects people on its own, so My settings shows it as a status with a way to
+ *   connect again, not as a step to take.
+ *   `members`, behind `trusted` only, is the program's own list of who is in and their role, which the People page shows
+ *   and changes there (hostedMembers.mjs, README.md "Embedding the console"); core keeps only each person's switches.
+ *   `slackEventsUrl` is the Slack events Request URL the Set up Slack dialog and its manifest show, over the
+ *   provider's; `slackInstall` is the program's own way to put a Slack app in a workspace, offered beside "Use your
+ *   own Slack app" (slackSetup.mjs, README.md "Embedding the console").
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, mcpServers: mcpServersHook = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null, mcpServers: mcpServersHook = null }) {
+  checkMembersHook(memberList, trusted);
   if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
+  if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
+  checkSlackInstall(slackInstall);
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
     throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
+  }
+  if (githubConnect && (!trusted || typeof githubConnect.clientId !== 'function' || typeof githubConnect.clientSecret !== 'function' || typeof githubConnect.href !== 'string' || !githubConnect.href.startsWith('/') || (githubConnect.automatic != null && typeof githubConnect.automatic !== 'boolean'))) {
+    throw new Error('githubConnect is for a console behind trusted sign-in, and needs clientId, clientSecret and a path for href (automatic, when given, true or false)');
   }
   if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
     throw new Error('repos needs add and remove, and list when it has one');
@@ -304,6 +338,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
   });
   const slack = createSlack({ store, secrets });
   console.log('console: Slack posts', { available: slack.available, channel: slack.view().channel || null });
+  // The program's events address wins: it receives Slack's events itself. Without either, the dialog says it is unknown.
+  const slackSetup = createSlackSetup({
+    store, secrets, slack, consoleName: config.consoleName, eventsUrl: slackEventsUrl ?? provider.slackEventsUrl ?? null, install: slackInstall,
+  });
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
   // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
   const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
@@ -324,8 +362,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const databasesFix = (project) => (provider.name === 'local' && project.clonedAtStart
     ? [{ text: `Run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases.` }]
     : null);
-  // Whom someone who cannot fix a project asks: the People list's admins. Behind a hosting proxy there is no list, and
-  // the program's own hook names them.
+  // Whom someone who cannot fix a project asks: the People list's admins (the program's owners, when it hands over its
+  // list). Behind a hosting proxy with no list, the program's own hook names them.
   const admins = () => (members ? members.view().members.filter((m) => m.admin).map((m) => m.login) : null);
   const databaseGate = createDatabaseGate({
     projectDatabases: (project) => readerOf(project.name).databases(), hosted, provider: provider.name ?? null, fix: databasesFix, admins,
@@ -336,8 +374,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // A repo's label may not be its QA label, which its project file names.
   const repoTriggers = createRepoTriggers({ store, config, qaLabelOf: async (name) => (await readerOf(name).pullRequests())?.qa?.label ?? null });
   const people = createGitHubPeople({ store, github });
-  // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
-  const members = trusted ? null : createMembers({ store });
+  // Behind a hosting proxy the host says who is in: no write access asked of those it signs in, and no People list
+  // unless the program hands over its own (hostedMembers.mjs). Someone it takes off in its own pages gives their
+  // sessions back to Unassigned at the next read of its list, once the fleet below is made (whenGone).
+  const members = !trusted ? createMembers({ store }) : memberList ? createHostedMembers({ hook: memberList, store }) : null;
+  if (members?.hosted) {
+    // The first read, so a label or a page right after start is answered from the list; a failure lets nobody in yet.
+    await members.refresh().catch((err) => console.warn('members: the program\'s list not read at start', { message: String(err?.message ?? err).split('\n')[0] }));
+  }
   const appShares = createAppShares({ store, secure: loaded.publicUrl.startsWith('https:') });
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
@@ -346,7 +390,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
   const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
-  const mcpServers = createMcpServers({ store, settings: loaded.mcp, secrets, host: mcpServersHook, lockdown: access.lockdown });
+  const mcpServers = createMcpServers({ store, settings: access.settings, secrets, host: mcpServersHook, lockdown: access.lockdown });
   await mcpServers.load().catch((err) => console.warn('mcpServers: starting with none from the program', { message: err.message }));
   // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
   // own sign-ins can run.
@@ -389,6 +433,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: access.certs,
     orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
   }) : null;
+  // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
+  members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
   // Questions need the bot token to answer, and the session API to hear the answer.
@@ -420,7 +466,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const settings = secrets && (appKey || config.githubBroker)
     ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
-  const githubUser = auth?.githubUser ?? null;
+  // Connect GitHub through the host's App, which a console behind a host has no sign-in of its own for. That App is
+  // installed beyond this console's repos, so a person's token is always scoped by GitHub, to this console's repos or
+  // the session's alone (sessionApi.mjs, `ownerTokenRepos`).
+  const hostConnect = githubConnect && secrets
+    ? createGitHubUser({ clientId: async () => githubConnect.clientId(), clientSecret: githubConnect.clientSecret, userSettings })
+    : null;
+  if (githubConnect && !secrets) console.warn('console: Connect GitHub off, the host gave no secret store to keep tokens in');
+  const githubUser = auth?.githubUser ?? hostConnect;
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
   const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => !auth?.enabled() || members.isMember(login) });
   const dbRestore = createDbRestore({
@@ -461,8 +514,13 @@ export async function createInstallation({ config: loaded, store, provider, trus
     githubFor,
     trusted,
     userMenu,
+    settingsTabs,
+    signOut,
     appPorts,
+    githubConnectHref: hostConnect ? githubConnect.href : null,
+    githubConnectAutomatic: Boolean(hostConnect && githubConnect.automatic),
     woodshedUpdate,
+    slackSetup,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
@@ -470,6 +528,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
     mcpRelay, egress: access.egress,
+    ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
@@ -544,11 +603,21 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */
     dispatchWebhook: (message) => webhookDispatch.dispatch(message),
+    /**
+     * Keeps a Connect GitHub sign-in the host ran (`githubConnect`): GitHub's answer to the code, and who signed in
+     * here, whom GitHub must say it is. Throws `shown` when GitHub says otherwise.
+     */
+    connectGitHub: async ({ login, answer }) => {
+      if (!hostConnect) throw new Error('this console was given no githubConnect');
+      await hostConnect.connect({ login, answer });
+    },
+    /** Disconnect, for the host when the person leaves: the stored token goes and GitHub ends it. */
+    disconnectGitHub: async (login) => { if (githubUser) await githubUser.disconnect(login); },
     summary: () => ({
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
-      appPorts: appPorts ? appPorts.ports.length : 0,
+      appPorts: appPorts ? appPorts.ports.length : 0, githubConnect: Boolean(hostConnect),
       mcpServers: mcpServers.list().length, lockdown: access.lockdown().available,
     }),
   };

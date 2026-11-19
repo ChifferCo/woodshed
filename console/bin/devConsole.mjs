@@ -33,8 +33,9 @@ if (sessionApp && !/^[0-9a-f]{8}$/.test(sessionId)) {
   process.exit(1);
 }
 const appDomain = (process.env.SESSION_APP_DOMAIN ?? '').trim().toLowerCase();
-// A console from before SESSION_APP_DOMAIN sends none: the app still opens, on any name whose first label is the id.
-if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so any name starting with the session id is let in');
+// A console from before SESSION_APP_DOMAIN sends none. Without the domain the app name cannot be told from a DNS-rebound
+// `<SESSION_ID>.attacker.example`, so only loopback is let in.
+if (sessionApp && !appDomain) console.warn('dev console: no SESSION_APP_DOMAIN, so the session\'s app name is refused and only loopback is let in');
 // Off unless given, so a second dev console does not fight over it (tlsAsk.mjs).
 const tlsAskPort = process.argv[3] ? { WOODSHED_TLS_ASK_PORT: process.argv[3] } : {};
 // The console as its image starts it, on the local provider (the docker launcher). DEV_CONSOLE_HOST_REPOS=1 starts it as
@@ -253,9 +254,7 @@ const LOOPBACK_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 function isSessionAppHost(host) {
   const name = String(host ?? '').replace(/:\d+$/, '').toLowerCase();
   if (LOOPBACK_NAMES.has(name)) return true;
-  if (appDomain) return name === `${sessionId}.${appDomain}`;
-  const labels = name.split('.');
-  return labels.length > 1 && labels[0] === sessionId;
+  return Boolean(appDomain) && name === `${sessionId}.${appDomain}`;
 }
 
 function asLoopback(headers, consolePort) {
