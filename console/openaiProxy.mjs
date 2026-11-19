@@ -28,7 +28,23 @@ import { credentialOf } from './codexModels.mjs';
 const PREFIX = '/openai';
 const CHATGPT_PREFIX = '/chatgpt';
 // What of ChatGPT's backend a review's codex may reach: Codex's own API, and the account check codex makes before it.
-const CHATGPT_PATH_RE = /^\/backend-api\/(?:codex\/[A-Za-z0-9/_.-]*|wham\/accounts\/check)(?:\?[^#]*)?$/;
+const CHATGPT_PATH_RE = /^\/backend-api\/(?:codex\/[A-Za-z0-9/_.-]*|wham\/accounts\/check)$/;
+
+/**
+ * The ChatGPT path a review's call may reach, or null. Only a path already in its plain form passes: no `.` or `..`
+ * segment, no empty one, no `%` escape and no backslash, since chatgpt.com would resolve `codex/../conversations` (or
+ * its escaped forms) to the author's chats. What passes is what is forwarded, query and all.
+ * @param {string} rawPath  the request's path and query, after /chatgpt
+ * @returns {string|null}
+ */
+export function chatgptPathAllowed(rawPath) {
+  const q = rawPath.indexOf('?');
+  const pathname = q === -1 ? rawPath : rawPath.slice(0, q);
+  if (/[%\\]|\/\/|(?:^|\/)\.{1,2}(?:\/|$)/.test(pathname)) return null;
+  if (!CHATGPT_PATH_RE.test(pathname)) return null;
+  const search = q === -1 ? '' : rawPath.slice(q);
+  return /#/.test(search) ? null : pathname + search;
+}
 const TEAM_KEY_SECRET = 'openai-api-key';
 // A key replaced on the Secrets page reaches sessions within this.
 const TEAM_KEY_TTL_MS = 5 * 60_000;
@@ -156,12 +172,14 @@ export function createOpenAiProxy({ secrets = null, teamKey = null, userSettings
         console.warn('openaiProxy: refused, ChatGPT is only for a review on its author\'s ChatGPT login', { sessionId: session.id });
         return refuse(res, 403, 'only a review on its author\'s own ChatGPT login reaches ChatGPT');
       }
-      if (!CHATGPT_PATH_RE.test(path)) {
+      const allowed = chatgptPathAllowed(path);
+      if (!allowed) {
         req.resume();
+        console.warn('openaiProxy: refused a ChatGPT path a review\'s codex does not need', { sessionId: session.id, path: path.slice(0, 120) });
         return refuse(res, 404, 'not something a review\'s codex needs');
       }
       firstCall(session, 'the author\'s ChatGPT login');
-      return forward(req, res, { target: targets.chatgpt, path, headers: cred.headers });
+      return forward(req, res, { target: targets.chatgpt, path: allowed, headers: cred.headers });
     }
     if (cred) {
       if (!cred.apiKey) {

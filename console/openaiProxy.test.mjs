@@ -50,7 +50,14 @@ async function setup(t, { teamKey = 'sk-team', own = ['ana', 'cy'], signIns = SI
   const chatgpt = (token, p = '/backend-api/codex/responses', headers = {}) => fetch(`http://127.0.0.1:${port}/chatgpt${p}`, {
     method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, ...headers }, body: '{"model":"gpt-6.1-sol"}',
   });
-  return { seen, call, chatgpt };
+  // As sent, with no tidying of `..` (fetch would resolve it before sending).
+  const raw = (token, p) => new Promise((resolve, reject) => {
+    const r = http.request({ host: '127.0.0.1', port, method: 'POST', path: `/chatgpt${p}`, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } },
+      (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)); });
+    r.on('error', reject);
+    r.end('{}');
+  });
+  return { seen, call, chatgpt, raw };
 }
 
 test('a Codex session\'s call goes out on the team key, and its session token never reaches OpenAI', async (t) => {
@@ -125,4 +132,16 @@ test('an author who turned it off, or whose login expired, since the review star
   assert.equal(old.status, 403);
   assert.match((await old.json()).error.message, /has expired/);
   assert.equal(off.seen.length + expired.seen.length, 0);
+});
+
+test('a path that climbs out of Codex\'s API, plainly or escaped, never reaches ChatGPT', async (t) => {
+  const { seen, raw } = await setup(t);
+  for (const p of ['/backend-api/codex/../conversations', '/backend-api/codex/%2e%2e/conversations', '/backend-api/codex/..%2Fconversations',
+    '/backend-api/codex/./../conversations', '/backend-api/codex//../conversations', '/backend-api/codex/..\\conversations',
+    '/backend-api/wham/accounts/check/../../conversations']) {
+    assert.equal(await raw('review-ana', p), 404, p);
+  }
+  assert.equal(seen.length, 0, 'nothing reached ChatGPT');
+  assert.equal(await raw('review-ana', '/backend-api/codex/models?client_version=1'), 200);
+  assert.equal(seen[0].url, '/backend-api/codex/models?client_version=1', 'what was checked is what is forwarded');
 });
