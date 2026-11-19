@@ -449,8 +449,9 @@ async function finishSignIn(link) {
       : err.name === 'TimeoutError' || err.name === 'AbortError' ? `The console did not answer in ${ANSWER_MS / 1000} s, so the sign-in was not finished.`
         : `The console did not answer: ${err.message}`;
   }
-  // Change console… while the claim was on its way: the window is the new console's now, and stays so.
-  if (base !== consoleUrl || !mainWindow) {
+  // Change console… while the claim was on its way: the window is the new console's now, and stays so. A window closed
+  // meanwhile is no reason to drop it: the code is spent, so the session is stored, and no window is moved (below).
+  if (base !== consoleUrl) {
     console.warn('woodshed-desktop: a sign-in finished after the console changed, not opened');
     return;
   }
