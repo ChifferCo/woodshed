@@ -818,8 +818,9 @@ No sign-in ever enters the review session, which reads what anyone who can push 
 console's OpenAI proxy (`openaiProxy.mjs`) adds one of these to each of codex's calls, as the Anthropic proxy does for
 claude:
 
-- **The author's own Codex sign-in.** Each person turns this on for themselves, on My settings' Codex card, with **Also
-  use it for reviews of my pull requests**. It is off by default, and needs the same checks as running a shared session
+- **The author's own Codex sign-in.** On My settings' Codex card, **Also use it for reviews of my pull requests** is on
+  once a sign-in is saved, unless the person turns it off, as the Claude token's switch for shared sessions is. It needs
+  the same checks as running a shared session
   on their Claude plan (`teamKeyReason`); a bot author never has it. The review keeps `review.codexLogin` and
   `review.codexVia`, and the session gets `REVIEW_CODEX_AUTH`:
   - `chatgpt` for a ChatGPT login, with `REVIEW_CODEX_ACCOUNT`, the login's account id (an id, no credential).

@@ -130,17 +130,17 @@ test('the switch for shared sessions is on by default, needs a token, is in effe
   assert.equal(settings.view('joel').ownTokenForShared, true, 'back to the default');
 });
 
-test('the switch for reviews on your own Codex sign-in is off by default, needs a sign-in, and is in effect only while one is saved', async () => {
+test('the switch for reviews on your own Codex sign-in is on by default once one is saved, and in effect only while one is', async () => {
   const settings = createUserSettings({ store: { state: {}, save() {} }, secrets: fakeSecrets() });
+  assert.equal(settings.usesOwnCodexForReviews('joel'), false, 'nothing saved, nothing used');
   assert.throws(() => settings.setOwnCodexForReviews('joel', true), /save your Codex sign-in first/);
   await settings.setCodexAuth('joel', 'sk-joel-own-key');
-  assert.deepEqual([settings.view('joel').ownCodexForReviews, settings.usesOwnCodexForReviews('joel')], [false, false], 'off by default');
+  assert.deepEqual([settings.view('joel').ownCodexForReviews, settings.usesOwnCodexForReviews('Joel')], [true, true], 'on by default');
+  settings.setOwnCodexForReviews('joel', false);
+  assert.deepEqual([settings.view('joel').ownCodexForReviews, settings.usesOwnCodexForReviews('joel')], [false, false], 'turned off');
   settings.setOwnCodexForReviews('joel', true);
-  assert.deepEqual([settings.view('joel').ownCodexForReviews, settings.usesOwnCodexForReviews('Joel')], [true, true]);
   await settings.removeCodexAuth('joel');
   assert.equal(settings.usesOwnCodexForReviews('joel'), false, 'no sign-in, no effect');
-  settings.setOwnCodexForReviews('joel', false);
-  assert.equal(settings.view('joel').ownCodexForReviews, false);
 });
 
 test('My settings\' files are tmux-conf alone: an env file\'s own lines are Repo settings', async () => {

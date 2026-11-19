@@ -209,7 +209,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       claudeToken: { set: Boolean(record?.claudeTokenAt), savedAt: record?.claudeTokenAt ?? null },
       codexAuth: { set: Boolean(record?.codexAuthAt), savedAt: record?.codexAuthAt ?? null },
       ownTokenForShared: record?.ownTokenForShared !== false,
-      ownCodexForReviews: record?.ownCodexForReviews === true,
+      ownCodexForReviews: record?.ownCodexForReviews !== false,
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
@@ -371,8 +371,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
 
   /**
    * The switch on the Codex card: whether reviews of this person's pull requests run Codex on their own sign-in, when
-   * Console settings' Reviews card has Codex review beside Claude Code. Off unless they turned it on, since it spends
-   * their own plan. The sign-in never goes into the review session: the console's OpenAI proxy adds it to codex's calls
+   * Console settings' Reviews card has Codex review beside Claude Code. On once a sign-in is saved, unless they turned
+   * it off, as the Claude token's switch for shared sessions is. The sign-in never goes into the review session: the console's OpenAI proxy adds it to codex's calls
    * (openaiProxy.mjs), as the Anthropic proxy does a Claude token.
    * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
    */
@@ -385,7 +385,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   /** @returns {boolean}  the switch is on and a sign-in is saved */
   function usesOwnCodexForReviews(login) {
     const record = recordFor(login);
-    return Boolean(record?.ownCodexForReviews === true && record?.codexAuthAt);
+    return Boolean(record?.ownCodexForReviews !== false && record?.codexAuthAt);
   }
 
   /** Replaces the person's own idle and lifetime hours; an empty object goes back to the console's numbers. */
