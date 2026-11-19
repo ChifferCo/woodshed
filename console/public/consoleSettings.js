@@ -377,7 +377,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
 
   // What a test that reached the server found, as a sentence's middle: "Reached docs-server 1.2, 12 tools".
   function reachedText(t) {
-    const who = t.serverInfo?.name ? `Reached ${t.serverInfo.name}${t.serverInfo.version ? ` ${t.serverInfo.version}` : ''}` : `Reached it (${t.status ?? 'no status'})`;
+    const who = t.serverInfo?.name ? `Reached ${t.serverInfo.name}${t.serverInfo.version ? ` ${t.serverInfo.version}` : ''}` : 'Reached the server';
     const tools = typeof t.tools === 'number' ? `, ${t.tools} ${t.tools === 1 ? 'tool' : 'tools'}` : '';
     const ms = typeof t.ms === 'number' ? ` in ${Math.round(t.ms)} ms` : '';
     return `${who}${tools}${ms}`;

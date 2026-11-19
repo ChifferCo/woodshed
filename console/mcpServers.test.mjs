@@ -153,3 +153,22 @@ test('an edited server keeps its place in the list', async (t) => {
   await servers.save({ server: { name: 'a', url: 'https://a2.test' }, by: 'ana' });
   assert.deepEqual(servers.list().map((s) => s.name), ['a', 'b', 'c']);
 });
+
+test('a header value read for an address is withheld when the server moved, or its value was saved again, meanwhile', async (t) => {
+  quietly(t);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const values = new Map();
+  const secrets = { configured: () => true, async save(n, v) { values.set(n, v); }, async read(n) { await gate; return values.get(n) ?? null; }, async remove(n) { values.delete(n); } };
+  const servers = createMcpServers({ store: { state: {}, save() {} }, settings: NONE, secrets, lockdown: () => ({ available: true }) });
+  await servers.save({ server: { name: 'h', url: 'https://a.test/mcp', auth: 'header' }, by: 'ana' });
+  await servers.setHeader({ name: 'h', value: 'old-key', by: 'ana' });
+  const held = servers.get('h');
+  // A test or a relayed call is reading the value for a.test while the admin moves it and saves a new one.
+  const reading = servers.headerValue(held);
+  await servers.save({ server: { name: 'h', url: 'https://b.test/mcp', auth: 'header' }, by: 'ana' });
+  await servers.setHeader({ name: 'h', value: 'new-key', by: 'ana' });
+  release();
+  assert.equal(await reading, null, 'neither value goes to a.test');
+  assert.equal(await servers.headerValue(servers.get('h')), 'new-key');
+});

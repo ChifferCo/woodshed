@@ -319,10 +319,18 @@ export function createMcpServers({ store, settings, secrets = null, host = null,
     console.log(text ? 'mcpServers: header saved' : 'mcpServers: header cleared', { name: wanted, header: server.header, by, ...(text && { bytes: Buffer.byteLength(text) }) });
   }
 
-  /** @returns {Promise<string|null>}  a server's header value, for the relay */
+  /**
+   * @param {object} server  the record the caller holds, as it was when it decided where to send the value
+   * @returns {Promise<string|null>}  a server's header value, for the relay and the test; null when the record changed
+   *   since (another address, or a value saved again): a value is only ever sent to the address it was saved for
+   */
   async function headerValue(server) {
     if (!secrets || !server.headerSavedAt) return null;
-    return secrets.read(headerSecretName(server.name));
+    const current = () => kept().find((s) => s.name === server.name);
+    const same = () => current()?.url === server.url && current()?.headerSavedAt === server.headerSavedAt;
+    if (!same()) return null;
+    const value = await secrets.read(headerSecretName(server.name));
+    return same() ? value : null;
   }
 
   return { list, get, forSession, view, load, save, remove, setHeader, headerValue, settings };

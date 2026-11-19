@@ -718,7 +718,11 @@ first, and each row has Test. The console itself calls the server as the relay w
 yet, or one typed with another address or audience, is tested with no token, so no admin can catch a token at an
 address of their own and replay it to a server that trusts this console (a production server should refuse any `sub`
 but `private:<login>` anyway). A saved header value goes only to its saved address's origin; a typed one wherever the
-form says. The console connects to the address its link-local check passed, never resolving the name again. No two
+form says, and a saved value is read only while the server's address and the value's revision are still those the
+caller started with, so a test or relayed call in flight across an edit sends it nowhere. The server's own words (its
+name and version, a JSON-RPC error's message) come back only from a test that added nothing: one that added a header or
+a token answers with the tool count and an error's code alone, since a server could echo what it was sent. The console
+connects to the address its link-local check passed, never resolving the name again. No two
 servers share an audience: a token the relay makes for one is never one another takes. It answers whether it was reached, the server's name and version and how
 many tools it has, or one sentence saying what failed (not reached, refused what the console added, no MCP endpoint at
 that path, not an MCP server). No session takes part, nothing is tainted, and neither the answer nor the log

@@ -290,7 +290,7 @@ test('the test API: an owner tests a saved or an edited server, a member is refu
 
   const saved = await send(port, { method: 'POST', path: where, headers: { ...write, ...owner }, body: { name: 'tracker' } });
   assert.equal(saved.status, 200);
-  assert.deepEqual({ ...saved.body, ms: 0 }, { ok: true, status: 200, serverInfo: { name: 'fake-mcp', version: '1.2.3' }, tools: 3, ms: 0 });
+  assert.deepEqual({ ...saved.body, ms: 0 }, { ok: true, status: 200, serverInfo: null, tools: 3, ms: 0 }, 'authenticated: no server-supplied name');
   assert.equal(mcp.calls[0].headers.authorization, 'Bearer key-123');
   const edited = await send(port, { method: 'POST', path: where, headers: { ...write, ...owner }, body: { server: { name: 'tracker', url: mcp.url, auth: 'header' }, value: 'Bearer typed' } });
   assert.equal(edited.body.ok, true);
@@ -377,4 +377,14 @@ test('what the console added never comes back, though the server echoes it in it
   assert.equal(answer.ok, false);
   assert.ok(!JSON.stringify(answer).includes('sk-secret'), JSON.stringify(answer));
   assert.match(answer.error, /refused the console's tools\/list call \(JSON-RPC error -32001\)/);
+});
+
+test('an authenticated test hands back no server-supplied name or version, which could carry a piece of what it was sent', async (t) => {
+  quietly(t);
+  const mcp = await fakeMcp(t);
+  const plain = await createMcpTester({ servers: servers() }).run({ server: { name: 'p', url: mcp.url }, by: 'ana' });
+  assert.ok(plain.serverInfo, 'with nothing added, the name is shown');
+  const keyed = await createMcpTester({ servers: servers() }).run({ server: { name: 'k', url: mcp.url, auth: 'header' }, value: 'Bearer k-1', by: 'ana' });
+  assert.equal(keyed.ok, true);
+  assert.equal(keyed.serverInfo, null);
 });

@@ -105,7 +105,7 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
   }
 
   async function headerFor(server) {
-    const key = `${server.name}\n${server.headerSavedAt}`;
+    const key = `${server.name}\n${server.url}\n${server.headerSavedAt}`;
     const held = headers.get(key);
     if (held && now() - held.at < HEADER_CACHE_MS) return held.value;
     const value = await servers.headerValue(server);
