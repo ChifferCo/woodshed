@@ -64,6 +64,9 @@ export function createPrAnnouncer({
   // A pull request is its repo's: another project's #12 is not the default project's #12. Items of the default
   // project carry no `project`, as they did before projects.
   const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
+  // Each watch is its session's own, so two My Woodshed sessions on one pull request are each told, and neither takes
+  // the place of a shared session's post.
+  const itemKey = (item) => (item.watch ? `${keyOf(item.number, item.project)}@${item.sessionId}` : keyOf(item.number, item.project));
   const gh = (item) => (item.project && githubOf ? githubOf(item.project) : github);
   const projectOf = (item) => item.project ?? defaultProjectName();
   const watched = (item) => item.watch === true;
@@ -80,7 +83,7 @@ export function createPrAnnouncer({
 
   async function drop(item, why) {
     state.slackPending = pending().filter((p) => p !== item);
-    checkedAt.delete(keyOf(item.number, item.project));
+    checkedAt.delete(itemKey(item));
     store.save();
     console.log('slack: pull request no longer waiting', { number: item.number, why });
     await events.dropped?.(item, why);
@@ -89,8 +92,8 @@ export function createPrAnnouncer({
   /**
    * Once per session, and only for a pull request it opened: a resumed branch or a PR's own session finds one
    * older than the session. The URL is the session's word, so only its number is used. A watched one (a My Woodshed
-   * session's) is never posted, so one older than the session, such as a pull request it was started to work on, is
-   * watched too.
+   * session's) is never posted, so one older than the session is watched too when the session's owner opened it: a
+   * pull request of their own they started it to work on, and never a teammate's it only reads.
    * @param {object} session
    * @param {{name: string, default?: boolean}|null} [project]  the session's project: its pull request is on that repo
    * @param {{watch?: boolean}} [opts]
@@ -100,14 +103,19 @@ export function createPrAnnouncer({
     const number = Number(/\/pull\/(\d+)$/.exec(session.prUrl ?? '')?.[1]);
     if (!number) return false;
     const other = project && !project.default ? project.name : null;
-    if (!watch) {
-      const pull = await gh({ project: other }).pull(number);
-      if (Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
+    const pull = await gh({ project: other }).pull(number);
+    if (Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
+      if (!watch) {
         console.log('slack: pull request older than the session, not posted', { id: session.id, number });
         return false;
       }
+      if (String(pull.user?.login ?? '').toLowerCase() !== String(session.owner ?? '').toLowerCase()) {
+        console.log('slack: someone else\'s pull request older than the session, not watched', { id: session.id, number, author: pull.user?.login ?? null });
+        return false;
+      }
     }
-    if (!pending().some((p) => p.number === number && (p.project ?? null) === other)) {
+    const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
+    if (!pending().some(same)) {
       pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}), ...(watch ? { watch: true } : {}) });
       store.save();
       console.log(watch ? 'slack: pull request watched for its session, until its review and suites pass' : 'slack: pull request waiting for its review and suites', { id: session.id, number });
@@ -148,6 +156,7 @@ export function createPrAnnouncer({
   // is posted or written on GitHub.
   async function watchOne(item) {
     if (events.listening && !events.listening(item)) return drop(item, 'its session ended');
+    if (now() - Date.parse(item.since) > giveUpMs()) return drop(item, 'watched as long as a pull request may wait');
     const gates = await gatesOf(item.project ?? null, item.number);
     if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
     const pull = await gh(item).pull(item.number);
@@ -156,7 +165,6 @@ export function createPrAnnouncer({
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
     const heard = passed ? await tellPassed(item, pull, review, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
-    if (!passed && now() - Date.parse(item.since) > giveUpMs()) return drop(item, 'not approved and green in time');
   }
 
   // Once per pull request: the session is told of the approval and the post waits, so the review's notes are at least read.
@@ -352,7 +360,7 @@ export function createPrAnnouncer({
   }
 
   function due(item) {
-    const last = checkedAt.get(keyOf(item.number, item.project));
+    const last = checkedAt.get(itemKey(item));
     if (last === undefined) return true;
     const everyMs = webhooksFlowing() && !waitsOnTheClock(item) ? Math.max(fallbackMs, CHECK_EVERY_MS) : CHECK_EVERY_MS;
     return now() - last >= everyMs;
@@ -365,16 +373,16 @@ export function createPrAnnouncer({
    * @returns {number[]}  the numbers that are waiting
    */
   function stale(numbers, project = null) {
-    const marked = numbers.filter((n) => pending().some((p) => p.number === n && (p.project ?? null) === project));
-    for (const n of marked) checkedAt.delete(keyOf(n, project));
-    return marked;
+    const items = pending().filter((p) => numbers.includes(p.number) && (p.project ?? null) === project);
+    for (const item of items) checkedAt.delete(itemKey(item));
+    return numbers.filter((n) => items.some((p) => p.number === n));
   }
 
   /** Each waiting pull request that is due. GitHub or Slack failing leaves it for its next check. Without Slack, only
    * the watched ones are read. */
   async function check() {
     for (const item of pending().filter((p) => (watched(p) || slack?.available) && due(p))) {
-      checkedAt.set(keyOf(item.number, item.project), now());
+      checkedAt.set(itemKey(item), now());
       try {
         await checkOne(item);
       } catch (err) {

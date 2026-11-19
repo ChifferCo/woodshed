@@ -1316,13 +1316,14 @@ test('the assignee is tagged in the thread of the ready pull request\'s post, an
 test('a My Woodshed session\'s pull request is watched until it passes, and never posted to Slack', async () => {
   const { fleet, github, slack, statuses, session, store, calls, advance } = await sessionWithPull({ createdAt: '2026-10-20T09:00:00Z' });
   session.owner = 'joel';
+  github.pull = async (number) => ({ number, title: 'Add GTM', created_at: '2026-10-20T09:00:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'Joel' } });
   github.reviews = async () => [{
     id: 1, user: { login: 'review-bot[bot]' }, state: 'CHANGES_REQUESTED', body: '## Code review', commit_id: 'abc', html_url: 'https://github.com/o/r/pull/7#r1',
   }];
   github.checkRuns = async () => e2eRuns();
   statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/7' };
   await fleet.tick();
-  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched, though older than the session');
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched, though older than the session: its owner opened it');
   assert.deepEqual([...fleet.slackWaiting()], [], 'not waiting for Slack');
   const sent = () => calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text);
   assert.equal(sent().length, 1);
@@ -1347,6 +1348,24 @@ test('a My Woodshed session\'s pull request is watched until it passes, and neve
   assert.deepEqual(store.state.slackPending, [], 'its session ended');
   assert.equal(session.status, 'stopped', 'never resumed by the console');
 });
+
+for (const [what, fields, author] of [
+  ['a review-only session, which only reads it', { reviewOnly: true }, 'joel'],
+  ['a teammate\'s pull request older than the session', {}, 'ana-dev'],
+]) {
+  test(`a My Woodshed session is never told to fix ${what}`, async () => {
+    const { fleet, github, statuses, session, store, calls } = await sessionWithPull({ createdAt: '2026-10-20T09:00:00Z' });
+    Object.assign(session, { owner: 'joel', ...fields });
+    github.pull = async (number) => ({ number, created_at: '2026-10-20T09:00:00Z', state: 'open', head: { sha: 'abc' }, user: { login: author } });
+    github.reviews = async () => [{ id: 1, user: { login: 'review-bot[bot]' }, state: 'CHANGES_REQUESTED', body: '## Code review', commit_id: 'abc', html_url: 'u' }];
+    github.checkRuns = async () => e2eRuns();
+    statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/7' };
+    await fleet.tick();
+    await fleet.tick();
+    assert.deepEqual(store.state.slackPending ?? [], []);
+    assert.deepEqual(calls.statusd.filter((c) => c.path === '/send'), []);
+  });
+}
 
 test('a My Woodshed session\'s pull request is watched on a console with no Slack', async () => {
   const { fleet, github, statuses, calls } = setup();

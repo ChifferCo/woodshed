@@ -711,6 +711,8 @@ export function createFleet({
     if (!session.prUrl || session.announcedPrUrl === session.prUrl) return;
     const project = projectFor(config, session);
     const watch = Boolean(session.owner);
+    // A review-only session reads someone's pull request: it is never told to fix and push it.
+    if (watch && session.reviewOnly) return;
     if (!watch && (!announcer.available || !announcer.postsFor(project))) return;
     const tracked = await safely('pull request read for Slack', async () => {
       await announcer.track(session, project, { watch });

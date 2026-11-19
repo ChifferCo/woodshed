@@ -1680,9 +1680,12 @@ pull request is never posted: it is watched instead (`watch` on its `slackPendin
 its session hears each verdict asking for changes and each failed or skipped suite as below, and once the gates pass
 on a head commit, a note to read the review's notes, fix what is real and stop, once for each commit. It stays watched
 while the session runs, so a fix pushed after the approval is followed to its own verdict, and is dropped when the
-pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), the week runs out, or
-the project file has no review or suite (`slack: pull request no longer waiting` with why), with nothing written on
-GitHub. A pull request older than the session is watched too. Until then the
+pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), the week runs out
+(passed or not), or the project file has no review or suite (`slack: pull request no longer waiting` with why), with
+nothing written on GitHub. Each watch is its session's own: two sessions on one pull request are each told, and a
+shared session's post on it still goes out. A review-only session (no prompt) is never watched, and a pull request
+older than the session only when the session's owner opened it (`slack: someone else's pull request older than the
+session, not watched`), so no session is told to push to a teammate's. Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
 the Console settings page), is dropped unposted. Once it is posted, its session stops (`posted to Slack`) and is

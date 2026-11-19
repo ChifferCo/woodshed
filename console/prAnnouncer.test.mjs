@@ -700,8 +700,10 @@ test('a watched pull request is never posted, hears its pass once per commit, an
     events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, listening: () => listening },
   });
   assert.equal(announcer.available, true);
-  await watcher.track({ ...session, createdAt: '2026-10-27T00:00:00Z' }, null, { watch: true });
-  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched though older than the session');
+  const { pull } = github;
+  github.pull = async (number) => ({ ...(await pull(number)), user: { login: 'joel' } });
+  await watcher.track({ ...session, owner: 'Joel', createdAt: '2026-10-27T00:00:00Z' }, null, { watch: true });
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched though older than the session: its owner opened it');
   assert.deepEqual([...watcher.waitingSessions()], []);
   await watcher.check();
   clock += MINUTE;
@@ -730,9 +732,44 @@ test('a watched pull request runs out of time with nothing written on GitHub, an
   assert.match(told[0], /asks for changes/);
   clock += 61 * MINUTE;
   await watcher.check();
-  assert.deepEqual([dropped, gaveUp, github.comments], [['not approved and green in time'], [], []]);
+  assert.deepEqual([dropped, gaveUp, github.comments, told.length], [['watched as long as a pull request may wait'], [], [], 1]);
   holder.gates = null;
   await watcher.track(session, null, { watch: true });
   await watcher.check();
   assert.deepEqual(dropped.at(-1), 'no review or suite to watch');
+});
+
+test('a green watched pull request is dropped at the deadline, untold of anything after it', async () => {
+  const { store, session, told, dropped, github } = setup();
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock, giveUpMs: () => 60 * MINUTE,
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); } },
+  });
+  await watcher.track(session, null, { watch: true });
+  await watcher.check();
+  assert.equal(told.length, 1, 'the pass');
+  clock += 61 * MINUTE;
+  github.pull = async (number) => ({ number, state: 'open', draft: false, head: { sha: 'def' }, created_at: '2026-10-26T12:00:00Z' });
+  await watcher.check();
+  assert.deepEqual([told.length, dropped, store.state.slackPending], [1, ['watched as long as a pull request may wait'], []]);
+});
+
+test('two My Woodshed sessions and a shared one on one pull request are each tracked, and each private one is told', async () => {
+  const { announcer, store, session, told, slack } = setup({ heard: true, reviews: [verdict('CHANGES_REQUESTED')] });
+  const tellers = [];
+  const watcher = createPrAnnouncer({
+    store, github: setup({ reviews: [verdict('CHANGES_REQUESTED')] }).github, slack, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'),
+    events: { feedback: (item, text) => { tellers.push(item.sessionId); told.push(text); return true; } },
+  });
+  await watcher.track({ ...session, id: 'p1' }, null, { watch: true });
+  await watcher.track({ ...session, id: 'p2' }, null, { watch: true });
+  await watcher.track({ ...session, id: 'p1' }, null, { watch: true });
+  await watcher.track(session);
+  assert.deepEqual(store.state.slackPending.map((p) => [p.sessionId, Boolean(p.watch)]), [['p1', true], ['p2', true], ['s1', false]]);
+  assert.deepEqual([...watcher.waitingSessions()], ['s1'], 'the shared one still waits for its post');
+  assert.deepEqual(watcher.stale([7]), [7]);
+  await watcher.check();
+  assert.deepEqual(tellers, ['p1', 'p2', 's1']);
+  assert.equal(announcer.available, true);
 });
