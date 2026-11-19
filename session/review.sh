@@ -90,9 +90,13 @@ startRelay() {
       -extfile "$tls/ext.cnf" -out "$tls/cert.pem"
   } > /dev/null 2>&1 || return 1
   rm -f "$tls/ca-key.pem"
-  coproc RELAY_PROC { node "$RELAY" "$tls/cert.pem" "$tls/key.pem" "$WOODSHED_CONSOLE_URL" 2>&1; }
+  # exec, so the coprocess is node itself and killing RELAY_PID stops the relay, not only a shell around it.
+  coproc RELAY_PROC { exec node "$RELAY" "$tls/cert.pem" "$tls/key.pem" "$WOODSHED_CONSOLE_URL" 2>&1; }
   RELAY_PID=$RELAY_PROC_PID
-  read -r -t 10 RELAY_PORT <&"${RELAY_PROC[0]}" && [[ "$RELAY_PORT" =~ ^[0-9]+$ ]]
+  if read -r -t 10 RELAY_PORT <&"${RELAY_PROC[0]}" && [[ "$RELAY_PORT" =~ ^[0-9]+$ ]]; then return 0; fi
+  # It never said its port: stop it rather than leave it running.
+  kill "$RELAY_PID" 2>/dev/null
+  return 1
 }
 
 runCodex() {

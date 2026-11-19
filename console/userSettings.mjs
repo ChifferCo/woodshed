@@ -371,9 +371,9 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
 
   /**
    * The switch on the Codex card: whether reviews of this person's pull requests run Codex on their own sign-in, when
-   * Console settings' Reviews card has Codex review beside Claude Code. Off unless they turned it on: unlike the
-   * Claude token, the sign-in itself goes into the review session (as into their private Codex sessions), which
-   * everyone on the console can open and which reads what others push to the pull request.
+   * Console settings' Reviews card has Codex review beside Claude Code. Off unless they turned it on, since it spends
+   * their own plan. The sign-in never goes into the review session: the console's OpenAI proxy adds it to codex's calls
+   * (openaiProxy.mjs), as the Anthropic proxy does a Claude token.
    * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
    */
   function setOwnCodexForReviews(login, on) {

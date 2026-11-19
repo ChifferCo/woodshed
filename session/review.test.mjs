@@ -59,7 +59,7 @@ function listen(handler) {
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
 }
 
-async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, via = null, account = null, codexMinutes = null } = {}) {
+async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', agents = null, codex = FAKE_CODEX, via = null, account = null, codexMinutes = null, relay = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'review-sh-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const sessionDir = path.join(dir, 'session');
@@ -97,7 +97,7 @@ async function runReview(t, { origin = 'https://github.com/Acme/widgets.git', ag
   if (agents) env.REVIEW_AGENTS = agents;
   if (via) env.REVIEW_CODEX_AUTH = via;
   if (account) env.REVIEW_CODEX_ACCOUNT = account;
-  env.REVIEW_CHATGPT_RELAY = path.join(HERE, 'chatgptRelay.mjs');
+  env.REVIEW_CHATGPT_RELAY = relay ?? path.join(HERE, 'chatgptRelay.mjs');
   if (codexMinutes) env.REVIEW_CODEX_MINUTES = codexMinutes;
   let output = '';
   await new Promise((resolve) => {
@@ -169,6 +169,19 @@ test('a review on the author\'s ChatGPT login gives codex a stand-in holding onl
   assert.ok(!fs.existsSync(path.join(codexHome, 'relay', 'ca-key.pem')), 'the CA\'s key is gone once the certificate is made');
   assert.equal(reports.filter((r) => r.path === '/codex-auth').length, 0, 'nothing is sent back: no sign-in was here');
   assert.equal(reports.find((r) => r.path === '/review-report').body.conclusion, 'REQUEST_CHANGES');
+});
+
+test('a relay that never says its port is stopped, and Claude Code\'s review goes out alone', async (t) => {
+  const pidFile = path.join(os.tmpdir(), `relay-pid-${process.pid}-${Date.now()}`);
+  const relay = path.join(os.tmpdir(), `hung-relay-${process.pid}-${Date.now()}.mjs`);
+  fs.writeFileSync(relay, `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`.replace('require(\'fs\')', '(await import(\'node:fs\'))'));
+  t.after(() => { fs.rmSync(relay, { force: true }); fs.rmSync(pidFile, { force: true }); });
+  const { reports, output } = await runReview(t, { agents: 'claude codex', via: 'chatgpt', account: 'acct-ana', relay });
+  assert.match(output, /Could not start the relay to the console, so Codex does not review/);
+  assert.equal(reports.find((r) => r.path === '/review-report').body.conclusion, 'APPROVE');
+  const pid = Number(fs.readFileSync(pidFile, 'utf8'));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.throws(() => process.kill(pid, 0), /ESRCH/, 'the relay was stopped');
 });
 
 test('on a key, codex goes through the console\'s OpenAI proxy and gets no login at all', async (t) => {

@@ -100,7 +100,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   }
 
   // Whether reviews of your pull requests run Codex on your sign-in, when an admin has Codex review beside Claude Code.
-  // Off unless turned on: unlike the Claude token, the sign-in itself goes into the review session.
+  // Off unless turned on, since it spends their plan; the console adds the sign-in to Codex's calls, never into the session.
   function codexReviewsSwitch() {
     const saved = me.codexAuth?.set;
     const on = Boolean(saved && me.ownCodexForReviews);
