@@ -57,7 +57,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *          ownApp?: () => {slug: string, login: string}|null,
  *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
- *                    feedback?: (item: object, text: string, opts: {stillWanted: () => Promise<boolean>, sha: string}) => Promise<boolean|'later'>|boolean|'later',
+ *                    feedback?: (item: object, text: string, opts: {stillWanted: () => Promise<boolean>, sha: string, untilMs: () => number}) => Promise<boolean|'later'>|boolean|'later',
                     listening?: (item: object) => 'yes'|'elsewhere'|'ended',
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
  *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs) of the pull request's project
@@ -212,7 +212,7 @@ export function createPrAnnouncer({
     console.log('slack: pull request feedback for its session', {
       number: item.number, sessionId: item.sessionId, changesRequested: asks, suites: fedSuites ? broken.map((s) => `${s.name}: ${s.outcome}`) : null,
     });
-    const heard = await events.feedback?.(item, text, { stillWanted: stillWanted(item, before.run, sha), sha });
+    const heard = await events.feedback?.(item, text, { stillWanted: stillWanted(item, before.run, sha), sha, untilMs: () => Date.parse(item.since) + giveUpMs() - now() });
     if (heard === 'later') untold(item, before);
     else if (heard === true) told(item);
     return heard;
@@ -264,7 +264,7 @@ export function createPrAnnouncer({
     item.passedSha = sha;
     store.save();
     console.log('slack: watched pull request passed its review and suites', { number: item.number, sessionId: item.sessionId, sha: sha.slice(0, 7) });
-    const heard = await events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, suites, gates }), { stillWanted: stillWanted(item, before.run, sha), sha });
+    const heard = await events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, suites, gates }), { stillWanted: stillWanted(item, before.run, sha), sha, untilMs: () => Date.parse(item.since) + giveUpMs() - now() });
     if (heard === 'later') untold(item, before);
     else if (heard === true) told(item);
     return heard;

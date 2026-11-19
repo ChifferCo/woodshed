@@ -3579,3 +3579,21 @@ test('a push while a private session\'s status is read again leaves the old comm
   await fleet.tick();
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
 });
+
+test('a guarded send never lets statusd type past the end of the watch\'s wait', async () => {
+  const retention = { afterCloseMs: 3 * 24 * HOUR, withoutPrMs: 7 * 24 * HOUR, openPrMs: 14 * 24 * HOUR, slackGiveUpMs: 10 * 60_000 };
+  const { fleet, github, statuses, calls, advance } = setup({ retention });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(10 * 60_000 - 5_000);
+  await fleet.tick();
+  const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].body.withinMs <= 5_000, `withinMs ${sent[0].body.withinMs} is no more than what is left of the wait`);
+});

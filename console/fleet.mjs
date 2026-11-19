@@ -1252,7 +1252,7 @@ export function createFleet({
 
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
   // or resumed with it (a shared one: a stopped My Woodshed session is not). True when the session was told.
-  async function prFeedback(item, text, { stillWanted = async () => true, sha = null } = {}) {
+  async function prFeedback(item, text, { stillWanted = async () => true, sha = null, untilMs = () => Infinity } = {}) {
     const session = find(item.sessionId);
     if (!session) return false;
     // A My Woodshed session is typed into now or told again at the next check, never held: a held message would be
@@ -1277,9 +1277,12 @@ export function createFleet({
         const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
         // statusd reads GitHub before typing: it may take a while, and types only within withinMs of getting it, while
         // the console still waits, so a reply the console gave up on never types a text it then sends again.
+        // Never past the watch's own end: what is left of its wait, if that is shorter.
+        const withinMs = Math.floor(Math.min(GUARDED_SEND_WITHIN_MS, untilMs()));
+        if (withinMs < 1000) return 'later';
         await statusd(session, 'POST', '/send', {
-          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs: GUARDED_SEND_WITHIN_MS },
-          timeoutMs: GUARDED_SEND_WITHIN_MS + 10_000,
+          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs },
+          timeoutMs: withinMs + 10_000,
         });
       } catch (err) {
         // Once until it is typed in: it is tried every minute while the session refuses it.

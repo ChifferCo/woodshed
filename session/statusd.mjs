@@ -1312,7 +1312,11 @@ async function handle(req, res) {
     // A message meant for the agent never reaches the shell of one that exited, nor an agent on another pull request.
     if (sendAgentOnly(raw)) {
       const forPr = sendForPr(raw);
-      if (forPr && !stillThePull(await ghPullNow().catch(() => null), forPr)) {
+      // The branch is read on both sides of the lookup: a checkout during it makes its answer another branch's.
+      const keyBefore = forPr ? await prLookupKey(git).catch(() => null) : null;
+      const pullNow = forPr ? await ghPullNow().catch(() => null) : null;
+      const keyAfter = forPr ? await prLookupKey(git).catch(() => null) : null;
+      if (forPr && (keyBefore === null || keyBefore !== keyAfter || !stillThePull(pullNow, forPr))) {
         console.log('statusd: text not sent, the branch is not on its pull request now');
         return reply(res, 409, { error: 'the branch checked out is not on that pull request now' });
       }

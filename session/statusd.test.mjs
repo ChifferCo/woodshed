@@ -874,6 +874,10 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   await onPull('https://github.com/o/r/pull/9');
   const late = await send({ ...forNine, withinMs: 200 });
   assert.deepEqual([late.status, late.body.error], [409, 'too late: the caller has stopped waiting']);
+  // A checkout while gh answers: its answer may be the old branch's, so nothing is typed.
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ngit -C "$REPO_DIR" checkout -q -b "other-$$"\ncat ${current}\n`, { mode: 0o755 });
+  const raced = await send(forNine);
+  assert.deepEqual([raced.status, raced.body.error], [409, 'the branch checked out is not on that pull request now']);
   await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
   await onPull('https://github.com/O/R/pull/9');
   assert.equal((await send(forNine)).status, 200);
