@@ -1347,6 +1347,8 @@ export function createFleet({
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
+      // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
+      announcedPrUrl: null,
     });
     console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background });
     await runStartQueued({ background });

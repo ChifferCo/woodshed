@@ -30,6 +30,15 @@ function firstLine(err) {
   return String(err?.stderr?.trim() || err?.message || err).split('\n')[0].slice(0, 300);
 }
 
+// A pull request is a person's when they opened it, or when its body's first line, which a session writes, says it
+// was started by them: a session that pushes as the App opens its pull request as the App.
+function ownersPull(pull, owner) {
+  const login = String(owner ?? '').toLowerCase();
+  if (!login) return false;
+  if (String(pull.user?.login ?? '').toLowerCase() === login) return true;
+  return String(/^Started by @([A-Za-z0-9-]+)/.exec(String(pull.body ?? '').trimStart())?.[1] ?? '').toLowerCase() === login;
+}
+
 // No review and no suite: nothing to wait for but the pull request itself.
 const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
 
@@ -92,8 +101,8 @@ export function createPrAnnouncer({
   /**
    * Once per session, and only for a pull request it opened: a resumed branch or a PR's own session finds one
    * older than the session. The URL is the session's word, so only its number is used. A watched one (a My Woodshed
-   * session's) is never posted, so one older than the session is watched too when the session's owner opened it: a
-   * pull request of their own they started it to work on, and never a teammate's it only reads.
+   * session's) is never posted, and is watched only when it is the session's owner's (ownersPull), whenever it was
+   * opened, so no session is told to push to a teammate's.
    * @param {object} session
    * @param {{name: string, default?: boolean}|null} [project]  the session's project: its pull request is on that repo
    * @param {{watch?: boolean}} [opts]
@@ -104,15 +113,13 @@ export function createPrAnnouncer({
     if (!number) return false;
     const other = project && !project.default ? project.name : null;
     const pull = await gh({ project: other }).pull(number);
-    if (Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
-      if (!watch) {
-        console.log('slack: pull request older than the session, not posted', { id: session.id, number });
-        return false;
-      }
-      if (String(pull.user?.login ?? '').toLowerCase() !== String(session.owner ?? '').toLowerCase()) {
-        console.log('slack: someone else\'s pull request older than the session, not watched', { id: session.id, number, author: pull.user?.login ?? null });
-        return false;
-      }
+    if (watch && !ownersPull(pull, session.owner)) {
+      console.log('slack: someone else\'s pull request, not watched', { id: session.id, number, author: pull.user?.login ?? null });
+      return false;
+    }
+    if (!watch && Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
+      console.log('slack: pull request older than the session, not posted', { id: session.id, number });
+      return false;
     }
     const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
     if (!pending().some(same)) {

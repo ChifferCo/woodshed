@@ -56,7 +56,7 @@ function setup({
     pull: async (number) => ({
       reads: ++github.reads,
       number, title: 'Add GTM', html_url: `https://github.com/acme/app/pull/${number}`, state: 'open', draft: false, head: { sha: 'abc' },
-      created_at: '2026-10-26T12:00:00Z', ...pull,
+      created_at: '2026-10-26T12:00:00Z', user: { login: 'joel' }, ...pull,
     }),
   };
   const slack = { available: true, posts: [], async postPr(pr) { this.posts.push(pr); return true; } };
@@ -727,14 +727,14 @@ test('a watched pull request runs out of time with nothing written on GitHub, an
     store, github, slack: null, gates: async () => holder.gates, now: () => clock, giveUpMs: () => 60 * MINUTE,
     events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, gaveUp: () => { gaveUp.push(1); } },
   });
-  await watcher.track(session, null, { watch: true });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
   await watcher.check();
   assert.match(told[0], /asks for changes/);
   clock += 61 * MINUTE;
   await watcher.check();
   assert.deepEqual([dropped, gaveUp, github.comments, told.length], [['watched as long as a pull request may wait'], [], [], 1]);
   holder.gates = null;
-  await watcher.track(session, null, { watch: true });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
   await watcher.check();
   assert.deepEqual(dropped.at(-1), 'no review or suite to watch');
 });
@@ -746,11 +746,11 @@ test('a green watched pull request is dropped at the deadline, untold of anythin
     store, github, slack: null, gates: async () => GATES, now: () => clock, giveUpMs: () => 60 * MINUTE,
     events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); } },
   });
-  await watcher.track(session, null, { watch: true });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
   await watcher.check();
   assert.equal(told.length, 1, 'the pass');
   clock += 61 * MINUTE;
-  github.pull = async (number) => ({ number, state: 'open', draft: false, head: { sha: 'def' }, created_at: '2026-10-26T12:00:00Z' });
+  github.pull = async (number) => ({ number, state: 'open', draft: false, head: { sha: 'def' }, created_at: '2026-10-26T12:00:00Z', user: { login: 'joel' } });
   await watcher.check();
   assert.deepEqual([told.length, dropped, store.state.slackPending], [1, ['watched as long as a pull request may wait'], []]);
 });
@@ -762,9 +762,9 @@ test('two My Woodshed sessions and a shared one on one pull request are each tra
     store, github: setup({ reviews: [verdict('CHANGES_REQUESTED')] }).github, slack, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'),
     events: { feedback: (item, text) => { tellers.push(item.sessionId); told.push(text); return true; } },
   });
-  await watcher.track({ ...session, id: 'p1' }, null, { watch: true });
-  await watcher.track({ ...session, id: 'p2' }, null, { watch: true });
-  await watcher.track({ ...session, id: 'p1' }, null, { watch: true });
+  await watcher.track({ ...session, id: 'p1', owner: 'joel' }, null, { watch: true });
+  await watcher.track({ ...session, id: 'p2', owner: 'joel' }, null, { watch: true });
+  await watcher.track({ ...session, id: 'p1', owner: 'joel' }, null, { watch: true });
   await watcher.track(session);
   assert.deepEqual(store.state.slackPending.map((p) => [p.sessionId, Boolean(p.watch)]), [['p1', true], ['p2', true], ['s1', false]]);
   assert.deepEqual([...watcher.waitingSessions()], ['s1'], 'the shared one still waits for its post');
@@ -773,3 +773,16 @@ test('two My Woodshed sessions and a shared one on one pull request are each tra
   assert.deepEqual(tellers, ['p1', 'p2', 's1']);
   assert.equal(announcer.available, true);
 });
+
+for (const [what, pull, watched] of [
+  ['a teammate\'s pull request opened after the session started', { user: { login: 'ana-dev' }, body: 'Started by @ana-dev via Woodshed.' }, false],
+  ['a pull request the session opened as the App, by its Started by line', { user: { login: 'woodshed-cloud[bot]' }, body: 'Started by @Joel via Woodshed.\n\nFixes it.' }, true],
+  ['a pull request that only mentions the owner\'s Started by line further down', { user: { login: 'ana-dev' }, body: 'Fixes it.\nStarted by @joel via Woodshed.' }, false],
+]) {
+  test(`a My Woodshed session watches ${what}: ${watched}`, async () => {
+    const { store, session, github } = setup({ pull });
+    const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z') });
+    assert.equal(await watcher.track({ ...session, owner: 'joel' }, null, { watch: true }), watched);
+    assert.equal((store.state.slackPending ?? []).length, watched ? 1 : 0);
+  });
+}

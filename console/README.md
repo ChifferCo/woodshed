@@ -1684,8 +1684,9 @@ pull request closes, the session stops (nothing resumes a My Woodshed session bu
 (passed or not), or the project file has no review or suite (`slack: pull request no longer waiting` with why), with
 nothing written on GitHub. Each watch is its session's own: two sessions on one pull request are each told, and a
 shared session's post on it still goes out. A review-only session (no prompt) is never watched, and a pull request
-older than the session only when the session's owner opened it (`slack: someone else's pull request older than the
-session, not watched`), so no session is told to push to a teammate's. Until then the
+only when it is the session's owner's, whenever it was opened: they opened it, or its body starts `Started by @<owner>`
+as a session that pushes as the App writes it (`slack: someone else's pull request, not watched`), so no session is
+told to push to a teammate's. A resumed session's watch starts again. Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
 the Console settings page), is dropped unposted. Once it is posted, its session stops (`posted to Slack`) and is

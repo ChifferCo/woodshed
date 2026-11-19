@@ -1367,18 +1367,29 @@ for (const [what, fields, author] of [
   });
 }
 
-test('a My Woodshed session\'s pull request is watched on a console with no Slack', async () => {
-  const { fleet, github, statuses, calls } = setup();
+test('a My Woodshed session\'s pull request is watched on a console with no Slack, and again once resumed', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
   const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
-  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' } });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
   github.reviews = async () => [];
   github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
   statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
   await fleet.tick();
   await fleet.tick();
-  const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].body.text, /e2e suite failed on PR #9/);
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0].body.text, /e2e suite failed on PR #9/);
+
+  await fleet.stop(session, 'idle for 1 h');
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending, [], 'its watch ends with it');
+  await fleet.resumePrivate({ owner: 'joel', id: session.id });
+  github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.sessionId]), [[9, session.id]], 'watched again once resumed');
+  assert.match(sent().at(-1).body.text, /e2e run \(3\/4\)/);
 });
 
 test('a stopped shared session is kept; posting its pull request to Slack stops it and it is finished', async () => {
