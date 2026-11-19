@@ -793,7 +793,7 @@ test('POST /answer picks each question\'s option and submits, in a real tmux pan
   const { call, tmux, answers } = await pickerPane(t, spec);
   const prompt = (await call('GET', '/prompt')).body.prompt;
   assert.deepEqual(prompt, { kind: 'question', step: 'question', question: 'Which colour do you prefer?', multiSelect: false, options: ['Red', 'Green', 'Blue'], questions: 2 });
-  const body = (picks) => JSON.stringify({ kind: 'question', questions: spec.questions.map((q, i) => ({ question: q.question, options: q.options, pick: picks[i] })) });
+  const body = (picks) => JSON.stringify({ kind: 'question', questions: spec.questions.map((q, i) => ({ question: q.question, options: q.options, descriptions: q.options.map((o) => `${o} is one of the options`), pick: picks[i] })) });
 
   assert.equal((await call('POST', '/answer', 'wrong', body([1, 2]))).status, 401);
   assert.equal((await call('GET', '/prompt', 'wrong')).status, 401);

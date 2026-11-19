@@ -13,8 +13,9 @@ import { createPicker } from '../shared/__fixtures__/claudePicker.mjs';
 const FIXTURES = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'shared', '__fixtures__');
 const pane = (name) => fs.readFileSync(path.join(FIXTURES, name), 'utf8');
 
-const COLOUR = { question: 'Which colour do you prefer?', options: ['Red', 'Green', 'Blue'] };
-const SIZE = { question: 'Which size do you want?', options: ['Small', 'Medium', 'Large'] };
+// With each option's description as the agent's record holds it: these captures draw each label again under it.
+const COLOUR = { question: 'Which colour do you prefer?', options: ['Red', 'Green', 'Blue'], descriptions: ['Red', 'Green', 'Blue'] };
+const SIZE = { question: 'Which size do you want?', options: ['Small', 'Medium', 'Large'], descriptions: ['Small', 'Medium', 'Large'] };
 
 test('claude\'s picker is read from a real capture: the question, its options, the highlight and the tabs', () => {
   const screen = readQuestionPicker(pane('pane-ask-two-first.txt'));
@@ -60,6 +61,10 @@ test('the review of several answers, a multi-select question and a wrapped label
   const deploy = {
     question: 'Which deployment strategy should we use for the console?',
     options: ['Blue-green deployment behind the load balancer with an automatic rollback when health checks fail', 'Rolling update'],
+    descriptions: [
+      'Run two environments and switch traffic at the load balancer, rolling back automatically on failed health checks.',
+      'Replace instances gradually, a few at a time, without a second full environment.',
+    ],
   };
   assert.ok(matchQuestion(wrapped, deploy).ok, 'a label cut where the pane wraps it still matches');
   assert.equal(matchQuestion(wrapped, { ...deploy, options: ['Blue-green', 'Rolling update'] }).why, 'other-options');
@@ -530,7 +535,9 @@ test('a label claude wrapped at a word matches the one given whole, and another 
     'Replace instances gradually, a few at a time, without a second full environment.',
   ];
   assert.ok(matchQuestion(screen, { question, options: [label, 'Rolling update'], descriptions }).ok);
-  assert.ok(matchQuestion(screen, { question, options: [label, 'Rolling update'] }).ok, 'from a page that sends no descriptions too');
+  // With no descriptions, its description lines could be the rest of a longer label: not answered here.
+  assert.equal(matchQuestion(screen, { question, options: [label, 'Rolling update'] }).why, 'other-options');
+  assert.equal(matchQuestion(screen, { question, options: ['Blue-green deployment behind the load balancer with an automatic', 'Rolling update'] }).why, 'other-options', 'nor the first line alone');
   // The review's case: the same first line, and another end.
   const other = 'Blue-green deployment behind the load balancer with an automatic rollback when health checks pass';
   assert.equal(matchQuestion(screen, { question, options: [other, 'Rolling update'], descriptions }).why, 'other-options');

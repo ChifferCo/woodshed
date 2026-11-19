@@ -261,7 +261,9 @@ function sameLabel(option, given, description) {
   const want = squash(given);
   const under = option.under ?? [];
   const rest = (k) => squash(under.slice(k).join(' '));
-  const describedHere = (k) => description === undefined || !rest(k) || (squash(description) && rest(k).startsWith(squash(description).slice(0, 40)));
+  // With no description given, nothing tells the label's wrapped lines from a description under it: the label must take
+  // every line there is, or the answer goes to the TUI tab.
+  const describedHere = (k) => !rest(k) || (description !== undefined && !!squash(description) && rest(k).startsWith(squash(description).slice(0, 40)));
   let text = option.label;
   for (let k = 0; k <= under.length; k++) {
     if (k > 0) text += ` ${under[k - 1]}`;

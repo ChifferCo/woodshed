@@ -284,11 +284,13 @@
         if (!err.typed) {
           // The session the person moved to meanwhile keeps its own box: the text goes to its session's draft, which
           // comes back with it.
-          if (id === session?.id && !field.value) {
-            field.value = text;
-            keepDraft(id, text);
+          // Before any newer draft the person began meanwhile, a blank line between, so neither is lost.
+          const withDraft = (draft) => (draft.trim() ? `${text}\n\n${draft}` : text);
+          if (id === session?.id) {
+            field.value = withDraft(field.value);
+            keepDraft(id, field.value);
             fit();
-          } else if (id !== session?.id && !readDraft(id)) keepDraft(id, text);
+          } else keepDraft(id, withDraft(readDraft(id)));
         }
         W.shell.toast(`Not sent: ${err.message}`, { ms: 6000 });
       } finally {
