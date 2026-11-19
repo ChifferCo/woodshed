@@ -41,7 +41,7 @@
     // the tab it was last left on (sessionTabs.cjs); ?tab=agent asks for the Agent tab itself.
     // Back and Forward reach an entry that says which tab it showed (its history state, as Agent has no ?tab), so it
     // comes back as it was rather than as the memory now says.
-    const asked = tabMemory.asked(id, params.get('tab'), window.history.state?.tab);
+    const asked = tabMemory.asked(id, params.get('tab'), SessionTabs.entryTab(window.history.state, pageLogin));
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
@@ -52,7 +52,7 @@
   }
   // This history entry's address, with the tab it shows in its state.
   function markEntry(address) {
-    window.history.replaceState({ ...window.history.state, tab }, '', address);
+    window.history.replaceState(SessionTabs.withEntryTab(window.history.state, tab, pageLogin), '', address);
   }
   // This history entry's state alone, with the tab it keeps for Back and Forward (sessionTabs.cjs, leftOn): written as
   // the page draws a session, so an entry left by Back or Forward keeps it too, not only one left through a link.
@@ -61,16 +61,18 @@
     const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
     const left = SessionTabs.leftOn({ tab, held: heldTab, reviewPending, drawn });
     if (left === null) return;
-    if ((window.history.state?.tab ?? null) !== left) window.history.replaceState({ ...window.history.state, tab: left }, '');
+    if (SessionTabs.entryTab(window.history.state, pageLogin) !== left) {
+      window.history.replaceState(SessionTabs.withEntryTab(window.history.state, left, pageLogin), '');
+    }
   }
   // The tab each session was last on, for this browser tab and the login signed in.
   const SessionTabs = window.WoodshedSessionTabs;
+  const pageLogin = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
   const tabMemory = (() => {
-    const login = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
     try {
-      return SessionTabs.memory(window.sessionStorage, login, () => !W.signingOut());
+      return SessionTabs.memory(window.sessionStorage, pageLogin, () => !W.signingOut());
     } catch {
-      return SessionTabs.memory({ getItem: () => null, setItem() {} }, login);
+      return SessionTabs.memory({ getItem: () => null, setItem() {} }, pageLogin);
     }
   })();
   // A tab asked for that the session, as the list before this route's lookup has it, cannot show: tried again once the

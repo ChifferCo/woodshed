@@ -240,3 +240,17 @@ test('a lookup that answers for another login than the page was drawn for is an 
   assert.equal(tabs.otherLogin(null, 'bob'), false, 'a page drawn with no sign-in names nobody');
   assert.equal(tabs.otherLogin('alice', undefined), false, 'a console that sends no login');
 });
+
+test("a history entry's tab is read back only by the login that drew it", () => {
+  // Alice leaves a shared session on Agent at its bare address; Bob signs in in the same browser tab, picks Diff on
+  // a later visit, then goes Back to Alice's entry.
+  const alices = tabs.withEntryTab(null, 'agent', 'alice');
+  assert.equal(tabs.entryTab(alices, 'alice'), 'agent');
+  assert.equal(tabs.entryTab(alices, 'bob'), null, "Bob's Back does not take Alice's entry as his choice");
+  const bobs = tabs.memory(storage(), 'bob');
+  bobs.remember('aaaa1111', 'diff');
+  assert.equal(bobs.asked('aaaa1111', null, tabs.entryTab(alices, 'bob')), 'diff', "so Bob's own Diff stands");
+  // Older entries kept no login: read by nobody.
+  assert.equal(tabs.entryTab({ tab: 'review' }, 'bob'), null);
+  assert.equal(tabs.entryTab(null, 'bob'), null);
+});

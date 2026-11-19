@@ -78,6 +78,22 @@
   }
 
   /**
+   * A history entry's tab is kept with the login that drew it (its state survives a reload and an account change in
+   * the same browser tab), and read back only by that login: another account's Back reaches an entry that asks for
+   * nothing, so it gets that account's own memory.
+   * @param {object|null} state  history.state
+   * @param {string|null} login  the page's woodshed-login meta
+   * @returns {string|null}
+   */
+  function entryTab(state, login) {
+    return state && state.login === login ? (state.tab ?? null) : null;
+  }
+  /** @returns {object}  history.state with `tab`, kept for `login` */
+  function withEntryTab(state, tab, login) {
+    return { ...state, tab, login };
+  }
+
+  /**
    * Whether a list lookup answered for another login than the page was drawn for: the account changed in another
    * browser tab with no sign-out here, so nothing it answers may be kept under the page's login. Unknown on either
    * side (no sign-in, an older console) is no change.
@@ -147,5 +163,5 @@
     };
   }
 
-  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, otherLogin, lookups, memory };
+  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, otherLogin, lookups, memory };
 });
