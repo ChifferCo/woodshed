@@ -16,8 +16,8 @@ export function pkcePair() {
 }
 
 /**
- * The console's sign-in path the page sends the window to, and where to go after it: `/auth/start?next=` (the login
- * page's Sign in with GitHub) and `/login?next=` (where a signed-out page lands).
+ * The console's Sign in with GitHub (`/auth/start?next=`, the login page's button), and where to go after it. Not
+ * `/login`, where a signed-out page lands: that page is the console's own, and its button is the step.
  * @returns {{next: string}|null}  null for any other address
  */
 export function signInStep(target, consoleUrl) {

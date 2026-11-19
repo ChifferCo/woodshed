@@ -142,10 +142,14 @@ ipcMain.handle('console:connect', async (event, typed) => {
   // The console's own /api/me, which answers signed out too: a web app's manifest alone would let any site through,
   // and the page of whatever is saved here gets the console's permissions (the microphone, notifications).
   try {
-    const res = await net.fetch(new URL('api/me', url).href, { redirect: 'follow', headers: { Accept: 'application/json' } });
-    const me = res.ok ? await res.json().catch(() => null) : null;
+    // No redirects: the answer must come from the address typed, since that origin is what gets the permissions.
+    const res = await net.fetch(new URL('api/me', url).href, { redirect: 'manual', headers: { Accept: 'application/json' } });
+    const fromThere = !res.url || new URL(res.url).origin === new URL(url).origin;
+    const me = res.ok && fromThere ? await res.json().catch(() => null) : null;
     if (!isConsoleMe(me)) return { error: `${url} answered, but not as a Woodshed console (status ${res.status}).` };
   } catch (err) {
+    // `redirect: 'manual'` refuses a redirect with an error of its own.
+    if (/redirect/i.test(err.message)) return { error: `${url} sends its console page elsewhere: type the console's own address.` };
     return { error: `${url} did not answer: ${err.message}` };
   }
   writeSettings({ consoleUrl: url });
@@ -175,7 +179,11 @@ async function desktopSignInReady() {
 
 // `inWindow`: the address the page was going to, for a console that cannot hand the sign-in back.
 async function signInInBrowser(next, inWindow) {
-  if (!(await desktopSignInReady())) {
+  const base = consoleUrl;
+  const ready = await desktopSignInReady();
+  // Change console… while the console was asked: this sign-in was for the other one.
+  if (base !== consoleUrl) return;
+  if (!ready) {
     console.log('woodshed-desktop: the console signs in inside the window');
     mainWindow?.loadURL(inWindow);
     return;
@@ -198,9 +206,10 @@ async function finishSignIn(link) {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+  const base = consoleUrl;
   let error = null;
   try {
-    const res = await session.defaultSession.fetch(new URL('auth/desktop/claim', consoleUrl).href, {
+    const res = await session.defaultSession.fetch(new URL('auth/desktop/claim', base).href, {
       method: 'POST', credentials: 'include',
       headers: { 'content-type': 'application/json', 'x-woodshed': '1' },
       body: JSON.stringify({ code: signedIn.code, verifier: started.verifier }),
@@ -209,11 +218,16 @@ async function finishSignIn(link) {
   } catch (err) {
     error = `The console did not answer: ${err.message}`;
   }
+  // Change console… while the claim was on its way: the window is the new console's now, and stays so.
+  if (base !== consoleUrl || !mainWindow) {
+    console.warn('woodshed-desktop: a sign-in finished after the console changed, not opened');
+    return;
+  }
   if (error) {
     mainWindow.loadFile(path.join(here, 'signin.html'), { query: { error } });
     return;
   }
-  mainWindow.loadURL(consolePath(consoleUrl, signedIn.next));
+  mainWindow.loadURL(consolePath(base, signedIn.next));
   startWatching();
 }
 

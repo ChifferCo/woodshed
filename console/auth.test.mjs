@@ -432,3 +432,23 @@ test('a signed-out browser gets no desktop code, and a challenge must be S256', 
   assert.equal(await ctx.auth.desktopCode({ cookieHeader: '', challenge }), null);
   await assert.rejects(ctx.auth.desktopCode({ cookieHeader: '', challenge: 'short' }), /not a desktop sign-in challenge/);
 });
+
+test('the desktop app\'s session keeps the browser\'s last access check, and a signed-out browser hands over nothing', async () => {
+  const ctx = setup();
+  const browser = cookiesFrom((await signIn(ctx)).setCookies);
+  ctx.clock.now += 59 * 60_000;
+  const { verifier, challenge } = await desktopPair();
+  const app = cookiesFrom(ctx.auth.claimDesktopCode({ code: await ctx.auth.desktopCode({ cookieHeader: browser, challenge }), verifier }).setCookie);
+  ctx.writers.length = 0;
+  ctx.writeChecks.length = 0;
+  ctx.clock.now += 2 * 60_000;
+  assert.equal(await ctx.auth.sessionFor(app), null, 'an hour after the browser\'s check, GitHub is asked again, and access is gone');
+  assert.deepEqual(ctx.writeChecks, ['octo']);
+
+  const other = setup();
+  const signedIn = cookiesFrom((await signIn(other)).setCookies);
+  const pair = await desktopPair();
+  const code = await other.auth.desktopCode({ cookieHeader: signedIn, challenge: pair.challenge });
+  other.auth.signOut(signedIn);
+  assert.equal(other.auth.claimDesktopCode({ code, verifier: pair.verifier }), null);
+});

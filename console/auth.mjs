@@ -408,7 +408,9 @@ export function createAuth({
     if (!user) return null;
     forget(now());
     const code = crypto.randomBytes(24).toString('hex');
-    desktopCodes.set(code, { login: user.login, challenge, expiresAt: now() + DESKTOP_CODE_MS });
+    // The browser's session, whose last access check the app's inherits.
+    const key = hash(parseCookies(cookieHeader)[sessionCookie]);
+    desktopCodes.set(code, { login: user.login, key, challenge, expiresAt: now() + DESKTOP_CODE_MS });
     console.log('auth: desktop sign-in code issued', { login: user.login });
     return code;
   }
@@ -428,8 +430,16 @@ export function createAuth({
       console.warn('auth: desktop sign-in code refused', { known: Boolean(claimed), verified: Boolean(proven) });
       return null;
     }
+    // Not a new access check: the app's session keeps the browser's last one, so its next hourly check with GitHub comes
+    // when the browser's would, and someone whose access just went cannot hand themselves a fresh hour. A browser that
+    // signed out in the two minutes since has nothing to hand over.
+    const parent = sessions()[claimed.key];
+    if (!parent || parent.login !== claimed.login || parent.expiresAt <= now()) {
+      console.warn('auth: desktop sign-in code refused, the browser signed out', { login: claimed.login });
+      return null;
+    }
     const id = crypto.randomBytes(32).toString('hex');
-    sessions()[hash(id)] = { login: claimed.login, createdAt: now(), checkedAt: now(), expiresAt: now() + SESSION_MS, desktop: true };
+    sessions()[hash(id)] = { login: claimed.login, createdAt: now(), checkedAt: parent.checkedAt, expiresAt: now() + SESSION_MS, desktop: true };
     store.save();
     console.log('auth: desktop signed in', { login: claimed.login });
     return { login: claimed.login, setCookie: cookie(sessionCookie, id, SESSION_MS / 1000) };
