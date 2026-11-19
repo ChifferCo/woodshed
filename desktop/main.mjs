@@ -308,7 +308,8 @@ async function askDesktopReady(base) {
       if (err.name === 'TimeoutError' || err.name === 'AbortError') throw err;
       return null;
     }) : null;
-    answered = true;
+    // A console or proxy that is down (5xx) is no answer either. A 4xx is: a console from before the route says 404.
+    answered = res.status < 500;
   } catch {
     ready = null;
   }
@@ -566,7 +567,14 @@ async function poll() {
     // 15 s at most: a read that never answers would otherwise hold `reading`, and the badge and notifications with it.
     const res = await session.defaultSession.fetch(new URL('api/sessions', base).href, { credentials: 'include', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
     // Signed out, or a page in place of JSON: nothing to count until the person signs in.
-    if (res.ok && String(res.headers.get('content-type')).includes('json')) body = await res.json();
+    if (res.ok && String(res.headers.get('content-type')).includes('json')) {
+      body = await res.json();
+      // Sessions, or a failed read: anything else (no list, a list of something else) would throw outside this one.
+      if (!body || typeof body !== 'object' || !Array.isArray(body.sessions)) {
+        body = null;
+        failure = 'an answer with no list of sessions';
+      }
+    }
     else if (res.status === 401 || res.status === 302 || res.status === 403 || res.ok) signedOut = true;
     // Anything else (a 502 or 503 from a console or proxy that is down) is a read that failed, as no answer is.
     else failure = `HTTP ${res.status}`;
