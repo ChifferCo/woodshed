@@ -543,9 +543,8 @@ export function createFleet({
       await statusd(session, 'POST', '/send', { body: { text } });
     } catch (err) {
       if (inTheBox(session, err)) return 'sent';
-      const why = busyWhy(err);
-      if (why) console.log('fleet: message held until the agent is at its prompt', { id: session.id, why });
-      else console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
+      // Busy is not a failure: hold() says it is held.
+      if (!busyWhy(err)) console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
       hold(session, text);
       return 'queued';
     }
