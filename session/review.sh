@@ -62,7 +62,12 @@ codexPrompt() {
   fi
   printf '%s ' "Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
   # Codex took every bug it found as a blocker, a narrower one each round, where Claude approved: step 6 is the bar.
-  printf '%s\n\n' "Hold to step 6's bar for what blocks: a bug that needs unlikely timing, or whose harm a reload undoes, is optional, never a reason to request changes."
+  # After the bar alone (#252) it still blocked 91 of the 99 rounds Claude approved, through a race in one request's
+  # window, a second failure, an older image mid-deploy, a missing edge-case test, or a declined point raised again.
+  printf '%s ' "Hold to step 6's bar for what blocks: a bug that needs unlikely timing, or whose harm a reload undoes, is optional, never a reason to request changes."
+  # It also gave one or two findings a round, and the next ones a round later: step 5 asks for all of them at once.
+  printf '%s ' "Read the whole change before you write, and give every finding you have in this one review, as step 5 says, rather than one or two now and more next round."
+  printf '%s\n\n' "Its list of optional cases is the list of what you blocked on before that the authors and the other reviewer rightly let through: do not reword one of them into a blocker."
   cat "$CODEX_DIR/review-prompt.md"
 }
 

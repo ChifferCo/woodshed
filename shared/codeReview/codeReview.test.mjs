@@ -32,6 +32,16 @@ test('the prompt blocks only on likely, harmful bugs, security, rules and missin
   assert.match(p, /Everything else is optional/);
   assert.match(p, /On a re-review, block only on an earlier blocking finding the head does not fix/);
   assert.match(p, /what triggers it, how often, what it costs/);
+  // What Codex still blocked on after the bar above, in 91 of the 99 rounds Claude approved: each is named optional.
+  assert.match(p, /These are optional, however the finding is worded, unless it is a security problem/);
+  assert.match(p, /a race that needs a person or another process to act inside the window of one request/);
+  assert.match(p, /a failure on top of another failure/);
+  assert.match(p, /still on the older version while a deploy rolls out/);
+  assert.match(p, /A missing test for one of its edge cases does not/);
+  assert.match(p, /A point the author declined with a reason, in the discussion or a reply to your comment, is not raised again/);
+  // Codex also gave one or two findings a round and the rest later: every finding goes in the round it is found.
+  assert.match(p, /Give all your feedback in this review: go through the whole change before you write/);
+  assert.match(p, /If you would call it rare, unlikely or a corner case, or it fits one of the optional cases above, it is optional/);
   assert.doesNotMatch(p, /REQUEST_CHANGES: a bug, a security problem/, 'a bug of any size no longer blocks');
 });
 
