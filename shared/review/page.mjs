@@ -2095,6 +2095,7 @@ ${DARK_PALETTE}
     function tabButton(name, label, count) {
       var tab = el('button', 'tab');
       tab.type = 'button';
+      tab.dataset.tab = name;
       tab.setAttribute('role', 'tab');
       tab.setAttribute('aria-selected', state.tab === name ? 'true' : 'false');
       tab.appendChild(el('span', null, label));
@@ -2969,9 +2970,17 @@ ${DARK_PALETTE}
       if (view.data && view.data.status === 'running') {
         view.timer = setTimeout(function again() { if (view === qaView) loadQa(state.tab === 'qa'); }, 3000);
       }
-      // Off the tab, only a change of state is worth a rebuild: the tab's count.
-      // On it, a read that found nothing yet may now be the one that starts the run.
-      if (state.tab === 'qa' || before !== (view.data ? view.data.status : null)) render();
+      // On the tab, the tree is redrawn: a read that found nothing yet may now
+      // be the one that starts the run. Off it, only the tab's own button: a
+      // whole render would take the focus out of whatever the reader is in, a
+      // comment being written on Files changed among them.
+      if (state.tab === 'qa') render();
+      else if (before !== (view.data ? view.data.status : null)) redrawQaTab();
+    }
+
+    function redrawQaTab() {
+      var old = document.querySelector('.tabbar .tab[data-tab="qa"]');
+      if (old) old.replaceWith(tabButton('qa', 'Q&A', qaTabCount()));
     }
 
     // Discard and Re-review empty the Q&A on the server (it describes the diff
