@@ -355,3 +355,26 @@ test('a saved header value goes only to its saved address\'s origin', async (t) 
   assert.equal((await createMcpTester({ servers: kept }).run({ server: { name: 'h', url: home.url, auth: 'header' }, by: 'ana' })).ok, true);
   assert.equal(home.calls[0].headers.authorization, 'Bearer saved-value');
 });
+
+test('what the console added never comes back, though the server echoes it in its name or an error', async (t) => {
+  quietly(t);
+  const echo = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const body = JSON.parse(raw || '{}');
+      const got = String(req.headers['x-api-key'] ?? '');
+      if (body.method === 'initialize') {
+        return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: `echo ${got.slice(0, 9)}`, version: '1.0' } } }));
+      }
+      if (body.method === 'tools/list') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001, message: `bad key ${got}` } }));
+      res.writeHead(202).end();
+    });
+  });
+  await new Promise((r) => echo.listen(0, '127.0.0.1', r));
+  t.after(() => echo.close());
+  const answer = await createMcpTester({ servers: servers() }).run({ server: { name: 'e', url: `http://127.0.0.1:${echo.address().port}/mcp`, auth: 'header', header: 'x-api-key' }, value: 'sk-secret-123456', by: 'ana' });
+  assert.equal(answer.ok, false);
+  assert.ok(!JSON.stringify(answer).includes('sk-secret'), JSON.stringify(answer));
+  assert.match(answer.error, /refused the console's tools\/list call \(JSON-RPC error -32001\)/);
+});

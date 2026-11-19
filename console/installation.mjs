@@ -220,7 +220,9 @@ async function loadAppKey(config, secrets) {
 function mcpAccess({ loaded: given, secrets, launcher }) {
   // A config an embedding program built by hand may have neither: no production server, and no egress proxy.
   const loaded = { ...given, mcp: given.mcp ?? mcpSettings({}, given.publicUrl ?? 'http://localhost'), egress: given.egress ?? { port: 7693, sessionUrl: null } };
-  const issuer = createOidcIssuer({ issuer: loaded.mcp.issuer, secrets, keyFile: secrets || !loaded.stateDir ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
+  // A secret store with no backend yet (the local provider before one is picked) keeps nothing: the key goes in a file.
+  const keyStore = secrets && secrets.configured?.() !== false ? secrets : null;
+  const issuer = createOidcIssuer({ issuer: loaded.mcp.issuer, secrets: keyStore, keyFile: keyStore || !loaded.stateDir ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
   const lockdown = () => {
     if (typeof launcher?.lockDown !== 'function') return { available: false, why: 'its launcher cannot move a running session onto a locked network' };
     if ('guardsEgress' in launcher && !launcher.guardsEgress) return { available: false, why: 'on AWS, sessions that may use production start on the guarded network Terraform makes with prod_mcp, and this installation has none' };

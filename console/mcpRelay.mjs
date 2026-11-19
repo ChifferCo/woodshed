@@ -144,7 +144,7 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
     const call = transport.request({
       lookup: mcpLookup,
       protocol: target.protocol, hostname: target.hostname, port: target.port || undefined,
-      method: req.method, path: `${target.pathname.replace(/\/+$/, '')}${suffix}${search}` || '/', headers: out,
+      method: req.method, path: `${`${target.pathname.replace(/\/+$/, '')}${suffix}` || '/'}${search}`, headers: out,
     }, (answer) => {
       const back = {};
       for (const [name, value] of Object.entries(answer.headers)) if (!RESPONSE_DROPPED.has(name)) back[name] = value;

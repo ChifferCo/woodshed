@@ -252,8 +252,10 @@ export function createMcpServers({ store, settings, secrets = null, host = null,
     if (checked.auth === 'header' && !keepsSecrets()) throw shown('this console has no secret store yet (Secrets & webhooks), so a server cannot have a header the console adds', 409);
     const record = {
       ...checked,
-      // The header's value stays while the header's name does.
-      headerSavedAt: checked.auth === 'header' && before?.header === checked.header ? before.headerSavedAt ?? null : null,
+      // The header's value stays while the header's name and the server's origin do: a value is never carried to another
+      // origin, where it must be typed again.
+      headerSavedAt: checked.auth === 'header' && before?.header === checked.header && before?.url && new URL(before.url).origin === new URL(checked.url).origin
+        ? before.headerSavedAt ?? null : null,
       updatedBy: by, updatedAt: new Date(now()).toISOString(),
     };
     if (before?.headerSavedAt && !record.headerSavedAt && secrets) await secrets.remove(headerSecretName(checked.name)).catch(() => {});
@@ -261,7 +263,8 @@ export function createMcpServers({ store, settings, secrets = null, host = null,
       await host.save({ server: record, by });
       await load();
     } else {
-      store.state.mcpServers = [...kept().filter((s) => s.name !== checked.name), record];
+      // An edited server keeps its place in the list; a new one goes at the end.
+      store.state.mcpServers = before ? kept().map((s) => (s.name === checked.name ? record : s)) : [...kept(), record];
       store.save();
     }
     console.log(before ? 'mcpServers: server changed' : 'mcpServers: server added', {

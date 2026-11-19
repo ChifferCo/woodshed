@@ -275,3 +275,15 @@ test('an ordinary server\'s stream open as the session\'s lockdown starts is cut
   assert.match((await refused.json()).error, /being locked down/);
   assert.equal(seen.length, 2);
 });
+
+test('a server at its root with a query gets /?query, never a bare query', async (t) => {
+  quietly(t);
+  const seen = [];
+  const upstream = http.createServer((req, res) => { seen.push(req.url); req.resume(); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => upstream.close());
+  const { base, as } = await relayOn(t, { settings: mcpSettings({}, 'https://c.test'), servers: [checkServer({ name: 'root', url: `http://127.0.0.1:${upstream.address().port}/?tenant=acme`, shared: true })], taint: async () => {} });
+  as({ id: 's1', kind: 'issue' });
+  assert.equal((await fetch(`${base}/mcp/root`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 200);
+  assert.deepEqual(seen, ['/?tenant=acme']);
+});

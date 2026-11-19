@@ -81,6 +81,16 @@ export function lookupFetch(url, { method = 'GET', headers = {}, body, signal } 
   });
 }
 
+/** @returns {boolean}  whether `text` holds the credential, or any 6 characters of it in a row (a prefix, a clipped piece) */
+export function sharesWith(text, credential) {
+  if (!text || !credential) return false;
+  const secret = String(credential).replace(/^Bearer\s+/i, '');
+  if (text.includes(secret)) return true;
+  const span = Math.min(6, secret.length);
+  for (let i = 0; i + span <= secret.length; i++) if (text.includes(secret.slice(i, i + span))) return true;
+  return false;
+}
+
 /** Reads a body up to MAX_ANSWER_BYTES, handing each piece to `seen` until it returns something. */
 async function readAnswer(response, seen) {
   if (!response.body) return seen('', true);
@@ -218,6 +228,10 @@ export function createMcpTester({ servers, issuer = null, fetch: fetchImpl = loo
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; abort.abort(); }, timeoutMs);
     let sessionId = null;
+    // What the console added to the calls (a header's value, or a signed token): never handed back, even when the server
+    // echoes it in its name or an error.
+    let credential = null;
+    const safe = (text) => (credential && sharesWith(String(text ?? ''), credential) ? null : text);
     let protocol = null;
     let lastStatus = null;
 
@@ -256,8 +270,10 @@ export function createMcpTester({ servers, issuer = null, fetch: fetchImpl = loo
       if (message?.tooLarge) throw failed(status, `${host} answered with more than 1 MB, which is not an MCP server's answer.`);
       if (!message) throw failed(status, `${host} answered, but not as an MCP server: use its Streamable HTTP URL.`);
       if (message.error) {
-        const text = clip(message.error?.message ?? 'no message', 200);
-        throw failed(status, `${host} refused the console's ${method} call: ${text}${/[.!?]$/.test(text) ? '' : '.'}`);
+        const code = Number.isInteger(message.error?.code) ? ` (JSON-RPC error ${message.error.code})` : '';
+        // Its words only when nothing was added to the call: a server could echo what it was sent.
+        const text = credential ? null : clip(message.error?.message ?? 'no message', 200);
+        throw failed(status, text ? `${host} refused the console's ${method} call: ${text}${/[.!?]$/.test(text) ? '' : '.'}` : `${host} refused the console's ${method} call${code}.`);
       }
       if (!message.result || typeof message.result !== 'object') throw failed(status, `${host} answered, but not as an MCP server: use its Streamable HTTP URL.`);
       return message.result;
@@ -267,10 +283,11 @@ export function createMcpTester({ servers, issuer = null, fetch: fetchImpl = loo
     let result;
     try {
       added = await authOf(picked, by);
+      credential = Object.values(added)[0] ?? null;
       const init = await request(1, 'initialize', { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: CLIENT_INFO });
       const initStatus = lastStatus;
       protocol = typeof init.protocolVersion === 'string' && /^[\w.-]{1,40}$/.test(init.protocolVersion) ? init.protocolVersion : PROTOCOL_VERSION;
-      const info = init.serverInfo && typeof init.serverInfo === 'object' ? { name: clip(init.serverInfo.name), version: clip(init.serverInfo.version) } : null;
+      const info = init.serverInfo && typeof init.serverInfo === 'object' ? { name: safe(clip(init.serverInfo.name)), version: safe(clip(init.serverInfo.version)) } : null;
       // The handshake ends with this notification, which a server must accept (202, or any 2xx) for a session to work.
       const sent = await call({ jsonrpc: '2.0', method: 'notifications/initialized' });
       sent.body?.cancel().catch(() => {});

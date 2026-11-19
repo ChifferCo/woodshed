@@ -130,3 +130,26 @@ test('the API behind the card: an owner reads and changes the list, a member is 
   assert.deepEqual(removed.body.servers, []);
   assert.equal(secrets.values.size, 0);
 });
+
+test('a saved header value never follows its server to another origin: it must be typed again', async (t) => {
+  quietly(t);
+  const store = { state: {}, save() {} };
+  const secrets = fakeSecrets();
+  const servers = createMcpServers({ store, settings: NONE, secrets, lockdown: () => ({ available: true }) });
+  await servers.save({ server: { name: 'h', url: 'https://a.test/mcp', auth: 'header' }, by: 'ana' });
+  await servers.setHeader({ name: 'h', value: 'k-1', by: 'ana' });
+  await servers.save({ server: { name: 'h', url: 'https://a.test/v2', auth: 'header' }, by: 'ana' });
+  assert.equal(await servers.headerValue(servers.get('h')), 'k-1', 'same origin: kept');
+  await servers.save({ server: { name: 'h', url: 'https://b.test/mcp', auth: 'header' }, by: 'ana' });
+  assert.equal(servers.get('h').headerSavedAt, null);
+  assert.equal(await servers.headerValue(servers.get('h')), null);
+  assert.equal(secrets.values.size, 0, 'the old value is deleted');
+});
+
+test('an edited server keeps its place in the list', async (t) => {
+  quietly(t);
+  const servers = createMcpServers({ store: { state: {}, save() {} }, settings: NONE, lockdown: () => ({ available: true }) });
+  for (const name of ['a', 'b', 'c']) await servers.save({ server: { name, url: `https://${name}.test` }, by: 'ana' });
+  await servers.save({ server: { name: 'a', url: 'https://a2.test' }, by: 'ana' });
+  assert.deepEqual(servers.list().map((s) => s.name), ['a', 'b', 'c']);
+});
