@@ -1077,6 +1077,12 @@ export function createFleet({
     return pullNumber(current) === item.number && onProjectRepo(current, project) ? 'yes' : 'elsewhere';
   }
 
+  // Whether a pull request URL is the item's pull request, on its project's repo.
+  function samePull(prUrl, item) {
+    const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    return pullNumber(prUrl) === item.number && onProjectRepo(prUrl, project);
+  }
+
   // Whether a pull request URL is on a project's repo.
   function onProjectRepo(prUrl, project) {
     const repo = /github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/i.exec(prUrl ?? '')?.[1];
@@ -1101,7 +1107,10 @@ export function createFleet({
         // its state is read again just before.
         const fresh = await statusd(session, 'GET', '/status');
         if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting') return 'later';
-        await statusd(session, 'POST', '/send', { body: { text } });
+        // And it must still be on this pull request.
+        if ('prUrl' in fresh && !samePull(fresh.prUrl, item)) return 'later';
+        // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).
+        await statusd(session, 'POST', '/send', { body: { text, agentOnly: true } });
       } catch (err) {
         console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
         return 'later';

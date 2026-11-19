@@ -1712,8 +1712,9 @@ the session keeps going until its review and suites pass:
   lookup failing), the watch waits, keeping what it told, and goes on once the session is back; it still ends if the
   pull request closes meanwhile.
 - **Resume and delivery.** A resumed session's watch starts again, its week over, and its new run is told where the
-  pull request stands. A stopping session hears nothing, and one claude is not open in (read again from statusd just before typing in, so
-  a closed claude's shell never gets the text) is told at the next check
+  pull request stands. A stopping session hears nothing, and one claude is not open in (read again from statusd just before typing in, with
+  the pull request it reports, and statusd checks the pane once more as it types, `agentOnly`, so a closed claude's
+  shell never gets the text) is told at the next check
   (each minute, even while webhooks flow) rather than held, so nothing is typed in at a later Resume.
 
 The console learns of the pull request from the session's status (`prUrl`),

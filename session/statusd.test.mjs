@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, createPrLookup, prLookupKey, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -785,4 +785,12 @@ test('the pull request lookup is kept for the branch, its upstream and its remot
   assert.equal(new Set([first, repointed, retracked]).size, 3, 'each change is another key');
   Object.assign(repo, { upstream: null, url: null });
   assert.equal(await prLookupKey(gitRun), 'woodshed/joel-1  ', 'no upstream or remote: the branch alone');
+});
+
+test('a send marked agentOnly types only while claude or codex runs in the pane', () => {
+  assert.equal(sendAgentOnly('{"text":"hi","agentOnly":true}'), true);
+  assert.equal(sendAgentOnly('{"text":"hi"}'), false);
+  assert.equal(sendAgentOnly('{"text":"hi","agentOnly":"yes"}'), false);
+  for (const command of ['claude', 'codex', 'claude\n']) assert.equal(isAgentCommand(command), true, command);
+  for (const command of ['bash', 'zsh', 'sh', 'node', '', null]) assert.equal(isAgentCommand(command), false, String(command));
 });

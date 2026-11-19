@@ -7,7 +7,8 @@
 //                     plain unified diff (sessionDiff.mjs)
 //   /shed-review/...   the Review tab: the shed's own review page and server (reviewShed/), reached through the console's
 //                     /review and /reviews/claude-<id>/...
-//   POST /send        {"text": "..."} typed into claude's pane, then Enter
+//   POST /send        {"text": "...", "agentOnly"?: true} typed into claude's pane, then Enter; with agentOnly, a 409
+//                     unless claude or codex is what runs in the pane
 //   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
@@ -233,6 +234,32 @@ export function parseSendBody(raw) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('text must be a non-empty string');
   if (text.length > MAX_SEND_CHARS) throw new Error(`text must be at most ${MAX_SEND_CHARS} characters`);
   return text;
+}
+
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {boolean}  whether the text may only be typed while the agent runs in its pane (`agentOnly`), never into
+ *   the shell it leaves behind
+ */
+export function sendAgentOnly(raw) {
+  try {
+    return JSON.parse(raw)?.agentOnly === true;
+  } catch {
+    return false;
+  }
+}
+
+// What tmux names the pane's command while claude or codex runs in it; the shell left after either exits is not one.
+const AGENT_COMMANDS = new Set(['claude', 'codex']);
+
+/** @returns {boolean}  whether tmux's `pane_current_command` is the agent's */
+export function isAgentCommand(command) {
+  return AGENT_COMMANDS.has(String(command ?? '').trim());
+}
+
+async function agentInPane() {
+  const { stdout } = await run('tmux', ['display', '-p', '-t', TMUX_TARGET, '#{pane_current_command}']).catch(() => ({ stdout: '' }));
+  return isAgentCommand(stdout);
 }
 
 /**
@@ -1130,10 +1157,17 @@ async function handle(req, res) {
   if (route === 'GET /status') return reply(res, 200, await status());
   if (route === 'POST /send') {
     let text;
+    let raw;
     try {
-      text = parseSendBody(await readBody(req));
+      raw = await readBody(req);
+      text = parseSendBody(raw);
     } catch (err) {
       return reply(res, 400, { error: err.message });
+    }
+    // Checked just before typing, so a message meant for the agent never reaches the shell of one that exited.
+    if (sendAgentOnly(raw) && !(await agentInPane())) {
+      console.log('statusd: text not sent, the agent is not running in its pane');
+      return reply(res, 409, { error: 'the agent is not running in its pane' });
     }
     await send(text);
     return reply(res, 200, { ok: true });

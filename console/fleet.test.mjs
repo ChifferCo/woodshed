@@ -3498,3 +3498,28 @@ test('a private session whose claude closed since its last status read is not ty
   await fleet.tick();
   assert.equal(sent().length, 1, 'told once claude is open again');
 });
+
+test('a private session that moved off its pull request since the last status read is not typed into, and agentOnly is asked', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  github.checkRuns = async () => {
+    statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/10' };
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.deepEqual(sent(), []);
+  statuses[session.id] = { state: 'done', prUrl };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 1);
+  assert.equal(sent()[0].body.agentOnly, true);
+});
