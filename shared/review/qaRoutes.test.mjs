@@ -245,9 +245,11 @@ test('the copy streams blobs of any size intact, and a cut-off listing fails it'
   } finally {
     removeSnapshot(snap.dir);
   }
+  const copies = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('woodshed-qa-claude-cdcdcdcd-')).sort();
+  const before = copies();
   const cut = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-cdcdcdcd', listMaxBytes: 100 });
   assert.deepEqual([cut.ok, /more files than/.test(cut.error)], [false, true]);
-  assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('woodshed-qa-claude-cdcdcdcd-')), []);
+  assert.deepEqual(copies(), before, 'the failed copy left no folder');
 });
 
 test('copies a restart left behind are swept at the next copy, and a live one is not', () => {
