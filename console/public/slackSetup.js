@@ -262,7 +262,7 @@
         h('div', { class: 'slack-options', role: 'radiogroup', 'aria-label': 'How to connect' },
           radio('own', 'Use your own Slack app', 'Make an app in your workspace from a manifest this console gives you, then paste its bot token and signing secret here.'),
           // Every word of this option is the program's own.
-          radio('install', install.label, install.description, { disabled: !install.available, tag: install.available ? null : h('span', { class: 'pill is-warn' }, 'Coming soon') })));
+          radio('install', install.label, install.description, { disabled: !install.available })));
       foot.replaceChildren(
         h('button', { type: 'button', class: 'btn btn-quiet', onclick: close }, 'Cancel'),
         h('button', {

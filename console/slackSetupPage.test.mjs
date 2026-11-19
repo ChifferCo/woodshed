@@ -154,12 +154,12 @@ test('with no events URL the manifest step says the address is unknown and how t
   assert.match(textOf(dialog), /does not know the address Slack should send its events to.*It is the webhook function's URL, at \/slack: run terraform apply, then open this again\. Pull requests are posted without it\./);
 });
 
-test('the program\'s install option is shown in its own words; not available, it is disabled and Coming soon', async () => {
+test('the program\'s install option is shown in its own words; not available, it is disabled and says nothing of its own', async () => {
   const { W, assigned } = load();
   const install = { label: 'Install the team app', description: 'One click, nothing to paste.', available: false, href: null, installed: false };
   const dialog = W.openSlackSetup({ view: { ...VIEW, install }, onSaved: () => {} });
   const options = walk(dialog).filter((e) => e.attrs.role === 'radio');
-  assert.deepEqual(options.map(textOf), ['Use your own Slack appMake an app in your workspace from a manifest this console gives you, then paste its bot token and signing secret here.', 'Install the team appComing soonOne click, nothing to paste.']);
+  assert.deepEqual(options.map(textOf), ['Use your own Slack appMake an app in your workspace from a manifest this console gives you, then paste its bot token and signing secret here.', 'Install the team appOne click, nothing to paste.']);
   assert.equal(options[1].attrs['aria-disabled'], 'true');
   options[1].listeners.click[0]();
   assert.equal(walk(dialog).filter((e) => e.attrs.role === 'radio')[0].attrs['aria-checked'], 'true', 'a disabled option cannot be picked');

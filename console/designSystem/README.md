@@ -131,7 +131,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - The Slack card is one card in rows (Bot, Pull requests, Questions), each with its sentence and its action on the
   right; a group's numbers fold under its row behind a quiet **Limits ▾**. Not set up, it is one sentence and the
   orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
-  available is disabled with an `is-warn` **Coming soon** tag.
+  available is disabled, and its own description says why.
 
 ## Naming a session
 
