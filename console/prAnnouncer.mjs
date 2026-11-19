@@ -30,13 +30,15 @@ function firstLine(err) {
   return String(err?.stderr?.trim() || err?.message || err).split('\n')[0].slice(0, 300);
 }
 
-// A pull request is a person's when they opened it, or when its body's first line, which a session writes, says it
-// was started by them: a session that pushes as the App opens its pull request as the App.
-function ownersPull(pull, owner) {
-  const login = String(owner ?? '').toLowerCase();
+// A My Woodshed session's pull request is its owner's when they opened it, or, since a session that pushes as the App
+// opens it as the App, when an app opened it from the session's own branch after the session started. Nothing a
+// teammate writes in a body counts.
+function ownersPull(pull, session) {
+  const login = String(session.owner ?? '').toLowerCase();
   if (!login) return false;
   if (String(pull.user?.login ?? '').toLowerCase() === login) return true;
-  return String(/^Started by @([A-Za-z0-9-]+)/.exec(String(pull.body ?? '').trimStart())?.[1] ?? '').toLowerCase() === login;
+  return pull.user?.type === 'Bot' && Boolean(session.branch) && pull.head?.ref === session.branch
+    && Date.parse(pull.created_at) >= Date.parse(session.createdAt);
 }
 
 // No review and no suite: nothing to wait for but the pull request itself.
@@ -113,7 +115,7 @@ export function createPrAnnouncer({
     if (!number) return false;
     const other = project && !project.default ? project.name : null;
     const pull = await gh({ project: other }).pull(number);
-    if (watch && !ownersPull(pull, session.owner)) {
+    if (watch && !ownersPull(pull, session)) {
       console.log('slack: someone else\'s pull request, not watched', { id: session.id, number, author: pull.user?.login ?? null });
       return false;
     }

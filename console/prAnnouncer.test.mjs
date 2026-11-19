@@ -709,7 +709,7 @@ test('a watched pull request is never posted, hears its pass once per commit, an
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 1, 'the second read of the same commit says nothing');
-  assert.match(told[0], /^PR #7 at abc passed: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*and stop\.$/);
+  assert.match(told[0], /^PR #7 at abc passed: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*`gh pr checks 7`: wait for any other check still pending .*and stop\.$/);
   assert.deepEqual(slack.posts, []);
   assert.deepEqual(github.comments, []);
   listening = false;
@@ -776,13 +776,15 @@ test('two My Woodshed sessions and a shared one on one pull request are each tra
 
 for (const [what, pull, watched] of [
   ['a teammate\'s pull request opened after the session started', { user: { login: 'ana-dev' }, body: 'Started by @ana-dev via Woodshed.' }, false],
-  ['a pull request the session opened as the App, by its Started by line', { user: { login: 'woodshed-cloud[bot]' }, body: 'Started by @Joel via Woodshed.\n\nFixes it.' }, true],
-  ['a pull request that only mentions the owner\'s Started by line further down', { user: { login: 'ana-dev' }, body: 'Fixes it.\nStarted by @joel via Woodshed.' }, false],
+  ['a teammate\'s pull request whose body names the owner', { user: { login: 'ana-dev' }, body: 'Started by @joel via Woodshed.' }, false],
+  ['a pull request the App opened from the session\'s branch after it started', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' } }, true],
+  ['a pull request the App opened from another branch', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/other' } }, false],
+  ['a pull request the App opened before the session started', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, created_at: '2026-10-26T10:00:00Z' }, false],
 ]) {
   test(`a My Woodshed session watches ${what}: ${watched}`, async () => {
-    const { store, session, github } = setup({ pull });
+    const { store, session, github } = setup({ pull: { head: { sha: 'abc', ref: 'woodshed/joel-1' }, ...pull } });
     const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z') });
-    assert.equal(await watcher.track({ ...session, owner: 'joel' }, null, { watch: true }), watched);
+    assert.equal(await watcher.track({ ...session, owner: 'joel', branch: 'woodshed/joel-1' }, null, { watch: true }), watched);
     assert.equal((store.state.slackPending ?? []).length, watched ? 1 : 0);
   });
 }
