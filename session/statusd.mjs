@@ -53,6 +53,7 @@
 // also carry `Authorization: Bearer <SESSION_TOKEN>`. Without a token it does
 // not start: a session's terminal and its branch must never be open by default.
 
+import { createPaneLock, reopenUnderLock } from './paneLock.mjs';
 import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { appendFileSync, createReadStream, existsSync, openSync } from 'node:fs';
@@ -848,8 +849,7 @@ async function startClaudeLogin() {
   if (isTainted()) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { status: 409 });
   if (await hasRemoteControlCommand()) {
     // Typed as a message is: one thing at a time, and only between turns, when no prompt can open under its Enter.
-    if (typing) throw new Error('a message is going in to claude: sign in once it has');
-    typing = true;
+    if (!paneLock.take('login')) throw new Error('a message is going in to claude: sign in once it has');
     try {
       const now = await agentState({ strict: true });
       const { state } = now;
@@ -860,7 +860,7 @@ async function startClaudeLogin() {
       const done = await send('/woodshed:remote-control');
       if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
     } finally {
-      typing = false;
+      paneLock.release('login');
     }
     console.log('statusd: Claude login started in claude');
     return { where: 'agent' };
@@ -997,7 +997,8 @@ async function send(text) {
 const TAKEN_MS = 20_000;
 // One thing typed into the pane at a time: a message, Sign in's command. Set before any await, so a check and the
 // claim cannot be split.
-let typing = false;
+// Whatever types into the agent's pane, one at a time (paneLock.mjs).
+const paneLock = createPaneLock();
 // The last message sent, until the agent is seen taking it: a hook since its Enter, a pane seen working, or TAKEN_MS.
 let lastSent = null;
 // Nothing is typed into an input box that holds text: a draft someone is writing in the TUI tab, or one left with no
@@ -1256,18 +1257,10 @@ async function reopenClaude() {
   const since = Date.now();
   while (Date.now() - since < TAINT_TURN_WAIT_MS && (await hookState())?.state === 'working') await new Promise((r) => setTimeout(r, 1_000));
   // One at a time with whatever else types into the pane (a Chat message, the login command): one already going in
-  // finishes first, and one sent while claude is down and coming back is refused as busy, for the console to hold.
-  while (typing) await new Promise((r) => setTimeout(r, 200));
-  typing = true;
-  try {
-    await restartClaude();
-    // Held until the new claude has taken the lockdown's message (its hooks say it works), or 30 s: a message typed
-    // while it draws its box would land before that message is in.
-    const since = Date.now();
-    while (Date.now() - since < 30_000 && (await hookState())?.state !== 'working') await new Promise((r) => setTimeout(r, 500));
-  } finally {
-    typing = false;
-  }
+  // finishes first, and one sent while claude is down and coming back is refused as busy, for the console to hold,
+  // until the new claude has taken the lockdown's message (paneLock.mjs).
+  const ready = await reopenUnderLock({ lock: paneLock, restart: restartClaude, hookState, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+  if (!ready) console.warn('statusd: the reopened claude was not seen working, the pane let go of anyway');
 }
 
 async function restartClaude() {
@@ -1471,8 +1464,7 @@ async function handle(req, res) {
       console.log('statusd: text not sent, the agent is busy', { why, chars: text.length });
       return reply(res, 409, { why, busy: true, error });
     };
-    if (typing) return busy('typing', `something else is going in to ${agentName}: this goes after it`);
-    typing = true;
+    if (!paneLock.take('send')) return busy('typing', `something else is going in to ${agentName}: this goes after it`);
     let done;
     try {
       const now = await agentState({ strict: true });
@@ -1502,7 +1494,7 @@ async function handle(req, res) {
       console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message });
       return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so it was not sent: try again' });
     } finally {
-      typing = false;
+      paneLock.release('send');
     }
     if (!done.sent) {
       const agent = CODEX ? 'codex' : 'claude';

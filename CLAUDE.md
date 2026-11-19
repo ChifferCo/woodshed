@@ -810,6 +810,11 @@ URL on top of each env file's Repo settings values
   console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
   a new session. Messages the console sends itself (Slack follow-ups, review feedback) still go to such a session, one
   right after each status read that says it is idle.
+- **Chat's Needs you line offers only the TUI tab, for a prompt it should read.** statusd's `GET /prompt` answered 503
+  `pane-unread`: statusd logs `statusd: prompt not read, the pane could not be read` with tmux's error. A send refused as
+  busy (`why: 'typing'`) right after a session's lockdown is the reopen of claude holding the pane until the new claude
+  works (`session/paneLock.mjs`); the console holds the message and sends it then, and statusd logs `the reopened claude
+  was not seen working, the pane let go of anyway` when that took over 30 s.
 - **The Chat tab's Send answers, Approve or Deny says `Not answered: …`.** statusd types an answer only once the agent's
   pane shows that same prompt (`session/panePrompt.mjs`): the console logs `console: answer typed in from the page`
   with the picks' numbers or the decision, and statusd `statusd: answer typed` with the arrow keys it took, or `statusd:
