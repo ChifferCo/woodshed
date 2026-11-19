@@ -120,7 +120,8 @@
 //   *    /shell/<id>/...         its second ttyd, on a plain shell in the repo (the Terminal tab)
 //   *    /redis/<id>/...         the session's redis-commander, through its statusd
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it
-//   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs)
+//   GET  /login, /auth/start, /auth/callback, POST /auth/sign-out   sign-in with GitHub (auth.mjs); behind a hosting
+//                                proxy, POST /auth/sign-out alone, which the program embedding the console answers
 //   GET  /api/me                 who is signed in, and whether sign-in is on
 //   POST /api/sessions/<id>/app/start  start the session's app: {"app": "<name>"} picks one of several
 //   POST /api/sessions/<id>/app/stop   stop it
@@ -320,8 +321,11 @@ export function knownHosts({ host, publicUrl, extraHosts }) {
 // A link from a program embedding the console goes into an href: a path on the console's own name, or the web.
 function menuHref(href) {
   if (typeof href !== 'string' || href.length > 2000) return null;
+  // A browser drops tabs and newlines from a URL and trims control characters and spaces, so `/\t/host` is `//host`.
+  if (/[\u0000-\u001f\u007f\s]/.test(href)) return null;
   if (/^https?:\/\//i.test(href)) return href;
-  return href.startsWith('/') && !href.startsWith('//') ? href : null;
+  // `//host` and `/\\host` are both another site to a browser.
+  return href.startsWith('/') && !href.startsWith('//') && !href.startsWith('/\\') ? href : null;
 }
 
 function menuText(value) {
@@ -621,7 +625,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, signOut = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -698,7 +702,8 @@ export function createHandler({
     return (await workflowLinks?.()) ?? config.actionsWorkflows ?? [];
   }
 
-  // The sign-in routes, open to anyone who reaches the console. Answers and returns true for its own paths.
+  // The sign-in and sign-out routes, open to anyone who reaches the console: GitHub's, or behind a hosting proxy the
+  // program's sign-out. Answers and returns true for its own paths.
   async function authRoute(req, res, url) {
     const { pathname } = url;
     if (pathname === '/login' && req.method === 'GET') {
@@ -714,6 +719,8 @@ export function createHandler({
         repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
         ...(user && settingsTabs ? settingsTabsOf(settingsTabs, req.headers) : {}),
+        // The user menu's Sign out, which only the program can do behind its proxy (signOut, below).
+        ...(user && signOut ? { signOut: true } : {}),
       });
       return true;
     }
@@ -742,7 +749,29 @@ export function createHandler({
       await accessRequest(req, res, pathname);
       return true;
     }
-    // Behind a hosting proxy there is no GitHub sign-in to start, finish or end: the proxy's header is the sign-in.
+    // Behind a hosting proxy the program signs people in, so it signs them out: it ends its own sign-in and says where
+    // to go, and the console answers as for its own (createInstallation's `signOut`).
+    if (pathname === '/auth/sign-out' && req.method === 'POST' && trusted && signOut) {
+      if (!isSameOrigin(req.headers)) {
+        reply(res, 403, { error: 'sign out from the console itself' });
+        return true;
+      }
+      let out;
+      try {
+        out = (await signOut(req)) ?? {};
+      } catch (err) {
+        console.error('console: sign-out failed', { message: String(err?.message ?? err).split('\n')[0] });
+        reply(res, 500, { error: 'could not sign out' });
+        return true;
+      }
+      const location = typeof out.location === 'string' && menuHref(out.location) ? out.location : '/';
+      const setCookie = [out.setCookie].flat().filter((c) => typeof c === 'string' && c);
+      res.writeHead(303, { location, 'cache-control': 'no-store', ...(setCookie.length ? { 'set-cookie': setCookie } : {}) });
+      res.end();
+      return true;
+    }
+    // Behind a hosting proxy there is no GitHub sign-in to start or finish: the proxy's header is the sign-in. What
+    // follows is the console's own GitHub sign-in.
     if (!auth || trusted) return false;
     if (pathname === '/auth/start' && req.method === 'GET') {
       if (!auth.available()) {

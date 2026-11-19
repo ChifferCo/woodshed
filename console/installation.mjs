@@ -211,7 +211,8 @@ async function loadAppKey(config, secrets) {
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          recordings?: object|null (where QA recordings are kept: qaRecordings.mjs),
  *          webhookUrl?: (() => Promise<string|null>)|null, slackEventsUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
- *          userMenu?: ((headers: object) => object)|null, settingsTabs?: ((headers: object) => object[])|null, newId?: () => string, repos?: object|null,
+ *          userMenu?: ((headers: object) => object)|null, settingsTabs?: ((headers: object) => object[])|null,
+ *          signOut?: ((req: object) => Promise<{location?: string, setCookie?: string|string[]}>)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
  *          hostApp?: object|null, woodshedUpdate?: boolean, slackEventsUrl?: (() => Promise<string|null>)|null,
  *          slackInstall?: {label: string, description?: string, available?: boolean|(() => boolean|Promise<boolean>),
@@ -222,7 +223,9 @@ async function loadAppKey(config, secrets) {
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
  *   (`{subtitle, groups}`, server.mjs's menuOf), and `settingsTabs(headers)` adds tabs of its own pages to Settings
- *   (`[{label, href}]`, server.mjs's settingsTabsOf; each page is drawn with settingsFrame); `newId` makes a session
+ *   (`[{label, href}]`, server.mjs's settingsTabsOf; each page is drawn with settingsFrame). Behind `trusted`,
+ *   `signOut(req)` ends the person's sign-in for the user menu's Sign out, answering where to go and the cookies to
+ *   set (`{location?, setCookie?}`); without it a hosted console has no Sign out; `newId` makes a session
  *   id, for ids unique beyond this installation.
  *   `repos` is where the program keeps the installation's repo list, which `config.projects` was built from, so the
  *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
@@ -242,7 +245,7 @@ async function loadAppKey(config, secrets) {
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null }) {
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
   checkSlackInstall(slackInstall);
@@ -444,6 +447,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     trusted,
     userMenu,
     settingsTabs,
+    signOut,
     appPorts,
     githubConnectHref: hostConnect ? githubConnect.href : null,
     githubConnectAutomatic: Boolean(hostConnect && githubConnect.automatic),

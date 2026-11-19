@@ -385,3 +385,15 @@ test('a repo\'s own settings open Settings too, with General marked', async () =
   await answered();
   assert.deepEqual(t.subs('side-sub'), [['General', '/console-settings', 'page'], ['Secrets & webhooks', '/secrets', null]]);
 });
+
+test('the user menu\'s Sign out: always on a console of its own, and behind a hosting proxy only when the program signs people out', async () => {
+  const signOutIn = async (me) => {
+    const mine = (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]];
+    const t = load('/settings', mine, { me: { login: 'sam', admin: true, ...me } });
+    await answered();
+    return t.side().querySelector('form.menu-form')?.getAttribute('action') ?? null;
+  };
+  assert.equal(await signOutIn({}), '/auth/sign-out');
+  assert.equal(await signOutIn({ hosted: true }), null);
+  assert.equal(await signOutIn({ hosted: true, signOut: true }), '/auth/sign-out');
+});

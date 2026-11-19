@@ -362,7 +362,9 @@ test('a program embedding the console adds tabs to Settings, each a path on the 
   const settingsTabs = (headers) => (headers['x-boom'] ? JSON.parse('{') : [
     { label: 'Members', href: '/orgs/acme/members' },
     { label: 'Away', href: 'https://billing.example/' }, { label: 'Odd', href: '//elsewhere.example' },
-    { label: 'Bad', href: 'javascript:alert(1)' }, { href: '/no-label' },
+    { label: 'Bad', href: 'javascript:alert(1)' }, { label: 'Slash', href: '/\\elsewhere.example' }, { href: '/no-label' },
+    // A browser drops the tab and the newline, which leaves `//elsewhere.example` and `//x`: another site.
+    { label: 'Tab', href: '/\t/elsewhere.example' }, { label: 'Newline', href: '/\n/x' },
     ...Array.from({ length: 12 }, (_, i) => ({ label: `Tab ${i}`, href: `/t/${i}` })),
   ]);
   const { port } = await hostedConsole(t, { extra: { settingsTabs } });
@@ -373,6 +375,47 @@ test('a program embedding the console adds tabs to Settings, each a path on the 
   t.mock.method(console, 'warn', () => {});
   const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
   assert.deepEqual([failed.login, failed.settingsTabs], ['sam-member', undefined], 'tabs that throw leave /api/me as it was');
+});
+
+test('behind a hosting proxy, Sign out is the program\'s: it ends the sign-in, and the console answers where it says', async (t) => {
+  const asked = [];
+  let answer = { location: '/account', setCookie: 'host_session=; Max-Age=0' };
+  const signOut = async (req) => {
+    asked.push(req.headers.cookie ?? null);
+    if (answer === 'boom') throw new Error('database gone');
+    return answer;
+  };
+  const { port } = await hostedConsole(t, { extra: { signOut } });
+  assert.equal((await send(port, { path: '/api/me', headers: MEMBER() })).body.signOut, true, 'the menu offers it');
+  assert.equal((await send(port, { path: '/api/me' })).body.signOut, undefined, 'not to someone not signed in');
+  const post = (headers) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/auth/sign-out', headers: { host: 'console.example', cookie: 'host_session=abc', ...headers } }, (res) => {
+      res.resume();
+      res.on('end', () => resolve({ status: res.statusCode, location: res.headers.location, cookies: res.headers['set-cookie'] ?? [] }));
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  const out = await post({ ...MEMBER(), origin: 'https://console.example' });
+  assert.deepEqual([out.status, out.location, out.cookies], [303, '/account', ['host_session=; Max-Age=0']]);
+  assert.deepEqual(asked, ['host_session=abc'], 'the program got the request, with its cookie');
+  assert.equal((await post({ ...MEMBER(), origin: 'https://elsewhere.example' })).status, 403, 'from another site: refused');
+  assert.equal(asked.length, 1, 'without asking the program');
+  answer = { location: 'https://elsewhere.example/' };
+  const away = await post({ ...MEMBER(), origin: 'https://console.example' });
+  assert.deepEqual([away.location, away.cookies], ['https://elsewhere.example/', []], 'an https address is the program\'s to name, as its menu links are');
+  answer = { location: '//elsewhere.example' };
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).location, '/', 'anything else goes home');
+  answer = { location: '/\t/elsewhere.example' };
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).location, '/', 'a tab in the path goes home: a browser drops it');
+  answer = 'boom';
+  t.mock.method(console, 'error', () => {});
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).status, 500);
+});
+
+test('behind a hosting proxy with no sign-out of the program\'s, there is no Sign out', async (t) => {
+  const { port } = await hostedConsole(t);
+  assert.equal((await send(port, { path: '/api/me', headers: MEMBER() })).body.signOut, undefined);
 });
 
 test('a program\'s page in the settings frame: its part in a template hostSettings.js shows, which it cannot close early', () => {
