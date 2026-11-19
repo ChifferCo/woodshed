@@ -24,7 +24,7 @@ import path from 'node:path';
 
 import { parseUnifiedDiff } from './diff.mjs';
 import {
-  originSlug, fetchPrMeta, fetchPrDiff, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
+  originSlug, fetchPrMeta, submitPrReview, fetchViewedFiles, setFileViewed, ghAccount,
   setPrTitle, fetchReviewState, addPendingComment, deletePendingComment, discardPendingReview,
   submitPendingReview, postLineComment, deletePostedComment, deleteIssueComment, hideComment,
 } from './github.mjs';
@@ -311,7 +311,7 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   }
 
   const patch = target.kind === 'pr'
-    ? await prDiffAt({ pr: target.pr, slug, headSha: created.headSha })
+    ? await pullRequestDiff({ repoRoot, baseRef, headSha: created.headSha, baseFetched: created.baseFetched })
     : await branchDiff({ repoRoot, baseRef, headSha: created.headSha });
   if (!patch.ok) {
     await undo(patch.error);
@@ -324,8 +324,8 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
     : await branchMeta({ repoRoot, target, baseRef, headSha: created.headSha, diff });
 
   // GitHub's own file count and git's can disagree — rename detection is the
-  // usual reason, and `gh pr diff` and `gh pr view` do not always agree with
-  // each other either. Not worth failing a review over, absolutely worth
+  // usual reason, and the diff here is git's own (pullRequestDiff), not
+  // GitHub's. Not worth failing a review over, absolutely worth
   // knowing about when a file seems to be missing from one.
   if (typeof meta.changedFiles === 'number' && meta.changedFiles !== diff.files.length) {
     log('review.file_count_mismatch', {
@@ -645,7 +645,7 @@ async function refreshTargetReview({ ctx, sessionName }) {
     }
 
     const patch = target.kind === 'pr'
-      ? await prDiffAt({ pr: target.pr, slug, headSha: head.headSha })
+      ? await pullRequestDiff({ repoRoot, baseRef, headSha: head.headSha, baseFetched: head.baseFetched })
       : await branchDiff({ repoRoot, baseRef, headSha: head.headSha });
     if (!patch.ok) return { ok: false, status: patch.status, error: patch.error };
 
@@ -827,23 +827,22 @@ async function removeReviewSessionNow({ ctx, sessionName }) {
 // --- HTTP -------------------------------------------------------------------
 
 /**
- * A pull request's diff, known to be of `headSha`: the commit the review checked
- * out, and so the one the analysis and the Q&A read. `gh pr diff` names no
- * commit, and a push between reading the head and fetching the diff would pair
- * a newer diff with the older commit; the head is read again once the diff is
- * in, and a head that moved refuses the take rather than mixing the two.
+ * A pull request's diff, of exactly `headSha`: the commit the review checked
+ * out, and so the one the analysis and the Q&A read. Computed here, from the
+ * pull request's base as fetched with its head and that commit (three dots,
+ * against their merge base, as GitHub shows it), rather than asked of `gh pr
+ * diff`, which names no commit: a push between reading the head and fetching
+ * the diff, even one pushed back again, could pair another commit's diff with
+ * this one. A base that could not be fetched refuses the take rather than
+ * diffing against an old one.
  *
  * @returns {Promise<{ok: true, patch: string} | {ok: false, status: number, error: string}>}
  */
-export async function prDiffAt({ pr, slug, headSha, fetchDiff = fetchPrDiff, fetchMeta = fetchPrMeta }) {
-  const patch = await fetchDiff({ pr, slug });
-  if (!patch.ok) return patch;
-  const after = await fetchMeta({ pr, slug });
-  if (!after.ok) return { ok: false, status: after.status, error: after.error };
-  if (after.meta.headRefOid !== headSha) {
-    return { ok: false, status: 409, error: 'the pull request was pushed to while it was being read: take it again' };
+export async function pullRequestDiff({ repoRoot, baseRef, headSha, baseFetched, diff = branchDiff }) {
+  if (!baseFetched) {
+    return { ok: false, status: 502, error: `could not fetch ${baseRef} from origin to diff the pull request against: take it again` };
   }
-  return patch;
+  return diff({ repoRoot, baseRef, headSha });
 }
 
 /**

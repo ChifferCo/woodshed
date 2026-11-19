@@ -110,8 +110,8 @@ re-analyse — and everything before them is about keeping three things in step.
   nowhere else, so each branch has a test that fails without it: delete the
   dirty-tree guard and two of `worktree.test.mjs`'s cases fail, the own-commits
   guard a third, the no-op case a fourth.
-- **Nothing is written until the diff is in hand.** The fetch and `gh pr diff`
-  come first, so a pull request that cannot be diffed leaves the review exactly
+- **Nothing is written until the diff is in hand.** The fetch and the diff
+  (computed locally from the fetched base and head, `pullRequestDiff`) come first, so a pull request that cannot be diffed leaves the review exactly
   as it was rather than half-refreshed.
 - **The diff is written before the record.** The record names the commit the
   analysis is about: a new diff under an old header is survivable, an old diff
@@ -282,7 +282,12 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   submitted), `DELETE /comments` (removes one or the whole draft), `/viewed`
   (this account's per-file tick, which nobody else sees), `PATCH /title`
   (renames the pull request) and `POST /merge` (squash-merges it, or adds it to the merge queue when its base branch has one). Everything else here reads: `gh pr view`,
-  `gh pr diff`, and a `claude` run over a diff already on disk.
+  a `git diff` of the fetched base and head, and a `claude` run over a diff already on disk.
+
+- **A pull request's diff is computed here, not asked of GitHub.** `gh pr diff` names no commit, so a push between
+  reading the head and fetching the diff (even one pushed back again) could pair another commit's diff with the commit
+  the review checked out, which the analysis and the Q&A read. `pullRequestDiff` diffs the base fetched with the head
+  against that commit, three dots as GitHub shows it; a base that could not be fetched refuses the take.
 
   Submitting posts under whichever account `gh` is signed in as on the box,
   and that is visible to everyone on the pull request.

@@ -50,7 +50,7 @@ exec ${REAL_GIT} "$@"
 process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest, failedQaRecord, removeReviewSession, prDiffAt } = await import('./index.mjs');
+const { handleReviewRequest, failedQaRecord, removeReviewSession, pullRequestDiff } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
@@ -633,16 +633,31 @@ test('trees are held one ref each, and pruning keeps only the one named', async 
   assert.deepEqual(refs(), []);
 });
 
-// A pull request's diff from GitHub names no commit. Read again after it, the head must still be the commit the review
-// checked out, or a newer diff is refused rather than paired with the older commit the analysis and Q&A read.
-test('a pull request diff fetched across a push is refused, not paired with the older commit', async () => {
-  const fetchDiff = async () => ({ ok: true, patch: 'diff --git a/x b/x' });
-  const at = (head) => async () => ({ ok: true, meta: { headRefOid: head } });
-  assert.deepEqual(await prDiffAt({ pr: 1, slug: 'o/r', headSha: 'aaa1111', fetchDiff, fetchMeta: at('aaa1111') }), { ok: true, patch: 'diff --git a/x b/x' });
-  const moved = await prDiffAt({ pr: 1, slug: 'o/r', headSha: 'aaa1111', fetchDiff, fetchMeta: at('bbb2222') });
-  assert.deepEqual([moved.ok, moved.status, /pushed to while it was being read/.test(moved.error)], [false, 409, true]);
-  const unread = await prDiffAt({ pr: 1, slug: 'o/r', headSha: 'aaa1111', fetchDiff, fetchMeta: async () => ({ ok: false, status: 502, error: 'gh down' }) });
-  assert.deepEqual([unread.ok, unread.error], [false, 'gh down']);
+// A pull request's diff is computed from fixed commits, the base as fetched and the head the review checked out, not
+// asked of GitHub, which names no commit: a branch that moved on (or moved and came back) cannot hand over another
+// commit's diff. A base that could not be fetched refuses the take.
+test('a pull request diff is of the recorded head commit, whatever the branch points at now', async () => {
+  const origin = path.join(DIR, 'pr-origin.git');
+  const repo = path.join(DIR, 'pr-clone');
+  const g = (...args) => execFileSync(REAL_GIT, ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, repo], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'base.txt'), 'base\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'base'); g('push', '-q', 'origin', 'HEAD:main');
+  g('fetch', '-q', 'origin', '+refs/heads/main:refs/remotes/origin/main');
+  g('checkout', '-q', '-b', 'pr');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'commit A\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'A');
+  const commitA = g('rev-parse', 'HEAD');
+  fs.writeFileSync(path.join(repo, 'b.txt'), 'commit B\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'B');
+  const got = await pullRequestDiff({ repoRoot: repo, baseRef: 'main', headSha: commitA, baseFetched: true });
+  assert.equal(got.ok, true, got.error);
+  assert.match(got.patch, /a\.txt/);
+  assert.doesNotMatch(got.patch, /b\.txt/, 'the branch moved on to B, and the diff is still A\'s');
+  assert.doesNotMatch(got.patch, /base\.txt/, 'against the merge base, as GitHub shows it');
+  const noBase = await pullRequestDiff({ repoRoot: repo, baseRef: 'main', headSha: commitA, baseFetched: false });
+  assert.deepEqual([noBase.ok, noBase.status, /could not fetch main/.test(noBase.error)], [false, 502, true]);
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {
