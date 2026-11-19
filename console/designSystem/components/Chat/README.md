@@ -65,4 +65,6 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
   pill, a `meta` hint (`Enter to send · Shift+Enter for a new line`, none on a phone), then quiet 32px icon buttons (the paperclip for files,
   the mic, `bad` while it listens), **■** Stop, outlined on `ground`, only while the agent works, and Send, the arrow on
   `action` with `action-ink`: the view's one primary action. Send is `chip-count` with `meta` while there is nothing to
-  send. Files waiting to go are mono chips on `chip-count` over the field.
+  send. Files waiting to go are mono chips on `chip-count` over the field. A message the console refuses (a session
+  started before Chat could send safely, whose statusd would type it blind) goes back in the field, and a toast says
+  `Not sent: <why>`.

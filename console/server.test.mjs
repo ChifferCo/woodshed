@@ -1849,7 +1849,7 @@ test('the message box types its text into the owner\'s session, and its files ar
   });
   const statusPort = await listen(statusd);
   t.after(() => statusd.close());
-  const mine = { id: '3f9a1c20', status: 'running', title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort, shellPort: 1 } };
+  const mine = { id: '3f9a1c20', status: 'running', safeSend: true, title: 'mine', owner: 'octocat', startedBy: 'octocat', token: 'tok', terminalToken: 'tt', endpoint: { host: '127.0.0.1', termPort: 1, statusPort, shellPort: 1 } };
   // The fleet sends it, or holds it in the session's saved pendingMessages while the agent is busy (fleet.mjs).
   const sent = [];
   let outcome = 'sent';
@@ -1869,6 +1869,14 @@ test('the message box types its text into the owner\'s session, and its files ar
   assert.deepEqual(sent, [{ id: mine.id, text }], 'the whole text, newlines kept, as one message, through the fleet');
   outcome = 'queued';
   assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'later' }), 'application/json')).json(), { ok: true, held: true }, 'held while the agent is busy');
+  // A statusd from before the guarded send types blind: the page's message is refused, not typed or held, and not
+  // passed to the fleet.
+  mine.safeSend = false;
+  const blind = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'yes do it' }), 'application/json');
+  assert.equal(blind.status, 409);
+  assert.match((await blind.json()).error, /started before Chat could send safely: type it in the TUI tab/);
+  assert.equal(sent.length, 2, 'never reached the fleet');
+  mine.safeSend = true;
   // No answer in time: it may have gone in, said as not known.
   outcome = 'unknown';
   assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'maybe' }), 'application/json')).json(), { ok: true, held: false, unknown: true });

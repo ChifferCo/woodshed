@@ -1759,6 +1759,12 @@ export function createHandler({
       if (typeof body?.text !== 'string' || !body.text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\s]/g, '')) return reply(res, 400, { error: 'nothing to send' });
       // statusd takes no more (session/statusd.mjs, MAX_SEND_CHARS): said now, not queued to fail behind the others.
       if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
+      // A statusd from before the guarded send types blind, Enter and all: a message from here could answer an approval
+      // that came up after the last status read. The person's own words never go that way; the TUI tab shows the screen.
+      if (session.safeSend !== true) {
+        console.log('console: message from the page refused, the session cannot send safely', { id: session.id });
+        return reply(res, 409, { error: 'this session started before Chat could send safely: type it in the TUI tab' });
+      }
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
       // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
       // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.

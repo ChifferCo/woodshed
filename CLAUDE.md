@@ -742,6 +742,11 @@ URL on top of each env file's Repo settings values
   speech recognition, and says why in a toast when the site may not use the
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
+- **Chat's Send says `Not sent: this session started before Chat could send safely`.** Its statusd predates the
+  guarded send (its `/status` has no `safeSend`), and would type blind, Enter and all, into whatever is on screen: the
+  console logs `console: message from the page refused, the session cannot send safely`. Type in the TUI tab, or start
+  a new session. Messages the console sends itself (Slack follow-ups, review feedback) still go to such a session, one
+  right after each status read that says it is idle.
 - **The Chat tab's Send answers, Approve or Deny says `Not answered: …`.** statusd types an answer only once the agent's
   pane shows that same prompt (`session/panePrompt.mjs`): the console logs `console: answer typed in from the page`
   with the picks' numbers or the decision, and statusd `statusd: answer typed` with the arrow keys it took, or `statusd:
