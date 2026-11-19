@@ -147,6 +147,16 @@
   }
 
   /**
+   * Whether a link to the address already showing opens it again as a new entry: when it asks for a tab other than the
+   * one showing. The address keeps a link's ?tab after a pick, and this login's own entry shows its picked tab over it,
+   * so without a new entry (whose state is empty, so its address asks) the action would change nothing.
+   * @param {{ sameAddress: boolean, sameSession: boolean, asked: string|null, showing: string }} at
+   */
+  function opensAgain({ sameAddress, sameSession, asked, showing }) {
+    return sameAddress && sameSession && Boolean(asked) && known(asked) !== showing;
+  }
+
+  /**
    * The tab a page asks for: this login's own entry's (its history state, the tab it showed: a reload, Back, Forward)
    * over its address, which keeps the ?tab the entry arrived with (a link, kept so a reload through the server's sign-in
    * still carries it) whatever was picked since; else the address's; else the memory's.
@@ -249,6 +259,6 @@
     };
   }
 
-  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
+  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, ask, opensAgain, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
     leaving, correctsMemory, otherLogin, lookups, memory };
 });

@@ -142,7 +142,11 @@
       window.location.href = url.href;
       return;
     }
-    if (url.href !== window.location.href) {
+    // The address keeps a link's ?tab after another tab was picked, so an action asking for that tab (Open the agent,
+    // Open the diff, Remote Control's sign-in) can name the very address showing: it still opens that tab, as a new
+    // entry, and Back returns to the one picked (sessionTabs.cjs, opensAgain).
+    const again = SessionTabs.opensAgain({ sameAddress: url.href === window.location.href, sameSession: url.pathname === window.location.pathname && Boolean(id), asked: url.searchParams.get('tab'), showing: tab });
+    if (url.href !== window.location.href || again) {
       // The entry left behind keeps the tab it showed, for Back (sessionTabs.cjs, leftOn).
       if (id) stampEntry();
       window.history.pushState(null, '', url.pathname + url.search);

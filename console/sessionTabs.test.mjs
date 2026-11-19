@@ -341,3 +341,16 @@ test("this login's own entry shows the tab it showed, over the link its address 
   // An entry still to land on Review asks for nothing.
   assert.equal(tabs.ask(memory, 'aaaa1111', null, tabs.LANDS_ON_REVIEW), null);
 });
+
+test('an action naming the address showing opens its tab again when another tab was picked since', () => {
+  // ?tab=agent (Resume), Diff picked: the address still says agent. Open the agent asks for that very address.
+  assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: true, asked: 'agent', showing: 'diff' }), true);
+  // ?tab=diff link, Review picked, Open the diff.
+  assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: true, asked: 'diff', showing: 'review' }), true);
+  // Already showing it: nothing to do, as before.
+  assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: true, asked: 'agent', showing: 'agent' }), false);
+  // Another address is a new entry anyway; no ?tab asks for nothing.
+  assert.equal(tabs.opensAgain({ sameAddress: false, sameSession: true, asked: 'diff', showing: 'review' }), false);
+  assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: true, asked: null, showing: 'review' }), false);
+  assert.equal(tabs.opensAgain({ sameAddress: true, sameSession: false, asked: 'diff', showing: 'review' }), false);
+});
