@@ -1662,6 +1662,9 @@ Connected, the card has a row each:
   set it when, and a scope the app lacks. **Replace keys** opens the dialog at the own app's steps with the manifest
   folded away and both fields empty: a field left empty keeps its value. A console connected through the program's
   install has **Reinstall** instead. A saved token Slack refuses shows as **Token refused**, with Slack's error.
+  What the card says of the saved token is kept until the token changes, and an app reinstalled with new scopes keeps
+  its token: **Check again**, next to a missing scope or a refused token, asks Slack about it now and reads the
+  channel list again (`POST /api/console-settings/slack/recheck`, `slack: saved token checked again`).
 - **Pull requests**: the channel, and **Change channel**, the picker again. **Limits** unfolds the two waits before a
   post (the review and suites, and the QA check; the table below).
 - **Questions**, only where the console answers them at all (a Slack bot and a session API): the switch that was on

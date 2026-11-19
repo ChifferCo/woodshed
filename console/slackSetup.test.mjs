@@ -133,6 +133,34 @@ test('Replace keys: an empty field keeps what is saved, and a new token is who t
   assert.equal((await slackSetup.view()).bot.team, 'Other Co');
 });
 
+test('Check again asks Slack about the saved token: an app reinstalled with new scopes keeps its token', async () => {
+  const scopes = BOT_SCOPES.filter((x) => x !== 'channels:read' && x !== 'groups:read');
+  const { slackSetup } = setup({ scopes });
+  await slackSetup.save({ botToken: TOKEN, by: 'mia-dev' });
+  assert.deepEqual((await slackSetup.view()).missingScopes, ['channels:read', 'groups:read']);
+  assert.deepEqual(await slackSetup.channels({ query: '' }), { missingScope: true, needed: ['channels:read', 'groups:read'] });
+  scopes.push('channels:read', 'groups:read');
+  assert.deepEqual((await slackSetup.view()).missingScopes, ['channels:read', 'groups:read'], 'the same token: the card goes on as saved');
+  const next = await slackSetup.recheck({ by: 'mia-dev' });
+  assert.deepEqual(next.missingScopes, []);
+  assert.deepEqual((await slackSetup.view()).missingScopes, [], 'kept until the next change');
+  assert.ok((await slackSetup.channels({ query: '' })).found?.length, 'the channel list is read again');
+});
+
+test('Check again with Slack not answering refuses, so nothing reads as checked', async () => {
+  const store = { state: {}, save() {} };
+  const secrets = memorySecrets();
+  const fake = fakeSlack({ scopes: BOT_SCOPES.filter((x) => x !== 'channels:read') });
+  let down = false;
+  const slack = createSlack({ store, secrets, fetchImpl: (url, opts) => (down ? Promise.reject(new Error('fetch failed')) : fake.fetchImpl(url, opts)) });
+  const slackSetup = createSlackSetup({ store, secrets, slack, consoleName: 'Team Shed', eventsUrl: async () => null });
+  await slackSetup.save({ botToken: TOKEN, by: 'mia-dev' });
+  down = true;
+  await assert.rejects(slackSetup.recheck({ by: 'mia-dev' }), (err) => err.shown && err.status === 502 && /did not answer/.test(err.message));
+  down = false;
+  assert.deepEqual((await slackSetup.recheck({ by: 'mia-dev' })).missingScopes, ['channels:read']);
+});
+
 test('a token changed elsewhere is looked up again, and one Slack refuses shows as refused', async () => {
   const { slackSetup, secrets } = setup();
   await slackSetup.save({ botToken: TOKEN, by: 'mia-dev' });

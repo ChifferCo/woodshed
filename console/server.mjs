@@ -94,6 +94,7 @@
 //   POST /api/console-settings/slack   {"botToken"?, "signingSecret"?, "channel"?}   the Set up Slack dialog's save: an empty
 //                                field keeps its value, and a token is checked with Slack's auth.test before anything is kept
 //   POST /api/console-settings/slack/check   {"botToken"}   who a pasted token is, by auth.test, keeping nothing
+//   POST /api/console-settings/slack/recheck  {}   the saved token asked about again (its scopes after a reinstall), as GET answers
 //   GET  /api/console-settings/slack/channels?q=   the channel picker: channels whose name has that text, and whether the bot
 //                                is in each; POST with {"q", "botToken"} lists them with a token pasted but not saved yet
 //   POST /api/console-settings/slack/disconnect  {"confirm": "slack"}   both Slack secrets deleted, where the store can make them again
@@ -249,7 +250,7 @@ const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
 const SLACK_SETUP_PATH = '/api/console-settings/slack';
-const SLACK_SETUP_WRITE_RE = /^\/api\/console-settings\/slack(?:\/(check|channels|disconnect))?$/;
+const SLACK_SETUP_WRITE_RE = /^\/api\/console-settings\/slack(?:\/(check|recheck|channels|disconnect))?$/;
 const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
@@ -1713,6 +1714,7 @@ export function createHandler({
     try {
       if (action === 'channels') return await slackChannelsReply(res, { query: body.q, botToken: body.botToken ?? null });
       if (action === 'check') return reply(res, 200, await slackSetup.check(body.botToken));
+      if (action === 'recheck') return reply(res, 200, { ...(await slackSetup.recheck({ by })), lastMention: lastMentionAt() });
       if (action === 'disconnect') {
         if (body.confirm !== 'slack') return reply(res, 400, { error: 'type slack to confirm' });
         await slackSetup.disconnect({ by });
