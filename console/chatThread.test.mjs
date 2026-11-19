@@ -281,3 +281,20 @@ test('a queued message is not taken as arrived by an earlier prompt that starts 
   const first = { text: 'hello', sentAt, state: 'sent', after: null };
   assert.equal(chat.stillPending([first], [{ role: 'user', text: 'hello', at: '2026-11-19T11:59:59.000Z' }], sentAt).length, 0, 'no earlier one: any is it, whatever the clocks say');
 });
+
+test('one entry in the record settles one of two identical messages, on this read and every one after', () => {
+  // The review's case: "go on" sent twice, the second queued; the first arrives.
+  const sentAt = Date.parse('2026-11-19T12:00:05.000Z');
+  const pending = [
+    { text: 'go on', sentAt, state: 'sent', after: null },
+    { text: 'go on', sentAt: sentAt + 1000, state: 'held', after: null },
+  ];
+  const entries = [{ role: 'user', text: 'go on', at: '2026-11-19T12:00:06.000Z' }];
+  const first = chat.stillPending(pending, entries, sentAt + 2000);
+  assert.equal(first.length, 1, 'the first settled, the second still waiting');
+  // The page keeps what it got and reads again with the same record: the same entry does not settle the second.
+  const again = chat.stillPending(first, entries, sentAt + 4000);
+  assert.equal(again.length, 1, 'still waiting on the next read');
+  const arrived = [...entries, { role: 'user', text: 'go on', at: '2026-11-19T12:01:00.000Z' }];
+  assert.equal(chat.stillPending(again, arrived, sentAt + 60_000).length, 0, 'its own entry settles it');
+});

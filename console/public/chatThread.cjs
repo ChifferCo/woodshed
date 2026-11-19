@@ -284,9 +284,14 @@
    */
   function stillPending(pending, entries, now = Date.now()) {
     const used = new Set();
-    return pending.filter((p) => {
+    // The entry that settled a message is no later message's: each after it must be matched by an entry after that one,
+    // on this read and the next (its `after` moves on), so one entry never settles two identical messages.
+    let settledAt = null;
+    const left = [];
+    for (const sent of pending) {
+      const p = settledAt && (sent.after == null || Date.parse(sent.after) < Date.parse(settledAt)) ? { ...sent, after: settledAt } : sent;
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
-      if (p.state !== 'held' && p.state !== 'in-box' && now - p.sentAt > PENDING_MS) return false;
+      if (p.state !== 'held' && p.state !== 'in-box' && now - p.sentAt > PENDING_MS) continue;
       const want = squash(p.text);
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
       // clock): an earlier prompt that starts the same is never taken for it. A message from before `after` was kept
@@ -294,11 +299,17 @@
       const later = (e) => (p.after !== undefined ? !!e.at && (p.after === null || Date.parse(e.at) > Date.parse(p.after))
         : !e.at || Date.parse(e.at) >= p.sentAt - 30_000);
       const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user' && later(e) && squash(e.text).startsWith(want.slice(0, 200)));
-      if (found === -1) return true;
+      if (found === -1) {
+        left.push(p);
+        continue;
+      }
       used.add(found);
-      return false;
-    });
+      const at = entries[found].at;
+      if (at && (!settledAt || Date.parse(at) > Date.parse(settledAt))) settledAt = at;
+    }
+    return left;
   }
+
 
   /** @returns {string}  "8s", "2m 05s", "1h 03m" */
   function elapsed(fromMs, now = Date.now()) {
