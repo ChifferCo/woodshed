@@ -155,6 +155,9 @@ function codexFailed(output) {
 const SCRIPT_CALL = /\btools\.([A-Za-z_][\w]*)\s*\(/g;
 const SCRIPT_ARG = /\b(cmd|command|path|file_path|pattern|query|url)\s*:\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`)/;
 
+// What a script calls that is not work of its own: `wait` reads a command still running, already in the log.
+const SCRIPT_QUIET = new Set(['wait']);
+
 function scriptValue(literal) {
   if (literal.startsWith('"')) {
     try {
@@ -175,7 +178,7 @@ export function codexScriptCalls(name, input) {
     const args = input.slice(m.index + m[0].length, starts[i + 1]?.index ?? input.length);
     const arg = SCRIPT_ARG.exec(args);
     return { tool: m[1], text: arg ? scriptValue(arg[2]).split('\n')[0].slice(0, 300) : '' };
-  });
+  }).filter((c) => !SCRIPT_QUIET.has(c.tool));
 }
 
 // The exit codes in an `exec` script's output: one JSON part per command it ran, each with its `exit_code`.
@@ -217,7 +220,7 @@ export function parseCodexRollout(text, { partial = false } = {}) {
       entries.push(...made);
     } else if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
       const made = tools.get(item.call_id);
-      if (!made) continue;
+      if (!made?.length) continue;
       const codes = scriptExitCodes(item.output);
       // A script's commands in order, each with its own exit code; anything else fails as a whole.
       if (codes.length) codes.forEach((code, i) => { if (code !== 0) (made[i] ?? made[made.length - 1]).error = true; });

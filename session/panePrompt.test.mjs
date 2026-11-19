@@ -224,3 +224,21 @@ test('approving and denying claude\'s permission dialog, and refusing a differen
   await assert.rejects(answerApproval(other.io, { decision: 'approve', title: shown.title, detail: shown.detail }), { why: 'other-approval' });
   assert.deepEqual(other.pressed, []);
 });
+
+test("real codex 0.167's approval reads with its own options, and the page keeps its wrapped reason whole", async () => {
+  const fs = await import('node:fs');
+  const chat = (await import('../console/public/chatThread.cjs')).default;
+  // Captured from codex 0.167 in plan mode's read-only sandbox, asked to write a file.
+  const screen = readApproval(fs.readFileSync(new URL('../shared/__fixtures__/pane-codex-approval.txt', import.meta.url), 'utf8'));
+  assert.equal(screen.agent, 'codex');
+  assert.equal(screen.title, 'Would you like to run the following command?');
+  assert.deepEqual(screen.options.map((o) => o.label.slice(0, 20)), ['Yes, proceed', "Yes, and don't ask a", 'No, and tell Codex w']);
+  assert.equal(screen.approve, 0, 'just this once, never the "don\'t ask again" row');
+  assert.equal(screen.deny, 2);
+  assert.equal(screen.highlighted, 0);
+  assert.deepEqual(chat.approvalText(screen).lines, [
+    'Environment: local',
+    '$ echo hi > hello-from-chat.txt',
+    'Reason: May I run the requested command outside the sandbox to create hello-from-chat.txt?',
+  ]);
+});

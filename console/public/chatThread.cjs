@@ -317,8 +317,13 @@
    * @returns {{asks: string, lines: string[]}}  asks: the agent's own question; lines: what it would run or change
    */
   function approvalText(prompt) {
-    const lines = (prompt.detail ?? []).filter((l) => !/^Reason:/i.test(l)).slice(0, 4);
-    const reason = (prompt.detail ?? []).find((l) => /^Reason:/i.test(l));
+    // The reason goes last, with the lines it wrapped onto: up to the command (`$ `) or the next `Label:` line.
+    const detail = prompt.detail ?? [];
+    const at = detail.findIndex((l) => /^Reason:/i.test(l));
+    let end = at + 1;
+    while (at !== -1 && end < detail.length && !/^\$ /.test(detail[end]) && !/^[A-Z][\w ]{0,20}:/.test(detail[end])) end++;
+    const reason = at === -1 ? null : detail.slice(at, end).join(' ');
+    const lines = (at === -1 ? detail : [...detail.slice(0, at), ...detail.slice(end)]).slice(0, 4);
     return { asks: prompt.what ? `${prompt.what}: ${prompt.title}` : prompt.title, lines: reason ? [...lines, reason] : lines };
   }
 

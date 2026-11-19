@@ -212,6 +212,8 @@ test("codex's exec script reads as the tools it calls, each failing by its own e
     call('c1', `text(await tools.exec_command({cmd:"find console/ -type f -name '*.mjs' -printf '.' | wc -c"}))\n`), out('c1', 0),
     call('c2', "const a = await tools.exec_command({ cmd: 'npm test' });\nconst b = await tools.exec_command({cmd:\"ls\"});\ntext(a + b)"), out('c2', 1, 0),
     call('c3', 'text("hello")'),
+    // Waiting on a command already in the log is no entry of its own.
+    call('c4', 'text(await tools.wait({session_id: 3}))'), out('c4', 0),
   ].join('\n'));
   assert.deepEqual(entries.map((e) => [e.tool, e.text, e.error ?? false]), [
     ['exec_command', "find console/ -type f -name '*.mjs' -printf '.' | wc -c", false],
