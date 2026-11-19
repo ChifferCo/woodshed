@@ -338,6 +338,16 @@ test('copies on disk together stay within the total, and a copy needs room left 
   assert.equal((await makeSnapshot(opts)).ok, false, 'so the next copy is refused');
   assert.equal(removeSnapshot(stuck.dir), true);
   assert.equal(reservedSnapshotBytes(), 0);
+
+  // Two copies counting the same free space: with room for one above the floor, a second is refused while the first
+  // still holds its share.
+  const roomForOne = () => 512 * 1024 * 1024 + 1024 * 1024;
+  const one = await makeSnapshot({ ...opts, maxTotalBytes: 4 * 1024 * 1024, free: roomForOne });
+  assert.equal(one.ok, true, one.error);
+  const two = await makeSnapshot({ ...opts, maxTotalBytes: 4 * 1024 * 1024, free: roomForOne });
+  assert.deepEqual([two.ok, /too little room left/.test(two.error)], [false, true]);
+  removeSnapshot(one.dir);
+  assert.equal(reservedSnapshotBytes(), 0);
 });
 
 // writeSync may write fewer bytes than asked. What it leaves must be written again, not skipped, or a file in a copy

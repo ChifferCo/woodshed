@@ -2139,8 +2139,12 @@ async function runQa({ ctx, session, review, gen }) {
   try {
     return await runQaRounds({ ctx, session, review, gen, pin: (dir) => { snapshotDir = dir; } });
   } finally {
-    // However it ended (done, failed, cancelled, crashed), the copy goes.
-    removeSnapshot(snapshotDir);
+    // However it ended (done, failed, cancelled, crashed), the copy goes. One
+    // that would not go keeps its room reserved, which can refuse later Q&As
+    // until the stale sweep takes it, so it is said.
+    if (!removeSnapshot(snapshotDir)) {
+      ctx.log('review.qa_copy_not_removed', { session, dir: snapshotDir });
+    }
   }
 }
 

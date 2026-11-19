@@ -379,7 +379,10 @@ export async function makeSnapshot({
   if (reservedBytes + total > maxTotalBytes) {
     return failed(`other Q&A copies on this machine hold ${mb(reservedBytes)} MB; try again when they finish`);
   }
-  if (free(dir) - total < minFreeAfterBytes) {
+  // Less what other copies have reserved: two copies starting together would
+  // otherwise both count the same free space. A copy already written is counted
+  // twice by this, which errs toward refusing, at most by the shared total.
+  if (free(dir) - reservedBytes - total < minFreeAfterBytes) {
     return failed(`the disk under ${os.tmpdir()} has too little room left for ${mb(total)} MB`);
   }
   // Held for as long as the copy is on disk: removeSnapshot gives it back.
