@@ -14,8 +14,14 @@
 // a first list arrives (the program failed at start), nobody is in, so nothing is let through on a guess.
 //
 // A switch only counts for someone on the list. Someone the program took off elsewhere is no member, assignable or
-// admin from the next read on, and their switches are cleared then (with `onGone`, so their sessions go back to
-// Unassigned), as Remove here clears them at once.
+// admin from the next read on, and their switches are cleared then, as Remove here clears them at once. Each read also
+// gives back the shared sessions of anyone it does not list (`whenGone`, the fleet's release), switches or not: someone
+// the program dropped while the console was down, or whose release a restart cut short, still holds them. The first
+// read comes before the fleet is made, so that one's sweep runs when the installation gives `whenGone`.
+//
+// An empty list while core knows of someone (the last list, a stored switch, an assigned shared session) is taken for
+// the program's mistake, not everyone leaving at once: People cannot remove the last owner, so the list is kept and
+// nothing is cleared or released. A console that never had anyone takes an empty list as it is.
 
 import logins from './public/logins.cjs';
 import { parseHandle } from './members.mjs';
@@ -30,10 +36,11 @@ const ROLES = new Set(['owner', 'member']);
 /**
  * @param {{hook: {list: () => Promise<{login: string, role: string}[]>, add: Function, remove: Function, setRole: Function},
  *          store: {state: object, save: () => void}, ttlMs?: number, now?: () => number,
- *          onGone?: (login: string) => void}} deps
- *   `onGone` hears of each person whose switches were cleared because the program's list no longer has them
+ *          onGone?: ((login: string) => void)|null}} deps
+ *   `onGone` gives back the shared sessions of someone the program's list does not have (or set it later, whenGone)
  */
-export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now, onGone = () => {} }) {
+export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now, onGone = null }) {
+  let release = onGone;
   const nowIso = () => new Date(now()).toISOString();
   // The program's list as last read, in its order: [{login, role}], and by lowercased login.
   let roster = null;
@@ -59,18 +66,42 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
       seen.set(login.toLowerCase(), person);
     }
     if (dropped) console.warn('members: entries of the program\'s list left out', { dropped });
+    if (!next.length && known()) {
+      console.warn('members: the program\'s list came back empty, kept the last one', { members: roster?.length ?? 0 });
+      return;
+    }
     roster = next;
     byLogin = seen;
     // Switches of anyone no longer listed: the program took them off in its own pages.
-    const gone = Object.keys(switches()).filter((key) => !seen.has(key));
-    for (const key of gone) delete switches()[key];
-    if (gone.length) {
+    const left = Object.keys(switches()).filter((key) => !seen.has(key));
+    for (const key of left) delete switches()[key];
+    if (left.length) {
       store.save();
-      console.log('members: switches cleared, no longer on the program\'s list', { logins: gone });
-      for (const key of gone) {
-        try { onGone(key); } catch (err) { console.error('members: release after leaving failed', { login: key, message: String(err?.message ?? err).split('\n')[0] }); }
-      }
+      console.log('members: switches cleared, no longer on the program\'s list', { logins: left });
     }
+    sweep();
+  }
+
+  // Who holds a shared session now, from the fleet's own records in the same state.
+  const holders = () => (store.state.sessions ?? []).filter((s) => !s.owner && s.assignee).map((s) => s.assignee);
+
+  // Whether core knows of anyone the program could have listed: an empty list then is not taken as it is.
+  const known = () => Boolean(roster?.length) || Object.keys(switches()).length > 0 || holders().length > 0;
+
+  // Shared sessions of anyone not on the list go back to Unassigned, once there is a fleet to do it.
+  function sweep() {
+    if (!release || !roster) return;
+    const unlisted = new Map();
+    for (const login of holders()) if (!byLogin.has(login.toLowerCase())) unlisted.set(login.toLowerCase(), login);
+    for (const login of unlisted.values()) {
+      try { release(login); } catch (err) { console.error('members: release after leaving failed', { login, message: String(err?.message ?? err).split('\n')[0] }); }
+    }
+  }
+
+  /** Who gives back the sessions of those the list does not have: from now on, and at once for the list already read. */
+  function whenGone(fn) {
+    release = fn;
+    sweep();
   }
 
   // One read at a time; a failed one keeps the list before it, and is tried again once that is older than ttlMs.
@@ -241,7 +272,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   }
 
   return {
-    hosted: true, refresh, load, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
+    hosted: true, refresh, load, whenGone, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
     setAssignable, add, remove, setRole, view, requestOf: () => null,
   };
 }

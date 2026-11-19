@@ -3,7 +3,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 
 import { createHandler } from './server.mjs';
 import { createHostedMembers } from './hostedMembers.mjs';
@@ -158,6 +161,7 @@ test('Sessions from GitHub can be turned off, which takes Can be assigned with i
 test('someone the program takes off elsewhere loses their switches at the next read of its list', async (t) => {
   const { program, members, post, store, gone, advance } = await hostedPeople(t);
   await post('/api/people/assignable', { login: 'sam-member', on: true });
+  store.state.sessions = [{ id: '0a1b2c3d', kind: 'manual', status: 'running', assignee: 'Sam-Member' }];
   assert.equal(members.isAssignable('sam-member'), true);
   program.people = program.people.filter((p) => p.login !== 'Sam-Member');
   advance(5_001);
@@ -168,7 +172,7 @@ test('someone the program takes off elsewhere loses their switches at the next r
   assert.equal(members.isMember('sam-member'), false);
   assert.deepEqual(members.assignables(), []);
   assert.equal(store.state.memberSwitches['sam-member'], undefined, 'their switch entry is gone');
-  assert.deepEqual(gone, ['sam-member'], 'and the installation hears of it, to give their sessions back');
+  assert.deepEqual(gone, ['Sam-Member'], 'and the installation hears of it, to give their sessions back');
 });
 
 test('the list is kept a few seconds: the fleet\'s questions do not each ask the program', async (t) => {
@@ -216,4 +220,63 @@ test('the members hook is for a console behind trusted sign-in only, and needs a
   const program = fakeProgram();
   await assert.rejects(createInstallation({ config: {}, store: { state: {} }, provider: {}, members: program }), /members is for a console behind trusted sign-in/);
   await assert.rejects(createInstallation({ config: {}, store: { state: {} }, provider: {}, trusted: { userFor: () => null }, members: { list: program.list } }), /needs list, add, remove and setRole/);
+});
+
+test('someone dropped while the console was down gives their shared sessions back when it starts', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hosted-people-'));
+  t.after(() => fs.rmSync(stateDir, { recursive: true, force: true }));
+  // The program took lee off while the console was down: their switch is still stored, and a shared session is theirs.
+  // Bo left earlier and their switches are gone already, but a restart cut their release short: theirs is kept too.
+  const store = {
+    state: {
+      memberSwitches: { 'lee-dev': { assignable: { by: 'ana-owner', at: '2026-01-01T00:00:00.000Z' } } },
+      sessions: [
+        { id: '0a1b2c3d', kind: 'manual', status: 'stopped', title: 'lee\'s', startedBy: 'ana-owner', assignee: 'Lee-Dev' },
+        { id: '1b2c3d4e', kind: 'manual', status: 'stopped', title: 'bo\'s', startedBy: 'ana-owner', assignee: 'bo-dev' },
+        { id: '2c3d4e5f', kind: 'manual', status: 'stopped', title: 'sam\'s', startedBy: 'ana-owner', assignee: 'Sam-Member' },
+        { id: '3d4e5f6a', kind: 'manual', status: 'stopped', title: 'private', owner: 'lee-dev', startedBy: 'lee-dev', assignee: null },
+      ],
+    },
+    save() {},
+  };
+  await createInstallation({
+    config: { ...CONFIG, stateDir, sessionEnv: {}, sessionApi: {} }, store, provider: { name: 'test', launcher: {} },
+    trusted: createTrustedIdentity({ secret: SECRET }), members: fakeProgram(),
+  });
+  assert.equal(store.state.memberSwitches['lee-dev'], undefined, 'their switches cleared');
+  const assigned = Object.fromEntries(store.state.sessions.map((s) => [s.title, [s.assignee, s.assignedBy ?? null]]));
+  assert.deepEqual(assigned, {
+    'lee\'s': [null, 'the program'], 'bo\'s': [null, 'the program'], 'sam\'s': ['Sam-Member', null], private: [null, null],
+  }, 'back to Unassigned for those not listed, and the listed keep theirs');
+});
+
+test('an empty list from the program while core knows of members keeps the last one, its switches and its sessions', async (t) => {
+  const warned = t.mock.method(console, 'warn', () => {});
+  const { program, members, post, store, gone, advance } = await hostedPeople(t);
+  await post('/api/people/assignable', { login: 'sam-member', on: true });
+  store.state.sessions = [{ id: '0a1b2c3d', kind: 'manual', status: 'running', assignee: 'Sam-Member' }];
+  program.people = [];
+  advance(5_001);
+  await members.load();
+  assert.deepEqual([members.isAdmin('ana-owner'), members.isAssignable('sam-member')], [true, true], 'both still in, with their switches');
+  assert.ok(store.state.memberSwitches['sam-member'].assignable);
+  assert.deepEqual(gone, [], 'no session given back');
+  assert.ok(warned.mock.calls.some((c) => /came back empty, kept the last one/.test(c.arguments[0])));
+});
+
+test('an empty list is taken as it is on a console that never had anyone, but not over a stored switch at start', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const store = { state: {}, save() {} };
+  const members = createHostedMembers({ hook: fakeProgram([]), store });
+  await members.load();
+  assert.deepEqual(members.view().members, []);
+  // With a stored switch at start, an empty first list is not taken: nobody is in until a list with someone comes.
+  const stored = { state: { memberSwitches: { 'lee-dev': { assignable: { by: 'ana-owner', at: '2026-01-01T00:00:00.000Z' } } } }, save() {} };
+  t.mock.method(console, 'warn', () => {});
+  const kept = createHostedMembers({ hook: fakeProgram([]), store: stored });
+  await kept.refresh();
+  assert.equal(kept.isMember('lee-dev'), false);
+  assert.ok(stored.state.memberSwitches['lee-dev'], 'the switch is kept for when the program lists them again');
 });

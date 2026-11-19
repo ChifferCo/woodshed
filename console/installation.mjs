@@ -337,11 +337,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const people = createGitHubPeople({ store, github });
   // Behind a hosting proxy the host says who is in: no write access asked of those it signs in, and no People list
   // unless the program hands over its own (hostedMembers.mjs). Someone it takes off in its own pages gives their
-  // sessions back to Unassigned at the next read of its list; the fleet is made below, so it is asked then.
-  let fleetRef = null;
-  const members = !trusted ? createMembers({ store })
-    : memberList ? createHostedMembers({ hook: memberList, store, onGone: (login) => fleetRef?.releaseAssignments({ login, by: 'the program' }) })
-      : null;
+  // sessions back to Unassigned at the next read of its list, once the fleet below is made (whenGone).
+  const members = !trusted ? createMembers({ store }) : memberList ? createHostedMembers({ hook: memberList, store }) : null;
   if (members?.hosted) {
     // The first read, so a label or a page right after start is answered from the list; a failure lets nobody in yet.
     await members.refresh().catch((err) => console.warn('members: the program\'s list not read at start', { message: String(err?.message ?? err).split('\n')[0] }));
@@ -385,7 +382,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     repoTriggers,
     reviewAgents,
   });
-  fleetRef = fleet;
+  // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
+  members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
   // Questions need the bot token to answer, and the session API to hear the answer.

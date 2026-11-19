@@ -1564,7 +1564,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   assigned one as it goes, without waiting, so it is answered from the list as last read, which is read again in the
   background once it is older; People's own reads, and each change made there, wait for a fresh one. Until a first
   list is read nobody is in (`members: the program's list not read at start`). Core keeps each person's switches:
-  *Sessions from GitHub* on and *Can be assigned* off for someone new, cleared when they leave the list. A call that
+  *Sessions from GitHub* on and *Can be assigned* off for someone new, cleared when they leave the list. Only someone
+  on the list starts a session from GitHub (a label or `/woodshed`), as intended: the list is who is in. Each read
+  gives the shared sessions of anyone it does not have back to Unassigned, so someone dropped while the console was
+  down is released at the next start. An empty list while core knows of someone (the last list read, a stored switch
+  or an assigned shared session) is kept from: the last list stays, nothing is cleared or released, and it logs
+  `members: the program's list came back empty, kept the last one`; a console that never had anyone takes it as it
+  is. People never empties the list, since nobody removes themselves and the last owner stays. A call that
   throws an error with `shown: true` shows its message on the page as it is; any other is logged (`members: the
   program failed a change`) and answered 500. Without the hook a hosted console has no People, as before.
 - `signOut(req)`, with `trusted`: how the program signs someone out, for the user menu's **Sign out**, which a
