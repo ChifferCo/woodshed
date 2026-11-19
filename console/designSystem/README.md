@@ -168,6 +168,12 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - A program embedding the console adds its own pages as tabs after those (`settingsTabs`, README.md "Embedding the
   console"), in the same row, and draws each page's part under it. Someone who is not an admin sees only the program's
   tabs. The row stays one line and scrolls sideways when it is wider than the page, on a phone above all.
+- Settings' tabs, the program's with the console's, also show as sub-items under Settings: in the settings list only on
+  its own pages (a repo's settings are General's), and in the avatar menu always, since the menu is where people look
+  for a page. They are indented on a thin `line` rule at their left (`side-subs` / `side-sub`, `menu-subs` /
+  `menu-sub`), the open one marked as any current entry; Settings is then `aria-current="true"`, its icon `amber-ink`,
+  not its ground. The tab row under the title stays. On a phone the list is one row, so it keeps Settings as one entry,
+  marked, and leaves the tabs to the row under the title.
 - People and Webhook events stay entries of their own: one is who is in, the other a log, not settings.
 
 ## Repo settings

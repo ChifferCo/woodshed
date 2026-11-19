@@ -397,6 +397,12 @@ dialog.wizard:focus { outline: none; }
 .side-item[aria-current="page"] { background: var(--slate-tint); box-shadow: inset 3px 0 0 var(--amber); }
 .side-ico { width: 18px; text-align: center; color: var(--meta); }
 .side-item[aria-current="page"] .side-ico { color: var(--amber-ink); }
+/* Settings' tabs under it, on its own pages: indented on a thin rule, the open one marked as any current entry. Settings
+   itself is then the set the page is in (aria-current="true"): its icon marked, not its ground. */
+.side-item[aria-current="true"] .side-ico { color: var(--amber-ink); }
+.side-item[aria-current="true"] { font-weight: 600; }
+.side-subs { display: flex; flex-direction: column; gap: 2px; margin: 0 0 4px 19px; padding-left: 8px; border-left: 1px solid var(--line); }
+.side-sub { padding: 6px 10px; font-size: 13px; }
 .side-hint { margin-left: auto; font: 10px var(--mono); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; color: var(--sub); }
 /* On a phone the list sits above the page as a row of its own, as the rail does above a session's list. */
 @media (max-width: 720px) {
@@ -405,6 +411,9 @@ dialog.wizard:focus { outline: none; }
   .side-list { flex-direction: row; overflow-x: auto; padding: 6px; }
   .side-group, .side-hint { display: none; }
   .side-item { width: auto; white-space: nowrap; }
+  /* The tabs are right under the title there, so the row keeps Settings as one entry, marked as the page's. */
+  .side-subs { display: none; }
+  .side-item[aria-current="true"] { font-weight: inherit; background: var(--slate-tint); box-shadow: inset 3px 0 0 var(--amber); }
 }
 
 /* ---- sign-in ---- */
@@ -425,6 +434,10 @@ dialog.wizard:focus { outline: none; }
 .menu-label { padding: 8px 10px 4px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .menu-item { display: flex; align-items: center; width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 10px; border: 0; border-radius: 5px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; text-decoration: none; cursor: pointer; }
 .menu-item:hover, .menu-item:focus-visible, .menu-item[aria-current="page"] { background: var(--stopped); }
+/* Settings' tabs, always under it in the menu, indented on a thin rule. */
+.menu-subs { display: flex; flex-direction: column; margin: 0 0 2px 10px; padding-left: 6px; border-left: 1px solid var(--line); }
+.menu-sub { min-height: 30px; font-size: 12.5px; color: var(--sub); }
+.menu-sub:hover, .menu-sub[aria-current="page"] { color: var(--ink); }
 .menu-form { margin: 0; border-top: 1px solid var(--line-soft); padding-top: 4px; margin-top: 4px; }
 /* What a program embedding the console adds: a line under the name on the button, and groups at the top of the menu. */
 .user-name:has(> .user-sub) { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 0; line-height: 1.25; }

@@ -1306,7 +1306,7 @@ asking.
 
 **Admins.** Each member on People has an *Admin* switch, off for a new member.
 Only an admin sees the Console group in the avatar menu (Settings, whose tabs
-are General and Secrets & webhooks, then People and Webhook events), and the console answers 403 to
+are General and Secrets & webhooks, listed under it too, then People and Webhook events), and the console answers 403 to
 anyone else's call behind those pages (`ADMIN_API_RE` in `console/server.mjs`;
 it logs `console: admin call refused`). The pages themselves still load and say
 so. Only an admin turns the switch on or off, and the last admin cannot turn
