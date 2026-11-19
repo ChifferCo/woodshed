@@ -188,7 +188,7 @@ test('nothing is typed when the pane shows another question, other options, or n
 });
 
 test('a picker that changes under the answer stops it, and says how far it got', async () => {
-  // Someone in the Agent tab answers the second question first: the screen after the first pick is the review.
+  // Someone in the TUI tab answers the second question first: the screen after the first pick is the review.
   const { io, pressed } = paneOf(TWO, {
     after: (k, picker) => {
       if (k === 'Enter' && picker.state.tab === 1) {

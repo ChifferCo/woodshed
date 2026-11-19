@@ -4,10 +4,10 @@
 // /s/beadfeed?tab=review is a running session whose Review tab is the shed's real page, over a made-up change with an
 // analysis already written (devReviewSession.mjs). /s/abbaabba is running on a project with two apps, web and admin,
 // behind the real statusd (devAppsSession.mjs): Start app picks one, and Open app opens whichever runs. /s/c0ffee11 has
-// a live Agent terminal, where ttyd and tmux are on the PATH (devTerminalSession.mjs). /s/c0de5e55 and /s/c1a0de00 open
+// a live TUI, where ttyd and tmux are on the PATH (devTerminalSession.mjs). /s/c0de5e55 and /s/c1a0de00 open
 // on a Chat tab that works, over a stand-in codex and claude behind the real statusd, where tmux is on the PATH
 // (devChatSession.mjs): a message is answered with a few tool calls and a reply, one that says "fail" has a tool fail,
-// and one that says "ask" puts the codex session at Needs you until Enter in its Agent tab.
+// and one that says "ask" puts the codex session at Needs you until Enter in its TUI tab.
 // DEV_CONSOLE_APP_PORTS=7701-7703 puts session apps on those ports of localhost, in place of `<id>.apps.localhost`.
 // DEV_CONSOLE_SESSION_APP=1, in a session (SESSION_ID set), also answers under the session's app name,
 // `<SESSION_ID>.<SESSION_APP_DOMAIN>`, as Woodshed's own app does behind the console's app proxy (scripts/devConsoleApp.sh).
@@ -59,7 +59,7 @@ const CLAUDE_CHAT_ID = 'c1a0de00';
 const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, token: `t${CODEX_CHAT_ID}`, agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
 const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, token: `t${CLAUDE_CHAT_ID}`, agent: 'claude', nextPath: '' });
 // DEV_CONSOLE_REAL_CLAUDE=1: /s/c1a0dea1 runs the real claude, on this machine's Claude credential, in a clone of this
-// checkout with no remote (devChatSession.mjs), with its Agent tab live. Off by default: it spends that credential.
+// checkout with no remote (devChatSession.mjs), with its TUI tab live. Off by default: it spends that credential.
 const REAL_ID = 'c1a0dea1';
 const realClaude = process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
   ? await startDevChatSession({ id: REAL_ID, token: `t${REAL_ID}`, terminalToken: `x${REAL_ID}`, agent: 'claude', real: true,
@@ -203,14 +203,14 @@ const sessions = [
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: true,
     ref: twoApps.ref, endpoint: { host: '127.0.0.1', statusPort: twoApps.port, termPort: twoApps.port },
   }),
-  // Running, with a live Agent terminal (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find, copy,
+  // Running, with a live TUI (devTerminalSession.mjs), where ttyd and tmux are on the PATH: for find, copy,
   // links and scrolling back on a real xterm. Its Terminal tab, Diff and app go nowhere.
   ...(liveTerminal ? [session(TERMINAL_ID, 26703, 'A session with a live terminal', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: liveTerminal.port, termPort: liveTerminal.port },
   })] : []),
   // Running on a stand-in codex and claude (devChatSession.mjs), for the Chat tab. The codex one's state is read from
-  // its pane; the claude one keeps this one. Their Agent tab has no ttyd, and their Terminal, Diff and app go nowhere.
+  // its pane; the claude one keeps this one. Their TUI tab has no ttyd, and their Terminal, Diff and app go nowhere.
   ...(codexChat ? [session(CODEX_CHAT_ID, 26704, 'Back off webhook retries for longer', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', options: { agent: 'codex' },
     ref: codexChat.ref, endpoint: { host: '127.0.0.1', statusPort: codexChat.port, termPort: codexChat.port },

@@ -1,6 +1,6 @@
 // Same-origin terminals and Redis viewers, after Woodshed's terminalProxy.mjs:
 //
-//   GET      /term/<id>/*    ->  <session host>:<ttyd port>/term/<id>/*         the Agent tab: claude's tmux
+//   GET      /term/<id>/*    ->  <session host>:<ttyd port>/term/<id>/*         the TUI tab: claude's tmux
 //   UPGRADE  /term/<id>/ws   ->  the same, as a raw socket pipe
 //   GET      /shell/<id>/*   ->  <session host>:<shell ttyd port>/shell/<id>/*  the Terminal tab: a plain shell
 //   UPGRADE  /shell/<id>/ws  ->  the same

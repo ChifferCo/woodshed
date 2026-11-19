@@ -1,7 +1,7 @@
 // A made-up session for the dev console whose project declares two apps, served by the real statusd
 // (session/statusd.mjs) over a small checkout made here. Start app's menu, the switch from one app to the other and Open
 // app (`http://<id>.apps.localhost:<port>/`) all work as in a session: each app is a page that names itself, on its own
-// frontend port beside one backend they share. No container, tmux or claude: the Agent and Terminal tabs go nowhere.
+// frontend port beside one backend they share. No container, tmux or claude: the TUI and Terminal tabs go nowhere.
 // The console reads a session's status only while its launcher says the container runs, so `binDir` holds a `docker`
 // that says so for this session's container alone, and hands every other call to the real one, if there is one.
 

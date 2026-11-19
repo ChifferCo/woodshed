@@ -1,7 +1,7 @@
 // The phone's message box under claude's terminal: a message written with the phone's own keyboard (autocorrect,
 // dictation, paste, the cursor), files from its picker, and the browser's speech recognition for the mic. Send types
 // it all into claude as one message, through the session's statusd (POST /api/sessions/<id>/send), then Enter.
-// Return makes a new line; only Send sends. session.js shows it on a phone, for a running session's Agent tab.
+// Return makes a new line; only Send sends. session.js shows it on a phone, for a running session's TUI tab.
 (function () {
   'use strict';
   const W = window.Woodshed;
@@ -184,7 +184,7 @@
       }
     }
 
-    /** @param {object|null} s  the running session whose Agent tab shows, or null to hide the box */
+    /** @param {object|null} s  the running session whose TUI tab shows, or null to hide the box */
     function show(s) {
       el.hidden = !s;
       if (!s) {

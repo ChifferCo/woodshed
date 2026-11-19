@@ -113,7 +113,7 @@
 //   POST /api/webhook/rotate     {"confirm": "github-webhook-secret"}
 //   POST /api/webhook/apply      {"confirm": "webhook"}   the Lambda's URL and the stored secret, set on the App
 //   POST /api/webhook/url        {"url": "https://...", "confirm": "webhook"}
-//   *    /term/<id>/...          the session's ttyd on claude's tmux (the Agent tab), proxied with its credentials
+//   *    /term/<id>/...          the session's ttyd on claude's tmux (the TUI tab), proxied with its credentials
 //   *    /shell/<id>/...         its second ttyd, on a plain shell in the repo (the Terminal tab)
 //   *    /redis/<id>/...         the session's redis-commander, through its statusd
 //   *    /pg/<id>/..., /mongo/<id>/...   a session's pgweb and mongo-express, on the databases the console made for it

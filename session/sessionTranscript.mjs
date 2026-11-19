@@ -58,7 +58,7 @@ function toolLine(input) {
 }
 
 // What claude's AskUserQuestion asks, for the Chat tab to show over the work log: each question and its options' labels.
-// claude takes the answer in its terminal: the Agent tab, or the Chat tab's picks, which statusd types there
+// claude takes the answer in its terminal: the TUI tab, or the Chat tab's picks, which statusd types there
 // (panePrompt.mjs).
 function askedQuestions(block) {
   const list = block.name === 'AskUserQuestion' && Array.isArray(block.input?.questions) ? block.input.questions : [];

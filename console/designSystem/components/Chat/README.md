@@ -21,27 +21,27 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
     border (`radius 6`) on `ground`, its number in `meta` mono, the label in `ink`; `slate` border on hover. The one
     picked has a `slate` border on `slate-tint` and a `slate` ✓ at the right (`aria-pressed`). Under them, one quiet
     `btn-plain` **Send answers** (**Send answer** for one question), off until every question has a pick, and a `meta`
-    line: what to do next, and a `slate` text link to the Agent tab for typing an answer of one's own. Never orange:
+    line: what to do next, and a `slate` text link to the TUI tab for typing an answer of one's own. Never orange:
     Send in the composer stays the view's one primary action.
   - **Refused**: when the session would not type it (its pane showed another question, or none), a `bad` line over the
-    button, `Not answered: <the session's reason>.`, with a `slate` link **Answer in the Agent tab**. The picks stay, to
+    button, `Not answered: <the session's reason>.`, with a `slate` link **Answer in the TUI tab**. The picks stay, to
     send again.
   - **Closed** (answered, declined, or a question that takes several options): the options as a numbered list in
     `sub`, the pick sent from here in `ink` 600. A multi-select question says `This takes several options: pick them in
-    the Agent tab`.
+    the TUI tab`.
 - **A note**, such as `Interrupted` or older messages being left out: centred `meta` mono, 11.5px.
 - **The status line**, over the composer: a word, never a colour alone. `Working` in `slate` 600 with the `slate` ring
   and the turn's clock in `meta` mono. `Needs you` is the only `wait`: a `wait` border round the line, the word in
   `wait`, what is asked in `sub`, and an outlined `wait` button. For a question above it reads `claude asks above: pick
-  your answers there` with **Agent tab**; for anything else it cannot answer here, **Answer in the Agent tab**.
+  your answers there` with **TUI tab**; for anything else it cannot answer here, **Answer in the TUI tab**.
   `Claude exited` in `ink`. Nothing when the agent is done. A record that ends on an open question is Needs you, not
   Working, whatever the agent's hooks said last.
 - **An approval** (claude's permission dialog, codex's approval, read from the pane): the Needs you line says `codex
   asks: <its own question>` (claude's with what it is, `Bash command: Do you want to proceed?`), then what it would run
   in a mono box on `stopped` with a `line-soft` border (`radius 6`, the reason last), then three buttons at the right:
-  quiet `btn-plain` **Agent tab** and **Deny**, and **Approve** outlined in `wait`, the line's own colour. While one is
+  quiet `btn-plain` **TUI tab** and **Deny**, and **Approve** outlined in `wait`, the line's own colour. While one is
   on its way it says `Approving…` or `Denying…` and both are off; a refusal is a `bad` line in the box,
-  `Not answered: <reason>. Answer in the Agent tab.` Approve is never orange or green: it answers the agent, and the
+  `Not answered: <reason>. Answer in the TUI tab.` Approve is never orange or green: it answers the agent, and the
   session's state is still the one that is coloured.
 - **The composer**: a `line` box on `ground`, `radius 12`, `amber` border while focused (the focus ring). The field has
   no border of its own, 15px (16px on a phone, which iOS will not zoom). Under it: the agent's name in a mono `line`

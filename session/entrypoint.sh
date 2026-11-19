@@ -747,7 +747,7 @@ restoreHome() {
 chooseClaudeAuth() {
   export PATH=$SESSION_DIR/bin:$PATH
   # tmux starts login shells, whose /etc/profile sets PATH again; ~/.profile runs last. For a claude typed in the
-  # Terminal tab or run by claude itself: the Agent tab's is started by the wrapper's own path.
+  # Terminal tab or run by claude itself: the TUI tab's is started by the wrapper's own path.
   local line="PATH=$SESSION_DIR/bin:\$PATH"
   grep -qxF "$line" "$HOME/.profile" 2>/dev/null || printf '\n%s\n' "$line" >> "$HOME/.profile"
   [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0

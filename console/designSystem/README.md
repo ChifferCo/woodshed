@@ -194,16 +194,16 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Chat
 
-- A running session opens on **Chat**, the conversation as a chat (`components/Chat`); its terminal is the **Agent**
+- A running session opens on **Chat**, the conversation as a chat (`components/Chat`); its terminal is the **TUI**
   tab beside it. The agent's replies are text on the ground; only the person's messages are bubbles, on the right.
 - Tool calls are never shown one by one in the thread: each run of them between two messages is one work log, said in
   words (`Ran 3 commands, edited 2 files`), folded once its turn is over. A failed call is the word `failed` in `bad`.
 - The line over the composer says the agent's state in a word: `Working` in `slate`, `Needs you` in `wait` with a way
-  to the Agent tab, where the agent asks. Send is the view's one orange control; Stop is outlined.
+  to the TUI tab, where the agent asks. Send is the view's one orange control; Stop is outlined.
 - claude's question is answered in its card: options are `line` buttons, the pick on `slate-tint` with a `slate` ✓, and
   **Send answers** is a quiet `btn-plain`. An approval is answered on the Needs you line: **Approve** outlined in
-  `wait`, **Deny** and **Agent tab** quiet. Neither is ever orange or green, and a refusal is a `bad` line saying
-  `Not answered: …` with a way to the Agent tab.
+  `wait`, **Deny** and **TUI tab** quiet. Neither is ever orange or green, and a refusal is a `bad` line saying
+  `Not answered: …` with a way to the TUI tab.
 
 ## Find in a terminal
 
