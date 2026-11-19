@@ -33,7 +33,7 @@ else {
 process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest } = await import('./index.mjs');
+const { handleReviewRequest, failedQaRecord } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 
 function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z') {
@@ -121,6 +121,27 @@ test('a page asking about a diff that was replaced is refused, and nothing is st
   const current = await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T12:00:00.000Z')}`);
   assert.equal(current.body.status, 'running');
   await until(() => readQa(session)?.status === 'ready');
+});
+
+// What a crashed run writes. A crash before the first save must still say which diff it failed for, or GET /qa reads
+// it as another diff's and the failure is hidden; and a file left from an older diff must never be relabelled as this
+// one's, or its answers show against code they are not about.
+test('a crashed run leaves a failure for its own diff, and never takes over another diff\'s answers', () => {
+  const review = { createdAt: '2026-11-19T12:00:00.000Z' };
+  const err = new Error('ENOSPC: no space left');
+  assert.deepEqual(failedQaRecord({ saved: null, review, err }),
+    { items: [], forDiff: review.createdAt, status: 'failed', phase: null, error: 'ENOSPC: no space left' });
+  const older = { forDiff: '2026-11-19T10:00:00.000Z', status: 'ready', items: [{ id: 'q1', answer: 'about old code' }] };
+  assert.deepEqual(failedQaRecord({ saved: older, review, err }).items, []);
+  const own = { forDiff: review.createdAt, status: 'running', items: [{ id: 'q1', answer: 'kept' }] };
+  assert.deepEqual(failedQaRecord({ saved: own, review, err }).items, own.items);
+});
+
+test('the diff says which review it belongs to, read with it', async () => {
+  const session = 'claude-6a6a6a6a';
+  makeReview(session, path.join(DIR, 'fast'), '2026-11-19T13:00:00.000Z');
+  const got = await call('GET', `/reviews/${session}/diff`);
+  assert.equal(got.body.createdAt, '2026-11-19T13:00:00.000Z');
 });
 
 test.after(() => fs.rmSync(DIR, { recursive: true, force: true }));

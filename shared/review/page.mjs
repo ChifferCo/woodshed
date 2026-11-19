@@ -5472,7 +5472,7 @@ ${DARK_PALETTE}
       state.diff = diff;
       // Which diff is on screen, for the Q&A. Not state.createdAt, which the
       // status poll moves to a newer review while this one is still drawn.
-      state.diffAt = got.createdAt || null;
+      state.diffAt = diff.createdAt || got.createdAt || null;
       render();
       // After the first paint, not before it: the ticks are one more round
       // trip, and a diff that waits on GitHub to draw is a diff that is slower

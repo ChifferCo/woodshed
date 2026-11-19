@@ -1577,7 +1577,9 @@ function restoreState(session) {
 function handleDiff(res, ctx, session) {
   const diff = readDiff(session);
   if (!diff) return ctx.json(res, 404, { ok: false, error: 'no diff stored for this session' });
-  return ctx.json(res, 200, { ok: true, session, ...diff });
+  // Which review the diff belongs to, read with it: a page that took it from the
+  // status call made just before could pair this diff with the one it replaced.
+  return ctx.json(res, 200, { ok: true, session, ...diff, createdAt: readSessionReview(session)?.createdAt ?? null });
 }
 
 async function handleAnalyze(res, ctx, session) {
@@ -2065,16 +2067,7 @@ function handleQaStart(res, ctx, session, forDiff) {
       // an unhandled rejection ends the process hosting every review.
       try {
         if (qaIsLive(session, gen)) {
-          const qa = readQa(session);
-          // forDiff too: a failure before the first save left no file to spread,
-          // and one without it is read as another diff's, hiding the failure.
-          writeQa({
-            session,
-            qa: {
-              ...(qa || { items: [] }), forDiff: review.createdAt ?? null,
-              status: 'failed', phase: null, error: err?.message || 'the Q&A failed',
-            },
-          });
+          writeQa({ session, qa: failedQaRecord({ saved: readQa(session), review, err }) });
         }
       } catch (again) {
         log('review.qa_failure_not_saved', { session, error: again?.message });
@@ -2084,6 +2077,21 @@ function handleQaStart(res, ctx, session, forDiff) {
       if (qaIsLive(session, gen)) qaRuns.delete(session);
     });
   return json(res, 200, { ok: true, status: 'running' });
+}
+
+/**
+ * What a crashed Q&A run leaves on disk: a failure, for the diff it was about.
+ *
+ * What the run saved is kept only when that file is this diff's: one left from
+ * an older diff (its delete failed) would otherwise be relabelled as this one's,
+ * its answers shown against code they are not about. And it always carries
+ * forDiff: a crash before the first save left no file to take it from, and one
+ * without it is read as another diff's, which hides the failure.
+ */
+export function failedQaRecord({ saved, review, err }) {
+  const forDiff = review?.createdAt ?? null;
+  const own = saved && (saved.forDiff ?? null) === forDiff ? saved : { items: [] };
+  return { ...own, forDiff, status: 'failed', phase: null, error: err?.message || 'the Q&A failed' };
 }
 
 const QA_START_RETRIES = 10;
