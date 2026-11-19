@@ -532,5 +532,14 @@
     return { pending: left, changed };
   }
 
-  return { reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * Whether a failed send was the console's own refusal, given with its reason, and so typed nothing (unless `typed`).
+   * Anything else (no answer in time, the connection lost, a proxy's page, a reply cut off) may have come after it went in.
+   * @param {{name?: string, status?: number, answered?: boolean}} err  as common.js's postJson throws it
+   */
+  function consoleRefused(err) {
+    return err?.name !== 'TimeoutError' && err?.name !== 'AbortError' && typeof err?.status === 'number' && err.answered === true;
+  }
+
+  return { consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

@@ -1516,7 +1516,9 @@
       method: 'POST', headers: { 'x-woodshed': '1', 'content-type': 'application/json' }, body: JSON.stringify(body || {}), signal,
     });
     const answer = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status }, answer.link && { link: answer.link }, answer.typed === true && { typed: true });
+    // `answered`: the console's own refusal, with its reason; a refusal with none (a proxy's page, a reply cut off) may
+    // have come after the console did the work.
+    if (!res.ok) throw Object.assign(new Error(answer.error || `POST ${path} answered ${res.status}`), { status: res.status, answered: typeof answer.error === 'string' }, answer.link && { link: answer.link }, answer.typed === true && { typed: true });
     return answer;
   }
 

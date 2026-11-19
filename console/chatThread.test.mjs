@@ -341,6 +341,13 @@ test('a held bubble the console left in the agent\'s box says so by its id, and 
   assert.deepEqual(r.pending.map((p) => p.id), ['aaaaaaaa-1'], 'the box empty again: let go');
 });
 
+test('a failed send is put back to send again only when the console refused it with its reason', () => {
+  assert.equal(chat.consoleRefused({ status: 409, answered: true }), true);
+  assert.equal(chat.consoleRefused({ status: 502, answered: false }), false, 'a proxy\'s page: the console may have sent it');
+  assert.equal(chat.consoleRefused(new TypeError('Failed to fetch')), false, 'the connection lost');
+  assert.equal(chat.consoleRefused(Object.assign(new Error('t'), { name: 'TimeoutError' })), false);
+});
+
 test('a held bubble the session could not take safely says it was not sent, and goes in time', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'yes do it', sentAt: now - 60_000, state: 'held' };

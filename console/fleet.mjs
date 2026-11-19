@@ -134,15 +134,15 @@ export function sendTimeoutMs(text) {
   return 10_000 + steps * 60;
 }
 
+// fetch's codes for a connection that was never made: nothing reached statusd (undici's, and Node's own).
+const NEVER_CONNECTED = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+
 /**
  * @param {object} session
  * @param {'GET'|'POST'} method
  * @param {string} path
  * @param {{body?: object, timeoutMs?: number}} [opts]
  */
-// fetch's codes for a connection that was never made: nothing reached statusd (undici's, and Node's own).
-const NEVER_CONNECTED = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
-
 export async function callStatusd(session, method, path, { body, timeoutMs = STATUS_TIMEOUT_MS } = {}) {
   const { host, statusPort } = session.endpoint;
   const res = await fetch(`http://${host}:${statusPort}${path}`, {
@@ -540,9 +540,11 @@ export function createFleet({
   // A send statusd never answered may have gone in: it may still be typing it and press its Enter after (a timeout), or
   // have sent it before the connection dropped (a reset, a reply cut off). Sent again it could reach the agent twice, so
   // it is not: the agent's record says whether it arrived. Only a connection that was never made, or an answer statusd
-  // gave (`status`), says it typed nothing; that is held to try again.
+  // gave in full (`status` with its body), says it typed nothing; that is held to try again.
   function unknownOutcome(session, err) {
-    if (typeof err?.status === 'number') return false;
+    // statusd always answers with its reasons: an answer with none was cut off, or is not statusd's, and says nothing of
+    // what was typed (a 409's `typed`).
+    if (typeof err?.status === 'number' && err.body && typeof err.body === 'object') return false;
     const code = err?.cause?.code ?? err?.code ?? null;
     if (NEVER_CONNECTED.has(code)) return false;
     console.warn('fleet: message send got no answer, not sent again: it may have gone in', { id: session.id, why: code ?? err?.name ?? null });

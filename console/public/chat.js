@@ -276,11 +276,13 @@
         sent.state = answer?.held ? 'held' : answer?.unknown ? 'unknown' : 'sent';
         if (answer?.unknown) sent.deliveredAt = Date.now();
       } catch (err) {
-        // No answer in time: it may have gone in, so it stays as sent, for the agent's record to say, and is not put back
-        // to send again, which could type it twice.
-        if (err.name === 'TimeoutError') {
-          sent.state = 'sent';
-          W.shell.toast('No answer yet: it may still go in. Check the thread before sending it again', { ms: 6000 });
+        // No answer from the console (none in time, the connection lost, a reply cut off or not the console's): it may
+        // have gone in, so it is not put back to send again, which could type it twice. The bubble says so, for the
+        // agent's record to settle.
+        if (!T.consoleRefused(err)) {
+          sent.state = 'unknown';
+          sent.deliveredAt = Date.now();
+          W.shell.toast('No answer: it may have gone in. Check the thread before sending it again', { ms: 6000 });
           return;
         }
         // Back in the box, to send again, unless it is in the agent's box already (a prompt came up as it went in):

@@ -683,6 +683,8 @@ test('a send whose connection drops after it reached statusd is unknown and neve
   assert.deepEqual(session.pendingMessages, [], 'not held to type again');
   fail.sendFor = () => new SyntaxError('Unexpected end of JSON input');
   assert.equal(await fleet.send(session, 'cut off'), 'unknown', 'a reply cut off after statusd took it');
+  fail.sendFor = () => Object.assign(new Error('statusd /send answered 409'), { status: 409, body: null });
+  assert.equal(await fleet.send(session, 'cut 409'), 'unknown', 'a refusal whose body was lost may have said typed');
   fail.sendFor = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
   assert.equal(await fleet.send(session, 'refused'), 'queued', 'never reached statusd: held to try again');
   fail.sendFor = null;
