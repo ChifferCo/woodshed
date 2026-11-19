@@ -127,6 +127,7 @@ function guard(win) {
 // macOS: no title bar, the traffic lights in the rail's head (windowChrome.mjs). `--mac-chrome` adds the same rules to
 // the pages anywhere, to look at the layout on another system, where the title bar itself stays.
 const macChrome = process.platform === 'darwin';
+const MAC_MIN_WIDTH = 900;
 const chromeRules = macChrome || process.argv.includes('--mac-chrome');
 
 // The header's rules on each page of the main window: the console's own, or the app's setup and sign-in pages'.
@@ -143,7 +144,10 @@ function createMainWindow() {
   const { bounds } = readSettings();
   mainWindow = new BrowserWindow({
     width: 1440, height: 920, minWidth: 420, minHeight: 480, ...(bounds ?? {}),
+    // No narrower than the console's desktop layout (900px), whose rail head holds the lights: narrower, the console
+    // takes its phone layout, whose top-left controls the lights would cover.
     ...(macChrome ? { titleBarStyle: 'hiddenInset', trafficLightPosition: TRAFFIC_LIGHTS } : {}),
+    ...(chromeRules ? { minWidth: MAC_MIN_WIDTH } : {}),
     title: 'Woodshed', icon, backgroundColor: '#1b2232', show: false,
     webPreferences: { ...webPreferences, preload: path.join(here, 'preload.cjs') },
   });
@@ -299,8 +303,10 @@ async function finishSignIn(link) {
   mainWindow.focus();
   const base = consoleUrl;
   const attempt = signInAttempt;
-  // Where the window is while the claim is on its way: a person who moved on (Change console…, another page) keeps it.
-  const from = mainWindow.webContents.getURL();
+  // Where the window is while the claim is on its way: a person who moved on (Change console…, another page) keeps it,
+  // and so does a window opened in place of this one, though it may be at the same address.
+  const win = mainWindow;
+  const from = win.webContents.getURL();
   const claimUrl = new URL('auth/desktop/claim', base).href;
   let error = null;
   let setCookies = [];
@@ -345,7 +351,7 @@ async function finishSignIn(link) {
     if (!error) startWatching();
     return;
   }
-  if (mainWindow.webContents.getURL() !== from) {
+  if (mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
     if (!error) startWatching();
     return;
