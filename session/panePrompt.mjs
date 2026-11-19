@@ -445,17 +445,6 @@ function asking(pane, text) {
   return menuOn(pane, text) ? 'menu' : null;
 }
 
-// What the agents put in their box for a paste they fold (claude 2.1.328, codex 0.167, measured): claude's
-// `[Pasted text #2]`, or `[Pasted text #1 +6 lines]` for 7 lines; codex's `[Pasted Content 1200 chars]`.
-const PASTE_PLACEHOLDER = /^\[Pasted (?:text #\d+(?: \+(\d+) lines)?|Content (\d+) chars)\]$/;
-// Text no agent folds: one short line goes in as typed.
-const FOLDS_FROM = 100;
-
-/**
- * Whether the box holds the text just typed and nothing else. A folded paste counts only when it can be this one: the
- * box was empty before it, holds that one placeholder alone (a paste of someone else's would leave two), the text is
- * one an agent folds (several lines, or long), and the count the placeholder gives matches the text's.
- */
 // The box shows nothing yet, or the start of the text: the agent has not drawn all of it.
 function stillDrawing(box, text) {
   if (typeof box !== 'string') return false;
@@ -463,17 +452,15 @@ function stillDrawing(box, text) {
   return bare(text).startsWith(bare(box));
 }
 
+/**
+ * Whether the box holds the text just typed and nothing else, as it shows it (wrapped, so whitespace aside). statusd
+ * types so that no agent folds it into a `[Pasted …]` placeholder (statusd.mjs, typingSteps), since a placeholder says
+ * nothing of whose paste it is: one in the box is never this text, and gets no Enter.
+ */
 export function holdsOnly(box, text) {
   if (typeof box !== 'string') return false;
   const bare = (s) => s.replace(/[\s\u00a0]+/g, '');
-  if (bare(box) === bare(text)) return true;
-  const folded = PASTE_PLACEHOLDER.exec(box.trim());
-  if (!folded) return false;
-  const lines = text.split('\n').length;
-  if (lines === 1 && text.length < FOLDS_FROM) return false;
-  if (folded[1] !== undefined) return Number(folded[1]) === lines - 1;
-  if (folded[2] !== undefined) return Number(folded[2]) === text.length || Number(folded[2]) === [...text].length;
-  return lines === 1;
+  return bare(box) === bare(text);
 }
 
 export async function typeMessage(io, text) {

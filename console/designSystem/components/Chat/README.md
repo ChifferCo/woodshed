@@ -3,7 +3,7 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
 
 - **The person's message**: on the right, at most 85% of the column, a bubble on `slate-tint` with a `line` border and
   `radius 14 14 4 14`, `ink` text as typed (line breaks kept). One sent from the page that the record does not hold yet
-  has a dashed border and a `meta` mono line under it: `Sending…`, then `Sent, waiting for claude`.
+  has a dashed border and a `meta` mono line under it: `Sending…`, then `Sent, waiting for claude`, or, while the console holds it because the agent is busy, `Not sent yet: it goes in when claude is back at its prompt`, which stays until the agent's record holds it.
 - **The agent's reply**: plain text on the ground, no bubble, 14.5px at 1.65. Markdown is drawn: headings as 15.5px
   700, lists with `meta` markers, quotes with a 3px `line` rule in `sub`, inline code on `stopped` with a `line-soft`
   border, tables with `stopped` heads, and fenced code in a `line` box (`radius 8`) whose head is the language in

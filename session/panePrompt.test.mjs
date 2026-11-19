@@ -439,20 +439,15 @@ test('Chat shows a command as drawn: two that differ only in their indentation l
   assert.match(shown(after), /for n in range\(3\):\n {4}print\(n\)\nrun\(n\)/);
 });
 
-test('a folded paste counts as the text just sent only when it can be: alone, for foldable text, its count matching', async () => {
+test('a folded paste never counts as the text just sent: a placeholder says nothing of whose paste it is', async () => {
   const { holdsOnly } = await import('./panePrompt.mjs');
   const sevenLines = Array.from({ length: 7 }, (_, i) => `line ${i + 1} of a long message`).join('\n');
-  const long = 'x'.repeat(1200);
-  // As claude 2.1.328 and codex 0.167 fold them (measured).
-  assert.equal(holdsOnly('[Pasted text #1 +6 lines]', sevenLines), true, 'claude: lines after the first');
-  assert.equal(holdsOnly('[Pasted text #1 +2 lines]', sevenLines), false, 'another paste, of 3 lines');
-  assert.equal(holdsOnly('[Pasted text #2]', long), true, 'claude: one long line, no count');
-  assert.equal(holdsOnly('[Pasted text #2]', sevenLines), false, 'claude counts the lines of a paste of several');
-  assert.equal(holdsOnly('[Pasted Content 1200 chars]', long), true, 'codex: its characters');
-  assert.equal(holdsOnly('[Pasted Content 900 chars]', long), false, 'another paste, of 900');
-  assert.equal(holdsOnly('[Pasted text #2]', 'short'), false, 'a short line is never folded: not this one');
-  assert.equal(holdsOnly('[Pasted text #1 +6 lines] [Pasted text #2]', sevenLines), false, 'two pastes: one is someone else\'s');
-  assert.equal(holdsOnly('ship it now', 'ship   it now'), true, 'typed text, as the box wraps it');
+  // statusd types so no agent folds the text (statusd typingSteps): a placeholder in the box is someone else's paste,
+  // even one whose count matches, as the review showed.
+  assert.equal(holdsOnly('[Pasted text #1 +6 lines]', sevenLines), false, 'same count, still not this one');
+  assert.equal(holdsOnly('[Pasted Content 1200 chars]', 'x'.repeat(1200)), false);
+  assert.equal(holdsOnly(sevenLines.replace(/\n/g, '\n  '), sevenLines), true, 'the text itself, as the box wraps it');
+  assert.equal(holdsOnly('ship it now', 'ship   it now'), true);
 });
 
 test('a claude box under a titled rule is found, and a row of dashes typed into a draft is not its closing rule', () => {

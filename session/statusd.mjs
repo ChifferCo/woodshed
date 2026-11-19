@@ -891,6 +891,32 @@ async function answer(body) {
   }
 }
 
+// How a message is typed so the agent shows it in its box as it is, never folded into a `[Pasted …]` placeholder
+// (measured on claude 2.1.328 and codex 0.167): claude folds a fast burst (1200 characters at once, or several lines),
+// and shows the same text typed 50 characters at a time, 20 ms apart, with Ctrl-J for each new line (a newline, not
+// an Enter). codex swallows an Enter landing in a fast run of plain keys, so it gets bracketed pastes, which it folds
+// over about 1000 characters: 400 at a time.
+const CLAUDE_CHUNK = 50;
+const CODEX_PASTE = 400;
+
+/**
+ * @returns {({keys: string}|{paste: string}|{key: string}) & {pauseMs: number}}[]
+ */
+export function typingSteps(text, agent) {
+  const steps = [];
+  if (agent === 'codex') {
+    const chars = [...text];
+    for (let i = 0; i < chars.length; i += CODEX_PASTE) steps.push({ paste: chars.slice(i, i + CODEX_PASTE).join(''), pauseMs: 50 });
+    return steps;
+  }
+  text.split('\n').forEach((line, n) => {
+    if (n > 0) steps.push({ key: 'C-j', pauseMs: 20 });
+    const chars = [...line];
+    for (let i = 0; i < chars.length; i += CLAUDE_CHUNK) steps.push({ keys: chars.slice(i, i + CLAUDE_CHUNK).join(''), pauseMs: 20 });
+  });
+  return steps;
+}
+
 /**
  * A failed tmux call that typed a message, said again without the message: execFile's own error quotes the command
  * line, and what someone typed never goes in a log or a reply.
@@ -907,12 +933,14 @@ const paneIo = {
     // A failed call's error quotes its command line, the message's text with it: it is said again without it, since
     // what someone typed never goes in a log.
     try {
-      // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about
-      // 100 characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
-      if (CODEX) {
-        await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
-        await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
-      } else await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', text]);
+      for (const step of typingSteps(text, CODEX ? 'codex' : 'claude')) {
+        if (step.paste !== undefined) {
+          await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', step.paste]);
+          await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
+        } else if (step.keys !== undefined) await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', step.keys]);
+        else await run('tmux', ['send-keys', '-t', TMUX_TARGET, step.key]);
+        await new Promise((resolve) => setTimeout(resolve, step.pauseMs));
+      }
     } catch (err) {
       throw typingError(err);
     }

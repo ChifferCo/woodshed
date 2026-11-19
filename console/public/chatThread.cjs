@@ -285,7 +285,8 @@
   function stillPending(pending, entries, now = Date.now()) {
     const used = new Set();
     return pending.filter((p) => {
-      if (now - p.sentAt > PENDING_MS) return false;
+      // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
+      if (p.state !== 'held' && now - p.sentAt > PENDING_MS) return false;
       const want = squash(p.text);
       const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user'
         && (!e.at || Date.parse(e.at) >= p.sentAt - 30_000) && squash(e.text).startsWith(want.slice(0, 200)));
@@ -424,5 +425,15 @@
     return null;
   }
 
-  return { notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * What a message sent from the page says under it until the agent's record holds it.
+   * @param {'sending'|'sent'|'held'} state  held: the console keeps it while the agent is busy, nothing has reached it
+   */
+  function pendingLabel(state, agent) {
+    if (state === 'sending') return 'Sending…';
+    if (state === 'held') return `Not sent yet: it goes in when ${agent} is back at its prompt`;
+    return `Sent, waiting for ${agent}`;
+  }
+
+  return { pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

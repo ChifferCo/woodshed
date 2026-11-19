@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError } from './statusd.mjs';
+import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -1011,4 +1011,20 @@ test('the status says when text waits in the agent\'s box at its prompt, for Cha
   const rule = '─'.repeat(60);
   const draft = await promptPane(t, 'done', { screen: `\n${rule}\n❯ half a note\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n` });
   assert.equal((await draft.call('GET', '/status')).body.boxText, true);
+});
+
+test('a message is typed so no agent folds it into a paste: claude in short runs with Ctrl-J between lines, codex in short pastes', () => {
+  const long = 'abcdefghij'.repeat(120);
+  const claude = typingSteps(`${long}\nsecond line\n\nlast`, 'claude');
+  assert.ok(claude.every((s) => s.keys === undefined || [...s.keys].length <= 50), 'never more than 50 characters at once');
+  assert.equal(claude.filter((s) => s.key === 'C-j').length, 3, 'a newline for each line after the first, an empty one too');
+  assert.ok(!claude.some((s) => s.key === 'Enter'), 'no Enter while typing');
+  assert.equal(claude.filter((s) => s.keys).map((s) => s.keys).join(''), `${long}second linelast`);
+  assert.ok(claude.every((s) => s.pauseMs >= 20));
+  const codex = typingSteps(long, 'codex');
+  assert.deepEqual(codex.map((s) => [...s.paste].length), [400, 400, 400]);
+  assert.equal(codex.map((s) => s.paste).join(''), long);
+  // A character outside the basic plane is never split across two runs.
+  const emoji = '🙂'.repeat(60);
+  assert.equal(typingSteps(emoji, 'claude').map((s) => s.keys).join(''), emoji);
 });

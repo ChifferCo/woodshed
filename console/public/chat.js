@@ -266,8 +266,10 @@
       drawComposer();
       drawThread(true);
       try {
-        await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
-        sent.state = 'sent';
+        const answer = await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        // Held by the console while the agent is busy: nothing has reached it yet, and the bubble says so until the
+        // agent's record holds it.
+        sent.state = answer?.held ? 'held' : 'sent';
       } catch (err) {
         // Back in the box, to send again, unless it is in the agent's box already (a prompt came up as it went in):
         // sending it again would type it twice.
@@ -501,7 +503,7 @@
       for (const p of waiting) {
         nodes.push(h('div', { class: 'chat-user is-pending' },
           h('div', { class: 'chat-bubble' }, p.text),
-          h('span', { class: 'chat-sent' }, p.state === 'sending' ? 'Sending…' : `Sent, waiting for ${agent()}`)));
+          h('span', { class: 'chat-sent' }, T.pendingLabel(p.state, agent()))));
       }
       return nodes;
     }

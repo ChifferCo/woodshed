@@ -242,3 +242,12 @@ test('a message waits for a file still uploading, which Enter would otherwise se
   assert.equal(chat.notReady({ text: '', files: [up], sending: false }), null, 'a file alone is a message');
   assert.equal(chat.notReady({ text: 'x', files: [], sending: true }), 'sending');
 });
+
+test('a message the console holds says it is not sent yet, and waits as long as the turn runs', () => {
+  assert.equal(chat.pendingLabel('held', 'claude'), 'Not sent yet: it goes in when claude is back at its prompt');
+  assert.equal(chat.pendingLabel('sent', 'codex'), 'Sent, waiting for codex');
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const hour = 60 * 60_000;
+  const left = chat.stillPending([{ text: 'held one', sentAt: now - hour, state: 'held' }, { text: 'sent one', sentAt: now - hour, state: 'sent' }], [], now);
+  assert.deepEqual(left.map((p) => p.text), ['held one'], 'a held one is not let go after ten minutes; a sent one is');
+});
