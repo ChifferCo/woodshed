@@ -98,6 +98,24 @@ test('an approval: claude\'s permission dialogs, old and new, with what is asked
   assert.equal(write.what, 'Create file');
   assert.equal(write.deny, 2);
 
+  // Captured live from claude 2.1.328 in default mode in an 80-column pane, where the auto mode tip wraps.
+  const narrow = readApproval(pane('pane-permission-bash-narrow.txt'));
+  assert.equal(narrow.what, 'Bash command');
+  assert.deepEqual(narrow.detail, ['Write current date to now.txt', 'date > now.txt'], 'the tip\'s wrapped "below" left out too');
+  assert.equal(narrow.options[narrow.approve].label, 'Yes');
+  assert.equal(narrow.options[narrow.deny].label, 'No');
+
+  const writeNarrow = readApproval(pane('pane-permission-write-narrow.txt'));
+  assert.equal(writeNarrow.what, 'Create file');
+  assert.deepEqual(writeNarrow.detail, ['notes2.txt', '1 hello']);
+  assert.equal(writeNarrow.options[writeNarrow.approve].label, 'Yes', 'not the wrapped "Yes, and switch to accept edits" row');
+  assert.equal(writeNarrow.options[writeNarrow.deny].label, 'No');
+  assert.equal(writeNarrow.deny, 2);
+
+  const noOnce = pane('pane-permission-bash.txt').replace('❯ 1. Yes\n', '❯ 1. Yes, and don\'t ask again for date\n');
+  assert.notEqual(noOnce, pane('pane-permission-bash.txt'));
+  assert.equal(readApproval(noOnce), null, 'with no one-time Yes, Approve has nothing it may pick');
+
   const old = readApproval(pane('pane-permission.txt'));
   assert.deepEqual(old.detail, ['curl -s https://example.com | head -2', 'Fetch example.com and show first two lines'], 'without "This command requires approval"');
 

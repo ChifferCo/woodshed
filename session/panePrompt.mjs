@@ -144,12 +144,28 @@ function readReview(lines, head) {
   };
 }
 
+// claude's `Tip: …` lines over its permission dialog, with the lines a narrow pane wrapped them onto (a 80-column pane
+// puts the auto mode tip's last word, `below`, on a line of its own). A line is wrapped onto the next when the next's
+// first word would not have fitted after it in the pane's width, which the rule over the dialog spans.
+function dropTips(raw, width) {
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (!/^\s*Tip:/.test(raw[i])) {
+      out.push(raw[i]);
+      continue;
+    }
+    while (i + 1 < raw.length && raw[i + 1].trim() && !DASHED.test(raw[i + 1])
+      && raw[i].trimEnd().length + 1 + raw[i + 1].trim().split(/\s/)[0].length > width) i++;
+  }
+  return out;
+}
+
 /**
  * An approval the agent waits on: claude's permission dialog, or codex's approval.
  * @param {string} pane
  * @returns {null|{agent: 'claude'|'codex', what: string|null, title: string, detail: string[],
  *   options: {n: number, label: string, highlighted: boolean}[], highlighted: number|null, approve: number, deny: number}}
- *   approve and deny are indexes into options: the first that says Yes, and the first that says No
+ *   approve and deny are indexes into options: the first that says Yes (and not `Yes, and …`), and the first that says No
  */
 export function readApproval(pane) {
   const lines = linesOf(pane);
@@ -167,7 +183,9 @@ export function readApproval(pane) {
       const head = lines.slice(rule + 1, title).map((l) => l.trim());
       // claude's question picker has its tabs here; it is not an approval, whatever its question says.
       if (rule === -1 || head.some((l) => TABS.test(l))) continue;
-      const kept = head.filter((l) => l && !/^Tip:/.test(l) && !/^╌+$/.test(l) && l !== 'This command requires approval');
+      const kept = dropTips(lines.slice(rule + 1, title), lines[rule].trimEnd().length)
+        .map((l) => l.trim())
+        .filter((l) => l && !/^╌+$/.test(l) && l !== 'This command requires approval');
       what = kept.shift() ?? null;
       detail = kept;
     } else {
@@ -175,7 +193,8 @@ export function readApproval(pane) {
       detail = lines.slice(title + 1, rows[0].line).map((l) => l.trim()).filter(Boolean);
     }
     const options = rows.map((r) => ({ n: r.n, label: r.text.replace(SHORTCUT, '').slice(0, MAX_LINE), highlighted: r.highlighted }));
-    const approve = options.findIndex((o) => /^Yes\b/.test(o.label));
+    // Just this once: never a `Yes, and …` row, which allows it for good or switches the mode. With none, no approval.
+    const approve = options.findIndex((o) => /^Yes\b/.test(o.label) && !/^Yes,? and\b/i.test(o.label));
     const deny = options.findIndex((o) => /^No\b/.test(o.label));
     if (approve === -1 || deny === -1) continue;
     const at = options.findIndex((o) => o.highlighted);
