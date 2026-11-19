@@ -224,7 +224,7 @@
   async function rename(s) {
     // No limit on the field: a pasted title is cut to the 120 characters a name keeps only after its runs of spaces
     // collapse, below, as the browser's prompt did.
-    const answer = await W.askText({ title: 'Rename this session', label: 'Name', value: s.title, goLabel: 'Rename', maxLength: null });
+    const answer = await W.askText({ title: 'Rename this session', label: 'Name', value: s.title, goLabel: 'Rename' });
     if (answer === null) return;
     const title = answer.replace(/\s+/g, ' ').trim().slice(0, 120);
     if (!title || title === s.title) return;

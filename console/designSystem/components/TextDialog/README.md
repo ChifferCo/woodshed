@@ -6,6 +6,8 @@ session, and the payload URL on Secrets & webhooks.
 - A heading that says what is asked, as a sentence: **Rename this session**, **Set the GitHub App's payload URL**.
 - One field under its label (`field-label`), filled with what is there now and selected, so typing replaces it. An
   address is `mono`.
+- No length limit on the field: a field that cuts a paste can keep a shorter text that still looks right (a URL
+  without its last parameter). What a caller keeps, it cuts itself, after collapsing spaces (Rename keeps 120).
 - Cancel, quiet, then the one action, orange, on the right: a verb (**Rename**, **Next**). Enter takes the text, Escape
   or Cancel drops it. An empty field is dropped, as Cancel.
 - Never `window.prompt`: the desktop app has none (Electron returns nothing), and in a browser it is the browser's box,

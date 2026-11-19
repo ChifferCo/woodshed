@@ -1582,10 +1582,11 @@
    * One line of text from the person, in the console's own dialog: window.prompt is missing where the page runs in the
    * desktop app (Electron has none, and returns nothing), and looks like the browser's rather than the console's.
    * @param {{title: string, label: string, value?: string, goLabel: string, maxLength?: number|null, mono?: boolean}} opts
-   *   `maxLength: null` sets no limit on the field, for a caller that cuts what it keeps itself
+   *   `maxLength`: a limit on the field, none by default: a field that cuts a paste can keep a shorter text that still
+   *   looks right (a URL without its last parameter), so a caller cuts what it keeps itself, after looking at it
    * @returns {Promise<string|null>}  what was typed, trimmed, or null on Cancel, Escape or an empty field
    */
-  function askText({ title, label, value = '', goLabel, maxLength = 500, mono = false }) {
+  function askText({ title, label, value = '', goLabel, maxLength = null, mono = false }) {
     return new Promise((resolve) => {
       let answer = null;
       const input = h('input', { type: 'text', autocomplete: 'off', spellcheck: 'false', ...(maxLength ? { maxlength: String(maxLength) } : {}), class: mono ? 'field mono' : 'field' });

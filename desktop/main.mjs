@@ -303,8 +303,12 @@ async function askDesktopReady(base) {
   try {
     // 5 s at most: a console that never answers signs in inside the window, rather than leave Sign in doing nothing.
     const res = await net.fetch(new URL('auth/desktop/ready', base).href, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(READY_MS) });
+    // A body cut off by the 5 s is no answer either, as no headers are: only a whole answer can change what is known.
+    ready = res.ok ? await res.json().catch((err) => {
+      if (err.name === 'TimeoutError' || err.name === 'AbortError') throw err;
+      return null;
+    }) : null;
     answered = true;
-    ready = res.ok ? await res.json().catch(() => null) : null;
   } catch {
     ready = null;
   }
