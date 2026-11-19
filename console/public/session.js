@@ -53,6 +53,8 @@
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
+    // An entry that showed a fallback (a link's tab the session could not show) still does after a reload.
+    fellBack = Boolean(id && state?.fellBack && state.login === pageLogin && !inAddress);
     const query = params.toString();
     const address = `${pathname}${query ? `?${query}` : ''}`;
     if (id && asked) markEntry(address, arrivedWith);
@@ -60,7 +62,7 @@
   }
   // This history entry's address, with the tab it shows in its state (and the ?tab it arrived with, when given).
   function markEntry(address, arrivedWith) {
-    const state = SessionTabs.withEntryTab(window.history.state, tab, pageLogin);
+    const state = { ...SessionTabs.withEntryTab(window.history.state, tab, pageLogin), fellBack };
     if (arrivedWith !== undefined) state.linkedTab = arrivedWith;
     window.history.replaceState(state, '', address);
   }
@@ -72,13 +74,15 @@
     const left = SessionTabs.leftOn({ tab, held: heldTab, reviewPending, drawn });
     if (left === null) return;
     if (SessionTabs.entryTab(window.history.state, pageLogin) !== left) {
-      window.history.replaceState(SessionTabs.withEntryTab(window.history.state, left, pageLogin), '');
+      window.history.replaceState({ ...SessionTabs.withEntryTab(window.history.state, left, pageLogin), fellBack }, '');
     }
   }
   // The memory keeps the tab a session is left on (a click on a tab, a move to another page, Back or Forward), not the
   // one an address asked for on arrival: a ?tab carried in from elsewhere (a link, the way back through sign-in, perhaps
   // someone else's) shows, and becomes this login's only if they leave the session on it.
   function rememberLeaving() {
+    // A tab the page fell back to (a link's tab the session cannot show) was not picked: leaving keeps the memory as is.
+    if (fellBack) return;
     const drawn = Boolean(id) && currentSession?.id === id;
     const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
     const left = SessionTabs.leaving({ tab, held: heldTab, reviewPending, drawn });
@@ -97,6 +101,8 @@
   // A tab asked for that the session, as the list before this route's lookup has it, cannot show: tried again once the
   // lookup answers (render).
   let heldTab = null;
+  // Whether the tab showing is a fallback the page chose (render), until a tab is picked or the route changes.
+  let fellBack = false;
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box.
@@ -1837,6 +1843,7 @@
     // So is the tab showing when the memory says another (a link opened it): the click makes it the one kept.
     const picked = SessionTabs.picks({ tab, next, held: heldTab, landOnReview }) || tabMemory.asked(id, null, null) !== next;
     heldTab = null;
+    fellBack = false;
     if (!picked) return;
     tab = next;
     landOnReview = false;
@@ -1979,6 +1986,7 @@
     const settled = SessionTabs.settle({ tab, held: heldTab, pending: !routeConfirmed, s, hasShell });
     ({ tab, held: heldTab } = settled);
     if (settled.fellBack) {
+      fellBack = true;
       const url = new URL(window.location.href);
       url.searchParams.delete('tab');
       markEntry(url);
