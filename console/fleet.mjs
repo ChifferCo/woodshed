@@ -1097,6 +1097,10 @@ export function createFleet({
       }
       if (!canType(session)) return 'later';
       try {
+        // claude may have closed since the last status read, and the pane would then be a shell that runs the text:
+        // its state is read again just before.
+        const fresh = await statusd(session, 'GET', '/status');
+        if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting') return 'later';
         await statusd(session, 'POST', '/send', { body: { text } });
       } catch (err) {
         console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });

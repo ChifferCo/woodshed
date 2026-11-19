@@ -3473,3 +3473,28 @@ test('a private watch on the default project ends when the default project is re
   await fleet.tick();
   assert.deepEqual([store.state.slackPending, reads], [[], []]);
 });
+
+test('a private session whose claude closed since its last status read is not typed into', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  // claude closes while the console reads GitHub, after this tick's status read.
+  github.checkRuns = async () => {
+    statuses[session.id] = { state: 'not-running', prUrl };
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.deepEqual(sent(), []);
+  statuses[session.id] = { state: 'done', prUrl };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 1, 'told once claude is open again');
+});
