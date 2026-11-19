@@ -199,7 +199,7 @@ function createMainWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
   guard(mainWindow);
   addChrome(mainWindow.webContents);
-  if (consoleUrl) mainWindow.loadURL(consoleUrl);
+  if (consoleUrl) loadConsole(mainWindow, consoleUrl);
   else showSetup();
 }
 
@@ -258,10 +258,9 @@ ipcMain.handle('console:connect', async (event, typed) => {
   // What was seen and the badge are the old console's: they go now, with it, whatever happens to the page after.
   startWatching();
   // Known before the console's first page, which a hosted console redirects to its own sign-in: only its answer names
-  // that path, so the redirect can go to the browser.
-  await readyBeforeLoading();
-  if (!stillAsked()) return { ok: true };
-  win.loadURL(url);
+  // that path, so the redirect can go to the browser. The page is loaded only while setup still asks, and only if
+  // nothing asked for another page meanwhile (File → Sessions, New session).
+  await loadConsole(win, url, { still: stillAsked });
   return { ok: true };
 });
 
@@ -278,21 +277,49 @@ let signInAttempt = 0;
 let desktopReady = false;
 let signInPaths = [...CONSOLE_SIGN_IN_PATHS];
 
-async function readDesktopReady() {
+// One read in flight for a console at a time, shared by whoever asks meanwhile (the start, Change console…, a menu's
+// load, Sign in): two at once could answer differently, the later one, if it failed, overwriting the good one.
+let readyInFlight = null;
+function readDesktopReady() {
   const base = consoleUrl;
+  if (readyInFlight?.base === base) return readyInFlight.promise;
+  const promise = askDesktopReady(base).finally(() => { if (readyInFlight?.promise === promise) readyInFlight = null; });
+  readyInFlight = { base, promise };
+  return promise;
+}
+async function askDesktopReady(base) {
   let ready = null;
+  let answered = false;
   try {
     // 5 s at most: a console that never answers signs in inside the window, rather than leave Sign in doing nothing.
     const res = await net.fetch(new URL('auth/desktop/ready', base).href, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(READY_MS) });
+    answered = true;
     ready = res.ok ? await res.json().catch(() => null) : null;
   } catch {
     ready = null;
   }
   // An answer from a console no longer in use is not this one's.
   if (base !== consoleUrl) return false;
+  // No answer at all keeps what this console said before, if it said anything: a slow moment is not a change of mind.
+  if (!answered && readyKnownFor === base) return desktopReady;
   desktopReady = ready?.desktop === true;
   signInPaths = signInPathsFrom(desktopReady ? ready : null);
+  readyKnownFor = base;
   return desktopReady;
+}
+// The console whose ready answer `desktopReady` and `signInPaths` hold: a page of another is loaded only once its own is
+// known (loadConsole), so its sign-in redirect goes where that console says.
+let readyKnownFor = null;
+// Loads wait for that answer in turn, and only the latest asked goes ahead: Change console…'s own load and File →
+// Sessions pressed while it waits never both load, and never race each other's sign-in.
+let loadSeq = 0;
+async function loadConsole(win, url, { still = () => true } = {}) {
+  const mine = ++loadSeq;
+  const base = consoleUrl;
+  if (readyKnownFor !== base) await readyBeforeLoading();
+  if (mine !== loadSeq || base !== consoleUrl || !win || win.isDestroyed() || !still()) return false;
+  win.loadURL(url);
+  return true;
 }
 const desktopSignInReady = readDesktopReady;
 // The ready answer before a console's first page, but never more than 5 s: a console that does not answer it signs in
@@ -566,14 +593,15 @@ function permitted(permission, origin, details) {
 
 function buildMenu() {
   const isMac = process.platform === 'darwin';
-  const goHome = () => consoleUrl && mainWindow?.loadURL(consoleUrl);
+  // Through loadConsole: during a Change console… the new console's ready answer may not be known yet.
+  const goHome = () => consoleUrl && loadConsole(mainWindow, consoleUrl);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(isMac ? [{ role: 'appMenu' }] : []),
     {
       label: 'File',
       submenu: [
         { label: 'Sessions', accelerator: 'CmdOrCtrl+Shift+H', click: goHome },
-        { label: 'New session', accelerator: 'CmdOrCtrl+N', click: () => consoleUrl && mainWindow?.loadURL(new URL('?new=1', consoleUrl).href) },
+        { label: 'New session', accelerator: 'CmdOrCtrl+N', click: () => consoleUrl && loadConsole(mainWindow, new URL('?new=1', consoleUrl).href) },
         { type: 'separator' },
         { label: 'Open in browser', click: () => { const url = BrowserWindow.getFocusedWindow()?.webContents.getURL(); if (url?.startsWith('http')) shell.openExternal(url); } },
         { label: 'Change console…', click: () => mainWindow && showSetup() },
