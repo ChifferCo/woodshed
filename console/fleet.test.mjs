@@ -3384,4 +3384,11 @@ test('a My Woodshed session that reports a pull request on another repo stops he
   assert.equal(session.prUrl, 'https://github.com/o/r/pull/9', 'its own repo\'s pull request is kept');
   assert.deepEqual(store.state.slackPending, []);
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  advance(60_000);
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'watched again once it is back on its own');
+  assert.match(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).at(-1)?.body.text ?? '', /e2e suite failed on PR #9/);
 });
