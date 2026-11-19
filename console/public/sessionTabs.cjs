@@ -13,6 +13,9 @@
   const KEY = 'woodshed-session-tabs';
   // Agent is claude's terminal and the default; the others are the plain shell, the review, the diff and the app's logs.
   const TABS = ['agent', 'terminal', 'review', 'diff', 'applog'];
+  // What a history entry keeps for a review-only session still to land on its Review: no tab was picked there, and
+  // coming back to it lands it on Review, whatever the session was left on since (leftOn, memory's asked).
+  const LANDS_ON_REVIEW = 'lands-on-review';
 
   /** @returns {string}  a tab the page knows, Agent for anything else */
   function known(name) {
@@ -63,12 +66,13 @@
   /**
    * The tab a history entry keeps, for Back and Forward, written each time the page draws it: the one it shows, or a
    * held one over the Agent standing in for it. A review-only session still to land on its Review (`reviewPending`)
-   * keeps none, since Agent there was not picked: coming back lands it on its Review as the first arrival would.
+   * keeps LANDS_ON_REVIEW, since Agent there was not picked: coming back lands it on its Review as the first arrival
+   * would, even after a later visit picked another tab.
    * @param {{ tab: string, held: string|null, reviewPending: boolean }} at
-   * @returns {string|null}
+   * @returns {string}
    */
   function leftOn({ tab, held, reviewPending }) {
-    return held || (reviewPending ? null : tab);
+    return held || (reviewPending ? LANDS_ON_REVIEW : tab);
   }
 
   /**
@@ -108,9 +112,12 @@
     }
     return {
       // The tab asked for: the address's, else the one this history entry showed when it was left (Back and Forward
-      // reach it; Agent has no ?tab), else the one this session was last left on, else none.
+      // reach it; Agent has no ?tab), else the one this session was last left on, else none. An entry still to land on
+      // Review asks for none, so the page lands it there.
       asked(id, inAddress, inEntry = null) {
-        return inAddress || (id && inEntry) || (id && Object.hasOwn(kept, id) ? kept[id] : null) || null;
+        if (inAddress) return inAddress;
+        if (id && inEntry === LANDS_ON_REVIEW) return null;
+        return (id && inEntry) || (id && Object.hasOwn(kept, id) ? kept[id] : null) || null;
       },
       remember(id, tab) {
         if (!id || kept[id] === tab) return;
@@ -125,5 +132,5 @@
     };
   }
 
-  return { KEY, TABS, known, shown, settle, picks, leftOn, lookups, memory };
+  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, lookups, memory };
 });

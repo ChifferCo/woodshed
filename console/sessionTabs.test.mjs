@@ -169,10 +169,10 @@ test('an entry keeps the tab it shows, and none while a review-only session is s
   assert.equal(tabs.leftOn({ tab: 'agent', held: null, reviewPending: false }), 'agent',
     'a regular session on Agent, picked or not: Back after Open the diff comes back to Agent');
   assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', reviewPending: false }), 'diff', 'the held tab, not its stand-in');
-  assert.equal(tabs.leftOn({ tab: 'agent', held: null, reviewPending: true }), null,
+  assert.equal(tabs.leftOn({ tab: 'agent', held: null, reviewPending: true }), tabs.LANDS_ON_REVIEW,
     'a starting review-only session: coming back lands it on Review once it runs, as Agent was not picked');
   // Back to that entry asks for nothing, so the page lands it on Review again.
-  assert.equal(tabs.memory(storage(), 'octocat').asked('aaaa1111', null, null), null);
+  assert.equal(tabs.memory(storage(), 'octocat').asked('aaaa1111', null, tabs.LANDS_ON_REVIEW), null);
 });
 
 test('Forward to a visit left by Back gives the tab it showed, though a later pick changed the memory', () => {
@@ -196,4 +196,15 @@ test('once sign-out starts, a page still answering writes nothing back', () => {
   memory.remember('aaaa1111', 'agent');
   memory.remember('bbbb2222', 'diff');
   assert.equal(store.items[tabs.KEY], undefined, "the former person's sessions are not put back");
+});
+
+test("Back to a review-only visit still to land on Review lands it, though a later visit picked Agent", () => {
+  // Empty storage. First visit, starting: nothing picked, the entry keeps LANDS_ON_REVIEW. Another session. Second
+  // visit: Agent clicked while it starts, so Agent is remembered. Back twice to the first visit.
+  const memory = tabs.memory(storage(), 'octocat');
+  const firstVisit = tabs.leftOn({ tab: 'agent', held: null, reviewPending: true });
+  memory.remember('aaaa1111', 'agent');
+  assert.equal(memory.asked('aaaa1111', null, firstVisit), null, 'nothing asked: the page lands it on Review');
+  assert.equal(memory.asked('aaaa1111', 'diff', firstVisit), 'diff', 'an address with a tab still wins');
+  assert.equal(memory.asked('aaaa1111', null, null), 'agent', 'a new entry (the rail) gets the memory');
 });
