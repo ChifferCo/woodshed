@@ -99,3 +99,14 @@ test('team keys that could not be read are said so, and are not taken for no key
   const own = await setup({ keysFail: true, claudeOwn: ['ana'] }).forReview({ login: 'ana' });
   assert.deepEqual([own.agents, own.keysUnread], [['claude'], true], 'the author\'s own sign-in still runs');
 });
+
+test('an author\'s own Codex sign-in that could not be read is said so too, and is not taken for none', async () => {
+  const userSettings = {
+    reviewAgents: () => null, usesOwnTokenForShared: () => false, usesOwnCodexForReviews: () => true,
+    codexAuth: async () => { throw new Error('Secrets Manager timed out'); },
+  };
+  const agents = createReviewAgents({ userSettings, connected: async () => ({ claude: false, codex: false }), now: () => NOW });
+  const r = await agents.forReview({ login: 'ana' });
+  assert.deepEqual([r.agents, r.keysUnread], [[], true]);
+  assert.match(r.why, /the author's Codex sign-in could not be read: Secrets Manager timed out/);
+});

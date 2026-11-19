@@ -46,7 +46,7 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
       if (cred.expired) return { cred: null, why: 'the author\'s saved Codex sign-in has expired' };
       return { cred, why: null };
     } catch (err) {
-      return { cred: null, why: `the author's Codex sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
+      return { cred: null, unread: true, why: `the author's Codex sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
     }
   }
 
@@ -66,7 +66,8 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
    * sign-in, `codexVia` how the session's codex reaches its credential (`chatgpt` for a ChatGPT login, `key` for an API
    * key, the author's or the team's) with `codexAccount` for a ChatGPT login, `choice` what they chose (null for none
    * saved), `why` when what runs is not what they chose, or not on their own sign-in, and `keysUnread` when the team
-   * keys could not be read: then what runs is a guess, and no review is not a choice anyone made.
+   * keys or the author's own Codex sign-in could not be read: then what runs is a guess, and no review is not a choice
+   * anyone made.
    * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
    * @returns {Promise<{agents: string[], choice: string|null, codexLogin: string|null, codexVia: 'chatgpt'|'key'|null,
    *   codexAccount?: string, why: string|null, keysUnread: boolean}>}
@@ -96,7 +97,9 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
         if (codexOwn.why) why.push(codexOwn.why);
       }
     }
-    return { agents, choice, ...codex, why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why) };
+    // An own sign-in that could not be read counts as unread too, whether or not Codex was left out for it.
+    if (codexOwn.unread && !why.includes(codexOwn.why)) why.push(codexOwn.why);
+    return { agents, choice, ...codex, why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why || codexOwn.unread) };
   }
 
   return { forReview, options };
