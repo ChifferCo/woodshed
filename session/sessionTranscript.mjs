@@ -23,7 +23,10 @@ const MAX_COMPRESSED_BYTES = 16 * 1024 * 1024;
 // unpacks it in one go.
 export const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 
-/** @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, error?: true, at: string|null}} Entry */
+/**
+ * @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, error?: true, denied?: string, at: string|null}} Entry
+ *   denied: on codex's interrupt note, the command whose approval was refused
+ */
 
 const cut = (text) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text);
 
@@ -197,14 +200,50 @@ function scriptExitCodes(output) {
   return codes;
 }
 
+// codex 0.16x's mark of a tool call cut short: the call's whole output, when Esc (or No at its approval) ended the turn.
+const CODEX_ABORTED = /^aborted by user\b/;
+// A call that asked to run outside the sandbox: codex showed its approval before running it.
+const CODEX_ESCALATED = /\bsandbox_permissions["']?\s*:\s*["']require_escalated["']|"with_escalated_permissions"\s*:\s*true/;
+// What the developer turn after an interrupt starts with, in rollouts that write no turn_aborted event.
+const CODEX_TURN_ABORTED = /^\s*<turn_aborted>/;
+
+/**
+ * The note for a codex turn cut short, written as claude writes its own (`[Request interrupted by user]`), so the Chat
+ * tab reads both the same, and a console from before it still says Interrupted. `denied`: the command whose approval
+ * was refused, when the call cut short was one asking to run outside the sandbox and had no output yet. codex writes the
+ * same records for No at its approval and for Esc there, which is the same key ((esc) on the No option).
+ */
+function codexInterrupt(at, denied) {
+  return { role: 'user', text: '[Request interrupted by user]', at, ...(denied && { denied }) };
+}
+
 export function parseCodexRollout(text, { partial = false } = {}) {
   const entries = [];
   const tools = new Map();
+  // The call whose output said it was cut short, since the last thing after it: an approval refused when it asked to
+  // run outside the sandbox.
+  let aborted = null;
+  const interrupted = (at) => {
+    const last = entries[entries.length - 1];
+    if (!(last?.role === 'user' && last.text === '[Request interrupted by user]')) entries.push(codexInterrupt(at, aborted?.denied ?? null));
+    aborted = null;
+  };
   for (const r of records(text, partial)) {
+    const at = typeof r.timestamp === 'string' ? r.timestamp : null;
+    if (r.type === 'event_msg' && r.payload?.type === 'turn_aborted') {
+      // `replaced` is a turn a new message took over: that message comes next, and says so itself.
+      if (r.payload.reason !== 'replaced') interrupted(at);
+      continue;
+    }
     const item = r.type === 'response_item' ? r.payload : null;
     if (!item) continue;
-    const at = typeof r.timestamp === 'string' ? r.timestamp : null;
+    if (item.type === 'message' && item.role === 'developer' && Array.isArray(item.content)
+      && item.content.some((c) => typeof c?.text === 'string' && CODEX_TURN_ABORTED.test(c.text))) {
+      interrupted(at);
+      continue;
+    }
     if (item.type === 'message' && (item.role === 'user' || item.role === 'assistant') && Array.isArray(item.content)) {
+      aborted = null;
       const said = item.content
         .filter((c) => (c?.type === 'input_text' || c?.type === 'output_text') && typeof c.text === 'string')
         .map((c) => c.text)
@@ -217,10 +256,18 @@ export function parseCodexRollout(text, { partial = false } = {}) {
       const calls = codexScriptCalls(item.name, input);
       const made = (calls ?? [{ tool: String(item.name || 'shell'), text: toolLine(input) }]).map((c) => ({ role: 'tool', ...c, at }));
       if (typeof item.call_id === 'string') tools.set(item.call_id, made);
+      const raw = typeof input === 'string' ? input : JSON.stringify(input ?? null);
+      if (CODEX_ESCALATED.test(raw)) made.escalated = true;
+      aborted = null;
       entries.push(...made);
     } else if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
       const made = tools.get(item.call_id);
       if (!made?.length) continue;
+      if (typeof item.output === 'string' && CODEX_ABORTED.test(item.output)) {
+        aborted = { denied: made.escalated ? made[made.length - 1].text || null : null };
+        continue;
+      }
+      aborted = null;
       const codes = scriptExitCodes(item.output);
       // A script's commands in order, each with its own exit code; anything else fails as a whole.
       if (codes.length) codes.forEach((code, i) => { if (code !== 0) (made[i] ?? made[made.length - 1]).error = true; });

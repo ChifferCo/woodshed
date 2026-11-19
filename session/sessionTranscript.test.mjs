@@ -222,3 +222,46 @@ test("codex's exec script reads as the tools it calls, each failing by its own e
     ['exec', 'text("hello")', false],
   ]);
 });
+
+// Three turns of codex 0.167, cut short (shared/__fixtures__/rollout-codex-interrupted.jsonl, trimmed from a real
+// rollout): No at its approval of a command it asked to run outside the read-only sandbox, ■ Stop while it wrote a reply,
+// and ■ Stop while a command it was allowed to run was still going. Each ends `aborted by user after Ns` on the call cut
+// short, a developer turn that starts `<turn_aborted>`, and an event_msg `turn_aborted` with reason `interrupted`.
+const ROLLOUT_INTERRUPTED = fs.readFileSync(new URL('../shared/__fixtures__/rollout-codex-interrupted.jsonl', import.meta.url), 'utf8');
+
+test("codex's interrupted turn ends on claude's own interrupt note, naming the command when its approval was refused", () => {
+  const entries = parseCodexRollout(ROLLOUT_INTERRUPTED);
+  assert.deepEqual(entries.map((e) => [e.role, e.tool ?? null, e.role === 'user' ? e.text.slice(0, 29) : e.text.slice(0, 40), e.denied ?? null]), [
+    ['user', null, 'Please create a file named he', null],
+    ['assistant', null, 'I’ll run the exact command you provided.', null],
+    ['tool', 'exec_command', 'echo hi > hello-codexfix.txt', null],
+    ['user', null, '[Request interrupted by user]', 'echo hi > hello-codexfix.txt'],
+    ['user', null, 'Without running any tools, th', null],
+    ['user', null, '[Request interrupted by user]', null],
+    ['user', null, 'Run exactly `sleep 45; echo s', null],
+    ['assistant', null, 'I’ll request approval to run the exact c', null],
+    ['tool', 'exec_command', 'sleep 45; echo slept > slept-codexfix.tx', null],
+    ['tool', 'write_stdin', '', null],
+    ['user', null, '[Request interrupted by user]', null],
+  ]);
+  assert.ok(entries.every((e) => !e.error), 'a call cut short did not fail');
+  assert.equal(entries[3].at, '2026-11-19T17:15:24.013Z', 'one note, at the developer turn, for it and the event after it');
+});
+
+test("codex's interrupt is read from either record alone, and a turn a new message replaced has no note", () => {
+  const user = line({ timestamp: at, type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'go' }] } });
+  const aborted = (reason) => line({ timestamp: at, type: 'event_msg', payload: { type: 'turn_aborted', reason } });
+  const developer = line({ timestamp: at, type: 'response_item', payload: { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<turn_aborted>\nThe previous turn was interrupted on purpose.\n</turn_aborted>' }] } });
+  const notes = (...lines) => parseCodexRollout([user, ...lines].join('\n')).slice(1).map((e) => e.text);
+  assert.deepEqual(notes(aborted('interrupted')), ['[Request interrupted by user]']);
+  assert.deepEqual(notes(developer), ['[Request interrupted by user]']);
+  assert.deepEqual(notes(aborted('replaced')), []);
+  // A shell call of the older function form, asking to run outside the sandbox, refused.
+  const call = line({ timestamp: at, type: 'response_item', payload: { type: 'function_call', call_id: 'f1', name: 'shell',
+    arguments: JSON.stringify({ command: ['bash', '-lc', 'rm -rf build'], with_escalated_permissions: true }) } });
+  const out = (output) => line({ timestamp: at, type: 'response_item', payload: { type: 'function_call_output', call_id: 'f1', output } });
+  const denied = parseCodexRollout([user, call, out('aborted by user after 3.1s'), aborted('interrupted')].join('\n'));
+  assert.equal(denied.at(-1).denied, 'rm -rf build');
+  const ran = parseCodexRollout([user, call, out('Exit code: 0'), aborted('interrupted')].join('\n'));
+  assert.equal(ran.at(-1).denied, undefined, 'it ran, and the Esc came after');
+});

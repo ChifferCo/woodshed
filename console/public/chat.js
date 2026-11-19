@@ -120,9 +120,13 @@
     // {state: 'sending'|'sent'|'refused', error?}.
     const picks = new Map();
     const answers = new Map();
-    // What the pane asks while the session needs the person (GET …/prompt), and an approval's answer on its way.
+    // What the pane asks while the session needs the person (GET …/prompt): null until it is read for this turn at Needs
+    // you, then {id, prompt} (prompt null when the pane shows nothing the page can answer). An approval's answer on its
+    // way, and the one answered from here while the console still says Needs you: {id, decision, prompt}.
     let prompt = null;
     let approval = null;
+    let answered = null;
+    let promptReading = false;
     let recognition = null;
 
     const thread = h('div', { class: 'chat-col chat-thread', role: 'log', 'aria-live': 'polite', 'aria-label': 'Conversation' });
@@ -401,7 +405,8 @@
       try {
         await W.postJson(`/api/sessions/${id}/answer`, { kind: 'approval', decision, title: shown.title, detail: shown.detail }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         approval = null;
-        prompt = null;
+        answered = { id, decision, prompt: JSON.stringify(shown) };
+        prompt = { id, prompt: null };
         W.shell.toast(decision === 'approve' ? `Approved: ${agent()} carries on` : `Denied: ${agent()} was told no`);
       } catch (err) {
         approval = { busy: null, error: err.name === 'TimeoutError' ? `no answer in ${SEND_TIMEOUT_MS / 1000} s` : err.message };
@@ -457,9 +462,20 @@
     function drawStatus() {
       if (!session) return;
       const state = session.state;
+      // Answered from here: the agent has it, and the console's state follows a few seconds later.
+      if (state === 'needs-you' && !asking() && answered?.id === session.id) {
+        status.className = 'chat-status';
+        status.replaceChildren(h('span', null, h('b', null, answered.decision === 'approve' ? 'Approved' : 'Denied'), ` · waiting for ${agent()}`));
+        return;
+      }
       if (state === 'needs-you' || asking()) {
         status.className = 'chat-status is-needs';
-        const shown = !asking() && prompt?.id === session.id && prompt.prompt?.kind === 'approval' ? prompt.prompt : null;
+        // Not read yet: the pane is being asked what it shows, which takes one call; the TUI tab's words wait for its answer.
+        if (!asking() && prompt?.id !== session.id) {
+          status.replaceChildren(h('span', null, h('b', null, 'Needs you'), ` · Reading what ${agent()} asks…`));
+          return;
+        }
+        const shown = !asking() && prompt.prompt?.kind === 'approval' ? prompt.prompt : null;
         if (shown) {
           const { asks, lines } = T.approvalText(shown);
           const busy = approval?.busy;
@@ -499,7 +515,9 @@
     }
 
     // While the session needs the person and the record holds no question of claude's: what its pane asks, read from
-    // the screen, so an approval shows on the Needs you line with its own buttons.
+    // the screen, so an approval shows on the Needs you line with its own buttons. Read at once when the state turns
+    // Needs you (show), not after the thread's read, and again with each read of the thread while it stays so. Never
+    // while the agent works.
     async function readPrompt(id) {
       if (id !== session?.id) return;
       if (session.state !== 'needs-you' || asking()) {
@@ -510,17 +528,26 @@
         }
         return;
       }
+      if (promptReading) return;
+      promptReading = true;
+      let read = null;
       try {
-        const read = await W.getJson(`/api/sessions/${id}/prompt`);
-        if (id !== session?.id) return;
-        const before = JSON.stringify(prompt?.id === id ? prompt.prompt : null);
-        prompt = { id, prompt: read.prompt ?? null };
-        if (JSON.stringify(prompt.prompt) !== before) {
-          if (!approval?.busy) approval = null;
-          drawStatus();
-        }
+        read = await W.getJson(`/api/sessions/${id}/prompt`);
       } catch {
-        // A console or session from before /prompt: the line keeps its button to the TUI tab.
+        // A console or session from before /prompt, or one that did not answer: the line gets its button to the TUI tab.
+      } finally {
+        promptReading = false;
+      }
+      if (id !== session?.id || session.state !== 'needs-you') return;
+      const was = prompt?.id === id ? JSON.stringify(prompt.prompt) : undefined;
+      let next = read?.prompt ?? null;
+      // The prompt just answered, still on the screen as the keys land: it is not asked again.
+      if (next && answered?.id === id && JSON.stringify(next) === answered.prompt) next = null;
+      else if (next) answered = null;
+      prompt = { id, prompt: next };
+      if (JSON.stringify(next) !== was) {
+        if (!approval?.busy) approval = null;
+        drawStatus();
       }
     }
 
@@ -540,6 +567,8 @@
         if (answer.unchanged && record?.id === id) return;
         record = { id, ...answer };
         drawThread(false);
+        // The record can end the turn (an interrupt) before the console's state says so: Stop goes with it.
+        drawComposer();
       } catch (err) {
         if (id !== session?.id) return;
         readError = err.message;
@@ -585,6 +614,17 @@
       const moved = s.id !== session?.id;
       const was = session?.state;
       session = s;
+      if (moved) {
+        prompt = null;
+        approval = null;
+      }
+      // A new Needs you: what the pane asks is read now, beside the thread, so an approval's buttons come with it.
+      if (s.state === 'needs-you' && (moved || was !== 'needs-you')) {
+        prompt = null;
+        approval = null;
+        answered = null;
+        readPrompt(s.id);
+      } else if (s.state !== 'needs-you') answered = null;
       if (moved) settledAt = s.state === 'working' ? 0 : Date.now() - STATE_LAG_MS;
       else if (was !== s.state && s.state !== 'working') settledAt = Date.now();
       if (moved) {
@@ -592,8 +632,6 @@
         recognition = null;
         record = null;
         readError = null;
-        prompt = null;
-        approval = null;
         const label = `Message ${agent()}`;
         field.placeholder = label;
         field.setAttribute('aria-label', label);
