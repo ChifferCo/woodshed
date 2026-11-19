@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
+import { APP_PAGE_CHROME_CSS, CONSOLE_CHROME_CSS, TRAFFIC_LIGHTS } from './windowChrome.mjs';
 import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSetCookie, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -123,10 +124,26 @@ function guard(win) {
   });
 }
 
+// macOS: no title bar, the traffic lights in the rail's head (windowChrome.mjs). `--mac-chrome` adds the same rules to
+// the pages anywhere, to look at the layout on another system, where the title bar itself stays.
+const macChrome = process.platform === 'darwin';
+const chromeRules = macChrome || process.argv.includes('--mac-chrome');
+
+// The header's rules on each page of the main window: the console's own, or the app's setup and sign-in pages'.
+function addChrome(contents) {
+  if (!chromeRules) return;
+  contents.on('dom-ready', () => {
+    const url = contents.getURL();
+    const css = url.startsWith('file:') ? APP_PAGE_CHROME_CSS : where(url) === 'console' ? CONSOLE_CHROME_CSS : null;
+    if (css) contents.insertCSS(css).catch(() => {});
+  });
+}
+
 function createMainWindow() {
   const { bounds } = readSettings();
   mainWindow = new BrowserWindow({
     width: 1440, height: 920, minWidth: 420, minHeight: 480, ...(bounds ?? {}),
+    ...(macChrome ? { titleBarStyle: 'hiddenInset', trafficLightPosition: TRAFFIC_LIGHTS } : {}),
     title: 'Woodshed', icon, backgroundColor: '#1b2232', show: false,
     webPreferences: { ...webPreferences, preload: path.join(here, 'preload.cjs') },
   });
@@ -138,6 +155,7 @@ function createMainWindow() {
   mainWindow.on('moved', keepBounds);
   mainWindow.on('closed', () => { mainWindow = null; });
   guard(mainWindow);
+  addChrome(mainWindow.webContents);
   if (consoleUrl) mainWindow.loadURL(consoleUrl);
   else showSetup();
 }
