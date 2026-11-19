@@ -403,6 +403,8 @@ async function finishSignIn(link) {
     console.warn('woodshed-desktop: a sign-in link that is not the waiting sign-in\'s, ignored');
     return;
   }
+  // Where it was going, kept for a retry from the waiting or error page: the claim has used the sign-in up.
+  retryNext = { consoleUrl, next: started.next };
   // The window and the page the sign-in may move on from, fixed before anything waits: with none open, one is made on
   // the waiting page, and its address is the page's own, not whatever it shows by the time it has loaded (a setup
   // form, a page opened meanwhile). Setup shown since, even at the same address, is the person moving on too.
@@ -512,16 +514,22 @@ async function finishSignIn(link) {
 function fromSignInPage(event) {
   return mainWindow && event.sender === mainWindow.webContents && event.senderFrame?.url.startsWith('file:');
 }
+// Where the last sign-in on a console was going, for its retries after its claim failed (finishSignIn).
+let retryNext = null;
+function nextForRetry() {
+  return pending.current(consoleUrl)?.next ?? (retryNext?.consoleUrl === consoleUrl ? retryNext.next : '/');
+}
 // The waiting page's two buttons: the browser again, or the window after all.
 ipcMain.handle('signin:browser', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
-  const next = pending.current(consoleUrl)?.next ?? '/';
+  const next = nextForRetry();
   signInInBrowser(next, signInHere(next), { again: true });
 });
 ipcMain.handle('signin:here', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
   signInAttempt += 1;
-  const next = pending.take()?.next ?? '/';
+  const next = nextForRetry();
+  pending.take();
   mainWindow.loadURL(signInHere(next));
 });
 
