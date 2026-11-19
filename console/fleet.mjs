@@ -1057,10 +1057,10 @@ export function createFleet({
   }
 
   // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
-  // nothing but its owner resumes it.
+  // nothing but its owner resumes it. A stopping one cannot: a message held for it would be typed in at a later Resume.
+  const ownListening = (session) => Boolean(session && ACTIVE_STATUSES.has(session.status) && session.status !== 'stopping');
   function prListening(item) {
-    const session = find(item.sessionId);
-    return Boolean(session && ACTIVE_STATUSES.has(session.status));
+    return ownListening(find(item.sessionId));
   }
 
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
@@ -1068,7 +1068,7 @@ export function createFleet({
   async function prFeedback(item, text) {
     const session = find(item.sessionId);
     if (!session) return false;
-    if (ACTIVE_STATUSES.has(session.status)) {
+    if (session.owner ? ownListening(session) : ACTIVE_STATUSES.has(session.status)) {
       const outcome = await send(session, text);
       console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome, owner: Boolean(session.owner) });
       return true;

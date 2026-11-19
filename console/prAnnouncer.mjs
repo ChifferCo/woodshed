@@ -31,15 +31,16 @@ function firstLine(err) {
 }
 
 // A My Woodshed session's pull request is its owner's when they opened it, or, since a session that pushes as the App
-// opens it as the App, when the console's App (any app, while its login is not known yet) opened it from the
-// session's own branch, in the repo itself and not a fork, after the session started. Nothing a teammate writes in a
-// body counts.
+// opens it as the App, when the console's App opened it from the session's own branch, in the repo itself and not a
+// fork, after the session started. Nothing a teammate writes in a body counts. An app's pull request while the App's
+// login is not read yet throws, so it is decided on a later tick.
 function ownersPull(pull, session, app) {
   const login = String(session.owner ?? '').toLowerCase();
   if (!login) return false;
   const author = String(pull.user?.login ?? '').toLowerCase();
   if (author === login) return true;
-  const fromTheApp = app?.login ? author === String(app.login).toLowerCase() : pull.user?.type === 'Bot';
+  if (pull.user?.type === 'Bot' && !app?.login) throw new Error('the console\'s App login is not read yet, so whose pull request this is is not known');
+  const fromTheApp = author === String(app?.login ?? '').toLowerCase();
   const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
   return fromTheApp && sameRepo && Boolean(session.branch) && pull.head?.ref === session.branch
     && Date.parse(pull.created_at) >= Date.parse(session.createdAt);

@@ -808,3 +808,16 @@ test('a watch tracked again, as by a resumed session, starts its wait over', asy
   assert.deepEqual([store.state.slackPending.length, dropped], [1, []]);
   assert.match(told[0], /asks for changes/);
 });
+
+test('an app\'s pull request waits for the App\'s login before it is watched or not', async () => {
+  const repo = { full_name: 'acme/app' };
+  const { store, session, github } = setup({ pull: { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-1', repo }, base: { repo } } });
+  let app = null;
+  const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => app });
+  const mine = { ...session, owner: 'joel', branch: 'woodshed/joel-1' };
+  await assert.rejects(watcher.track(mine, null, { watch: true }), /App login is not read yet/);
+  app = { slug: 'other', login: 'other-bot[bot]' };
+  assert.equal(await watcher.track(mine, null, { watch: true }), false);
+  app = { slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' };
+  assert.equal(await watcher.track(mine, null, { watch: true }), true);
+});

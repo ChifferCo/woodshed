@@ -1686,8 +1686,9 @@ nothing written on GitHub. Each watch is its session's own: two sessions on one 
 shared session's post on it still goes out. A review-only session (no prompt) is never watched, and a pull request
 only when it is the session's owner's, whenever it was opened: they opened it, or the console's App did (a session that pushes as
 the App) from the session's own branch in the repo itself, not a fork, after the session started (`slack: someone else's pull request, not watched`),
-so no session is told to push to a teammate's. A resumed session's watch starts its week over. The note on a pass also has the session run `gh pr checks` and see any
-other check through before it stops. A resumed session's watch starts again. Until then the
+so no session is told to push to a teammate's. The note on a pass also has the session run `gh pr checks` and see any
+other check through before it stops. A resumed session's watch starts again, its week over; a stopping session hears nothing, so nothing is held for a
+later Resume. Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
 the Console settings page), is dropped unposted. Once it is posted, its session stops (`posted to Slack`) and is

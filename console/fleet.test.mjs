@@ -1368,7 +1368,7 @@ for (const [what, fields, author] of [
 }
 
 test('a My Woodshed session\'s pull request is watched on a console with no Slack, and again once resumed', async () => {
-  const { fleet, github, statuses, calls, store, advance } = setup();
+  const { fleet, github, statuses, calls, store, advance, launcher } = setup();
   const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
   github.reviews = async () => [];
@@ -1380,10 +1380,19 @@ test('a My Woodshed session\'s pull request is watched on a console with no Slac
   assert.equal(sent().length, 1);
   assert.match(sent()[0].body.text, /e2e suite failed on PR #9/);
 
-  await fleet.stop(session, 'idle for 1 h');
+  // A stop in flight (its checkpoint and task stop take a while) while the pull request is read.
+  let release;
+  const { stop } = launcher;
+  launcher.stop = (ref) => new Promise((resolve) => { release = () => resolve(stop.call(launcher, ref)); });
+  const stopping = fleet.stop(session, 'idle for 1 h');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(session.status, 'stopping');
+  github.checkRuns = async () => e2eRuns((n) => (n === 4 ? 'failure' : 'success'));
   advance(60_000);
   await fleet.tick();
-  assert.deepEqual(store.state.slackPending, [], 'its watch ends with it');
+  assert.deepEqual([store.state.slackPending, session.pendingMessages], [[], []], 'a stopping session hears nothing, and nothing is held for a Resume');
+  release();
+  await stopping;
   await fleet.resumePrivate({ owner: 'joel', id: session.id });
   github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
   await fleet.tick();
