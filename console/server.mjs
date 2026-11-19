@@ -195,7 +195,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
 const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
-const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
+const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'sessionTabs.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
   'logins.cjs': 'text/javascript; charset=utf-8',
@@ -213,6 +213,7 @@ const STATIC_FILES = {
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
+  'sessionTabs.cjs': 'text/javascript; charset=utf-8',
   'terminal.js': 'text/javascript; charset=utf-8',
   'sharedHome.js': 'text/javascript; charset=utf-8',
   'dictation.js': 'text/javascript; charset=utf-8',

@@ -37,34 +37,27 @@
     onNew = onMy && params.get('new') === '1';
     picked = W.pickedLogins(search);
     // Agent is claude's terminal and the default; ?tab=terminal is the plain shell, ?tab=review the review, ?tab=diff
-    // the plain diff and ?tab=applog the app's logs.
-    // With no tab in the address (the rail's links), a session opens on the tab it was last left on in this browser
-    // tab; ?tab=agent asks for the Agent tab itself.
-    const asked = params.get('tab') || (id && lastTabs[id]) || null;
-    tab = ['review', 'terminal', 'diff', 'applog'].includes(asked) ? asked : 'agent';
+    // the plain diff and ?tab=applog the app's logs. With no tab in the address (the rail's links), a session opens on
+    // the tab it was last left on (sessionTabs.cjs); ?tab=agent asks for the Agent tab itself.
+    const asked = tabMemory.asked(id, params.get('tab'));
+    tab = SessionTabs.known(asked);
     landOnReview = !asked;
-    if (id && asked) rememberTab(id, tab);
+    if (id && asked) tabMemory.remember(id, tab);
     if (id && !params.get('tab') && tab !== 'agent') {
       params.set('tab', tab);
       window.history.replaceState(null, '', `${pathname}?${params}`);
     }
   }
-  // The tab each session was last on, kept for this browser tab (sessionStorage) so a reload remembers it too.
-  const TABS_KEY = 'woodshed-session-tabs';
-  const lastTabs = (() => {
+  // The tab each session was last on, for this browser tab and the login signed in.
+  const SessionTabs = window.WoodshedSessionTabs;
+  const tabMemory = (() => {
+    const login = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
     try {
-      return JSON.parse(window.sessionStorage.getItem(TABS_KEY) || '{}') || {};
+      return SessionTabs.memory(window.sessionStorage, login);
     } catch {
-      return {};
+      return SessionTabs.memory({ getItem: () => null, setItem() {} }, login);
     }
   })();
-  function rememberTab(sessionId, which) {
-    if (lastTabs[sessionId] === which) return;
-    lastTabs[sessionId] = which;
-    try {
-      window.sessionStorage.setItem(TABS_KEY, JSON.stringify(lastTabs));
-    } catch {}
-  }
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box.
@@ -184,7 +177,7 @@
   async function resumePrivate(s) {
     try {
       const next = await W.postJson(`/api/my/sessions/${s.id}/resume`, {});
-      navigate(`/s/${next.id}`);
+      navigate(`/s/${next.id}?tab=agent`);
       return true;
     } catch (err) {
       window.alert(`Could not resume: ${err.message}`);
@@ -1793,7 +1786,7 @@
     if (tab === next) return;
     tab = next;
     landOnReview = false;
-    if (id) rememberTab(id, tab);
+    tabMemory.remember(id, tab);
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
     if (tab === 'agent') url.searchParams.delete('tab');
@@ -1924,9 +1917,14 @@
       return;
     }
     openReviewWhenRunning(s);
-    if (tab === 'review' && !s.branch) tab = 'agent';
-    if (tab === 'terminal' && !hasShell) tab = 'agent';
-    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'agent';
+    tab = SessionTabs.shown(tab, s, hasShell);
+    // A tab the session cannot show fell back to Agent: the address and the remembered tab say so too.
+    if (tab === 'agent' && new URLSearchParams(window.location.search).has('tab')) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('tab');
+      window.history.replaceState(null, '', url);
+      tabMemory.remember(s.id, 'agent');
+    }
     slots.head.replaceChildren(paneBar(s));
     offerRenameOnce(s);
     renderKeyBar(s);
@@ -1968,7 +1966,7 @@
     if (!s.reviewOnly || !landOnReview || s.status !== 'running') return;
     landOnReview = false;
     tab = 'review';
-    rememberTab(s.id, tab);
+    tabMemory.remember(s.id, tab);
     window.history.replaceState(null, '', `/s/${s.id}?tab=review`);
   }
 

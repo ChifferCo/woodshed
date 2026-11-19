@@ -1275,11 +1275,11 @@
       (me.menuSections ?? []).map((section) => [h('div', { class: 'menu-label' }, section.label), section.items.map(hostEntry)]),
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
-      // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it. Behind a
+      // Signing out drops what the rail page kept in this tab (session.js, and sessionTabs.cjs's last tab of each session), so nobody signing in after sees it. Behind a
       // hosting proxy, only when the program signs people out (server.mjs, signOut).
       me.login && (!me.hosted || me.signOut) && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
-        onsubmit: () => { try { window.sessionStorage.removeItem('woodshed-last'); } catch { /* nothing kept */ } },
+        onsubmit: () => { try { for (const key of ['woodshed-last', 'woodshed-session-tabs']) window.sessionStorage.removeItem(key); } catch { /* nothing kept */ } },
       },
         h('button', { type: 'submit', class: 'menu-item', role: 'menuitem' }, 'Sign out')));
     function setOpen(open) {
