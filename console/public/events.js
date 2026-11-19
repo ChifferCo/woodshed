@@ -70,6 +70,7 @@ window.Woodshed.settingsPage('/events', (app, life) => {
   function render() {
     const head = h('header', { class: 'page-head', id: 'events' },
       h('div', null,
+        h('p', { class: 'crumb' }, h('a', { href: '/secrets' }, '‹ Secrets & webhooks')),
         h('h1', { class: 'title' }, 'Webhook events ', W.scopePill('/events')),
         h('p', { class: 'sub' }, 'Every delivery the console took off the queue, and what it did with it.')));
     if (!data) {

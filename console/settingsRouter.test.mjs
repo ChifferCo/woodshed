@@ -360,7 +360,7 @@ test('on one of Settings\' pages its tabs open under it in the side list, the pa
 });
 
 test('on the other settings pages Settings stays one entry, and the avatar menu lists its tabs always', async () => {
-  for (const path of ['/settings', '/events']) {
+  for (const path of ['/settings']) {
     const t = adminPages(path);
     await answered();
     assert.deepEqual(t.subs('side-sub'), [], `none under Settings on ${path}`);
@@ -377,6 +377,29 @@ test('on the other settings pages Settings stays one entry, and the avatar menu 
   assert.deepEqual(t.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'with no program, the console\'s two');
   t.click(t.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings'));
   assert.deepEqual(t.subs('side-sub').map(([label, , mark]) => [label, mark]), [['General', 'page'], ['Secrets & webhooks', null]], 'and opening Settings opens them');
+});
+
+test('Webhook events is under Settings, not an entry of its own, and Keyboard shortcuts is in the side list alone', async () => {
+  const t = adminPages('/events');
+  await answered();
+  assert.equal(t.title(), 'Webhook events');
+  const sideHrefs = t.side().querySelector('nav.side-list').querySelectorAll('a.side-item').map((a) => a.getAttribute('href'));
+  assert.ok(!sideHrefs.includes('/events'), 'no Webhook events in the side list');
+  const menu = t.side().querySelector('div.user-menu');
+  assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => a.getAttribute('href') === '/events'), 'nor in the avatar menu');
+  assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => /Webhook events/.test(a.textContent)));
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings', 'People']);
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings is the set the page is in');
+  assert.deepEqual(t.subs('side-sub').map(([, href, mark]) => [href, mark]), [
+    ['/console-settings', null], ['/secrets', null], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
+  ], 'its tabs open under it, none of them the page');
+  const menuEntry = menu.querySelectorAll('a.menu-item').find((a) => a.getAttribute('href') === '/console-settings' && !a.matches('a.menu-sub'));
+  assert.equal(menuEntry.getAttribute('aria-current'), 'true', 'and in the menu');
+  assert.ok(!menu.querySelectorAll('button.menu-item').some((b) => /Keyboard shortcuts/.test(b.textContent)), 'no Keyboard shortcuts in the avatar menu');
+  assert.ok(t.side().querySelectorAll('button.side-item').some((b) => /Keyboard shortcuts/.test(b.textContent)), 'it stays under This browser');
+  t.click(t.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings'));
+  assert.equal(t.title(), 'General');
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true');
 });
 
 test('a repo\'s own settings open Settings too, with General marked', async () => {
