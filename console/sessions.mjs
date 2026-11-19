@@ -95,7 +95,8 @@ export function pullNumber(prUrl) {
  * @returns {Set<string>}  the sessions whose databases stay: every active one, and each stopped shared one still kept
  */
 export function keptIds(sessions) {
-  return new Set(sessions.filter((s) => ACTIVE_STATUSES.has(s.status) || (s.kept && !s.owner)).map((s) => s.id));
+  // A private session with databases of its own (one that may use production) keeps them while it is on the list.
+  return new Set(sessions.filter((s) => ACTIVE_STATUSES.has(s.status) || (s.kept && !s.owner) || (s.owner && s.ownDatabases)).map((s) => s.id));
 }
 
 /**

@@ -13,6 +13,10 @@
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
 //                     (~/.claude and ~/.claude.json) to the console, for the session's next run
+//   POST /taint       {"proxy", "ca", "message"}: the console locked this session down (console/mcpRelay.mjs). Every tool
+//                     is pointed at the console's egress proxy, the settings sync stops, the rules gain tainted.md, and
+//                     claude reopens its conversation on the console's Anthropic proxy once its turn ends, with
+//                     `message` as what it reads first (taint.mjs)
 //
 // A private session also keeps its owner's shared Claude settings in step with their other sessions, every
 // SYNC_EVERY_MS (settingsSync.mjs).
@@ -66,6 +70,7 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
+import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { classifyCodexPane } from './codexState.mjs';
 import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
@@ -839,6 +844,8 @@ async function hasRemoteControlCommand() {
 // Control on (session/claudePlugin, session/bin/woodshed-login); a claude without it gets woodshed-login typed at the
 // Terminal tab's prompt, where the code is pasted. Nothing else may be typed through this route.
 async function startClaudeLogin() {
+  // The console refuses it too: Remote Control would carry what the session saw to claude.ai.
+  if (isTainted()) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { status: 409 });
   if (await hasRemoteControlCommand()) {
     // Typed as a message is: one thing at a time, and only between turns, when no prompt can open under its Enter.
     if (typing) throw new Error('a message is going in to claude: sign in once it has');
@@ -1150,7 +1157,8 @@ let settingsRound = null;
 let settingsOver = false;
 
 function syncSettings(timeoutMs) {
-  if (settingsOver) return Promise.resolve();
+  // A tainted session's settings stay its own: the console refuses them, so nothing is sent.
+  if (settingsOver || isTainted()) return Promise.resolve();
   settingsRound ??= settingsRoundOnce(timeoutMs).finally(() => { settingsRound = null; });
   return settingsRound;
 }
@@ -1200,6 +1208,76 @@ async function checkpoint() {
   await git('push', '-u', 'origin', 'HEAD');
   console.log('statusd: checkpoint pushed', { committed: Boolean(staged) });
   return { committed: Boolean(staged), head: await git('rev-parse', '--short', 'HEAD'), homeSaved: home.saved };
+}
+
+// The session's side of its taint (taint.mjs), then claude reopened on the console's proxy. Answers at once: the
+// reopening waits for claude's turn to end.
+const RULES_FILE = '/tmp/woodshed-rules.md';
+const TAINT_MESSAGE_FILE = '/tmp/woodshed-taint-message.md';
+const CLAUDE_BIN = path.join(import.meta.dirname, 'bin', 'claude');
+// How long claude's turn may run before it is reopened anyway, and how long it has to stop.
+const TAINT_TURN_WAIT_MS = 5 * 60_000;
+let tainting = null;
+
+async function taint({ proxy = null, ca = null, message = '' }) {
+  // Done only once every step below was: a setup that failed partway is finished by the console's next notice.
+  if (isTaintSetUp()) return { already: true };
+  const { egress, variables } = await applyTaint({ proxy, ca, token: TOKEN, env: process.env, repoDir: REPO_DIR });
+  // statusd's own git (the stop's checkpoint push) goes out the same way.
+  Object.assign(process.env, variables);
+  settingsOver = true;
+  const rules = await fs.readFile(RULES_FILE, 'utf8').catch(() => '');
+  if (!rules.includes('This session has seen production data')) await fs.appendFile(RULES_FILE, await fs.readFile(path.join(import.meta.dirname, 'tainted.md'), 'utf8'));
+  const flags = await fs.readFile(CLAUDE_FLAGS_FILE, 'utf8').catch(() => '');
+  // First: --disallowedTools takes several values, so the flag after it must be another flag, never the message.
+  if (!flags.includes('--strict-mcp-config')) await fs.writeFile(CLAUDE_FLAGS_FILE, `${TAINTED_CLAUDE_FLAGS}${flags.trimEnd()}`);
+  await fs.writeFile(TAINT_MESSAGE_FILE, String(message || 'This session has seen production data and is now locked down.'));
+  await markTaintSetUp();
+  console.log('statusd: tainted', { egress, reopens: !CODEX });
+  if (!CODEX) tainting ??= reopenClaude().catch((err) => console.warn('statusd: claude not reopened after the taint', { message: err?.message }));
+  return { tainted: true, egress };
+}
+
+// The processes a pid started, from /proc: claude, under the pane's shell.
+async function childrenOf(pid) {
+  const found = [];
+  for (const entry of await fs.readdir('/proc').catch(() => [])) {
+    if (!/^\d+$/.test(entry)) continue;
+    const stat = await fs.readFile(`/proc/${entry}/stat`, 'utf8').catch(() => '');
+    const ppid = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[1];
+    if (ppid === String(pid)) found.push(Number(entry));
+  }
+  return found;
+}
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+async function reopenClaude() {
+  const since = Date.now();
+  while (Date.now() - since < TAINT_TURN_WAIT_MS && (await hookState())?.state === 'working') await new Promise((r) => setTimeout(r, 1_000));
+  // One at a time with whatever else types into the pane (a Chat message, the login command): one already going in
+  // finishes first, and one sent while claude is down and coming back is refused as busy, for the console to hold.
+  while (typing) await new Promise((r) => setTimeout(r, 200));
+  typing = true;
+  try {
+    await restartClaude();
+  } finally {
+    typing = false;
+  }
+}
+
+async function restartClaude() {
+  const conversation = (await newestTranscript())?.name.replace(/\.jsonl$/, '') ?? null;
+  const panePid = (await run('tmux', ['display', '-p', '-t', TMUX_TARGET, '#{pane_pid}'])).stdout.trim();
+  const claude = await childrenOf(panePid);
+  for (const pid of claude) process.kill(pid, 'SIGTERM');
+  for (let i = 0; i < 100 && claude.some(alive); i++) await new Promise((r) => setTimeout(r, 100));
+  for (const pid of claude.filter(alive)) process.kill(pid, 'SIGKILL');
+  const flags = (await fs.readFile(CLAUDE_FLAGS_FILE, 'utf8').catch(() => TAINTED_CLAUDE_FLAGS)).trim();
+  const resume = conversation && /^[0-9a-f-]{36}$/.test(conversation) ? ` --resume ${conversation}` : '';
+  await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', `${CLAUDE_BIN} ${flags}${resume} "$(cat ${TAINT_MESSAGE_FILE})"`]);
+  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']);
+  console.log('statusd: claude reopened on the console\'s proxy, tainted', { conversation: Boolean(resume), stopped: claude.length });
 }
 
 function readBody(req) {
@@ -1458,9 +1536,19 @@ async function handle(req, res) {
     try {
       return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });
     } catch (err) {
-      // An open prompt would take the command's Enter; a pane that could not be read might be showing one.
-      return reply(res, 409, { error: err.message });
+      // An open prompt would take the command's Enter; a pane that could not be read might be showing one. A refusal
+      // with a status of its own (a session that has seen production data) keeps it.
+      return reply(res, err.status ?? 409, { error: err.message });
     }
+  }
+  if (route === 'POST /taint') {
+    let body;
+    try {
+      body = JSON.parse(await readBody(req) || '{}');
+    } catch {
+      return reply(res, 400, { error: 'not JSON' });
+    }
+    return reply(res, 200, await taint(body));
   }
   if (route === 'POST /checkpoint') return reply(res, 200, await checkpoint());
   if (route === 'POST /upload') return uploadReply(req, res);

@@ -1,0 +1,12 @@
+The repo pick chooses some of the console's repos, or all of them, where a setting applies per repo: Console settings'
+MCP servers card, **Repos** (`mcpRepos` in `public/consoleSettings.js`, `.repo-pick` in `public/style.css`).
+
+- A `details` fold whose summary is a `field` saying the pick in mono (`All repos`, or the repos, cut to one line with
+  an ellipsis), with a `meta` ▾. 280px on a desktop, the full width under 560px. It opens in place, under the summary,
+  never as a floating menu, so it fits a phone with no sideways scroll.
+- Inside, on `ground` with a `line` border: **All repos** first (600, its own rule under it), then a native checkbox
+  per repo in mono, `slate` as its accent as People's checkboxes are; hover is `slate-tint`. While All repos is ticked
+  the repos show ticked and disabled. Unticking it ticks every listed repo, so nothing changes until one is unticked.
+- A saved repo the console no longer lists stays, ticked, with a `meta` note `not a repo of this console`: a save never
+  drops what was saved unseen.
+- No repo ticked says so in words under it.
