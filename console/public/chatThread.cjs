@@ -549,5 +549,24 @@
     return err?.name !== 'TimeoutError' && err?.name !== 'AbortError' && typeof err?.status === 'number' && err.answered === true;
   }
 
-  return { consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * What the phone's message box (messageBox.js) does with a send's outcome: whether its draft goes, and what it says.
+   * The draft stays only when nothing reached the agent for sure (the console's own refusal); anything that may have gone
+   * in leaves it, so a second Send cannot type it twice.
+   * @param {{answer?: object|null, err?: object|null, agent: string}} outcome
+   * @returns {{clear: boolean, toast: string}}
+   */
+  function boxSendOutcome({ answer = null, err = null, agent }) {
+    if (err) {
+      if (consoleRefused(err) && !err.typed) return { clear: false, toast: `Not sent: ${err.message}` };
+      if (err.typed) return { clear: true, toast: `Not sent: ${err.message}` };
+      return { clear: true, toast: `No answer: it may have gone in. Check ${agent}'s screen before sending it again` };
+    }
+    if (answer?.ok !== true) return { clear: true, toast: `Sent, with no word back on whether it went in or waits: watch ${agent}'s screen` };
+    if (answer.held) return { clear: true, toast: `Not sent yet: it goes in when ${agent} is back at its prompt` };
+    if (answer.unknown) return { clear: true, toast: `No answer in time: it may have gone in. Check ${agent}'s screen before sending it again` };
+    return { clear: true, toast: 'Sent' };
+  }
+
+  return { boxSendOutcome, consoleRefused, reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

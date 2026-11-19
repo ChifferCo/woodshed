@@ -360,6 +360,19 @@ test('a send answered unreadably waits like a held one, and is settled by the re
   assert.equal(b.state, 'refused');
 });
 
+test('the phone box keeps its draft only for a refusal that typed nothing, and says held, maybe and sent apart', () => {
+  const o = (x) => chat.boxSendOutcome({ agent: 'codex', ...x });
+  assert.deepEqual(o({ answer: { ok: true, held: false } }), { clear: true, toast: 'Sent' });
+  assert.match(o({ answer: { ok: true, held: true } }).toast, /^Not sent yet: it goes in when codex is back at its prompt/);
+  assert.match(o({ answer: { ok: true, unknown: true } }).toast, /may have gone in/);
+  assert.match(o({ answer: {} }).toast, /no word back/, 'an answer that could not be read');
+  assert.deepEqual(o({ err: Object.assign(new Error('too long'), { status: 400, answered: true }) }), { clear: false, toast: 'Not sent: too long' });
+  assert.equal(o({ err: Object.assign(new Error('in the box'), { status: 409, answered: true, typed: true }) }).clear, true, 'in the box already');
+  for (const err of [new TypeError('Failed to fetch'), Object.assign(new Error('t'), { name: 'TimeoutError' }), Object.assign(new Error('502'), { status: 502, answered: false })]) {
+    assert.deepEqual(o({ err }), { clear: true, toast: 'No answer: it may have gone in. Check codex\'s screen before sending it again' });
+  }
+});
+
 test('a held bubble the session could not take safely says it was not sent, and goes in time', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'yes do it', sentAt: now - 60_000, state: 'held' };
