@@ -233,7 +233,7 @@ test('the copy streams blobs of any size intact, and a cut-off listing fails it'
   git('add', '-A');
   git('commit', '-q', '-m', 'tree');
   const tree = git('rev-parse', 'HEAD^{tree}');
-  const snap = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-cdcdcdcd' });
+  const snap = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-cdcdcdcd', maxFileBytes: 64 * 1024 * 1024 });
   assert.equal(snap.ok, true, snap.error);
   try {
     assert.equal(snap.files, 302);
@@ -250,6 +250,55 @@ test('the copy streams blobs of any size intact, and a cut-off listing fails it'
   const cut = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-cdcdcdcd', listMaxBytes: 100 });
   assert.deepEqual([cut.ok, /more files than/.test(cut.error)], [false, true]);
   assert.deepEqual(copies(), before, 'the failed copy left no folder');
+});
+
+// A copy cannot fill the host's /tmp: a file past the per-file limit becomes a note saying so, and a tree whose files
+// still come to more than the total is refused before anything is written.
+test('the copy leaves a large file as a note, and refuses a tree past its total', async () => {
+  const repo = path.join(DIR, 'limits');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'huge.bin'), Buffer.alloc(3 * 1024 * 1024, 1));
+  fs.writeFileSync(path.join(repo, 'small.txt'), 'kept\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const snap = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-dededede', maxFileBytes: 1024 * 1024 });
+  assert.equal(snap.ok, true, snap.error);
+  try {
+    assert.deepEqual([snap.files, snap.skipped], [1, 1]);
+    assert.equal(fs.readFileSync(path.join(snap.dir, 'small.txt'), 'utf8'), 'kept\n');
+    assert.match(fs.readFileSync(path.join(snap.dir, 'huge.bin'), 'utf8'), /^\(Not copied for the Q&A: 3072 KB/);
+  } finally {
+    removeSnapshot(snap.dir);
+  }
+  const over = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-dededede', maxTotalBytes: 1024 * 1024 });
+  assert.deepEqual([over.ok, /past the 1 MB a copy may take/.test(over.error)], [false, true]);
+});
+
+// Git allows a file name that is not UTF-8. Decoded as text, two such names can come out as the same string, and one
+// file silently overwrites the other in the copy. Kept as bytes, each lands at its own name.
+test('file names that are not UTF-8 are copied by their bytes, each to its own file', async () => {
+  const repo = path.join(DIR, 'bytes');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  const nameA = Buffer.from([0x66, 0xff, 0x2e, 0x74, 0x78, 0x74]); // f\xff.txt
+  const nameB = Buffer.from([0x66, 0xfe, 0x2e, 0x74, 0x78, 0x74]); // f\xfe.txt
+  fs.writeFileSync(Buffer.concat([Buffer.from(repo + '/'), nameA]), 'first\n');
+  fs.writeFileSync(Buffer.concat([Buffer.from(repo + '/'), nameB]), 'second\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const snap = await makeSnapshot({ repoDir: repo, treeish: git('rev-parse', 'HEAD^{tree}'), session: 'claude-fafafafa' });
+  assert.equal(snap.ok, true, snap.error);
+  try {
+    assert.equal(snap.files, 2);
+    assert.equal(fs.readFileSync(Buffer.concat([Buffer.from(snap.dir + '/'), nameA]), 'utf8'), 'first\n');
+    assert.equal(fs.readFileSync(Buffer.concat([Buffer.from(snap.dir + '/'), nameB]), 'utf8'), 'second\n');
+  } finally {
+    removeSnapshot(snap.dir);
+  }
 });
 
 test('copies a restart left behind are swept at the next copy, and a live one is not', () => {

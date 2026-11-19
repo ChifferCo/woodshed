@@ -36,7 +36,6 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { REVIEW_MODEL, clamp } from './analyze.mjs';
-import { run } from './exec.mjs';
 
 // The review's own model, so the one setting that picks it (WOODSHED_REVIEW_MODEL, read by the shed's host) picks this too.
 const QA_MODEL = REVIEW_MODEL;
@@ -300,35 +299,133 @@ export function snapshotTreeish(review) {
  *
  * @returns {Promise<{ok: true, dir: string, files: number} | {ok: false, error: string}>}
  */
-export async function makeSnapshot({ repoDir, treeish, session, listMaxBytes = 64 * 1024 * 1024 }) {
+// A file past this is not copied: the answerer cannot make use of a large
+// binary's bytes, and a few of them would be most of the copy. It finds a note
+// in its place saying so. A copy whose files still come to more than the total
+// is refused, so a huge repository cannot fill the host's /tmp under every
+// other review there.
+const MAX_FILE_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
+
+export async function makeSnapshot({
+  repoDir, treeish, session, listMaxBytes = 64 * 1024 * 1024,
+  maxFileBytes = MAX_FILE_BYTES, maxTotalBytes = MAX_TOTAL_BYTES,
+}) {
   sweepStaleSnapshots();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-qa-${session}-`));
   const failed = (why) => {
     removeSnapshot(dir);
     return { ok: false, error: `could not copy the reviewed code (${why})` };
   };
-  const listed = await run('git', ['-C', repoDir, 'ls-tree', '-r', '-z', '--full-tree', treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS, maxBytes: listMaxBytes });
-  if (listed.status !== 0) return failed(`ls-tree: ${(listed.stderr || '').trim().slice(0, 200) || listed.status}`);
-  // Cut off at the runner's cap with a clean exit: a copy missing its last files
-  // would be answered from as if it were whole.
-  if (listed.truncated) return failed('the tree lists more files than the Q&A copies');
+  let listing;
+  try {
+    listing = await listTree({ repoDir, treeish, maxBytes: listMaxBytes });
+  } catch (err) {
+    return failed(`ls-tree: ${String(err?.message || err).slice(0, 200)}`);
+  }
+  // Cut off at the cap: a copy missing its last files would be answered from as if it were whole.
+  if (listing.truncated) return failed('the tree lists more files than the Q&A copies');
+
+  // Paths stay bytes from here to the disk: git allows a name that is not UTF-8,
+  // and decoding one would turn it into text another name may decode to as well,
+  // so one file would silently overwrite the other in the copy.
+  const root = Buffer.from(dir + path.sep);
   const blobs = [];
-  for (const entry of listed.stdout.split('\0')) {
-    const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64})\t(.+)$/s.exec(entry);
+  const notes = [];
+  let total = 0;
+  for (const entry of splitRecords(listing.bytes)) {
+    const tab = entry.indexOf(9);
+    if (tab === -1) continue;
+    const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64}) +(-|\d+)$/.exec(entry.subarray(0, tab).toString('latin1'));
     if (!m) continue;
-    const [, mode, type, sha, rel] = m;
-    const target = path.resolve(dir, rel);
-    // A path git would never write (absolute, or climbing out) is refused, not followed.
-    if (!target.startsWith(dir + path.sep)) return failed(`a path outside the tree: ${rel.slice(0, 80)}`);
-    if (type === 'commit') fs.mkdirSync(target, { recursive: true });
-    else if (type === 'blob') blobs.push({ sha, target, mode });
+    const [, mode, type, sha, size] = m;
+    const rel = entry.subarray(tab + 1);
+    // A path git would never write (absolute, empty parts, or climbing out) is refused, not followed.
+    if (!safeRelative(rel)) return failed(`a path outside the tree: ${rel.toString('utf8').slice(0, 80)}`);
+    const target = Buffer.concat([root, rel]);
+    if (type === 'commit') {
+      fs.mkdirSync(target, { recursive: true });
+    } else if (type === 'blob') {
+      const bytes = Number(size);
+      if (bytes > maxFileBytes) notes.push({ target, bytes });
+      else {
+        total += bytes;
+        blobs.push({ sha, target, mode });
+      }
+    }
+  }
+  if (total > maxTotalBytes) {
+    return failed(`its files come to ${Math.round(total / 1048576)} MB, past the ${Math.round(maxTotalBytes / 1048576)} MB a copy may take`);
+  }
+  for (const note of notes) {
+    fs.mkdirSync(parentOf(note.target), { recursive: true });
+    fs.writeFileSync(note.target, `(Not copied for the Q&A: ${Math.round(note.bytes / 1024)} KB, past its ${Math.round(maxFileBytes / 1048576)} MB limit per file.)\n`);
   }
   try {
     await writeBlobs({ repoDir, blobs });
   } catch (err) {
     return failed(`cat-file: ${String(err?.message || err).slice(0, 200)}`);
   }
-  return { ok: true, dir, files: blobs.length };
+  return { ok: true, dir, files: blobs.length, skipped: notes.length };
+}
+
+/** `ls-tree -r -z -l` as bytes, up to `maxBytes`: past that, `truncated`. */
+function listTree({ repoDir, treeish, maxBytes }) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['-C', repoDir, 'ls-tree', '-r', '-z', '-l', '--full-tree', treeish], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const parts = [];
+    let got = 0;
+    let truncated = false;
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timed out')); }, SNAPSHOT_TIMEOUT_MS);
+    child.stdout.on('data', (chunk) => {
+      if (truncated) return;
+      if (got + chunk.length > maxBytes) {
+        truncated = true;
+        child.kill('SIGKILL');
+        return;
+      }
+      got += chunk.length;
+      parts.push(chunk);
+    });
+    child.stderr.on('data', (d) => { if (stderr.length < 2000) stderr += d; });
+    child.on('error', (err) => { clearTimeout(timer); reject(err); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (truncated) return resolve({ bytes: Buffer.alloc(0), truncated: true });
+      if (code !== 0) return reject(new Error(stderr.trim() || `exited ${code}`));
+      resolve({ bytes: Buffer.concat(parts), truncated: false });
+    });
+  });
+}
+
+function splitRecords(bytes) {
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const at = bytes.indexOf(0, from);
+    if (at === -1) break;
+    out.push(bytes.subarray(from, at));
+    from = at + 1;
+  }
+  return out;
+}
+
+/** A relative path of non-empty parts, none of them `.` or `..`. */
+function safeRelative(rel) {
+  if (!rel.length || rel[0] === 0x2f) return false;
+  let from = 0;
+  for (;;) {
+    const at = rel.indexOf(0x2f, from);
+    const part = rel.subarray(from, at === -1 ? rel.length : at);
+    if (!part.length || (part.length === 1 && part[0] === 0x2e) || (part.length === 2 && part[0] === 0x2e && part[1] === 0x2e)) return false;
+    if (at === -1) return true;
+    from = at + 1;
+  }
+}
+
+function parentOf(target) {
+  return target.subarray(0, target.lastIndexOf(0x2f));
 }
 
 /**
@@ -357,7 +454,7 @@ function writeBlobs({ repoDir, blobs }) {
       if (err) { child.kill('SIGKILL'); reject(err); } else resolve();
     }
     function open(blob, size) {
-      fs.mkdirSync(path.dirname(blob.target), { recursive: true });
+      fs.mkdirSync(parentOf(blob.target), { recursive: true });
       fd = fs.openSync(blob.target, 'w');
       left = size;
     }
