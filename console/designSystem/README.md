@@ -119,6 +119,20 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   branch and last update. A pick writes `PR #123` and is named under the field. Anything typed still goes as typed.
 - The list is a `menu` surface with rows on `slate-tint` when picked or hovered, never a status color.
 
+## Choosing a Slack channel
+
+- A Slack channel is picked, never typed, wherever one is chosen: the Set up Slack dialog, the Slack card's Change
+  channel and a repo's own channel (`components/ChannelPicker`). A search field over a list of the workspace's
+  channels, each `#name`, a quiet `private` tag for a private one, and a word for the bot: an `is-ok` **bot is in it**
+  tag, or an `is-warn` **invite the bot first**. The pick is on `amber-tint`, hover on `slate-tint`, and a `sub` line
+  under the list names it.
+- Where Slack will not list them (an app without the scopes), the picker is the channel ID field, with a `cap-note`
+  that says which scopes to add. It never shows an empty list as if the workspace had no channels.
+- The Slack card is one card in rows (Bot, Pull requests, Questions), each with its sentence and its action on the
+  right; a group's numbers fold under its row behind a quiet **Limits ▾**. Not set up, it is one sentence and the
+  orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
+  available is disabled with an `is-warn` **Coming soon** tag.
+
 ## Naming a session
 
 - New session asks for no name. Once the console has named the session, its page shows a rename offer under the title:

@@ -22,6 +22,8 @@ test('the words people reach for find the section, in the right place', () => {
   assert.equal(search('ostgr')[0].id, 'my-databases', 'part of a word still matches');
   assert.equal(search('tmux')[0].id, 'my-tmux');
   assert.equal(search('slack channel')[0].id, 'card-slack');
+  assert.equal(search('slack bot token')[0].id, 'card-slack', 'Slack\'s keys are set on its card, not the Secrets page');
+  assert.equal(search('questions')[0].id, 'card-slack');
   assert.equal(search('webhook')[0].page, '/secrets');
   assert.equal(search('invite')[0].id, 'invite-card');
 });
