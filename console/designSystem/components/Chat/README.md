@@ -47,8 +47,10 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
   and the turn's clock in `meta` mono. `Needs you` is the only `wait`: a `wait` border round the line, the word in
   `wait`, what is asked in `sub`, and an outlined `wait` button. For a question above it reads `claude asks above: pick
   your answers there` with **TUI tab**; for anything else it cannot answer here, **Answer in the TUI tab**. `Claude
-  exited` in `ink`. Nothing when the agent is done, or once the record ends on an interrupt. A record that ends on an
-  open question is Needs you, not Working, whatever the agent's hooks said last.
+  exited` in `ink`. `Not sent` in `ink` when text waits in the agent's box at its prompt (a draft in the TUI tab, or a
+  message a prompt cut off), with a plain **TUI tab** button: neutral, not `wait`, since nothing asks for the person.
+  Nothing when the agent is done, or once the record ends on an interrupt. A record that ends on an open question is
+  Needs you, not Working, whatever the agent's hooks said last.
 - **An approval** (claude's permission dialog, codex's approval, read from the pane): until the pane has been read, the
   Needs you line says `Reading what codex asks…`, with no button; then, with no approval on it, the line to the TUI tab
   above. With one, the line says `codex asks: <its own question>` (claude's with what it is, `Bash command: Do you want
