@@ -350,6 +350,7 @@ export async function makeSnapshot({
   const root = Buffer.from(dir + path.sep);
   const blobs = [];
   const notes = [];
+  const folders = [];
   let total = 0;
   for (const entry of splitRecords(listing.bytes)) {
     const tab = entry.indexOf(9);
@@ -362,7 +363,7 @@ export async function makeSnapshot({
     if (!safeRelative(rel)) return failed(`a path outside the tree: ${rel.toString('utf8').slice(0, 80)}`);
     const target = Buffer.concat([root, rel]);
     if (type === 'commit') {
-      fs.mkdirSync(target, { recursive: true });
+      folders.push(target);
     } else if (type === 'blob') {
       const bytes = Number(size);
       if (bytes > maxFileBytes) notes.push({ target, bytes });
@@ -388,7 +389,10 @@ export async function makeSnapshot({
   // Held for as long as the copy is on disk: removeSnapshot gives it back.
   reservedBytes += total;
   reservations.set(dir, total);
+  // Every write is in here, the submodules' empty folders too, so a failure of
+  // any of them removes the copy at once rather than at the stale sweep.
   try {
+    for (const folder of folders) fs.mkdirSync(folder, { recursive: true });
     for (const note of notes) {
       fs.mkdirSync(parentOf(note.target), { recursive: true });
       fs.writeFileSync(note.target, `(Not copied for the Q&A: ${Math.round(note.bytes / 1024)} KB, past its ${mb(maxFileBytes)} MB limit per file.)\n`);

@@ -377,6 +377,40 @@ test('a short write is finished, not skipped: every file comes out whole', async
   }
 });
 
+// Every write of a copy is inside its failure path: a submodule's folder that cannot be made fails the copy and
+// removes it at once, rather than leaving it for the stale sweep.
+test('a submodule folder that cannot be made fails the copy and leaves nothing behind', async () => {
+  const repo = path.join(DIR, 'submodule');
+  fs.mkdirSync(repo, { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+  git('add', '-A');
+  git('commit', '-q', '-m', 'one');
+  git('update-index', '--add', '--cacheinfo', `160000,${git('rev-parse', 'HEAD')},vendor/lib`);
+  git('commit', '-q', '-m', 'with a submodule');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const copies = () => fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('woodshed-qa-claude-c3c3c3c3-'));
+  const ok = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-c3c3c3c3', free: () => Infinity });
+  assert.equal(ok.ok, true, ok.error);
+  assert.equal(fs.statSync(path.join(ok.dir, 'vendor/lib')).isDirectory(), true);
+  removeSnapshot(ok.dir);
+  const realMkdirSync = fs.mkdirSync;
+  fs.mkdirSync = (p, ...rest) => {
+    if (String(p).endsWith('vendor/lib')) throw new Error('EACCES: injected');
+    return realMkdirSync(p, ...rest);
+  };
+  let failed;
+  try {
+    failed = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-c3c3c3c3', free: () => Infinity });
+  } finally {
+    fs.mkdirSync = realMkdirSync;
+  }
+  assert.deepEqual([failed.ok, /EACCES: injected/.test(failed.error)], [false, true]);
+  assert.deepEqual(copies(), [], 'the failed copy was removed at once');
+  assert.equal(reservedSnapshotBytes(), 0);
+});
+
 test('copies a restart left behind are swept at the next copy, and a live one is not', () => {
   const tmp = fs.mkdtempSync(path.join(DIR, 'tmp-'));
   const stale = path.join(tmp, 'woodshed-qa-claude-12345678-old');
