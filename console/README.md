@@ -87,8 +87,15 @@ where the browser has it, and keeps its draft with the phone's message box. A me
 holds it. While the agent works the line over the composer says **Working** with its clock, from the console's state
 or sooner from the record (a turn that ends on the person or a tool, written in the last 90 s and after the console
 last said it settled), and **■** stops the turn: `POST /api/sessions/<id>/interrupt`, which types Esc into the agent's
-pane (`console: agent interrupted from the page`). A question the agent can only ask in its terminal, a permission
-prompt or a menu, shows as **Needs you** with **Answer in the Agent tab**. The agent still runs in its terminal, on
+pane (`console: agent interrupted from the page`). claude's questions (AskUserQuestion) are answered in their card:
+one option picked for each question, then **Send answers**, `POST /api/sessions/<id>/answer`, which statusd types
+into claude's picker only once its pane shows that same question with those options, from the highlighted row, and
+checks the pane again after each step (`session/panePrompt.mjs`, session/README.md). An approval the pane shows,
+claude's permission dialog or codex's approval, is read from the screen (`GET /api/sessions/<id>/prompt`) onto the
+**Needs you** line with **Approve** and **Deny**, under the same check. A pane that is not what was answered is a 409
+the page shows as `Not answered: <why>` with a way to the Agent tab; the console logs `console: answer typed in from
+the page` with the picks' numbers or the decision, never their text. A free-text answer, a question that takes
+several options, and anything else the agent asks only in its terminal stay **Answer in the Agent tab**. The agent still runs in its terminal, on
 the **Agent** tab (`?tab=agent`): hooks, Remote Control and Resume work as before. A session that is not running has
 no Chat tab and shows its start or its end there.
 

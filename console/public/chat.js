@@ -156,7 +156,8 @@
       return last?.kind === 'ask' && !last.answered && !last.declined;
     };
     const ownRecord = () => (record?.id === session?.id ? record : null);
-    const working = () => !T.endedByStop(ownRecord())
+    // A record that ends on claude's open question is a turn waiting on the person, whatever its hooks said last.
+    const working = () => !T.endedByStop(ownRecord()) && !asking()
       && (session?.state === 'working' || (session?.state !== 'needs-you' && T.midTurn(ownRecord(), settledAt)));
 
     function changed() {
@@ -456,21 +457,22 @@
     function drawStatus() {
       if (!session) return;
       const state = session.state;
-      if (state === 'needs-you') {
+      if (state === 'needs-you' || asking()) {
         status.className = 'chat-status is-needs';
         const shown = !asking() && prompt?.id === session.id && prompt.prompt?.kind === 'approval' ? prompt.prompt : null;
         if (shown) {
           const { asks, lines } = T.approvalText(shown);
           const busy = approval?.busy;
           status.classList.add('is-approval');
-          status.replaceChildren(
+          status.replaceChildren(...[
             h('span', { class: 'chat-needs-text' }, h('b', null, 'Needs you'), ` · ${agent()} asks: ${asks}`),
             lines.length > 0 && h('pre', { class: 'chat-approval' }, lines.join('\n')),
             approval?.error && h('p', { class: 'chat-needs-error', role: 'alert' }, `Not answered: ${approval.error}. Answer in the Agent tab.`),
             h('span', { class: 'chat-needs-actions' },
               h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'Agent tab'),
               h('button', { type: 'button', class: 'btn btn-sm btn-plain', disabled: Boolean(busy), title: shown.deny, onclick: () => answerApproval('deny') }, busy === 'deny' ? 'Denying…' : 'Deny'),
-              h('button', { type: 'button', class: 'btn btn-sm chat-answer', disabled: Boolean(busy), title: shown.approve, onclick: () => answerApproval('approve') }, busy === 'approve' ? 'Approving…' : 'Approve')));
+              h('button', { type: 'button', class: 'btn btn-sm chat-answer', disabled: Boolean(busy), title: shown.approve, onclick: () => answerApproval('approve') }, busy === 'approve' ? 'Approving…' : 'Approve')),
+          ].filter(Boolean));
           return;
         }
         const open = asking() && T.canAnswer(T.items(ownRecord()?.entries ?? []).pop());
