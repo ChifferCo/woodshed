@@ -93,9 +93,9 @@ databases:
 
 # Default: [] (none). The containers sessions need beside them, such as a fake S3 or a PDF renderer, each reached at
 # its URL in its `variable` (a session and the seed get WOODSHED_SERVICES, the list of those variables, too). Where they
-# run is the installation's, one place for all its sessions: the base box on AWS, the compose stack on a local install,
-# the org's services VM on Woodshed Cloud. A service with no `data` is stateless, so one copy serves everyone; one with
-# `data` gets a copy for each person. Each reader takes the default branch's, so a branch cannot change what runs.
+# run is the installation's: the base box on AWS, the compose stack on a local install, or beside each session on a host
+# that gives every session a machine of its own. A service with no `data` is stateless, so a copy can serve everyone;
+# `data` says whose a copy's data is. Each reader takes the default branch's, so a branch cannot change what runs.
 services:
   - # Required. Lowercase letters, digits and dashes, at most 32: the container's name, and its host on the sessions'
     # network. Not postgres, mongo, console or caddy, which Woodshed runs.
@@ -109,7 +109,7 @@ services:
     variable: S3_ENDPOINT
     # Default: {}. The container's environment. Quote numbers.
     environment:
-      SERVICES: s3
+      SERVICES: s3,lambda
       PERSISTENCE: '1'
     # Default: {}. Files put in the container, read-only and executable, such as an init script: the path there, then
     # the file in the repo it is read from, the repo's own and never a symlink.
@@ -126,6 +126,11 @@ services:
       # every session's starts empty and goes when it ends. An init script in `files` runs at each start, so it must
       # be safe to run again on data it made before.
       keep: person
+    # Default: false. true for a service that starts containers of its own, such as LocalStack running Lambda
+    # functions (SERVICES: s3,lambda): it gets a Docker daemon's socket at /var/run/docker.sock, where the installation
+    # can give it one. It runs the code sessions give it, so it needs `data`, and gets a copy for each person or
+    # session. The AWS provider runs no service with `data` yet, so none with this either.
+    docker: true
 
 # Default: null (no app: no Start app, no ports probed, and no pull request refused for an untested app).
 app:
@@ -180,6 +185,15 @@ editor: true
 # comments (a session started, resumed or failed, a refusal) and the session's link in its pull requests. For a public
 # repo, whose readers are not the installation's.
 consoleLinks: false
+
+# Default: null (the installation's WOODSHED_ACTIONS_WORKFLOWS, which named them before this field; write [] for none).
+# The console's avatar menu links to these workflows of the repo, each with its Run workflow button, such as the deploy
+# workflow. Read from the default branch of the installation's default repo.
+workflowLinks:
+  - # Required. What the menu calls it: 1 to 40 printable characters.
+    label: Deploy
+    # Required. The workflow file, directly in .github/workflows/, on the default branch.
+    workflow: .github/workflows/deploy.yml
 
 # Default: full. How far a private session's GitHub token reaches; a private session acts as its owner either way.
 # full is the owner's token as GitHub issued it, reaching every repo they can write to that the GitHub App is on. repo
@@ -242,5 +256,6 @@ pullRequests:
     check: Merge risk
   # Default: none. For a repo connected to more than one console: the login of the GitHub App whose console does the
   # automatic work, meaning sessions from the label or a comment, the review and QA. Other consoles skip it and still
-  # start sessions by hand. Consoles that act as the same App (Woodshed Cloud orgs) all match it.
-  runsOn: woodshed-cloud[bot]
+  # start sessions by hand. Consoles that act as the same App all match it, unless a slash names one by the name it is
+  # given (WOODSHED_RUNS_ON_NAME): acme-woodshed[bot]/staging.
+  runsOn: acme-woodshed[bot]

@@ -27,8 +27,8 @@ function checkout() {
 
 test('services: each its name, image, port and variable, with an environment, files and memory left out as none', () => {
   const { services } = parse([LOCALSTACK, PDF]);
-  assert.deepEqual(services[0], { ...LOCALSTACK, memory: '768m', data: null });
-  assert.deepEqual(services[1], { ...PDF, environment: {}, files: {}, memory: '768m', data: null });
+  assert.deepEqual(services[0], { ...LOCALSTACK, memory: '768m', data: null, docker: false });
+  assert.deepEqual(services[1], { ...PDF, environment: {}, files: {}, memory: '768m', data: null, docker: false });
   assert.deepEqual(parseProject({ version: 1 }).services, [], 'none when left out');
   assert.equal(parse([{ ...PDF, memory: '2g' }]).services[0].memory, '2g');
   assert.equal(parse([{ ...PDF, image: `registry.example.com:5000/pdf/pdf@sha256:${'a'.repeat(64)}` }]).services.length, 1, 'a digest is a version');
@@ -75,6 +75,15 @@ test('data: what a stateful service keeps, and for whom; none is stateless', () 
     [{ dir: '/a/../b', keep: 'person' }, /data\.dir must be an absolute folder/],
     [{ dir: '/data', keep: 'person', size: '1g' }, /data has size, which is not a field/],
   ]) assert.throws(() => parse([{ ...LOCALSTACK, data }]), error, JSON.stringify(data));
+});
+
+test('docker: a service that starts containers, which must keep its data for a person or a session', () => {
+  const data = { dir: '/var/lib/localstack', keep: 'session' };
+  assert.equal(parse([{ ...LOCALSTACK, data, docker: true }]).services[0].docker, true);
+  assert.equal(parse([{ ...LOCALSTACK, data: { ...data, keep: 'person' }, docker: true }]).services[0].docker, true);
+  assert.equal(parse([{ ...LOCALSTACK, docker: false }]).services[0].docker, false);
+  assert.throws(() => parse([{ ...LOCALSTACK, docker: true }]), /services\[0\]\.docker runs containers .*give it data/);
+  assert.throws(() => parse([{ ...LOCALSTACK, data, docker: 'yes' }]), /services\[0\]\.docker must be true or false/);
 });
 
 test('check names each service, a file of one that is missing, and an env that would hide its URL', () => {

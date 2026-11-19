@@ -323,17 +323,21 @@ function devSecrets(dir) {
   return { WOODSHED_LOCAL_SECRETS_DIR: secretsDir, WOODSHED_LOCAL_SECRETS_KEY_FILE: keyFile };
 }
 
+// The first repo's file also names the avatar menu's workflow links, over the installation's
+// WOODSHED_ACTIONS_WORKFLOWS, which only a repo whose file names none would show.
 function devRepoSettings(dir) {
   const file = (envPath) => `version: 1\nenvFiles:\n  - path: ${envPath}\n    defaults:\n      - LOG_LEVEL=info\n`;
+  const links = 'workflowLinks:\n  - label: Deploy\n    workflow: .github/workflows/deploy.yml\n';
   return {
     env: {
       ...devSecrets(dir),
+      WOODSHED_ACTIONS_WORKFLOWS: 'Run infrastructure=infra.yml',
       WOODSHED_PROJECTS: JSON.stringify([
         { name: 'example-repo', repo: 'example-org/example-repo', default: true },
         { name: 'example-tools', repo: 'example-org/example-tools' },
       ]),
     },
-    projectFiles: { 'example-org/example-repo': file('api/.env'), 'example-org/example-tools': file('tools/.env') },
+    projectFiles: { 'example-org/example-repo': file('api/.env') + links, 'example-org/example-tools': file('tools/.env') },
   };
 }
 

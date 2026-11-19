@@ -27,7 +27,10 @@ test('Woodshed\'s project file parses, with no dependencies or databases, and it
 });
 
 test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s test job and the review\'s Merge risk', () => {
-  assert.deepEqual(selfProject().pullRequests, {
+  // Which console does this repo's automatic work is .woodshed/'s alone to name.
+  const { runsOn, ...gates } = selfProject().pullRequests;
+  assert.match(runsOn, /^[a-z0-9-]+\[bot\]\/[a-z0-9][a-z0-9-]*$/);
+  assert.deepEqual(gates, {
     review: {
       author: null, heading: '## Claude review', workflow: null,
       rerun: null, commentAuthor: null, runner: 'woodshed',
@@ -35,7 +38,6 @@ test('Woodshed\'s pull requests wait for its Claude review, its Check suite\'s t
     suites: [{ name: 'Check', workflow: '.github/workflows/check.yml', jobs: 'test', rerun: null }],
     qa: { check: 'QA', label: 'woodshed-qa', heading: '## QA', author: null, runner: 'woodshed', autoLabel: true },
     mergeRisk: { check: 'Merge risk' },
-    runsOn: 'woodshed-internal[bot]',
   });
 });
 

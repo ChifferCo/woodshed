@@ -210,7 +210,8 @@ async function loadAppKey(config, secrets) {
  *          recordings?: object|null (where QA recordings are kept: qaRecordings.mjs),
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
  *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
- *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null}} args
+ *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
+ *          hostApp?: object|null, woodshedUpdate?: boolean}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
@@ -219,11 +220,13 @@ async function loadAppKey(config, secrets) {
  *   Console settings page's Add a repo and Remove change it there (addedProjects.mjs, README.md "Embedding the
  *   console"): `{list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`. `projectReadiness` says why
  *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
- *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console")
+ *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console").
+ *   `woodshedUpdate: false` turns off the Console settings Woodshed card and its check, for a program that deploys
+ *   Woodshed itself (README.md "Embedding the console")
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true }) {
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
     throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
@@ -381,16 +384,18 @@ export async function createInstallation({ config: loaded, store, provider, trus
   }) : null;
   // Woodshed's own updates, from the git clone the console runs from (woodshedUpdate.mjs): none without one. The image
   // is built for the environment's repo, not one an admin added, so a console that started with none builds it with no
-  // checkout again, as install.sh did.
-  const woodshedUpdate = createWoodshedUpdate({
+  // checkout again, as install.sh did. A program that deploys Woodshed itself turns it off: an Update here would go
+  // around its deploy, and restart a console that may serve more than one team.
+  const woodshedUpdate = followUpdates ? createWoodshedUpdate({
     config, store, supervisor: supervisorOf(process.env), repo: () => defaultProject(loaded).repo || null,
     token: tokens ? async () => (await tokens.console.token()).token : null,
-  });
+  }) : null;
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
+    workflowLinks: () => projectReader.workflowLinks(),
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
     projectAccess: createProjectAccess({ config, githubFor, viewPrefs, signIn: () => !trusted && Boolean(auth?.enabled()) }),
     githubFor,
@@ -453,7 +458,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     if (asks) loops.every(config.tickMs, 'asks', () => asks.tick());
     loops.every(config.startingCheckMs, 'starting check', () => fleet.checkStarting());
     loops.every(config.startingCheckMs, 'wait progress', () => fleet.checkWaiting());
-    loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
+    if (woodshedUpdate) loops.every(CHECK_EVERY_MS, 'Woodshed update check', () => woodshedUpdate.check());
     if (databases.available) loops.every(databases.POLL_MS, 'databases', () => databases.poll());
     if (config.pollGitHub) {
       startGitHub({ webhooks, deliveredWebhooks }).catch((err) => console.error('console: GitHub start failed', { message: String(err?.message ?? err).split('\n')[0] }));

@@ -743,9 +743,13 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   assert.match(await getBody(port, '/static/sharedHome.js', as('octocat')), /createSharedHome/);
   assert.match(await getBody(port, '/static/messageBox.js', as('octocat')), /createMessageBox/);
   assert.match(await getBody(port, '/static/dictation.js', as('octocat')), /W\.dictation = /);
-  // My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
-  const settingsScripts = [...(await getBody(port, '/settings', as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
-  assert.deepEqual(settingsScripts.slice(-3), ['repoLayers.js', 'myRepoSettings.js', 'mySettings.js']);
+  // The settings pages are one page: each address loads every settings page's script, so common.js moves between
+  // them in place. My settings' Repo settings card draws its layers with the repo page's parts, loaded before both.
+  const SETTINGS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+  for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
+    const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
+    assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
+  }
   assert.match(await getBody(port, '/static/repoLayers.js', as('octocat')), /WoodshedRepoLayers = /);
   assert.match(await getBody(port, '/static/myRepoSettings.js', as('octocat')), /WoodshedMyRepoSettings = /);
 
@@ -1201,6 +1205,20 @@ test('Console settings: the Woodshed card reads, checks and starts an update, an
   const nonePort = await listen(noneServer);
   t.after(() => noneServer.close());
   assert.match(await getBody(nonePort, '/api/console-settings/updates'), /does not run from a git clone/);
+});
+
+test('Console settings: with no Woodshed update service, as an embedding program\'s woodshedUpdate: false, there is no card nor count', async (t) => {
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [] }, woodshedUpdate: null });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/console-settings/updates`)).status, 404);
+  assert.equal((await post(port, '/api/console-settings/updates/check', {})).status, 404);
+  assert.equal((await post(port, '/api/console-settings/updates/update', {})).status, 404);
+  const me = await (await fetch(`http://127.0.0.1:${port}/api/me`)).json();
+  assert.equal('updates' in me, false, 'no dot on the avatar');
 });
 
 test('Console settings: a repo is added and removed on the page, with its sessions counted, and a refused one says why', async (t) => {

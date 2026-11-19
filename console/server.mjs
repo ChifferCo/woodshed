@@ -176,6 +176,9 @@ import { countRequests, createShutdown } from './shutdown.mjs';
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public');
 // /, /all and a session's page are one page, session.js last.
+// The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
+// address names, then moves between them in place (settingsPage), so switching pages never reloads.
+const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -183,6 +186,8 @@ const STATIC_FILES = {
   'setupSteps.cjs': 'text/javascript; charset=utf-8',
   'inviteLink.cjs': 'text/javascript; charset=utf-8',
   'openPulls.cjs': 'text/javascript; charset=utf-8',
+  'settingsIndex.cjs': 'text/javascript; charset=utf-8',
+  'settingsSearch.js': 'text/javascript; charset=utf-8',
   'keys.cjs': 'text/javascript; charset=utf-8',
   'projectColors.cjs': 'text/javascript; charset=utf-8',
   'common.js': 'text/javascript; charset=utf-8',
@@ -221,6 +226,8 @@ const PEOPLE_RE = /^\/api\/people\/(invite|accept|decline|remove|slack|assignabl
 const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 // A repo's settings page: its project's name, as Console settings' Repos card links it.
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
+// The console's own settings pages, served as one page with /settings (SETTINGS_SCRIPTS).
+const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
 const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
@@ -403,7 +410,9 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('inviteLink.cjs')}"></script>
 <script src="${staticUrl('openPulls.cjs')}"></script>
 <script src="${staticUrl('projectColors.cjs')}"></script>
+<script src="${staticUrl('settingsIndex.cjs')}"></script>
 <script src="${staticUrl('common.js')}"></script>
+<script src="${staticUrl('settingsSearch.js')}"></script>
 <script src="${staticUrl('keys.cjs')}"></script>
 <script src="${staticUrl('shell.js')}"></script>
 ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n')}
@@ -552,7 +561,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -621,6 +630,13 @@ export function createHandler({
     res.end();
   }
 
+  // The menu's workflow links, for the default project's repo: its project file's (`workflowLinks`, read from the default
+  // branch), or the installation's WOODSHED_ACTIONS_WORKFLOWS where the file leaves them out or cannot be read, so a
+  // console set up before the field keeps its links.
+  async function menuWorkflows() {
+    return (await workflowLinks?.()) ?? config.actionsWorkflows ?? [];
+  }
+
   // The sign-in routes, open to anyone who reaches the console. Answers and returns true for its own paths.
   async function authRoute(req, res, url) {
     const { pathname } = url;
@@ -634,7 +650,7 @@ export function createHandler({
         supported: true, signIn: true, available: true, hosted: true, login: user?.login ?? null, visitor: null, asked: null,
         admin: Boolean(user) && isAdmin(user), asking: 0, names: namesFor([user?.login]),
         ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
-        repo: user ? defaultProject(config).repo : null, workflows: user ? (config.actionsWorkflows ?? []) : [],
+        repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
       return true;
@@ -654,7 +670,7 @@ export function createHandler({
         names: namesFor([user?.login ?? visitor?.login]),
         // The menu's workflow links. A signed-out browser is not told which repo this is: it may be private.
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
-        workflows: user || !auth?.enabled() ? (config.actionsWorkflows ?? []) : [],
+        workflows: user || !auth?.enabled() ? await menuWorkflows() : [],
         ...((user || !auth?.enabled()) && userMenu ? menuOf(userMenu, req.headers) : {}),
       });
       return true;
@@ -1937,20 +1953,15 @@ export function createHandler({
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings') return html(res, pageShell({ title: consoleName, script: ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js'], provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings' || SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SETTINGS_SCRIPTS, provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
-    if (pathname === '/events') return html(res, pageShell({ title: consoleName, script: 'events.js', provider }));
-    if (pathname === '/secrets') return html(res, pageShell({ title: consoleName, script: ['webhookSetup.js', 'secrets.js'], provider }));
-    if (pathname === '/console-settings') return html(res, pageShell({ title: consoleName, script: 'consoleSettings.js', provider }));
-    if (REPO_SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: ['repoLayers.js', 'repoSettings.js'], provider }));
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
-    if (pathname === '/people') return html(res, pageShell({ title: consoleName, script: 'people.js', provider }));
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));
     if (pathname === '/api/sessions') return reply(res, 200, sessionsBody(user.login));

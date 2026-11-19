@@ -1,6 +1,6 @@
 // My settings: what the signed-in person's own My Woodshed sessions are given. Only they see this page's values,
 // and the token is write-only: once saved, the console never shows it again, not even to them.
-(function () {
+window.Woodshed.settingsPage('/settings', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -181,19 +181,19 @@
     const via = me.app?.slug ?? 'the App';
     // No App at all, on one person's machine: sessions push with its gh login, as that person.
     if (!gh.connected && !me.githubConnect && me.pushesWithGh) {
-      return h('section', { class: 'set-card' },
+      return h('section', { class: 'set-card', id: 'my-github' },
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, 'Pushes as you')),
         h('p', { class: 'sub' }, 'Your My Woodshed sessions commit, push and open pull requests as you, with this machine\'s gh login.'));
     }
     // No App sign-in to connect through (a console that borrows its GitHub access from its host): sessions push as the App.
     if (!gh.connected && !me.githubConnect) {
       const app = me.app?.login ?? 'the GitHub App';
-      return h('section', { class: 'set-card' },
+      return h('section', { class: 'set-card', id: 'my-github' },
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${app}`)),
         h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as ${app}, with the GitHub access this console has.`));
     }
     if (!gh.connected) {
-      return h('section', { class: 'set-card' },
+      return h('section', { class: 'set-card', id: 'my-github' },
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${bot}`)),
         h('p', { class: 'sub' }, `Connect to have your My Woodshed sessions commit, push and open pull requests as you, marked “via ${via}”. It is the same GitHub sign-in again; this time the console keeps the token, and only your private sessions get it, a few minutes at a time.`),
         h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-open', href: '/auth/connect' }, 'Connect GitHub')),
@@ -201,7 +201,7 @@
     }
     if (document.activeElement !== gitName && !gitTyped) gitName.value = gh.name ?? '';
     if (document.activeElement !== gitEmail && !gitTyped) gitEmail.value = gh.email ?? '';
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'my-github' },
       h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill is-ok' }, `Connected as ${W.personText(me.login)}`)),
       h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as you. Disconnect here ends your token at GitHub, and running sessions push as ${bot} again within 5 minutes.`),
       h('div', { class: 'lgrid2' },
@@ -230,10 +230,10 @@
   function watchDatabases() {
     clearTimeout(dbRefresh);
     if (me.databases?.status !== 'working') return;
-    dbRefresh = setTimeout(() => W.getJson('/api/my').then((answer) => { me = answer; render(); }, () => watchDatabases()), 10_000);
+    dbRefresh = life.timeout(() => W.getJson('/api/my').then((answer) => { me = answer; render(); }, () => watchDatabases()), 10_000);
   }
 
-  const restore = window.WoodshedRestore.createRestore({ getMe: () => me, setMe: (answer) => { me = answer; }, render });
+  const restore = window.WoodshedRestore.createRestore({ getMe: () => me, setMe: (answer) => { me = answer; }, render, life });
 
   // From your computer: a token for woodshed-db.mjs, shown once, since the console keeps only its hash.
   let tunnelToken = null;
@@ -335,7 +335,7 @@
         run: () => databasesChange({ confirm: 'reset' }, 'Starting the reset…'),
       }),
     }, 'Reset my data…');
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'my-databases' },
       h('div', { class: 'set-head' }, h('h2', null, 'Your databases'), pill),
       h('p', { class: 'sub' }, ...databasesLine(db)),
       // Each repo whose sessions cannot start, with why and its fix (databaseGate.mjs); every other repo still starts.
@@ -355,7 +355,7 @@
 
   function homeCard() {
     const home = me.home;
-    return h('section', { class: 'set-card' },
+    return h('section', { class: 'set-card', id: 'my-home' },
       h('div', { class: 'set-head' }, h('h2', null, 'MCP logins and Claude memory'),
         home.saved ? h('span', { class: 'pill is-ok' }, `Kept · ${(home.bytes / 1024 / 1024).toFixed(1)} MB`) : h('span', { class: 'pill' }, 'Nothing kept yet')),
       h('p', { class: 'sub' }, 'Log in to an MCP once, inside any of your private sessions. While one runs, and when it stops, your ', h('code', null, '~/.claude'),
@@ -429,7 +429,7 @@
     renderFilePill();
     const label = (key) => me.files?.[key]?.label ?? key;
     if (!fileKey) return null;
-    return h('section', { class: 'set-card is-wide' },
+    return h('section', { class: 'set-card is-wide', id: 'my-tmux' },
       h('div', { class: 'set-head' }, h('h2', null, 'tmux'), filePill),
       h('p', { class: 'sub' }, 'Your sessions use the image\'s tmux config, and add your own lines after it, so a setting in both uses yours. Your next My Woodshed session picks up what you save; running ones keep theirs. Your own values for a repo\'s env files are under Repo settings.'),
       f && sharedFileBlock(f, label(fileKey)),
@@ -472,8 +472,8 @@
       projectSelect.replaceChildren(...projects.projects.map((p) => h('option', { value: p.name }, `${p.name} \u00b7 ${p.repo}`)));
       projectSelect.value = projects.defaultProject;
     }
-    return h('section', { class: 'set-card' },
-      h('div', { class: 'set-head' }, h('h2', null, 'Default project'), h('span', { class: projects.saved ? 'pill is-ok' : 'pill' }, projects.saved ? 'Your own' : 'Console default')),
+    return h('section', { class: 'set-card', id: 'my-project' },
+      h('div', { class: 'set-head' }, h('h2', null, 'My default project'), h('span', { class: projects.saved ? 'pill is-ok' : 'pill' }, projects.saved ? 'Your own' : 'Console default')),
       h('p', { class: 'sub' }, 'The repo New session opens on for you. You can still pick another there for one session. Only projects whose repo you can write to are listed.'),
       h('label', { class: 'field-label', for: 'default-project' }, h('span', null, 'Project')),
       projectSelect,
@@ -497,9 +497,9 @@
       if (document.activeElement !== input && !limitsTyped) input.value = own[key] ?? '';
     }
     const custom = Object.keys(own).length > 0;
-    return h('section', { class: 'set-card' },
-      h('div', { class: 'set-head' }, h('h2', null, 'Session timeouts'), h('span', { class: custom ? 'pill is-ok' : 'pill' }, custom ? 'Your own' : 'Console defaults')),
-      h('p', { class: 'sub' }, 'How long your My Woodshed sessions wait for you before they pause, and how long one that works may run before it is stopped. Either way its work is pushed first, and Resume picks it up. Leave a box empty to use the console\'s number, shown in it. Sessions already running use the new numbers within a few seconds.'),
+    return h('section', { class: 'set-card', id: 'my-timeouts' },
+      h('div', { class: 'set-head' }, h('h2', null, 'My session timeouts'), h('span', { class: custom ? 'pill is-ok' : 'pill' }, custom ? 'Your own' : 'Console defaults')),
+      h('p', { class: 'sub' }, 'How long your My Woodshed sessions wait for you before they pause, and how long one that works may run before it is stopped. Either way its work is pushed first, and Resume picks it up. Leave a box empty to use the console\'s number, shown in it. Sessions already running use the new numbers within a few seconds. The console\'s own numbers, for shared sessions, are the Sessions card on ', W.isAdmin() ? h('a', { href: '/console-settings#card-sessions' }, 'Settings') : 'Settings (admins)', '.'),
       h('label', { class: 'field-label', for: 'limit-idle' }, h('span', null, 'Pause a session waiting for input after (hours, 0.25 to 24)')),
       limitInputs.idleHours,
       h('label', { class: 'field-label', for: 'limit-lifetime' }, h('span', null, 'Stop a working session after (hours, 1 to 24)')),
@@ -514,7 +514,7 @@
   // everything saved here is deleted. What is on GitHub stays, and so do shared sessions.
   function removeCard() {
     const live = me.running;
-    return h('section', { class: 'set-card is-danger' },
+    return h('section', { class: 'set-card is-danger', id: 'my-remove' },
       h('div', { class: 'set-head' }, h('h2', null, 'Remove My Woodshed'), !me.setUp && !live && h('span', { class: 'pill' }, 'Nothing to remove')),
       h('p', { class: 'sub' }, `Stops your ${live} running private session${live === 1 ? '' : 's'}, each pushing its branch first, takes all your private sessions off the list, and deletes your Claude token, GitHub connection, your own databases, your repo settings, tmux lines and kept Claude home. Branches and pull requests stay on GitHub, and shared sessions you started stay on Shared. You can set it up again from scratch later.`),
       h('div', { class: 'set-actions' }, h('button', {
@@ -541,18 +541,17 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
     if (!me) {
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/settings'), h('p', { class: 'empty' }, loadError ? `Could not load your settings: ${loadError}` : 'Loading…')));
       return;
     }
     // The page is rebuilt on each answer (the projects, a save): a box being typed in keeps its focus.
     const focused = document.activeElement;
     app.replaceChildren(h('div', { class: 'page settings-page' },
-      W.nav('/settings'),
+      life.nav('/settings'),
       h('header', { class: 'page-head' }, h('div', null,
-        h('h1', { class: 'title' }, 'My settings'),
-        h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions. Shared sessions get none of it, but for your Claude token when you switch that on below.`))),
+        h('h1', { class: 'title' }, 'My settings ', W.scopePill('/settings')),
+        h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
       tokenCard(),
       codexCard(),
       projectCard(),
@@ -583,5 +582,5 @@
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
   W.getJson('/api/my/projects').then((answer) => { projects = answer; if (me) render(); }, () => {});
   render();
-  window.addEventListener('woodshed:me', render);
-})();
+  life.on(window, 'woodshed:me', render);
+});

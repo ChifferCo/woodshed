@@ -15,7 +15,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, qaRecordings = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -101,6 +101,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     sessionEnv: { PGHOST: 'db' }, ghToken, pollMs: 30_000, fallbackPollMs: 300_000, retention, maxPrivatePerPerson,
     ...(projects ? { projects } : {}),
     ...(appDomain ? { appDomain } : {}),
+    ...(runsOnName ? { runsOnName } : {}),
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
@@ -3018,23 +3019,39 @@ test('the refusal and failure comments name the repo\'s own label', async () => 
 
 test('pullRequests.runsOn keeps label sessions, reviews and QA on the console it names, and a session by hand anywhere', async () => {
   const elsewhere = { ...REVIEW_GATES, runsOn: 'woodshed-internal[bot]' };
-  const label = setup({ gates: elsewhere, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  const label = setup({ gates: elsewhere, ownApp: () => ({ login: 'acme-woodshed[bot]' }) });
   assert.equal((await label.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'ignored');
   assert.deepEqual([label.calls.started.length, label.calls.comments.length], [0, 0]);
-  const review = reviewSetup({ gates: elsewhere, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  const review = reviewSetup({ gates: elsewhere, ownApp: () => ({ login: 'acme-woodshed[bot]' }) });
   assert.equal((await review.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored');
-  const here = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  const here = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'acme-woodshed[bot]' }, ownApp: () => ({ login: 'acme-woodshed[bot]' }) });
   assert.equal((await here.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
   assert.ok(await label.fleet.startManual({ number: 43, startedBy: 'joel' }), 'by hand, on any console');
 });
 
+test('pullRequests.runsOn names one of the consoles that act as one App, by the name each is given', async () => {
+  const cloud = () => ({ login: 'acme-woodshed[bot]' });
+  const gates = { ...REVIEW_GATES, runsOn: 'acme-woodshed[bot]/beta' };
+  const named = reviewSetup({ gates, ownApp: cloud, runsOnName: 'beta' });
+  assert.equal((await named.fleet.reviewOnTag({ number: 7 })).outcome, 'started');
+  const other = reviewSetup({ gates, ownApp: cloud, runsOnName: 'acme' });
+  assert.equal((await other.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'another org of the same App');
+  const label = setup({ gates, ownApp: cloud, runsOnName: 'acme' });
+  assert.equal((await label.fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'Add GTM', kind: 'issue' })).outcome, 'ignored');
+  assert.equal(label.calls.started.length, 0);
+  const unnamed = reviewSetup({ gates, ownApp: cloud });
+  assert.equal((await unnamed.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a console with no name is not the one named');
+  const any = reviewSetup({ gates: { ...REVIEW_GATES, runsOn: 'acme-woodshed[bot]' }, ownApp: cloud, runsOnName: 'acme' });
+  assert.equal((await any.fleet.reviewOnTag({ number: 7 })).outcome, 'started', 'the App alone still matches each of its consoles');
+});
+
 test('pullRequests.runsOn keeps the QA label to the console it names, so its own label starts its QA', async () => {
   const gates = { ...REVIEW_GATES, qa: { ...REVIEW_GATES.qa ?? {}, check: 'QA', label: 'woodshed-qa', heading: '## QA', runner: 'woodshed', autoLabel: true } };
-  const elsewhere = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-internal[bot]' }) });
+  const elsewhere = reviewSetup({ gates: { ...gates, runsOn: 'acme-woodshed[bot]' }, ownApp: () => ({ login: 'woodshed-internal[bot]' }) });
   elsewhere.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
   await elsewhere.fleet.qaAutoLabel({ number: 7 });
   assert.deepEqual(elsewhere.calls.labeled, []);
-  const here = reviewSetup({ gates: { ...gates, runsOn: 'woodshed-cloud[bot]' }, ownApp: () => ({ login: 'woodshed-cloud[bot]' }) });
+  const here = reviewSetup({ gates: { ...gates, runsOn: 'acme-woodshed[bot]' }, ownApp: () => ({ login: 'acme-woodshed[bot]' }) });
   here.github.pull = async () => ({ ...REVIEW_PULL, labels: [] });
   await here.fleet.qaAutoLabel({ number: 7 });
   assert.deepEqual(here.calls.labeled, [{ number: 7, label: 'woodshed-qa' }]);
@@ -3099,4 +3116,37 @@ test('a review comments that it started, and that comment becomes the review\'s 
   died.store.state.sessions[0].error = 'CannotPullContainerError: no image';
   await died.fleet.tick();
   assert.match(died.calls.comments.at(-1).body, /did not finish.*CannotPullContainerError/);
+});
+
+test('a session pull request is reviewed by the console that ran the session, whatever runsOn names, and skipped by the others', async () => {
+  const internal = { login: 'woodshed-internal[bot]' };
+  const cloud = { login: 'acme-woodshed[bot]' };
+  const gates = { ...REVIEW_GATES, runsOn: internal.login };
+  const sessionPull = { ...REVIEW_PULL, user: { login: cloud.login }, head: { ...REVIEW_PULL.head, ref: 'woodshed/ada-0b34fee6' } };
+
+  const onCloud = reviewSetup({ ownApp: () => cloud, gates });
+  onCloud.github.pull = async () => sessionPull;
+  onCloud.store.state.sessions.push({
+    id: '0b34fee6', repo: 'o/r', kind: 'task', number: null, title: 'qa video', startedBy: 'ada', status: 'running',
+    branch: 'woodshed/ada-0b34fee6', prUrl: null, createdAt: '2026-10-21T09:00:00.000Z', pendingMessages: [],
+  });
+  assert.equal((await onCloud.fleet.reviewOnTag({ number: 7 })).outcome, 'started', 'its own session: runsOn does not stop it');
+  assert.equal(onCloud.fleet.sessions().find((s) => s.review).startedBy, 'ada');
+
+  const onInternal = reviewSetup({ ownApp: () => internal, gates });
+  onInternal.github.pull = async () => sessionPull;
+  assert.deepEqual(await onInternal.fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'another console\'s session opened it' });
+
+  const otherConsole = reviewSetup({ ownApp: () => cloud, gates: REVIEW_GATES });
+  otherConsole.github.pull = async () => sessionPull;
+  assert.equal((await otherConsole.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'another console of the App with no such session leaves it to the one that has it');
+
+  const person = reviewSetup({ ownApp: () => cloud, gates });
+  assert.equal((await person.fleet.reviewOnTag({ number: 7 })).outcome, 'ignored', 'a person\'s pull request still follows runsOn');
+});
+
+test('QA of another console\'s session pull request is neither labelled nor run here', async () => {
+  const t = qaSetup({ gates: AUTO_GATES, ownApp: () => APP });
+  t.github.pull = async () => ({ ...QA_PULL, user: { login: 'acme-woodshed[bot]' }, head: { ...QA_PULL.head, ref: 'woodshed/ada-0b34fee6' }, labels: [] });
+  assert.deepEqual(await t.fleet.qaAutoLabel({ number: 7 }), { unrecorded: true });
 });

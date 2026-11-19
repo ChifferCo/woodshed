@@ -1,6 +1,6 @@
 // The Webhook events page: what the console did with each message the webhooks
 // queue brought, newest first. The filter lives in the URL (?show=acted|problems).
-(function () {
+window.Woodshed.settingsPage('/events', (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -68,13 +68,12 @@
   }
 
   function render() {
-    const app = document.getElementById('app');
-    const head = h('header', { class: 'page-head' },
+    const head = h('header', { class: 'page-head', id: 'events' },
       h('div', null,
-        h('h1', { class: 'title' }, 'Webhook events'),
+        h('h1', { class: 'title' }, 'Webhook events ', W.scopePill('/events')),
         h('p', { class: 'sub' }, 'Every delivery the console took off the queue, and what it did with it.')));
     if (!data) {
-      app.replaceChildren(h('div', { class: 'page' }, W.nav('/events'), head,
+      app.replaceChildren(h('div', { class: 'page' }, life.nav('/events'), head,
         h('p', { class: 'empty' }, loadError ? `Could not load events: ${loadError}` : 'Loading events…')));
       return;
     }
@@ -86,7 +85,7 @@
         h('tbody', null, visible.map(row))))
       : h('p', { class: 'empty' }, data.events.length ? 'No events match this filter.' : 'No webhook events yet.');
     app.replaceChildren(h('div', { class: 'page' },
-      W.nav('/events'),
+      life.nav('/events'),
       head,
       offNote(),
       h('div', { class: 'filters' },
@@ -108,6 +107,8 @@
     render();
   }
 
+  // Drawn at once, saying it loads, so the page never sits empty while the list is on its way.
+  render();
   refresh();
-  setInterval(refresh, REFRESH_MS);
-})();
+  life.interval(refresh, REFRESH_MS);
+});

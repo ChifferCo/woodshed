@@ -254,6 +254,15 @@ console gets `WOODSHED_CONSOLE_NAME` and restarts. The pages and the manifest fo
 installed from the browser keeps the old name until it is installed again, since the browser keeps the name it was
 installed with.
 
+The avatar menu's workflow links (a deploy workflow, an image build) are the repo's project file's `workflowLinks`
+(docs/reference.md, "The project file"), read from the default branch: a new link is a commit there, with no apply.
+`console_workflow_links` in the tfvars, which the console gets as `WOODSHED_ACTIONS_WORKFLOWS`, still works, and is
+read only where the file leaves `workflowLinks` out (or cannot be read). Moving from it: write each entry in the
+project file, its key the `label` and its value under `.github/workflows/` the `workflow` (`"Deploy" = "deploy.yml"` is
+`{label: Deploy, workflow: .github/workflows/deploy.yml}`), and merge it; the menu has the file's links within ten
+minutes, the time the console keeps the file. Then take `console_workflow_links` out of the tfvars: that plan changes
+only the `<prefix>-configure-base-box` document and its association, and the console restarts with none.
+
 Terraform ignores changes to `baseBox.sh.tftpl` (first boot only), so an apply
 never replaces the box by surprise. `terraform apply -replace=aws_instance.base_box`
 does: the new box mounts the same data volume, so Mongo and the console's

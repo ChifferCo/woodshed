@@ -5,7 +5,7 @@
 // API refuses anyone else, and the page says so. Values stay hidden until Show, as on Secrets & webhooks, and never
 // reach the table, which names keys alone. ?file=<key> opens one env file's tab, and #slack the Slack card, so a link
 // can point at them.
-(function () {
+window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/, (app, life) => {
   'use strict';
   const W = window.Woodshed;
   const { h } = W;
@@ -410,13 +410,13 @@
   }
 
   function page(...body) {
-    return h('div', { class: 'page' }, W.nav('/console-settings'),
+    return h('div', { class: 'page' }, life.nav('/console-settings'),
       h('header', { class: 'page-head' },
         h('div', null,
           h('p', { class: 'crumb' }, h('a', { href: '/console-settings#card-projects' }, '‹ Settings · Repos')),
           h('h1', { class: 'title' }, view?.repo ?? project),
           h('p', { class: 'sub' }, view
-            ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'What sessions on this repo get in their env files and prompt. Only admins can change these, and each change is logged with who made it.']
+            ? [h('span', { class: 'rref' }, view.project), view.default ? ' · the default project. ' : '. ', 'What every shared session on this repo gets in its env files and prompt. Only admins can change these, and each change is logged with who made it. Your own values for the same files, for your My Woodshed sessions, are on ', h('a', { href: '/settings#repo-settings' }, 'My settings'), '.']
             : 'Repo settings'))),
       body);
   }
@@ -430,7 +430,6 @@
 
   // A redraw replaces the page; the editors are the same nodes, so the one being typed in keeps its caret.
   function render() {
-    const app = document.getElementById('app');
     const focused = document.activeElement;
     let caret = null;
     try { caret = [focused.selectionStart, focused.selectionEnd]; } catch { /* nothing focused */ }
@@ -466,4 +465,4 @@
   }
 
   load();
-})();
+});
