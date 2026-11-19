@@ -109,7 +109,10 @@ test('a shared session\'s rules drop the private lines, and a private one\'s dro
 
 test('every session, private or shared, is told to wait for CI once it opens its pull request', () => {
   for (const kind of ['private', 'shared']) {
-    assert.match(writePrompt({ attachments: false, ...(kind === 'shared' ? { kind } : {}) }).rules, /Do not end the session when you open the PR: wait for CI\./, kind);
+    const { rules } = writePrompt({ attachments: false, ...(kind === 'shared' ? { kind } : {}) });
+    assert.equal(rules.match(/Do not end the session when you open the PR: wait for CI\./g)?.length, 1, kind);
+    // A private session's owner reads its terminal; a shared one's notes go on the pull request.
+    assert.match(rules, kind === 'shared' ? /is flaky: note it in a PR comment\./ : /is flaky: say so here\./, kind);
   }
 });
 

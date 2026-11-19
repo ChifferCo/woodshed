@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { AGENT_PANE_FORMAT, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -869,6 +869,12 @@ test('POST /send with agentOnly types into a running agent and never into a shel
     const refused = await send(forNine);
     assert.deepEqual([refused.status, refused.body.error], [409, 'the branch checked out is not on that pull request now'], why);
   }
+  // GitHub slower than the caller waits: nothing typed, so its try again cannot type it twice.
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\nsleep 1\ncat ${current}\n`, { mode: 0o755 });
+  await onPull('https://github.com/o/r/pull/9');
+  const late = await send({ ...forNine, withinMs: 200 });
+  assert.deepEqual([late.status, late.body.error], [409, 'too late: the caller has stopped waiting']);
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
   await onPull('https://github.com/O/R/pull/9');
   assert.equal((await send(forNine)).status, 200);
   for (let i = 0; i < 50 && !(await typed('agent')).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
@@ -901,4 +907,10 @@ test('a guarded send\'s pull request must be the same one, open, on the same com
   assert.equal(stillThePull({ ...pull, url: 'https://github.com/o/r/pull/10' }, wanted), false);
   assert.equal(stillThePull(null, wanted), false);
   assert.equal(stillThePull({ ...pull, headRefOid: 'fff' }, { ...wanted, headSha: null }), true, 'no commit named: the pull request alone');
+});
+
+test('a guarded send names how long it may still be typed, a minute at most', () => {
+  assert.equal(sendWithinMs('{"text":"x","withinMs":20000}'), 20000);
+  assert.equal(sendWithinMs('{"text":"x","withinMs":999999}'), 60000);
+  for (const raw of ['{"text":"x"}', '{"text":"x","withinMs":0}', '{"text":"x","withinMs":"20"}', 'nope']) assert.equal(sendWithinMs(raw), null, raw);
 });

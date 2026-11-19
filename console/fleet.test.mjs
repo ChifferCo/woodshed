@@ -3525,6 +3525,7 @@ test('a private session that moved off its pull request since the last status re
   await fleet.tick();
   assert.equal(sent().length, 1);
   assert.deepEqual([sent()[0].body.agentOnly, sent()[0].body.prUrl, sent()[0].body.headSha], [true, prUrl, 'abc'], 'statusd checks the pull request and its commit too');
+  assert.equal(sent()[0].body.withinMs, 20_000, 'and types it only while the console still waits');
 });
 
 test('a private session that starts stopping while its status is read again is not typed into', async () => {

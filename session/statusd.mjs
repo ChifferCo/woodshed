@@ -277,6 +277,20 @@ export function stillThePull(pull, wanted) {
   return !wanted.headSha || String(pull.headRefOid ?? '').toLowerCase().startsWith(wanted.headSha.toLowerCase());
 }
 
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {number|null}  how long after statusd got it a guarded text may still be typed (`withinMs`, at most a
+ *   minute): its caller gives up and tries again after that, so typing it later would type it twice
+ */
+export function sendWithinMs(raw) {
+  try {
+    const ms = JSON.parse(raw)?.withinMs;
+    return Number.isInteger(ms) && ms > 0 ? Math.min(ms, 60_000) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** @returns {boolean}  whether two pull request URLs are the same pull request (GitHub's owner and name ignore case) */
 export function samePrUrl(a, b) {
   return Boolean(a && b) && String(a).toLowerCase() === String(b).toLowerCase();
@@ -1220,6 +1234,7 @@ async function handle(req, res) {
   const route = `${req.method} ${pathname}`;
   if (route === 'GET /status') return reply(res, 200, await status());
   if (route === 'POST /send') {
+    const receivedAt = Date.now();
     let text;
     let raw;
     try {
@@ -1234,6 +1249,12 @@ async function handle(req, res) {
       if (forPr && !stillThePull(await ghPullNow().catch(() => null), forPr)) {
         console.log('statusd: text not sent, the branch is not on its pull request now');
         return reply(res, 409, { error: 'the branch checked out is not on that pull request now' });
+      }
+      // GitHub was slow: its caller has given up on this request by now, and will send it again.
+      const within = sendWithinMs(raw);
+      if (within && Date.now() - receivedAt > within) {
+        console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
+        return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
       }
       if (await sendToAgent(text)) return reply(res, 200, { ok: true });
       console.log('statusd: text not sent, the agent is not running in its pane');

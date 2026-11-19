@@ -54,7 +54,7 @@ export function passedNotesFor({ number, sha, review, suites = [], gates }) {
   const notes = gates.review
     ? `Read the review's notes with \`gh pr view ${number} --comments\` and \`gh api repos/{owner}/{repo}/pulls/${number}/comments\`. `
       + `Fix what is real with a commit${rerunTags(gates) ? ` whose subject has ${rerunTags(gates)}` : ''}, which is watched again to its own verdict, `
-      + 'and answer what you decline in a PR comment with the reason. If there is nothing to act on, '
+      + 'and say here what you decline and why: its owner reads this terminal. If there is nothing to act on, '
     : 'If there is nothing left to do, ';
   const gatesSaid = gates.review ? 'its review and suites' : 'its suites';
   return `PR #${number} at ${short} passed ${gatesSaid}: ${passed}. ${notes}run \`gh pr checks ${number}\`: wait for any other check still pending `

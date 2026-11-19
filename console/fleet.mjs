@@ -27,6 +27,8 @@ const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
 const STATUS_TIMEOUT_MS = 5_000;
+// How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
+const GUARDED_SEND_WITHIN_MS = 20_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
 const STARTING_STATUS_TIMEOUT_MS = 1_500;
 // After the agent opened, a start the console has not reached in this long is logged (noteUnreached): it takes a second
@@ -1124,8 +1126,11 @@ export function createFleet({
         // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).
         // With the pull request it is about, which statusd checks afresh on the branch checked out, just before typing.
         const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+        // statusd reads GitHub before typing: it may take a while, and types only within withinMs of getting it, while
+        // the console still waits, so a reply the console gave up on never types a text it then sends again.
         await statusd(session, 'POST', '/send', {
-          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}) },
+          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs: GUARDED_SEND_WITHIN_MS },
+          timeoutMs: GUARDED_SEND_WITHIN_MS + 10_000,
         });
       } catch (err) {
         // Once until it is typed in: it is tried every minute while the session refuses it.

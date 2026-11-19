@@ -710,7 +710,8 @@ test('a watched pull request is never posted, hears its pass once per commit, an
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 1, 'the second read of the same commit says nothing');
-  assert.match(told[0], /^PR #7 at abc passed its review and suites: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*`gh pr checks 7`: wait for any other check still pending .*name each check that still fails and why it is not your change.s, and stop\.$/);
+  assert.match(told[0], /^PR #7 at abc passed its review and suites: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*say here what you decline and why.*`gh pr checks 7`: wait for any other check still pending .*name each check that still fails and why it is not your change.s, and stop\.$/);
+  assert.doesNotMatch(told[0], /PR comment/, 'its owner reads the terminal');
   assert.deepEqual(slack.posts, []);
   assert.deepEqual(github.comments, []);
   listening = 'ended';
