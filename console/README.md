@@ -1696,13 +1696,15 @@ the session keeps going until its review and suites pass:
   Nothing is posted to Slack or written on GitHub.
 - **Which pull request.** Only its owner's: one they opened, or one the console's App opened (a session that pushes
   as the App) from the branch the console made for the session at its start (`madeBranch`: `woodshed/<owner>-<id>` or
-  `woodshed/<issue>-<id>`, not an existing branch it was started on, nor whatever it has checked out since), in the repo itself and not a fork, after the session started (`slack:
+  `woodshed/<issue>-<id>`, not an existing branch it was started on, nor whatever it has checked out since; while the App's login is not read yet, such a pull request is decided a minute
+  later), in the repo itself and not a fork, after the session started (`slack:
   someone else's pull request, not watched`). Never a review-only session's, nor one on another repo than its
   project's (`fleet: pull request on another repo than the session's project, not watched`, as for a session whose
   project left the list). Each watch is its session's own: two sessions on one pull request are each told, and a shared
   session's post on it still goes out.
 - **How long.** While the session runs, so a fix pushed after the approval is followed to its own verdict. It ends when
-  the pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), the week runs out
+  the pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), its project leaves
+  the console (its repo is no longer read), the week runs out
   (passed or not; checked again after GitHub's reads, before the session is told), or the project file has no review or
   suite (`slack: pull request no longer waiting` with why). A watch that ran out is not started again by the session
   coming back to its pull request (`watchesExpired` in `state.json`).
