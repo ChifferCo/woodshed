@@ -528,6 +528,12 @@ export function createFleet({
     return session.safeSend === true || session.state === 'done';
   }
 
+  // Through a statusd that types blind, the idle state is only as good as its read: such a message is always held, and
+  // deliverHeld types one right after each status read that says the agent is idle, then waits for the next read.
+  function guarded(session) {
+    return session.safeSend === true;
+  }
+
   // A send that got no answer in time may have gone in: statusd may still be typing it, and press its Enter after. Sent
   // again it could reach the agent twice, so it is not: the agent's record says whether it arrived. Only a timeout is;
   // a refused connection never reached statusd, and is held to try again.
@@ -539,7 +545,7 @@ export function createFleet({
 
   // A send statusd refused after the text went in (a prompt came up as it was typed): typing it again would put it in
   // the agent's box twice. It is there, for the agent to read once the prompt is answered.
-  // The page is told which of its messages that was, by its length and when, never its text (`leftInBox`), so its bubble
+  // The page is told which of its messages that was, by its own id and when, never its text (`leftInBox`), so its bubble
   // can say it sits in the box; a status read with the box empty again forgets it (readStatus).
   function inTheBox(session, err, messageId = null) {
     if (!(err?.status === 409 && err.body?.typed === true)) return false;
@@ -583,7 +589,7 @@ export function createFleet({
       return 'sent';
     }
     // Behind the ones already waiting, in the order they were sent.
-    if (!canType(session) || session.pendingMessages.length) {
+    if (!canType(session) || !guarded(session) || session.pendingMessages.length) {
       hold(session, text, id);
       return 'queued';
     }
@@ -637,6 +643,8 @@ export function createFleet({
       if (!boxed) noteDelivered(session, messageId);
       // In the agent's box with no Enter: inTheBox said so; it is not sent, and not typed again.
       if (!boxed) console.log('fleet: held message sent', { id: session.id, chars: text.length, left: session.pendingMessages.length });
+      // The agent is working on it now, which a blind statusd would not check before the next one's Enter.
+      if (!guarded(session)) return;
     }
   }
 

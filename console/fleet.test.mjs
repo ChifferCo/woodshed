@@ -3432,6 +3432,24 @@ test('through a statusd from before the guarded send, a message goes in only whi
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text), ['approve it please'], 'sent once it is idle');
 });
 
+test('through a statusd from before the guarded send, nothing is typed on an old idle read, and a queue goes one a read', async () => {
+  // Its idle state is only as fresh as the last read: an approval may be up by now, and the first message sets it working.
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  const sends = () => calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text);
+  assert.equal(await fleet.send(session, 'one'), 'queued', 'held for the next read, not typed on the last one');
+  assert.equal(await fleet.send(session, 'two'), 'queued');
+  assert.deepEqual(sends(), []);
+  await fleet.tick();
+  assert.deepEqual(sends(), ['one'], 'one message for one read');
+  await fleet.tick();
+  assert.deepEqual(sends(), ['one', 'two']);
+  assert.deepEqual(session.pendingMessages, []);
+});
+
 test('a direct send with no answer in time is said to be unknown, not sent, and not held', async () => {
   const { fleet, statuses, fail } = setup();
   await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
