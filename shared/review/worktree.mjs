@@ -642,7 +642,14 @@ const INDEX_TIMEOUT_MS = 120_000;
  * own changes reversed.
  *
  * @param {{repoRoot: string, worktreePath: string, baseRef: string, indexFile: string}} params
- * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, baseFetched: boolean}
+ * The scratch index is also written out as a tree object (`write-tree`): the
+ * exact tree this diff describes, uncommitted and untracked files included, so
+ * the Q&A can answer from it rather than from a tree that has moved on since.
+ * Unreferenced, so git's gc may take it after its grace period (two weeks by
+ * default); `treeSha` is null when it could not be written, which costs only
+ * the Q&A.
+ *
+ * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, treeSha: string|null, baseFetched: boolean}
  *                 | {ok: false, status: number, error: string, stderr?: string}>}
  */
 export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile }) {
@@ -713,7 +720,10 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
         stderr: (diffed.stderr || '').trim().slice(0, 400),
       };
     }
-    return { ok: true, patch: diffed.stdout || '', baseSha, headSha, baseFetched };
+    const written = await git(worktreePath, ['write-tree'], INDEX_TIMEOUT_MS, env);
+    const treeSha = written.status === 0 && /^[0-9a-f]{40}$/.test((written.stdout || '').trim())
+      ? written.stdout.trim() : null;
+    return { ok: true, patch: diffed.stdout || '', baseSha, headSha, treeSha, baseFetched };
   } finally {
     // The scratch index is ours alone and is worthless the moment the diff is
     // taken. Leaving it would cost a few MB per review on a box that runs

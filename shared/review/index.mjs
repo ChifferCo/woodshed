@@ -54,6 +54,7 @@ import { validateChatRequest, buildChatPrompt } from './chat.mjs';
 import {
   MAX_DEPTH as QA_MAX_DEPTH, juniorArgv, seniorArgv, buildTopQuestionsPrompt, buildFollowupsPrompt,
   buildAnswersPrompt, extractStructured, topQuestions, followupQuestions, applyAnswers,
+  snapshotTreeish, makeSnapshot, removeSnapshot,
 } from './qa.mjs';
 import { enqueuePr, fetchMergeReadiness, mergeBlocker, mergePr } from './merge.mjs';
 import { pullRequestsFor, schedulePrRefresh } from '../prStatus.mjs';
@@ -430,6 +431,9 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     baseRef,
     headSha: patch.headSha,
     baseSha: patch.baseSha,
+    // The tree this diff was taken from, uncommitted files included: what the
+    // Q&A answers from, so its answers match the diff on screen.
+    snapshot: patch.treeSha,
     // Nothing here to take away. removeReviewSession keys off this.
     reviewBranch: null,
     ownsWorktree: false,
@@ -2098,10 +2102,10 @@ const QA_START_RETRIES = 10;
 const QA_START_RETRY_MS = 15_000;
 
 /** One run of either voice: started (waiting out memory pressure), awaited, and read. */
-async function qaRun({ ctx, session, review, gen, argv }) {
+async function qaRun({ ctx, session, review, gen, argv, cwd = review.worktree }) {
   for (let tries = 0; tries < QA_START_RETRIES; tries += 1) {
     if (!qaIsLive(session, gen)) return null;
-    const started = startJob({ kind: 'qa', session, argv, cwd: review.worktree, log: ctx.log, readMeminfo: ctx.readMeminfo });
+    const started = startJob({ kind: 'qa', session, argv, cwd, log: ctx.log, readMeminfo: ctx.readMeminfo });
     if (started.ok) {
       const job = await started.job.done;
       if (!qaIsLive(session, gen)) return null;
@@ -2120,6 +2124,16 @@ async function qaRun({ ctx, session, review, gen, argv }) {
  * after the first answers keeps what was answered and says it stopped early.
  */
 async function runQa({ ctx, session, review, gen }) {
+  let snapshotDir = null;
+  try {
+    return await runQaRounds({ ctx, session, review, gen, pin: (dir) => { snapshotDir = dir; } });
+  } finally {
+    // However it ended (done, failed, cancelled, crashed), the copy goes.
+    removeSnapshot(snapshotDir);
+  }
+}
+
+async function runQaRounds({ ctx, session, review, gen, pin }) {
   const { log } = ctx;
   const diff = readDiff(session);
   const files = diff?.files || [];
@@ -2146,6 +2160,19 @@ async function runQa({ ctx, session, review, gen }) {
     return;
   }
 
+  // The answers come from the code as this diff has it, not the live tree.
+  // First, so a review that cannot be pinned fails before anything is paid for.
+  const treeish = snapshotTreeish(review);
+  if (!treeish) return fail('this review was taken before the Q&A could pin its code: press Re-review, then ask again');
+  const snapshot = await makeSnapshot({ repoDir: review.worktree, treeish, session });
+  if (!qaIsLive(session, gen)) {
+    if (snapshot.ok) removeSnapshot(snapshot.dir);
+    return;
+  }
+  if (!snapshot.ok) return fail(snapshot.error);
+  pin(snapshot.dir);
+  log('review.qa_pinned', { session, treeish: treeish.slice(0, 12) });
+
   const asked = await qaRun({
     ctx, session, review, gen,
     argv: juniorArgv({ prompt: buildTopQuestionsPrompt({ meta: review.meta, files, overview: overviewNow() }), followups: false }),
@@ -2163,6 +2190,7 @@ async function runQa({ ctx, session, review, gen }) {
     const answered = await qaRun({
       ctx, session, review, gen,
       argv: seniorArgv({ prompt: buildAnswersPrompt({ meta: review.meta, files, overview: overviewNow(), items: qa.items, open }) }),
+      cwd: snapshot.dir,
     });
     if (!answered) return;
     spent(answered);
