@@ -12,7 +12,9 @@
 import fs from 'node:fs';
 import { isMain } from '../shared/isMain.mjs';
 
-export const STATE_FILE = '/tmp/woodshed-claude-state.json';
+// WOODSHED_CLAUDE_STATE_FILE moves it, for a second claude on one machine with a statusd of its own: the dev console's
+// real-agent session (console/bin/devChatSession.mjs), beside the session's own claude.
+export const STATE_FILE = process.env.WOODSHED_CLAUDE_STATE_FILE || '/tmp/woodshed-claude-state.json';
 
 // PreToolUse comes 30 ms before PermissionRequest for the same call, so needs-you is the later write. Notification
 // repeats it 6 s on, in case a parallel tool's PostToolUse landed in between.

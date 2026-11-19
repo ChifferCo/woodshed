@@ -24,9 +24,12 @@ start() {
   fi
   echo "devConsoleApp: starting the dev console on port $PORT" | tee -a "$LOG"
   # In a session, Open app's requests name the session's app host, which only the console in front knows.
-  local sessionApp=0
+  local sessionApp=0 realClaude=0
+  # A private session's claude runs on its owner's own Claude, never the team's.
+  if [[ ${WOODSHED_CLAUDE_AUTH:-} == own ]]; then realClaude=1; fi
   if [[ -n ${SESSION_ID:-} ]]; then sessionApp=1; fi
-  DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
+  # In a session, its real claude too (DEV_CONSOLE_REAL_CLAUDE, devConsole.mjs): the owner's app, on the owner's Claude.
+  DEV_CONSOLE_REAL_CLAUDE=${DEV_CONSOLE_REAL_CLAUDE:-$realClaude} DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   for _ in $(seq "$WAIT_STEPS"); do

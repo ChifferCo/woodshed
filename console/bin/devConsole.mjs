@@ -58,6 +58,14 @@ const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
 const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, token: `t${CODEX_CHAT_ID}`, agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
 const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, token: `t${CLAUDE_CHAT_ID}`, agent: 'claude', nextPath: '' });
+// DEV_CONSOLE_REAL_CLAUDE=1: /s/c1a0dea1 runs the real claude, on this machine's Claude credential, in a clone of this
+// checkout with no remote (devChatSession.mjs), with its Agent tab live. Off by default: it spends that credential.
+const REAL_ID = 'c1a0dea1';
+const realClaude = process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
+  ? await startDevChatSession({ id: REAL_ID, token: `t${REAL_ID}`, terminalToken: `x${REAL_ID}`, agent: 'claude', real: true,
+    nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+  : null;
+if (process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
 function session(id, number, title, extra = {}) {
   return {
     id, repo: 'example-org/example-repo', kind: 'pr', number, title, startedBy: 'octocat', trigger: 'console', prompt: '',
@@ -204,6 +212,10 @@ const sessions = [
   ...(claudeChat ? [session(CLAUDE_CHAT_ID, 26705, 'Why webhook deliveries fail after a deploy', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
     endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
+  })] : []),
+  ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {
+    kind: 'task', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: false,
+    ref: realClaude.ref, endpoint: { host: '127.0.0.1', statusPort: realClaude.port, termPort: realClaude.termPort },
   })] : []),
   // Starting, for the start checklist in the provider's words: its container is up and booting. With no container
   // behind it the start timeout fails it after a while; restart this script to see it again.
@@ -367,7 +379,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).
@@ -403,6 +415,7 @@ function startConsole() {
     liveTerminal?.close();
     codexChat?.close();
     claudeChat?.close();
+    realClaude?.close();
     fs.rmSync(stateDir, { recursive: true, force: true });
     fs.rmSync(path.dirname(devClone), { recursive: true, force: true });
     process.exit(code ?? 0);
