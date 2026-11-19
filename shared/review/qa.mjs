@@ -29,6 +29,7 @@
 // This is the one reading on the page pinned this way: the analysis, an explain
 // and the chat still read the live tree, and say so through the page's header.
 
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -287,34 +288,125 @@ export function snapshotTreeish(review) {
 /**
  * The tree, written out into a scratch folder of its own for the answerer to read.
  *
- * A scratch index (`read-tree`) and `checkout-index`, not `git archive`: archive
- * honours `export-ignore` and `export-subst` from the tree's .gitattributes, so a
- * file the diff shows could be missing or rewritten in the copy. checkout-index
- * writes every file the tree has, as a checkout would. Nothing is registered
- * with git (no worktree, no ref) and the session's own index is never touched.
- * Submodules are their commit ids in the diff, and empty folders here, as in
- * any checkout that has not initialised them. The caller removes `dir` with
- * removeSnapshot.
+ * Its blobs exactly as git stores them: the paths from `ls-tree`, the bytes from
+ * one `cat-file --batch`, which is what `git diff` compares. Not `git archive`,
+ * which honours `export-ignore` and `export-subst`, and not `checkout-index`,
+ * which applies this checkout's line-ending and clean/smudge conversions: either
+ * could hand the answerer a file that differs from the diff beside its answers.
+ * A symlink is written as a file holding its target, so nothing in the copy
+ * points out of it; a submodule is an empty folder, as in a checkout that has
+ * not initialised it. Nothing is registered with git and the session's index is
+ * never touched. The caller removes `dir` with removeSnapshot.
  *
- * @returns {Promise<{ok: true, dir: string} | {ok: false, error: string}>}
+ * @returns {Promise<{ok: true, dir: string, files: number} | {ok: false, error: string}>}
  */
 export async function makeSnapshot({ repoDir, treeish, session }) {
+  sweepStaleSnapshots();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-qa-${session}-`));
-  const index = `${dir}.index`;
-  const env = { ...process.env, GIT_INDEX_FILE: index };
-  const failed = (step, got) => {
+  const failed = (why) => {
     removeSnapshot(dir);
-    return { ok: false, error: `could not copy the reviewed code (${step}: ${(got.stderr || '').trim().slice(0, 200) || got.status})` };
+    return { ok: false, error: `could not copy the reviewed code (${why})` };
   };
-  try {
-    const read = await run('git', ['-C', repoDir, 'read-tree', treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS, env });
-    if (read.status !== 0) return failed('read-tree', read);
-    const written = await run('git', ['-C', repoDir, 'checkout-index', '--all', '--force', `--prefix=${dir}/`], { timeoutMs: SNAPSHOT_TIMEOUT_MS, env });
-    if (written.status !== 0) return failed('checkout-index', written);
-    return { ok: true, dir };
-  } finally {
-    fs.rmSync(index, { force: true });
+  const listed = await run('git', ['-C', repoDir, 'ls-tree', '-r', '-z', '--full-tree', treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
+  if (listed.status !== 0) return failed(`ls-tree: ${(listed.stderr || '').trim().slice(0, 200) || listed.status}`);
+  const blobs = [];
+  for (const entry of listed.stdout.split('\0')) {
+    const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64})\t(.+)$/s.exec(entry);
+    if (!m) continue;
+    const [, mode, type, sha, rel] = m;
+    const target = path.resolve(dir, rel);
+    // A path git would never write (absolute, or climbing out) is refused, not followed.
+    if (!target.startsWith(dir + path.sep)) return failed(`a path outside the tree: ${rel.slice(0, 80)}`);
+    if (type === 'commit') fs.mkdirSync(target, { recursive: true });
+    else if (type === 'blob') blobs.push({ sha, target, mode });
   }
+  try {
+    await writeBlobs({ repoDir, blobs });
+  } catch (err) {
+    return failed(`cat-file: ${String(err?.message || err).slice(0, 200)}`);
+  }
+  return { ok: true, dir, files: blobs.length };
+}
+
+/** Every blob's bytes from one `cat-file --batch`, each written to its path in the order asked. */
+function writeBlobs({ repoDir, blobs }) {
+  return new Promise((resolve, reject) => {
+    if (!blobs.length) return resolve();
+    const child = spawn('git', ['-C', repoDir, 'cat-file', '--batch'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timed out')); }, SNAPSHOT_TIMEOUT_MS);
+    let buf = Buffer.alloc(0);
+    let next = 0;
+    let size = null;
+    let stderr = '';
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) { child.kill('SIGKILL'); reject(err); } else resolve();
+    };
+    child.stderr.on('data', (d) => { if (stderr.length < 2000) stderr += d; });
+    child.on('error', finish);
+    child.stdout.on('data', (chunk) => {
+      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
+      try {
+        for (;;) {
+          if (size === null) {
+            const nl = buf.indexOf(10);
+            if (nl === -1) return;
+            const header = buf.subarray(0, nl).toString('utf8');
+            const m = /^[0-9a-f]+ blob (\d+)$/.exec(header);
+            if (!m) return finish(new Error(`unexpected answer for ${blobs[next]?.sha?.slice(0, 12)}: ${header.slice(0, 80)}`));
+            size = Number(m[1]);
+            buf = buf.subarray(nl + 1);
+          }
+          if (buf.length < size + 1) return;
+          const blob = blobs[next];
+          fs.mkdirSync(path.dirname(blob.target), { recursive: true });
+          fs.writeFileSync(blob.target, buf.subarray(0, size));
+          buf = buf.subarray(size + 1);
+          size = null;
+          next += 1;
+          if (next === blobs.length) return finish();
+        }
+      } catch (err) {
+        finish(err);
+      }
+    });
+    child.on('close', (code) => {
+      if (next < blobs.length) finish(new Error(stderr.trim() || `git cat-file exited ${code} after ${next} of ${blobs.length}`));
+    });
+    child.stdin.on('error', () => {});
+    child.stdin.end(blobs.map((b) => b.sha).join('\n') + '\n');
+  });
+}
+
+// Longer than any run lasts (six rounds, none past its timeout), so a folder
+// this old belongs to a run a restart cut off, whose finally never ran.
+const STALE_SNAPSHOT_MS = 3 * 60 * 60_000;
+
+/**
+ * Remove copies a restart left behind. Done here, at the next copy, rather than
+ * at boot: the session's host has no startup sweep, and this needs none.
+ *
+ * @returns {number} how many were removed
+ */
+export function sweepStaleSnapshots({ now = Date.now(), tmp = os.tmpdir() } = {}) {
+  let removed = 0;
+  let names = [];
+  try { names = fs.readdirSync(tmp); } catch { return 0; }
+  for (const name of names) {
+    if (!/^woodshed-qa-claude-[0-9a-f]{8}-/.test(name)) continue;
+    const full = path.join(tmp, name);
+    try {
+      if (now - fs.statSync(full).mtimeMs < STALE_SNAPSHOT_MS) continue;
+      fs.rmSync(full, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // Gone already, or not ours to remove: either way, nothing to do.
+    }
+  }
+  return removed;
 }
 
 export function removeSnapshot(dir) {

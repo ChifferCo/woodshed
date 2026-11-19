@@ -2977,7 +2977,11 @@ ${DARK_PALETTE}
           if (asked.kept) {
             var kept = await api('GET', '/reviews/' + state.session + '/qa');
             if (view !== qaView) return;
+            // Read like any other: one for another diff (a Re-review in between)
+            // is not drawn against this one.
             view.data = kept.qa || null;
+            view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.diffAt || null));
+            if (view.otherDiff) view.data = null;
           } else {
             view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
           }
@@ -3017,25 +3021,16 @@ ${DARK_PALETTE}
     // The answers on screen stay until the server has taken the new run: a
     // refused one (the box busy, say) leaves them, with the reason under them,
     // rather than clearing them for a read to bring back with the reason gone.
-    async function askQaAgain() {
+    // Ask again replaces what is there; the empty state's Ask the questions
+    // does not. That one goes as a first ask (first=1), so the server keeps a
+    // Q&A another tab finished meanwhile, in the same call that would start one:
+    // no read beforehand that another tab's run could slip past.
+    async function askQaAgain(replace) {
       if (!state.session) return;
       var was = qaView;
-      // Nothing on screen: another tab may have asked since. Show that rather
-      // than paying for a run that would replace it.
-      if (!was.data) {
-        try {
-          var there = await api('GET', '/reviews/' + state.session + '/qa');
-          if (was !== qaView) return;
-          if (there.qa && (there.qa.forDiff || null) === (state.diffAt || null)) {
-            loadQa(false);
-            return;
-          }
-        } catch (e) {
-          // Not read: ask anyway, as the reader pressed.
-        }
-      }
+      var asked;
       try {
-        await api('POST', qaStartUrl());
+        asked = await api('POST', qaStartUrl() + (replace ? '' : '&first=1'));
       } catch (e) {
         if (was !== qaView) return;
         if (e.code === 'other-diff') {
@@ -3050,10 +3045,10 @@ ${DARK_PALETTE}
       if (was !== qaView) return;
       clearTimeout(was.timer);
       var view = freshQaView(true);
-      view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+      if (!asked.kept) view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
       qaView = view;
       render();
-      loadQa(true);
+      loadQa(!asked.kept);
     }
 
     function qaPhaseText(d) {
@@ -3089,13 +3084,13 @@ ${DARK_PALETTE}
       }
       if (qaView.error && !d) {
         box.appendChild(el('div', 'tabnote', 'The Q&A could not be loaded: ' + qaView.error));
-        box.appendChild(qaAgainButton('Try again'));
+        box.appendChild(qaAgainButton('Try again', false));
         content.appendChild(box);
         return;
       }
       if (!d && qaView.started && !qaView.loading) {
         box.appendChild(el('div', 'tabnote', 'There is no Q&A for this diff yet.'));
-        box.appendChild(qaAgainButton('Ask the questions'));
+        box.appendChild(qaAgainButton('Ask the questions', false));
         content.appendChild(box);
         return;
       }
@@ -3121,7 +3116,7 @@ ${DARK_PALETTE}
           render();
         }));
       }
-      if (d.status !== 'running') tools.appendChild(qaAgainButton('Ask again'));
+      if (d.status !== 'running') tools.appendChild(qaAgainButton('Ask again', true));
       box.appendChild(tools);
 
       if (d.status === 'failed') {
@@ -3155,8 +3150,8 @@ ${DARK_PALETTE}
       return b;
     }
 
-    function qaAgainButton(label) {
-      return qaToolButton(label, askQaAgain);
+    function qaAgainButton(label, replace) {
+      return qaToolButton(label, function ask() { askQaAgain(replace); });
     }
 
     function qaList(nodes, kids, running) {

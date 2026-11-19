@@ -41,6 +41,7 @@ process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
 const { handleReviewRequest, failedQaRecord } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
+const { makeSnapshot, removeSnapshot, sweepStaleSnapshots } = await import('./qa.mjs');
 
 // A worktree review of a real checkout, whose snapshot is the commit made here: what the diff was taken from.
 function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes } = {}) {
@@ -188,6 +189,46 @@ test('a first-open ask keeps the Q&A the diff already has; Ask again replaces it
   const again = await call('POST', `/reviews/${session}/qa`);
   assert.equal(again.body.status, 'running');
   await until(() => (readQa(session)?.status === 'ready' && readQa(session).startedAt !== done.startedAt));
+});
+
+// The copy is the tree's bytes as git stores them, which is what the diff compares. A smudge filter configured in the
+// checkout (what checkout-index applies) and export-ignore (what git archive honours) must change nothing in it, and a
+// symlink must not point out of it.
+test('the copy is the tree as git stores it: no checkout filters, no export rules, no links out', async () => {
+  const repo = path.join(DIR, 'raw');
+  fs.mkdirSync(path.join(repo, 'deep/er'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'lower case, as committed\n');
+  fs.writeFileSync(path.join(repo, '.gitattributes'), 'a.txt export-ignore filter=upper\n');
+  fs.writeFileSync(path.join(repo, 'deep/er/b.mjs'), 'export const b = 1;\n');
+  fs.symlinkSync('/etc/hostname', path.join(repo, 'link'));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  git('config', 'filter.upper.smudge', 'tr a-z A-Z');
+  const snap = await makeSnapshot({ repoDir: repo, treeish: git('rev-parse', 'HEAD^{tree}'), session: 'claude-abababab' });
+  assert.equal(snap.ok, true, snap.error);
+  try {
+    assert.equal(fs.readFileSync(path.join(snap.dir, 'a.txt'), 'utf8'), 'lower case, as committed\n');
+    assert.equal(fs.readFileSync(path.join(snap.dir, 'deep/er/b.mjs'), 'utf8'), 'export const b = 1;\n');
+    assert.equal(fs.lstatSync(path.join(snap.dir, 'link')).isSymbolicLink(), false);
+    assert.equal(fs.readFileSync(path.join(snap.dir, 'link'), 'utf8'), '/etc/hostname');
+  } finally {
+    removeSnapshot(snap.dir);
+  }
+});
+
+test('copies a restart left behind are swept at the next copy, and a live one is not', () => {
+  const tmp = fs.mkdtempSync(path.join(DIR, 'tmp-'));
+  const stale = path.join(tmp, 'woodshed-qa-claude-12345678-old');
+  const live = path.join(tmp, 'woodshed-qa-claude-12345678-new');
+  const other = path.join(tmp, 'someone-elses-folder');
+  for (const d of [stale, live, other]) fs.mkdirSync(d);
+  const old = new Date(Date.now() - 4 * 60 * 60_000);
+  fs.utimesSync(stale, old, old);
+  fs.utimesSync(other, old, old);
+  assert.equal(sweepStaleSnapshots({ tmp }), 1);
+  assert.deepEqual(fs.readdirSync(tmp).sort(), ['someone-elses-folder', 'woodshed-qa-claude-12345678-new']);
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {
