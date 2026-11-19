@@ -3333,7 +3333,7 @@ test('a My Woodshed session that cannot be typed into is told at a later check, 
   assert.deepEqual(session.pendingMessages, []);
 });
 
-test('a My Woodshed session that reports another pull request stops hearing about the first', async () => {
+test('a My Woodshed session that reports another pull request hears nothing more of the first while it is on the other', async () => {
   const { fleet, github, statuses, calls, store, advance } = setup();
   const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
@@ -3348,7 +3348,7 @@ test('a My Woodshed session that reports another pull request stops hearing abou
   await fleet.tick();
   await fleet.tick();
   const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).map((c) => c.body.text);
-  assert.deepEqual(store.state.slackPending.map((p) => p.number), [10]);
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9, 10], '#9 waits for the session to be back on it');
   assert.ok(sent.every((t) => !/PR #9\b/.test(t) || /passed/.test(t)), 'nothing about #9 after it left it');
   assert.ok(sent.some((t) => /e2e suite failed on PR #10/.test(t)));
 });
@@ -3369,7 +3369,7 @@ test('a My Woodshed session\'s pull request on another repo than its project is 
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
 });
 
-test('a My Woodshed session that reports a pull request on another repo stops hearing about its own', async () => {
+test('a My Woodshed session that reports a pull request on another repo hears nothing of its own until it is back', async () => {
   const { fleet, github, statuses, calls, store, advance } = setup();
   const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
@@ -3382,18 +3382,17 @@ test('a My Woodshed session that reports a pull request on another repo stops he
   advance(60_000);
   await fleet.tick();
   assert.equal(session.prUrl, 'https://github.com/o/r/pull/9', 'its own repo\'s pull request is kept');
-  assert.deepEqual(store.state.slackPending, []);
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'its watch waits');
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
 
   statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
   advance(60_000);
   await fleet.tick();
-  await fleet.tick();
-  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'watched again once it is back on its own');
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9]);
   assert.match(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).at(-1)?.body.text ?? '', /e2e suite failed on PR #9/);
 });
 
-test('a My Woodshed session that moves to a branch with no pull request stops hearing about its old one', async () => {
+test('a My Woodshed session on a branch with no pull request (or a failed lookup) hears nothing until it is back, then nothing twice', async () => {
   const { fleet, github, statuses, calls, store, advance } = setup();
   const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
   github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
@@ -3401,15 +3400,24 @@ test('a My Woodshed session that moves to a branch with no pull request stops he
   github.checkRuns = async () => e2eRuns();
   statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
   await fleet.tick();
-  statuses[session.id] = { state: 'done', prUrl: null };
   github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
   advance(60_000);
   await fleet.tick();
-  assert.deepEqual(store.state.slackPending, []);
-  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent().length, 1, 'told of the failure while on it');
+  statuses[session.id] = { state: 'done', prUrl: null };
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'def' }, user: { login: 'joel' } });
+  github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending.map((p) => p.number), sent().length], [[9], 1], 'waits, told nothing');
   statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
   advance(60_000);
   await fleet.tick();
+  assert.equal(sent().length, 2);
+  assert.match(sent()[1].body.text, /e2e run \(3\/4\)/, 'back: told what changed, and not the failure it heard before');
+  github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
+  advance(60_000);
   await fleet.tick();
-  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'watched again once back on its branch');
+  assert.equal(sent().length, 2, 'nothing twice');
 });

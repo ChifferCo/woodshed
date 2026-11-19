@@ -32,8 +32,8 @@ function firstLine(err) {
 
 // A My Woodshed session's pull request is its owner's when they opened it, or, since a session that pushes as the App
 // opens it as the App, when the console's App opened it from the branch the console made for this session
-// (`woodshed/<owner>-<id>`, never an existing branch it was started on, which another session may share), in the repo
-// itself and not a fork, after the session started. Nothing a teammate writes in a body counts. An app's pull request while the App's
+// (`woodshed/<owner>-<id>`, or `woodshed/<issue>-<id>` for one started on an issue; never an existing branch it was
+// started on, which another session may share), in the repo itself and not a fork, after the session started. Nothing a teammate writes in a body counts. An app's pull request while the App's
 // login is not read yet throws, so it is decided on a later tick.
 function ownersPull(pull, session, app) {
   const login = String(session.owner ?? '').toLowerCase();
@@ -44,8 +44,8 @@ function ownersPull(pull, session, app) {
   const fromTheApp = author === String(app?.login ?? '').toLowerCase();
   const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
   // Git's refs are case-sensitive: the branch is the very one the console named (fleet.mjs, createSession).
-  const ownBranch = `woodshed/${session.owner}-${session.id}`;
-  return fromTheApp && sameRepo && session.branch === ownBranch && pull.head?.ref === ownBranch
+  const madeForIt = new RegExp(`^woodshed/[^/]+-${String(session.id ?? '').replace(/[^A-Za-z0-9]/g, '')}$`).test(session.branch ?? '');
+  return fromTheApp && sameRepo && Boolean(session.id) && madeForIt && pull.head?.ref === session.branch
     && Date.parse(pull.created_at) >= Date.parse(session.createdAt);
 }
 
@@ -58,7 +58,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
  *                    feedback?: (item: object, text: string) => Promise<boolean|'later'>|boolean|'later',
-                    listening?: (item: object) => boolean,
+                    listening?: (item: object) => 'yes'|'elsewhere'|'ended',
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
  *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs) of the pull request's project
  *   (null for the default project's), null for a repo with none; `githubOf` is another project's GitHub client, for a
@@ -68,7 +68,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *   check, both read at each check (the Console settings page's numbers); `events` tells the fleet a pull request stopped
  *   waiting (`why` is `posted` once it is in Slack), hands it what the session should hear, and asks it
  *   whose Slack member ID to mention in the post's thread; `listening` says whether a watched pull request's session
- *   can still be told anything, and `feedback` answers true when it was, and `later` when a watched one's session
+ *   can still be told about it (`yes`), is on another pull request or none for now (`elsewhere`), or ended (`ended`), and `feedback` answers true when it was, and `later` when a watched one's session
  *   could not be typed into just now. While pull request webhooks arrive (`webhooksFlowing`), a
  *   webhook marks its pull request due (`stale`) and the rest are read only every `fallbackMs`, except one waiting out
  *   a deadline of its own, which is still read every minute
@@ -110,6 +110,22 @@ export function createPrAnnouncer({
   }
 
   /**
+   * A resumed My Woodshed session: each watch of its pull request still waiting (one whose stop was not read yet)
+   * starts a new run, its wait over and with nothing told, so the new run hears where the pull request stands rather
+   * than running out on the old run's clock. A check reading GitHub meanwhile acts on nothing it read.
+   * @param {string} sessionId
+   */
+  function renew(sessionId) {
+    const items = pending().filter((p) => watched(p) && p.sessionId === sessionId);
+    for (const item of items) {
+      Object.assign(item, { since: new Date(now()).toISOString(), run: (item.run ?? 0) + 1 });
+      for (const key of ['fedReview', 'fedSuite', 'passedSha', 'untoldSaid']) delete item[key];
+      checkedAt.delete(itemKey(item));
+    }
+    if (items.length) store.save();
+  }
+
+  /**
    * Once per session, and only for a pull request it opened: a resumed branch or a PR's own session finds one
    * older than the session. The URL is the session's word, so only its number is used. A watched one (a My Woodshed
    * session's) is never posted, and is watched only when it is the session's owner's (ownersPull), whenever it was
@@ -134,15 +150,6 @@ export function createPrAnnouncer({
     }
     const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
     const known = pending().find(same);
-    // A resumed session tracks its pull request again before its last run's watch was dropped: that watch starts its
-    // wait over, rather than running out on the old run's clock, and the new run hears where the pull request stands,
-    // whatever the old run was told.
-    if (known && watch) {
-      Object.assign(known, {
-        since: new Date(now()).toISOString(), run: (known.run ?? 0) + 1, fedReview: undefined, fedSuite: undefined, passedSha: undefined, untoldSaid: undefined,
-      });
-      store.save();
-    }
     if (!known) {
       pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}), ...(watch ? { watch: true } : {}) });
       store.save();
@@ -212,13 +219,18 @@ export function createPrAnnouncer({
   // Whether a watch is over: its session no longer listens for this pull request, or its wait ran out. Asked before
   // GitHub is read and again before the session is told, since the reads take a while.
   function watchOver(item) {
-    if (events.listening && !events.listening(item)) return 'its session ended or reports another pull request';
+    if (listening(item) === 'ended') return 'its session ended';
     if (now() - Date.parse(item.since) > giveUpMs()) return 'watched as long as a pull request may wait';
     return null;
   }
 
+  const listening = (item) => events.listening?.(item) ?? 'yes';
+
   async function watchOne(item) {
     if (watchOver(item)) return drop(item, watchOver(item));
+    // A session on another pull request, or a branch with none, for now (or statusd's lookup failed): the watch waits,
+    // keeping what it told, so nothing is told twice when the session is back on it.
+    if (listening(item) === 'elsewhere') return;
     // A resume while GitHub is read starts a new run of the watch: nothing read for the old one is acted on, not even
     // to drop it. Asked after each read.
     const run = item.run ?? 0;
@@ -233,6 +245,7 @@ export function createPrAnnouncer({
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
     if (renewed()) return;
     if (watchOver(item)) return drop(item, watchOver(item));
+    if (listening(item) === 'elsewhere') return;
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
   }
@@ -468,5 +481,5 @@ export function createPrAnnouncer({
   }
 
   // A getter: the channel is a setting, and can be set or cleared while the console runs.
-  return { get available() { return Boolean(slack?.available); }, postsFor, track, check, stale, waitingSessions };
+  return { get available() { return Boolean(slack?.available); }, postsFor, track, renew, check, stale, waitingSessions };
 }

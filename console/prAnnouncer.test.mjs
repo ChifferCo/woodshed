@@ -694,7 +694,7 @@ test('a tracked pull request whose channel is cleared waits for one, and is stil
 
 test('a watched pull request is never posted, hears its pass once per commit, and ends with its session', async () => {
   const { announcer, slack, store, session, told, dropped, github } = setup({ heard: true });
-  let listening = true;
+  let listening = 'yes';
   let clock = Date.parse('2026-10-26T12:00:00.000Z');
   const watcher = createPrAnnouncer({
     store, github, slack: null, gates: async () => GATES, now: () => clock,
@@ -713,10 +713,10 @@ test('a watched pull request is never posted, hears its pass once per commit, an
   assert.match(told[0], /^PR #7 at abc passed its review and suites: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*`gh pr checks 7`: wait for any other check still pending .*name each check that still fails and why it is not your change.s, and stop\.$/);
   assert.deepEqual(slack.posts, []);
   assert.deepEqual(github.comments, []);
-  listening = false;
+  listening = 'ended';
   clock += MINUTE;
   await watcher.check();
-  assert.deepEqual([store.state.slackPending, dropped], [[], ['its session ended or reports another pull request']]);
+  assert.deepEqual([store.state.slackPending, dropped], [[], ['its session ended']]);
 });
 
 test('a watched pull request runs out of time with nothing written on GitHub, and one with no gates is not watched', async () => {
@@ -781,6 +781,7 @@ for (const [what, pull, watched] of [
   ['a pull request the App opened from the session\'s branch after it started', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' } }, true],
   ['a pull request another app opened from the session\'s branch', { user: { login: 'other-bot[bot]', type: 'Bot' } }, false],
   ['a pull request the App opened from a branch differing from the session\'s only in case', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/Joel-s1', repo: { full_name: 'acme/app' } } }, false],
+  ['a pull request the App opened from the branch the console made for an issue\'s session', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/42-s1', repo: { full_name: 'acme/app' } } }, true],
   ['a pull request the App opened from an existing branch the session was started on', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'feature/shared', repo: { full_name: 'acme/app' } } }, false],
   ['a pull request the App opened from a fork\'s branch of the same name', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-s1', repo: { full_name: 'someone/app' } } }, false],
   ['a pull request the App opened from another branch', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/other' } }, false],
@@ -792,13 +793,14 @@ for (const [what, pull, watched] of [
     const watcher = createPrAnnouncer({
       store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => ({ slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' }),
     });
-    const branch = pull.head?.ref === 'feature/shared' ? 'feature/shared' : 'woodshed/joel-s1';
+    // The session is on the pull request's branch, except where a case is about a branch that is not the session's.
+    const branch = ['feature/shared', 'woodshed/42-s1'].includes(pull.head?.ref) ? pull.head.ref : 'woodshed/joel-s1';
     assert.equal(await watcher.track({ ...session, owner: 'joel', branch }, null, { watch: true }), watched);
     assert.equal((store.state.slackPending ?? []).length, watched ? 1 : 0);
   });
 }
 
-test('a watch tracked again, as by a resumed session, starts its wait over', async () => {
+test('a watch renewed by a resumed session starts its wait over', async () => {
   const { store, session, told, dropped, github } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
   let clock = Date.parse('2026-10-26T12:00:00.000Z');
   const watcher = createPrAnnouncer({
@@ -807,7 +809,7 @@ test('a watch tracked again, as by a resumed session, starts its wait over', asy
   });
   await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
   clock += 61 * MINUTE;
-  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  watcher.renew(session.id);
   await watcher.check();
   assert.deepEqual([store.state.slackPending.length, dropped], [1, []]);
   assert.match(told[0], /asks for changes/);
@@ -894,7 +896,7 @@ test('a resumed session\'s watch tells the new run where the pull request stands
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 1);
-  await watcher.track(mine, null, { watch: true });
+  watcher.renew(mine.id);
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 2, 'the verdict is told to the resumed run');
@@ -916,7 +918,7 @@ test('a check whose GitHub reads span a resume tells the new run nothing from th
   github.checkRuns = async (sha) => {
     if (resumeDuringRead) {
       resumeDuringRead = false;
-      await watcher.track(mine, null, { watch: true });
+      watcher.renew(mine.id);
     }
     return checkRuns(sha);
   };
@@ -938,7 +940,7 @@ test('a closed pull request read before a resume does not drop the renewed watch
     const read = await pull(number);
     if (resumeDuringRead) {
       resumeDuringRead = false;
-      await watcher.track(mine, null, { watch: true });
+      watcher.renew(mine.id);
     }
     return read;
   };
@@ -975,4 +977,28 @@ test('a private session\'s feedback asks its owner at the terminal, never Slack 
     assert.match(text, /ask what to do, then wait for the answer/);
     assert.match(feedbackFor({ number: 7, sha: 'abcdef1', review: null, broken, runs, gates: GATES }), /Needs a human/, 'a shared session\'s is as it was');
   }
+});
+
+test('a watch whose session is on another pull request for now waits, keeping what it told, and goes on once it is back', async () => {
+  const { store, session, github, dropped } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  let where = 'yes';
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock,
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, listening: () => where },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  where = 'elsewhere';
+  github.checkRuns = async () => [...allShards('success').slice(0, 3), shard(4, 'failure')];
+  clock += MINUTE;
+  await watcher.check();
+  assert.deepEqual([told.length, dropped, store.state.slackPending.length], [1, [], 1], 'waits, told nothing');
+  where = 'yes';
+  clock += MINUTE;
+  await watcher.check();
+  assert.equal(told.length, 2);
+  assert.match(told[1], /e2e suite failed/);
+  assert.doesNotMatch(told[1], /asks for changes/, 'the verdict it heard before is not told again');
 });

@@ -708,12 +708,6 @@ export function createFleet({
   // Slack. A GitHub that cannot be read is tried again on the next tick. Each pull request a session reports is tracked
   // once, so a session that closes its pull request and opens another from a new branch gets the new one too.
   async function announcePull(session) {
-    // A My Woodshed session reporting a pull request on another repo, or none, has left its own (prListening ends that
-    // watch): it is tracked again once it reports its own once more.
-    if (session.owner && session.reportedPrUrl !== undefined && session.reportedPrUrl !== session.prUrl) {
-      if (session.announcedPrUrl) update(session, { announcedPrUrl: null });
-      return;
-    }
     if (!session.prUrl || session.announcedPrUrl === session.prUrl) return;
     const project = projectFor(config, session);
     const watch = Boolean(session.owner);
@@ -1071,13 +1065,14 @@ export function createFleet({
   // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
   // nothing but its owner resumes it. A stopping one cannot: a message held for it would be typed in at a later Resume.
   const ownListening = (session) => Boolean(session && ACTIVE_STATUSES.has(session.status) && session.status !== 'stopping');
-  // It listens only for the pull request it reports now, on the item's repo: one it closed or left for another is not
-  // its work any more.
+  // It listens only for the pull request it reports now, on the item's repo: while it reports another or none (or
+  // statusd's lookup failed), the watch waits for it to be back.
   function prListening(item) {
     const session = find(item.sessionId);
+    if (!ownListening(session)) return 'ended';
     const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
-    const current = session?.reportedPrUrl === undefined ? session?.prUrl : session.reportedPrUrl;
-    return ownListening(session) && pullNumber(current) === item.number && onProjectRepo(current, project);
+    const current = session.reportedPrUrl === undefined ? session.prUrl : session.reportedPrUrl;
+    return pullNumber(current) === item.number && onProjectRepo(current, project) ? 'yes' : 'elsewhere';
   }
 
   // Whether a pull request URL is on a project's repo.
@@ -1386,6 +1381,8 @@ export function createFleet({
       // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
       announcedPrUrl: null,
     });
+    // Or, when its stop was not read yet, the watch starts a new run for this one.
+    announcer.renew(session.id);
     console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background });
     await runStartQueued({ background });
     return session;

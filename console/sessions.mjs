@@ -427,9 +427,9 @@ export function statusUpdate(session, status, nowIso) {
     branch: status.branch || session.branch,
     head: status.head || session.head,
     prUrl: prUrl || session.prUrl || null,
-    // The pull request statusd reported last, on any repo, or null for none on the branch it is on now: a session that
-    // moved to another one, or to a branch with none, is no longer watched on its old one (fleet.mjs, prListening),
-    // though `prUrl` keeps the last on its own repo. A statusd that sends no `prUrl` at all leaves it as it was.
+    // The pull request statusd reported last, on any repo, or null for none on the branch it is on now (or a failed
+    // lookup): while it is not the watched one, the watch of a My Woodshed session's pull request waits (fleet.mjs,
+    // prListening), though `prUrl` keeps the last on its own repo. A statusd that sends no `prUrl` leaves it as it was.
     reportedPrUrl: typeof status.prUrl === 'string' && status.prUrl ? status.prUrl.slice(0, 300)
       : 'prUrl' in status ? null : session.reportedPrUrl,
     // Every pull request the session has reported, oldest first: a session can open another after one merged.
