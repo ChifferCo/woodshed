@@ -204,6 +204,8 @@ function createMainWindow() {
 }
 
 function showSetup(error) {
+  // A console page waiting for its ready answer (File → Sessions a moment ago) does not replace the form opened now.
+  loadSeq += 1;
   mainWindow.loadFile(path.join(here, 'setup.html'), { query: { current: readSettings().consoleUrl || DEFAULT_CONSOLE, ...(error ? { error } : {}) } });
 }
 
@@ -334,9 +336,11 @@ async function signInInBrowser(next, inWindow, { again = false } = {}) {
   const base = consoleUrl;
   // Where the window was when the person pressed: a slow answer must not take it from wherever they went since (Change
   // console…, another page).
-  const from = mainWindow?.webContents.getURL();
+  // The very window, not only its address: one opened in its place may be at the same one.
+  const win = mainWindow;
+  const from = win?.webContents.getURL();
   const ready = await desktopSignInReady();
-  if (base !== consoleUrl || !mainWindow || mainWindow.webContents.getURL() !== from) {
+  if (base !== consoleUrl || !win || mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from) {
     console.log('woodshed-desktop: the window moved on while the console was asked, sign-in not started');
     return;
   }
