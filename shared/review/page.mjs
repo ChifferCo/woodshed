@@ -5208,6 +5208,19 @@ ${DARK_PALETTE}
     // returns markdown and this page never uses innerHTML, so without this
     // you read literal asterisks. Everything the model wrote goes through it —
     // overview, architecture, each act's why, each preamble, the answers.
+    // Tag-shaped text out of a line of markdown, but not out of its inline
+    // code spans: split on backticks, the odd pieces are inside a span. An
+    // unclosed backtick opens no span, so a stray one cannot shelter a tag.
+    function stripTagsOutsideCode(line) {
+      var parts = line.split('\\u0060');
+      var closed = parts.length % 2 === 1 ? parts.length : parts.length - 1;
+      for (var k = 0; k < parts.length; k++) {
+        var inCode = k % 2 === 1 && k < closed;
+        if (!inCode) parts[k] = parts[k].replace(/<\\/?[a-zA-Z][^>]*>/g, '');
+      }
+      return parts.join('\\u0060');
+    }
+
     function renderMarkdown(root, text) {
       // Raw HTML and horizontal rules are dropped rather than printed. A
       // GitHub review body is written for GitHub, which renders <details> and
@@ -5227,7 +5240,9 @@ ${DARK_PALETTE}
         // words inside, and dropping the whole line would drop the heading
         // with it. Nothing is interpreted as markup either way — every node
         // below is built with textContent.
-        var line = raw[r].replace(/<\\/?[a-zA-Z][^>]*>/g, '');
+        // Except inside inline code: a span like refs/x/<session>/<tree> or
+        // Map<string, number> is text to show, not markup to drop.
+        var line = stripTagsOutsideCode(raw[r]);
         var bare = line.trim();
         if (/^-{3,}$/.test(bare) || /^\\*{3,}$/.test(bare)) continue;
         lines.push(line);
