@@ -1,7 +1,7 @@
 // Woodshed's desktop app: the console in a window of its own, the session apps it opens in windows beside it, and a
 // notification and a Dock badge when one of your sessions needs you. Everything else is the console's page as a
 // browser shows it: the app holds no token and talks to nothing but the console the person typed.
-import { app, BrowserWindow, Menu, Notification, ipcMain, nativeImage, net, session, shell } from 'electron';
+import { app, BrowserWindow, Menu, Notification, ipcMain, nativeImage, net, screen, session, shell } from 'electron';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -160,7 +160,9 @@ function zoomBy(step) {
 // Zoomed in, the page is narrower than the window: the main window's minimum grows with the zoom, so the page stays in
 // the desktop layout (900px), never the phone one under the lights. On each page too, since Chromium keeps a zoom.
 function fitMinWidth(win) {
-  const least = Math.ceil(MAC_MIN_WIDTH * Math.max(1, win.webContents.getZoomFactor()));
+  // Never wider than the screen the window is on: zoomed in that far, the window fills it.
+  const screenWidth = screen.getDisplayMatching(win.getBounds()).workAreaSize.width;
+  const least = Math.min(screenWidth, Math.ceil(MAC_MIN_WIDTH * Math.max(1, win.webContents.getZoomFactor())));
   const [, minHeight] = win.getMinimumSize();
   win.setMinimumSize(least, minHeight);
   const [width, height] = win.getSize();
@@ -371,7 +373,11 @@ async function finishSignIn(link) {
       for (const cookie of cookies) await session.defaultSession.cookies.set(cookie);
       // A newer sign-in began while it was stored: that one's account is the person's, so this one is taken back out.
       if (attempt !== signInAttempt || base !== consoleUrl) {
-        for (const cookie of cookies) await session.defaultSession.cookies.remove(cookie.url, cookie.name).catch(() => {});
+        // Only while it is still this sign-in's value: the newer one may have stored its own under the same name.
+        for (const cookie of cookies) {
+          const now = await session.defaultSession.cookies.get({ url: cookie.url, name: cookie.name }).catch(() => []);
+          if (now.some((c) => c.value === cookie.value)) await session.defaultSession.cookies.remove(cookie.url, cookie.name).catch(() => {});
+        }
         console.log('woodshed-desktop: a sign-in stored after a newer one began, taken back out');
         return;
       }
