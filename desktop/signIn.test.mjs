@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { browserUrl, createPending, linkInArgs, parseSignedInLink, pkcePair, signInPathsFrom, signInStep } from './signIn.mjs';
+import { browserUrl, createPending, linkInArgs, parseSetCookie, parseSignedInLink, pkcePair, signInPathsFrom, signInStep } from './signIn.mjs';
 
 test('the challenge is the verifier\'s SHA-256, as the console checks it', () => {
   const { verifier, challenge } = pkcePair();
@@ -92,4 +92,15 @@ test('a link is claimed only by the sign-in it answers, on its console', () => {
 test('the link among the arguments Windows and Linux start the app with', () => {
   assert.equal(linkInArgs(['/opt/Woodshed/woodshed', '--flag', 'woodshed://signed-in?code=ab']), 'woodshed://signed-in?code=ab');
   assert.equal(linkInArgs(['/opt/Woodshed/woodshed']), null);
+});
+
+test('a claim\'s Set-Cookie becomes what the app stores, when it stores it', () => {
+  const now = () => 1_000_000_000;
+  assert.deepEqual(parseSetCookie('__Host-woodshed_session=ab12; Path=/; HttpOnly; SameSite=Lax; Secure; Max-Age=43200', 'https://woodshed.example.com/auth/desktop/claim', now), {
+    url: 'https://woodshed.example.com/auth/desktop/claim', name: '__Host-woodshed_session', value: 'ab12', path: '/', httpOnly: true, sameSite: 'lax', secure: true, expirationDate: 1_000_000 + 43200,
+  });
+  assert.deepEqual(parseSetCookie('host=octo; Path=/; HttpOnly', 'http://localhost:7702/x', now), { url: 'http://localhost:7702/x', name: 'host', value: 'octo', path: '/', httpOnly: true });
+  assert.equal(parseSetCookie('no-equals-sign; Path=/', 'http://x/', now), null);
+  assert.equal(parseSetCookie('=nameless', 'http://x/', now), null);
+  assert.equal(parseSetCookie('', 'http://x/', now), null);
 });

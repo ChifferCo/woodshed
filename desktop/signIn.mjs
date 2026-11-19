@@ -123,3 +123,31 @@ export function createPending({ now = Date.now } = {}) {
 export function linkInArgs(argv) {
   return argv.find((a) => typeof a === 'string' && a.startsWith(`${PROTOCOL}://`)) ?? null;
 }
+
+/**
+ * A claim's Set-Cookie header as Electron's `session.cookies.set` takes it. The app claims with credentials left out,
+ * so nothing is stored by the answer itself, and stores the session only while the claim is still the sign-in the
+ * person is on: a late claim never replaces a newer one's account.
+ * @param {string} header  one Set-Cookie header
+ * @param {string} url  the address the claim went to
+ * @param {() => number} [now]
+ * @returns {object|null}  `cookies.set` details, or null for a header with no name
+ */
+export function parseSetCookie(header, url, now = Date.now) {
+  const [pair, ...attributes] = String(header).split(';').map((part) => part.trim());
+  const eq = pair.indexOf('=');
+  if (eq <= 0) return null;
+  const details = { url, name: pair.slice(0, eq), value: pair.slice(eq + 1), path: '/' };
+  for (const attribute of attributes) {
+    const [rawKey, ...rest] = attribute.split('=');
+    const key = rawKey.trim().toLowerCase();
+    const value = rest.join('=').trim();
+    if (key === 'path' && value.startsWith('/')) details.path = value;
+    else if (key === 'httponly') details.httpOnly = true;
+    else if (key === 'secure') details.secure = true;
+    else if (key === 'samesite' && /^(lax|strict|none)$/i.test(value)) details.sameSite = value.toLowerCase() === 'none' ? 'no_restriction' : value.toLowerCase();
+    else if (key === 'max-age' && /^-?\d+$/.test(value)) details.expirationDate = Math.floor(now() / 1000) + Number(value);
+    else if (key === 'expires' && !('expirationDate' in details) && !Number.isNaN(Date.parse(value))) details.expirationDate = Math.floor(Date.parse(value) / 1000);
+  }
+  return details;
+}

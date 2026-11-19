@@ -7,13 +7,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
-import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
+import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSetCookie, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const iconFile = path.join(here, 'icon.png');
 const icon = existsSync(iconFile) ? nativeImage.createFromPath(iconFile) : undefined;
 const POLL_MS = 20_000;
 const READY_MS = 5_000;
+const POLL_TIMEOUT_MS = 15_000;
 // Settled once the start has made the main window: a second launch or a sign-in link that comes in while the start
 // still waits on the console's ready answer waits for it too, so there is never a second main window.
 let markStarted;
@@ -179,6 +180,7 @@ ipcMain.handle('console:connect', async (event, typed) => {
   appDomain = null;
   // A sign-in started on the console before is not this one's.
   pending.take();
+  signInAttempt += 1;
   // Known before the console's first page, which a hosted console redirects to its own sign-in: only its answer names
   // that path, so the redirect can go to the browser.
   await readyBeforeLoading();
@@ -193,6 +195,9 @@ ipcMain.handle('console:connect', async (event, typed) => {
 // people in itself) is signed in to in the window, as before. ---
 
 const pending = createPending();
+// Each new sign-in (Sign in with GitHub, Sign in in this window instead, Change console…) is a new attempt: a claim
+// that answers after a newer one began stores no account and moves no window.
+let signInAttempt = 0;
 // What the console's /auth/desktop/ready last said: whether it hands sign-ins back, and the paths its pages sign in at
 // (a hosted console's are its host's), read at start and on Change console…, and asked again at each sign-in.
 let desktopReady = false;
@@ -239,7 +244,9 @@ async function signInInBrowser(next, inWindow, { again = false } = {}) {
     return;
   }
   // Open the browser again reuses the sign-in already started, so a code from either tab is claimed with its verifier.
-  const started = (again && pending.current(base)) || pending.begin(next, base);
+  const reused = again && pending.current(base);
+  if (!reused) signInAttempt += 1;
+  const started = reused || pending.begin(next, base);
   shell.openExternal(browserUrl(base, { challenge: started.challenge, next: started.next }));
   mainWindow.loadFile(path.join(here, 'signin.html'));
 }
@@ -260,18 +267,23 @@ async function finishSignIn(link) {
   mainWindow.show();
   mainWindow.focus();
   const base = consoleUrl;
+  const attempt = signInAttempt;
   // Where the window is while the claim is on its way: a person who moved on (Change console…, another page) keeps it.
   const from = mainWindow.webContents.getURL();
+  const claimUrl = new URL('auth/desktop/claim', base).href;
   let error = null;
+  let setCookies = [];
   try {
-    // No redirects: the code and the verifier go to the console that made the code, and nowhere it might point.
-    const res = await session.defaultSession.fetch(new URL('auth/desktop/claim', base).href, {
-      method: 'POST', credentials: 'include', redirect: 'manual',
+    // No redirects: the code and the verifier go to the console that made the code, and nowhere it might point. No
+    // credentials either: the answer's cookie is stored below, and only while this is still the sign-in under way.
+    const res = await session.defaultSession.fetch(claimUrl, {
+      method: 'POST', credentials: 'omit', redirect: 'manual',
       headers: { 'content-type': 'application/json', 'x-woodshed': '1' },
       body: JSON.stringify({ code: signedIn.code, verifier: started.verifier }),
     });
     if (res.url && new URL(res.url).origin !== new URL(base).origin) error = 'The console answered from another address.';
     else if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The console answered ${res.status}.`;
+    else setCookies = res.headers.getSetCookie?.() ?? [];
   } catch (err) {
     error = /redirect/i.test(err.message) ? 'The console sent the sign-in elsewhere, so it was not finished.' : `The console did not answer: ${err.message}`;
   }
@@ -279,6 +291,20 @@ async function finishSignIn(link) {
   if (base !== consoleUrl || !mainWindow) {
     console.warn('woodshed-desktop: a sign-in finished after the console changed, not opened');
     return;
+  }
+  // A newer sign-in began while this claim was on its way: its account and its page are the person's now.
+  if (attempt !== signInAttempt) {
+    console.log('woodshed-desktop: a sign-in finished after a newer one began, dropped', { signedIn: !error });
+    return;
+  }
+  if (!error) {
+    try {
+      const cookies = setCookies.map((header) => parseSetCookie(header, claimUrl)).filter(Boolean);
+      if (!cookies.length) throw new Error('the console sent no session');
+      for (const cookie of cookies) await session.defaultSession.cookies.set(cookie);
+    } catch (err) {
+      error = `The sign-in could not be kept: ${err.message}`;
+    }
   }
   if (mainWindow.webContents.getURL() !== from) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
@@ -304,6 +330,7 @@ ipcMain.handle('signin:browser', (event) => {
 });
 ipcMain.handle('signin:here', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
+  signInAttempt += 1;
   const next = pending.take()?.next ?? '/';
   mainWindow.loadURL(signInHere(next));
 });
@@ -344,7 +371,8 @@ async function poll() {
   let body = null;
   let signedOut = false;
   try {
-    const res = await session.defaultSession.fetch(new URL('api/sessions', base).href, { credentials: 'include', headers: { Accept: 'application/json' } });
+    // 15 s at most: a read that never answers would otherwise hold `reading`, and the badge and notifications with it.
+    const res = await session.defaultSession.fetch(new URL('api/sessions', base).href, { credentials: 'include', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
     // Signed out, or a page in place of JSON: nothing to count until the person signs in.
     if (res.ok && String(res.headers.get('content-type')).includes('json')) body = await res.json();
     else signedOut = res.status === 401 || res.status === 302 || res.status === 403 || res.ok;
