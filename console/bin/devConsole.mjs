@@ -66,7 +66,7 @@ const liveTerminal = await startDevTerminal({ id: TERMINAL_ID, terminalToken: `x
 const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
 const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
-const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: '' });
+const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) });
 // A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
 // app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
 // reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
@@ -78,14 +78,14 @@ const realAllowed = wantsReal && !sessionApp;
 const REAL_ID = 'c1a0dea1';
 const realClaude = realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
   ? await startDevChatSession({ id: REAL_ID, ...tokensOf(REAL_ID), agent: 'claude', real: true,
-    nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+    nextPath: [claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
   : null;
 if (realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
 // DEV_CONSOLE_REAL_CODEX=1: /s/c0dea1ed runs the real codex the same way, on this machine's Codex sign-in.
 const REAL_CODEX_ID = 'c0dea1ed';
 const realCodex = realAllowed && process.env.DEV_CONSOLE_REAL_CODEX === '1'
   ? await startDevChatSession({ id: REAL_CODEX_ID, ...tokensOf(REAL_CODEX_ID), agent: 'codex', real: true,
-    nextPath: [realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
+    nextPath: [realClaude?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
   : null;
 function session(id, number, title, extra = {}) {
   return {
@@ -232,7 +232,7 @@ const sessions = [
   })] : []),
   ...(claudeChat ? [session(CLAUDE_CHAT_ID, 26705, 'Why webhook deliveries fail after a deploy', {
     status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat',
-    endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
+    ref: claudeChat.ref, endpoint: { host: '127.0.0.1', statusPort: claudeChat.port, termPort: claudeChat.port },
   })] : []),
   ...(realClaude ? [session(REAL_ID, null, 'Real claude on a clone of this checkout', {
     kind: 'task', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, assignee: 'octocat', hasShell: false,
@@ -403,7 +403,7 @@ function startConsole() {
   child = spawn(process.execPath, [server], {
     stdio: 'inherit',
     env: {
-      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
+      ...inherited, PATH: [devGhDir, realCodex?.binDir, realClaude?.binDir, claudeChat?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter), WOODSHED_HOST: '127.0.0.1', WOODSHED_PORT: consolePort, WOODSHED_STATE_DIR: stateDir,
       WOODSHED_POLL_GITHUB: '0', GH_TOKEN: 'dev',
       // DEV_CONSOLE_APP_PORTS (such as 7701-7703) puts session apps on ports of localhost instead, as a console reached
       // through Tailscale's serve has them (appPorts.mjs).

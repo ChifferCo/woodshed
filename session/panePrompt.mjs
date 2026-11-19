@@ -497,15 +497,19 @@ const BOX_RULE = /^\s*─{10,}\s*$/;
 export function composerEmpty(colored, agent) {
   const mark = BOX_MARKS[agent];
   const lines = linesOf(colored);
+  const plain = lines.map(PLAIN);
+  // codex's box runs down to its footer, the last line on screen with anything on it.
+  let footer = plain.length - 1;
+  while (footer > 0 && !plain[footer].trim()) footer--;
   for (let i = lines.length - 1; i >= 0; i--) {
-    const plain = PLAIN(lines[i]);
-    if (!mark.test(plain) || HIGHLIGHTED_ROW.test(plain)) continue;
-    if (agent === 'claude' && !(i > 0 && BOX_RULE.test(PLAIN(lines[i - 1])))) continue;
-    // Its draft, to the rule under it (claude) or the first blank line (codex): every line with no dim text left.
+    if (!mark.test(plain[i])) continue;
+    if (agent === 'claude' && !(i > 0 && BOX_RULE.test(plain[i - 1]))) continue;
+    // A menu's highlighted row, with its key hint under it, is not the box. A draft that starts `1. ` is.
+    if (HIGHLIGHTED_ROW.test(plain[i]) && plain.slice(i + 1, i + 10).some((l) => MENU_HINT.test(l))) continue;
+    // The whole draft, blank lines in it too: to the rule under it (claude), or to the footer (codex).
     let text = undimmed(lines[i]).replace(mark, '');
     for (let j = i + 1; j < lines.length; j++) {
-      const next = PLAIN(lines[j]);
-      if (BOX_RULE.test(next) || !next.trim()) break;
+      if (agent === 'claude' ? BOX_RULE.test(plain[j]) : j >= footer) break;
       text += undimmed(lines[j]);
     }
     return !text.replace(/\u00a0/g, ' ').trim();

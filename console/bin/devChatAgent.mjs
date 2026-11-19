@@ -151,13 +151,23 @@ let turns = 0;
 function draw() {
   out('\x1b[2J\x1b[H');
   out(`stand-in ${format} (dev console)\n\n`);
-  if (screen === 'working') out(`• Working (${Math.round((Date.now() - started) / 1000)}s • esc to interrupt)\n`);
+  if (screen === 'working' && format === 'claude') {
+    // claude's own working screen: its box between rules, the turn's line under them, as statusd reads claude's pane.
+    const rule = '─'.repeat(60);
+    out(`\n${rule}\n❯\u00a0\n${rule}\n  ✻ Working… (${Math.round((Date.now() - started) / 1000)}s · esc to interrupt)\n`);
+  } else if (screen === 'working') out(`• Working (${Math.round((Date.now() - started) / 1000)}s • esc to interrupt)\n`);
   if (screen === 'asking') {
     out('Would you like to run the following command?\n\n  Reason: the tests need the new column\n\n  $ npm run migrate\n\n');
     APPROVAL.forEach(([label, key], i) => out(`${i === approvalAt ? '›' : ' '} ${i + 1}. ${label} (${key})\n`));
     out('\n  Press enter to confirm or esc to cancel\n');
   }
-  if (screen === 'idle') out(`\n› ${typed || 'Ask anything'}`);
+  // Each agent's input box as it draws it: claude's `❯` between rules, codex's `›`, the hint in an empty one dim
+  // (SGR 2), as statusd reads it (composerEmpty, session/panePrompt.mjs).
+  const hint = (text) => `\x1b[2m${text}\x1b[0m`;
+  if (screen === 'idle' && format === 'claude') {
+    const rule = '─'.repeat(60);
+    out(`\n${rule}\n❯\u00a0${typed || hint('Try "fix lint errors"')}\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`);
+  } else if (screen === 'idle') out(`\n› ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }
 
 function after(ms, step) {

@@ -3,9 +3,9 @@
 // record of the conversation: codex's rollout, or claude's transcript. So the Chat tab's whole path is the session's own:
 // the thread from GET /transcript, Send typed into the pane by POST /send, Stop's Esc by POST /interrupt.
 // A codex session's state is read from its pane, as statusd reads codex's (Working, Needs you, Done), so `docker`
-// says its container runs and the console reads its status. A claude session's state comes from claude's hooks, through
-// a file every session on the machine shares (/tmp/woodshed-claude-state.json), so it gets no `docker` and keeps the
-// state the dev console gives it. Only where tmux is on the PATH (a Woodshed session has it); elsewhere it returns null.
+// says its container runs and the console reads its status. A claude session gets no `docker` and keeps the state the
+// dev console gives it; its statusd has a hook state file of its own (WOODSHED_CLAUDE_STATE_FILE), never the machine's,
+// which the session's own claude writes, so its sends go by its own screen, which the stand-in draws as claude does. Only where tmux is on the PATH (a Woodshed session has it); elsewhere it returns null.
 //
 // With `real`, the pane runs the real `claude` instead, on whatever Claude credential this machine's claude has (in a
 // Woodshed session, its owner's own), in a clone of this checkout with no remote, so nothing it does reaches GitHub or
@@ -132,7 +132,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   }
   const stateFile = path.join(root, 'claude-state.json');
   // A tmux server of its own (TMUX_TMPDIR), so it never meets the session's own claude.
-  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, ...(real && { WOODSHED_CLAUDE_STATE_FILE: stateFile }),
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: root, HOME: home, WOODSHED_CLAUDE_STATE_FILE: stateFile,
     ...(realCodex && { CODEX_HOME: codexHome }) };
   let paneCommand = `${process.execPath} ${AGENT} ${agent} ${recordDir} ${repo}`;
   if (realCodex) {
@@ -174,7 +174,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   child.stderr.on('data', relay);
   let binDir = null;
   let ref = null;
-  if (agent === 'codex' || real) {
+  {
     ref = `woodshed-${id}`;
     binDir = path.join(root, 'bin');
     fs.mkdirSync(binDir);

@@ -563,6 +563,7 @@ export function createFleet({
   async function deliverHeld(session) {
     while (session.pendingMessages.length && canType(session)) {
       const [text] = session.pendingMessages;
+      let boxed = false;
       try {
         await statusd(session, 'POST', '/send', { body: { text } });
       } catch (err) {
@@ -572,7 +573,8 @@ export function createFleet({
           update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
           continue;
         }
-        if (!inTheBox(session, err)) {
+        boxed = inTheBox(session, err);
+        if (!boxed) {
           // Busy is the usual answer mid-turn: said once per reason, not on every status read.
           const why = busyWhy(err) ?? firstLine(err);
           if (heldWhy.get(session.id) !== why) console.log('fleet: held message not delivered yet', { id: session.id, why });
@@ -583,7 +585,8 @@ export function createFleet({
       heldWhy.delete(session.id);
       // The list as it is now: a message held while this one went in stays.
       update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
-      console.log('fleet: held message sent', { id: session.id, chars: text.length, left: session.pendingMessages.length });
+      // In the agent's box with no Enter: inTheBox said so; it is not sent, and not typed again.
+      if (!boxed) console.log('fleet: held message sent', { id: session.id, chars: text.length, left: session.pendingMessages.length });
     }
   }
 

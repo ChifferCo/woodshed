@@ -692,7 +692,7 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
   });
   for (const name of ['claude', 'shell']) {
     // claude's pane shows its mode footer, as claude at its prompt does.
-    const footer = name === 'claude' ? 'printf "\\n> \\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n"; ' : '';
+    const footer = name === 'claude' ? `printf "\\n${'─'.repeat(40)}\\n❯ \\n${'─'.repeat(40)}\\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n"; ` : '';
     await tmux('new-session', '-d', '-s', name, `bash --norc -c '${footer}while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`);
   }
   const flags = path.join(dir, 'flags');
@@ -864,7 +864,10 @@ test('POST /send types nothing when the pane cannot be read, which may be showin
 });
 
 // A stand-in claude at its prompt: its mode footer, and each line it is sent written to a file.
-async function promptPane(t, state, { screen = '\n> \n  ⏵⏵ auto mode on (shift+tab to cycle)\n', menuOnInput = false } = {}) {
+// claude at its prompt: its box between two rules, the box's hint dim, and its mode footer.
+const CLAUDE_IDLE = `\n${'─'.repeat(60)}\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n${'─'.repeat(60)}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
+
+async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
   const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
@@ -880,7 +883,7 @@ process.stdout.write(${JSON.stringify(screen)});
 process.stdin.setRawMode(true);
 let shown = false;
 let line = '';
-const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + ${JSON.stringify(screen)} + '${'─'.repeat(40)}\\n❯ ' + line + (shown ? '\\n\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : '\\n'));
+const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + 'stand-in claude\\n' + '${'─'.repeat(40)}\\n❯ ' + line + '\\n${'─'.repeat(40)}\\n  ⏵⏵ auto mode on (shift+tab to cycle)' + (shown ? '\\n\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : '\\n'));
 process.stdin.on('data', (d) => {
   for (const ch of d.toString()) {
     if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(lines)}, line + '\\n'); line = ''; }

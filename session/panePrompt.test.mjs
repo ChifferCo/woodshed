@@ -374,3 +374,20 @@ test('the input box is empty when only dim text follows its mark, as claude and 
   const trust = ['  decision will be saved.', '\x1b[1;7m› 1. Trust and continue', '\x1b[0m\x1b[39m\x1b[49m  2. Back to Agent Command Center', '  \x1b[1menter\x1b[0;2m continue · \x1b[0;1mesc\x1b[0;2m back'].join('\n');
   assert.equal(composerEmpty(trust, 'codex'), null);
 });
+
+test('a draft that starts with a number, or has a blank line in it, still counts as text in the box', () => {
+  const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
+  const footer = '  ⏵⏵ auto mode on (shift+tab to cycle)';
+  // A numbered draft is the box, not a menu: no key hint under it.
+  assert.equal(composerEmpty([rule, '❯ 1. note to self', rule, footer].join('\n'), 'claude'), false);
+  // Text below a blank line in claude's box, to its closing rule.
+  assert.equal(composerEmpty([rule, '❯ ', '', 'the rest of a draft', rule, footer].join('\n'), 'claude'), false);
+  assert.equal(composerEmpty([rule, '❯ \x1b[2mTry "x"\x1b[0m', rule, footer].join('\n'), 'claude'), true);
+  // codex's box, to its footer: a blank line in the draft does not end it.
+  const codexFooter = '  GPT-6.2-Sol default · /tmp/fx/repo';
+  assert.equal(composerEmpty(['› 1. first point', '', '  second point', '', codexFooter].join('\n'), 'codex'), false);
+  assert.equal(composerEmpty(['› ', '', 'more of it', '', codexFooter].join('\n'), 'codex'), false);
+  assert.equal(composerEmpty(['› \x1b[2mAsk Codex to do anything\x1b[0m', '', codexFooter].join('\n'), 'codex'), true);
+  // A screen with no box at all.
+  assert.equal(composerEmpty('stand-in\n\nnothing here', 'claude'), null);
+});
