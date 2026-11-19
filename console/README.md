@@ -796,6 +796,85 @@ part. The session cannot write to GitHub, so it writes files and the console pos
   A session that ends without a review turns it into `The review did not finish` with the reason
   (`fleet: review ended without a report`).
 
+### Who reviews: Claude Code, Codex, both or none
+
+Each person picks who reviews the pull requests they open, on My settings' **Reviews of my pull requests** card
+(`reviewAgents.mjs`; kept with their settings, `userSettings.mjs` `reviewAgents`): **Claude Code and Codex**, **Claude
+Code only**, **Codex only** or **No code review**. A choice is offered only while something can run it:
+
+- Claude Code: the team's `anthropic-api-key`, or their own Claude token while they run shared sessions on it;
+- Codex: the team's `openai-api-key`, or their own Codex sign-in while they use it for reviews (below).
+
+With no choice saved, a review runs the most there is: both, else the one there is, else none. A saved choice that can
+no longer run keeps what of it can, else falls back the same way, and the console says why. A pull request is the
+person's whose session opened it, or its GitHub author otherwise (`pullOwner`); one whose author fails the identity
+checks of their Claude plan (`teamKeyReason`), or a bot, gets the most the team keys can run.
+
+The review gets `review.agents` and `REVIEW_AGENTS` (`claude`, `codex` or both), and `session/review.sh` runs each.
+Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
+its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
+Claude's verdict goes out alone. Codex alone sends its own verdict.
+
+**No code review** starts no session and posts nothing on the pull request. The console keeps the skip in `state.json`
+(`reviewSkips`, by project and number), and what waits for a review goes on without one for that pull request: the
+Slack post and its brief (the gates come without `review`, `gatesFor` in `fleet.mjs`) and QA (`reviewApproved`). A
+review that runs on it later clears the skip.
+
+The two verdicts become one (`codeReview.mjs merge`):
+
+- The stricter conclusion and the higher merge risk win, so a pull request is approved only when both approve.
+- The comment and summary have a section from each, and each inline comment says whose it is.
+- An earlier comment is resolved only when both found it fixed.
+- When one writes no verdict, the other's goes out alone and says so.
+
+The PR comment says `Reviewing with Claude Code and Codex`.
+
+No sign-in ever enters the review session, which reads what anyone who can push to the pull request wrote. The
+console's OpenAI proxy (`openaiProxy.mjs`) adds one of these to each of codex's calls, as the Anthropic proxy does for
+claude:
+
+- **The author's own Codex sign-in.** On My settings' Codex card, **Also use it for reviews of my pull requests** is on
+  once a sign-in is saved, unless the person turns it off, as the Claude token's switch for shared sessions is. It needs
+  the same checks as running a shared session
+  on their Claude plan (`teamKeyReason`); a bot author never has it. The review keeps `review.codexLogin` and
+  `review.codexVia`, and the session gets `REVIEW_CODEX_AUTH`:
+  - `chatgpt` for a ChatGPT login, with `REVIEW_CODEX_ACCOUNT`, the login's account id (an id, no credential).
+    `review.sh` gives codex a stand-in login for that account whose access token is the session's `SESSION_TOKEN`,
+    refreshed just now so codex never refreshes it. codex talks to a ChatGPT backend only over https, so it is pointed
+    (`chatgpt_base_url`, `openai_base_url`) at `session/chatgptRelay.mjs` on 127.0.0.1, with a certificate made for
+    the run from a CA whose key is deleted at once and which only this codex trusts (`CODEX_CA_CERTIFICATE`). The
+    relay passes each call on to the console's `/chatgpt/backend-api/`, where the proxy puts the author's access token
+    and account on Codex's API (`codex/…`) and the account check (`wham/accounts/check`), and refuses the rest of
+    ChatGPT, such as the author's chats. The console never refreshes the login (`codexModels.mjs` says why): one whose
+    access token has expired is not used. codex first tries a websocket, which the relay does not carry, and falls
+    back to https after five tries, a few seconds.
+  - `key` for an API key, which the proxy puts on `/openai` in place of the team key.
+
+  On a key, the author's or the team's, a review reaches only Codex's own calls on `/openai`: `/v1/responses`,
+  `/v1/responses/compact` and `/v1/models`, in plain form. The key's files, vector stores, fine-tuning and the rest get
+  a 404 (`openaiProxy: refused an OpenAI path a review's codex does not need`), since the pull request's code runs in
+  the review. A private Codex session is its owner's, and reaches all of it as before.
+
+  The proxy checks the switch and the sign-in at each call, so one turned off or expired mid-review stops being used
+  at once.
+- **The team's `openai-api-key`**, on `/openai`, for everyone else (`REVIEW_CODEX_AUTH=key`), and for an author whose
+  saved ChatGPT login has expired.
+
+
+The console logs:
+
+- `userSettings: reviews of my pull requests` with the `choice`;
+- `userSettings: own Codex sign-in for reviews` on each person's switch;
+- `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`);
+- `fleet: review runs other than the author chose` with `choice`, `agents` and `why`;
+- `fleet: review not started` with `reason: 'the author chose no code review'`;
+- `openaiProxy: first call on the author's ChatGPT login`, `on the author's key` or `on the team key`;
+- `openaiProxy: refused, the author's sign-in not usable` with `why`.
+
+In the session's pane: `Codex reviews on the author's ChatGPT login, which the console adds to its calls` or `on a key
+the console adds to its calls`, then `Codex ended (exit=…)`, and `Codex took longer than … minutes and was stopped`
+when it did. Codex's own log is at `.review/logs/codex.jsonl`.
+
 ### The approval waits for QA
 
 When QA runs here (`pullRequests.qa.runner: woodshed`) and the pull request carries the QA label, the review's APPROVE

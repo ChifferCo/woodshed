@@ -70,7 +70,7 @@ function setup({
   };
   const holder = { gates };
   const announcer = createPrAnnouncer({
-    store, github, slack, gates: async () => (typeof holder.gates === 'function' ? holder.gates() : holder.gates), now: () => clock, events,
+    store, github, slack, gates: async (name, number) => (typeof holder.gates === 'function' ? holder.gates(name, number) : holder.gates), now: () => clock, events,
     ...(qaWaitMs && { qaWaitMs: () => qaWaitMs }), webhooksFlowing: () => flowing, fallbackMs: 5 * MINUTE,
   });
   const session = { id: 's1', prUrl: 'https://github.com/acme/app/pull/7', createdAt: '2026-10-26T11:00:00Z' };
@@ -101,6 +101,15 @@ test('an approved pull request with a green suite is posted, then no longer wait
   assert.deepEqual(slack.posts.map((p) => [p.title, p.url]), [['Add GTM', 'https://github.com/acme/app/pull/7']], 'the one line, as before');
   assert.match(slack.posts[0].brief, /^👉 \*\*Please look before merging\*\*/, 'the thread starts with the verdict: the post above has the title');
   assert.deepEqual(store.state.slackPending, []);
+});
+
+test('a pull request whose author chose no review is posted with no verdict: its gates come without the review', async () => {
+  const asked = [];
+  const { announcer, slack, session } = setup({ reviews: [], gates: (name, number) => { asked.push(number); return { ...GATES, review: null }; } });
+  await announcer.track(session);
+  await announcer.check();
+  assert.deepEqual(asked, [7], 'the gates are asked for this pull request');
+  assert.deepEqual(slack.posts.map((p) => p.title), ['Add GTM']);
 });
 
 for (const [why, opts] of [

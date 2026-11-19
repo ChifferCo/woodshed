@@ -495,7 +495,7 @@ test('a member who is not an admin loads the console\'s own pages, and every cal
   for (const path of reads) assert.equal((await getWith(port, path, sam)).status, 403, `GET ${path}`);
   const writes = ['/api/secrets/registry-token', '/api/secrets/registry-token/reveal', '/api/webhook/rotate', '/api/webhook/apply', '/api/webhook/url',
     '/api/console-settings', '/api/console-settings/clean', '/api/console-settings/projects/color', '/api/console-settings/projects/slack-channel', '/api/console-settings/projects/triggers', '/api/people/invite',
-    '/api/console-settings/updates/check', '/api/console-settings/updates/update', '/api/console-settings/webhooks'];
+    '/api/console-settings/updates/check', '/api/console-settings/updates/update', '/api/console-settings/webhooks', '/api/console-settings/reviews'];
   for (const path of writes) assert.equal((await post(port, path, { confirm: 'x', login: 'ana-k', values: {} }, sam)).status, 403, `POST ${path}`);
   assert.deepEqual(reached, [], 'nothing behind the pages was reached');
   const samMe = await (await fetch(`http://127.0.0.1:${port}/api/me`, { headers: sam })).json();
@@ -1530,6 +1530,33 @@ test('the switch for shared sessions is set for the signed-in person alone, behi
   assert.equal(done.length, 1);
 });
 
+test('the switch for reviews on your own Codex sign-in is set for the signed-in person alone', async (t) => {
+  const done = [];
+  const userSettings = {
+    view: () => ({ claudeToken: { set: false, savedAt: null }, codexAuth: { set: true, savedAt: null }, ownCodexForReviews: done.at(-1)?.[1] ?? false, setUp: true, available: true }),
+    setOwnCodexForReviews(login, on) {
+      if (login === 'nobody') throw Object.assign(new Error('save your Codex sign-in first'), { shown: true });
+      done.push([login, on]);
+    },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+
+  const on = await post(port, '/api/my/codex-auth/reviews', { on: true, login: 'joel' }, as);
+  assert.equal(on.status, 200);
+  assert.equal(on.body.ownCodexForReviews, true);
+  assert.deepEqual(done, [['mia-dev', true]], 'the body cannot say whose it is');
+  assert.equal((await post(port, '/api/my/codex-auth/reviews', { on: 'yes' }, as)).status, 400);
+  assert.equal((await post(port, '/api/my/codex-auth/reviews', { on: true }, { ...as, origin: 'https://evil.example' })).status, 403);
+  assert.deepEqual(await post(port, '/api/my/codex-auth/reviews', { on: true }, { cookie: 'woodshed_session=nobody' }),
+    { status: 409, body: { error: 'save your Codex sign-in first' } });
+});
+
 test('a manual start is the signed-in person\'s, whatever login the body names', async (t) => {
   const started = [];
   const fleet = { sessions: () => [], async startManual(args) { started.push(args); return { id: '0a1b2c3d', status: 'queued', title: 't' }; } };
@@ -1609,6 +1636,33 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
   const settingsPage = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
   assert.deepEqual([settingsPage.webhooks.receiving, settingsPage.webhooks.github.off, settingsPage.webhooks.slack.off], [true, true, true], 'Console settings shows the switches');
   assert.equal((await get()).webhooks.github.off, true, 'and Webhook events says what is off');
+});
+
+test('My settings\' Reviews card: each person picks who reviews their pull requests, from what can run for them', async (t) => {
+  const { createReviewAgents } = await import('./reviewAgents.mjs');
+  const { createUserSettings } = await import('./userSettings.mjs');
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const reviewAgents = createReviewAgents({ userSettings, connected: async () => ({ claude: true, codex: false }) });
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings, reviewAgents });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
+
+  assert.deepEqual(await get(), { available: { claude: true, codex: false }, own: { claude: false, codex: false }, best: 'claude', choice: null },
+    'the team Anthropic key alone: Claude Code is the most there is');
+  const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
+  assert.equal(none.status, 200);
+  assert.equal(none.body.choice, 'none');
+  assert.equal(userSettings.reviewAgents('mia-dev'), 'none', 'the body cannot say whose it is');
+  assert.equal(userSettings.reviewAgents('joel'), null);
+  assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
+  assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
+  assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
 });
 
 test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {

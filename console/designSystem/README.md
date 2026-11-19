@@ -38,6 +38,7 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 ## Settings pages
 
+- A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
 - Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
   Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".
 

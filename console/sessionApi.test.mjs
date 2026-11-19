@@ -865,3 +865,25 @@ test('two repos that both have an api-env: each session writes its own repo\'s r
   assert.equal(onApp.includes('api-settings'), false, 'the other repo\'s session never gets them');
   assert.equal(onApp.includes('FROM=terraform'), false, 'nor the Terraform secret');
 });
+
+test('a review whose Codex runs on its author\'s sign-in is never handed that sign-in, and cannot replace it', async (t) => {
+  const sessions = [
+    { id: 'rrrrrrrr', status: 'running', token: 'review-own', kind: 'pr', number: 7, review: { base: 'main', agents: ['claude', 'codex'], codexLogin: 'ana', codexVia: 'chatgpt' }, plan: null, startedBy: 'ana' },
+  ];
+  const saved = [];
+  const userSettings = {
+    usesOwnTokenForShared: () => false, claudeToken: async () => null, usesOwnCodexForReviews: () => true,
+    codexAuth: async () => '{"tokens":{"access_token":"at","refresh_token":"rt","account_id":"acct-ana"}}',
+    setCodexAuth: async (login, text) => { saved.push([login, text]); },
+  };
+  const handle = createSessionApi({ fleet: { sessions: () => sessions }, tokens: { token: async () => ({}) }, userSettings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const settings = await request(port, { path: '/settings', authorization: 'Bearer review-own' });
+  assert.equal(settings.status, 200);
+  assert.ok(!JSON.stringify(settings.body).includes('rt'), 'the console\'s proxy adds it to the calls instead');
+  assert.equal((await request(port, { path: '/codex-auth', authorization: 'Bearer review-own', body: '{"tokens":{"refresh_token":"x"}}' })).status, 404);
+  assert.deepEqual(saved, []);
+});

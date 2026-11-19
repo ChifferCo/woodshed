@@ -47,6 +47,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         me = await W.postJson(path, body);
         tokenInput.value = '';
         tokenInput.type = 'password';
+        loadReviews();
       },
     });
   }
@@ -66,7 +67,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const codexStatus = h('p', { class: 'form-note', role: 'status' });
 
   function codexChange(path, body, done, working) {
-    return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; } });
+    return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; loadReviews(); } });
   }
 
   const codexInput = h('textarea', { id: 'codex-auth', class: 'field mono', rows: '3', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-… or the contents of ~/.codex/auth.json' });
@@ -94,8 +95,27 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
             if (window.confirm('Remove your Codex sign-in? Codex sessions then run on the team key, if there is one.')) codexChange('/api/my/codex-auth/remove', {}, 'Removed.', 'Removing…');
           },
         }, 'Remove')),
+      codexReviewsSwitch(),
       !me.available && h('p', { class: 'form-note is-error' }, 'This console has no secrets manager yet, so nothing can be saved here. ', h('a', { href: '/secrets' }, 'Choose one on the Secrets page.')),
       codexStatus);
+  }
+
+  // Whether reviews of your pull requests run Codex on your sign-in, when an admin has Codex review beside Claude Code.
+  // On once a sign-in is saved, unless turned off, as the Claude token's switch is; the console adds the sign-in to
+  // Codex's calls, never into the session.
+  function codexReviewsSwitch() {
+    const saved = me.codexAuth?.set;
+    const on = Boolean(saved && me.ownCodexForReviews);
+    return h('div', { class: `toggle-row${on ? '' : ' is-off'}` },
+      h('button', {
+        type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(on), 'aria-labelledby': 'codex-reviews-label', disabled: !saved || !me.available || busy.has('codex'),
+        onclick: () => codexChange('/api/my/codex-auth/reviews', { on: !on }, on ? 'Off: reviews of your pull requests run Codex on the team key.' : 'On: reviews of your pull requests run Codex on your sign-in.'),
+      }),
+      h('span', { class: 'toggle-label', id: 'codex-reviews-label' }, 'Also use it for reviews of my pull requests'),
+      h('p', { class: 'sub' }, on
+        ? 'On: when Codex reviews a pull request you opened (Reviews of my pull requests, below), it runs on your plan. The console adds your sign-in to Codex\u2019s calls; it never goes into the review session. A ChatGPT sign-in that has expired is not used: a Codex session of yours refreshes it.'
+        : 'Off: when Codex reviews a pull request you opened, it runs on the team\u2019s OpenAI key, or not at all without one.'),
+      !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
 
   // Numbered steps for a card, each { text, command }: a command gets its own box and Copy, so copying one never
@@ -485,6 +505,55 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       projectStatus);
   }
 
+  // Who reviews the pull requests you open (console/reviewAgents.mjs), as a grid: Claude Code and Codex on their own
+  // rows, Off and On across the top (designSystem/components/OnOffGrid). Both on is both, both off is no code review.
+  // On is offered only while the team's key or your own sign-in can run it; with nothing saved, the most there is runs.
+  // A pick saves at once.
+  let reviews = null;
+  const reviewStatus = h('p', { class: 'form-note', role: 'status' });
+  const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
+  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; if (me) render(); }, () => {});
+
+  function saveReviews(choice, done) {
+    return act({ card: 'reviews', note: reviewStatus, done, call: async () => { reviews = await W.postJson('/api/my/reviews', { choice }); } });
+  }
+
+  function reviewsCard() {
+    if (!reviews) return null;
+    const { available, best, choice } = reviews;
+    const on = new Set(AGENTS_OF[choice ?? best] ?? []);
+    const rows = [
+      ['claude', 'Claude Code', 'Needs a Claude token above, or the team\u2019s Anthropic key.'],
+      ['codex', 'Codex', 'Needs a Codex sign-in above, or the team\u2019s OpenAI key.'],
+    ];
+    const pick = (agent, value) => {
+      const next = new Set(on);
+      if (value) next.add(agent); else next.delete(agent);
+      const chosen = next.has('claude') && next.has('codex') ? 'both' : next.has('claude') ? 'claude' : next.has('codex') ? 'codex' : 'none';
+      saveReviews(chosen, 'Saved. It applies to the next review.');
+    };
+    const radio = (agent, label, value) => h('input', {
+      type: 'radio', name: `reviews-${agent}`, value: value ? 'on' : 'off', checked: on.has(agent) === value,
+      disabled: busy.has('reviews') || (value && !available[agent]), 'aria-label': `${label} ${value ? 'on' : 'off'}`,
+      onchange: () => pick(agent, value),
+    });
+    const cantRun = choice && AGENTS_OF[choice].some((a) => !available[a]);
+    return h('section', { class: 'set-card', id: 'my-reviews' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Reviews of my pull requests'), h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default')),
+      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With both on, the stricter verdict wins, so it is approved only when both approve. With both off, there is no code review, and the Slack post and QA go on without one.'),
+      h('table', { class: 'onoff-grid' },
+        h('thead', null, h('tr', null, h('th', { scope: 'col' }, h('span', { class: 'sr-only' }, 'Reviewer')), h('th', { scope: 'col' }, 'Off'), h('th', { scope: 'col' }, 'On'))),
+        h('tbody', null, rows.map(([agent, label, needs]) => h('tr', { class: available[agent] ? null : 'is-unavailable' },
+          h('th', { scope: 'row' }, h('span', { class: 'onoff-name' }, label), available[agent] ? null : h('span', { class: 'onoff-note' }, needs)),
+          h('td', null, radio(agent, label, false)),
+          h('td', null, radio(agent, label, true)))))),
+      h('p', { class: 'form-note' }, choice
+        ? (cantRun ? 'What you chose cannot all run now, so your reviews get what of it can.' : 'Your own choice. ')
+        : 'Default: the most there is, from your sign-ins and the team\u2019s keys. ',
+      choice && h('button', { type: 'button', class: 'btn-link', disabled: busy.has('reviews'), onclick: () => saveReviews(null, 'Back to the default.') }, 'Back to the default')),
+      reviewStatus);
+  }
+
   function saveLimits(values, done) {
     limitsTyped = true;
     return act({ card: 'limits', note: limitStatus, done, call: async () => { me = await W.postJson('/api/my/limits', { limits: values }); limitsTyped = false; } });
@@ -554,6 +623,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
       tokenCard(),
       codexCard(),
+      reviewsCard(),
       projectCard(),
       limitsCard(),
       databasesCard(),
@@ -581,6 +651,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
   W.getJson('/api/my/projects').then((answer) => { projects = answer; if (me) render(); }, () => {});
+  loadReviews();
   render();
   life.on(window, 'woodshed:me', render);
 });

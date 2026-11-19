@@ -15,7 +15,7 @@ const PULL_GATES = {
 const approvedReview = () => [{ user: { login: 'review-bot[bot]' }, state: 'APPROVED', body: '## Code review' }];
 const e2eRuns = (conclusion = () => 'success') => [1, 2, 3, 4].map((n) => ({ name: `e2e run (${n}/4)`, status: 'completed', conclusion: conclusion(n), html_url: `u${n}` }));
 
-function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null } = {}) {
+function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, writers = ['joel'], issues = {}, ghToken = 'gh-token', databases = null, slack = null, homes = null, retention, people = null, autoName = null, attachments = null, assignables = [], githubSessions = null, memberList = null, pings = null, projectBlocker = async () => null, projects = null, githubFor = null, consoleLinks = undefined, appDomain = '', gates = PULL_GATES, ownApp = () => null, reviewerApp = null, repoTriggers = null, runsOnName = null, qaRecordings = null, reviewAgents = null } = {}) {
   let clock = Date.parse('2026-10-21T10:00:00.000Z');
   const calls = { started: [], stopped: [], statusd: [], comments: [], checks: [], reviews: [], reactions: [], unlabeled: [], found: [], assignees: [], statusMoves: [], taskStates: [], taskState: [], labeled: [], labelsMade: [], resolvedThreads: [] };
   const alive = new Set();
@@ -105,7 +105,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
   };
   const fleet = createFleet({
     config, store, launcher, github, databases, slack, homes, userSettings, people, autoName, attachments, qaRecordings, now: () => clock,
-    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, ...(consoleLinks ? { consoleLinks } : {}),
+    pings, pullRequests: async () => gates, projectBlocker, githubFor, ownApp, reviewerApp, repoTriggers, reviewAgents, ...(consoleLinks ? { consoleLinks } : {}),
     // Every writer has sessions from GitHub unless a test names who does.
     members: {
       isAssignable: (login) => assignables.some((e) => e.toLowerCase() === String(login).toLowerCase()),
@@ -2588,6 +2588,89 @@ test('the review tag on the head starts a review session, once for the commit, o
   const actions = setup({ gates: { ...REVIEW_GATES, review: { ...REVIEW_GATES.review, runner: 'actions' } } });
   actions.github.pull = async () => REVIEW_PULL;
   assert.deepEqual(await actions.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the actions runner stays in CI');
+});
+
+test('a review runs whom its author chose, and says so on the pull request', async () => {
+  const both = { forReview: async () => ({ agents: ['claude', 'codex'], why: null }) };
+  const { fleet, calls } = reviewSetup({ reviewAgents: both });
+  await fleet.reviewOnTag({ number: 7 });
+  const [session] = fleet.sessions();
+  assert.deepEqual(session.review.agents, ['claude', 'codex']);
+  await fleet.tick();
+  assert.equal(calls.started[0].env.REVIEW_AGENTS, 'claude codex');
+  assert.match(calls.comments[0].body, /Reviewing\*\* with Claude Code and Codex/);
+  assert.equal(calls.started[0].env.REVIEW_CODEX_AUTH, 'key', 'the team key, through the console');
+  assert.equal(calls.started[0].env.REVIEW_CODEX_ACCOUNT, undefined);
+
+  const own = reviewSetup({ reviewAgents: { forReview: async ({ login }) => ({ agents: ['claude', 'codex'], codexLogin: login, codexVia: 'chatgpt', codexAccount: 'acct-joel', why: null }) } });
+  await own.fleet.reviewOnTag({ number: 7 });
+  await own.fleet.tick();
+  const ownEnv = own.calls.started[0].env;
+  assert.equal(ownEnv.REVIEW_CODEX_AUTH, 'chatgpt');
+  assert.equal(ownEnv.REVIEW_CODEX_ACCOUNT, 'acct-joel', 'the account, an id the stand-in login names');
+  assert.ok(!Object.keys(ownEnv).some((k) => /CODEX_AUTH_JSON|OPENAI_API_KEY/.test(k)), 'no sign-in in the session');
+
+  const alone = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['claude'], why: 'the console has no OpenAI key' }) } });
+  await alone.fleet.reviewOnTag({ number: 7 });
+  await alone.fleet.tick();
+  assert.deepEqual(alone.fleet.sessions()[0].review.agents, ['claude']);
+  assert.equal(alone.calls.started[0].env.REVIEW_AGENTS, 'claude');
+  assert.doesNotMatch(alone.calls.comments[0].body, /Codex/);
+
+  const codex = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['codex'], choice: 'codex', codexVia: 'key', why: null }) } });
+  await codex.fleet.reviewOnTag({ number: 7 });
+  await codex.fleet.tick();
+  assert.equal(codex.calls.started[0].env.REVIEW_AGENTS, 'codex');
+  assert.equal(codex.calls.started[0].env.REVIEW_CODEX_AUTH, 'key');
+  assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
+});
+
+test('team keys that could not be read start no review and skip nothing: QA and the Slack post keep waiting', async () => {
+  const unread = { forReview: async () => ({ agents: [], choice: null, why: 'the team keys could not be read: timed out', keysUnread: true }) };
+  const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };
+  const { fleet, github, store } = setup({ gates, reviewAgents: unread });
+  github.pull = async () => ({ ...REVIEW_PULL, labels: [{ name: 'qa' }] });
+  github.reviews = async () => [];
+  github.labeledBy = async () => 'joel';
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'the team keys could not be read, so whom to review with is not known' });
+  assert.equal(fleet.sessions().length, 0);
+  assert.equal(store.state.reviewSkips, undefined, 'no skip recorded');
+  assert.equal((await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' })).outcome, 'waiting', 'QA still waits for a review');
+});
+
+test('an author who chose no code review gets none, and QA and the Slack post go on without waiting for one', async () => {
+  const none = { forReview: async () => ({ agents: [], choice: 'none', why: null }) };
+  const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };
+  const { fleet, calls, github, store } = setup({ gates, reviewAgents: none });
+  github.pull = async () => ({ ...REVIEW_PULL, labels: [{ name: 'qa' }] });
+  github.reviews = async () => [];
+  github.labeledBy = async () => 'joel';
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'the author chose no code review' });
+  assert.equal(fleet.sessions().length, 0, 'no review session');
+  assert.equal(calls.comments.length, 0, 'nothing posted on the pull request');
+  assert.equal(Object.values(store.state.reviewSkips)[0].why, 'the author chose no review');
+  const qa = await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  assert.equal(qa.outcome, 'started', 'QA does not wait for a review that will not come');
+
+  const later = { forReview: async () => ({ agents: ['claude'], choice: 'claude', why: null }) };
+  const again = setup({ gates, reviewAgents: later });
+  again.store.state.reviewSkips = { ...store.state.reviewSkips };
+  again.github.pull = async () => REVIEW_PULL;
+  await again.fleet.reviewOnTag({ number: 7 });
+  assert.deepEqual(again.store.state.reviewSkips, {}, 'a review that runs again clears the skip');
+});
+
+test('a review runs Codex on its author\'s own sign-in only when they pass the checks their Claude plan needs', async () => {
+  const asked = [];
+  const reviewAgents = { forReview: async ({ login }) => { asked.push(login); return { agents: ['claude', 'codex'], codexLogin: login, why: null }; } };
+  const { fleet } = reviewSetup({ reviewAgents });
+  await fleet.reviewOnTag({ number: 7 });
+  assert.equal(fleet.sessions()[0].review.codexLogin, 'joel');
+
+  const outsider = reviewSetup({ reviewAgents, githubSessions: [] });
+  await outsider.fleet.reviewOnTag({ number: 7 });
+  assert.deepEqual(asked, ['joel', null], 'someone without sessions from GitHub: nobody\'s own sign-in');
+  assert.equal(outsider.fleet.sessions()[0].review.codexLogin, undefined);
 });
 
 test('a head without the review tag starts nothing', async () => {

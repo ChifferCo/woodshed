@@ -52,6 +52,7 @@ import { createAppShares } from './appShares.mjs';
 import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
 import { createWebhookSwitch } from './webhookSwitch.mjs';
+import { createReviewAgents } from './reviewAgents.mjs';
 import { createProjectTokens } from './projectTokens.mjs';
 import { createProjectAccess } from './projectAccess.mjs';
 import { createAddedProjects, createHostProjects, ghRepoLister, repoChecker, repoLister } from './addedProjects.mjs';
@@ -303,10 +304,19 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const appShares = createAppShares({ store, secure: loaded.publicUrl.startsWith('https:') });
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
-  const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null });
+  const openai = createOpenAiProxy({ secrets, teamKey: config.sessionEnv.OPENAI_API_KEY ?? null, userSettings });
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
+  // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
+  // own sign-ins can run.
+  const reviewAgents = createReviewAgents({
+    userSettings,
+    connected: async () => {
+      const [claude, codex] = await Promise.all([anthropic.teamCredential(), openai.teamCredential()]);
+      return { claude: Boolean(claude), codex: Boolean(codex) };
+    },
+  });
   const qaRecordings = provider.recordings ? createQaRecordings({ store: provider.recordings }) : null;
   const pullWebhooks = createPullWebhooks();
   const prChips = createProjectPrChips({ projects: () => allProjects(config), githubFor, webhooksFlowing: pullWebhooks.flowing, fallbackMs: config.fallbackPollMs });
@@ -328,6 +338,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ownApp: () => appIdentity.known(),
     reviewerApp,
     repoTriggers,
+    reviewAgents,
   });
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
@@ -391,7 +402,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     token: tokens ? async () => (await tokens.console.token()).token : null,
   }) : null;
   const handle = createHandler({
-    config, fleet, settings, events, webhookSwitch, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
+    config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
     prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,

@@ -20,6 +20,9 @@ import logins from './public/logins.cjs';
 import { SETTINGS, settingProblem } from './consoleSettings.mjs';
 const { loginKey } = logins;
 
+// Who may review a person's pull requests, as reviewAgents.mjs reads it.
+const REVIEW_CHOICES = ['none', 'claude', 'codex', 'both'];
+
 const CLAUDE_TOKEN = 'claude-token';
 const CODEX_AUTH = 'codex-auth';
 const GITHUB = 'github';
@@ -209,6 +212,8 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
       claudeToken: { set: Boolean(record?.claudeTokenAt), savedAt: record?.claudeTokenAt ?? null },
       codexAuth: { set: Boolean(record?.codexAuthAt), savedAt: record?.codexAuthAt ?? null },
       ownTokenForShared: record?.ownTokenForShared !== false,
+      ownCodexForReviews: record?.ownCodexForReviews !== false,
+      reviewAgents: REVIEW_CHOICES.includes(record?.reviewAgents) ? record.reviewAgents : null,
       limits: { ...record?.limits },
       github: { connected: Boolean(github?.connectedAt), connectedAt: github?.connectedAt ?? null, name: github?.name ?? null, email: github?.email ?? null },
       home: { saved: Boolean(record?.home?.savedAt), savedAt: record?.home?.savedAt ?? null, bytes: record?.home?.bytes ?? 0 },
@@ -368,6 +373,42 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
     return Boolean(record?.ownTokenForShared !== false && record?.claudeTokenAt);
   }
 
+  /**
+   * The switch on the Codex card: whether reviews of this person's pull requests run Codex on their own sign-in, when
+   * Console settings' Reviews card has Codex review beside Claude Code. On once a sign-in is saved, unless they turned
+   * it off, as the Claude token's switch for shared sessions is. The sign-in never goes into the review session: the console's OpenAI proxy adds it to codex's calls
+   * (openaiProxy.mjs), as the Anthropic proxy does a Claude token.
+   * @throws {Error}  shown on the page, when it is turned on with no sign-in saved
+   */
+  function setOwnCodexForReviews(login, on) {
+    if (on && !recordFor(login)?.codexAuthAt) throw Object.assign(new Error('save your Codex sign-in first'), { shown: true });
+    touch(login, { ownCodexForReviews: Boolean(on) });
+    console.log('userSettings: own Codex sign-in for reviews', { login, on: Boolean(on) });
+  }
+
+  /** @returns {boolean}  the switch is on and a sign-in is saved */
+  function usesOwnCodexForReviews(login) {
+    const record = recordFor(login);
+    return Boolean(record?.ownCodexForReviews !== false && record?.codexAuthAt);
+  }
+
+  /**
+   * Who reviews this person's pull requests (reviewAgents.mjs): none, claude, codex or both, or null for the most this
+   * console can run, which is the default.
+   * @throws {Error}  shown on the page, for anything else
+   */
+  function setReviewAgents(login, choice) {
+    if (choice !== null && !REVIEW_CHOICES.includes(choice)) throw Object.assign(new Error(`reviews must be one of ${REVIEW_CHOICES.join(', ')}`), { shown: true, status: 400 });
+    touch(login, { reviewAgents: choice });
+    console.log('userSettings: reviews of my pull requests', { login, choice: choice ?? 'the most there is' });
+  }
+
+  /** @returns {string|null}  the person's saved choice, or null for the default */
+  function reviewAgents(login) {
+    const saved = recordFor(login)?.reviewAgents;
+    return REVIEW_CHOICES.includes(saved) ? saved : null;
+  }
+
   /** Replaces the person's own idle and lifetime hours; an empty object goes back to the console's numbers. */
   function setLimits(login, values) {
     const limits = checkLimits(values);
@@ -405,7 +446,7 @@ export function createUserSettings({ store, secrets, now = Date.now }) {
   }
 
   return {
-    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
+    view, refresh, askedAbout: (login) => askedAt.has(loginKey(login)), setClaudeToken, removeClaudeToken, claudeToken, setCodexAuth, removeCodexAuth, codexAuth, setOwnTokenForShared, usesOwnTokenForShared, setOwnCodexForReviews, usesOwnCodexForReviews, setReviewAgents, reviewAgents, setLimits, limitsFor, file, saveFile, resetFile, ownFiles,
     githubCredentials, saveGitHub, forgetGitHub, setGitIdentity, gitIdentity, noteHome, removeAll,
   };
 }

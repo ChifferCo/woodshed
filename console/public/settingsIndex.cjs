@@ -23,8 +23,10 @@
     // My settings
     { page: '/settings', id: 'claude', title: 'Claude sign-in', note: 'Your Claude token, so your private sessions run on your plan.',
       words: 'anthropic token plan login log in subscription api key oauth setup-token claude max pro credentials sign in auth shared sessions switch use mine' },
-    { page: '/settings', id: 'codex', title: 'Codex sign-in', note: 'Your OpenAI login for private Codex sessions.',
-      words: 'openai chatgpt gpt api key auth.json token login log in credentials sign in agent' },
+    { page: '/settings', id: 'codex', title: 'Codex sign-in', note: 'Your OpenAI login for private Codex sessions, and for reviews of your pull requests if you turn that on.',
+      words: 'openai chatgpt gpt api key auth.json token login log in credentials sign in agent review reviews pull request plan subscription' },
+    { page: '/settings', id: 'my-reviews', title: 'Reviews of my pull requests', note: 'Who reviews the pull requests you open: Claude Code, Codex, both, or no code review.',
+      words: 'review reviewer reviews codex openai claude code both none no off agents second opinion verdict approve merge risk pull request pr' },
     { page: '/settings', id: 'my-project', title: 'My default project', note: 'The repo New session starts on for you.',
       words: 'repo repository default project which repo new session start on pick choose' },
     { page: '/settings', id: 'my-timeouts', title: 'My session timeouts', note: 'How long your sessions wait for you, and how long they may run. Overrides the console\'s numbers for you.',

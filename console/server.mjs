@@ -18,6 +18,9 @@
 //   POST /api/my/claude-token    {"value": "sk-ant-..."}
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
 //   POST /api/my/codex-auth/remove
+//   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
+//   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
+//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
@@ -228,7 +231,7 @@ const SESSION_PAGE_RE = /^\/s\/([0-9a-f]{8})$/;
 const REPO_SETTINGS_PAGE_RE = /^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
 // The console's own settings pages, served as one page with /settings (SETTINGS_SCRIPTS).
 const SETTINGS_PAGE_RE = new RegExp(`^/(?:events|secrets|people|console-settings)$|${REPO_SETTINGS_PAGE_RE.source}`);
-const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove))?$/;
+const MY_CODEX_AUTH_RE = /^\/api\/my\/codex-auth(?:\/(remove|reviews))?$/;
 const MY_LIMITS_PATH = '/api/my/limits';
 const PROJECTS_PATH = '/api/console-settings/projects';
 const UPDATES_PATH = '/api/console-settings/updates';
@@ -556,7 +559,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
  *   `settings` only where the Secrets page works (AWS); `people` gives the pages each handle's display name
  */
 export function createHandler({
-  config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, auth = null, review = null, userSettings = null, github = null,
+  config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, reviewAgents = null, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
@@ -1391,6 +1394,11 @@ export function createHandler({
       if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
       const codexMatch = MY_CODEX_AUTH_RE.exec(pathname);
       if (codexMatch) {
+        if (codexMatch[1] === 'reviews') {
+          if (typeof body.on !== 'boolean') return reply(res, 400, { error: 'on must be true or false' });
+          userSettings.setOwnCodexForReviews(login, body.on);
+          return reply(res, 200, myView(login));
+        }
         if (codexMatch[1]) await userSettings.removeCodexAuth(login);
         else {
           await userSettings.setCodexAuth(login, body.value);
@@ -1676,6 +1684,32 @@ export function createHandler({
     return reply(res, 200, { webhooks: webhookState() });
   }
 
+  /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
+  async function myReviewsView(login) {
+    if (!reviewAgents) return { available: { claude: false, codex: false }, best: 'none', choice: null };
+    const { available, own, best } = await reviewAgents.options(login);
+    return { available, own, best, choice: userSettings?.reviewAgents(login) ?? null };
+  }
+
+  async function myReviewsWrite(req, res, login) {
+    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
+    if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    try {
+      userSettings.setReviewAgents(login, body?.choice ?? null);
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      throw err;
+    }
+    return reply(res, 200, await myReviewsView(login));
+  }
+
+
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
     if (!consoleSettings) return reply(res, 404, { error: 'this console has no settings page' });
@@ -1812,6 +1846,7 @@ export function createHandler({
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
@@ -1975,6 +2010,7 @@ export function createHandler({
       await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey()]);
       return reply(res, 200, myView(user.login));
     }
+    if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });
