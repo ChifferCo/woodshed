@@ -159,7 +159,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // What it was sent and its state: the rest is warnings of what a made-up session lacks (gh, a branch on GitHub).
-  const relay = (chunk) => { if (/statusd: (text sent|agent interrupted|claude state changed)/.test(String(chunk))) process.stdout.write(`dev chat session ${id}: ${chunk}`); };
+  const relay = (chunk) => { if (/statusd: (text sent|agent interrupted|answer typed|answer refused|claude state changed)/.test(String(chunk))) process.stdout.write(`dev chat session ${id}: ${chunk}`); };
   child.stdout.on('data', relay);
   child.stderr.on('data', relay);
   await new Promise((resolve) => child.stdout.on('data', (chunk) => { if (String(chunk).includes('listening')) resolve(); }));

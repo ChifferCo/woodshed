@@ -741,6 +741,14 @@ URL on top of each env file's Repo settings values
   speech recognition, and says why in a toast when the site may not use the
   microphone. A terminal that reconnected by itself logs `terminal:
   reconnecting` in the browser's console.
+- **The Chat tab's Send answers, Approve or Deny says `Not answered: …`.** statusd types an answer only once the agent's
+  pane shows that same prompt (`session/panePrompt.mjs`): the console logs `console: answer typed in from the page`
+  with the picks' numbers or the decision, and statusd `statusd: answer typed` with the arrow keys it took, or `statusd:
+  answer refused` with `why` (`no-picker`: answered or cancelled already; `other-question`: the picker was moved on in
+  the Agent tab; `other-options`, `other-approval`: the screen changed; `not-moved`: the highlight did not follow) and
+  `typed`, how many questions it had answered before it stopped. `TMUX= tmux capture-pane -p -t claude` in the session
+  shows what it read. A Claude Code or codex that draws its picker otherwise reads as `no-picker` for every answer:
+  capture its pane into `shared/__fixtures__/` and fix the reader.
 - **Files attached to New session are missing in the session.** The console
   logs `attachments: staged`, `claimed` and `handed out`; the session's log says
   `Attachments fetched` or `WARNING: attachments not fetched` with the status.

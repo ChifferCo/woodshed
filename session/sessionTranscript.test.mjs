@@ -193,6 +193,12 @@ test("claude's AskUserQuestion keeps each question and its options, and whether 
   assert.equal(entries[1].error, true, 'Esc on the question');
   assert.equal(entries[1].answered, undefined);
   assert.equal(entries[2].answered, undefined, 'not answered yet');
+
+  const several = parseClaudeTranscript(line({ type: 'assistant', message: { content: [{
+    type: 'tool_use', id: 'q4', name: 'AskUserQuestion',
+    input: { questions: [{ question: 'Which toppings?', header: 'Toppings', multiSelect: true, options: [{ label: 'Cheese' }, { label: 'Olives' }] }] },
+  }] } }));
+  assert.deepEqual(several[0].questions, [{ question: 'Which toppings?', options: ['Cheese', 'Olives'], multiSelect: true }], 'a multi-select question says so');
 });
 
 test("codex's exec script reads as the tools it calls, each failing by its own exit code", () => {

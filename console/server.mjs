@@ -62,6 +62,10 @@
 //   GET  /api/sessions/<id>/applog  the end of the session's app logs: its start, the backend's and the frontend's
 //   GET  /api/sessions/<id>/diff    the Diff tab: the checkout against the default branch, uncommitted work included, as a plain diff
 //   POST /api/sessions/<id>/interrupt  Esc to the session's agent, the Chat tab's Stop: it ends the agent's turn
+//   GET  /api/sessions/<id>/prompt  what the agent's pane asks now (a question picker, an approval), for the Chat tab
+//   POST /api/sessions/<id>/answer  the Chat tab's answer to it, which the session types only once its pane shows that
+//        same prompt: {"kind": "question", "questions": [{question, options, pick}]} or {"kind": "approval",
+//        "decision": "approve"|"deny", title, detail} (session/panePrompt.mjs)
 //   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
 //        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
 //        (session/sessionTranscript.mjs)
@@ -259,7 +263,7 @@ const STOP_RE = /^\/api\/sessions\/([0-9a-f]{8})\/stop$/;
 const ASSIGN_RE = /^\/api\/sessions\/([0-9a-f]{8})\/assign$/;
 const SHARED_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(resume|delete|remove)$/;
 const VIEW_ACTION_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(pin|rename)$/;
-const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|applog|diff|transcript)$/;
+const TERMINAL_RE = /^\/api\/sessions\/([0-9a-f]{8})\/(upload|image|scroll|send|interrupt|answer|prompt|applog|diff|transcript)$/;
 // The skills in the repo change with a merge; an hour is soon enough for a / list.
 const SKILLS_FRESH_MS = 60 * 60_000;
 // A project's open pull requests, for New session's Work on list: every launcher that opens asks.
@@ -1515,6 +1519,21 @@ export function createHandler({
     req.pipe(upstream);
   }
 
+  // The Chat tab's answer, with only the fields statusd reads: it checks them against the pane before typing.
+  function answerBody(body) {
+    const str = (v) => typeof v === 'string' && v.length <= 1000;
+    if (body?.kind === 'question' && Array.isArray(body.questions) && body.questions.length >= 1 && body.questions.length <= 4) {
+      const questions = body.questions.map((q) => (str(q?.question) && Array.isArray(q.options) && q.options.length <= 8 && q.options.every(str)
+        && Number.isInteger(q.pick) && q.pick >= 0 && q.pick < q.options.length ? { question: q.question, options: q.options, pick: q.pick } : null));
+      return questions.every(Boolean) ? { kind: 'question', questions } : null;
+    }
+    if (body?.kind === 'approval' && (body.decision === 'approve' || body.decision === 'deny') && str(body.title)
+      && Array.isArray(body.detail) && body.detail.length <= 6 && body.detail.every(str)) {
+      return { kind: 'approval', decision: body.decision, title: body.title, detail: body.detail };
+    }
+    return null;
+  }
+
   function runningFor(id, login) {
     const session = findFor(id, login);
     return session?.status === 'running' && session.endpoint ? session : null;
@@ -1543,6 +1562,16 @@ export function createHandler({
     if (action === 'interrupt') {
       console.log('console: agent interrupted from the page', { id: session.id });
       return toStatusd(req, res, session, { method: 'POST', path: '/interrupt', body: {} });
+    }
+    if (action === 'answer') {
+      const sent = answerBody(body);
+      if (!sent) return reply(res, 400, { error: 'not an answer: a question\'s picks, or approve or deny' });
+      // Which picks, never their text: an answer can say anything.
+      console.log('console: answer typed in from the page', {
+        id: session.id, kind: sent.kind,
+        ...(sent.kind === 'question' ? { questions: sent.questions.length, picks: sent.questions.map((q) => q.pick + 1) } : { decision: sent.decision }),
+      });
+      return toStatusd(req, res, session, { method: 'POST', path: '/answer', body: sent });
     }
     if (action === 'send') {
       if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
@@ -1851,7 +1880,7 @@ export function createHandler({
     const repoRoute = repoSettingsApi && repoSettingsRoute(pathname);
     if (repoRoute) return repoSettingsApi(req, res, { route: repoRoute, login });
     const terminalWrite = TERMINAL_RE.exec(pathname);
-    if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
+    if (terminalWrite && ['upload', 'scroll', 'send', 'interrupt', 'answer'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
@@ -2048,7 +2077,7 @@ export function createHandler({
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);
     const imageMatch = TERMINAL_RE.exec(pathname);
-    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript') {
+    if (imageMatch?.[2] === 'applog' || imageMatch?.[2] === 'diff' || imageMatch?.[2] === 'transcript' || imageMatch?.[2] === 'prompt') {
       const session = runningFor(imageMatch[1], user.login);
       if (!session) return reply(res, findFor(imageMatch[1], user.login) ? 409 : 404, { error: 'the session is not running' });
       const limit = imageMatch[2] === 'transcript' ? url.searchParams.get('limit') : null;

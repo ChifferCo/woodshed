@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -725,4 +725,84 @@ test('POST /interrupt sends Esc to the agent\'s pane, which ends its turn, with 
   assert.deepEqual((await call('POST', '/interrupt')).body, { ok: true });
   for (let i = 0; i < 50 && !(await keys()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await keys(), "$'\\E'\n", 'Esc and nothing else');
+});
+
+test('parseAnswerBody takes a question\'s picks or an approval\'s decision, and nothing else', () => {
+  const q = { question: 'Which colour?', options: ['Red', 'Blue'], pick: 1 };
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [q], extra: 'x' })), { kind: 'question', questions: [q] });
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] })),
+    { kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] });
+  for (const bad of [
+    'nope', '{}', JSON.stringify({ kind: 'question', questions: [] }),
+    JSON.stringify({ kind: 'question', questions: [{ ...q, pick: 2 }] }),
+    JSON.stringify({ kind: 'question', questions: [{ ...q, pick: '1' }] }),
+    JSON.stringify({ kind: 'question', questions: Array(5).fill(q) }),
+    JSON.stringify({ kind: 'approval', decision: 'yes', title: 't', detail: [] }),
+    JSON.stringify({ kind: 'approval', decision: 'approve', title: 't' }),
+    JSON.stringify({ kind: 'keys', keys: 'Enter' }),
+  ]) assert.throws(() => parseAnswerBody(bad), undefined, bad);
+});
+
+// The stand-in picker (shared/__fixtures__/claudePicker.mjs) in a tmux pane of the test's own, where statusd reads
+// and types as in a session: what it picked is written to a file once the picker closes.
+async function pickerPane(t, spec) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-answer-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  await fs.writeFile(path.join(dir, 'spec.json'), JSON.stringify(spec));
+  const picker = fileURLToPath(new URL('../shared/__fixtures__/claudePicker.mjs', import.meta.url));
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '40', `${process.execPath} ${picker} ${dir}/spec.json ${dir}/answers.json`);
+  const shown = async () => (await tmux('capture-pane', '-p', '-t', 'claude')).stdout;
+  for (let i = 0; i < 50 && !/Esc to cancel/.test(await shown()); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  return {
+    call, tmux,
+    answers: async () => JSON.parse(await fs.readFile(path.join(dir, 'answers.json'), 'utf8').catch(() => 'null')),
+  };
+}
+
+test('POST /answer picks each question\'s option and submits, in a real tmux pane, with the token only', async (t) => {
+  const spec = { questions: [
+    { question: 'Which colour do you prefer?', header: 'Colour', options: ['Red', 'Green', 'Blue'] },
+    { question: 'Which size do you want?', header: 'Size', options: ['Small', 'Medium', 'Large'] },
+  ] };
+  const { call, tmux, answers } = await pickerPane(t, spec);
+  const prompt = (await call('GET', '/prompt')).body.prompt;
+  assert.deepEqual(prompt, { kind: 'question', step: 'question', question: 'Which colour do you prefer?', multiSelect: false, options: ['Red', 'Green', 'Blue'], questions: 2 });
+  const body = (picks) => JSON.stringify({ kind: 'question', questions: spec.questions.map((q, i) => ({ question: q.question, options: q.options, pick: picks[i] })) });
+
+  assert.equal((await call('POST', '/answer', 'wrong', body([1, 2]))).status, 401);
+  assert.equal((await call('GET', '/prompt', 'wrong')).status, 401);
+  // The person moved the highlight in the Agent tab first: the moves count from where it is.
+  await tmux('send-keys', '-t', 'claude', 'Down', 'Down');
+  const wrong = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'question', questions: [{ question: 'Which size do you want?', options: ['Small', 'Medium', 'Large'], pick: 0 }] }));
+  assert.equal(wrong.status, 409);
+  assert.equal(wrong.body.why, 'other-question');
+  assert.equal(await answers(), null, 'nothing picked');
+
+  assert.deepEqual((await call('POST', '/answer', 'sess', body([1, 2]))).body, { ok: true });
+  assert.deepEqual(await answers(), { answers: ['Green', 'Large'] });
+  assert.deepEqual((await call('GET', '/prompt')).body, { prompt: null });
+
+  const again = await call('POST', '/answer', 'sess', body([1, 2]));
+  assert.equal(again.status, 409, 'answered already: the pane has no question');
+  assert.equal(again.body.why, 'no-picker');
+});
+
+test('POST /answer approves or denies the approval on screen, and refuses one the page did not show', async (t) => {
+  const spec = { approval: { title: 'Do you want to proceed?', what: 'Write the date', command: 'date > now.txt' } };
+  const { call, answers } = await pickerPane(t, spec);
+  const prompt = (await call('GET', '/prompt')).body.prompt;
+  assert.deepEqual(prompt, { kind: 'approval', agent: 'claude', what: 'Bash command', title: 'Do you want to proceed?', detail: ['Write the date', 'date > now.txt'], approve: 'Yes', deny: 'No' });
+  const other = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'approve', title: prompt.title, detail: ['date > other.txt'] }));
+  assert.equal(other.status, 409);
+  assert.equal(other.body.why, 'other-approval');
+  assert.equal(await answers(), null);
+  assert.equal((await call('POST', '/answer', 'sess', '{"kind":"keys"}')).status, 400);
+  assert.deepEqual((await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'deny', title: prompt.title, detail: prompt.detail }))).body, { ok: true });
+  assert.deepEqual(await answers(), { approval: 'No' });
 });

@@ -34,6 +34,12 @@
 //                     console's Chat tab: what was asked, said and run (sessionTranscript.mjs). With `since`, only
 //                     {unchanged: true} while nothing was written after it
 //   POST /interrupt   Esc typed into the agent's pane: claude and codex both stop their turn on it
+//   GET  /prompt      what the agent's pane asks now, read from the screen (panePrompt.mjs): claude's AskUserQuestion
+//                     picker, or an approval (claude's permission dialog, codex's approval), or {prompt: null}
+//   POST /answer      the Chat tab's answer to it, typed as keys only once the pane shows that same prompt, and checked
+//                     again after each key (panePrompt.mjs); 409 with the reason when the pane is not what was answered:
+//                     {"kind": "question", "questions": [{"question", "options": [...], "pick": <index>}]} or
+//                     {"kind": "approval", "decision": "approve"|"deny", "title", "detail": [...]}
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
 //        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own
@@ -60,6 +66,7 @@ import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
+import { Refusal, answerApproval, answerQuestions, readPrompt } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -235,6 +242,68 @@ export function parseSendBody(raw) {
   if (typeof text !== 'string' || !text.trim()) throw new Error('text must be a non-empty string');
   if (text.length > MAX_SEND_CHARS) throw new Error(`text must be at most ${MAX_SEND_CHARS} characters`);
   return text;
+}
+
+const MAX_QUESTIONS = 4;
+const MAX_OPTIONS = 8;
+const MAX_ANSWER_TEXT = 1000;
+
+const filled = (value, max) => typeof value === 'string' && value.trim() && value.length <= max;
+
+/**
+ * POST /answer's body, checked to its shape: what the page answers and the prompt it saw.
+ * @param {string} raw
+ * @returns {{kind: 'question', questions: {question: string, options: string[], pick: number}[]}
+ *   |{kind: 'approval', decision: 'approve'|'deny', title: string, detail: string[]}}
+ */
+export function parseAnswerBody(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    throw new Error('body must be JSON');
+  }
+  if (body?.kind === 'question') {
+    const list = body.questions;
+    if (!Array.isArray(list) || !list.length || list.length > MAX_QUESTIONS) throw new Error(`questions must be 1 to ${MAX_QUESTIONS} questions`);
+    const questions = list.map((q) => {
+      const options = q?.options;
+      if (!filled(q?.question, MAX_ANSWER_TEXT) || !Array.isArray(options) || !options.length || options.length > MAX_OPTIONS
+        || !options.every((o) => filled(o, MAX_ANSWER_TEXT)) || !Number.isInteger(q.pick) || q.pick < 0 || q.pick >= options.length) {
+        throw new Error('each question needs its text, its options and the index of the one picked');
+      }
+      return { question: q.question, options: [...options], pick: q.pick };
+    });
+    return { kind: 'question', questions };
+  }
+  if (body?.kind === 'approval') {
+    if (body.decision !== 'approve' && body.decision !== 'deny') throw new Error('decision must be approve or deny');
+    if (!filled(body.title, MAX_ANSWER_TEXT) || !Array.isArray(body.detail) || body.detail.length > 6
+      || !body.detail.every((d) => typeof d === 'string' && d.length <= MAX_ANSWER_TEXT)) {
+      throw new Error('an approval needs the title and the lines the page showed');
+    }
+    return { kind: 'approval', decision: body.decision, title: body.title, detail: [...body.detail] };
+  }
+  throw new Error('kind must be question or approval');
+}
+
+/**
+ * What GET /prompt tells the page: enough to show the prompt and answer it, nothing of the rest of the screen.
+ * @param {ReturnType<typeof readPrompt>} prompt
+ */
+export function promptReply(prompt) {
+  if (!prompt) return { prompt: null };
+  if (prompt.kind === 'approval') {
+    const { agent, what, title, detail, options, approve, deny } = prompt;
+    return { prompt: { kind: 'approval', agent, what, title, detail, approve: options[approve].label, deny: options[deny].label } };
+  }
+  if (prompt.step === 'review') return { prompt: { kind: 'question', step: 'review' } };
+  return {
+    prompt: {
+      kind: 'question', step: 'question', question: prompt.question, multiSelect: prompt.multiSelect,
+      options: prompt.options.map((o) => o.label), questions: prompt.tabs.questions.length,
+    },
+  };
 }
 
 /**
@@ -750,6 +819,40 @@ async function interrupt() {
   console.log('statusd: agent interrupted');
 }
 
+async function capturePane() {
+  return (await run('tmux', ['capture-pane', '-p', '-t', TMUX_TARGET])).stdout;
+}
+
+// One answer at a time: two typed into one picker would each check a screen the other is changing.
+let answering = false;
+
+/**
+ * Types the Chat tab's answer into the agent's pane, once the pane shows the prompt it answers (panePrompt.mjs).
+ * The log says which picks, never their text.
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function answer(body) {
+  if (answering) return { status: 409, body: { error: 'another answer is being typed: wait a moment' } };
+  answering = true;
+  const io = { capture: capturePane, keys: async (...keys) => { await run('tmux', ['send-keys', '-t', TMUX_TARGET, ...keys]); } };
+  try {
+    if (body.kind === 'question') {
+      const { moves } = await answerQuestions(io, body.questions);
+      console.log('statusd: answer typed', { kind: 'question', questions: body.questions.length, picks: body.questions.map((q) => q.pick + 1), moves });
+    } else {
+      const { moves, agent } = await answerApproval(io, body);
+      console.log('statusd: answer typed', { kind: 'approval', decision: body.decision, agent, moves });
+    }
+    return { status: 200, body: { ok: true } };
+  } catch (err) {
+    if (!(err instanceof Refusal)) throw err;
+    console.log('statusd: answer refused', { kind: body.kind, why: err.why, typed: err.typed });
+    return { status: 409, body: { error: err.message, why: err.why, typed: err.typed } };
+  } finally {
+    answering = false;
+  }
+}
+
 async function send(text) {
   // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about 100
   // characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
@@ -1114,6 +1217,17 @@ async function handle(req, res) {
   if (route === 'POST /interrupt') {
     await interrupt();
     return reply(res, 200, { ok: true });
+  }
+  if (route === 'GET /prompt') return reply(res, 200, promptReply(readPrompt(await capturePane().catch(() => ''))));
+  if (route === 'POST /answer') {
+    let body;
+    try {
+      body = parseAnswerBody(await readBody(req));
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    const done = await answer(body);
+    return reply(res, done.status, done.body);
   }
   if (route === 'POST /claude-login') {
     return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });

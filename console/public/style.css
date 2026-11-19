@@ -1248,6 +1248,19 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-ask-q p { margin: 0 0 4px; font-weight: 600; color: var(--ink); }
 .chat-ask-q ol { margin: 0 0 6px; padding-left: 1.4em; color: var(--sub); }
 .chat-ask-q + .chat-ask-q { margin-top: 8px; }
+.chat-ask-q li.is-picked { color: var(--ink); font-weight: 600; }
+.chat-opts { display: flex; flex-direction: column; gap: 4px; margin: 0 0 6px; }
+.chat-opt { display: flex; align-items: baseline; gap: 8px; width: 100%; margin: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--ground); color: var(--ink); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.chat-opt:hover { border-color: var(--slate); }
+.chat-opt[aria-pressed="true"] { border-color: var(--slate); background: var(--slate-tint); }
+.chat-opt-n { flex: none; font-family: var(--mono); font-size: 11.5px; color: var(--meta); }
+.chat-opt-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-opt-mark { flex: none; color: var(--slate); font-weight: 700; }
+.chat-ask-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; }
+.chat-ask-note { font-size: 12px; color: var(--meta); }
+.chat-ask-error { margin: 8px 0 0; font-size: 12.5px; color: var(--bad); }
+.chat-link { padding: 0; border: 0; background: none; color: var(--slate); font: inherit; font-weight: 600; cursor: pointer; }
+.chat-link:hover { text-decoration: underline; }
 .chat-note { margin: 0; text-align: center; font-family: var(--mono); font-size: 11.5px; color: var(--meta); }
 .chat-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 0; padding: 16vh 0 0; text-align: center; font-size: 14px; color: var(--sub); }
 .chat-empty b { font-size: 16px; color: var(--ink); }
@@ -1262,6 +1275,13 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-status.is-needs { gap: 12px; margin-bottom: 8px; padding: 8px 8px 8px 12px; border: 1px solid var(--wait); border-radius: 8px; }
 .chat-status.is-needs b { color: var(--wait); }
 .chat-status .chat-answer { flex: none; margin-left: auto; border: 1px solid var(--wait); background: none; color: var(--wait); }
+.chat-status .chat-answer:disabled, .chat-status .btn-plain:disabled { opacity: 0.6; cursor: wait; }
+.chat-status.is-approval { flex-wrap: wrap; }
+.chat-needs-text { flex: 1 1 260px; min-width: 0; overflow-wrap: anywhere; }
+.chat-approval { flex: 1 1 100%; order: 3; max-height: 8.5em; margin: 0; padding: 6px 10px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 6px; background: var(--stopped); color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-needs-error { flex: 1 1 100%; order: 4; margin: 0; color: var(--bad); }
+.chat-needs-actions { flex: none; display: flex; gap: 6px; margin-left: auto; }
+.chat-needs-actions .chat-answer { margin-left: 0; }
 .chat-composer { display: flex; flex-direction: column; gap: 6px; padding: 10px 8px 8px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--ground); }
 .chat-composer:focus-within { border-color: var(--amber); }
 .chat-field { min-height: 44px; margin: 0; padding: 0 6px 0 0; resize: none; border: 0; outline: none; background: none; color: var(--ink); font: 15px/22px "Red Hat Display", system-ui, sans-serif; }
