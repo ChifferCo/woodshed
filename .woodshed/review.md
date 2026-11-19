@@ -12,4 +12,6 @@ Woodshed is open-source, dependency-free Node ESM with no build step, and this r
 - This repository is public: anything about an installation in the diff, the description or the commit messages
   (links to a private console, Slack, Notion or private repositories, log lines, account ids, emails, screenshots with
   data).
-- The pull request title and commit messages: one line in Conventional Commits form, no trailers.
+- The pull request title: one line in Conventional Commits form, no trailers. Not the branch's own commits: pull
+  requests are squash-merged under their title, so a `WIP:` checkpoint, a merge commit, a body or a trailer on the
+  branch never reaches main. Do not block on them, comment on them, or ask for a history rewrite.
