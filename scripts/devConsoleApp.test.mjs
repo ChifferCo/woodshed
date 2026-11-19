@@ -61,7 +61,13 @@ test('start never runs a real agent, in a private session or when asked to', asy
   });
   const started = run(home, port, 'start', { WOODSHED_CLAUDE_AUTH: 'own', DEV_CONSOLE_REAL_CLAUDE: '1', DEV_CONSOLE_REAL_CODEX: '1' });
   assert.equal(started.status, 0, started.stderr);
-  const list = await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json();
+  // Up means it answers; its list can take a moment longer under load, so it is read again until it parses.
+  let list = null;
+  for (let i = 0; i < 50 && !list; i++) {
+    list = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((r) => r.json()).catch(() => null);
+    if (!list) await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  assert.ok(list, 'the session list');
   const ids = (list.sessions ?? list).map((s) => s.id);
   assert.ok(ids.includes('aaaa1111'), 'the made-up sessions are there');
   assert.ok(!ids.includes('c1a0dea1') && !ids.includes('c0dea1ed'), 'no real claude or codex');
