@@ -88,5 +88,6 @@ export function awsProvider(config) {
     dbAdmin: ecs.dbAdminTaskDefinition ? createDbAdminRunner({ ecs, aws: awsCli, services }) : null,
     webhooks: config.webhookQueue ? createWebhookQueue({ queue: config.webhookQueue, aws: awsCli }) : null,
     webhookUrl: config.webhookFunction ? createWebhookUrl({ functionName: config.webhookFunction, aws: awsCli }) : null,
+    slackEventsUrl: config.webhookFunction ? createWebhookUrl({ functionName: config.webhookFunction, aws: awsCli, path: '/slack' }) : null,
   };
 }

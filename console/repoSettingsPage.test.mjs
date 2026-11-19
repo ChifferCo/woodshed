@@ -12,6 +12,7 @@ import { parseProject } from '../shared/project.mjs';
 
 const layersSource = fs.readFileSync(new URL('./public/repoLayers.js', import.meta.url), 'utf8');
 const source = fs.readFileSync(new URL('./public/repoSettings.js', import.meta.url), 'utf8');
+const pickerSource = fs.readFileSync(new URL('./public/slackSetup.js', import.meta.url), 'utf8');
 const SECRET_MARK = 'zq9-page-value';
 
 const PROJECTS = [{ name: 'app', repo: 'acme/app', default: true }, { name: 'tools', repo: 'acme/tools', default: false }];
@@ -75,6 +76,14 @@ async function call(api, { method, path, body, login }) {
 }
 
 const CHANNEL_PATH = '/api/console-settings/projects/slack-channel';
+const CHANNELS = {
+  found: [
+    { id: 'C0APPPRS01', name: 'app-prs', private: false, member: true },
+    { id: 'G0RELEASE1', name: 'releases', private: true, member: true },
+    { id: 'C0GENERAL1', name: 'general', private: false, member: false },
+  ],
+  truncated: false, total: 3,
+};
 
 // The repo's Slack channel as the server adds it to the view, and its save as the server answers it: Console settings'
 // view, the repo's channel in its row.
@@ -97,7 +106,7 @@ function channelCall(slack, body) {
  * `slack` is the console's Slack settings, {consoleChannel, channels: {<project>: channel}}; left out, it has none.
  * @returns the page's root, the calls it made, and the console's state and secrets
  */
-async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null } = {}) {
+async function loadPage({ project = 'app', search = '', hash = '', file = APP_FILE, admin = true, before = null, confirmAnswer = true, slack: slackSettings = null, channels = CHANNELS } = {}) {
   const store = { state: { sessions: [] }, save() {} };
   const secrets = memorySecrets();
   const config = { projects: PROJECTS, repo: 'acme/app' };
@@ -118,6 +127,8 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     calls.push({ method, path, ...(body !== undefined && { body: JSON.parse(JSON.stringify(body)) }) });
     if (!admin) return Promise.reject(Object.assign(new Error('only an admin can do this'), { status: 403 }));
     if (path === CHANNEL_PATH) return slack ? channelCall(slack, body) : Promise.reject(Object.assign(new Error('this console posts nothing to Slack'), { status: 404 }));
+    // The channel picker's list, as GET /api/console-settings/slack/channels answers it (slackSetup.mjs).
+    if (path.startsWith('/api/console-settings/slack/channels')) return Promise.resolve(structuredClone(channels));
     return call(api, { method, path, body, login: 'mia-dev' });
   };
   const app = element('div');
@@ -135,7 +146,7 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
     return el;
   };
   const W = {
-    h, nav: () => element('nav'), scopePill: () => element('span'), when: (iso) => `at ${iso}`,
+    h, nav: () => element('nav'), scopePill: () => element('span'), when: (iso) => `at ${iso}`, providerWords: {},
     settingsPage: (_match, start) => start(app, { nav: () => element('nav'), interval: (fn, ms) => context.setInterval?.(fn, ms), timeout: (fn, ms) => context.setTimeout(fn, ms), on: (target, type, fn) => target.addEventListener?.(type, fn) }),
     getJson: (path) => consoleCall('GET', path),
     postJson: (path, body) => consoleCall('POST', path, body),
@@ -145,8 +156,10 @@ async function loadPage({ project = 'app', search = '', hash = '', file = APP_FI
   const history = { urls: [], replaceState(_s, _t, url) { this.urls.push(String(url)); } };
   const context = vm.createContext({
     window: { Woodshed: W, confirm: (text) => { asked.push(text); return confirmAnswer; } }, console, location, history, URL, URLSearchParams, TextEncoder,
-    document: { getElementById: () => app, activeElement: null },
+    document: { getElementById: (id) => (id === 'slack' ? walk(app).find((e) => e.attrs.id === 'slack') : app), activeElement: null },
+    setTimeout: (fn) => setImmediate(fn), clearTimeout: () => {},
   });
+  vm.runInContext(pickerSource, context);
   vm.runInContext(layersSource, context);
   vm.runInContext(source, context);
   await settle();
@@ -404,81 +417,78 @@ test('a console with no secret store says nothing can be saved, and turns the ed
   assert.equal(editorOf(app, 'env-api-env').disabled, true);
 });
 
-const channelField = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel');
+const pickerSearch = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel');
+const options = (app) => walk(cardOf(app, 'slack')).filter((e) => e.attrs.role === 'option');
+const idField = (app) => walk(app).find((e) => e.tag === 'input' && e.attrs.id === 'slack-channel-id');
 
-async function typeChannel(app, text) {
-  channelField(app).value = text;
-  channelField(app).listeners.input();
-}
-
-test('the Slack card says what the channel is for, how to find its ID and to invite the bot, and where posts go now', async () => {
+test('the Slack card says what the channel is for and where posts go now, and lists the channels to pick from', async () => {
   const { app } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
   const card = cardOf(app, 'slack');
   const text = textOf(card);
   assert.match(text, /When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post's thread\./);
   assert.match(text, /With no channel here, it goes to the channel on Settings' Slack card\./);
-  assert.match(text, /the ID \(C…\) is at the bottom of its About tab/);
-  assert.match(text, /Invite the Woodshed bot to the channel first/);
+  assert.match(text, /invite the bot first/, 'each channel says whether the bot is in it');
   assert.match(text, /a question asked in Slack is answered in its own thread/);
   assert.match(text, /Posting to the console's channel, C0CONSOLE01\./);
   assert.equal(walk(card).find((e) => e.tag === 'a' && /Slack card/.test(textOf(e))).attrs.href, '/console-settings#card-slack');
-  assert.equal(channelField(app).value, '');
-  assert.equal(channelField(app).disabled, false);
-  assert.equal(button(card, 'Save').attrs.disabled, '', 'nothing typed yet');
+  assert.ok(pickerSearch(app), 'a search over the channels, not an ID field');
+  assert.deepEqual(options(app).map(textOf), ['#app-prsbot is in it', '#releasesprivatebot is in it', '#generalinvite the bot first']);
+  assert.equal(button(card, 'Save').attrs.disabled, '', 'nothing picked yet');
   assert.equal(button(card, 'Clear').attrs.disabled, '', 'nothing saved to clear');
 });
 
-test('the Slack card saves a channel and clears it back to the console\'s, through the Repos card\'s API', async () => {
+test('picking a channel saves it, and Clear sends it back to the console\'s, through the Repos card\'s API', async () => {
   const { app, calls, store } = await loadPage({ slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
-  await typeChannel(app, ' C0APPPRS01 ');
   const card = () => cardOf(app, 'slack');
+  options(app)[0].listeners.click();
+  assert.equal(options(app)[0].attrs['aria-selected'], 'true');
   assert.equal(button(card(), 'Save').attrs.disabled, undefined);
   button(card(), 'Save').listeners.click();
   await settle();
-  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/projects/slack-channel', body: { name: 'app', channel: 'C0APPPRS01' } });
+  const saves = () => calls.filter((c) => c.path === CHANNEL_PATH);
+  assert.deepEqual(saves().at(-1), { method: 'POST', path: '/api/console-settings/projects/slack-channel', body: { name: 'app', channel: 'C0APPPRS01' } });
   assert.deepEqual(store.state.settings.projectSlackChannels, { app: 'C0APPPRS01' });
   assert.match(textOf(card()), /Saved\. acme\/app's next pull request goes to C0APPPRS01\. Invite the bot to it first\./);
   assert.match(textOf(card()), /Posting to C0APPPRS01\./);
-  assert.equal(channelField(app).value, 'C0APPPRS01');
+  assert.equal(button(card(), 'Save').attrs.disabled, '', 'the saved channel is the one picked now');
 
   button(card(), 'Clear').listeners.click();
   await settle();
-  assert.deepEqual(calls.at(-1), { method: 'POST', path: '/api/console-settings/projects/slack-channel', body: { name: 'app', channel: '' } });
+  assert.deepEqual(saves().at(-1), { method: 'POST', path: '/api/console-settings/projects/slack-channel', body: { name: 'app', channel: '' } });
   assert.deepEqual(store.state.settings.projectSlackChannels, {});
   assert.match(textOf(card()), /Cleared\. acme\/app's next pull request goes to the console's channel, C0CONSOLE01\./);
-  assert.equal(channelField(app).value, '');
 });
 
-test('a channel\'s name is refused before Save, and a refusal from the console shows on the card', async () => {
-  const { app, calls } = await loadPage({ slack: { consoleChannel: '', channels: { app: 'C0APPPRS01' } } });
+test('an app without channels:read and groups:read falls back to the channel ID, says how to get the list, and refuses a name', async () => {
+  const { app, calls } = await loadPage({ slack: { consoleChannel: '', channels: { app: 'C0APPPRS01' } }, channels: { missingScope: true, needed: ['channels:read', 'groups:read'] } });
   const card = () => cardOf(app, 'slack');
-  assert.match(textOf(card()), /Posting to C0APPPRS01\./);
-  await typeChannel(app, '#app-prs');
-  assert.equal(channelField(app).attrs['aria-invalid'], 'true');
-  assert.match(textOf(walk(card()).find((e) => e.className === 'form-error')), /Give the channel's ID, such as C0123456789, not its name\./);
+  assert.match(textOf(card()), /the app lacks the channels:read and groups:read scopes\. Add them on the app's OAuth & Permissions page, reinstall it/);
+  assert.equal(idField(app).value, 'C0APPPRS01');
+  idField(app).value = '#app-prs';
+  idField(app).listeners.input();
+  assert.match(textOf(walk(card()).find((e) => e.className === 'form-error' && textOf(e))), /Give the channel's ID, such as C0123456789, not its name\./);
   assert.equal(button(card(), 'Save').attrs.disabled, '');
   assert.equal(calls.filter((c) => c.path === CHANNEL_PATH).length, 0);
-
-  button(card(), 'Clear').listeners.click();
+  idField(app).value = 'C0OTHER001';
+  idField(app).listeners.input();
+  button(card(), 'Save').listeners.click();
   await settle();
-  assert.match(textOf(card()), /Cleared\. The console has no channel either, so nothing is posted\./);
-  assert.match(textOf(card()), /Nothing is posted: neither this repo nor the console has a channel\./);
+  assert.deepEqual(calls.filter((c) => c.path === CHANNEL_PATH).at(-1).body, { name: 'app', channel: 'C0OTHER001' });
 });
 
-test('a console with no Slack says so on the card and turns the field off', async () => {
+test('a console with no Slack says so on the card, with nothing to pick', async () => {
   const { app } = await loadPage();
   const card = cardOf(app, 'slack');
   assert.match(textOf(card), /This console has no Slack, so it posts nothing and a channel cannot be set here\./);
   assert.doesNotMatch(textOf(card), /Posting to/);
-  assert.equal(channelField(app).disabled, true);
-  assert.equal(button(card, 'Save').attrs.disabled, '');
-  assert.equal(button(card, 'Clear').attrs.disabled, '');
+  assert.equal(pickerSearch(app), undefined);
 });
 
-test('#slack brings the Slack card\'s field into view', async () => {
+test('#slack brings the Slack card into view', async () => {
   const { app } = await loadPage({ hash: '#slack', slack: { consoleChannel: 'C0CONSOLE01', channels: {} } });
-  assert.deepEqual({ ...channelField(app).scrolledTo }, { block: 'center' });
-  assert.equal(walk(app).find((e) => e.tag === 'section' && e.attrs.id === 'slack').attrs['aria-labelledby'], 'card-slack');
+  const section = walk(app).find((e) => e.tag === 'section' && e.attrs.id === 'slack');
+  assert.deepEqual({ ...section.scrolledTo }, { block: 'center' });
+  assert.equal(section.attrs['aria-labelledby'], 'card-slack');
 });
 
 test('a repo with no env files says how to add one, with a link to its project file', async () => {

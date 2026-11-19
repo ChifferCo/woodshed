@@ -61,9 +61,17 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 
 - A program embedding the console may add a line under the person's name on the user button, in `meta` (mono, `meta`
   color), and nowhere else on the rail.
-- It may add groups to the top of the user menu (`components/MenuGroups`): a `menu-label`, then a row per item. A
-  choice in use has a `green` ✓ and 600 weight; a note, such as the person's role there, is a word in `meta` at the
-  right end. Then a `line-soft` rule.
+- The user menu, top to bottom (`components/MenuGroups`): the name and @handle; My settings, then the program's pages
+  for the person, and a `line-soft` rule; the program's switcher groups; **Console**; the program's own sections; Sign
+  out. With no program, My settings alone is under the name.
+- A switcher group is a `menu-label`, then a row per item. A choice in use has a `green` ✓ and 600 weight; a note, such
+  as the person's role there, is a word in `meta` at the right end.
+- A section is a `menu-label` and its entries; an entry's own pages are under it as Settings' tabs are (below,
+  Settings), always in the menu.
+- The settings side list has the same groups, each a `side-group` heading: **You** (My settings, then the program's
+  pages for the person), **Console**, the program's sections, then **This browser**. A program's entry has a `○` in
+  the icon column, and its own pages open under it only on those pages. Its page has its own title (the entry's name)
+  and, when it has pages of its own, their row under it, as Settings has its tabs.
 - Each one is a plain link: never orange, never a button that looks like an action on the session.
 
 ## Admin notices
@@ -119,6 +127,20 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   branch and last update. A pick writes `PR #123` and is named under the field. Anything typed still goes as typed.
 - The list is a `menu` surface with rows on `slate-tint` when picked or hovered, never a status color.
 
+## Choosing a Slack channel
+
+- A Slack channel is picked, never typed, wherever one is chosen: the Set up Slack dialog, the Slack card's Change
+  channel and a repo's own channel (`components/ChannelPicker`). A search field over a list of the workspace's
+  channels, each `#name`, a quiet `private` tag for a private one, and a word for the bot: an `is-ok` **bot is in it**
+  tag, or an `is-warn` **invite the bot first**. The pick is on `amber-tint`, hover on `slate-tint`, and a `sub` line
+  under the list names it.
+- Where Slack will not list them (an app without the scopes), the picker is the channel ID field, with a `cap-note`
+  that says which scopes to add. It never shows an empty list as if the workspace had no channels.
+- The Slack card is one card in rows (Bot, Pull requests, Questions), each with its sentence and its action on the
+  right; a group's numbers fold under its row behind a quiet **Limits ▾**. Not set up, it is one sentence and the
+  orange **Set up Slack**, its primary action. The dialog's way to connect is a radio card list; an option not yet
+  available is disabled, and its own description says why.
+
 ## Naming a session
 
 - New session asks for no name. Once the console has named the session, its page shows a rename offer under the title:
@@ -144,6 +166,11 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   Slack, and Remove. Head cells are uppercase `group-label` on `stopped`, with a `meta` note under each switch's name.
   A thin `line` rule sets the feature columns apart from Admin. A switch that needs another is a disabled checkbox at
   45% with a title saying what it needs. Checkboxes take `slate` as their accent. The table scrolls sideways on a phone.
+- Behind a hosting proxy whose program keeps who is in, People is a tab of Settings (below), titled Settings. The
+  Admin column is **Role**, a select of Owner and Member in its cell; adding is **Add someone**, the handle and a role
+  select (as wide as its words) beside it. There is no Asking to join card, no accept or decline, and no asking dot.
+  The program's note about a person sits in their `meta` line under the name, where a console of its own says who
+  added them; what it says it did on an add ends the hint under the field, in place of "Nothing is sent to them".
 
 ## Settings
 
@@ -151,7 +178,22 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   settings list. Its pages are tabs under the title, **General** (`/console-settings`) and **Secrets & webhooks**
   (`/secrets`): the rail's segmented control (`rail-seg`, `rail-seg-link`), links with `aria-current="page"` on the
   open one, never orange. The title says Settings on every tab; the tab's own note sits under the tabs.
-- People and Webhook events stay entries of their own: one is who is in, the other a log, not settings.
+- A program embedding the console adds its own pages as tabs after those (`settingsTabs`, README.md "Embedding the
+  console"), in the same row, and draws each page's part under it. Someone who is not an admin sees only the program's
+  tabs. The row stays one line and scrolls sideways when it is wider than the page, on a phone above all.
+- Settings' tabs, the program's with the console's, also show as sub-items under Settings: in the settings list only on
+  its own pages (a repo's settings are General's), and in the avatar menu always, since the menu is where people look
+  for a page. They are indented on a thin `line` rule at their left (`side-subs` / `side-sub`, `menu-subs` /
+  `menu-sub`), the open one marked as any current entry; Settings is then `aria-current="true"`, its icon `amber-ink`,
+  not its ground. The tab row under the title stays. On a phone the list is one row, so it keeps Settings as one entry,
+  marked, and leaves the tabs to the row under the title.
+- People stays an entry of its own: it is who is in, not settings. Behind a hosting proxy whose program hands over its
+  list, People is the console's third tab instead, after Secrets & webhooks and before the program's: who is in is the
+  program's there, beside its own pages. Webhook events is a log, not a setting, and not a
+  navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
+  none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
+- Keyboard shortcuts is in the settings list's This browser group, beside Theme and review files, not in the avatar
+  menu: the menu holds pages, and `?` and the command palette open the sheet anywhere.
 
 ## Repo settings
 

@@ -19,3 +19,8 @@ test('the function URL is read once, at its /github path, and a failed read is t
   assert.equal(await webhookUrl(), 'https://abc.lambda-url.us-east-1.on.aws/github');
   assert.equal(calls, 2);
 });
+
+test('Slack\'s events Request URL is the same function URL, at its /slack path', async () => {
+  const slackEventsUrl = createWebhookUrl({ functionName: 'hooks', aws: async () => ({ FunctionUrl: 'https://abc.lambda-url.us-east-1.on.aws/' }), path: '/slack' });
+  assert.equal(await slackEventsUrl(), 'https://abc.lambda-url.us-east-1.on.aws/slack');
+});

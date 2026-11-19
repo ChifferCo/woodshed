@@ -26,10 +26,8 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
   const busy = new Set();
   const INSTRUCTIONS = '#instructions';
   const SLACK = '#slack';
-  // As slack.mjs checks it: a channel's name would be refused by Slack as channel_not_found.
-  const CHANNEL_RE = /^[CG][A-Z0-9]{8,}$/;
-  // The Slack channel field, made once like the editors, so what is typed and the caret survive a redraw.
-  let channelInput = null;
+  // The channel picker (slackSetup.js), made once like the editors, so what is typed and the focus survive a redraw.
+  let channelPicker = null;
   const GITHUB = '#github';
   // The label's name field, made once for the same reason.
   let labelInput = null;
@@ -356,17 +354,14 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     return 'Nothing is posted: neither this repo nor the console has a channel.';
   }
 
-  function channelProblem(raw) {
-    return raw && !CHANNEL_RE.test(raw) ? 'Give the channel\'s ID, such as C0123456789, not its name.' : null;
-  }
-
   // Saved through the Repos card's API, which answers with Settings' view: the repo's channel is in its row.
   function saveChannel(channel) {
     return act(SLACK, async () => {
       const answer = await W.postJson('/api/console-settings/projects/slack-channel', { name: view.project, channel });
       const own = answer.projects?.find((p) => p.name === view.project)?.slackChannel ?? channel;
       view = { ...view, slack: { ...view.slack, channel: own, consoleChannel: answer.slack?.channel ?? view.slack.consoleChannel } };
-      channelInput.value = own;
+      // Drawn again on the saved channel, so Save is off until another is picked.
+      channelPicker = null;
       if (own) return `Saved. ${view.repo}'s next pull request goes to ${own}. Invite the bot to it first.`;
       return view.slack.consoleChannel ? `Cleared. ${view.repo}'s next pull request goes to the console's channel, ${view.slack.consoleChannel}.`
         : 'Cleared. The console has no channel either, so nothing is posted.';
@@ -377,35 +372,24 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
     const slack = view.slack;
     const off = !slack?.canPost;
     const saved = slack?.channel ?? '';
-    if (!channelInput) {
-      channelInput = h('input', {
-        id: 'slack-channel', class: 'field is-text is-channel mono', type: 'text', autocomplete: 'off', spellcheck: 'false', placeholder: 'C0123456789',
-        oninput: () => render(),
-      });
-      channelInput.value = saved;
-    }
-    const field = channelInput;
-    const raw = field.value;
-    const bad = channelProblem(raw.trim());
-    field.disabled = off;
-    field.readOnly = busy.has(SLACK);
-    field.setAttribute('aria-invalid', bad ? 'true' : 'false');
+    if (!off && !channelPicker) channelPicker = W.slackChannelPicker({ value: saved, id: 'slack-channel', onChange: () => render() });
+    const picked = channelPicker ? channelPicker.value().trim() : saved;
+    const bad = channelPicker?.problem() ?? null;
     const consoleLink = h('a', { href: '/console-settings#card-slack' }, 'Settings\' Slack card');
     return h('section', { class: 'settings-card', id: 'slack', 'aria-labelledby': 'card-slack' },
       h('h2', { id: 'card-slack', class: 'label' }, 'Slack'),
       h('p', { class: 'sub' }, 'When a shared session on this repo opens a pull request, the console posts it to this channel once its review and checks pass, with its decision brief and a mention of whoever has the session in the post\'s thread. With no channel here, it goes to the channel on ', consoleLink, '.'),
       off && h('p', { class: 'cap-note', role: 'status' }, 'This console has no Slack, so it posts nothing and a channel cannot be set here.'),
-      h('div', { class: 'layered' },
+      !off && h('div', { class: 'layered' },
         h('div', { class: 'layer' },
-          h('div', { class: 'layer-head' }, h('h3', null, h('label', { for: 'slack-channel' }, 'This repo\'s channel ID'))),
-          !off && h('p', { class: 'layer-meta' }, slackNow(slack)),
-          h('div', { class: 'value-row' }, field),
+          h('div', { class: 'layer-head' }, h('h3', null, h('label', { for: 'slack-channel' }, 'This repo\'s channel'))),
+          h('p', { class: 'layer-meta' }, slackNow(slack)),
+          channelPicker.el,
           bad && h('p', { class: 'form-error', role: 'alert' }, bad),
           h('div', { class: 'card-foot' },
-            h('button', { type: 'button', class: 'btn btn-open', disabled: off || Boolean(bad) || raw.trim() === saved || busy.has(SLACK), onclick: () => saveChannel(raw.trim()) }, busy.has(SLACK) ? 'Saving…' : 'Save'),
-            h('button', { type: 'button', class: 'btn btn-quiet', disabled: off || !saved || busy.has(SLACK), title: saved ? 'Back to the console\'s channel' : null, onclick: () => saveChannel('') }, 'Clear')),
-          note(SLACK),
-          h('p', { class: 'sub' }, 'The ID, not the name: in Slack, open the channel\'s name at its top, and the ID (C…) is at the bottom of its About tab. Invite the Woodshed bot to the channel first (', h('code', null, '/invite @'), ' and the bot\'s name), or Slack refuses the post.'))),
+            h('button', { type: 'button', class: 'btn btn-open', disabled: Boolean(bad) || picked === saved || busy.has(SLACK), onclick: () => saveChannel(picked) }, busy.has(SLACK) ? 'Saving…' : 'Save'),
+            h('button', { type: 'button', class: 'btn btn-quiet', disabled: !saved || busy.has(SLACK), title: saved ? 'Back to the console\'s channel' : null, onclick: () => saveChannel('') }, 'Clear')),
+          note(SLACK))),
       h('p', { class: 'sub' }, 'Nothing else uses it: a question asked in Slack is answered in its own thread, the assignee\'s other messages are direct messages, and a My Woodshed session\'s pull request is never posted.'));
   }
 
@@ -445,7 +429,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       githubCard(),
       slackCard()));
     for (const key of editors.keys()) updateCounts(key);
-    if (focused && ([...editors.values()].includes(focused) || focused === channelInput || focused === labelInput)) {
+    if (focused && ([...editors.values()].includes(focused) || channelPicker?.el.contains?.(focused) || focused === labelInput)) {
       focused.focus?.();
       try { if (caret?.[0] !== undefined && caret?.[0] !== null) focused.setSelectionRange(...caret); } catch { /* not a text field */ }
     }
@@ -459,7 +443,7 @@ window.Woodshed.settingsPage(/^\/console-settings\/repos\/[a-z0-9]+(?:-[a-z0-9]+
       loadError = err;
     }
     render();
-    if (view && location.hash === SLACK) channelInput?.scrollIntoView?.({ block: 'center' });
+    if (view && location.hash === SLACK) document.getElementById('slack')?.scrollIntoView?.({ block: 'center' });
     if (view && location.hash === GITHUB) document.getElementById('github')?.scrollIntoView?.({ block: 'start' });
     if (view?.instructions.installation) await show(INSTRUCTIONS);
   }

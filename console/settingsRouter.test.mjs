@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const source = fs.readFileSync(new URL('./public/common.js', import.meta.url), 'utf8');
+const hostSource = fs.readFileSync(new URL('./public/hostSettings.js', import.meta.url), 'utf8');
 const ORIGIN = 'http://console.test';
 
 class Node {
@@ -95,9 +96,11 @@ function makeDom(location) {
 
 /**
  * common.js on a settings page at `path`, with the pages `makePages(W, window)` gives registered as the page scripts
- * would, then loaded.
+ * would, then loaded. `me` is what /api/me answers (none: it never does); `hostPage`, a program's page as settingsFrame
+ * sends it, its template's `current`, `body` (a node) and, for one of the program's own entries, `heading` and `tabs`,
+ * run through hostSettings.js.
  */
-function load(path, makePages = () => []) {
+function load(path, makePages = () => [], { me = null, hostPage = null } = {}) {
   const location = {};
   const setLocation = (url) => {
     const u = new URL(url, location.href ?? ORIGIN);
@@ -128,13 +131,18 @@ function load(path, makePages = () => []) {
     window, Node, URL, location, history,
     console: { ...console, error: (...args) => errors.push(args) },
     Event: class { constructor(type) { this.type = type; } },
-    fetch: () => new Promise(() => {}),
+    fetch: (url) => (me && url === '/api/me' ? Promise.resolve({ json: async () => me }) : new Promise(() => {})),
     setInterval: (fn, ms) => { const id = nextId++; intervals.set(id, ms); return id; },
     clearInterval: (id) => intervals.delete(id),
     setTimeout: () => nextId++, clearTimeout: () => {},
     document: {
       addEventListener: on('document'), removeEventListener: off('document'), querySelector() { return null; },
-      getElementById: (id) => (id === 'app' ? app : null),
+      getElementById: (id) => (id === 'app' ? app
+        : id === 'woodshed-host-page' && hostPage ? {
+          getAttribute: (a) => ({ 'data-current': hostPage.current, 'data-heading': hostPage.heading, 'data-tabs': hostPage.tabs && JSON.stringify(hostPage.tabs) })[a] ?? null,
+          content: { cloneNode: () => hostPage.body },
+        }
+          : null),
       createElement: (tag) => new El(tag), createTextNode: (text) => new Text(text),
     },
     matchMedia: () => ({}),
@@ -142,6 +150,7 @@ function load(path, makePages = () => []) {
   vm.runInContext(source, context);
   const W = window.Woodshed;
   for (const [match, start] of makePages(W, window)) W.settingsPage(match, start);
+  if (hostPage) vm.runInContext(hostSource, context);
   for (const fn of listeners.document.DOMContentLoaded ?? []) fn();
   // A click as the browser sends it: the anchor's own handlers, then the document's. `true` when the page took it.
   const click = (el, mods = {}) => {
@@ -154,7 +163,11 @@ function load(path, makePages = () => []) {
   const side = () => app.querySelector('aside.settings-side');
   const title = () => app.querySelector('h1')?.textContent ?? null;
   const current = () => side()?.querySelectorAll('a.side-item').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.getAttribute('href'));
-  return { W, app, location, pushed, intervals, listeners, errors, shown, click, back, side, title, current, link: (href) => app.querySelectorAll('a').find((a) => a.getAttribute('href') === href) };
+  const tabs = () => app.querySelector('nav.settings-tabs')?.querySelectorAll('a').map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('aria-current')]);
+  // Settings' tabs under its entry, in the side list and in the avatar menu: [label, href, aria-current] each.
+  const subs = (cls) => [...(side()?.querySelectorAll(`a.${cls}`) ?? []).map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('aria-current')])];
+  const settingsEntry = () => side()?.querySelectorAll('a.side-item').find((a) => a.textContent === '⚙Settings');
+  return { W, El, tabs, subs, settingsEntry, app, location, pushed, intervals, listeners, errors, shown, click, back, side, title, current, link: (href) => app.querySelectorAll('a').find((a) => a.getAttribute('href') === href) };
 }
 
 /** A made-up settings page: its title, links to the others, a 5-second timer and a window listener, as events.js has. */
@@ -267,4 +280,261 @@ test('a page that is not a settings page has no switching at all', () => {
   const t = load('/s/aaaa1111');
   assert.equal(t.listeners.document.click, undefined);
   assert.equal(t.listeners.window.popstate, undefined);
+});
+
+const HOST_TABS = [{ label: 'Members', href: '/orgs/acme/members' }, { label: 'Credits', href: '/orgs/acme/credits' }];
+const answered = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a program\'s page shows in the settings frame, under Settings and its tabs, with the program\'s own part as it sent it', async () => {
+  // The template is read as the page starts, so the stand-in's node is made by a first load and handed to a second.
+  const first = load('/nowhere');
+  const part = new first.El('p');
+  part.append('Compute credits: $40');
+  const t = load('/orgs/acme/credits', () => [], { me: { login: 'sam', admin: true, settingsTabs: HOST_TABS }, hostPage: { current: '/orgs/acme/credits', body: part } });
+  assert.equal(t.title(), 'Settings');
+  assert.ok(t.side(), 'with the side list');
+  assert.match(t.app.querySelector('div.host-page').textContent, /Compute credits: \$40/);
+  assert.deepEqual(t.tabs(), [['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null]], 'the console\'s own until /api/me answers');
+  await answered();
+  assert.deepEqual(t.tabs(), [
+    ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page'],
+  ], 'then the program\'s after them, the page\'s own marked, without the page drawing again');
+  assert.deepEqual(t.current(), ['/orgs/acme/credits'], 'and in the side list Credits, under Settings, is the current entry');
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings itself the set the page is in');
+  assert.deepEqual(t.subs('side-sub'), [
+    ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page'],
+  ]);
+  assert.equal(t.click(t.link('/console-settings')), false, 'the console\'s tab is not on this page: the browser loads it');
+});
+
+test('someone who is not an admin sees the program\'s tabs alone, and Settings opens the first', async () => {
+  const first = load('/nowhere');
+  const t = load('/orgs/acme/credits', () => [], { me: { login: 'sam', admin: false, settingsTabs: HOST_TABS }, hostPage: { current: '/orgs/acme/credits', body: new first.El('p') } });
+  await answered();
+  assert.deepEqual(t.tabs(), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']]);
+  assert.deepEqual(t.current(), ['/orgs/acme/credits'], 'Credits, under Settings, is current');
+  assert.equal(t.settingsEntry().getAttribute('href'), '/orgs/acme/members', 'Settings opens Members');
+  assert.deepEqual(t.subs('side-sub'), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']], 'the program\'s tabs alone under it');
+  assert.deepEqual(t.subs('menu-sub'), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']], 'and in the menu');
+  assert.equal(t.side().querySelectorAll('a.side-item').find((a) => a.textContent.endsWith('Settings') && a.textContent !== '◉My settings')?.textContent, '⚙Settings', 'with Settings\' own icon');
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings'], 'no People or Webhook events');
+});
+
+test('with no tabs from a program, someone who is not an admin has no Console entries, as before', async () => {
+  const t = load('/settings', () => [], { me: { login: 'sam', admin: false } });
+  await answered();
+  assert.equal(t.W.consoleLinks().length, 0);
+  assert.deepEqual(t.subs('side-sub'), [], 'and no tabs under anything');
+  assert.deepEqual(t.subs('menu-sub'), []);
+});
+
+// The console's own pages, for an admin: General and Secrets & webhooks, as made-up settings pages, and My settings.
+function adminPages(path, me = { login: 'sam', admin: true, settingsTabs: HOST_TABS }) {
+  const started = [];
+  return load(path, (W, window) => [page('General', '/console-settings', started, W, window), page('Secrets', '/secrets', started, W, window),
+    page('My settings', '/settings', started, W, window), page('Webhook events', '/events', started, W, window)], { me });
+}
+
+test('on one of Settings\' pages its tabs open under it in the side list, the page\'s marked, and move in place', async () => {
+  const t = adminPages('/console-settings');
+  assert.deepEqual(t.subs('side-sub'), [], 'none until /api/me answers');
+  await answered();
+  const list = t.side();
+  assert.deepEqual(t.subs('side-sub'), [
+    ['General', '/console-settings', 'page'], ['Secrets & webhooks', '/secrets', null],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', null],
+  ], 'filled when /api/me answers, the page not drawn again');
+  assert.equal(t.side(), list);
+  assert.deepEqual(t.current(), ['/console-settings']);
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true');
+  const secrets = t.side().querySelectorAll('a.side-sub').find((a) => a.getAttribute('href') === '/secrets');
+  assert.equal(t.click(secrets), true, 'a click on a console tab is the page\'s, in place');
+  assert.equal(t.title(), 'Secrets');
+  assert.equal(t.side(), list, 'the same side list');
+  assert.deepEqual(t.subs('side-sub').map(([, href, mark]) => [href, mark]), [
+    ['/console-settings', null], ['/secrets', 'page'], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
+  ]);
+  assert.deepEqual(t.subs('menu-sub').map(([, href, mark]) => [href, mark]), [
+    ['/console-settings', null], ['/secrets', 'page'], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
+  ], 'and the menu\'s mark moves with it');
+  const members = t.side().querySelectorAll('a.side-sub').find((a) => a.getAttribute('href') === '/orgs/acme/members');
+  assert.equal(t.click(members), false, 'a program\'s tab is not on this page: the browser loads it');
+});
+
+test('on the other settings pages Settings stays one entry, and the avatar menu lists its tabs always', async () => {
+  for (const path of ['/settings']) {
+    const t = adminPages(path);
+    await answered();
+    assert.deepEqual(t.subs('side-sub'), [], `none under Settings on ${path}`);
+    assert.equal(t.settingsEntry().getAttribute('aria-current'), null);
+    assert.deepEqual(t.subs('menu-sub'), [
+      ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
+      ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', null],
+    ], `the menu has them on ${path}, none marked`);
+    const sub = t.side().querySelectorAll('a.menu-sub')[0];
+    assert.equal(sub.getAttribute('role'), 'menuitem');
+  }
+  const t = adminPages('/settings', { login: 'sam', admin: true });
+  await answered();
+  assert.deepEqual(t.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'with no program, the console\'s two');
+  t.click(t.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings'));
+  assert.deepEqual(t.subs('side-sub').map(([label, , mark]) => [label, mark]), [['General', 'page'], ['Secrets & webhooks', null]], 'and opening Settings opens them');
+});
+
+test('Webhook events is under Settings, not an entry of its own, and Keyboard shortcuts is in the side list alone', async () => {
+  const t = adminPages('/events');
+  await answered();
+  assert.equal(t.title(), 'Webhook events');
+  const sideHrefs = t.side().querySelector('nav.side-list').querySelectorAll('a.side-item').map((a) => a.getAttribute('href'));
+  assert.ok(!sideHrefs.includes('/events'), 'no Webhook events in the side list');
+  const menu = t.side().querySelector('div.user-menu');
+  assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => a.getAttribute('href') === '/events'), 'nor in the avatar menu');
+  assert.ok(!menu.querySelectorAll('a.menu-item').some((a) => /Webhook events/.test(a.textContent)));
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings', 'People']);
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings is the set the page is in');
+  assert.deepEqual(t.subs('side-sub').map(([, href, mark]) => [href, mark]), [
+    ['/console-settings', null], ['/secrets', null], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
+  ], 'its tabs open under it, none of them the page');
+  const menuEntry = menu.querySelectorAll('a.menu-item').find((a) => a.getAttribute('href') === '/console-settings' && !a.matches('a.menu-sub'));
+  assert.equal(menuEntry.getAttribute('aria-current'), 'true', 'and in the menu');
+  assert.ok(!menu.querySelectorAll('button.menu-item').some((b) => /Keyboard shortcuts/.test(b.textContent)), 'no Keyboard shortcuts in the avatar menu');
+  assert.ok(t.side().querySelectorAll('button.side-item').some((b) => /Keyboard shortcuts/.test(b.textContent)), 'it stays under This browser');
+  t.click(t.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings'));
+  assert.equal(t.title(), 'General');
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true');
+});
+
+test('a repo\'s own settings open Settings too, with General marked', async () => {
+  const t = load('/console-settings/repos/app', (W) => [[/^\/console-settings\/repos\//, (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/console-settings')))]],
+    { me: { login: 'sam', admin: true } });
+  await answered();
+  assert.deepEqual(t.subs('side-sub'), [['General', '/console-settings', 'page'], ['Secrets & webhooks', '/secrets', null]]);
+});
+
+test('the user menu\'s Sign out: always on a console of its own, and behind a hosting proxy only when the program signs people out', async () => {
+  const signOutIn = async (me) => {
+    const mine = (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]];
+    const t = load('/settings', mine, { me: { login: 'sam', admin: true, ...me } });
+    await answered();
+    return t.side().querySelector('form.menu-form')?.getAttribute('action') ?? null;
+  };
+  assert.equal(await signOutIn({}), '/auth/sign-out');
+  assert.equal(await signOutIn({ hosted: true }), null);
+  assert.equal(await signOutIn({ hosted: true, signOut: true }), '/auth/sign-out');
+});
+
+// What a program embedding the console gives /api/me (server.mjs, menuOf): the person's own page, a switcher, and a
+// section of its own whose entry has pages under it.
+const HOST_MENU = {
+  login: 'sam', admin: true, hosted: true, signOut: true, settingsTabs: HOST_TABS,
+  menuYou: [{ label: 'Your workspaces', href: '/account' }],
+  menuGroups: [{ label: 'Organization', items: [{ label: 'Acme', href: null, current: true, note: 'Owner' }, { label: 'Globex', href: '/switch/globex', current: false, note: null }] }],
+  menuSections: [{ label: 'Service', items: [{ label: 'Admin', href: '/admin', items: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }] }] }],
+};
+
+// The avatar menu, top to bottom: each heading, link and rule, and the sub-items' rows as `› label`.
+function menuRows(t) {
+  const rows = [];
+  for (const el of t.side().querySelector('div.user-menu').children) {
+    if (el.matches('div.menu-head')) rows.push('head');
+    else if (el.matches('div.menu-rule')) rows.push('—');
+    else if (el.matches('div.menu-label')) rows.push(`[${el.textContent}]`);
+    else if (el.matches('div.menu-subs')) rows.push(...el.children.map((a) => `› ${a.textContent}`));
+    else if (el.matches('form')) rows.push(el.textContent);
+    else rows.push(el.querySelector('span.menu-choice-name')?.textContent ?? el.textContent);
+  }
+  return rows;
+}
+
+// The side list's groups and entries in order, each entry's mark after it, and This browser's buttons left out.
+function sideRows(t) {
+  const rows = [];
+  const walk = (el) => {
+    for (const c of el.children) {
+      if (!c.matches) continue;
+      if (c.matches('div.side-group')) rows.push(`[${c.textContent}]`);
+      else if (c.matches('a.side-item')) rows.push(`${c.matches('a.side-sub') ? '› ' : ''}${c.textContent.replace(/^[^A-Za-z]+/, '')}${c.getAttribute('aria-current') ? ` (${c.getAttribute('aria-current')})` : ''}`);
+      else if (c.matches('div')) walk(c);
+    }
+  };
+  walk(t.side().querySelector('nav.side-list'));
+  return rows;
+}
+
+test('the avatar menu: My settings and the program\'s pages under the name, its switcher, Console, its sections, Sign out', async () => {
+  const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
+  await answered();
+  assert.deepEqual(menuRows(t), [
+    'head', 'My settings', 'Your workspaces', '—',
+    '[Organization]', 'Acme', 'Globex',
+    '[Console]', 'Settings', '› General', '› Secrets & webhooks', '› Members', '› Credits',
+    '[Service]', 'Admin', '› Overview', '› Pool',
+    'Sign out',
+  ], 'the entry\'s own pages always listed in the menu, as Settings\' tabs are');
+  const plain = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: { login: 'sam', admin: true } });
+  await answered();
+  assert.deepEqual(menuRows(plain).slice(0, 4), ['head', 'My settings', '—', '[Console]'], 'with no program, My settings alone under the name');
+});
+
+test('the side list: You with the program\'s pages, Console, then the program\'s sections, an entry\'s pages open on its own', async () => {
+  const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
+  await answered();
+  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
+    'Admin one entry away from its pages');
+
+  const first = load('/nowhere');
+  const part = new first.El('p');
+  part.append('The pool');
+  const admin = load('/admin/pool', () => [], { me: HOST_MENU, hostPage: { current: '/admin/pool', heading: 'Admin', tabs: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }], body: part } });
+  await answered();
+  assert.equal(admin.title(), 'Admin', 'the page\'s own heading, not Settings');
+  assert.deepEqual(admin.tabs(), [['Overview', '/admin', null], ['Pool', '/admin/pool', 'page']], 'and the row of its entry\'s pages');
+  assert.match(admin.app.querySelector('div.host-page').textContent, /The pool/);
+  assert.deepEqual(sideRows(admin), ['[You]', 'My settings', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin (true)', '› Overview', '› Pool (page)', '[This browser]'],
+    'its pages open under it, the page marked, Settings closed');
+  assert.deepEqual(menuRows(admin).slice(-4), ['Admin', '› Overview', '› Pool', 'Sign out']);
+  const menu = admin.side().querySelector('div.user-menu');
+  assert.deepEqual(menu.querySelectorAll('a.menu-item').filter((a) => a.getAttribute('aria-current')).map((a) => [a.textContent, a.getAttribute('aria-current')]),
+    [['Admin', 'true'], ['Pool', 'page']], 'and in the menu');
+
+  const account = load('/account', () => [], { me: HOST_MENU, hostPage: { current: '/account', heading: 'Your workspaces', tabs: [], body: new first.El('p') } });
+  await answered();
+  assert.equal(account.title(), 'Your workspaces');
+  assert.equal(account.tabs(), undefined, 'with no row of tabs');
+  assert.deepEqual(account.current(), ['/account'], 'the You entry marked');
+});
+
+test('behind a hosting proxy with the program\'s list, People is Settings\' tab after Secrets & webhooks, before the program\'s', async () => {
+  const people = (W) => [['/people', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/people'), W.h('h1', null, 'Settings'), W.settingsTabs('/people')))]];
+  const t = load('/people', people, { me: { login: 'sam', admin: true, hosted: true, people: true, settingsTabs: HOST_TABS } });
+  await answered();
+  const expected = [
+    ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null], ['People', '/people', 'page'],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', null],
+  ];
+  assert.deepEqual(t.tabs(), expected);
+  assert.deepEqual(t.subs('side-sub'), expected, 'and under Settings in the side list, marked');
+  assert.deepEqual(t.subs('menu-sub'), expected, 'and in the avatar menu');
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings is the set People is in');
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.href)], ['/console-settings'], 'no People entry of its own');
+
+  const mine = (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]];
+  const without = load('/settings', mine, { me: { login: 'sam', admin: true, hosted: true } });
+  await answered();
+  assert.deepEqual(without.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'without the list, no People');
+  assert.deepEqual([...without.W.consoleLinks().map((l) => l.href)], ['/console-settings']);
+
+  const own = load('/settings', mine, { me: { login: 'sam', admin: true, people: true } });
+  await answered();
+  assert.deepEqual(own.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'on a console of its own People stays an entry');
+  assert.deepEqual([...own.W.consoleLinks().map((l) => l.href)], ['/console-settings', '/people']);
+});
+
+test('someone who is not an owner behind a hosting proxy gets no People tab', async () => {
+  const mine = (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]];
+  const t = load('/settings', mine, { me: { login: 'sam', admin: false, hosted: true, people: true, settingsTabs: HOST_TABS } });
+  await answered();
+  assert.deepEqual(t.subs('menu-sub').map(([label]) => label), ['Members', 'Credits']);
 });

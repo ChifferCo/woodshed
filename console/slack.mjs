@@ -3,17 +3,27 @@
 // setting on the Console settings page, kept in state.json as `settings.slackChannel`; a project may have its own,
 // from its repo's Settings page (Console settings → Repos), under `settings.projectSlackChannels` by project name.
 
+import crypto from 'node:crypto';
+
 export const SLACK_TOKEN_SECRET = 'slack-bot-token';
+export const SLACK_SIGNING_SECRET = 'slack-signing-secret';
 const POST_TIMEOUT_MS = 10_000;
 // A channel's ID, as its About tab shows it: a name would be refused by Slack as channel_not_found.
 const CHANNEL_RE = /^[CG][A-Z0-9]{8,}$/;
 const MEMBER_RE = /^[UW][A-Z0-9]{6,}$/;
 
-const READ_METHODS = new Set(['users.info', 'users.lookupByEmail', 'users.list']);
+const API = 'https://slack.com/api/';
+const READ_METHODS = new Set(['users.info', 'users.lookupByEmail', 'users.list', 'conversations.list']);
 // Slack returns at most 1,000 members a call, so this reads two: only the first 2,000 can be found by name. A member
-// ID always works.
+// ID always works. Channels are read the same way, so a workspace past 2,000 channels finds the rest by ID.
 const LIST_LIMIT = 1000;
 const LIST_PAGES = 2;
+// The channel picker asks on each keystroke (after a pause); Slack allows conversations.list about 20 times a minute,
+// so the list is kept this long and searched here, as the member search does with users.list.
+const CHANNELS_KEPT_MS = 60_000;
+const CHANNEL_MATCHES = 50;
+/** The scopes listing channels takes: public ones, and the private ones the bot is in. */
+export const CHANNEL_SCOPES = ['channels:read', 'groups:read'];
 // Slack's limit for one message's markdown_text is 12,000 characters.
 const MARKDOWN_PART_CHARS = 11_000;
 
@@ -64,9 +74,9 @@ export function plainText(text) {
 
 /**
  * @param {{store: {state: object, save: () => void}, secrets: {read: (name: string) => Promise<string|null>}|null,
- *          fetchImpl?: typeof fetch}} deps  with no channel set, or no secret store, there is nowhere to post
+ *          fetchImpl?: typeof fetch, now?: () => number}} deps  with no channel set, or no secret store, there is nowhere to post
  */
-export function createSlack({ store, secrets, fetchImpl = fetch }) {
+export function createSlack({ store, secrets, fetchImpl = fetch, now = Date.now }) {
   const channel = () => store.state.settings?.slackChannel ?? '';
   const projectChannels = () => store.state.settings?.projectSlackChannels ?? {};
 
@@ -118,7 +128,36 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
   }
 
   /**
-   * One Slack Web API call as the bot. The token is read for each, so a new one on the Secrets page takes effect
+   * One Slack Web API call with `token`, whatever Slack answers.
+   * @returns {Promise<{status: number, answer: object|null, scopes: string[]|null}>}  `scopes` are the token's, from
+   *   Slack's `x-oauth-scopes` header, where it sent one
+   * @throws {Error}  when Slack could not be reached
+   */
+  async function send(token, method, body) {
+    // Slack takes JSON for its write methods only: a read such as users.info goes as a query string.
+    const res = READ_METHODS.has(method)
+      ? await fetchImpl(`${API}${method}?${new URLSearchParams(body)}`, {
+        headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(POST_TIMEOUT_MS),
+      })
+      : await fetchImpl(`${API}${method}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(POST_TIMEOUT_MS),
+      });
+    const answer = await res.json().catch(() => null);
+    const header = res.headers?.get?.('x-oauth-scopes');
+    return { status: res.status, answer, scopes: typeof header === 'string' ? header.split(',').map((s) => s.trim()).filter(Boolean) : null };
+  }
+
+  /** @returns {Promise<string|null>}  the saved bot token, or null while there is none */
+  async function savedToken() {
+    if (!secrets) return null;
+    return (await secrets.read(SLACK_TOKEN_SECRET))?.trim() || null;
+  }
+
+  /**
+   * One Slack Web API call as the bot. The token is read for each, so a new one from the Slack card takes effect
    * without a restart.
    * @param {string} method  e.g. `chat.postMessage`
    * @param {object} body
@@ -127,30 +166,101 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
    */
   async function call(method, body) {
     if (!secrets) return null;
-    const token = (await secrets.read(SLACK_TOKEN_SECRET))?.trim();
+    const token = await savedToken();
     if (!token) {
       console.log('slack: no bot token yet, nothing sent', { method });
       return null;
     }
-    // Slack takes JSON for its write methods only: a read such as users.info goes as a query string.
-    const res = READ_METHODS.has(method)
-      ? await fetchImpl(`https://slack.com/api/${method}?${new URLSearchParams(body)}`, {
-        headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(POST_TIMEOUT_MS),
-      })
-      : await fetchImpl(`https://slack.com/api/${method}`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json; charset=utf-8' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(POST_TIMEOUT_MS),
-      });
-    const answer = await res.json().catch(() => null);
+    const { status, answer } = await send(token, method, body);
     if (!answer?.ok) {
-      console.warn('slack: call refused', { method, status: res.status, error: answer?.error ?? null });
+      console.warn('slack: call refused', { method, status, error: answer?.error ?? null });
       // Worth trying again, unlike a wrong token or a missing scope.
       if (answer?.error === 'ratelimited') throw new Error('slack: rate limited');
       return null;
     }
     return answer;
+  }
+
+  /**
+   * Who a bot token is, by `auth.test`: the Slack card shows it, and checks a pasted token before keeping it.
+   * @param {string|null} [token]  a token to check; the saved one without it
+   * @returns {Promise<{ok: true, team: string|null, teamId: string|null, name: string|null, userId: string|null,
+   *   url: string|null, scopes: string[]|null}|{ok: false, error: string}|null>}  null when no token is saved
+   * @throws {Error}  when Slack or the secret store could not be reached, or Slack is rate limiting
+   */
+  async function identify(token = null) {
+    const use = token ?? await savedToken();
+    if (!use) return null;
+    const { status, answer, scopes } = await send(use, 'auth.test', {});
+    if (!answer?.ok) {
+      if (answer?.error === 'ratelimited') throw new Error('slack: rate limited');
+      console.warn('slack: call refused', { method: 'auth.test', status, error: answer?.error ?? null, saved: !token });
+      return { ok: false, error: answer?.error ?? `HTTP ${status}` };
+    }
+    return { ok: true, team: answer.team ?? null, teamId: answer.team_id ?? null, name: answer.user ?? null, userId: answer.user_id ?? null, url: answer.url ?? null, scopes };
+  }
+
+  // The last channel list read, for each token, by a digest of it: kept CHANNELS_KEPT_MS.
+  const channelLists = new Map();
+
+  /**
+   * The workspace's channels that are not archived, public and private, from `conversations.list`: the private ones
+   * Slack lists are those the bot is in.
+   * @returns {Promise<{list: {id: string, name: string, private: boolean, member: boolean}[], truncated: boolean}
+   *   |{missingScope: true, needed: string[]}|{error: string}>}
+   * @throws {Error}  when Slack could not be reached or is rate limiting
+   */
+  async function channelList(token) {
+    const key = crypto.createHash('sha256').update(token).digest('hex');
+    const kept = channelLists.get(key);
+    if (kept && now() - kept.at < CHANNELS_KEPT_MS) return kept.value;
+    const list = [];
+    let cursor = '';
+    for (let page = 0; page < LIST_PAGES; page += 1) {
+      const { status, answer } = await send(token, 'conversations.list', {
+        types: 'public_channel,private_channel', exclude_archived: 'true', limit: String(LIST_LIMIT), ...(cursor && { cursor }),
+      });
+      if (!answer?.ok) {
+        if (answer?.error === 'ratelimited') throw new Error('slack: rate limited');
+        console.warn('slack: call refused', { method: 'conversations.list', status, error: answer?.error ?? null, needed: answer?.needed ?? null });
+        // An app made before the picker lacks these: the page falls back to the channel's ID.
+        if (answer?.error === 'missing_scope') return { missingScope: true, needed: CHANNEL_SCOPES };
+        return { error: answer?.error ?? `HTTP ${status}` };
+      }
+      list.push(...(answer.channels ?? []).filter((c) => c.id && !c.is_archived).map((c) => ({
+        id: c.id, name: c.name ?? c.id, private: Boolean(c.is_private), member: Boolean(c.is_member),
+      })));
+      cursor = answer.response_metadata?.next_cursor ?? '';
+      if (!cursor) break;
+    }
+    const value = { list, truncated: Boolean(cursor) };
+    channelLists.set(key, { at: now(), value });
+    console.log('slack: channel list read', { channels: list.length, truncated: value.truncated });
+    return value;
+  }
+
+  /**
+   * Channels whose name has `query`, for the channel picker: those the bot is in first, then by name.
+   * @param {{query?: string, token?: string|null}} args  `token` is one pasted but not saved yet; the saved one without it
+   * @returns {Promise<{found: {id: string, name: string, private: boolean, member: boolean}[], truncated: boolean, total: number}
+   *   |{missingScope: true, needed: string[]}|{error: string}|null>}  at most CHANNEL_MATCHES; null with no token
+   * @throws {Error}  when Slack could not be reached or is rate limiting
+   */
+  async function channels({ query = '', token = null } = {}) {
+    const use = token ?? await savedToken();
+    if (!use) return null;
+    const all = await channelList(use);
+    if (!all.list) return all;
+    const want = String(query ?? '').trim().toLowerCase().replace(/^#/, '');
+    const found = all.list
+      .filter((c) => !want || c.name.toLowerCase().includes(want) || c.id.toLowerCase() === want)
+      .sort((a, b) => Number(b.member) - Number(a.member) || a.name.localeCompare(b.name));
+    return { found: found.slice(0, CHANNEL_MATCHES), truncated: all.truncated, total: found.length };
+  }
+
+  /** A new token, or none: the lists read with the old one are not its. */
+  function forgetChannels() {
+    channelLists.clear();
   }
 
   /**
@@ -328,5 +438,8 @@ export function createSlack({ store, secrets, fetchImpl = fetch }) {
     personByEmail,
     personByHandle,
     search,
+    identify,
+    channels,
+    forgetChannels,
   };
 }

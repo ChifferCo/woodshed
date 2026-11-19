@@ -38,8 +38,10 @@ while it has none and GitHub has it). Whoever opens it signs in first (`/login?n
 New session with Work on filled in, to start their own private session on their own Claude. The link holds the PR or
 branch alone, so the session stays private. With nothing pushed the button says so and copies nothing.
 The settings pages (My settings, Settings with its General and Secrets &
-webhooks tabs, People and Webhook events) keep the same frame: a list of them takes the rail's place,
-with **‹ Back to sessions** and the avatar menu above it.
+webhooks tabs and any a program embedding the console adds, and People) keep the same frame: a list of them takes the rail's place,
+with **‹ Back to sessions** and the avatar menu above it. Webhook events, a log rather than a setting, is in neither the
+list nor the menu: Secrets & webhooks links to it, it has a **‹ Secrets & webhooks** link above its title, and Settings
+is marked in the list while it is open. Keyboard shortcuts is under the list's This browser group, not the avatar menu.
 Each page opens with a **tag for whose sessions it changes** (`Only you`: your My Woodshed sessions; `Everyone`: shared
 sessions and the console), and the side list has a **search** at its top (`public/settingsSearch.js`, `settingsIndex.cjs`). The search
 lists every section of every page you can open, narrows as you type (`repo`, `token`, `timeout`, `slack`…) and takes
@@ -493,8 +495,8 @@ And what the shed shows about each session:
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is
   `public/keys.cjs`, read by the sheet, the hints and the handler alike. A
-  control with a key (New session, the user menu's and settings list's
-  Keyboard shortcuts) shows a hint with it when the pointer rests on it.
+  control with a key (New session, the settings list's Keyboard shortcuts)
+  shows a hint with it when the pointer rests on it.
 - **Install as an app**: the console serves the shed's manifest and icons
   (`woodshed/shared/pwa.mjs`) under its own name, before sign-in, since a
   browser fetches the manifest without cookies. There is no service worker,
@@ -929,8 +931,9 @@ approval held: removing and adding the label runs QA again, which releases it.
 
 ## Webhook events, secrets and the GitHub App's webhook
 
-In AWS the console has two more pages, under Console in the menu under your
-avatar at the top right. Only an admin can open them (see "Sign-in"). The same menu signs
+In AWS the console has two more pages: Secrets & webhooks, a tab of Settings under Console in the menu under your
+avatar, and Webhook events, linked from it (from its GitHub webhook card, or its note when there is no webhook card).
+Only an admin can open them (see "Sign-in"). The same menu signs
 you out.
 
 - **Webhook events** (`/events`): each message it took off the webhooks queue,
@@ -943,10 +946,10 @@ you out.
   delivery the Lambda refused never reaches the queue: GitHub's Recent
   Deliveries page shows those. When a source is switched off on Console
   settings (below), the page says so above the list.
-- **Webhooks** card on Console settings (`/console-settings#webhooks`): two
-  switches, shown where webhooks reach the console (a queue, the local
-  receiver, or the program it is embedded in), that turn each source off on
-  its own. **GitHub webhooks** off, the console drops
+- **Webhooks** card on Console settings (`/console-settings#webhooks`): a
+  switch for GitHub, and on the Slack card's Questions row one for Slack, shown
+  where webhooks reach the console (a queue, the local receiver, or the program
+  it is embedded in), that turn each source off on its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
   at full speed (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does.
   The poll finds only the session label and `/woodshed` comments, so what only
@@ -955,7 +958,7 @@ you out.
   assignee's message for a session's `Needs a human:` comment. The console logs
   `webhooks: off, dropped a delivery the poll does not cover` with its `kind`
   at the first of each.
-  **Slack questions** (only on a console that answers them) off, it drops each
+  The Slack card's **Questions** switch (only on a console that answers them) off, it drops each
   mention of its bot, which nothing else brings, and lists it as ignored. Each
   is kept in `state.json` under `webhooks.<source>`, with who turned it and
   when; the console logs `webhooks: switched` with `source`, `off` and `by`,
@@ -967,7 +970,8 @@ you out.
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
-  write-only. A new App key is used at once, after a test token minted with it
+  write-only. Slack's two keys are not listed: they are set on the Slack card
+  (below, "Slack"), and a line says so. A new App key is used at once, after a test token minted with it
   succeeds. The webhook card checks four things (the App's webhook switched
   on, the five events subscribed, the App connected to the Lambda with the
   stored secret, GitHub's last delivery accepted) and **Set up webhook** walks
@@ -1154,7 +1158,8 @@ terminals' websockets. Postgres keeps RDS's own TLS end to end, hence
 The script has no sign-in cookie, so the token is its sign-in, as
 `Authorization: Bearer wt_...`. It lasts 12 hours, and the console keeps only
 its SHA-256. **Make a new token**, **Revoke**, Remove My Woodshed and the 12
-hours each end it and close every tunnel it opened. It reaches only its owner's
+hours each end it and close every tunnel it opened, and so does leaving the program's member list behind a hosting proxy
+(at the next read of it, which a failed read retries every 5 s, backing off to a minute). It reaches only its owner's
 databases: the console hands out their password, and the database still asks
 for it.
 
@@ -1336,7 +1341,8 @@ asking.
 
 **Admins.** Each member on People has an *Admin* switch, off for a new member.
 Only an admin sees the Console group in the avatar menu (Settings, whose tabs
-are General and Secrets & webhooks, then People and Webhook events), and the console answers 403 to
+are General and Secrets & webhooks, listed under it too, then People; Webhook events is reached from Secrets &
+webhooks), and the console answers 403 to
 anyone else's call behind those pages (`ADMIN_API_RE` in `console/server.mjs`;
 it logs `console: admin call refused`). The pages themselves still load and say
 so. Only an admin turns the switch on or off, and the last admin cannot turn
@@ -1361,6 +1367,18 @@ column per switch, each off for a new member and set by an admin:
   it, and turning that off turns this off too and gives their sessions back
   to Unassigned. An old `engineer` field in `state.json` is ignored: the
   switch starts off, and sessions already assigned keep their assignee.
+
+**Behind a hosting proxy** there is no People list of the console's own, and no People page, unless the program
+embedding the console hands over its list (`members`, "Embedding the console"). With it, People is a tab of Settings,
+after General and Secrets & webhooks, for owners (the admins there). Who is in and each person's role (Owner or
+Member) are the program's: **Add someone** takes a GitHub handle and a role, Remove and the Role column change them
+there, and core keeps no copy of the list (`console/hostedMembers.mjs`). Nobody asks to join, so there is no Asking to
+join, accept or decline, and no dot. The switches stay the console's, in `state.json` under `memberSwitches` by
+lowercased handle: *Sessions from GitHub* is on for everyone listed (it was never asked behind a proxy, and it also
+gates seeing shared sessions), so only those turned off are kept; *Can be assigned* is off, as above. Someone the list
+no longer has is no member, assignable or not, from the next read, and their switches are cleared then. The Slack link
+works as above. Nobody removes themselves, and the last owner is neither removed nor made a member, before the
+program is asked; the program's own refusal is shown as it says it.
 
 Taking someone off the list shuts them out at once. A console that never had a list starts one from the people signed
 in to it and those with My Woodshed sessions; with nobody to start from, the
@@ -1511,7 +1529,8 @@ that hangs off a login works as signed in, My settings, private sessions and eac
 (`users/<login>/claude-token`) among them. `role: owner` is an admin (Secrets & webhooks, Webhook events, Console
 settings); `member` is not, and gets 403 there. With no People list, nobody can be assigned a shared session, and the
 `woodshed` label and `/woodshed` comments start sessions for anyone with write access to the repo, as the console
-checks them: there is no Sessions from GitHub switch to ask.
+checks them: there is no Sessions from GitHub switch to ask. A program that hands over its own list of who is in (the
+`members` hook, "Embedding the console" below) gets People back, as a tab of Settings, with those switches.
 
 A session's app takes the header on its own name: `/auth/app` on the console sends the browser straight on to the
 app's `/__woodshed/auth`, with no code, and every app request, the editor's and the websockets included, is signed in
@@ -1528,7 +1547,7 @@ which is not refused when the host later lets someone go: it lasts at most 12 ho
 hosted mode` with which of the two are on at start.
 
 **One person's console** (`WOODSHED_ONE_PERSON=1`, or `config.onePerson: true` for an embedding program). With no
-People list a hosted console cannot count who uses it, so the host says when it is one person's own, such as a
+People list of its own (a program's is not counted) a hosted console cannot count who uses it, so the host says when it is one person's own, such as a
 personal workspace: the rail then shows one list of every session, with no Mine | Everyone switch. Without it, Mine
 still lists the shared sessions each person started, since nobody can be assigned one here.
 
@@ -1545,8 +1564,56 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   proxy's header says on a single console.
 - `config.githubBroker.source`: a GitHub token source called in the process (`createInProcessBroker`), with the HTTP
   broker's checks and cache.
-- `userMenu(headers)`: a line under the person's name and groups of links at the top of the user menu (`menuOf` in
-  `server.mjs`, `designSystem/components/MenuGroups`).
+- `userMenu(headers)`: what the program adds to the user menu and the settings pages' side list (`menuOf` in
+  `server.mjs`, `designSystem/components/MenuGroups`), `{subtitle?, you?, groups?, sections?}`: `subtitle`, a line under
+  the person's name on the user button; `you: [{label, href}]`, the person's own pages, after My settings under their
+  name in the menu and in the side list's You group; `groups: [{label, items: [{label, href?, current, note?}]}]`, what
+  the person switches between, after those, the one in use `current: true` (it needs no `href`); and
+  `sections: [{label, items: [{label, href, items?: [{label, href}]}]}]`, the program's own headed groups after the
+  Console group, in the menu and the side list, an entry with its own pages under it as Settings has its tabs (listed
+  always in the menu, and in the side list on those pages). Each `href` is a path on the console's name or an http(s)
+  address, text is cut at 100 characters, fifty links in all, and anything else is dropped; a hook that throws adds
+  nothing and logs `console: user menu not given`. A group with no label and no `current` items, the way to put links
+  under the name before `you`, is still read as `you` links: move them to `you`.
+- `settingsTabs(headers)`: tabs of the program's own pages on Settings, `[{label, href}]`, after General and Secrets &
+  webhooks (`settingsTabsOf` in `server.mjs`: at most eight, each `href` a path on the console's name, the rest
+  dropped; a hook that throws adds none and logs `console: settings tabs not given`). The program serves each page
+  itself, rendered with `settingsFrame({title, body, current, heading?, tabs?, login?, linkQuery?, styles?})` from
+  `server.mjs`: its own HTML (`body`, which it has escaped) under the title Settings and the tabs, with `current` (the tab's `href`) marked,
+  in the settings pages' frame, with the side list and avatar menu (`public/hostSettings.js`). A page that is one of
+  `userMenu`'s `you` or `sections` entries instead passes `heading`, its title in place of Settings, and `tabs`
+  (`[{label, href}]`, paths, at most eight), the row under it, such as the entry's own pages, or none: `current` then
+  marks its entry in the side list and menu, and its tab in the row and among the entry's pages. `styles` are its
+  stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
+  theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
+  first of them; with no tabs, nothing changes for them.
+- `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
+  (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
+  "Sign-in", behind a hosting proxy). `list()` answers `[{login, role, note?}]`, `role` `owner` or `member` (an
+  entry with another role, or that is no GitHub handle, is left out and logged); `note`, a few words People shows
+  under the person (`hasn't signed in yet`), is plain text on one line, cut to 80 characters, and left out (the person
+  kept) when it is not text. The others change it, `by` being the owner who did, and resolve once done. `add` may
+  resolve to `{told}`, one sentence of what the program did about it (`We emailed them a link.`), which People shows
+  after the add in place of its own `Nothing is sent to them: tell them the link.`; plain text, cut to 200 characters,
+  and `told` in `/api/people/add`'s answer (`null` when the program said nothing). Owners are the admins, as the proxy's header says. Core keeps no copy of the
+  list: it reads it at start, and keeps the answer 5 seconds. The fleet asks who may start a session from a label or be
+  assigned one as it goes, without waiting, so it is answered from the list as last read, which is read again in the
+  background once it is older; People's own reads, and each change made there, wait for a fresh one. Until a first
+  list is read nobody is in (`members: the program's list not read at start`). Core keeps each person's switches:
+  *Sessions from GitHub* on and *Can be assigned* off for someone new, cleared when they leave the list. Only someone
+  on the list starts a session from GitHub (a label or `/woodshed`), as intended: the list is who is in. Each read
+  gives the shared sessions of anyone it does not have back to Unassigned, so someone dropped while the console was
+  down is released at the next start. An empty list while core knows of someone (the last list read, a stored switch
+  or an assigned shared session) is kept from: the last list stays, nothing is cleared or released, and it logs
+  `members: the program's list came back empty, kept the last one`; a console that never had anyone takes it as it
+  is. People never empties the list, since nobody removes themselves and the last owner stays. A call that
+  throws an error with `shown: true` shows its message on the page as it is; any other is logged (`members: the
+  program failed a change`) and answered 500. Without the hook a hosted console has no People, as before.
+- `signOut(req)`, with `trusted`: how the program signs someone out, for the user menu's **Sign out**, which a
+  hosted console otherwise leaves out since it signs nobody in itself. The menu posts to `/auth/sign-out` as on a
+  console of its own; the console refuses a post from another site, then calls `signOut` with the request (its
+  cookies are the program's) and answers 303 to the `location` it returns (a path or an https address, else `/`)
+  with its `setCookie` (one or a list). One that throws answers 500 and logs `console: sign-out failed`.
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
@@ -1580,6 +1647,20 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   `/api/me`), and no update check, for a program that deploys Woodshed itself. Its update routes
   (`/api/console-settings/updates`, `/check`, `/update`) answer 404, as on a console that runs from no git clone (below,
   "Console settings").
+- `githubConnect: {clientId(), clientSecret(), href}`, behind `trusted` only: Connect GitHub on My settings through
+  the program's GitHub App, for a console with no sign-in of its own. Connect sends the person to `href` (a path),
+  where the program signs them in with its App's user authorization and hands GitHub's answer to the code to the
+  installation's `connectGitHub({login, answer})`, then sends them to `/settings?connected=1`; `login` is who signed in
+  here, and GitHub must say it is them. From there it is the Connect GitHub above (`githubUser.mjs`): kept in
+  `provider.secrets` at `users/<login>/github`, refreshed and ended with `clientId()` and `clientSecret()`, and handed
+  to that person's private sessions alone. The program's App is installed beyond this console's repos, so the token is
+  always scoped by GitHub: to this console's repos of the session's repo's owner when the project file's `githubAccess`
+  is `full` (`sessionApi: github access for a private session` logs `repos`), and to the session's repo alone when it is
+  `repo` or the file cannot be read (logs `repo`); a session that gets no scoped token pushes as the App. The
+  installation's `disconnectGitHub(login)` is Disconnect, for when the person leaves. `automatic: true` says the
+  program connects people on its own (on their first page, say): My settings then shows the connection as a status,
+  "Pushes as @you", or, unconnected, says it did not happen and offers Connect as the way back. Without a secret store it is off
+  (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
   such as a machine it sets up for the sessions (`providers/README.md`, "A wait's progress").
 - `start({ deliveredWebhooks: true })`, then `dispatchWebhook(message)` for each GitHub event (`githubEvents.mjs`'s
@@ -1592,6 +1673,21 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `createsOnWrite: true` on the program's secret store when its `write` makes a secret that does not exist yet
   (`providers/README.md`, "A secret store that makes a secret when it is first written"): the Secrets page then
   offers Set on a secret nobody has written. Without it, such a secret shows no Set.
+
+- `slackEventsUrl: () => Promise<string|null>`: the Request URL Slack's Event Subscriptions should post to, which the
+  Set up Slack dialog shows and puts in the app manifest it gives (below, "Slack"), for a program that receives Slack's
+  events itself. Without it the console asks its provider's `slackEventsUrl` (`providers/README.md`); with neither, or
+  when it throws (`slack: events URL not read`), the dialog says the address is unknown and how to find it, and the
+  manifest has no events.
+- `slackInstall: {label, description?, available?, href?, installed?}`: the program's own way to put a Slack app in a
+  workspace, offered in the dialog as a second option beside "Use your own Slack app". Every word of it is the
+  program's: `label` is the option's title, `description` the line under it. `available` (true when left out, or a
+  function answering it) false shows the option disabled, with nothing added: the program says why in its own
+  `description`, such as when it will be ready; `href` (https, or a path on the
+  console) is where Continue goes when it is picked. `installed()` (async allowed) answers whether this console was
+  connected that way: the card's Bot row then says installed with the option's label, and offers **Reinstall**
+  (`href`) in place of Replace keys. Core has no install flow of its own: whatever `href` leads to writes the same
+  `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
 
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
@@ -1626,6 +1722,67 @@ reads it and its checks from GitHub with the App's token
 (`console/prAnnouncer.mjs`, the gates in `console/pullGates.mjs`), and posts with
 `chat.postMessage` as the bot whose token is `slack-bot-token`. The token is
 console only, like the App key: a session never sees it.
+
+### Setting it up: the Slack card
+
+Console settings has one **Slack** card for all of it (`public/consoleSettings.js`, its server side
+`console/slackSetup.mjs`). Not set up, it says what Slack does and has **Set up Slack**, which opens a dialog
+(`public/slackSetup.js`). Where the program embedding the console offers an install of its own (`slackInstall`,
+"Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
+
+1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
+   scopes (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`,
+   `users:read.email`), the Messages tab the assignee's direct messages need, and this console's events Request URL
+   with the `app_mention` bot event. The URL is the embedding program's (`slackEventsUrl`), else the provider's: the
+   webhooks Lambda's function URL at `/slack` on AWS, the local receiver's `WOODSHED_LOCAL_WEBHOOK_URL` at `/slack`.
+   With neither the manifest has no events, and the dialog says where the address comes from. Paste it at
+   api.slack.com/apps, Create New App, From a manifest.
+2. **The Bot User OAuth Token** (`xoxb-…`, OAuth & Permissions, after Install to Workspace). The dialog checks it with
+   Slack's `auth.test` as soon as it is pasted, and shows its workspace and bot, and any scope the app lacks (from
+   Slack's `x-oauth-scopes`); the save checks it again before anything is kept.
+3. **The Signing Secret** (Basic Information, App Credentials), for questions only: pull requests are posted without
+   it.
+4. **The channel for pull requests**, from the channel picker (below).
+
+**Save and connect** (`POST /api/console-settings/slack`, `{"botToken", "signingSecret", "channel"}`, each optional)
+writes the same `slack-bot-token` and `slack-signing-secret` the Secrets page used to, so what reads them (this file,
+the webhooks Lambda, the local receiver) is unchanged, and the Secrets page no longer lists them: a line there points
+to the card. A token Slack refuses, or a value of the wrong shape, keeps nothing. Neither value is ever sent back:
+`GET /api/console-settings/slack` answers who the bot is (kept in `state.json` under `slackBot` until the secret
+changes), whether the signing secret is set, the channel, the events URL, the manifest and the install option. The
+console logs `slack: keys saved` with the workspace, the bot and which fields changed (never a value), and `slack:
+call refused` for `auth.test` with Slack's error.
+
+Connected, the card has a row each:
+
+- **Bot**: the bot, its workspace, how it was connected (your own app, or installed with the program's option) and who
+  set it when, and a scope the app lacks. **Replace keys** opens the dialog at the own app's steps with the manifest
+  folded away and both fields empty: a field left empty keeps its value. A console connected through the program's
+  install has **Reinstall** instead. A saved token Slack refuses shows as **Token refused**, with Slack's error.
+  What the card says of the saved token is kept until the token changes, and an app reinstalled with new scopes keeps
+  its token: **Check again**, next to a missing scope or a refused token, asks Slack about it now and reads the
+  channel list again (`POST /api/console-settings/slack/recheck`, `slack: saved token checked again`).
+- **Pull requests**: the channel, and **Change channel**, the picker again. **Limits** unfolds the two waits before a
+  post (the review and suites, and the QA check; the table below).
+- **Questions**, only where the console answers them at all (a Slack bot and a session API): the switch that was on
+  the Webhooks card (`POST /api/console-settings/webhooks` with `source: "slack"`), when the bot was last mentioned
+  (from the Webhook events log), a note while no signing secret is saved, and **Limits** for the questions' own
+  (below, "Questions from Slack").
+- **Disconnect Slack**, behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
+  `slack: disconnected`). It is offered only where the secret store makes a secret on its first write
+  (`createsOnWrite`, providers/README.md), as the local store does: a store whose secrets its infrastructure made, as
+  Terraform makes AWS's, would be left without the one the webhooks Lambda reads, so there the keys are replaced
+  instead.
+
+**The channel picker**, in the dialog, on Change channel and on a repo's Settings (below), lists the workspace's
+channels that are not archived (`GET /api/console-settings/slack/channels?q=`, Slack's `conversations.list` with
+`public_channel,private_channel`), the bot's first, searchable by name, each saying whether the bot is in it. Like the
+member search on People, it reads at most two pages of 1,000 and keeps the list a minute, searching it in the console
+(`slack: channel list read`). In the dialog, before the token is saved, it lists with the pasted one (`POST` with
+`{"q", "botToken"}`: a token never goes in a URL). It needs the `channels:read` and `groups:read` scopes, which the
+manifest asks for. **An app made before them has neither**: Slack answers `missing_scope`, and the picker falls back
+to the channel's ID (`C…`, at the bottom of the channel's About tab), with a note to add the two scopes on the app's
+OAuth & Permissions page, reinstall it, and Replace keys with its token if Slack issued a new one.
 
 ### The decision brief
 
@@ -1714,18 +1871,9 @@ plain: angle brackets become look-alikes, `](` is split and `@` gets a
 zero-width space, so nothing in it can become a Slack link or mention. The PR
 comment puts the same space after each `@`, so a quote notifies nobody.
 
-To turn it on:
-
-1. A Slack app with a bot user and the `chat:write` scope, installed in the
-   workspace. Invite the bot to the channel (`/invite @<bot>`).
-2. The bot token (`xoxb-...`) on the Secrets & webhooks tab, as
-   `slack-bot-token`.
-3. The channel's ID (`C...`, at the bottom of the channel's About tab) in the
-   Slack card of the Console settings page. The console keeps it in
-   `state.json`, and an empty channel turns the posts off. A repo can have a
-   channel of its own on its Settings page (below).
-
-Both are read for each post, so neither needs a restart.
+To turn it on, use the Slack card's Set up Slack (above), and invite the bot to the channel (`/invite @<bot>`). The
+channel is kept in `state.json` (`settings.slackChannel`), and none turns the posts off. A repo can have a channel of
+its own on its Settings page (below). The token and the channel are read for each post, so neither needs a restart.
 
 ### A channel for each project
 
@@ -1743,7 +1891,8 @@ it says so and its field is off. It reads the channel with the page's view
 channel ID, never a name). It is kept in `state.json` under
 `settings.projectSlackChannels`, by project name, and removing an added repo
 drops it. A project's pull requests and their decision briefs go to its own
-channel when it has one, and to the Slack card's channel otherwise. A project
+channel when it has one, and to the Slack card's channel otherwise. Its channel is picked with the same channel
+picker as the Slack card's, falling back to the ID where the app lacks `channels:read` and `groups:read`. A project
 with neither has its pull requests left untracked, as every pull request was
 with no channel, and tracked once a channel is set; one tracked before its
 channel was cleared is still read, so it is dropped when it closes, and waits
@@ -1785,9 +1934,8 @@ settings, so Remove My Woodshed keeps it.
 - **To turn it on,** add the `users:read.email` bot scope: the Slack app's
   **OAuth & Permissions** page, Bot Token Scopes, then **Reinstall to
   Workspace** (Slack shows the banner once a scope is added). Reinstalling keeps
-  the bot token's value unless Slack issues a new one: copy the page's Bot User
-  OAuth Token onto the Secrets & webhooks tab as `slack-bot-token` if it
-  changed. Without the scope, the console logs `slack: call refused` with
+  the bot token's value unless Slack issues a new one: Replace keys on the Slack
+  card with the page's Bot User OAuth Token if it changed. Without the scope, the console logs `slack: call refused` with
   `missing_scope` for `users.lookupByEmail` and people stay "Not linked".
 
 For code that needs a person's Slack user, `slackUserFor(login)` on
@@ -1855,24 +2003,20 @@ anyone Slack will not say anything about.
    with its conversation once it has stopped. A mention in a new thread is a new
    question.
 5. It stops after 5 minutes without working, so soon after it answers, or 2
-   hours in all. Both are on the Console settings page's "Questions from Slack"
-   card, apart from the shared sessions' limits. One that failed, or stopped
+   hours in all. Both are under the Slack card's Questions row, behind Limits,
+   apart from the shared sessions' limits. One that failed, or stopped
    before posting any answer, says so in the thread. A stopped one is kept 7 days
    for follow-ups (the "no pull request" number on the Console settings page).
 
 A follow-up has to mention the bot too: the app reads mentions only
 (`app_mention`), not every message in a channel.
 
-To turn it on, on the same Slack app as the pull request posts:
-
-1. Bot token scopes: `app_mentions:read`, `chat:write`, `reactions:write`,
-   `users:read` and `users:read.email`. Reinstall the app if Slack asks, and put
-   the new bot token on the Secrets & webhooks tab as `slack-bot-token`.
-2. The app's **Signing Secret** (Basic Information) on the Secrets & webhooks
-   tab as `slack-signing-secret`.
-3. **Event Subscriptions**: on, with the `slack_events_url` Terraform output as
-   the Request URL (Slack checks it at once), and the bot event `app_mention`.
-4. Invite the bot to the channels where people should ask.
+To turn it on, on the same Slack app as the pull request posts: Set up Slack on the Slack card (above, "Setting it up:
+the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `chat:write`,
+`reactions:write`, `users:read` and `users:read.email` for questions) and Event Subscriptions with this console's
+Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at once) and the bot event
+`app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then
+Replace keys with its signing secret. Invite the bot to the channels where people should ask.
 
 ## QA sessions
 
@@ -1925,8 +2069,15 @@ card's:
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
-| Slack | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
-| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on its repo's Settings posts there instead | none |
+| Slack, Pull requests' Limits | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
+| Slack, Pull requests' Limits | Wait for the QA check before the brief for at most | 0 to 180 minutes | 30 |
+| Slack, Pull requests | Channel | picked from the channel picker (a channel ID where the app cannot list them), or none for no posts; a project with its own channel on its repo's Settings posts there instead | none |
+| Slack, Questions' Limits | Questions running at once | 1 to 10 | 3 |
+| Slack, Questions' Limits | Stop a question's session when idle for | 1 to 120 minutes | 5 |
+| Slack, Questions' Limits | Stop a question's session after | 0.5 to 8 hours | 2 |
+
+The Slack card's Limits are shown once Slack is set up (above, "Setting it up: the Slack card"); each Limits saves its
+own values, as a card does.
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
