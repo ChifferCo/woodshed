@@ -270,6 +270,24 @@ What to know:
 - **On Linux**, the forward reaches a port through `host.docker.internal`, the sessions' network gateway: a port a
   container publishes on `127.0.0.1` alone is not reachable there, only one published on every address.
 
+### Production access and the lockdown
+
+A session that may use production (`../../docs/reference.md`, "Production access") never gets the machine's Docker:
+its root could join the session to any network again. Its own, under Sysbox, stays, since what it starts shares the
+session's network. When the session is tainted, `dockerLauncher.mjs`'s `lockDown` moves it, outside its container:
+
+1. a network of its own, `woodshed-locked-<id>`, `--internal` and with no address of the machine's on it
+   (`-o com.docker.network.bridge.gateway_mode_ipv4=isolated`, Docker 28 or newer; an older one is refused);
+2. a gateway container beside it, `woodshed-<id>-gw`, from the session image (`shared/sessionGateway.mjs`): on the
+   session's old network and the new one, it carries the console's session API and egress proxy, the databases and
+   the shared services, each on its port, and publishes the session's ttyd, statusd and shell for the console;
+3. the session joins the new network and leaves every other, and its destinations' names point at the gateway;
+4. the console reaches statusd through the gateway, or the session is put back as it was and the call refused.
+
+A resumed tainted session starts that way. Its stop removes the gateway and the network with it (`docker ps -a --filter
+label=woodshed.session` lists both). A destination the session env gives by address (`PGHOST=172.17.0.1`) cannot be
+carried: give it by name. `bin/taintInImage.mjs` proves it all in the real image.
+
 ## From your other devices, with Tailscale
 
 The console listens on loopback alone. To use it from your phone or another computer, Tailscale's `serve` puts it at

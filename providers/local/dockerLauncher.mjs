@@ -10,6 +10,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
 import { bothNames } from '../../shared/envNames.mjs';
+import { INBOUND_PORTS, hostsPointedAt, lockedTargets } from './lockdown.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 const execFileAsync = promisify(execFile);
@@ -41,6 +42,15 @@ const OWN_DOCKER_RECHECK_MS = 10 * 60_000;
 // What says a session has it (`1` the machine's, `own` its own), to claude's rules (writeRules in session/entrypoint.sh) and the project file's scripts.
 // Only the launcher sets it: one from the session env file is left out.
 const SESSION_DOCKER = 'WOODSHED_SESSION_DOCKER';
+// A locked-down session (lockDown): its own isolated network, and the gateway beside it that is all that network holds.
+export const lockedNetworkName = (sessionId) => `woodshed-locked-${sessionId}`;
+export const gatewayName = (sessionId) => `woodshed-${sessionId}-gw`;
+const GATEWAY_LABEL = 'woodshed.gateway';
+const GATEWAY_SCRIPT = '/opt/woodshed/shared/sessionGateway.mjs';
+// How long a new gateway has to carry a call through to the session's statusd.
+const GATEWAY_WAIT_MS = 20_000;
+// Session ids are the console's own 8 hex digits; a ref names its container.
+const idOfRef = (ref) => /^woodshed-([0-9a-f]{8})$/.exec(String(ref ?? ''))?.[1] ?? null;
 
 /**
  * @param {{image: string, memory: string, cpus: string, network?: string|null, projectFilesDir?: string|null,
@@ -53,11 +63,13 @@ const SESSION_DOCKER = 'WOODSHED_SESSION_DOCKER';
  *   on it alone, and on 127.0.0.1 without it. `ownDocker` (`auto`, or `required` for ownDockerInImage.mjs's proof)
  *   gives every session but a question from Slack a Docker daemon of its own, inside its container, where the machine
  *   has Sysbox; `hostDocker` gives them the machine's daemon's socket instead where they get no own one, which is root on that machine (config.mjs,
- *   sessionDocker). `run(args, env, {dockerHost})` stands in for the docker CLI in tests
+ *   sessionDocker). `addHosts` are `name:address` entries every session and gateway gets (`--add-host`), for a console
+ *   that sessions reach by a name of its own, as in a container (bin/taintInImage.mjs). `run(args, env, {dockerHost})`
+ *   stands in for the docker CLI in tests
  */
 export function createDockerLauncher({
   image, memory, cpus, network = null, projectFilesDir = null, projectFilesHostDir = null, repo = null, dockerHost = null, reachHost = null,
-  ownDocker = false, hostDocker = false, run = null,
+  ownDocker = false, hostDocker = false, addHosts = [], run = null,
 }) {
   const bind = reachHost || '127.0.0.1';
   const cliEnv = (env) => ({ ...process.env, ...env, ...(dockerHost ? { DOCKER_HOST: dockerHost } : {}) });
@@ -123,9 +135,13 @@ export function createDockerLauncher({
 
   /** @returns {Promise<{before: string[], after: string[]}>}  `docker run`'s arguments that give the session a Docker, before the image and after it */
   async function dockerArgs(sessionId, env) {
-    const none = { before: [], after: [] };
+    const none = { before: [], after: [], kind: null };
     // A question from Slack reads and answers, and anyone in the workspace can ask one: it never gets a Docker.
     if (env.SESSION_MODE === 'ask') return none;
+    // The machine's Docker is root on the machine, from which a session could join any network again and undo its
+    // lockdown: a session that may use production (mcpRelay.mjs) never has it. Its own, under Sysbox, runs inside the
+    // session's network, so what it starts is locked down with it.
+    const production = env.WOODSHED_PROD_MCP === '1' || env.WOODSHED_TAINTED === '1';
     if (ownDocker) {
       let answer;
       try {
@@ -145,14 +161,93 @@ export function createDockerLauncher({
         return {
           before: ['--runtime', SYSBOX_RUNTIME, '--user', '0', '--entrypoint', OWN_DOCKER_START, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=own`],
           after: ['session'],
+          kind: 'own',
         };
       }
       if (ownDocker === 'required') throw new Error(`this session was to have its own Docker, and cannot: ${why}`);
     }
     if (!hostDocker) return none;
+    if (production) {
+      console.log('launcher: no machine\'s Docker for a session with production access', { sessionId });
+      return none;
+    }
     const group = await hostSocketGroup();
     console.log('launcher: session given this machine\'s Docker', { sessionId });
-    return { before: ['-v', `${DOCKER_SOCKET}:${DOCKER_SOCKET}`, '--group-add', group, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=1`], after: [] };
+    return { before: ['-v', `${DOCKER_SOCKET}:${DOCKER_SOCKET}`, '--group-add', group, '-e', `DOCKER_HOST=unix://${DOCKER_SOCKET}`, '-e', `${SESSION_DOCKER}=1`], after: [], kind: 'host' };
+  }
+
+  // The session's isolated network: internal (no route out) and with no address of the machine's on it
+  // (gateway_mode_ipv4=isolated, Docker 28 or newer), so nothing on the machine listens where the session can reach.
+  // Checked after it is made: a Docker that ignored the option gives the machine an address, and is refused.
+  async function isolatedNetwork(sessionId) {
+    const name = lockedNetworkName(sessionId);
+    const inspect = async () => JSON.parse(await docker(['network', 'inspect', '-f', '{{json .}}', name]) || 'null');
+    let network = await inspect().catch(() => null);
+    if (!network) {
+      await docker(['network', 'create', '--driver', 'bridge', '--internal', '-o', 'com.docker.network.bridge.gateway_mode_ipv4=isolated', '--label', `${SESSION_LABEL}=${sessionId}`, name]);
+      network = await inspect();
+    }
+    const gateways = (network?.IPAM?.Config ?? []).map((c) => c.Gateway).filter(Boolean);
+    if (!network?.Internal || gateways.length) {
+      await docker(['network', 'rm', name]).catch(() => {});
+      throw new Error(`this machine's Docker gave the session's isolated network a route or an address of its own (${gateways.join(', ') || 'not internal'}): Docker 28 or newer is needed`);
+    }
+    return name;
+  }
+
+  async function addressOn(container, network) {
+    const networks = JSON.parse(await docker(['inspect', '-f', '{{json .NetworkSettings.Networks}}', container]) || '{}');
+    const ip = networks?.[network]?.IPAddress;
+    if (!ip) throw new Error(`${container} has no address on ${network}`);
+    return ip;
+  }
+
+  async function networksOf(container) {
+    return Object.keys(JSON.parse(await docker(['inspect', '-f', '{{json .NetworkSettings.Networks}}', container]) || '{}'));
+  }
+
+  // The gateway: on the networks the session reached its destinations through, and on its isolated one. It publishes
+  // the session's three ports for the console, which can no longer reach the session's own.
+  async function startGatewayFor(sessionId, { ref, open, targets }) {
+    const name = gatewayName(sessionId);
+    const isolated = lockedNetworkName(sessionId);
+    await docker(['rm', '-f', name]).catch(() => {});
+    const outbound = targets.routes.map((r) => `${r.listen}=${r.host}:${r.port}`).join(',');
+    await docker([
+      'run', '-d', '--name', name, '--restart', 'unless-stopped', '--init', '--memory', '128m', '--cpus', '0.25', '--user', '1000',
+      '--label', `${SESSION_LABEL}=${sessionId}`, '--label', `${GATEWAY_LABEL}=1`,
+      '--add-host=host.docker.internal:host-gateway', ...addHosts.map((h) => `--add-host=${h}`), '--network', open[0],
+      ...INBOUND_PORTS.flatMap((p) => ['-p', `${bind}::${p}`]),
+      '-e', `WOODSHED_GATEWAY_SESSION=${ref}`, '-e', `WOODSHED_GATEWAY_INBOUND=${INBOUND_PORTS.join(',')}`, '-e', `WOODSHED_GATEWAY_OUTBOUND=${outbound}`,
+      '--entrypoint', 'node', image, GATEWAY_SCRIPT,
+    ]);
+    for (const other of open.slice(1)) await docker(['network', 'connect', other, name]);
+    await docker(['network', 'connect', isolated, name]);
+    const [termPort, statusPort, shellPort] = await Promise.all(INBOUND_PORTS.map(async (p) => parseDockerPort(await docker(['port', name, String(p)]))));
+    if (!termPort || !statusPort || !shellPort) throw new Error(`no published ports for ${name}`);
+    return { ip: await addressOn(name, isolated), endpoint: { host: bind, termPort, statusPort, shellPort } };
+  }
+
+  // A call through the gateway to the session's statusd: any HTTP answer says the way in works.
+  async function waitThrough(endpoint) {
+    const deadline = Date.now() + GATEWAY_WAIT_MS;
+    let last = null;
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`http://${endpoint.host}:${endpoint.statusPort}/`, { signal: AbortSignal.timeout(2_000) });
+        await res.body?.cancel();
+        return;
+      } catch (err) {
+        last = err;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    throw new Error(`the session's gateway did not reach its statusd: ${last?.cause?.code ?? last?.message ?? 'no answer'}`);
+  }
+
+  async function removeLockdown(sessionId) {
+    await docker(['rm', '-f', gatewayName(sessionId)]).catch(() => {});
+    await docker(['network', 'rm', lockedNetworkName(sessionId)]).catch(() => {});
   }
 
   return {
@@ -177,28 +272,90 @@ export function createDockerLauncher({
       // Both names while a session image older than shared/envNames.mjs, which reads only the old one, may be running;
       // the old name goes in a later release.
       const env = mounts.repos.length ? { ...named, ...bothNames('PROJECT_FILES_DIR', PROJECT_FILES_MOUNT) } : named;
-      const args = [
-        'run', '-d', '--name', ref, '--init', '--memory', memory, '--cpus', cpus,
-        '--add-host=host.docker.internal:host-gateway',
-        '-p', `${bind}::7681`, '-p', `${bind}::7682`, '-p', `${bind}::7684`,
-        '--label', `${SESSION_LABEL}=${sessionId}`,
-        ...(network ? ['--network', network] : []),
-        ...mounts.args,
-        ...withDocker.before,
-      ];
-      for (const key of Object.keys(env)) args.push('-e', key);
-      args.push(image, ...withDocker.after);
+      // A tainted session starts locked down: on its isolated network alone, its destinations its gateway's, and its
+      // ports published by the gateway (lockDown says how a running one gets there).
+      const locked = given.WOODSHED_TAINTED === '1';
+      let lockedStart = null;
       try {
+        if (locked) {
+          const targets = lockedTargets(given);
+          const isolated = await isolatedNetwork(sessionId);
+          const gateway = await startGatewayFor(sessionId, { ref, open: [network || 'bridge'], targets });
+          lockedStart = { isolated, gateway, names: targets.names };
+          console.log('launcher: tainted session starts locked down', { sessionId, carried: targets.routes.map((r) => `${r.host}:${r.port}`) });
+        }
+        const args = [
+          'run', '-d', '--name', ref, '--init', '--memory', memory, '--cpus', cpus,
+          ...(lockedStart
+            ? [...lockedStart.names.map((n) => `--add-host=${n}:${lockedStart.gateway.ip}`), '--network', lockedStart.isolated]
+            : ['--add-host=host.docker.internal:host-gateway', ...addHosts.map((h) => `--add-host=${h}`), '-p', `${bind}::7681`, '-p', `${bind}::7682`, '-p', `${bind}::7684`, ...(network ? ['--network', network] : [])]),
+          '--label', `${SESSION_LABEL}=${sessionId}`,
+          ...mounts.args,
+          ...withDocker.before,
+        ];
+        for (const key of Object.keys(env)) args.push('-e', key);
+        args.push(image, ...withDocker.after);
         await docker(args, env);
+        if (lockedStart) return { ref, ...lockedStart.gateway.endpoint, docker: withDocker.kind, locked: true };
         const termPort = parseDockerPort(await docker(['port', ref, '7681']));
         const statusPort = parseDockerPort(await docker(['port', ref, '7682']));
         const shellPort = parseDockerPort(await docker(['port', ref, '7684']));
         if (!termPort || !statusPort || !shellPort) throw new Error(`no published ports for ${ref}`);
         if (dockerHost) console.log('launcher: session on another docker host', { sessionId, reachHost: bind });
-        return { ref, host: bind, termPort, statusPort, shellPort };
+        return { ref, host: bind, termPort, statusPort, shellPort, docker: withDocker.kind };
       } catch (err) {
         // `docker run` can create the container and still fail; nothing else would remove it.
         await this.stop(ref);
+        throw err;
+      }
+    },
+
+    /**
+     * Locks a running session down, from outside its container: a gateway beside it, then the session joined to its
+     * isolated network and taken off every other, its destinations' names pointed at the gateway. Only once the
+     * session is on the isolated network alone, and the console reaches its statusd through the gateway, does it
+     * resolve. A failure puts the session back on its networks, as it was, and throws.
+     * @param {string} ref
+     * @param {{sessionId: string, env: Record<string, string>, egressUrl?: string|null}} opts  `env` is the session's own
+     * @returns {Promise<{host: string, termPort: number, statusPort: number, shellPort: number, locked: true}>}  the
+     *   session's new endpoint, the gateway's ports
+     */
+    async lockDown(ref, { sessionId, env, egressUrl = null }) {
+      if (idOfRef(ref) !== sessionId) throw new Error(`${ref} is not session ${sessionId}'s container`);
+      const isolated = lockedNetworkName(sessionId);
+      const before = await networksOf(ref);
+      if (before.length === 1 && before[0] === isolated) {
+        // Locked down already, as after a console that stopped halfway: the gateway's ports are the way in.
+        const ports = await Promise.all(INBOUND_PORTS.map(async (p) => parseDockerPort(await docker(['port', gatewayName(sessionId), String(p)]))));
+        const endpoint = { host: bind, termPort: ports[0], statusPort: ports[1], shellPort: ports[2] };
+        await waitThrough(endpoint);
+        return { ...endpoint, locked: true };
+      }
+      const targets = lockedTargets(env, { egressUrl });
+      const hostsBefore = await docker(['exec', '-u', '0', ref, 'cat', '/etc/hosts']);
+      let left = [];
+      try {
+        await isolatedNetwork(sessionId);
+        const gateway = await startGatewayFor(sessionId, { ref, open: before.filter((n) => n !== isolated), targets });
+        await docker(['network', 'connect', isolated, ref]);
+        // The lockdown itself: the session leaves every network with a way out.
+        for (const name of before.filter((n) => n !== isolated)) {
+          await docker(['network', 'disconnect', '--force', name, ref]);
+          left.push(name);
+        }
+        const hosts = hostsPointedAt(await docker(['exec', '-u', '0', ref, 'cat', '/etc/hosts']), targets.names, gateway.ip);
+        await docker(['exec', '-u', '0', '-e', `WOODSHED_HOSTS=${hosts}`, ref, 'node', '-e', 'require("fs").writeFileSync("/etc/hosts", process.env.WOODSHED_HOSTS)']);
+        const after = await networksOf(ref);
+        if (after.length !== 1 || after[0] !== isolated) throw new Error(`the session is still on ${after.filter((n) => n !== isolated).join(', ') || 'no network'}`);
+        await waitThrough(gateway.endpoint);
+        console.log('launcher: session locked down', { sessionId, left, carried: targets.routes.map((r) => `${r.host}:${r.port}`) });
+        return { ...gateway.endpoint, locked: true };
+      } catch (err) {
+        console.warn('launcher: lockdown failed, putting the session back', { sessionId, message: String(err?.message ?? err).split('\n')[0] });
+        for (const name of left) await docker(['network', 'connect', name, ref]).catch(() => {});
+        await docker(['network', 'disconnect', '--force', isolated, ref]).catch(() => {});
+        await docker(['exec', '-u', '0', '-e', `WOODSHED_HOSTS=${hostsBefore}\n`, ref, 'node', '-e', 'require("fs").writeFileSync("/etc/hosts", process.env.WOODSHED_HOSTS)']).catch(() => {});
+        await removeLockdown(sessionId);
         throw err;
       }
     },
@@ -227,6 +384,9 @@ export function createDockerLauncher({
       await docker(['rm', '-f', ref]).catch((err) => {
         console.warn('launcher: docker rm failed', { ref, message: err?.message?.split('\n')[0] });
       });
+      // A locked-down session's gateway and isolated network go with it; nothing if it had none.
+      const sessionId = idOfRef(ref);
+      if (sessionId) await removeLockdown(sessionId);
     },
   };
 }

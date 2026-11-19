@@ -560,3 +560,64 @@ test('each repo on the Repos card links to its own settings page, the installati
     ['/console-settings/repos/api', 'Settings of acme/api: env files, instructions and Slack channel'],
   ]);
 });
+
+const MCP_ANSWER = {
+  ...ANSWER,
+  servers: [{ name: 'shop', url: 'https://shop.example.com/mcp', production: false, shared: false, people: '*', repos: ['acme/api', 'acme/gone'], auth: 'header', header: 'x-api-key', headerSet: true, source: 'console', updatedBy: 'mia-dev' }],
+  production: { available: false, why: 'it has no session API' }, headers: true, issuer: 'https://c.example', jwks: 'https://c.example/.well-known/jwks.json',
+};
+const byId = (app, id) => walk(app).find((e) => e.attrs.id === id);
+
+test('MCP servers: Kind is two cards, Production off with the reason here, and a header shows in Title-Case', async () => {
+  const { app } = await loadPage(MCP_ANSWER);
+  const card = cardOf(app, 'mcp');
+  assert.equal(byId(app, 'mcp-kind-ordinary').attrs.checked, '');
+  assert.equal(byId(app, 'mcp-kind-production').attrs.disabled, '');
+  assert.match(textOf(card), /Not on this console: it cannot lock a session down, since it has no session API\./);
+  assert.match(textOf(card), /X-Api-Key header/);
+  buttonIn(card, 'Edit').listeners.click();
+  assert.equal(byId(app, 'mcp-header').attrs.value, 'X-Api-Key');
+});
+
+test('MCP servers: Repos is All repos and the console\'s repos, a saved one it does not list stays ticked', async () => {
+  const { app } = await loadPage(MCP_ANSWER);
+  assert.equal(byId(app, 'mcp-repo-all').attrs.checked, '', 'a new server is for every repo');
+  assert.equal(byId(app, 'mcp-repo-0').attrs.disabled, '');
+  buttonIn(cardOf(app, 'mcp'), 'Edit').listeners.click();
+  assert.equal(byId(app, 'mcp-repo-all').attrs.checked, undefined);
+  assert.deepEqual([0, 1].map((i) => byId(app, `mcp-repo-${i}`).attrs.checked), [undefined, '']);
+  assert.equal(byId(app, 'mcp-repo-x0').attrs.checked, '');
+  assert.match(textOf(cardOf(app, 'mcp')), /acme\/gonenot a repo of this console/);
+});
+
+test('MCP servers: Save tests the form first, keeps it on a failure, and Save anyway saves untested', async () => {
+  const { app, posted } = await loadPage(MCP_ANSWER);
+  posted.reply = (path) => (path.endsWith('/test') ? { ok: false, status: 401, error: 'The server answered 401: it did not accept what the console added.' } : MCP_ANSWER);
+  buttonIn(cardOf(app, 'mcp'), 'Edit').listeners.click();
+  buttonIn(cardOf(app, 'mcp'), 'Save').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted)), [{ path: '/api/console-settings/mcp-servers/test', body: { server: {
+    name: 'shop', url: 'https://shop.example.com/mcp', production: false, shared: false, people: '*', repos: ['acme/api', 'acme/gone'], auth: 'header', header: 'X-Api-Key',
+  } } }], 'no value: the console tests with the saved one');
+  assert.match(textOf(cardOf(app, 'mcp')), /Not saved\. The server answered 401/);
+  assert.equal(byId(app, 'mcp-url').attrs.value, 'https://shop.example.com/mcp', 'the form stays as typed');
+  buttonIn(cardOf(app, 'mcp'), 'Save anyway').listeners.click();
+  await tick();
+  assert.deepEqual(posted.slice(1).map((p) => p.path), ['/api/console-settings/mcp-servers']);
+  assert.match(textOf(cardOf(app, 'mcp')), /shop saved\. Not tested\./);
+});
+
+test('MCP servers: a test that reaches the server saves and says what it found; Test on a row says it there', async () => {
+  const { app, posted } = await loadPage(MCP_ANSWER);
+  posted.reply = (path) => (path.endsWith('/test') ? { ok: true, status: 200, serverInfo: { name: 'shop-mcp', version: '2.0' }, tools: 12, ms: 40 } : MCP_ANSWER);
+  byId(app, 'mcp-name').listeners.input({ target: { value: 'docs' } });
+  byId(app, 'mcp-url').listeners.input({ target: { value: 'https://docs.example.com/mcp' } });
+  buttonIn(cardOf(app, 'mcp'), 'Add server').listeners.click();
+  await tick();
+  assert.deepEqual(posted.map((p) => p.path), ['/api/console-settings/mcp-servers/test', '/api/console-settings/mcp-servers']);
+  assert.match(textOf(cardOf(app, 'mcp')), /docs added\. Reached shop-mcp 2\.0, 12 tools in 40 ms\./);
+  buttonIn(cardOf(app, 'mcp'), 'Test').listeners.click();
+  await tick();
+  assert.deepEqual(JSON.parse(JSON.stringify(posted.at(-1))), { path: '/api/console-settings/mcp-servers/test', body: { name: 'shop' } });
+  assert.match(textOf(cardOf(app, 'mcp')), /Reached shop-mcp 2\.0, 12 tools in 40 ms\./);
+});
