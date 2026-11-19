@@ -20,6 +20,7 @@ import { createDatabaseGate } from './databaseGate.mjs';
 import { createDatabases } from './databases.mjs';
 import { createDbRestore } from './dbRestore.mjs';
 import { createSlack } from './slack.mjs';
+import { checkSlackInstall, createSlackSetup } from './slackSetup.mjs';
 import { createTunnel, tunnelTargetsFor } from './dbTunnel.mjs';
 import { createFleet } from './fleet.mjs';
 import { createGitHub } from './github.mjs';
@@ -209,10 +210,12 @@ async function loadAppKey(config, secrets) {
  * @param {{config: object, store: {state: object, save: () => void}, provider: {name?: string|null, words?: object|null,
  *          launcher: object, secrets: object|null, homes: object|null, dbAdmin: object|null, databases?: string[],
  *          recordings?: object|null (where QA recordings are kept: qaRecordings.mjs),
- *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
+ *          webhookUrl?: (() => Promise<string|null>)|null, slackEventsUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
  *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
- *          hostApp?: object|null, woodshedUpdate?: boolean}} args
+ *          hostApp?: object|null, woodshedUpdate?: boolean, slackEventsUrl?: (() => Promise<string|null>)|null,
+ *          slackInstall?: {label: string, description?: string, available?: boolean|(() => boolean|Promise<boolean>),
+ *            href?: string, installed?: () => boolean|Promise<boolean>}|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
@@ -223,12 +226,16 @@ async function loadAppKey(config, secrets) {
  *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
  *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console").
  *   `woodshedUpdate: false` turns off the Console settings Woodshed card and its check, for a program that deploys
- *   Woodshed itself (README.md "Embedding the console")
+ *   Woodshed itself (README.md "Embedding the console"). `slackEventsUrl` is the Slack events Request URL the Set up
+ *   Slack dialog and its manifest show, over the provider's; `slackInstall` is the program's own way to put a Slack app
+ *   in a workspace, offered beside "Use your own Slack app" (slackSetup.mjs, README.md "Embedding the console")
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, slackEventsUrl = null, slackInstall = null }) {
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
+  if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
+  checkSlackInstall(slackInstall);
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
     throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
   }
@@ -267,6 +274,10 @@ export async function createInstallation({ config: loaded, store, provider, trus
   });
   const slack = createSlack({ store, secrets });
   console.log('console: Slack posts', { available: slack.available, channel: slack.view().channel || null });
+  // The program's events address wins: it receives Slack's events itself. Without either, the dialog says it is unknown.
+  const slackSetup = createSlackSetup({
+    store, secrets, slack, consoleName: config.consoleName, eventsUrl: slackEventsUrl ?? provider.slackEventsUrl ?? null, install: slackInstall,
+  });
   const claudeSettings = homes ? createClaudeSettings({ store: homes }) : null;
   // A repo with no project file of its own reads the installation's for it, when it keeps one (shared/project.mjs).
   const installationFileOf = (repo) => () => installationProjectFile({ dir: config.projectFilesDir, repo });
@@ -414,6 +425,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     userMenu,
     appPorts,
     woodshedUpdate,
+    slackSetup,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
   // Without a GitHub App the API still answers what it can: a session's settings, Claude token and home. It mints no GitHub token.
