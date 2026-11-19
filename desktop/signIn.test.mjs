@@ -43,13 +43,17 @@ test('the browser opens the console\'s desktop sign-in', () => {
 
 test('a signed-in link is read, and anything else is not', () => {
   const code = 'ab'.repeat(24);
-  assert.deepEqual(parseSignedInLink(`woodshed://signed-in?code=${code}&next=%2Fs%2Faaaa1111`), { code, next: '/s/aaaa1111' });
-  assert.deepEqual(parseSignedInLink(`woodshed://signed-in?code=${code}`), { code, next: '/' });
-  assert.deepEqual(parseSignedInLink(`woodshed://signed-in?code=${code}&next=%2F%2Fevil.test`), { code, next: '/' });
-  assert.deepEqual(parseSignedInLink(`woodshed://signed-in?code=${code}&next=https%3A%2F%2Fevil.test`), { code, next: '/' });
-  assert.equal(parseSignedInLink('woodshed://signed-in?code=not-hex'), null);
-  assert.equal(parseSignedInLink(`woodshed://other?code=${code}`), null);
-  assert.equal(parseSignedInLink(`https://signed-in/?code=${code}`), null);
+  const ch = 'C'.repeat(43);
+  const link = (rest) => `woodshed://signed-in?code=${code}&challenge=${ch}${rest}`;
+  assert.deepEqual(parseSignedInLink(link('&next=%2Fs%2Faaaa1111')), { code, challenge: ch, next: '/s/aaaa1111' });
+  assert.deepEqual(parseSignedInLink(link('')), { code, challenge: ch, next: '/' });
+  assert.deepEqual(parseSignedInLink(link('&next=%2F%2Fevil.test')), { code, challenge: ch, next: '/' });
+  assert.deepEqual(parseSignedInLink(link('&next=https%3A%2F%2Fevil.test')), { code, challenge: ch, next: '/' });
+  assert.equal(parseSignedInLink(`woodshed://signed-in?code=${code}`), null, 'no challenge: no sign-in to match');
+  assert.equal(parseSignedInLink(`woodshed://signed-in?code=${code}&challenge=short`), null);
+  assert.equal(parseSignedInLink(`woodshed://signed-in?code=not-hex&challenge=${ch}`), null);
+  assert.equal(parseSignedInLink(`woodshed://other?code=${code}&challenge=${ch}`), null);
+  assert.equal(parseSignedInLink(`https://signed-in/?code=${code}&challenge=${ch}`), null);
   assert.equal(parseSignedInLink('garbage'), null);
 });
 
@@ -72,6 +76,17 @@ test('a sign-in is claimed once, and only within ten minutes', () => {
   clock.now += 10 * 60_000;
   assert.equal(pending.waiting(), false);
   assert.equal(pending.take(), null);
+});
+
+test('a link is claimed only by the sign-in it answers, on its console', () => {
+  const pending = createPending();
+  const home = 'https://woodshed.example.com/';
+  const started = pending.begin('/', home);
+  assert.equal(pending.takeFor(home, 'x'.repeat(43)), null, 'a stale tab\'s link');
+  assert.equal(pending.takeFor('https://other.example.com/', started.challenge), null, 'another console');
+  assert.ok(pending.waiting(), 'neither used the sign-in up');
+  assert.equal(pending.takeFor(home, started.challenge), started);
+  assert.equal(pending.takeFor(home, started.challenge), null, 'claimed once');
 });
 
 test('the link among the arguments Windows and Linux start the app with', () => {

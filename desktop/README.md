@@ -72,12 +72,14 @@ As native apps do, the app signs in through your default browser, where you are 
    of a verifier only the app holds. The window says to finish there.
 2. The browser signs in to the console as it always does (a click, when GitHub knows you), then asks **Sign in to the
    Woodshed app?** as whom. Its button, and only that, makes the code: another program could open the browser at the
-   same page, but not press it. The next page opens `woodshed://signed-in?code=…`, and the browser asks whether to open
+   same page, but not press it. The next page opens `woodshed://signed-in?code=…&challenge=…`, and the browser asks whether to open
    Woodshed: say yes.
 3. The app claims the code with its verifier, gets a session of its own, and opens where you were going. A code
    another program catches is no use without the verifier, works once, and lasts two minutes; a link the app started
-   no sign-in for, or one for another console than the one open now, is ignored, and the page to open after it is
-   always a path on that console.
+   no sign-in for, or whose challenge is not the waiting sign-in's (an older tab, another console), is ignored and
+   leaves that sign-in waiting. The claim follows no redirect, a claim that finishes after you moved on (Change
+   console…) signs the app in but leaves the window where you are, and the page to open after it is always a path on
+   that console.
 
 `/auth/desktop/ready` also names the paths the console's pages sign in at (`signInPaths`): `/auth/start` on a console
 of its own, the host's on one behind a program that signs people in itself (the hosted console's `/account/sign-in`,

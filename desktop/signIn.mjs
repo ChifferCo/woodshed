@@ -58,7 +58,8 @@ export function browserUrl(consoleUrl, { challenge, next }) {
 
 /**
  * @param {string} link  what the OS handed the app
- * @returns {{code: string, next: string}|null}  null for anything but woodshed://signed-in with a code
+ * @returns {{code: string, challenge: string, next: string}|null}  null for anything but woodshed://signed-in with a
+ *   code and the challenge of the sign-in it answers
  */
 export function parseSignedInLink(link) {
   let url;
@@ -70,9 +71,11 @@ export function parseSignedInLink(link) {
   if (url.protocol !== `${PROTOCOL}:` || url.hostname !== 'signed-in') return null;
   const code = url.searchParams.get('code');
   if (!code || !/^[0-9a-f]{16,128}$/.test(code)) return null;
+  const challenge = url.searchParams.get('challenge');
+  if (!challenge || !/^[A-Za-z0-9_-]{43}$/.test(challenge)) return null;
   const next = url.searchParams.get('next') || '/';
   // Only a path on the console: never another site, nor `//host`.
-  return { code, next: /^\/(?![/\\])/.test(next) ? next : '/' };
+  return { code, challenge, next: /^\/(?![/\\])/.test(next) ? next : '/' };
 }
 
 /**
@@ -87,6 +90,18 @@ export function createPending({ now = Date.now } = {}) {
       const pair = pkcePair();
       current = { ...pair, next, consoleUrl, startedAt: now() };
       return current;
+    },
+    /**
+     * The sign-in waiting on `consoleUrl` that made `challenge`, forgotten as it is handed over (a sign-in is claimed
+     * once). Anything else, a stale tab's link or another console's, is left waiting.
+     * @returns {object|null}
+     */
+    takeFor(consoleUrl, challenge) {
+      const match = current && now() - current.startedAt < PENDING_MS && current.consoleUrl === consoleUrl && current.challenge === challenge;
+      if (!match) return null;
+      const taken = current;
+      current = null;
+      return taken;
     },
     /** @returns {{verifier: string, next: string}|null}  and forgets it: a sign-in is claimed once */
     take() {

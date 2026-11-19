@@ -20,7 +20,7 @@
 // The desktop app (desktop/) signs in through the person's own browser, where they are usually signed in to GitHub
 // already, as native apps do (RFC 8252), and is handed a session of its own (console/desktopSignIn.mjs):
 //
-//   GET  /auth/desktop?challenge=  (browser, signed in)  ->  woodshed://signed-in?code=
+//   GET  /auth/desktop?challenge=  (browser, signed in)  ->  woodshed://signed-in?code=&challenge=
 //   POST /auth/desktop/claim       (the app: code, verifier)  ->  a session cookie for the app
 //
 // The challenge is the SHA-256 of a verifier only the app holds (PKCE's S256), so a code another program catches on

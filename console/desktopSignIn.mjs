@@ -7,7 +7,8 @@
 //   GET  /auth/desktop?challenge=&next=
 //                               ->  signed out: GitHub sign-in in this browser, which comes back here
 //                                   signed in: a page that asks whether to sign the app in, as whom
-//   POST /auth/desktop          ->  (that page's button, same origin) a page that opens woodshed://signed-in?code=&next=
+//   POST /auth/desktop          ->  (that page's button, same origin) a page that opens
+//                                   woodshed://signed-in?code=&challenge=&next=
 //   POST /auth/desktop/claim    ->  {code, verifier} for the app's own session cookie
 //
 // The button is what keeps another program on the machine from signing itself in: anything can open a browser at
@@ -32,9 +33,12 @@ function escapeHtml(text) {
 }
 
 /** @returns {string}  the woodshed:// address that hands the code to the app */
-export function desktopLink({ code, next }) {
+// The challenge goes back with the code, so the app claims only the link of the sign-in it is waiting on: a link from an
+// older tab, or from another console, leaves that sign-in as it is. It is no secret: the app sent it in the open.
+export function desktopLink({ code, challenge, next }) {
   const link = new URL('woodshed://signed-in');
   link.searchParams.set('code', code);
+  link.searchParams.set('challenge', challenge);
   link.searchParams.set('next', safeNext(next));
   return link.href;
 }
@@ -169,7 +173,7 @@ export async function handleDesktopSignIn({
       return true;
     }
     res.writeHead(200, PAGE_HEADERS);
-    res.end(handOffPage({ link: desktopLink({ code, next }), consoleName }));
+    res.end(handOffPage({ link: desktopLink({ code, challenge, next }), consoleName }));
     return true;
   }
   if (pathname === '/auth/desktop/claim' && req.method === 'POST') {

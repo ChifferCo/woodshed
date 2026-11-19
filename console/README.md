@@ -1292,7 +1292,8 @@ already (`console/desktopSignIn.mjs`). Its Sign in with GitHub opens `/auth/desk
 signs in as usual if it has to, then asks **Sign in to the Woodshed app?** as whom. Only that button, a form POST from
 the console's own page (Origin checked, the page never framed), makes the code, so another program on the machine that
 opens the browser with a challenge of its own and catches `woodshed://` gets nothing without the person's press. The
-page after it opens `woodshed://signed-in?code=` with a code that lives two minutes and works once. The app claims it at `POST /auth/desktop/claim` with the verifier the challenge was made from (PKCE's S256), for a
+page after it opens `woodshed://signed-in?code=&challenge=` with a code that lives two minutes and works once; the
+challenge goes back with it so the app claims only the link of the sign-in it is waiting on. The app claims it at `POST /auth/desktop/claim` with the verifier the challenge was made from (PKCE's S256), for a
 session of its own: signing the browser out leaves the app signed in, and the other way round. `GET
 /auth/desktop/ready` says the console does this; a console behind a hosting proxy, which signs people in itself,
 answers none of these, and the app signs in inside its window there, unless the program answers them itself

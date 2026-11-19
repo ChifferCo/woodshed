@@ -200,8 +200,9 @@ const desktopSignInReady = readDesktopReady;
 // Where the window signs in, for a console that cannot hand the sign-in back or a person who asked to stay here.
 const signInHere = (next) => new URL(`${signInPaths[0].replace(/^\//, '')}?next=${encodeURIComponent(next)}`, consoleUrl).href;
 
-// `inWindow`: the address the page was going to, for a console that cannot hand the sign-in back.
-async function signInInBrowser(next, inWindow) {
+// `inWindow`: the address the page was going to, for a console that cannot hand the sign-in back. `again`: the waiting
+// page's Open the browser again, which reuses the sign-in started; a press of Sign in with GitHub starts a new one.
+async function signInInBrowser(next, inWindow, { again = false } = {}) {
   const base = consoleUrl;
   // Where the window was when the person pressed: a slow answer must not take it from wherever they went since (Change
   // console…, another page).
@@ -217,7 +218,7 @@ async function signInInBrowser(next, inWindow) {
     return;
   }
   // Open the browser again reuses the sign-in already started, so a code from either tab is claimed with its verifier.
-  const started = pending.current(base) ?? pending.begin(next, base);
+  const started = (again && pending.current(base)) || pending.begin(next, base);
   shell.openExternal(browserUrl(base, { challenge: started.challenge, next: started.next }));
   mainWindow.loadFile(path.join(here, 'signin.html'));
 }
@@ -225,10 +226,11 @@ async function signInInBrowser(next, inWindow) {
 async function finishSignIn(link) {
   const signedIn = parseSignedInLink(link);
   if (!signedIn || !consoleUrl) return;
-  // Only the sign-in started on the console open now: its code and verifier go to no other.
-  const started = pending.take();
-  if (!started || started.consoleUrl !== consoleUrl) {
-    console.warn('woodshed-desktop: a sign-in link arrived with no sign-in started on this console, ignored');
+  // Only the link of the sign-in waiting on the console open now, by its challenge: its code and verifier go to no
+  // other console, and a stale tab's link, or another console's, leaves that sign-in waiting.
+  const started = pending.takeFor(consoleUrl, signedIn.challenge);
+  if (!started) {
+    console.warn('woodshed-desktop: a sign-in link that is not the waiting sign-in\'s, ignored');
     return;
   }
   if (!mainWindow) createMainWindow();
@@ -236,20 +238,29 @@ async function finishSignIn(link) {
   mainWindow.show();
   mainWindow.focus();
   const base = consoleUrl;
+  // Where the window is while the claim is on its way: a person who moved on (Change console…, another page) keeps it.
+  const from = mainWindow.webContents.getURL();
   let error = null;
   try {
+    // No redirects: the code and the verifier go to the console that made the code, and nowhere it might point.
     const res = await session.defaultSession.fetch(new URL('auth/desktop/claim', base).href, {
-      method: 'POST', credentials: 'include',
+      method: 'POST', credentials: 'include', redirect: 'manual',
       headers: { 'content-type': 'application/json', 'x-woodshed': '1' },
       body: JSON.stringify({ code: signedIn.code, verifier: started.verifier }),
     });
-    if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The console answered ${res.status}.`;
+    if (res.url && new URL(res.url).origin !== new URL(base).origin) error = 'The console answered from another address.';
+    else if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The console answered ${res.status}.`;
   } catch (err) {
-    error = `The console did not answer: ${err.message}`;
+    error = /redirect/i.test(err.message) ? 'The console sent the sign-in elsewhere, so it was not finished.' : `The console did not answer: ${err.message}`;
   }
   // Change console… while the claim was on its way: the window is the new console's now, and stays so.
   if (base !== consoleUrl || !mainWindow) {
     console.warn('woodshed-desktop: a sign-in finished after the console changed, not opened');
+    return;
+  }
+  if (mainWindow.webContents.getURL() !== from) {
+    console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
+    if (!error) startWatching();
     return;
   }
   if (error) {
@@ -267,7 +278,7 @@ function fromSignInPage(event) {
 ipcMain.handle('signin:browser', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
   const next = pending.current(consoleUrl)?.next ?? '/';
-  signInInBrowser(next, signInHere(next));
+  signInInBrowser(next, signInHere(next), { again: true });
 });
 ipcMain.handle('signin:here', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
