@@ -734,15 +734,16 @@ test('POST /interrupt sends Esc to the agent\'s pane, which ends its turn, with 
 test('parseAnswerBody takes a question\'s picks or an approval\'s decision, and nothing else', () => {
   const q = { question: 'Which colour?', options: ['Red', 'Blue'], pick: 1 };
   assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [q], extra: 'x' })), { kind: 'question', questions: [q] });
-  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] })),
-    { kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] });
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'approval', decision: 'deny', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', title: 'Do you want to proceed?' })),
+    { kind: 'approval', decision: 'deny', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' });
   for (const bad of [
     'nope', '{}', JSON.stringify({ kind: 'question', questions: [] }),
     JSON.stringify({ kind: 'question', questions: [{ ...q, pick: 2 }] }),
     JSON.stringify({ kind: 'question', questions: [{ ...q, pick: '1' }] }),
     JSON.stringify({ kind: 'question', questions: Array(5).fill(q) }),
-    JSON.stringify({ kind: 'approval', decision: 'yes', title: 't', detail: [] }),
-    JSON.stringify({ kind: 'approval', decision: 'approve', title: 't' }),
+    JSON.stringify({ kind: 'approval', decision: 'yes', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' }),
+    JSON.stringify({ kind: 'approval', decision: 'approve', title: 't', detail: [] }),
+    JSON.stringify({ kind: 'approval', decision: 'approve', key: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }),
     JSON.stringify({ kind: 'keys', keys: 'Enter' }),
   ]) assert.throws(() => parseAnswerBody(bad), undefined, bad);
 });
@@ -801,13 +802,16 @@ test('POST /answer approves or denies the approval on screen, and refuses one th
   const spec = { approval: { title: 'Do you want to proceed?', what: 'Write the date', command: 'date > now.txt' } };
   const { call, answers } = await pickerPane(t, spec);
   const prompt = (await call('GET', '/prompt')).body.prompt;
-  assert.deepEqual(prompt, { kind: 'approval', agent: 'claude', what: 'Bash command', title: 'Do you want to proceed?', detail: ['Write the date', 'date > now.txt'], approve: 'Yes', deny: 'No' });
-  const other = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'approve', title: prompt.title, detail: ['date > other.txt'] }));
+  const { key, ...shown } = prompt;
+  assert.match(key, /^[0-9a-f]{64}$/);
+  assert.deepEqual(shown, { kind: 'approval', agent: 'claude', complete: true, what: 'Bash command', title: 'Do you want to proceed?', detail: ['Write the date', 'date > now.txt'], approve: 'Yes', deny: 'No' });
+  // Another approval's key: what the page showed when the pane asked something else.
+  const other = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'approve', key: 'b'.repeat(64) }));
   assert.equal(other.status, 409);
   assert.equal(other.body.why, 'other-approval');
   assert.equal(await answers(), null);
   assert.equal((await call('POST', '/answer', 'sess', '{"kind":"keys"}')).status, 400);
-  assert.deepEqual((await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'deny', title: prompt.title, detail: prompt.detail }))).body, { ok: true });
+  assert.deepEqual((await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'deny', key }))).body, { ok: true });
   assert.deepEqual(await answers(), { approval: 'No' });
 });
 
@@ -831,4 +835,15 @@ test('POST /send refuses while claude\'s question picker is open', async (t) => 
   assert.match(sent.body.error, /asking a question/);
   await new Promise((resolve) => setTimeout(resolve, 400));
   assert.equal(await answers(), null, 'nothing picked');
+});
+
+test('POST /send types nothing when the pane cannot be read, which may be showing a prompt', async (t) => {
+  // No tmux server in this TMUX_TMPDIR: capture-pane fails, as it would for a moment while tmux is busy.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-unread-'));
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'go on' }));
+  assert.equal(sent.status, 503);
+  assert.equal(sent.body.why, 'pane-unread');
+  assert.doesNotMatch(JSON.stringify(sent.body), /go on/, 'the reply carries no text of the message');
 });

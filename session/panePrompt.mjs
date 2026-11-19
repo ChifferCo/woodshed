@@ -25,6 +25,8 @@
 // run the following command?`) over numbered options from `Yes` to `No`, with what it asks to run above it (claude) or
 // between (codex).
 
+import crypto from 'node:crypto';
+
 const RULE = /^\s*─{10,}\s*$/;
 const DASHED = /^\s*╌{10,}\s*$/;
 const ROW = /^\s*([❯›>])?\s*(\d{1,2})\.\s+(.*?)\s*$/;
@@ -43,6 +45,16 @@ const SHORTCUT = /\s+\((?:[a-z]|esc|enter)\)$/i;
 // The most a field read from the screen keeps.
 const MAX_LINE = 300;
 const MAX_DETAIL = 6;
+
+/**
+ * What an approval asks, exactly: the lines it draws from its head down to its first option, each as on screen (its
+ * spaces kept, only the padding at the end dropped), hashed. The page sends it back with its decision, and statusd
+ * types only while the pane shows that same text: a command that differs by one space, or in a part the page never
+ * showed, is another approval.
+ */
+export function approvalKey(agent, lines) {
+  return crypto.createHash('sha256').update(`${agent}\n${lines.map((l) => l.trimEnd()).join('\n')}`).digest('hex');
+}
 
 export const squash = (text) => String(text ?? '').replace(/\s+/g, ' ').trim();
 
@@ -178,8 +190,10 @@ export function readApproval(pane) {
     if (!rows.length) continue;
     let what = null;
     let detail;
+    let from = title;
     if (agent === 'claude') {
       const rule = lastIndex(lines, RULE, title);
+      from = rule + 1;
       const head = lines.slice(rule + 1, title).map((l) => l.trim());
       // claude's question picker has its tabs here; it is not an approval, whatever its question says.
       if (rule === -1 || head.some((l) => TABS.test(l))) continue;
@@ -198,8 +212,13 @@ export function readApproval(pane) {
     const deny = options.findIndex((o) => /^No\b/.test(o.label));
     if (approve === -1 || deny === -1) continue;
     const at = options.findIndex((o) => o.highlighted);
+    // The page shows the whole of what it asks, or nothing to answer it with: a clipped command could hide its end.
+    const complete = detail.length <= MAX_DETAIL && detail.every((l) => l.length <= MAX_LINE) && (!what || what.length <= MAX_LINE)
+      && squash(lines[title]).length <= MAX_LINE;
     return {
       agent,
+      key: approvalKey(agent, lines.slice(from, rows[0].line)),
+      complete,
       what: what ? what.slice(0, MAX_LINE) : null,
       title: squash(lines[title]).slice(0, MAX_LINE),
       detail: detail.slice(0, MAX_DETAIL).map((l) => l.slice(0, MAX_LINE)),
@@ -258,14 +277,13 @@ export function matchReview(screen, wants) {
 
 /**
  * @param {ReturnType<typeof readApproval>} screen
- * @param {{title: string, detail: string[]}} want  what the page showed, from GET /prompt
+ * @param {{key: string}} want  the key of the approval the page showed, from GET /prompt
  */
 export function matchApproval(screen, want) {
   if (!screen) return { ok: false, why: 'no-approval' };
-  const same = squash(screen.title) === squash(want.title)
-    && Array.isArray(want.detail) && screen.detail.length === want.detail.length
-    && screen.detail.every((line, i) => squash(line) === squash(want.detail[i]));
-  return same ? { ok: true } : { ok: false, why: 'other-approval' };
+  if (screen.key !== want.key) return { ok: false, why: 'other-approval' };
+  if (!screen.complete) return { ok: false, why: 'incomplete' };
+  return { ok: true };
 }
 
 /**
@@ -291,6 +309,7 @@ const REFUSALS = {
   'other-answers': 'the agent\'s terminal shows other answers than the ones sent',
   'no-approval': 'the agent\'s terminal shows no approval now',
   'other-approval': 'the agent\'s terminal asks something else now',
+  'incomplete': 'what the agent asks is too long to show here in full',
   'no-highlight': 'the agent\'s terminal shows no highlighted option',
   'not-moved': 'the highlight did not move where it should',
   'still-there': 'the agent\'s terminal still shows the prompt',
@@ -371,7 +390,7 @@ export async function answerQuestions(io, wants) {
 /**
  * Approves or denies the approval the pane shows, once it is the one the page showed.
  * @param {PaneIo} io
- * @param {{decision: 'approve'|'deny', title: string, detail: string[]}} want
+ * @param {{decision: 'approve'|'deny', key: string}} want
  * @returns {Promise<{moves: number, agent: string}>}
  * @throws {Refusal}
  */

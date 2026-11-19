@@ -197,7 +197,7 @@ function scriptValue(literal) {
  * @returns {{tool: string, text: string, diffs?: object[]}[]|null}  the tools an `exec` script calls, or null for any
  *   other input. Its apply_patch calls take the script's patches in order, each named by its files
  */
-export function codexScriptCalls(name, input, { root } = {}) {
+export function codexScriptCalls(name, input, { root, quiet = false } = {}) {
   if (name !== 'exec' || typeof input !== 'string') return null;
   const starts = [...input.matchAll(SCRIPT_CALL)];
   if (!starts.length) return null;
@@ -210,8 +210,14 @@ export function codexScriptCalls(name, input, { root } = {}) {
     const args = input.slice(m.index + m[0].length, starts[i + 1]?.index ?? input.length);
     const arg = SCRIPT_ARG.exec(args);
     return { tool: m[1], text: arg ? scriptValue(arg[2]).split('\n')[0].slice(0, 300) : '' };
-  }).filter((c) => !SCRIPT_QUIET.has(c.tool));
+  }).filter((c) => quiet || !SCRIPT_QUIET.has(c.tool));
 }
+
+// The script tools whose answer is a command's output, with its exit_code: the start of one, or the rest of one still
+// running. An exit code belongs to one of these, in the order they were called, and to no other tool.
+const SCRIPT_EXEC = new Set(['exec_command', 'write_stdin', 'wait', 'shell', 'local_shell', 'unified_exec']);
+// Of those, the ones that start a command of their own, with an entry in the work log.
+const SCRIPT_STARTS = new Set(['exec_command', 'shell', 'local_shell', 'unified_exec']);
 
 // The diffs of a codex tool call that patches: apply_patch's input, or a shell call that runs apply_patch.
 function codexDiffs(input, root) {
@@ -309,6 +315,21 @@ export function parseCodexRollout(text, { partial = false, root } = {}) {
       // A shell call that ran apply_patch is the patch: named by its files, and an edit in the work log.
       const one = diffs ? { tool: 'apply_patch', text: diffs.map((d) => d.path).join(' ').slice(0, 300), diffs } : { tool: String(item.name || 'shell'), text: toolLine(input) };
       const made = (calls ?? [one]).map((c) => ({ role: 'tool', ...c, at }));
+      // Which call each exit code answers: only a script's own commands, each with its entry. A `wait` or `write_stdin`
+      // reads a command started before, maybe in another script, so its code is no entry's here.
+      if (calls) {
+        const left = [...made];
+        made.execs = codexScriptCalls(item.name, input, { quiet: true })
+          .filter((c) => SCRIPT_EXEC.has(c.tool))
+          .map((c) => {
+            if (!SCRIPT_STARTS.has(c.tool)) return null;
+            const i = left.findIndex((e) => e?.tool === c.tool);
+            if (i === -1) return null;
+            const own = left[i];
+            left.fill(null, 0, i + 1);
+            return own;
+          });
+      }
       if (typeof item.call_id === 'string') tools.set(item.call_id, made);
       const raw = typeof input === 'string' ? input : JSON.stringify(input ?? null);
       if (CODEX_ESCALATED.test(raw)) made.escalated = true;
@@ -323,11 +344,23 @@ export function parseCodexRollout(text, { partial = false, root } = {}) {
       }
       aborted = null;
       const codes = scriptExitCodes(item.output);
-      // A script's commands in order, each with its own exit code; anything else fails as a whole. A script's patches
-      // answer no exit code: one that threw before any patch said it applied leaves them failed.
-      const commands = made.filter((e) => e.tool !== 'apply_patch');
-      if (codes.length) codes.forEach((code, i) => { if (code !== 0) (commands[i] ?? commands[commands.length - 1] ?? made[made.length - 1]).error = true; });
-      else if (codexFailed(item.output)) made[made.length - 1].error = true;
+      // Each exit code to the command it answers, when the script's commands and its codes line up one to one. When
+      // they do not, or a code answers a wait on a command started elsewhere, the failure is the script's, said as
+      // such: never pinned on a tool that did not fail. A script's patches answer no exit code: one that threw before
+      // any patch said it applied leaves them failed.
+      if (codes.length && made.execs) {
+        const lined = made.execs.length === codes.length;
+        let unplaced = false;
+        codes.forEach((code, i) => {
+          if (code === 0) return;
+          const own = lined ? made.execs[i] : null;
+          if (own) own.error = true;
+          else unplaced = true;
+        });
+        if (unplaced) entries.push({ role: 'tool', tool: 'exec', text: 'a command in this script failed', at: made[made.length - 1].at, error: true });
+      } else if (codes.length) {
+        if (codes.some((c) => c !== 0)) made[made.length - 1].error = true;
+      } else if (codexFailed(item.output)) made[made.length - 1].error = true;
       const said = Array.isArray(item.output) ? item.output.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('\n') : '';
       if (SCRIPT_ERROR.test(said) && !PATCH_APPLIED.test(said)) for (const e of made) if (e.tool === 'apply_patch') e.error = true;
       for (const e of made) if (e.error) delete e.diffs;

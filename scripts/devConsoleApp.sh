@@ -24,15 +24,12 @@ start() {
   fi
   echo "devConsoleApp: starting the dev console on port $PORT" | tee -a "$LOG"
   # In a session, Open app's requests name the session's app host, which only the console in front knows.
-  local sessionApp=0 realClaude=0
-  # A private session's claude runs on its owner's own Claude, never the team's.
-  if [[ ${WOODSHED_CLAUDE_AUTH:-} == own ]]; then realClaude=1; fi
+  local sessionApp=0
   if [[ -n ${SESSION_ID:-} ]]; then sessionApp=1; fi
-  # In a session, its real claude too (DEV_CONSOLE_REAL_CLAUDE, devConsole.mjs): the owner's app, on the owner's Claude.
-  # And its real codex, once the owner signed codex in here (codex login): devChatSession.mjs lends it that sign-in.
-  local realCodex=0
-  if [[ $realClaude == 1 && -s $HOME/.codex/auth.json ]]; then realCodex=1; fi
-  DEV_CONSOLE_REAL_CODEX=${DEV_CONSOLE_REAL_CODEX:-$realCodex} DEV_CONSOLE_REAL_CLAUDE=${DEV_CONSOLE_REAL_CLAUDE:-$realClaude} DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
+  # Made-up sessions only, never a real agent: this console has no sign-in, and Open app and app shares reach it. A real
+  # claude or codex runs on its owner's credentials, so it is a separate console on another port Open app never
+  # forwards (CLAUDE.md, "Checking a console page change in a browser").
+  DEV_CONSOLE_REAL_CODEX=0 DEV_CONSOLE_REAL_CLAUDE=0 DEV_CONSOLE_SESSION_APP=$sessionApp setsid node "$REPO/console/bin/devConsole.mjs" "$PORT" >>"$LOG" 2>&1 </dev/null &
   local pid=$!
   echo "$pid" >"$PID_FILE"
   for _ in $(seq "$WAIT_STEPS"); do

@@ -65,7 +65,7 @@
 //   GET  /api/sessions/<id>/prompt  what the agent's pane asks now (a question picker, an approval), for the Chat tab
 //   POST /api/sessions/<id>/answer  the Chat tab's answer to it, which the session types only once its pane shows that
 //        same prompt: {"kind": "question", "questions": [{question, options, pick}]} or {"kind": "approval",
-//        "decision": "approve"|"deny", title, detail} (session/panePrompt.mjs)
+//        "decision": "approve"|"deny", "key": <GET /prompt's key, the hash of exactly what it asks>} (session/panePrompt.mjs)
 //   GET  /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>  the conversation so far (what was asked, said and
 //        run), for the Chat tab; `since` answers {unchanged: true} while the agent wrote nothing newer
 //        (session/sessionTranscript.mjs)
@@ -1527,9 +1527,9 @@ export function createHandler({
         && Number.isInteger(q.pick) && q.pick >= 0 && q.pick < q.options.length ? { question: q.question, options: q.options, pick: q.pick } : null));
       return questions.every(Boolean) ? { kind: 'question', questions } : null;
     }
-    if (body?.kind === 'approval' && (body.decision === 'approve' || body.decision === 'deny') && str(body.title)
-      && Array.isArray(body.detail) && body.detail.length <= 6 && body.detail.every(str)) {
-      return { kind: 'approval', decision: body.decision, title: body.title, detail: body.detail };
+    if (body?.kind === 'approval' && (body.decision === 'approve' || body.decision === 'deny')
+      && typeof body.key === 'string' && /^[0-9a-f]{64}$/.test(body.key)) {
+      return { kind: 'approval', decision: body.decision, key: body.key };
     }
     return null;
   }

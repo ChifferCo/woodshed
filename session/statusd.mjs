@@ -79,6 +79,10 @@ import { isMain } from '../shared/isMain.mjs';
 const run = promisify(execFile);
 
 const PORT = Number(process.env.STATUSD_PORT || 7682);
+// Every interface in a session, where the console reaches it from another host. STATUSD_HOST is the dev console's
+// alone (console/bin/devChatSession.mjs), to keep a made-up session's statusd on loopback: the fleet never sets it, so
+// it is in no PER_SESSION_ENV.
+const HOST = process.env.STATUSD_HOST || undefined;
 // Each viewer serves under its own prefix, so a path passes through unchanged.
 // Redis's, then each database engine's (shared/databases/), such as pgweb on /pg/<id>/. A test moves one with
 // <ROUTE>_VIEWER_PORT (PG_VIEWER_PORT, MONGO_COPY_VIEWER_PORT).
@@ -279,11 +283,9 @@ export function parseAnswerBody(raw) {
   }
   if (body?.kind === 'approval') {
     if (body.decision !== 'approve' && body.decision !== 'deny') throw new Error('decision must be approve or deny');
-    if (!filled(body.title, MAX_ANSWER_TEXT) || !Array.isArray(body.detail) || body.detail.length > 6
-      || !body.detail.every((d) => typeof d === 'string' && d.length <= MAX_ANSWER_TEXT)) {
-      throw new Error('an approval needs the title and the lines the page showed');
-    }
-    return { kind: 'approval', decision: body.decision, title: body.title, detail: [...body.detail] };
+    // The approval's key from GET /prompt: the hash of exactly what it asks (panePrompt.mjs, approvalKey).
+    if (typeof body.key !== 'string' || !/^[0-9a-f]{64}$/.test(body.key)) throw new Error('an approval needs the key GET /prompt gave');
+    return { kind: 'approval', decision: body.decision, key: body.key };
   }
   throw new Error('kind must be question or approval');
 }
@@ -295,8 +297,8 @@ export function parseAnswerBody(raw) {
 export function promptReply(prompt) {
   if (!prompt) return { prompt: null };
   if (prompt.kind === 'approval') {
-    const { agent, what, title, detail, options, approve, deny } = prompt;
-    return { prompt: { kind: 'approval', agent, what, title, detail, approve: options[approve].label, deny: options[deny].label } };
+    const { agent, key, complete, what, title, detail, options, approve, deny } = prompt;
+    return { prompt: { kind: 'approval', agent, key, complete, what, title, detail, approve: options[approve].label, deny: options[deny].label } };
   }
   if (prompt.step === 'review') return { prompt: { kind: 'question', step: 'review' } };
   return {
@@ -1214,7 +1216,15 @@ async function handle(req, res) {
     }
     // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. Nothing is
     // typed then; the console holds what it sends (fleet.mjs) and the page puts the text back in its box.
-    const open = readPrompt(await capturePane().catch(() => ''));
+    // A pane that could not be read may be showing one: nothing is typed then either.
+    let pane;
+    try {
+      pane = await capturePane();
+    } catch (err) {
+      console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so nothing was typed: try again' });
+    }
+    const open = readPrompt(pane);
     if (open) {
       const agent = CODEX ? 'codex' : 'claude';
       console.log('statusd: text not sent, a prompt is open', { kind: open.kind, chars: text.length });
@@ -1312,7 +1322,7 @@ function main() {
     });
   });
   server.on('upgrade', (req, socket, head) => handleUpgrade(req, socket, head));
-  server.listen(PORT, () => console.log('statusd: listening', { port: PORT }));
+  server.listen(PORT, HOST, () => console.log('statusd: listening', { port: PORT }));
   if (CONSOLE_URL) {
     setInterval(() => saveHomeIfChanged().catch((err) => {
       console.warn('statusd: Claude home check failed', { message: err?.message });

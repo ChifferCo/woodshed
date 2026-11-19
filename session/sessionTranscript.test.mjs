@@ -350,3 +350,28 @@ test("a /transcript answer's diffs stay bounded however many edits the record ho
   assert.equal(read.entries.at(-1).diffs[0].cut, true, 'cut at its line cap');
   assert.deepEqual([read.entries[0].diffs[0].hunks.length, read.entries[0].diffs[0].cut, read.entries[0].diffs[0].add], [0, true, 300]);
 });
+
+test("a codex script's exit codes go to its own commands, never to another tool, and an unplaceable failure is the script's", () => {
+  const call = (id, input) => line({ timestamp: at, type: 'response_item', payload: { type: 'custom_tool_call', call_id: id, name: 'exec', input } });
+  const out = (id, ...codes) => line({ timestamp: at, type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: id, output: [
+    { type: 'input_text', text: 'Script completed\nOutput:\n' },
+    { type: 'input_text', text: 'a profile' },
+    ...codes.map((exit_code) => ({ type: 'input_text', text: JSON.stringify({ chunk_id: 'x', exit_code, output: '' }) })),
+  ] } });
+  // The review's case: a lookup that succeeded, then a shell command exiting 1.
+  const mixed = parseCodexRollout([
+    call('m1', 'const p = await tools.view_image({path: "a.png"});\nconst r = await tools.exec_command({cmd: "npm test"});\ntext(r)'),
+    out('m1', 1),
+  ].join('\n'));
+  assert.deepEqual(mixed.map((e) => [e.tool, e.error ?? false]), [['view_image', false], ['exec_command', true]]);
+  // A wait reads a command started in another script: its code is no entry's here, so the failure is said as the
+  // script's, and the command it ran itself is not blamed.
+  const waited = parseCodexRollout([
+    call('w1', 'await tools.exec_command({cmd: "ls"});\ntext(await tools.wait({session_id: 7}))'),
+    out('w1', 0, 2),
+  ].join('\n'));
+  assert.deepEqual(waited.map((e) => [e.tool, e.text, e.error ?? false]), [['exec_command', 'ls', false], ['exec', 'a command in this script failed', true]]);
+  // More codes than commands: no guessing either.
+  const extra = parseCodexRollout([call('x1', 'text(await tools.exec_command({cmd: "make"}))'), out('x1', 1, 0)].join('\n'));
+  assert.deepEqual(extra.map((e) => [e.tool, e.error ?? false]), [['exec_command', false], ['exec', true]]);
+});

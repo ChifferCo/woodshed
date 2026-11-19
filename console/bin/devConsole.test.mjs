@@ -134,6 +134,17 @@ test('with no SESSION_APP_DOMAIN the dev console lets in any name whose first la
   assert.equal(stderr().match(/no SESSION_APP_DOMAIN/g)?.length, 1);
 });
 
+// A real agent runs on this machine's credentials: never behind the session's app name, which has no sign-in.
+test('with DEV_CONSOLE_SESSION_APP=1 the dev console runs no real agent, and says so', async (t) => {
+  const { port, child, stderr } = await startSessionApp(t, { SESSION_APP_DOMAIN: 'apps.example.com', DEV_CONSOLE_REAL_CLAUDE: '1', DEV_CONSOLE_REAL_CODEX: '1' });
+  assert.equal(await firstAnswer(port, child, `localhost:${port}`), 200);
+  const list = await (await fetch(`http://127.0.0.1:${port}/api/sessions`)).json();
+  const ids = (list.sessions ?? list).map((s) => s.id);
+  assert.ok(ids.includes('aaaa1111'));
+  assert.ok(!ids.includes('c1a0dea1') && !ids.includes('c0dea1ed'));
+  assert.match(stderr(), /no real agent behind DEV_CONSOLE_SESSION_APP/);
+});
+
 function upgradeStatus(port, host) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(port, '127.0.0.1', () => {

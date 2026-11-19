@@ -101,9 +101,6 @@
     // The last answer for the shown session: { id, agent, entries, partial, writtenAt }.
     let record = null;
     let readError = null;
-    let reading = false;
-    // A read asked for while one was on its way: it runs once that one answers.
-    let again = false;
     let timer = null;
     let ticker = null;
     let wasWorking = false;
@@ -207,7 +204,7 @@
       chips.hidden = !mine().length;
       const busy = working();
       stopButton.hidden = !busy;
-      sendButton.disabled = sending.has(id) || mine().some((f) => f.busy) || !(field.value.trim() || mine().some((f) => f.path));
+      sendButton.disabled = Boolean(T.notReady({ text: field.value, files: mine(), sending: sending.has(id) }));
       micButton.classList.toggle('is-live', Boolean(recognition));
       hint.textContent = narrow.matches ? '' : busy ? `Sent now, ${agent()} reads it after this step` : 'Enter to send · Shift+Enter for a new line';
     }
@@ -248,6 +245,9 @@
     async function send() {
       const id = session?.id;
       if (!id || sending.has(id)) return;
+      // Enter calls this past Send's disabled button: a file still uploading keeps the draft as it is.
+      const uploading = mine().find((f) => f.busy);
+      if (uploading) return W.shell.toast(T.notReady({ text: field.value, files: mine(), sending: false }));
       if (recognition) {
         const words = recognition.abort() ?? '';
         recognition = null;
@@ -454,7 +454,7 @@
       approval = { busy: decision, error: null };
       drawStatus();
       try {
-        await W.postJson(`/api/sessions/${id}/answer`, { kind: 'approval', decision, title: shown.title, detail: shown.detail }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+        await W.postJson(`/api/sessions/${id}/answer`, { kind: 'approval', decision, key: shown.key }, { signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
         approval = null;
         answered = { id, decision, prompt: JSON.stringify(shown) };
         prompt = { id, prompt: null };
@@ -541,10 +541,14 @@
             h('span', { class: 'chat-needs-text' }, h('b', null, 'Needs you'), ` · ${agent()} asks: ${asks}`),
             lines.length > 0 && h('pre', { class: 'chat-approval' }, lines.join('\n')),
             approval?.error && h('p', { class: 'chat-needs-error', role: 'alert' }, `Not answered: ${approval.error}. Answer in the TUI tab.`),
-            h('span', { class: 'chat-needs-actions' },
-              h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'TUI tab'),
-              h('button', { type: 'button', class: 'btn btn-sm btn-plain', disabled: Boolean(busy), title: shown.deny, onclick: () => answerApproval('deny') }, busy === 'deny' ? 'Denying…' : 'Deny'),
-              h('button', { type: 'button', class: 'btn btn-sm chat-answer', disabled: Boolean(busy), title: shown.approve, onclick: () => answerApproval('approve') }, busy === 'approve' ? 'Approving…' : 'Approve')),
+            // Too long to show in full: the person answers it where they can read all of it.
+            shown.complete === false && h('p', { class: 'chat-needs-error' }, 'Too long to show here in full: read and answer it in the TUI tab.'),
+            shown.complete === false
+              ? h('span', { class: 'chat-needs-actions' }, h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, 'Answer in the TUI tab'))
+              : h('span', { class: 'chat-needs-actions' },
+                h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'TUI tab'),
+                h('button', { type: 'button', class: 'btn btn-sm btn-plain', disabled: Boolean(busy), title: shown.deny, onclick: () => answerApproval('deny') }, busy === 'deny' ? 'Denying…' : 'Deny'),
+                h('button', { type: 'button', class: 'btn btn-sm chat-answer', disabled: Boolean(busy), title: shown.approve, onclick: () => answerApproval('approve') }, busy === 'approve' ? 'Approving…' : 'Approve')),
           ].filter(Boolean));
           return;
         }
@@ -608,14 +612,10 @@
       }
     }
 
-    async function read() {
+    // One read at a time; one asked for meanwhile, for this session or the next one shown, runs when it ends.
+    const read = T.oneAtATime(async () => {
       if (!session) return;
-      if (reading) {
-        again = true;
-        return;
-      }
       const id = session.id;
-      reading = true;
       try {
         const since = record?.id === id && record.writtenAt ? `&since=${record.writtenAt}` : '';
         const answer = await W.getJson(`/api/sessions/${id}/transcript?limit=${LIMIT}${since}`);
@@ -632,11 +632,9 @@
         if (!record) drawThread(false);
       } finally {
         await readPrompt(id);
-        reading = false;
-        if (id === session?.id) schedule(again ? 0 : undefined);
-        again = false;
+        if (id === session?.id) schedule();
       }
-    }
+    });
 
     function schedule(ms) {
       clearTimeout(timer);

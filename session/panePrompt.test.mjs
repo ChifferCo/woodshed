@@ -142,8 +142,12 @@ test('codex\'s approval, as codex 0.167 words it, with the shortcut after each o
   assert.equal(approval.what, null);
   assert.deepEqual(approval.detail, ['Reason: run the migrations before the tests', '$ npm run migrate']);
   assert.deepEqual([approval.options[approval.approve].label, approval.options[approval.deny].label], ['Yes, just this once', 'No, and tell Codex what to do differently']);
-  assert.ok(matchApproval(approval, { title: approval.title, detail: approval.detail }).ok);
-  assert.equal(matchApproval(approval, { title: approval.title, detail: ['$ rm -rf /'] }).why, 'other-approval');
+  assert.ok(matchApproval(approval, { key: approval.key }).ok);
+  assert.equal(matchApproval(approval, { key: readApproval(screen.replace('npm run migrate', 'rm -rf /')).key }).why, 'other-approval');
+  // One space more inside the command is another command: the key is the screen's text as it is, not squashed.
+  const spaced = readApproval(screen.replace('npm run migrate', 'npm run  migrate'));
+  assert.notEqual(spaced.key, approval.key);
+  assert.equal(matchApproval(spaced, { key: approval.key }).why, 'other-approval');
 });
 
 // The in-memory stand-in picker as a pane: capture draws it, keys press it, and each key is kept.
@@ -229,18 +233,37 @@ test('approving and denying claude\'s permission dialog, and refusing a differen
   const spec = { approval: { title: 'Do you want to proceed?', what: 'Write current date to now.txt', command: 'date > now.txt' } };
   const shown = readApproval(createPicker(spec).render());
   const approve = paneOf(spec);
-  assert.deepEqual(await answerApproval(approve.io, { decision: 'approve', title: shown.title, detail: shown.detail }), { moves: 0, agent: 'claude' });
+  assert.deepEqual(await answerApproval(approve.io, { decision: 'approve', key: shown.key }), { moves: 0, agent: 'claude' });
   assert.deepEqual(approve.picker.state.done, { approval: 'Yes' });
   assert.deepEqual(approve.pressed, ['Enter']);
 
   const deny = paneOf(spec);
-  await answerApproval(deny.io, { decision: 'deny', title: shown.title, detail: shown.detail });
+  await answerApproval(deny.io, { decision: 'deny', key: shown.key });
   assert.deepEqual(deny.picker.state.done, { approval: 'No' });
   assert.deepEqual(deny.pressed, ['Down', 'Down', 'Enter']);
 
   const other = paneOf({ approval: { ...spec.approval, command: 'rm -rf build' } });
-  await assert.rejects(answerApproval(other.io, { decision: 'approve', title: shown.title, detail: shown.detail }), { why: 'other-approval' });
-  assert.deepEqual(other.pressed, []);
+  await assert.rejects(answerApproval(other.io, { decision: 'approve', key: shown.key }), { why: 'other-approval' });
+  assert.deepEqual(other.pressed, [], 'a stale approval sends no key, Enter least of all');
+});
+
+test('an approval too long for the page to show in full is answered in the TUI tab alone, and a clipped part counts', async () => {
+  const codex = (command) => [
+    'Would you like to run the following command?', '',
+    ...Array.from({ length: 7 }, (_, i) => `  Reason line ${i + 1}`),
+    `  $ ${command}`, '',
+    '› 1. Yes, proceed (y)',
+    '  3. No, and tell Codex what to do differently (esc)', '',
+    '  Press enter to confirm or esc to cancel',
+  ].join('\n');
+  const long = readApproval(codex('npm test'));
+  assert.equal(long.complete, false, 'more lines than the page shows');
+  assert.equal(long.detail.length, 6, 'the command, the 8th line, is not among them');
+  assert.equal(matchApproval(long, { key: long.key }).why, 'incomplete');
+  // The part the page never showed still tells two approvals apart.
+  assert.notEqual(readApproval(codex('rm -rf /')).key, long.key);
+  const wide = readApproval(codex(`echo ${'x'.repeat(400)}`).replace(/ {2}Reason line [2-7]\n/g, ''));
+  assert.equal(wide.complete, false, 'a line longer than the page keeps');
 });
 
 test("real codex 0.167's approval reads with its own options, and the page keeps its wrapped reason whole", async () => {

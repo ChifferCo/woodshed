@@ -207,3 +207,38 @@ test('an approval reads as what is asked, then what would run, the reason last',
   assert.deepEqual(chat.approvalText({ what: null, title: 'Would you like to run the following command?', detail: ['Reason: migrate first', '$ npm run migrate'] }),
     { asks: 'Would you like to run the following command?', lines: ['$ npm run migrate', 'Reason: migrate first'] });
 });
+
+test('one read at a time: one asked for meanwhile runs when it ends, so a session opened mid-read is read', async () => {
+  // As the Chat tab: A's read is on its way when B is shown; its answer is for A, dropped, and B's read must still run.
+  let shown = 'A';
+  const ran = [];
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  const read = chat.oneAtATime(async () => {
+    const id = shown;
+    ran.push(`start ${id}`);
+    if (id === 'A') await held;
+    ran.push(`end ${id}`);
+  });
+  const first = read();
+  shown = 'B';
+  await read();
+  assert.deepEqual(ran, ['start A'], 'B waits for A, and is not run twice at once');
+  release();
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(ran, ['start A', 'end A', 'start B', 'end B'], 'B is read once A answered');
+  await read();
+  await read();
+  assert.equal(ran.filter((r) => r === 'start B').length, 3, 'calls with nothing on its way run at once');
+});
+
+test('a message waits for a file still uploading, which Enter would otherwise send without and drop', () => {
+  const up = { name: 'shot.png', path: '/tmp/uploads/shot.png' };
+  const busy = { name: 'log.txt', path: null, busy: true };
+  assert.equal(chat.notReady({ text: 'look at this', files: [up], sending: false }), null);
+  assert.match(chat.notReady({ text: 'look at this', files: [up, busy], sending: false }), /log.txt is still uploading/);
+  assert.equal(chat.notReady({ text: '  ', files: [], sending: false }), 'nothing to send');
+  assert.equal(chat.notReady({ text: '', files: [up], sending: false }), null, 'a file alone is a message');
+  assert.equal(chat.notReady({ text: 'x', files: [], sending: true }), 'sending');
+});

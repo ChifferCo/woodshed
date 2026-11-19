@@ -312,27 +312,32 @@ test('the Chat tab\'s answer goes to the running session\'s statusd with only th
   assert.match(logged, /answer typed in from the page/);
   assert.doesNotMatch(logged, /Which colour|Blue/, 'the log says which pick, never its text');
 
-  const approval = { kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] };
+  const approval = { kind: 'approval', decision: 'deny', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' };
   answerStatus = 409;
   const refused = await post('0a1b2c3d', approval);
   assert.equal(refused.status, 409, 'statusd\'s refusal reaches the page as it said it');
   assert.match((await refused.json()).error, /another question/);
   assert.deepEqual(JSON.parse(asked[1].body), approval);
+  // Only the key: what the page showed is no part of the answer, the pane's own text is.
+  await post('0a1b2c3d', { ...approval, title: 'Do you want to proceed?', detail: ['ls'] });
+  assert.deepEqual(JSON.parse(asked[2].body), approval);
 
-  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'yes', title: 't', detail: [] })).status, 400);
+  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'yes', key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' })).status, 400);
+  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'deny', title: 'Do you want to proceed?', detail: ['ls'] })).status, 400, 'no key');
+  assert.equal((await post('0a1b2c3d', { kind: 'approval', decision: 'deny', key: 'abc' })).status, 400, 'not a key');
   assert.equal((await post('0a1b2c3d', { kind: 'question', questions: [{ question: 'q', options: ['a'], pick: 3 }] })).status, 400);
   assert.equal((await post('1b2c3d4e', approval)).status, 409);
   assert.equal((await post('ffffffff', approval)).status, 404);
   assert.notEqual((await post('0a1b2c3d', approval, {})).status, 200, 'a cross-site form cannot send it');
-  assert.equal(asked.length, 2);
+  assert.equal(asked.length, 3);
 
   const prompt = await fetch(`http://127.0.0.1:${port}/api/sessions/0a1b2c3d/prompt`);
   assert.equal(prompt.status, 200);
   assert.equal((await prompt.json()).prompt.kind, 'approval');
-  assert.deepEqual(asked[2], { method: 'GET', url: '/prompt', authorization: 'Bearer tok', body: '' });
+  assert.deepEqual(asked[3], { method: 'GET', url: '/prompt', authorization: 'Bearer tok', body: '' });
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/1b2c3d4e/prompt`)).status, 409);
   assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/ffffffff/prompt`)).status, 404);
-  assert.equal(asked.length, 3);
+  assert.equal(asked.length, 4);
 });
 
 test('with sign-in on, everything but the sign-in pages needs a session', async (t) => {

@@ -26,6 +26,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { statusdReady } from './devStatusd.mjs';
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const STATUSD = path.join(HERE, '..', '..', 'session', 'statusd.mjs');
 const AGENT = path.join(HERE, 'devChatAgent.mjs');
@@ -161,7 +163,7 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   const port = await freePort();
   const child = spawn(process.execPath, [STATUSD], {
     env: {
-      ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), REPO_DIR: repo, CODEX_HOME: codexHome,
+      ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, CODEX_HOME: codexHome,
       AGENT: agent === 'codex' ? 'codex' : '', APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -170,7 +172,6 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   const relay = (chunk) => { if (/statusd: (text sent|text not sent|agent interrupted|answer typed|answer refused|claude state changed)/.test(String(chunk))) process.stdout.write(`dev chat session ${id}: ${chunk}`); };
   child.stdout.on('data', relay);
   child.stderr.on('data', relay);
-  await new Promise((resolve) => child.stdout.on('data', (chunk) => { if (String(chunk).includes('listening')) resolve(); }));
   let binDir = null;
   let ref = null;
   if (agent === 'codex' || real) {
@@ -182,8 +183,7 @@ if [ "$1" = inspect ] && [ "$4" = ${ref} ]; then echo true; exit 0; fi
 PATH='${nextPath}' exec docker "$@"
 `, { mode: 0o755 });
   }
-  console.log('dev console: chat session ready', { id, agent, real, port });
-  return {
+  const session = {
     port, termPort, ref, binDir,
     close() {
       child.kill();
@@ -206,4 +206,14 @@ PATH='${nextPath}' exec docker "$@"
       if (real && !realCodex) fs.rmSync(recordDir, { recursive: true, force: true });
     },
   };
+  // A statusd that did not start leaves nothing behind it: the dev console goes on without this session.
+  try {
+    await statusdReady(child);
+  } catch (err) {
+    console.warn('dev console: chat session not started', { id, agent, real, message: err.message });
+    session.close();
+    return null;
+  }
+  console.log('dev console: chat session ready', { id, agent, real, port });
+  return session;
 }

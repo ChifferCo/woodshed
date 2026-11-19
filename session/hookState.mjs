@@ -13,7 +13,8 @@ import fs from 'node:fs';
 import { isMain } from '../shared/isMain.mjs';
 
 // WOODSHED_CLAUDE_STATE_FILE moves it, for a second claude on one machine with a statusd of its own: the dev console's
-// real-agent session (console/bin/devChatSession.mjs), beside the session's own claude.
+// real-agent session (console/bin/devChatSession.mjs), beside the session's own claude. The fleet never sets it, so no
+// session task needs it and it is in no PER_SESSION_ENV (providers/aws/ecsLauncher.mjs): every session uses the default.
 export const STATE_FILE = process.env.WOODSHED_CLAUDE_STATE_FILE || '/tmp/woodshed-claude-state.json';
 
 // PreToolUse comes 30 ms before PermissionRequest for the same call, so needs-you is the later write. Notification

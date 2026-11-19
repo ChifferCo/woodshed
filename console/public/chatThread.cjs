@@ -379,5 +379,47 @@
     return { asks: prompt.what ? `${prompt.what}: ${prompt.title}` : prompt.title, lines: reason ? [...lines, reason] : lines };
   }
 
-  return { markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * One run at a time: a call while one runs is kept, and run once that one ends, whatever it was about. The Chat tab's
+   * reads go through it: a read asked for session B while A's is on its way runs when A's ends, rather than being
+   * dropped with A's answer, which left B on "Reading the conversation…".
+   * @param {() => Promise<void>} run
+   * @returns {() => Promise<void>}
+   */
+  function oneAtATime(run) {
+    let busy = false;
+    let queued = false;
+    return async function request() {
+      if (busy) {
+        queued = true;
+        return;
+      }
+      busy = true;
+      try {
+        await run();
+      } finally {
+        busy = false;
+        if (queued) {
+          queued = false;
+          request();
+        }
+      }
+    };
+  }
+
+  /**
+   * Why a message cannot go yet, or null: a file still uploading would be left out, and dropped with the draft. Send's
+   * button and Enter both ask it, since Enter calls send itself and a disabled button does not stop it.
+   * @param {{text: string, files: {name: string, path: string|null, busy?: boolean}[], sending: boolean}} draft
+   * @returns {string|null}
+   */
+  function notReady({ text, files, sending }) {
+    if (sending) return 'sending';
+    const busy = files.find((f) => f.busy);
+    if (busy) return `${busy.name} is still uploading: it goes with the message once it is up`;
+    if (!String(text ?? '').trim() && !files.some((f) => f.path)) return 'nothing to send';
+    return null;
+  }
+
+  return { notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

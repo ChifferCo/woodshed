@@ -51,25 +51,39 @@ const now = new Date().toISOString();
 const REVIEW_ID = 'beadfeed';
 const review = await startDevReview({ id: REVIEW_ID, branch: `woodshed/${REVIEW_ID}` });
 const APPS_ID = 'abbaabba';
-const twoApps = await startDevAppsSession({ id: APPS_ID, token: `t${APPS_ID}` });
+// Each made-up session's statusd and ttyd take a token made for this run: they listen on loopback alone, and a token
+// written in this repository would let anything on the machine type into them.
+const secret = () => crypto.randomBytes(16).toString('hex');
+const tokens = new Map();
+const tokensOf = (id) => {
+  if (!tokens.has(id)) tokens.set(id, { token: secret(), terminalToken: secret() });
+  return tokens.get(id);
+};
+const twoApps = await startDevAppsSession({ id: APPS_ID, token: tokensOf(APPS_ID).token });
 const TERMINAL_ID = 'c0ffee11';
 const liveTerminal = await startDevTerminal({ id: TERMINAL_ID, terminalToken: `x${TERMINAL_ID}` });
 const CODEX_CHAT_ID = 'c0de5e55';
 const CLAUDE_CHAT_ID = 'c1a0de00';
-const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, token: `t${CODEX_CHAT_ID}`, agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
-const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, token: `t${CLAUDE_CHAT_ID}`, agent: 'claude', nextPath: '' });
+const codexChat = await startDevChatSession({ id: CODEX_CHAT_ID, ...tokensOf(CODEX_CHAT_ID), agent: 'codex', nextPath: [twoApps.binDir, process.env.PATH].join(path.delimiter) });
+const claudeChat = await startDevChatSession({ id: CLAUDE_CHAT_ID, ...tokensOf(CLAUDE_CHAT_ID), agent: 'claude', nextPath: '' });
+// A real agent runs on this machine's credentials, so it is never served behind the session's app name: Open app and
+// app shares reach that console, which has no sign-in. Run it on a port of its own instead, which only this machine
+// reaches: DEV_CONSOLE_REAL_CLAUDE=1 node console/bin/devConsole.mjs 7700.
+const wantsReal = process.env.DEV_CONSOLE_REAL_CLAUDE === '1' || process.env.DEV_CONSOLE_REAL_CODEX === '1';
+if (wantsReal && sessionApp) console.warn('dev console: no real agent behind DEV_CONSOLE_SESSION_APP, which Open app and app shares reach: run one on another port');
+const realAllowed = wantsReal && !sessionApp;
 // DEV_CONSOLE_REAL_CLAUDE=1: /s/c1a0dea1 runs the real claude, on this machine's Claude credential, in a clone of this
 // checkout with no remote (devChatSession.mjs), with its TUI tab live. Off by default: it spends that credential.
 const REAL_ID = 'c1a0dea1';
-const realClaude = process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
-  ? await startDevChatSession({ id: REAL_ID, token: `t${REAL_ID}`, terminalToken: `x${REAL_ID}`, agent: 'claude', real: true,
+const realClaude = realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1'
+  ? await startDevChatSession({ id: REAL_ID, ...tokensOf(REAL_ID), agent: 'claude', real: true,
     nextPath: [codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
   : null;
-if (process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
+if (realAllowed && process.env.DEV_CONSOLE_REAL_CLAUDE === '1' && !realClaude) console.warn('dev console: no real claude, it needs claude, ttyd and tmux on the PATH');
 // DEV_CONSOLE_REAL_CODEX=1: /s/c0dea1ed runs the real codex the same way, on this machine's Codex sign-in.
 const REAL_CODEX_ID = 'c0dea1ed';
-const realCodex = process.env.DEV_CONSOLE_REAL_CODEX === '1'
-  ? await startDevChatSession({ id: REAL_CODEX_ID, token: `t${REAL_CODEX_ID}`, terminalToken: `x${REAL_CODEX_ID}`, agent: 'codex', real: true,
+const realCodex = realAllowed && process.env.DEV_CONSOLE_REAL_CODEX === '1'
+  ? await startDevChatSession({ id: REAL_CODEX_ID, ...tokensOf(REAL_CODEX_ID), agent: 'codex', real: true,
     nextPath: [realClaude?.binDir, codexChat?.binDir, twoApps.binDir, process.env.PATH].filter(Boolean).join(path.delimiter) })
   : null;
 function session(id, number, title, extra = {}) {
@@ -78,7 +92,7 @@ function session(id, number, title, extra = {}) {
     owner: null, options: null, resumeClaude: null, branch: `woodshed/${id}`, status: 'stopped', state: null,
     createdAt: now, startedAt: now, stoppedAt: now, lastActiveAt: now, checkedAt: null, stopReason: 'idle', error: null,
     head: null, prUrl: `https://github.com/example-org/example-repo/pull/${number}`, lastMessage: null, commentId: null,
-    token: `t${id}`, terminalToken: `x${id}`, ref: null, endpoint: null, pendingMessages: [], ...extra,
+    ...(tokens.get(id) ?? { token: `t${id}`, terminalToken: `x${id}` }), ref: null, endpoint: null, pendingMessages: [], ...extra,
   };
 }
 // A status line reading as sessions.mjs keeps it: each window's used share and how many minutes until it resets.
