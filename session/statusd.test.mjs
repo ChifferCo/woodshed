@@ -810,3 +810,25 @@ test('POST /answer approves or denies the approval on screen, and refuses one th
   assert.deepEqual((await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'approval', decision: 'deny', title: prompt.title, detail: prompt.detail }))).body, { ok: true });
   assert.deepEqual(await answers(), { approval: 'No' });
 });
+
+test('POST /send types nothing while the pane shows an approval or a question: its Enter would answer it', async (t) => {
+  // Found with the real codex 0.167: a message sent while it showed its approval was swallowed, and its Enter approved
+  // the command, the highlighted Yes.
+  const { call, answers } = await pickerPane(t, { approval: { title: 'Do you want to proceed?', what: 'Write the date', command: 'date > now.txt' } });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'run the tests next' }));
+  assert.equal(sent.status, 409);
+  assert.equal(sent.body.why, 'prompt-open');
+  assert.match(sent.body.error, /waiting for an approval/);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await answers(), null, 'nothing approved');
+  assert.equal((await call('GET', '/prompt')).body.prompt?.kind, 'approval', 'still asking');
+});
+
+test('POST /send refuses while claude\'s question picker is open', async (t) => {
+  const { call, answers } = await pickerPane(t, { questions: [{ question: 'Which colour do you prefer?', header: 'Colour', options: ['Red', 'Green'] }] });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'Red please' }));
+  assert.equal(sent.status, 409);
+  assert.match(sent.body.error, /asking a question/);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await answers(), null, 'nothing picked');
+});

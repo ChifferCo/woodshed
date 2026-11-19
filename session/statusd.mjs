@@ -7,7 +7,8 @@
 //                     plain unified diff (sessionDiff.mjs)
 //   /shed-review/...   the Review tab: the shed's own review page and server (reviewShed/), reached through the console's
 //                     /review and /reviews/claude-<id>/...
-//   POST /send        {"text": "..."} typed into claude's pane, then Enter
+//   POST /send        {"text": "..."} typed into claude's pane, then Enter; 409 (why: prompt-open) while the pane shows
+//                     a question or an approval, which the Enter would answer
 //   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
@@ -1210,6 +1211,19 @@ async function handle(req, res) {
       text = parseSendBody(await readBody(req));
     } catch (err) {
       return reply(res, 400, { error: err.message });
+    }
+    // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. Nothing is
+    // typed then; the console holds what it sends (fleet.mjs) and the page puts the text back in its box.
+    const open = readPrompt(await capturePane().catch(() => ''));
+    if (open) {
+      const agent = CODEX ? 'codex' : 'claude';
+      console.log('statusd: text not sent, a prompt is open', { kind: open.kind, chars: text.length });
+      return reply(res, 409, {
+        why: 'prompt-open',
+        error: open.kind === 'question'
+          ? `${agent} is asking a question: answer it first, then send this`
+          : `${agent} is waiting for an approval: approve or deny it first, then send this`,
+      });
     }
     await send(text);
     return reply(res, 200, { ok: true });
