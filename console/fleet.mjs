@@ -257,7 +257,7 @@ export function createFleet({
   const retention = () => config.retention ?? DEFAULT_RETENTION;
   const announcer = createPrAnnouncer({
     store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: (name, number) => gatesFor(name, number), now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
-    events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
+    events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention, listening: prListening },
     webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
   });
   const issueTracking = createIssueTracking({ github });
@@ -703,15 +703,17 @@ export function createFleet({
     }
   }
 
-  // Shared sessions only: a My Woodshed session's work is its owner's own. A GitHub that cannot be read is tried
-  // again on the next tick. Each pull request a session reports is tracked once, so a session that closes its
-  // pull request and opens another from a new branch gets the new one posted too.
+  // A shared session's pull request is posted to Slack once it passes; a My Woodshed session's is only watched, its
+  // owner's work being their own, so its session hears each verdict and broken suite until it passes, with or without
+  // Slack. A GitHub that cannot be read is tried again on the next tick. Each pull request a session reports is tracked
+  // once, so a session that closes its pull request and opens another from a new branch gets the new one too.
   async function announcePull(session) {
-    if (!announcer.available || session.owner || !session.prUrl || session.announcedPrUrl === session.prUrl) return;
+    if (!session.prUrl || session.announcedPrUrl === session.prUrl) return;
     const project = projectFor(config, session);
-    if (!announcer.postsFor(project)) return;
+    const watch = Boolean(session.owner);
+    if (!watch && (!announcer.available || !announcer.postsFor(project))) return;
     const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session, project);
+      await announcer.track(session, project, { watch });
       return true;
     });
     if (tracked) update(session, { announcedPrUrl: session.prUrl });
@@ -1052,15 +1054,26 @@ export function createFleet({
     return session && pings ? pings.mentionFor(session) : null;
   }
 
+  // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
+  // nothing but its owner resumes it.
+  function prListening(item) {
+    const session = find(item.sessionId);
+    return Boolean(session && ACTIVE_STATUSES.has(session.status));
+  }
+
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
-  // or resumed with it. True when the session was told.
+  // or resumed with it (a shared one: a stopped My Woodshed session is not). True when the session was told.
   async function prFeedback(item, text) {
     const session = find(item.sessionId);
-    if (!session || session.owner) return false;
+    if (!session) return false;
     if (ACTIVE_STATUSES.has(session.status)) {
       const outcome = await send(session, text);
-      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome });
+      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome, owner: Boolean(session.owner) });
       return true;
+    }
+    if (session.owner) {
+      console.log('fleet: review feedback dropped, the My Woodshed session is not running', { id: session.id, number: item.number });
+      return false;
     }
     if (!session.kept) {
       console.log('fleet: review feedback dropped, the session is deleted', { id: session.id, number: item.number });

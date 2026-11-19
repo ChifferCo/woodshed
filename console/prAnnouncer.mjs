@@ -8,10 +8,15 @@
 // read the review's notes first. The brief goes in the thread of the post, and is kept as one PR comment, updated in
 // place, which the brief links to. A pull request goes to its project's own channel when the project has one, and
 // otherwise to the console's; where it went is kept with the post (`slackPost` on the session, by the fleet).
+//
+// A My Woodshed session's pull request is watched instead (`watch` on its item): never posted, with or without Slack,
+// it hands the session the same feedback, and once the gates pass on a head commit, the approval's notes, once for each
+// commit. It keeps watching while the session runs, so a fix pushed after an approval is watched to its own verdict, and
+// stops when the pull request closes, the session ends, or the wait runs out, with nothing written on GitHub.
 
 import { DEFAULT_RETENTION } from './consoleSettings.mjs';
 import { briefCommentIn, buildBrief, mergeRiskRunIds, qaCheckFrom } from './decisionBrief.mjs';
-import { approvalNotesFor, feedbackFor, gaveUpComment } from './prMessages.mjs';
+import { approvalNotesFor, feedbackFor, gaveUpComment, passedNotesFor } from './prMessages.mjs';
 import { checksPass, reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
 import { pullRequestFilters } from '../shared/workflowFile.mjs';
 
@@ -33,7 +38,8 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *          ownApp?: () => {slug: string, login: string}|null,
  *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
- *                    feedback?: (item: object, text: string) => Promise<void>|void,
+ *                    feedback?: (item: object, text: string) => Promise<boolean>|boolean,
+                    listening?: (item: object) => boolean,
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
  *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs) of the pull request's project
  *   (null for the default project's), null for a repo with none; `githubOf` is another project's GitHub client, for a
@@ -42,7 +48,8 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *   `giveUpMs` is how long a pull request may wait, and `qaWaitMs` how long an approved, green one waits for its QA
  *   check, both read at each check (the Console settings page's numbers); `events` tells the fleet a pull request stopped
  *   waiting (`why` is `posted` once it is in Slack), hands it what the session should hear, and asks it
- *   whose Slack member ID to mention in the post's thread. While pull request webhooks arrive (`webhooksFlowing`), a
+ *   whose Slack member ID to mention in the post's thread; `listening` says whether a watched pull request's session
+ *   can still be told anything, and `feedback` answers true when it was. While pull request webhooks arrive (`webhooksFlowing`), a
  *   webhook marks its pull request due (`stale`) and the rest are read only every `fallbackMs`, except one waiting out
  *   a deadline of its own, which is still read every minute
  */
@@ -59,6 +66,7 @@ export function createPrAnnouncer({
   const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
   const gh = (item) => (item.project && githubOf ? githubOf(item.project) : github);
   const projectOf = (item) => item.project ?? defaultProjectName();
+  const watched = (item) => item.watch === true;
   const hasChannel = (name) => (slack?.channelFor ? Boolean(slack.channelFor(name).channel) : Boolean(slack?.available));
 
   /**
@@ -80,24 +88,29 @@ export function createPrAnnouncer({
 
   /**
    * Once per session, and only for a pull request it opened: a resumed branch or a PR's own session finds one
-   * older than the session. The URL is the session's word, so only its number is used.
+   * older than the session. The URL is the session's word, so only its number is used. A watched one (a My Woodshed
+   * session's) is never posted, so one older than the session, such as a pull request it was started to work on, is
+   * watched too.
    * @param {object} session
    * @param {{name: string, default?: boolean}|null} [project]  the session's project: its pull request is on that repo
+   * @param {{watch?: boolean}} [opts]
    * @throws {Error}  when GitHub could not be read, which is worth trying again
    */
-  async function track(session, project = null) {
+  async function track(session, project = null, { watch = false } = {}) {
     const number = Number(/\/pull\/(\d+)$/.exec(session.prUrl ?? '')?.[1]);
     if (!number) return false;
     const other = project && !project.default ? project.name : null;
-    const pull = await gh({ project: other }).pull(number);
-    if (Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
-      console.log('slack: pull request older than the session, not posted', { id: session.id, number });
-      return false;
+    if (!watch) {
+      const pull = await gh({ project: other }).pull(number);
+      if (Date.parse(pull.created_at) < Date.parse(session.createdAt)) {
+        console.log('slack: pull request older than the session, not posted', { id: session.id, number });
+        return false;
+      }
     }
     if (!pending().some((p) => p.number === number && (p.project ?? null) === other)) {
-      pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}) });
+      pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}), ...(watch ? { watch: true } : {}) });
       store.save();
-      console.log('slack: pull request waiting for its review and suites', { id: session.id, number });
+      console.log(watch ? 'slack: pull request watched for its session, until its review and suites pass' : 'slack: pull request waiting for its review and suites', { id: session.id, number });
     }
     return true;
   }
@@ -117,7 +130,33 @@ export function createPrAnnouncer({
     console.log('slack: pull request feedback for its session', {
       number: item.number, sessionId: item.sessionId, changesRequested: asks, suites: fedSuites ? broken.map((s) => `${s.name}: ${s.outcome}`) : null,
     });
-    await events.feedback?.(item, text);
+    return events.feedback?.(item, text);
+  }
+
+  // A watched pull request passed its gates on its head commit: the session hears it once for that commit, with the
+  // approval's notes to read. It stays watched, so a fix pushed after it is followed to its own verdict.
+  async function tellPassed(item, pull, review, gates) {
+    const sha = pull.head.sha;
+    if (item.passedSha === sha) return undefined;
+    item.passedSha = sha;
+    store.save();
+    console.log('slack: watched pull request passed its review and suites', { number: item.number, sessionId: item.sessionId, sha: sha.slice(0, 7) });
+    return events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, gates }));
+  }
+
+  // A My Woodshed session's pull request: its session hears each verdict and broken suite, and the pass, and nothing
+  // is posted or written on GitHub.
+  async function watchOne(item) {
+    if (events.listening && !events.listening(item)) return drop(item, 'its session ended');
+    const gates = await gatesOf(item.project ?? null, item.number);
+    if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
+    const pull = await gh(item).pull(item.number);
+    if (pull.state !== 'open') return drop(item, 'closed');
+    const runs = await gh(item).checkRuns(pull.head.sha);
+    const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
+    const heard = passed ? await tellPassed(item, pull, review, gates) : await feedBack(item, pull, review, suites, runs, gates);
+    if (heard === false) return drop(item, 'its session ended');
+    if (!passed && now() - Date.parse(item.since) > giveUpMs()) return drop(item, 'not approved and green in time');
   }
 
   // Once per pull request: the session is told of the approval and the post waits, so the review's notes are at least read.
@@ -277,6 +316,7 @@ export function createPrAnnouncer({
   }
 
   async function checkOne(item) {
+    if (watched(item)) return watchOne(item);
     const gates = await gatesOf(item.project ?? null, item.number);
     const pull = await gh(item).pull(item.number);
     if (pull.state !== 'open') return drop(item, 'closed');
@@ -330,10 +370,10 @@ export function createPrAnnouncer({
     return marked;
   }
 
-  /** Each waiting pull request that is due. GitHub or Slack failing leaves it for its next check. */
+  /** Each waiting pull request that is due. GitHub or Slack failing leaves it for its next check. Without Slack, only
+   * the watched ones are read. */
   async function check() {
-    if (!slack?.available) return;
-    for (const item of pending().filter(due)) {
+    for (const item of pending().filter((p) => (watched(p) || slack?.available) && due(p))) {
       checkedAt.set(keyOf(item.number, item.project), now());
       try {
         await checkOne(item);
@@ -345,7 +385,7 @@ export function createPrAnnouncer({
 
   /** @returns {Set<string>}  the sessions whose pull request is still waiting to be posted */
   function waitingSessions() {
-    return new Set(pending().map((p) => p.sessionId));
+    return new Set(pending().filter((p) => !watched(p)).map((p) => p.sessionId));
   }
 
   // A getter: the channel is a setting, and can be set or cleared while the console runs.

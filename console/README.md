@@ -1676,7 +1676,13 @@ filters from the workflow file on the default branch, and waits for the suite wh
 cannot. With no `pullRequests` (or no project file, or neither a review nor a suite), it
 is posted once it is out of draft and none of its checks is running or failed (with no checks at all, 2 minutes after it was first seen, so they have time to show). A project
 file that cannot be read holds every pull request until it can. A My Woodshed session's
-pull request is never posted. Until then the
+pull request is never posted: it is watched instead (`watch` on its `slackPending` item), with or without Slack, so
+its session hears each verdict asking for changes and each failed or skipped suite as below, and once the gates pass
+on a head commit, a note to read the review's notes, fix what is real and stop, once for each commit. It stays watched
+while the session runs, so a fix pushed after the approval is followed to its own verdict, and is dropped when the
+pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), the week runs out, or
+the project file has no review or suite (`slack: pull request no longer waiting` with why), with nothing written on
+GitHub. A pull request older than the session is watched too. Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
 the Console settings page), is dropped unposted. Once it is posted, its session stops (`posted to Slack`) and is

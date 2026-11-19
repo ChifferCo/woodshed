@@ -33,6 +33,24 @@ export function approvalNotesFor({ number, sha, review, gates, graceMinutes }) {
     + 'and answer what you decline in a PR comment with the reason. If there is nothing to act on, do nothing.';
 }
 
+/**
+ * @param {{number: number, sha: string, review: object|null, gates: object}} args
+ * @returns {string}  what a My Woodshed session hears once its pull request passed its review and suites on a commit
+ */
+export function passedNotesFor({ number, sha, review, gates }) {
+  const short = sha.slice(0, 7);
+  const passed = [
+    gates.review && review ? `the review verdict is APPROVE (${review.html_url})` : null,
+    gates.suites.length ? `${gates.suites.map((s) => s.name).join(', ')} passed` : null,
+  ].filter(Boolean).join(', and ');
+  const notes = gates.review
+    ? `Read the review's notes with \`gh pr view ${number} --comments\` and \`gh api repos/{owner}/{repo}/pulls/${number}/comments\`. `
+      + `Fix what is real with a commit${rerunTags(gates) ? ` whose subject has ${rerunTags(gates)}` : ''}, which is watched again to its own verdict, `
+      + 'and answer what you decline in a PR comment with the reason. If there is nothing to act on, '
+    : 'If there is nothing left to do, ';
+  return `PR #${number} at ${short} passed: ${passed}. ${notes}say in one line that the PR passed its review and checks, and stop.`;
+}
+
 function suiteFailed({ number, short, suite, runs }) {
   const failed = suiteJobs(runs, suite).filter((r) => r.conclusion !== 'success').slice(0, JOBS_NAMED);
   return `The ${suite.name} failed on PR #${number} at ${short}: ${failed.map((r) => `${r.name} ${r.html_url}`).join(', ')}. `

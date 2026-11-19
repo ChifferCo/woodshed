@@ -1313,12 +1313,53 @@ test('the assignee is tagged in the thread of the ready pull request\'s post, an
   assert.equal(slack.posts[0].mention, 'U0JOEL0001', 'the assignee is tagged in the thread');
 });
 
-test('a My Woodshed session\'s pull request is never tracked for Slack', async () => {
-  const { fleet, statuses, session, store } = await sessionWithPull({ createdAt: '2026-10-21T10:05:00Z' });
+test('a My Woodshed session\'s pull request is watched until it passes, and never posted to Slack', async () => {
+  const { fleet, github, slack, statuses, session, store, calls, advance } = await sessionWithPull({ createdAt: '2026-10-20T09:00:00Z' });
   session.owner = 'joel';
-  statuses[session.id] = { state: 'working', prUrl: 'https://github.com/o/r/pull/7' };
+  github.reviews = async () => [{
+    id: 1, user: { login: 'review-bot[bot]' }, state: 'CHANGES_REQUESTED', body: '## Code review', commit_id: 'abc', html_url: 'https://github.com/o/r/pull/7#r1',
+  }];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/7' };
   await fleet.tick();
-  assert.deepEqual(store.state.slackPending ?? [], []);
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched, though older than the session');
+  assert.deepEqual([...fleet.slackWaiting()], [], 'not waiting for Slack');
+  const sent = () => calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text);
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0], /asks for changes/);
+
+  github.pull = async (number) => ({ number, title: 'Add GTM', created_at: '2026-10-20T09:00:00Z', state: 'open', head: { sha: 'def' } });
+  github.reviews = async () => approvedReview();
+  github.checkRuns = async () => e2eRuns();
+  advance(60_000);
+  await fleet.tick();
+  assert.match(sent()[1], /^PR #7 at def passed: the review verdict is APPROVE/);
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 2, 'the pass is told once for its commit');
+  assert.deepEqual(slack.posts, []);
+  assert.equal(session.status, 'running', 'a pass does not stop it');
+  assert.equal(store.state.slackPending.length, 1, 'still watched, for a fix pushed after the approval');
+
+  await fleet.stop(session, 'idle for 1 h');
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending, [], 'its session ended');
+  assert.equal(session.status, 'stopped', 'never resumed by the console');
+});
+
+test('a My Woodshed session\'s pull request is watched on a console with no Slack', async () => {
+  const { fleet, github, statuses, calls } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].body.text, /e2e suite failed on PR #9/);
 });
 
 test('a stopped shared session is kept; posting its pull request to Slack stops it and it is finished', async () => {

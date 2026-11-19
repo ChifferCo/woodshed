@@ -690,3 +690,49 @@ test('a tracked pull request whose channel is cleared waits for one, and is stil
   assert.deepEqual(dropped.map((d) => [d.item.number, d.why]), [[7, 'closed'], [8, 'no Slack channel']]);
   assert.deepEqual(store.state.slackPending, []);
 });
+
+test('a watched pull request is never posted, hears its pass once per commit, and ends with its session', async () => {
+  const { announcer, slack, store, session, told, dropped, github } = setup({ heard: true });
+  let listening = true;
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock,
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, listening: () => listening },
+  });
+  assert.equal(announcer.available, true);
+  await watcher.track({ ...session, createdAt: '2026-10-27T00:00:00Z' }, null, { watch: true });
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched though older than the session');
+  assert.deepEqual([...watcher.waitingSessions()], []);
+  await watcher.check();
+  clock += MINUTE;
+  await watcher.check();
+  assert.equal(told.length, 1, 'the second read of the same commit says nothing');
+  assert.match(told[0], /^PR #7 at abc passed: the review verdict is APPROVE \(https:.*\), and e2e suite passed\. .*\[review\]\[e2e\].*and stop\.$/);
+  assert.deepEqual(slack.posts, []);
+  assert.deepEqual(github.comments, []);
+  listening = false;
+  clock += MINUTE;
+  await watcher.check();
+  assert.deepEqual([store.state.slackPending, dropped], [[], ['its session ended']]);
+});
+
+test('a watched pull request runs out of time with nothing written on GitHub, and one with no gates is not watched', async () => {
+  const { store, session, told, dropped, github } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const holder = { gates: GATES };
+  const gaveUp = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => holder.gates, now: () => clock, giveUpMs: () => 60 * MINUTE,
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, gaveUp: () => { gaveUp.push(1); } },
+  });
+  await watcher.track(session, null, { watch: true });
+  await watcher.check();
+  assert.match(told[0], /asks for changes/);
+  clock += 61 * MINUTE;
+  await watcher.check();
+  assert.deepEqual([dropped, gaveUp, github.comments], [['not approved and green in time'], [], []]);
+  holder.gates = null;
+  await watcher.track(session, null, { watch: true });
+  await watcher.check();
+  assert.deepEqual(dropped.at(-1), 'no review or suite to watch');
+});
