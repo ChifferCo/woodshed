@@ -62,10 +62,12 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   session stops, Review shows what it pushed.
 - `?tab=terminal` opens on Terminal, `?tab=review` on Review, `?tab=diff` on Diff and `?tab=applog` on App log.
   With no `?tab`, as from the rail, a session opens on the tab it was last left on in that browser tab
-  (`public/sessionTabs.cjs`: sessionStorage, so a reload keeps it too, read only by the login that picked it and
-  dropped at sign-out); `?tab=agent` asks for Agent itself, as Open the agent and Resume do. A remembered tab the session
-  cannot show now (Diff once it stopped) opens Agent, and the address and the memory then say Agent too; until the
-  route's lookup answers, the list may be the kept snapshot's, so the tab is held and tried again first.
+  (`public/sessionTabs.cjs`: sessionStorage, read only by the login that picked it and dropped at sign-out). The page
+  never writes `?tab` itself: a tab picked lives in the history entry's state, so a reload, Back and Forward keep it,
+  and an address only ever carries a link's tab (it goes through sign-in as it came, and a ?tab nobody linked to never
+  reaches someone else). `?tab=agent` asks for Agent itself, as Open the agent and Resume do. A tab the session cannot
+  show now (Diff once it stopped) opens Agent; a remembered one is then remembered as Agent. Until the route's lookup
+  answers, the list may be the kept snapshot's, so the tab is held and tried again first.
 
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.

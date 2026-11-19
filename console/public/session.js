@@ -49,11 +49,13 @@
     const dropped = Boolean(params.get('tab')) && !inAddress;
     if (inAddress) params.set('tab', inAddress);
     else params.delete('tab');
-    const asked = tabMemory.asked(id, inAddress, SessionTabs.entryTab(state, pageLogin));
+    const fromEntry = SessionTabs.entryTab(state, pageLogin);
+    const asked = tabMemory.asked(id, inAddress, fromEntry);
+    // Only the memory's own tab is the memory's to correct when the session cannot show it (render's fallback).
+    askedFromMemory = Boolean(asked) && !inAddress && !fromEntry;
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
-    if (id && !params.get('tab') && tab !== 'agent') params.set('tab', tab);
     const query = params.toString();
     const address = `${pathname}${query ? `?${query}` : ''}`;
     if (id && asked) markEntry(address, arrivedWith);
@@ -98,6 +100,7 @@
   // A tab asked for that the session, as the list before this route's lookup has it, cannot show: tried again once the
   // lookup answers (render).
   let heldTab = null;
+  let askedFromMemory = false;
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box.
@@ -1840,8 +1843,9 @@
     tabMemory.remember(id, tab);
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
-    if (tab === 'agent') url.searchParams.delete('tab');
-    else url.searchParams.set('tab', tab);
+    // The tab picked lives in the entry's state, not its address: a ?tab is only ever a link's, so nothing this login
+    // picked rides in an address to someone else (a reload after a lost sign-in goes through the server's redirect).
+    url.searchParams.delete('tab');
     markEntry(url);
     render();
   }
@@ -1977,7 +1981,8 @@
       const url = new URL(window.location.href);
       url.searchParams.delete('tab');
       markEntry(url);
-      tabMemory.remember(s.id, tab);
+      // A link's tab the session cannot show leaves the memory as it was: nothing was picked.
+      if (askedFromMemory) tabMemory.remember(s.id, tab);
     }
     stampEntry();
     if (hasShell && tab === 'terminal') shellPool.show(s);
@@ -2023,7 +2028,9 @@
     landOnReview = false;
     tab = 'review';
     tabMemory.remember(s.id, tab);
-    markEntry(`/s/${s.id}?tab=review`);
+    const url = new URL(window.location.href);
+    url.searchParams.delete('tab');
+    markEntry(url);
   }
 
   // What the last answers were, in this tab, so a page load draws the rail at once and refreshes it after, rather than
