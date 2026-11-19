@@ -212,18 +212,29 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${app}`)),
         h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as ${app}, with the GitHub access this console has.`));
     }
+    // Behind a host that connects people on its own, being unconnected is the exception: someone signed in to GitHub as
+    // another account, or who disconnected. The card says so, and Connect is the quiet way back.
+    if (!gh.connected && me.githubConnectAutomatic) {
+      return h('section', { class: 'set-card', id: 'my-github' },
+        h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${bot}`)),
+        h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as ${bot}. GitHub usually connects on its own the first time you open the console; it did not this time, or you disconnected. Connect to have them push as you, marked “via ${via}”.`),
+        h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-quiet', href: me.githubConnectHref }, 'Connect GitHub')),
+        githubStatus);
+    }
     if (!gh.connected) {
       return h('section', { class: 'set-card', id: 'my-github' },
         h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill' }, `Pushes as ${bot}`)),
         h('p', { class: 'sub' }, `Connect to have your My Woodshed sessions commit, push and open pull requests as you, marked “via ${via}”. It is the same GitHub sign-in again; this time the console keeps the token, and only your private sessions get it, a few minutes at a time.`),
-        h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-open', href: '/auth/connect' }, 'Connect GitHub')),
+        h('div', { class: 'set-actions' }, h('a', { class: 'btn btn-open', href: me.githubConnectHref ?? '/auth/connect' }, 'Connect GitHub')),
         githubStatus);
     }
     if (document.activeElement !== gitName && !gitTyped) gitName.value = gh.name ?? '';
     if (document.activeElement !== gitEmail && !gitTyped) gitEmail.value = gh.email ?? '';
     return h('section', { class: 'set-card', id: 'my-github' },
-      h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill is-ok' }, `Connected as ${W.personText(me.login)}`)),
-      h('p', { class: 'sub' }, `Your My Woodshed sessions push and open pull requests as you. Disconnect here ends your token at GitHub, and running sessions push as ${bot} again within 5 minutes.`),
+      h('div', { class: 'set-head' }, h('h2', null, 'GitHub'), h('span', { class: 'pill is-ok' }, me.githubConnectAutomatic ? `Pushes as ${W.personText(me.login)}` : `Connected as ${W.personText(me.login)}`)),
+      h('p', { class: 'sub' }, me.githubConnectAutomatic
+        ? `Your My Woodshed sessions push and open pull requests as you, marked “via ${via}”. Nothing to do: it connected on its own when you first opened the console. Disconnect ends your token at GitHub, and running sessions push as ${bot} again within 5 minutes.`
+        : `Your My Woodshed sessions push and open pull requests as you. Disconnect here ends your token at GitHub, and running sessions push as ${bot} again within 5 minutes.`),
       h('div', { class: 'lgrid2' },
         h('label', { class: 'field-label', for: 'git-name' }, h('span', null, 'Commits as'), gitName),
         h('label', { class: 'field-label', for: 'git-email' }, h('span', null, 'Email'), gitEmail)),

@@ -179,6 +179,30 @@ test('a console that borrows its GitHub access has no /setup/github, and My sett
   assert.equal((await send(port, { method: 'POST', path: '/api/setup/github/restart', headers: WRITE, body: {} })).status, 404);
   assert.deepEqual(asked, [], 'the setup was never reached');
   assert.equal((await send(port, { path: '/api/my' })).body.githubConnect, false, 'no App sign-in to connect through');
+  assert.equal((await send(port, { path: '/api/my' })).body.githubConnectHref, '/auth/connect', 'the console\'s own, unused');
+  assert.equal((await send(port, { path: '/api/my' })).body.githubConnectAutomatic, false, 'a console on its own connects nobody by itself');
+});
+
+test('a console the host lends Connect GitHub to sends My settings\' Connect to the host\'s page, and its Disconnect works', async (t) => {
+  const disconnected = [];
+  const userSettings = {
+    view: () => ({ claudeToken: { set: false }, codexAuth: { set: false }, github: { connected: false }, files: {}, setUp: false, available: true }),
+  };
+  const githubUser = { tokenFor: async () => null, disconnect: async (login) => { disconnected.push(login); } };
+  const fleet = { sessions: () => [], find: () => null };
+  const config = { ...CONFIG, trustedIdentitySecret: null, githubBroker: { url: 'https://host.example/t', tokenFile: '/nonexistent' } };
+  const handle = createHandler({ config, fleet, userSettings, githubUser, githubConnectHref: '/host/github/connect', githubConnectAutomatic: true });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+
+  const me = (await send(port, { path: '/api/my' })).body;
+  assert.equal(me.githubConnect, true);
+  assert.equal(me.githubConnectHref, '/host/github/connect', 'the host runs the sign-in, not /auth/connect');
+  assert.equal(me.githubConnectAutomatic, true, 'the host connects people on its own');
+  assert.equal((await send(port, { path: '/auth/connect', headers: { accept: 'text/html' } })).status, 404, 'the console has no sign-in of its own to connect with');
+  await send(port, { method: 'POST', path: '/api/my/github/disconnect', headers: WRITE, body: {} });
+  assert.equal(disconnected.length, 1, 'Disconnect ends the token through the host-lent githubUser');
 });
 
 test('the header signs a terminal websocket in, and never reaches the session', async (t) => {

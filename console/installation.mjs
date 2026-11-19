@@ -212,7 +212,9 @@ async function loadAppKey(config, secrets) {
  *          webhookUrl?: (() => Promise<string|null>)|null}, trusted?: {userFor: Function}|null, githubSetup?: object|null,
  *          userMenu?: ((headers: object) => object)|null, newId?: () => string, repos?: object|null,
  *          projectReadiness?: ((project: {name: string, repo: string}) => Promise<object|null>)|null,
- *          hostApp?: object|null, woodshedUpdate?: boolean}} args
+ *          hostApp?: object|null, woodshedUpdate?: boolean,
+ *          githubConnect?: {clientId: () => string|Promise<string>, clientSecret: () => string|null, href: string,
+ *                           automatic?: boolean}|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
@@ -223,14 +225,22 @@ async function loadAppKey(config, secrets) {
  *   sessions cannot start on a project, where the program knows (its image not built, a secret missing): null, or
  *   `{reason, fix: [{text, href?, label?}], ask?: {who, text?}}` (databaseGate.mjs, README.md "Embedding the console").
  *   `woodshedUpdate: false` turns off the Console settings Woodshed card and its check, for a program that deploys
- *   Woodshed itself (README.md "Embedding the console")
+ *   Woodshed itself (README.md "Embedding the console").
+ *   `githubConnect`, behind `trusted` only, is Connect GitHub on the host's GitHub App: My settings' Connect sends
+ *   people to `href`, where the host signs them in with GitHub and hands the answer to `connectGitHub`; the console
+ *   keeps it in `provider.secrets` and refreshes it with the App's `clientId` and `clientSecret` (githubUser.mjs).
+ *   `automatic: true` says the host connects people on its own, so My settings shows it as a status with a way to
+ *   connect again, not as a step to take.
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null }) {
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
     throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
+  }
+  if (githubConnect && (!trusted || typeof githubConnect.clientId !== 'function' || typeof githubConnect.clientSecret !== 'function' || typeof githubConnect.href !== 'string' || !githubConnect.href.startsWith('/') || (githubConnect.automatic != null && typeof githubConnect.automatic !== 'boolean'))) {
+    throw new Error('githubConnect is for a console behind trusted sign-in, and needs clientId, clientSecret and a path for href (automatic, when given, true or false)');
   }
   if (repos && (typeof repos.add !== 'function' || typeof repos.remove !== 'function' || (repos.list != null && typeof repos.list !== 'function'))) {
     throw new Error('repos needs add and remove, and list when it has one');
@@ -371,7 +381,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const settings = secrets && (appKey || config.githubBroker)
     ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
-  const githubUser = auth?.githubUser ?? null;
+  // Connect GitHub through the host's App, which a console behind a host has no sign-in of its own for. That App is
+  // installed beyond this console's repos, so a person's token is always scoped by GitHub, to this console's repos or
+  // the session's alone (sessionApi.mjs, `ownerTokenRepos`).
+  const hostConnect = githubConnect && secrets
+    ? createGitHubUser({ clientId: async () => githubConnect.clientId(), clientSecret: githubConnect.clientSecret, userSettings })
+    : null;
+  if (githubConnect && !secrets) console.warn('console: Connect GitHub off, the host gave no secret store to keep tokens in');
+  const githubUser = auth?.githubUser ?? hostConnect;
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
   const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => !auth?.enabled() || members.isMember(login) });
   const dbRestore = createDbRestore({
@@ -413,6 +430,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     trusted,
     userMenu,
     appPorts,
+    githubConnectHref: hostConnect ? githubConnect.href : null,
+    githubConnectAutomatic: Boolean(hostConnect && githubConnect.automatic),
     woodshedUpdate,
   });
   const upgrade = createConsoleUpgrade({ config, fleet, auth, members, appShares, tunnel, trusted, appPorts });
@@ -420,6 +439,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
+    ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
@@ -492,11 +512,21 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */
     dispatchWebhook: (message) => webhookDispatch.dispatch(message),
+    /**
+     * Keeps a Connect GitHub sign-in the host ran (`githubConnect`): GitHub's answer to the code, and who signed in
+     * here, whom GitHub must say it is. Throws `shown` when GitHub says otherwise.
+     */
+    connectGitHub: async ({ login, answer }) => {
+      if (!hostConnect) throw new Error('this console was given no githubConnect');
+      await hostConnect.connect({ login, answer });
+    },
+    /** Disconnect, for the host when the person leaves: the stored token goes and GitHub ends it. */
+    disconnectGitHub: async (login) => { if (githubUser) await githubUser.disconnect(login); },
     summary: () => ({
       repo: defaultProject(config).repo, projects: config.projects?.map((p) => p.name), label: config.label,
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
-      appPorts: appPorts ? appPorts.ports.length : 0,
+      appPorts: appPorts ? appPorts.ports.length : 0, githubConnect: Boolean(hostConnect),
     }),
   };
 }
