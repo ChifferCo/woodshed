@@ -91,8 +91,9 @@ export function checkSlackInstall(install) {
 export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshed', eventsUrl = null, install = null, now = Date.now }) {
   checkSlackInstall(install);
   // Only a store that makes a secret when it is first written can lose one and make it again. One whose secrets its
-  // infrastructure made (Terraform, on AWS) would be left without the secret the webhook receiver reads.
-  const canDisconnect = Boolean(secrets?.createsOnWrite && typeof secrets.remove === 'function');
+  // infrastructure made (Terraform, on AWS) would be left without the secret the webhook receiver reads. Asked each time:
+  // a store chosen on the Secrets page after the console starts answers only from then on.
+  const canDisconnect = () => Boolean(secrets?.createsOnWrite && typeof secrets.remove === 'function');
 
   async function readEventsUrl() {
     if (!eventsUrl) return null;
@@ -147,7 +148,7 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
    * @returns {Promise<object>}  what the card and the dialog show; never a value
    */
   async function view() {
-    const base = { eventsUrl: await readEventsUrl(), install: await installView(), canDisconnect, scopes: BOT_SCOPES, channelScopes: CHANNEL_SCOPES };
+    const base = { eventsUrl: await readEventsUrl(), install: await installView(), canDisconnect: canDisconnect(), scopes: BOT_SCOPES, channelScopes: CHANNEL_SCOPES };
     base.manifest = slackManifest({ name: consoleName, eventsUrl: base.eventsUrl });
     const channel = slack.view().channel;
     if (!secrets || secrets.configured?.() === false) {
@@ -253,7 +254,7 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
    * for the next bot.
    */
   async function disconnect({ by }) {
-    if (!canDisconnect) throw shown('This console\'s secret store keeps its Slack secrets: replace the keys instead.', 409);
+    if (!canDisconnect()) throw shown('This console\'s secret store keeps its Slack secrets: replace the keys instead.', 409);
     await secrets.remove(SLACK_TOKEN_SECRET);
     await secrets.remove(SLACK_SIGNING_SECRET);
     slack.forgetChannels();
@@ -268,5 +269,5 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
     return slack.channels({ query, token });
   }
 
-  return { view, check, save, disconnect, channels, canDisconnect };
+  return { view, check, save, disconnect, channels, get canDisconnect() { return canDisconnect(); } };
 }

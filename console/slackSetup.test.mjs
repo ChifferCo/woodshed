@@ -165,6 +165,18 @@ test('an app made before the picker gets missingScope, for the page\'s channel I
   assert.deepEqual(await slackSetup.channels({ query: '', botToken: TOKEN }), { missingScope: true, needed: ['channels:read', 'groups:read'] });
 });
 
+test('Disconnect follows a store chosen after the console started, with no restart', async () => {
+  // The local provider's secret slot answers createsOnWrite only once a store is chosen on the Secrets page.
+  const secrets = memorySecrets({ createsOnWrite: false });
+  const { slackSetup } = setup({ secrets });
+  assert.equal((await slackSetup.view()).canDisconnect, false);
+  secrets.createsOnWrite = true;
+  assert.equal((await slackSetup.view()).canDisconnect, true);
+  await slackSetup.save({ botToken: TOKEN, by: 'mia-dev' });
+  await slackSetup.disconnect({ by: 'mia-dev' });
+  assert.equal(secrets.values.size, 0);
+});
+
 test('Disconnect only where the store makes its secrets: it deletes both, and keeps the channel', async () => {
   const fixed = setup();
   await assert.rejects(fixed.slackSetup.disconnect({ by: 'mia-dev' }), (err) => err.shown && err.status === 409);
