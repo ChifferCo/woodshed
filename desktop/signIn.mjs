@@ -15,12 +15,28 @@ export function pkcePair() {
   return { verifier, challenge: crypto.createHash('sha256').update(verifier).digest('base64url') };
 }
 
+/** A console's own sign-in: its login page's Sign in with GitHub. */
+export const CONSOLE_SIGN_IN_PATHS = Object.freeze(['/auth/start']);
+
 /**
- * The console's Sign in with GitHub (`/auth/start?next=`, the login page's button), and where to go after it. Not
- * `/login`, where a signed-out page lands: that page is the console's own, and its button is the step.
+ * The paths a console's pages go to to sign in, from its `/auth/desktop/ready`: a console behind a program that signs
+ * people in itself names that program's (the hosted console's `/account/sign-in`).
+ * @returns {string[]}  paths on the console only; the console's own when it named none
+ */
+export function signInPathsFrom(ready) {
+  const named = Array.isArray(ready?.signInPaths) ? ready.signInPaths : [];
+  const paths = named.filter((p) => typeof p === 'string' && /^\/(?![/\\])[\w./-]{0,200}$/.test(p)).slice(0, 8);
+  return paths.length ? paths : [...CONSOLE_SIGN_IN_PATHS];
+}
+
+/**
+ * The console's sign-in step, and where to go after it: one of its sign-in paths, on its origin (`/auth/start?next=`,
+ * the login page's button, on a console of its own). Not a console's own `/login`, where a signed-out page lands: that
+ * page is the console's, and its button is the step.
+ * @param {readonly string[]} [signInPaths]  signInPathsFrom()'s
  * @returns {{next: string}|null}  null for any other address
  */
-export function signInStep(target, consoleUrl) {
+export function signInStep(target, consoleUrl, signInPaths = CONSOLE_SIGN_IN_PATHS) {
   let url;
   try {
     url = new URL(target);
@@ -28,7 +44,7 @@ export function signInStep(target, consoleUrl) {
     return null;
   }
   if (url.origin !== new URL(consoleUrl).origin) return null;
-  if (url.pathname !== '/auth/start') return null;
+  if (!signInPaths.includes(url.pathname)) return null;
   return { next: url.searchParams.get('next') || '/' };
 }
 

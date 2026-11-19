@@ -2300,7 +2300,7 @@ test('a browser signed in to the console signs the desktop app in, through the c
   const get = (path, cookie = '') => fetch(`${base}${path}`, { redirect: 'manual', headers: { accept: 'text/html', cookie } });
   const cookieOf = (res) => res.headers.getSetCookie().map((c) => c.split(';')[0]).filter((c) => !c.endsWith('=')).join('; ');
 
-  assert.deepEqual(await (await get('/auth/desktop/ready')).json(), { desktop: true, available: true, required: true });
+  assert.deepEqual(await (await get('/auth/desktop/ready')).json(), { desktop: true, available: true, required: true, signInPaths: ['/auth/start'] });
   const verifier = crypto.randomBytes(32).toString('base64url');
   const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
   const desktop = `/auth/desktop?challenge=${challenge}&next=%2Fs%2F0a1b2c3d`;

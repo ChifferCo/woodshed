@@ -1,8 +1,9 @@
 // The desktop app's sign-in through the person's own browser (desktop/signIn.mjs is the app's side, auth.mjs keeps the
 // codes). Open to anyone who reaches the console, like the rest of sign-in:
 //
-//   GET  /auth/desktop/ready    ->  whether this console hands sign-ins to the app; an app that gets anything else
-//                                   (an older console, or one behind a hosting proxy) signs in inside its own window
+//   GET  /auth/desktop/ready    ->  whether this console hands sign-ins to the app, and the paths its pages sign in
+//                                   at, which the app sends to the browser; an app that gets anything else (an older
+//                                   console, or a hosting proxy that answers none of these) signs in inside its window
 //   GET  /auth/desktop?challenge=&next=
 //                               ->  signed out: GitHub sign-in in this browser, which comes back here
 //                                   signed in: a page that asks whether to sign the app in, as whom
@@ -12,6 +13,10 @@
 // The button is what keeps another program on the machine from signing itself in: anything can open a browser at
 // /auth/desktop with a challenge of its own, and register woodshed:// to catch the link, so the code is made only
 // when the person presses Sign in on a page that says it is for the Woodshed app, and only from the console's own page.
+//
+// A program that signs people in itself (a hosting proxy, the multi-tenant console) answers the same routes with this
+// handler: its own `auth` (visitorFor, desktopCode and claimDesktopCode, with auth.mjs's createDesktopCodes),
+// `signInUrl` and `signInPaths` (console/README.md, "Embedding the console").
 import { DESKTOP_CHALLENGE_RE, safeNext } from './auth.mjs';
 import { isSameOrigin } from '../shared/sameOrigin.mjs';
 
@@ -96,15 +101,27 @@ async function readBody(req, parse = (text) => JSON.parse(text || '{}')) {
   return parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+/** The console's own sign-in: GitHub's, which comes back to `back`. */
+export const consoleSignInUrl = (back) => `/auth/start?next=${encodeURIComponent(back)}`;
+export const CONSOLE_SIGN_IN_PATHS = Object.freeze(['/auth/start']);
+
 /**
  * @param {{req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, url: URL,
- *          auth: ReturnType<import('./auth.mjs').createAuth>, consoleName?: string}} args
+ *          auth: {available(): boolean, enabled(): boolean,
+ *                 visitorFor(cookieHeader: string|undefined, req: object): Promise<{login: string}|null>,
+ *                 desktopCode(args: {cookieHeader: string|undefined, req: object, challenge: string}): Promise<string|null>,
+ *                 claimDesktopCode(args: {code: string, verifier: string}): ({login: string, setCookie: string}|null|Promise<{login: string, setCookie: string}|null>)},
+ *          consoleName?: string, signInUrl?: (back: string) => string, signInPaths?: readonly string[]}} args
+ *   `auth` is auth.mjs's createAuth() on a console; `signInUrl` where a signed-out browser signs in, coming back to
+ *   `back`; `signInPaths` the paths the console's pages go to to sign in, which the app sends to the browser instead
  * @returns {Promise<boolean>}  whether it answered: true for its own paths
  */
-export async function handleDesktopSignIn({ req, res, url, auth, consoleName = 'Woodshed' }) {
+export async function handleDesktopSignIn({
+  req, res, url, auth, consoleName = 'Woodshed', signInUrl = consoleSignInUrl, signInPaths = CONSOLE_SIGN_IN_PATHS,
+}) {
   const { pathname } = url;
   if (pathname === '/auth/desktop/ready' && req.method === 'GET') {
-    json(res, 200, { desktop: true, available: auth.available(), required: auth.enabled() });
+    json(res, 200, { desktop: true, available: auth.available(), required: auth.enabled(), signInPaths });
     return true;
   }
   if (pathname === '/auth/desktop' && req.method === 'GET') {
@@ -114,11 +131,11 @@ export async function handleDesktopSignIn({ req, res, url, auth, consoleName = '
       json(res, 400, { error: 'open this from the Woodshed app' });
       return true;
     }
-    const user = await auth.visitorFor(req.headers.cookie);
+    const user = await auth.visitorFor(req.headers.cookie, req);
     if (!user) {
-      // Signed out in this browser: GitHub's sign-in, which brings the browser back here, challenge and all.
+      // Signed out in this browser: the console's sign-in, which brings the browser back here, challenge and all.
       const back = `/auth/desktop?${new URLSearchParams({ challenge, next })}`;
-      res.writeHead(302, { location: `/auth/start?next=${encodeURIComponent(back)}`, 'cache-control': 'no-store' });
+      res.writeHead(302, { location: signInUrl(back), 'cache-control': 'no-store' });
       res.end();
       return true;
     }
@@ -145,7 +162,7 @@ export async function handleDesktopSignIn({ req, res, url, auth, consoleName = '
       json(res, 400, { error: 'open this from the Woodshed app' });
       return true;
     }
-    const code = await auth.desktopCode({ cookieHeader: req.headers.cookie, challenge });
+    const code = await auth.desktopCode({ cookieHeader: req.headers.cookie, req, challenge });
     if (!code) {
       res.writeHead(303, { location: `/auth/desktop?${new URLSearchParams({ challenge, next })}`, 'cache-control': 'no-store' });
       res.end();
@@ -168,7 +185,7 @@ export async function handleDesktopSignIn({ req, res, url, auth, consoleName = '
       json(res, 400, { error: 'send {code, verifier} as JSON' });
       return true;
     }
-    const claimed = auth.claimDesktopCode({ code: body?.code, verifier: body?.verifier });
+    const claimed = await auth.claimDesktopCode({ code: body?.code, verifier: body?.verifier });
     if (!claimed) {
       json(res, 401, { error: 'That sign-in has expired or was already used. Sign in again from the app.' });
       return true;

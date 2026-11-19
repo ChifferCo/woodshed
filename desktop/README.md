@@ -79,8 +79,11 @@ As native apps do, the app signs in through your default browser, where you are 
    no sign-in for, or one for another console than the one open now, is ignored, and the page to open after it is
    always a path on that console.
 
-A console that cannot hand the sign-in back (one from before this, or the hosted one, whose hosting layer signs people
-in itself and does not answer `/auth/desktop/ready`) is signed in to inside the window, as in a browser. The waiting
+`/auth/desktop/ready` also names the paths the console's pages sign in at (`signInPaths`): `/auth/start` on a console
+of its own, the host's on one behind a program that signs people in itself (the hosted console's `/account/sign-in`,
+which its `/login` redirects to). The app sends a click or a redirect to any of them to the browser. A console that
+cannot hand the sign-in back (one from before this, or behind a proxy that answers none of these routes) is signed in
+to inside the window, as in a browser. The waiting
 page's **Sign in in this window instead** does the same anywhere.
 
 `woodshed://` is the app's: a built app registers it (electron-builder's `protocols`); `npm start` registers Electron,

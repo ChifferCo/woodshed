@@ -1295,7 +1295,9 @@ opens the browser with a challenge of its own and catches `woodshed://` gets not
 page after it opens `woodshed://signed-in?code=` with a code that lives two minutes and works once. The app claims it at `POST /auth/desktop/claim` with the verifier the challenge was made from (PKCE's S256), for a
 session of its own: signing the browser out leaves the app signed in, and the other way round. `GET
 /auth/desktop/ready` says the console does this; a console behind a hosting proxy, which signs people in itself,
-answers none of these, and the app signs in inside its window there. The console logs `auth: desktop sign-in code
+answers none of these, and the app signs in inside its window there, unless the program answers them itself
+("Embedding the console": `handleDesktopSignIn` with its own sign-in). The ready answer's `signInPaths` are the paths the
+console's pages sign in at (`/auth/start` here), which the app sends to the browser. The console logs `auth: desktop sign-in code
 issued`, `auth: desktop signed in`, or `auth: desktop sign-in code refused` with `known` and `verified`.
 
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
@@ -1530,6 +1532,11 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
+- Where the program signs people in itself (`trusted`), the desktop app's routes are its own to answer, since core's
+  sign-in is off: `handleDesktopSignIn` (`desktopSignIn.mjs`) with an `auth` of the program's (`visitorFor` says who
+  the browser is signed in as, `desktopCode` issues a code for them when they press Sign in, `claimDesktopCode` makes
+  the app a session of the program's), the codes from `createDesktopCodes` (`auth.mjs`), and `signInUrl(back)` and
+  `signInPaths` for the program's sign-in page.
 - `repos: {list?(), add({repo, name?, by}), remove({name, repo, by}), names?}`: where the program keeps the
   installation's repos, which it built `config.projects` from, so Console settings' Repos card changes them there and
   core keeps no list of its own (`addedProjects`, above under the Repos card). `list` answers what Add a repo offers:

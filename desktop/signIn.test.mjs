@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { browserUrl, createPending, linkInArgs, parseSignedInLink, pkcePair, signInStep } from './signIn.mjs';
+import { browserUrl, createPending, linkInArgs, parseSignedInLink, pkcePair, signInPathsFrom, signInStep } from './signIn.mjs';
 
 test('the challenge is the verifier\'s SHA-256, as the console checks it', () => {
   const { verifier, challenge } = pkcePair();
@@ -19,6 +19,21 @@ test('only the console\'s own Sign in with GitHub goes to the browser', () => {
   assert.equal(signInStep('https://woodshed.example.com/auth/connect', home), null, 'Connect GitHub keeps its token, in the window');
   assert.equal(signInStep('https://elsewhere.example.com/auth/start', home), null);
   assert.equal(signInStep('nonsense', home), null);
+});
+
+test('a console behind a host that signs people in itself sends its own sign-in to the browser', () => {
+  const home = 'https://console.woodshed.run/';
+  const paths = signInPathsFrom({ desktop: true, signInPaths: ['/account/sign-in'] });
+  assert.deepEqual(paths, ['/account/sign-in']);
+  assert.deepEqual(signInStep('https://console.woodshed.run/account/sign-in?next=%2F', home, paths), { next: '/' });
+  assert.equal(signInStep('https://console.woodshed.run/account/sign-up', home, paths), null);
+  assert.equal(signInStep('https://console.woodshed.run/auth/start', home, paths), null);
+});
+
+test('a ready answer names only paths on the console, or the console\'s own sign-in', () => {
+  assert.deepEqual(signInPathsFrom({ desktop: true }), ['/auth/start'], 'a console from before the paths');
+  assert.deepEqual(signInPathsFrom(null), ['/auth/start']);
+  assert.deepEqual(signInPathsFrom({ signInPaths: ['//evil.test/x', 'https://evil.test/', '/\\evil', 42, '/ok'] }), ['/ok']);
 });
 
 test('the browser opens the console\'s desktop sign-in', () => {

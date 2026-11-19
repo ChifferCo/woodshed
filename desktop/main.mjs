@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
-import { PROTOCOL, browserUrl, createPending, linkInArgs, parseSignedInLink, signInStep } from './signIn.mjs';
+import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const iconFile = path.join(here, 'icon.png');
@@ -77,8 +77,8 @@ function guard(win) {
   });
   contents.on('did-create-window', (child) => guard(child));
   contents.on('will-navigate', (event, url) => {
-    // The console's Sign in with GitHub: in the person's browser, when the console can hand it back (signInInBrowser).
-    const step = consoleUrl && win === mainWindow ? signInStep(url, consoleUrl) : null;
+    // The console's sign-in: in the person's browser, when the console can hand it back (signInInBrowser).
+    const step = consoleUrl && win === mainWindow ? signInStep(url, consoleUrl, signInPaths) : null;
     if (step) {
       event.preventDefault();
       signInInBrowser(step.next, url);
@@ -100,6 +100,14 @@ function guard(win) {
   });
   // A redirect (sign-in's callback, an app's /auth/app) is checked as a navigation is.
   contents.on('will-redirect', (event, url) => {
+    // A signed-out page sent to sign in by a redirect (the hosted console's /login): the browser too, but only for a
+    // console that said it hands sign-ins back, so the window's own sign-in, when it falls back to it, is never caught.
+    const step = consoleUrl && win === mainWindow && desktopReady ? signInStep(url, consoleUrl, signInPaths) : null;
+    if (step) {
+      event.preventDefault();
+      signInInBrowser(step.next, url);
+      return;
+    }
     if (where(url) === 'external') {
       event.preventDefault();
       openExternal(url);
@@ -157,6 +165,7 @@ ipcMain.handle('console:connect', async (event, typed) => {
   appDomain = null;
   // A sign-in started on the console before is not this one's.
   pending.take();
+  readDesktopReady();
   mainWindow.loadURL(url);
   startWatching();
   return { ok: true };
@@ -167,15 +176,29 @@ ipcMain.handle('console:connect', async (event, typed) => {
 // people in itself) is signed in to in the window, as before. ---
 
 const pending = createPending();
+// What the console's /auth/desktop/ready last said: whether it hands sign-ins back, and the paths its pages sign in at
+// (a hosted console's are its host's), read at start and on Change console…, and asked again at each sign-in.
+let desktopReady = false;
+let signInPaths = [...CONSOLE_SIGN_IN_PATHS];
 
-async function desktopSignInReady() {
+async function readDesktopReady() {
+  const base = consoleUrl;
+  let ready = null;
   try {
-    const res = await net.fetch(new URL('auth/desktop/ready', consoleUrl).href, { headers: { Accept: 'application/json' } });
-    return res.ok && (await res.json().catch(() => null))?.desktop === true;
+    const res = await net.fetch(new URL('auth/desktop/ready', base).href, { headers: { Accept: 'application/json' } });
+    ready = res.ok ? await res.json().catch(() => null) : null;
   } catch {
-    return false;
+    ready = null;
   }
+  // An answer from a console no longer in use is not this one's.
+  if (base !== consoleUrl) return false;
+  desktopReady = ready?.desktop === true;
+  signInPaths = signInPathsFrom(desktopReady ? ready : null);
+  return desktopReady;
 }
+const desktopSignInReady = readDesktopReady;
+// Where the window signs in, for a console that cannot hand the sign-in back or a person who asked to stay here.
+const signInHere = (next) => new URL(`${signInPaths[0].replace(/^\//, '')}?next=${encodeURIComponent(next)}`, consoleUrl).href;
 
 // `inWindow`: the address the page was going to, for a console that cannot hand the sign-in back.
 async function signInInBrowser(next, inWindow) {
@@ -238,12 +261,12 @@ function fromSignInPage(event) {
 ipcMain.handle('signin:browser', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
   const { next } = pending.waiting() ? pending.take() : { next: '/' };
-  signInInBrowser(next, new URL(`auth/start?next=${encodeURIComponent(next)}`, consoleUrl).href);
+  signInInBrowser(next, signInHere(next));
 });
 ipcMain.handle('signin:here', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
   const next = pending.take()?.next ?? '/';
-  mainWindow.loadURL(new URL(`auth/start?next=${encodeURIComponent(next)}`, consoleUrl).href);
+  mainWindow.loadURL(signInHere(next));
 });
 
 // --- Attention: the badge and notifications, from the same /api/sessions the rail reads, with the window's cookie. ---
@@ -410,6 +433,7 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) => permitted(permission, origin, details));
     if (process.platform === 'darwin' && icon) app.dock?.setIcon(icon);
     buildMenu();
+    readDesktopReady();
     createMainWindow();
     startWatching();
     app.on('activate', () => { if (!mainWindow) createMainWindow(); });
