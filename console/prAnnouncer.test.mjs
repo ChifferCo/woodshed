@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createPrAnnouncer } from './prAnnouncer.mjs';
-import { passedNotesFor } from './prMessages.mjs';
+import { feedbackFor, passedNotesFor } from './prMessages.mjs';
 import { reviewVerdict, suiteNeverRuns, suiteOutcome } from './pullGates.mjs';
 import { pullRequestFilters } from '../shared/workflowFile.mjs';
 
@@ -944,4 +944,35 @@ test('a closed pull request read before a resume does not drop the renewed watch
   };
   await watcher.check();
   assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.run]), [[7, 1]]);
+});
+
+test('a watched session not told yet is tried each minute while webhooks flow, and back to the fallback once told', async () => {
+  const { store, session, github } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  let answer = 'later';
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock, webhooksFlowing: () => true, fallbackMs: 5 * MINUTE,
+    events: { feedback: (item, text) => { told.push(text); return answer; } },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  answer = true;
+  clock += MINUTE;
+  await watcher.check();
+  assert.equal(told.length, 2, 'tried again a minute later, not at the fallback');
+  github.reviews = async () => [verdict('CHANGES_REQUESTED')];
+  clock += MINUTE;
+  await watcher.check();
+  assert.equal(told.length, 2, 'told: read again only at the fallback or a webhook');
+});
+
+test('a private session\'s feedback asks its owner at the terminal, never Slack or a Needs a human comment', () => {
+  const runs = [shard(1, 'failure')];
+  for (const broken of [[{ suite: SUITE, outcome: 'failed' }], [{ suite: SUITE, outcome: 'skipped' }]]) {
+    const text = feedbackFor({ number: 7, sha: 'abcdef1', review: verdict('CHANGES_REQUESTED'), broken, runs, gates: GATES, watch: true });
+    assert.doesNotMatch(text, /Slack|Needs a human/);
+    assert.match(text, /ask what to do, then wait for the answer/);
+    assert.match(feedbackFor({ number: 7, sha: 'abcdef1', review: null, broken, runs, gates: GATES }), /Needs a human/, 'a shared session\'s is as it was');
+  }
 });

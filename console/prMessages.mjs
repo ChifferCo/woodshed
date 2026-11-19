@@ -19,6 +19,9 @@ function pushWith(tags) {
 }
 
 const NEEDS_HUMAN = 'post a PR comment that opens with `Needs a human:` and tags the person on the PR body\'s `Started by @…` line, then stop.';
+// A My Woodshed session's owner is at its terminal, and its pull request goes to no Slack.
+const ASK_OWNER = 'say so here, with what you found, and ask what to do, then wait for the answer.';
+const stuck = (watch) => (watch ? ASK_OWNER : NEEDS_HUMAN);
 
 /**
  * @param {{number: number, sha: string, review: object, gates: object, graceMinutes: number}} args
@@ -59,39 +62,42 @@ export function passedNotesFor({ number, sha, review, suites = [], gates }) {
     + 'and why it is not your change\'s, and stop.';
 }
 
-function suiteFailed({ number, short, suite, runs }) {
+function suiteFailed({ number, short, suite, runs, watch }) {
   const failed = suiteJobs(runs, suite).filter((r) => r.conclusion !== 'success').slice(0, JOBS_NAMED);
   return `The ${suite.name} failed on PR #${number} at ${short}: ${failed.map((r) => `${r.name} ${r.html_url}`).join(', ')}. `
     + `Find out why. Fix it if the change caused it, then ${pushWith(suite.rerun)}. `
-    + `If CI caused it or you cannot fix it, ${NEEDS_HUMAN}`;
+    + `If CI caused it or you cannot fix it, ${stuck(watch)}`;
 }
 
-function suiteSkipped({ number, short, suite }) {
+function suiteSkipped({ number, short, suite, watch }) {
   const { name, rerun } = suite;
   const emptyCommit = `git commit --allow-empty -m "${rerun ? `${rerun} ` : ''}Run the ${name}"`;
-  return `The ${name} was skipped on PR #${number} at ${short}, so the PR cannot be posted to Slack. It does not run on a pull request `
+  const giveUp = watch
+    ? `if that is refused, or the job is cancelled again, do not keep pushing: ${ASK_OWNER} `
+    : 'if that is refused, or the job is cancelled again, do not keep pushing: post a PR comment that opens with `Needs a human:`, '
+      + 'names the job and links its run, and tags the person on the PR body\'s `Started by @…` line (and comment on the issue too if the PR closes one), '
+      + 'so it does not get lost, then stop. ';
+  return `The ${name} was skipped on PR #${number} at ${short}, so the PR ${watch ? 'has not passed it' : 'cannot be posted to Slack'}. It does not run on a pull request `
     + `that is a draft${rerun ? `, or for a last commit whose subject does not have ${rerun}` : ''}. Before you push anything, run `
     + `\`gh run list --workflow=${path.basename(suite.workflow)} --branch <branch>\` and \`gh run view <id> --json jobs\`: if ${rerun ? 'the tag and ' : ''}the draft state `
     + `${rerun ? 'are' : 'is'} fine and a job such as the install job was cancelled or timed out, that is CI, not your commit. Try \`gh run rerun --failed <id>\` once; `
-    + 'if that is refused, or the job is cancelled again, do not keep pushing: post a PR comment that opens with `Needs a human:`, '
-    + 'names the job and links its run, and tags the person on the PR body\'s `Started by @…` line (and comment on the issue too if the PR closes one), '
-    + `so it does not get lost, then stop. Otherwise push one commit such as \`${emptyCommit}\`, and no more than one.`;
+    + `${giveUp}Otherwise push one commit such as \`${emptyCommit}\`, and no more than one.`;
 }
 
 /**
  * @param {{number: number, sha: string, review: object|null, broken: {suite: object, outcome: string}[], runs: object[],
- *          gates: object}} args  `review` is a verdict asking for changes, to hand over; `broken` the suites that
- *   failed or were skipped, to hand over
+ *          gates: object, watch?: boolean}} args  `review` is a verdict asking for changes, to hand over; `broken` the suites that
+ *   failed or were skipped, to hand over; `watch` for a My Woodshed session, which asks its owner rather than GitHub
  * @returns {string}  what the session hears
  */
-export function feedbackFor({ number, sha, review, broken, runs, gates }) {
+export function feedbackFor({ number, sha, review, broken, runs, gates, watch = false }) {
   const short = sha.slice(0, 7);
   const parts = [
     review
       ? `The review verdict on PR #${number} at ${short} asks for changes: ${review.html_url}. Read it with \`gh pr view ${number} --comments\`, `
-        + `fix the blocking findings, and ${pushWith(rerunTags(gates))}. If you cannot, ${NEEDS_HUMAN}`
+        + `fix the blocking findings, and ${pushWith(rerunTags(gates))}. If you cannot, ${stuck(watch)}`
       : null,
-    ...broken.map(({ suite, outcome }) => (outcome === 'failed' ? suiteFailed({ number, short, suite, runs }) : suiteSkipped({ number, short, suite }))),
+    ...broken.map(({ suite, outcome }) => (outcome === 'failed' ? suiteFailed({ number, short, suite, runs, watch }) : suiteSkipped({ number, short, suite, watch }))),
   ];
   return parts.filter(Boolean).join('\n\n');
 }

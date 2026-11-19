@@ -159,7 +159,7 @@ export function createPrAnnouncer({
     const suiteKey = `${sha}:${broken.map((s) => `${s.name}=${s.outcome}`).join(',')}`;
     const fedSuites = broken.length > 0 && item.fedSuite !== suiteKey;
     if (!asks && !fedSuites) return;
-    const text = feedbackFor({ number: item.number, sha, review: asks ? review : null, broken: fedSuites ? broken : [], runs, gates });
+    const text = feedbackFor({ number: item.number, sha, review: asks ? review : null, broken: fedSuites ? broken : [], runs, gates, watch: watched(item) });
     const before = { fedReview: item.fedReview, fedSuite: item.fedSuite, run: item.run ?? 0 };
     if (asks) item.fedReview = review.id;
     if (fedSuites) item.fedSuite = suiteKey;
@@ -169,18 +169,26 @@ export function createPrAnnouncer({
     });
     const heard = await events.feedback?.(item, text);
     if (heard === 'later') untold(item, before);
+    else if (heard === true) told(item);
     return heard;
   }
 
   // A watched session that could not be typed into just now (claude not open, or statusd not answering) is told again
   // at the next check: nothing is held for it, which a later Resume would type in long after.
+  // Told at last: the watch goes back to being read when a webhook says so, and logs the next miss again.
+  function told(item) {
+    if (!item.untoldSaid) return;
+    delete item.untoldSaid;
+    store.save();
+  }
+
   function untold(item, { run, ...before }) {
     // A resume while the session was being told has already started the watch over: its reset stands.
     if ((item.run ?? 0) !== run) return;
     const said = item.untoldSaid;
     Object.assign(item, before, { untoldSaid: true });
     store.save();
-    // Once for each watch: claude may stay closed for a while, and it is tried every minute.
+    // Once until it is told: claude may stay closed for a while, and it is tried every minute.
     if (!said) console.log('slack: watched pull request\'s session not told yet, tried again at each check', { number: item.number, sessionId: item.sessionId });
   }
 
@@ -195,6 +203,7 @@ export function createPrAnnouncer({
     console.log('slack: watched pull request passed its review and suites', { number: item.number, sessionId: item.sessionId, sha: sha.slice(0, 7) });
     const heard = await events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, suites, gates }));
     if (heard === 'later') untold(item, before);
+    else if (heard === true) told(item);
     return heard;
   }
 
@@ -417,7 +426,8 @@ export function createPrAnnouncer({
   // grace period counts a minute past its end, so a check lands after it and not a fallback period later.
   function waitsOnTheClock(item) {
     const holding = item.heldAt && now() - Date.parse(item.heldAt) < APPROVAL_GRACE_MS + CHECK_EVERY_MS;
-    return Boolean(holding || item.qaSince);
+    // A watched session not told yet is tried again each minute, with no webhook to say claude opened.
+    return Boolean(holding || item.qaSince || item.untoldSaid);
   }
 
   function due(item) {

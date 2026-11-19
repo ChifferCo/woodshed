@@ -1678,7 +1678,8 @@ is posted once it is out of draft and none of its checks is running or failed (w
 file that cannot be read holds every pull request until it can. A My Woodshed session's
 pull request is never posted: it is watched instead (`watch` on its `slackPending` item), with or without Slack, so
 its session hears each verdict asking for changes and each failed or skipped suite as below, and once the gates pass
-on a head commit, a note to read the review's notes, fix what is real and stop, once for each commit. It stays watched
+on a head commit, a note to read the review's notes, fix what is real and stop, once for each commit. Where a
+shared session would post a `Needs a human:` comment, a private one asks its owner at its terminal. It stays watched
 while the session runs, so a fix pushed after the approval is followed to its own verdict, and is dropped when the
 pull request closes, the session stops (nothing resumes a My Woodshed session but its owner) or reports another pull
 request or none (a branch with no pull request), the week runs out (checked again after GitHub's reads, before the session is told)
@@ -1691,7 +1692,7 @@ started on) in the repo itself, not a fork, after the session started (`slack: s
 so no session is told to push to a teammate's, nor about a pull request on another repo than its project's (`fleet: pull request on another
 repo than the session's project, not watched`, as for a session whose project left the list). The note on a pass also has the session run `gh pr checks` and see any
 other check through before it stops. A resumed session's watch starts again, its week over, and its new run is told where the pull request stands; a stopping session hears nothing, and one claude is not open
-in yet is told at the next check rather than held, so nothing is typed in at a later Resume. A suite whose path filters
+in yet is told at the next check, each minute even while webhooks flow, rather than held, so nothing is typed in at a later Resume. A suite whose path filters
 leave the change out is named as not run in the pass's note. Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
