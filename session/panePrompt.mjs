@@ -171,17 +171,17 @@ function asDrawn(raw) {
   return lines.map((l) => (l.trim() ? l.slice(indent) : ''));
 }
 
+// claude's tip, and the lines it wraps onto, in the one place claude draws one: the line right under the dialog's head
+// (`Bash command`). A line starting `Tip:` anywhere else, a command's own line among them, is what it asks, and stays:
+// the person approves only what the page showed them.
 function dropTips(raw, width) {
-  const out = [];
-  for (let i = 0; i < raw.length; i++) {
-    if (!/^\s*Tip:/.test(raw[i])) {
-      out.push(raw[i]);
-      continue;
-    }
-    while (i + 1 < raw.length && raw[i + 1].trim() && !DASHED.test(raw[i + 1])
-      && raw[i].trimEnd().length + 1 + raw[i + 1].trim().split(/\s/)[0].length > width) i++;
-  }
-  return out;
+  const head = raw.findIndex((l) => l.trim());
+  const at = head + 1;
+  if (head === -1 || !/^\s*Tip:/.test(raw[at] ?? '')) return raw;
+  let end = at;
+  while (end + 1 < raw.length && raw[end + 1].trim() && !DASHED.test(raw[end + 1])
+    && raw[end].trimEnd().length + 1 + raw[end + 1].trim().split(/\s/)[0].length > width) end++;
+  return [...raw.slice(0, at), ...raw.slice(end + 1)];
 }
 
 /**

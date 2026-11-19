@@ -123,6 +123,14 @@ test('an approval: claude\'s permission dialogs, old and new, with what is asked
   assert.notEqual(noOnce, pane('pane-permission-bash.txt'));
   assert.equal(readApproval(noOnce), null, 'with no one-time Yes, Approve has nothing it may pick');
 
+  // A command whose own line starts `Tip:` (a heredoc, a script) is what it asks: shown, never taken for claude's tip.
+  const tipped = pane('pane-permission-bash.txt').replace(/\n date > now\.txt\n(?=╌)/, '\n date > now.txt\n Tip: rm -rf ~/notes\n');
+  assert.notEqual(tipped, pane('pane-permission-bash.txt'));
+  const withTipLine = readApproval(tipped);
+  assert.deepEqual(withTipLine.detail, ['Write current date to now.txt', 'date > now.txt', 'Tip: rm -rf ~/notes'], 'the command\'s Tip: line is shown');
+  const tippedNarrow = readApproval(pane('pane-permission-bash-narrow.txt').replace(/\n date > now\.txt\n(?=╌)/, '\n date > now.txt\n Tip: and more of it\n'));
+  assert.deepEqual(tippedNarrow.detail, ['Write current date to now.txt', 'date > now.txt', 'Tip: and more of it']);
+
   const old = readApproval(pane('pane-permission.txt'));
   assert.deepEqual(old.detail, ['curl -s https://example.com | head -2', 'Fetch example.com and show first two lines'], 'without "This command requires approval"');
 
