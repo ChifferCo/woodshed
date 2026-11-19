@@ -47,11 +47,19 @@
     heldTab = null;
     if (id && asked) tabMemory.remember(id, tab);
     if (id && !params.get('tab') && tab !== 'agent') params.set('tab', tab);
-    if (id && asked) markEntry(`${pathname}${params.size ? `?${params}` : ''}`);
+    const query = params.toString();
+    if (id && asked) markEntry(`${pathname}${query ? `?${query}` : ''}`);
   }
   // This history entry's address, with the tab it shows in its state.
   function markEntry(address) {
     window.history.replaceState({ ...window.history.state, tab }, '', address);
+  }
+  // This history entry's state alone, with the tab it keeps for Back and Forward (sessionTabs.cjs, leftOn): written as
+  // the page draws a session, so an entry left by Back or Forward keeps it too, not only one left through a link.
+  function stampEntry() {
+    const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
+    const left = SessionTabs.leftOn({ tab, held: heldTab, reviewPending });
+    if ((window.history.state?.tab ?? null) !== left) window.history.replaceState({ ...window.history.state, tab: left }, '');
   }
   // The tab each session was last on, for this browser tab and the login signed in.
   const SessionTabs = window.WoodshedSessionTabs;
@@ -97,8 +105,7 @@
     }
     if (url.href !== window.location.href) {
       // The entry left behind keeps the tab it showed, for Back (sessionTabs.cjs, leftOn).
-      const left = SessionTabs.leftOn({ tab, held: heldTab, landOnReview });
-      if (id) window.history.replaceState({ ...window.history.state, tab: left }, '');
+      if (id) stampEntry();
       window.history.pushState(null, '', url.pathname + url.search);
     }
     moved();
@@ -1947,6 +1954,7 @@
       markEntry(url);
       tabMemory.remember(s.id, tab);
     }
+    stampEntry();
     if (hasShell && tab === 'terminal') shellPool.show(s);
     slots.head.replaceChildren(paneBar(s));
     offerRenameOnce(s);

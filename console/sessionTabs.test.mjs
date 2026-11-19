@@ -164,14 +164,24 @@ test('Back to an entry gives the tab it showed, over what the session was left o
   assert.equal(memory.asked(null, null, 'diff'), null, 'not a session page');
 });
 
-test('an entry left keeps the tab it showed, and none while a review-only session is still to land on Review', () => {
-  assert.equal(tabs.leftOn({ tab: 'diff', held: null, landOnReview: false }), 'diff');
-  assert.equal(tabs.leftOn({ tab: 'agent', held: null, landOnReview: false }), 'agent', 'Agent picked, or the default');
-  assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', landOnReview: false }), 'diff', 'the held tab, not its stand-in');
-  assert.equal(tabs.leftOn({ tab: 'agent', held: null, landOnReview: true }), null,
-    'a starting review-only session: Back lands it on Review once it runs, as Agent was not picked');
+test('an entry keeps the tab it shows, and none while a review-only session is still to land on Review', () => {
+  assert.equal(tabs.leftOn({ tab: 'diff', held: null, reviewPending: false }), 'diff');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: null, reviewPending: false }), 'agent',
+    'a regular session on Agent, picked or not: Back after Open the diff comes back to Agent');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', reviewPending: false }), 'diff', 'the held tab, not its stand-in');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: null, reviewPending: true }), null,
+    'a starting review-only session: coming back lands it on Review once it runs, as Agent was not picked');
   // Back to that entry asks for nothing, so the page lands it on Review again.
   assert.equal(tabs.memory(storage(), 'octocat').asked('aaaa1111', null, null), null);
+});
+
+test('Forward to a visit left by Back gives the tab it showed, though a later pick changed the memory', () => {
+  // Nothing kept. Visit A (Agent, stamped as drawn), B, A again (Agent, stamped as drawn); Back twice to the first A,
+  // which picks Diff; Forward twice to the second A.
+  const memory = tabs.memory(storage(), 'octocat');
+  const secondVisit = tabs.leftOn({ tab: 'agent', held: null, reviewPending: false });
+  memory.remember('aaaa1111', 'diff');
+  assert.equal(memory.asked('aaaa1111', null, secondVisit), 'agent');
 });
 
 test('once sign-out starts, a page still answering writes nothing back', () => {
