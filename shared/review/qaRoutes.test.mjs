@@ -43,11 +43,12 @@ const { handleReviewRequest, failedQaRecord } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 
 // A worktree review of a real checkout, whose snapshot is the commit made here: what the diff was taken from.
-function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt } = {}) {
+function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z', { aTxt, attributes } = {}) {
   fs.mkdirSync(worktree, { recursive: true });
   const git = (...args) => execFileSync('git', ['-C', worktree, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
   if (!fs.existsSync(path.join(worktree, '.git'))) git('init', '-q');
   if (aTxt !== undefined) fs.writeFileSync(path.join(worktree, 'a.txt'), aTxt);
+  if (attributes !== undefined) fs.writeFileSync(path.join(worktree, '.gitattributes'), attributes);
   fs.writeFileSync(path.join(worktree, 'src.mjs'), `// ${createdAt}\n`);
   git('add', '-A');
   git('commit', '-q', '-m', 'snapshot');
@@ -163,7 +164,8 @@ test('the diff says which review it belongs to, read with it', async () => {
 test('the answerer reads the code the diff was taken from, not edits made in the checkout since', async () => {
   const session = 'claude-7b7b7b7b';
   const worktree = path.join(DIR, 'pinned');
-  makeReview(session, worktree, '2026-11-19T14:00:00.000Z', { aTxt: 'as the diff has it\n' });
+  // export-ignore too: a copy made by `git archive` would leave a.txt out, though the diff may show it.
+  makeReview(session, worktree, '2026-11-19T14:00:00.000Z', { aTxt: 'as the diff has it\n', attributes: 'a.txt export-ignore\n' });
   fs.writeFileSync(path.join(worktree, 'a.txt'), 'edited after the diff was taken\n');
   await call('POST', `/reviews/${session}/qa`);
   const qa = await until(() => { const q = readQa(session); return q?.status === 'ready' || q?.status === 'failed' ? q : null; });
@@ -171,6 +173,21 @@ test('the answerer reads the code the diff was taken from, not edits made in the
   for (const item of qa.items) assert.match(item.answer, /a\.txt: as the diff has it$/, item.id);
   // The copy is gone once the run is.
   assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith(`woodshed-qa-${session}-`)), []);
+});
+
+// The page asks by itself on the tab's first opening. That ask must not replace a Q&A this diff already has: a tab
+// opened late, as another tab's run finished, would pay to throw that one away. Ask again is the one that replaces.
+test('a first-open ask keeps the Q&A the diff already has; Ask again replaces it', async () => {
+  const session = 'claude-9d9d9d9d';
+  makeReview(session, path.join(DIR, 'keep'), '2026-11-19T16:00:00.000Z');
+  await call('POST', `/reviews/${session}/qa`);
+  const done = await until(() => (readQa(session)?.status === 'ready' ? readQa(session) : null));
+  const first = await call('POST', `/reviews/${session}/qa?first=1`);
+  assert.deepEqual([first.body.status, first.body.kept], ['ready', true]);
+  assert.equal(readQa(session).startedAt, done.startedAt, 'the same run, nothing new paid for');
+  const again = await call('POST', `/reviews/${session}/qa`);
+  assert.equal(again.body.status, 'running');
+  await until(() => (readQa(session)?.status === 'ready' && readQa(session).startedAt !== done.startedAt));
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {

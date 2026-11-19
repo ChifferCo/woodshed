@@ -931,7 +931,7 @@ export async function handleReviewRequest(req, res, ctx) {
     return true;
   }
   if (req.method === 'POST' && section === '/qa') {
-    await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session, url.searchParams.get('forDiff')));
+    await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session, url.searchParams.get('forDiff'), url.searchParams.get('first') === '1'));
     return true;
   }
   if (req.method === 'GET' && section === '/chat') {
@@ -2047,7 +2047,11 @@ function handleQaRead(res, ctx, session) {
 // left open across a Re-review elsewhere would otherwise pay for a Q&A about a
 // diff it is not showing, and could not show; a caller that names none (a
 // script) asks about whatever the review is now.
-function handleQaStart(res, ctx, session, forDiff) {
+// `first`: the page asking by itself, on the tab's first opening, rather than a
+// person pressing Ask again. That one never replaces a Q&A this diff already
+// has: a tab that opened late, while another tab's run finished, would
+// otherwise pay to throw that one away.
+function handleQaStart(res, ctx, session, forDiff, first = false) {
   const { json, log, reqId } = ctx;
   const review = readSessionReview(session);
   if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
@@ -2059,6 +2063,13 @@ function handleQaStart(res, ctx, session, forDiff) {
     });
   }
   if (qaRuns.has(session)) return json(res, 200, { ok: true, status: 'running' });
+  if (first) {
+    const had = readQa(session);
+    if (had && (had.forDiff ?? null) === (review.createdAt ?? null) && had.status !== 'running') {
+      log('review.qa_first_ask_kept', { reqId, session, status: had.status });
+      return json(res, 200, { ok: true, status: had.status, kept: true });
+    }
+  }
   qaGen += 1;
   const gen = qaGen;
   qaRuns.set(session, { gen });

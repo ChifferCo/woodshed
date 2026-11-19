@@ -25,7 +25,7 @@
 // was taken would contradict the diff they sit beside. Each run extracts the
 // diff's tree (`snapshotTreeish`: a worktree review's scratch-index tree, which
 // holds its uncommitted and untracked files, or a pull request's head commit)
-// into a scratch folder with `git archive`, answers there, and deletes it.
+// into a scratch folder (makeSnapshot), answers there, and deletes it.
 // This is the one reading on the page pinned this way: the analysis, an explain
 // and the chat still read the live tree, and say so through the page's header.
 
@@ -285,30 +285,35 @@ export function snapshotTreeish(review) {
 }
 
 /**
- * The tree, extracted into a scratch folder of its own for the answerer to read.
- * `git archive` rather than a worktree: nothing is registered with git, so there
- * is nothing to unregister, and tracked files are all it writes. The caller
- * removes `dir` with removeSnapshot.
+ * The tree, written out into a scratch folder of its own for the answerer to read.
+ *
+ * A scratch index (`read-tree`) and `checkout-index`, not `git archive`: archive
+ * honours `export-ignore` and `export-subst` from the tree's .gitattributes, so a
+ * file the diff shows could be missing or rewritten in the copy. checkout-index
+ * writes every file the tree has, as a checkout would. Nothing is registered
+ * with git (no worktree, no ref) and the session's own index is never touched.
+ * Submodules are their commit ids in the diff, and empty folders here, as in
+ * any checkout that has not initialised them. The caller removes `dir` with
+ * removeSnapshot.
  *
  * @returns {Promise<{ok: true, dir: string} | {ok: false, error: string}>}
  */
 export async function makeSnapshot({ repoDir, treeish, session }) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-qa-${session}-`));
-  const tar = `${dir}.tar`;
+  const index = `${dir}.index`;
+  const env = { ...process.env, GIT_INDEX_FILE: index };
+  const failed = (step, got) => {
+    removeSnapshot(dir);
+    return { ok: false, error: `could not copy the reviewed code (${step}: ${(got.stderr || '').trim().slice(0, 200) || got.status})` };
+  };
   try {
-    const archived = await run('git', ['-C', repoDir, 'archive', '--format=tar', '-o', tar, treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
-    if (archived.status !== 0) {
-      removeSnapshot(dir);
-      return { ok: false, error: `could not copy the reviewed code (git archive: ${(archived.stderr || '').trim().slice(0, 200) || archived.status})` };
-    }
-    const unpacked = await run('tar', ['-xf', tar, '-C', dir], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
-    if (unpacked.status !== 0) {
-      removeSnapshot(dir);
-      return { ok: false, error: `could not copy the reviewed code (tar: ${(unpacked.stderr || '').trim().slice(0, 200) || unpacked.status})` };
-    }
+    const read = await run('git', ['-C', repoDir, 'read-tree', treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS, env });
+    if (read.status !== 0) return failed('read-tree', read);
+    const written = await run('git', ['-C', repoDir, 'checkout-index', '--all', '--force', `--prefix=${dir}/`], { timeoutMs: SNAPSHOT_TIMEOUT_MS, env });
+    if (written.status !== 0) return failed('checkout-index', written);
     return { ok: true, dir };
   } finally {
-    fs.rmSync(tar, { force: true });
+    fs.rmSync(index, { force: true });
   }
 }
 

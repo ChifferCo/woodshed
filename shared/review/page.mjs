@@ -2971,9 +2971,16 @@ ${DARK_PALETTE}
         // is for the analysis. Once per view, so a failure is not retried in a loop.
         if (!view.data && start && !view.started && !view.otherDiff) {
           view.started = true;
-          await api('POST', qaStartUrl());
+          var asked = await api('POST', qaStartUrl() + '&first=1');
           if (view !== qaView) return;
-          view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+          // Another tab's Q&A was there already: read it rather than drawing a run.
+          if (asked.kept) {
+            var kept = await api('GET', '/reviews/' + state.session + '/qa');
+            if (view !== qaView) return;
+            view.data = kept.qa || null;
+          } else {
+            view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
+          }
         }
       } catch (e) {
         if (view !== qaView) return;
