@@ -41,12 +41,14 @@
     // the tab it was last left on (sessionTabs.cjs); ?tab=agent asks for the Agent tab itself.
     // Back and Forward reach an entry that says which tab it showed (its history state, as Agent has no ?tab), so it
     // comes back as it was rather than as the memory now says.
-    // Another login's entry keeps only the ?tab it arrived with: one the page wrote there was that login's choice.
+    // Another login's entry asks for the ?tab it arrived with, whatever its address says now: one the page wrote there
+    // since was that login's choice. The address is put back to it.
     const state = window.history.state;
     const arrivedWith = SessionTabs.linkedTab(state, params.get('tab'));
     const inAddress = id ? SessionTabs.addressTab(state, pageLogin, params.get('tab')) : params.get('tab');
     const dropped = Boolean(params.get('tab')) && !inAddress;
-    if (dropped) params.delete('tab');
+    if (inAddress) params.set('tab', inAddress);
+    else params.delete('tab');
     const asked = tabMemory.asked(id, inAddress, SessionTabs.entryTab(state, pageLogin));
     tab = SessionTabs.known(asked);
     landOnReview = !asked;

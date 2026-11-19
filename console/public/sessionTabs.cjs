@@ -95,16 +95,16 @@
 
   /**
    * The ?tab an entry's address asks for, as `login` reads it. The page writes ?tab into an entry itself (a remembered
-   * tab, a click), so on another login's entry only the ?tab it arrived with (`linkedTab`, a link followed or typed)
-   * still asks; the rest was that login's choice. An entry with no login (an older page, or a new one) is the reader's.
+   * tab, a click), so on another login's entry the ?tab it arrived with (`linkedTab`, a link followed or typed) asks,
+   * whatever the address says now; the rest was that login's choice. An entry with no login (an older page, or a new
+   * one) is the reader's, as its address says.
    * @param {object|null} state  history.state
    * @param {string|null} login  the page's woodshed-login meta
    * @param {string|null} inAddress  the address's ?tab
    */
   function addressTab(state, login, inAddress) {
-    if (!inAddress) return null;
-    if (!state || !state.login || state.login === login) return inAddress;
-    return state.linkedTab === inAddress ? inAddress : null;
+    if (!state || !state.login || state.login === login) return inAddress || null;
+    return state.linkedTab || null;
   }
   /**
    * The ?tab an entry arrived with: its address's, when it has no state yet (a link followed, typed or pushed), else

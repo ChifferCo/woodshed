@@ -62,4 +62,8 @@ test("the way back keeps a session page's ?tab only when the entry arrived with 
   page = loadCommon({ answer: signIn, state: { tab: 'terminal', login: 'alice', linkedTab: null } });
   await page.fetch('/api/sessions');
   assert.deepEqual(page.assigned, ['/login?next=%2Fs%2Faaaa1111']);
+  // Followed a link to ?tab=diff, then picked Terminal (the address says terminal now): the way back is the link.
+  page = loadCommon({ answer: signIn, state: { tab: 'terminal', login: 'alice', linkedTab: 'diff' } });
+  await page.fetch('/api/sessions');
+  assert.deepEqual(page.assigned, ['/login?next=%2Fs%2Faaaa1111%3Ftab%3Ddiff']);
 });

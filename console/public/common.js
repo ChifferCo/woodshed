@@ -38,14 +38,16 @@
     console.log('signIn: the console needs a sign-in again, going to the login page');
     location.assign(`/login?next=${encodeURIComponent(location.pathname + backSearch())}`);
   }
-  // The address to come back to after signing in, perhaps as someone else: a session page's ?tab only when the entry
-  // arrived with it (a link, its history state's linkedTab, session.js), not one the page wrote from what this login
-  // picked or remembered. An entry with no state yet came as it is.
+  // The address to come back to after signing in, perhaps as someone else: a session page's ?tab is the one its entry
+  // arrived with (a link, its history state's linkedTab, session.js), not one the page wrote from what this login
+  // picked or remembered since. An entry with no state yet came as it is.
   function backSearch() {
     const params = new URLSearchParams(location.search);
-    const tab = params.get('tab');
     const state = window.history?.state;
-    if (tab && location.pathname.startsWith('/s/') && state && state.linkedTab !== tab) params.delete('tab');
+    if (location.pathname.startsWith('/s/') && state) {
+      if (state.linkedTab) params.set('tab', state.linkedTab);
+      else params.delete('tab');
+    }
     const query = params.toString();
     return query ? `?${query}` : '';
   }

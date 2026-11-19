@@ -265,8 +265,12 @@ test("on another login's entry, only the ?tab it arrived with still asks", () =>
   // Alice followed a link to ?tab=review: a deep link still opens Review for whoever comes back to it.
   const linked = { tab: 'review', login: 'alice', linkedTab: tabs.linkedTab(null, 'review') };
   assert.equal(tabs.addressTab(linked, 'bob', 'review'), 'review');
-  assert.equal(tabs.addressTab(linked, 'bob', 'diff'), null, 'a ?tab changed after it arrived was a choice');
-  // The reader's own entries, new ones and older pages' always count.
+  // Alice followed a link to ?tab=diff, then picked Review (the address says review now): Bob still gets the link.
+  const linkedThenPicked = { tab: 'review', login: 'alice', linkedTab: 'diff' };
+  assert.equal(tabs.addressTab(linkedThenPicked, 'bob', 'review'), 'diff');
+  assert.equal(tabs.addressTab(linkedThenPicked, 'bob', null), 'diff', 'or picked Agent, which drops ?tab');
+  // The reader's own entries, new ones and older pages' always count as their address says.
+  assert.equal(tabs.addressTab(linkedThenPicked, 'alice', 'review'), 'review');
   assert.equal(tabs.addressTab(written, 'alice', 'review'), 'review');
   assert.equal(tabs.addressTab(null, 'bob', 'review'), 'review');
   assert.equal(tabs.addressTab({ tab: 'review' }, 'bob', 'review'), 'review');
