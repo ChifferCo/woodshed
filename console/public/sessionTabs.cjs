@@ -34,10 +34,11 @@
   }
 
   /**
-   * Which tab a render shows, given the tab asked for and the session as the page has it. Before the route's lookup
-   * answers (`pending`), the session may be a kept snapshot's (starting, where it now runs): a tab it cannot show is
-   * held, Agent shows meanwhile, and the held tab is tried again on the first render after the answer. Only then does a
-   * fallback stand (`fellBack`): the page then takes the tab out of the address and remembers Agent.
+   * Which tab a render shows, given the tab asked for and the session as the page has it. Until a lookup for this route
+   * has answered (`pending`, which a failed lookup leaves as it was), the session may be a kept snapshot's or the
+   * previous page's (starting, where it now runs): a tab it cannot show is held, Agent shows meanwhile, and the held tab
+   * is tried again on the first render after an answer. Only then does a fallback stand (`fellBack`): the page then
+   * takes the tab out of the address and remembers Agent.
    * @param {{ tab: string, held: string|null, pending: boolean, s: object, hasShell: boolean }} at
    * @returns {{ tab: string, held: string|null, fellBack: boolean }}
    */

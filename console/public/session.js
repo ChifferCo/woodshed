@@ -74,6 +74,8 @@
   let loadError = null;
   // The list belongs to the previous page (or this tab's saved snapshot) until this route's lookup answers.
   let routePending = true;
+  // Whether this route's list came from a lookup that answered, rather than a snapshot or a failed one (sessionTabs.cjs).
+  let routeConfirmed = false;
   let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
@@ -96,6 +98,7 @@
     readRoute();
     routeVersion++;
     routePending = true;
+    routeConfirmed = false;
     loadError = null;
     closeCardMenu();
     if (onMy) launcher.applyQuery();
@@ -1787,8 +1790,10 @@
   }
 
   function setTab(next) {
+    // Agent picked while another tab is held (the lookup pending) is a choice too: it replaces the held one.
+    const held = heldTab;
     heldTab = null;
-    if (tab === next) return;
+    if (tab === next && !held) return;
     tab = next;
     landOnReview = false;
     tabMemory.remember(id, tab);
@@ -1906,7 +1911,6 @@
     // The shell's terminal, made the first time its tab opens and dropped once the session stops.
     const hasShell = Boolean(shellKey(s));
     if (!hasShell) shellPool.hide();
-    else if (tab === 'terminal') shellPool.show(s);
     if (!s) {
       offerRenameOnce(null);
       slots.plain.hidden = true;
@@ -1925,7 +1929,8 @@
     // A tab the session cannot show falls back to Agent. Until this route's lookup answers, the session may be the kept
     // snapshot's (starting, where it now runs), so the tab asked for is held and tried again; once the answer is in,
     // the fallback stands and the address and the remembered tab say Agent too.
-    const settled = SessionTabs.settle({ tab, held: heldTab, pending: routePending, s, hasShell });
+    // A failed lookup leaves the list as it was, so only a successful one confirms it (routeConfirmed).
+    const settled = SessionTabs.settle({ tab, held: heldTab, pending: !routeConfirmed, s, hasShell });
     ({ tab, held: heldTab } = settled);
     if (settled.fellBack) {
       const url = new URL(window.location.href);
@@ -1933,6 +1938,7 @@
       window.history.replaceState(null, '', url);
       tabMemory.remember(s.id, tab);
     }
+    if (hasShell && tab === 'terminal') shellPool.show(s);
     slots.head.replaceChildren(paneBar(s));
     offerRenameOnce(s);
     renderKeyBar(s);
@@ -2015,6 +2021,7 @@
       if (version !== routeVersion) return;
       [data, me] = answer;
       routePending = false;
+      routeConfirmed = true;
       // The rail's pull requests are best effort: GitHub being slow must not hold the page.
       if (railMine()) W.getJson('/api/my/pulls').then((answer) => { pulls = answer.pulls; keepLast(); render(); }, () => {});
       loadError = null;

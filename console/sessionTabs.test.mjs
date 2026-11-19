@@ -92,3 +92,14 @@ test('once the route\'s lookup answers, a tab the session cannot show falls back
   assert.deepEqual(tabs.settle({ tab: 'diff', held: null, pending: false, s: stopped, hasShell: false }),
     { tab: 'agent', held: null, fellBack: true }, 'with the answer in, at once');
 });
+
+test('a failed lookup confirms nothing: the tab stays held until one answers', () => {
+  const starting = { status: 'starting', branch: 'woodshed/x' };
+  const running = { status: 'running', branch: 'woodshed/x' };
+  // The previous page's list has the session starting; the lookup fails, so the page renders that list again, pending.
+  let at = tabs.settle({ tab: 'diff', held: null, pending: true, s: starting, hasShell: true });
+  at = tabs.settle({ tab: at.tab, held: at.held, pending: true, s: starting, hasShell: true });
+  assert.deepEqual(at, { tab: 'agent', held: 'diff', fellBack: false }, 'nothing erased on the failure');
+  at = tabs.settle({ tab: at.tab, held: at.held, pending: false, s: running, hasShell: true });
+  assert.deepEqual(at, { tab: 'diff', held: null, fellBack: false }, 'the retry that answers shows Diff');
+});
