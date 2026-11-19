@@ -535,7 +535,8 @@ export function createFleet({
       update(session, { plan });
       console.log('fleet: whose Claude the session runs on', { id: session.id, plan: plan ?? 'team key' });
     }
-    // Whether this session may use production is decided at its first start, and only such a session can ever be tainted
+    // Whether this session may use production is decided at a start, its first or a Resume (a new container either way),
+    // once and for good, and only such a session can ever be tainted
     // (taint): it starts as one must be for the lockdown (no machine's Docker, on AWS the guarded network), and works on
     // databases of its own, as a shared session does, never its owner's: what it writes there after a taint is dropped
     // with it (keptIds), and no untainted session reads it.

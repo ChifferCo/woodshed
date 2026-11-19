@@ -220,6 +220,14 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
     if (!server.production && (session.taintedAt || fleet.isLocked?.(session))) {
       return refuse(403, 'this session is being locked down for production data, so only its production servers are open to it');
     }
+    // The server changed while the auth was made (made production, moved, its auth changed): the call was decided on a
+    // record that is no longer it, and does not go. The next one is decided on the new record.
+    const latest = servers.get(server.name);
+    const fields = (s) => s && JSON.stringify([s.url, s.production, s.shared, s.people, s.repos, s.auth, s.audience, s.header, s.headerSavedAt ?? null]);
+    if (fields(latest) !== fields(server)) {
+      return refuse(409, `${server.name} changed while this call was made: try it again`,
+        { message: 'mcpRelay: refused, the server changed during the call', fields: { sessionId: session.id, server: server.name } });
+    }
     return forward(req, res, session, server, path.suffix, added);
   }
 

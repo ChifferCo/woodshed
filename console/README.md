@@ -743,7 +743,10 @@ A signed token is RS256 from the console as an OpenID Connect issuer (`oidcIssue
 `iss` the console's address (`WOODSHED_OIDC_ISSUER`), `aud` the server's audience, `sub` `private:<login>` for a My
 Woodshed session or `session:<id>` for a shared one, and `login`, `session_id`, `session_kind` and `repo`. The
 discovery document and the keys are at `/.well-known/openid-configuration` and `/.well-known/jwks.json`, before
-sign-in; the card shows both for the server's own configuration.
+sign-in; the card shows both for the server's own configuration. A local console with no secret store yet keeps its key
+in `oidc-signing-key.pem` in the state folder; once a store is chosen and the console restarts, it makes a new key there,
+which the JWKS then serves: a server fetching the JWKS follows by itself, and a test token signed before it no longer
+checks.
 
 ### Production access
 
@@ -758,7 +761,7 @@ with `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS`).
 - **The session.** An eligible session's claude gets the production server from `--mcp-config` (`/tmp/woodshed-mcp.json`),
   in its `disabledMcpServers` for the checkout: claude makes no call to it until its person turns it on in `/mcp`. It is
   never started without the machine's Docker socket, which would let it undo a lockdown (its own, under Sysbox, stays).
-- **Who can be tainted**: only a session that could use a production server at its first start (`mayUseProduction` on
+- **Who can be tainted**: only a session that could use a production server when it started, first or on a Resume (`mayUseProduction` on
   its record, `fleet: a session that may use production`), which started as the lockdown needs: no machine's Docker,
   its own databases, and on AWS the guarded network. One started before a server listed it is refused (503, `started
   before it could use production`): a new session is ready for it. Its pass-through on AWS is likewise for those alone.

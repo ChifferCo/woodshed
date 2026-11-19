@@ -287,3 +287,26 @@ test('a server at its root with a query gets /?query, never a bare query', async
   assert.equal((await fetch(`${base}/mcp/root`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).status, 200);
   assert.deepEqual(seen, ['/?tenant=acme']);
 });
+
+test('a call decided on a server\'s old record does not go once an admin changed it, here made production', async (t) => {
+  quietly(t);
+  const mcp = await fakeMcp(t);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const store = { state: { mcpServers: [{ ...checkServer({ name: 'h', url: mcp.url, auth: 'header', shared: true }), headerSavedAt: 'r1' }] }, save() {} };
+  const secrets = { configured: () => true, async read() { await gate; return 'Bearer k'; }, async save() {}, async remove() {} };
+  const servers = createMcpServers({ store, settings: mcpSettings({}, 'https://c.test'), secrets, lockdown: () => ({ available: true }) });
+  let tainted = 0;
+  const relay = createMcpRelay({ servers, issuer: null, fleet: { taint: async () => { tainted += 1; } }, repoOf: () => 'o/r' });
+  const server = http.createServer((req, res) => relay.handle(req, res, { id: 's1', kind: 'issue' }));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const call = fetch(`http://127.0.0.1:${server.address().port}/mcp/h`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' });
+  await new Promise((r) => setTimeout(r, 30));
+  store.state.mcpServers = [{ ...store.state.mcpServers[0], production: true, shared: false }];
+  release();
+  const answer = await call;
+  assert.equal(answer.status, 409);
+  assert.equal(mcp.seen.length, 0, 'nothing reached the server');
+  assert.equal(tainted, 0);
+});
