@@ -9,15 +9,15 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const source = fs.readFileSync(new URL('./public/common.js', import.meta.url), 'utf8');
 
-function loadCommon({ pathname = '/s/aaaa1111', answer }) {
+function loadCommon({ pathname = '/s/aaaa1111', answer, state = null }) {
   const assigned = [];
   const location = { pathname, search: '?tab=terminal', href: `https://console.example${pathname}?tab=terminal`, origin: 'https://console.example', assign: (to) => assigned.push(to) };
   const window = {
     WoodshedLogins: require('./public/logins.cjs'), WoodshedSetup: require('./public/setupSteps.cjs'),
-    fetch: async () => answer(), addEventListener() {},
+    fetch: async () => answer(), addEventListener() {}, history: { state },
   };
   const context = vm.createContext({
-    window, location, URL, console: { log() {} },
+    window, location, URL, URLSearchParams, console: { log() {} },
     document: { addEventListener() {}, createElement: () => ({}) },
     matchMedia: () => ({}),
     fetch: () => new Promise(() => {}),
@@ -50,4 +50,16 @@ test('other answers, other origins and the login page itself stay where they are
     await fetch(url);
     assert.deepEqual(assigned, [], `${pathname} ${url}`);
   }
+});
+
+test("the way back keeps a session page's ?tab only when the entry arrived with it", async () => {
+  const signIn = () => json(401, { error: 'sign in first' });
+  // Followed a link to ?tab=terminal: someone signing in comes back to it.
+  let page = loadCommon({ answer: signIn, state: { tab: 'terminal', login: 'alice', linkedTab: 'terminal' } });
+  await page.fetch('/api/sessions');
+  assert.deepEqual(page.assigned, ['/login?next=%2Fs%2Faaaa1111%3Ftab%3Dterminal']);
+  // The page wrote ?tab=terminal from Alice's memory or her click: Bob signing in there does not take it as his.
+  page = loadCommon({ answer: signIn, state: { tab: 'terminal', login: 'alice', linkedTab: null } });
+  await page.fetch('/api/sessions');
+  assert.deepEqual(page.assigned, ['/login?next=%2Fs%2Faaaa1111']);
 });
