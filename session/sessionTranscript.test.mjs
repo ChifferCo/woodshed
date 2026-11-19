@@ -189,7 +189,7 @@ test("claude's AskUserQuestion keeps each question and its options, and whether 
     ask('q3', 'Still open?'),
   ].join('\n'));
   assert.deepEqual(entries[0], { role: 'tool', tool: 'AskUserQuestion', text: 'Tabs or spaces?', at: '2026-01-01T00:00:01Z',
-    questions: [{ question: 'Tabs or spaces?', options: ['Tabs', 'Spaces'] }], answered: true });
+    questions: [{ question: 'Tabs or spaces?', options: ['Tabs', 'Spaces'], descriptions: ['Tab characters', ''] }], answered: true });
   assert.equal(entries[1].error, true, 'Esc on the question');
   assert.equal(entries[1].answered, undefined);
   assert.equal(entries[2].answered, undefined, 'not answered yet');
@@ -198,7 +198,7 @@ test("claude's AskUserQuestion keeps each question and its options, and whether 
     type: 'tool_use', id: 'q4', name: 'AskUserQuestion',
     input: { questions: [{ question: 'Which toppings?', header: 'Toppings', multiSelect: true, options: [{ label: 'Cheese' }, { label: 'Olives' }] }] },
   }] } }));
-  assert.deepEqual(several[0].questions, [{ question: 'Which toppings?', options: ['Cheese', 'Olives'], multiSelect: true }], 'a multi-select question says so');
+  assert.deepEqual(several[0].questions, [{ question: 'Which toppings?', options: ['Cheese', 'Olives'], descriptions: ['', ''], multiSelect: true }], 'a multi-select question says so');
 });
 
 test("codex's exec script reads as the tools it calls, each failing by its own exit code", () => {

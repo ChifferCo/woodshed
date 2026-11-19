@@ -281,10 +281,14 @@
         // Back in the box, to send again, unless it is in the agent's box already (a prompt came up as it went in):
         // sending it again would type it twice.
         pending.set(id, pendingOf(id).filter((p) => p !== sent));
-        if (id === session?.id && !field.value && !err.typed) {
-          field.value = text;
-          keepDraft(id, text);
-          fit();
+        if (!err.typed) {
+          // The session the person moved to meanwhile keeps its own box: the text goes to its session's draft, which
+          // comes back with it.
+          if (id === session?.id && !field.value) {
+            field.value = text;
+            keepDraft(id, text);
+            fit();
+          } else if (id !== session?.id && !readDraft(id)) keepDraft(id, text);
         }
         W.shell.toast(`Not sent: ${err.message}`, { ms: 6000 });
       } finally {

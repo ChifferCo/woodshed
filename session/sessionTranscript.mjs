@@ -73,6 +73,9 @@ function askedQuestions(block) {
   const questions = list.filter((q) => typeof q?.question === 'string' && q.question.trim()).slice(0, 4).map((q) => ({
     question: q.question.trim().slice(0, 500),
     options: (Array.isArray(q.options) ? q.options : []).map((o) => String(o?.label ?? '').trim().slice(0, 200)).filter(Boolean).slice(0, 8),
+    // Each option's description, as claude draws it under the label: what tells a wrapped label from its description.
+    descriptions: (Array.isArray(q.options) ? q.options : []).filter((o) => String(o?.label ?? '').trim())
+      .map((o) => String(o?.description ?? '').trim().slice(0, 300)).slice(0, 8),
     // A question that takes several options is picked in the terminal: the Chat tab answers one option a question.
     ...(q.multiSelect === true && { multiSelect: true }),
   }));

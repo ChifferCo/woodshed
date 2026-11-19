@@ -112,7 +112,6 @@ export function readQuestionPicker(pane) {
   // The picker sits under the rule that ends the conversation above it.
   if (tabLine === -1 || lastIndex(lines, RULE, tabLine) === -1) return null;
   const rows = rowsOf(lines, tabLine + 1, foot);
-  const width = Math.max(...lines.map((l) => l.trimEnd().length));
   if (!rows.length) return null;
   const question = squash(lines.slice(tabLine + 1, rows[0].line).map((l) => l.replace(/^\s*│\s?/, '')).join(' '));
   if (!question) return null;
@@ -126,9 +125,9 @@ export function readQuestionPicker(pane) {
     }
     if (OWN_ROW.test(label)) break;
     const chosen = CHOSEN.test(label);
-    // Cut where the screen wraps it: its row runs to the pane's right edge and goes on under it.
-    const wrapped = row.under.length > 0 && lines[row.line].trimEnd().length >= width - 1;
-    answers.push({ n: row.n, label: label.replace(CHOSEN, '').slice(0, MAX_LINE), highlighted: row.highlighted, chosen, wrapped });
+    // The lines under it: the rest of a label claude wrapped (at a word, anywhere short of the edge), then its
+    // description, indented alike; which is which is known only against the label given (sameLabel).
+    answers.push({ n: row.n, label: label.replace(CHOSEN, '').slice(0, MAX_LINE), highlighted: row.highlighted, chosen, under: row.under.slice(0, MAX_DETAIL) });
   }
   const at = answers.findIndex((o) => o.highlighted);
   return { step: 'question', question: question.slice(0, 1000), multiSelect, tabs: readTabs(lines[tabLine]), options: answers, highlighted: at === -1 ? null : at };
@@ -254,25 +253,33 @@ export function readPrompt(pane) {
   return approval ? { kind: 'approval', ...approval } : null;
 }
 
-// A label read from the screen against the one claude was given. Only one the screen cut where it wraps may be the start
-// of the given one; any other must be the same, so that a shorter option, whose label starts the one shown, never stands
-// in for it.
-function sameLabel(screen, given, wrapped = false) {
-  const a = squash(screen);
-  const b = squash(given);
-  return a === b || (wrapped && a.length >= 8 && b.startsWith(a));
+// An option on screen against the label claude was given: its first line, alone or with the lines it wrapped onto under
+// it, must be that label, all of it. A shorter option, or another whose first line is the same, is never it. With the
+// option's description given too, what follows the label on screen must be that description (or nothing), which tells
+// a wrapped label from a description under it: a label that is only the first line of a longer one does not pass.
+function sameLabel(option, given, description) {
+  const want = squash(given);
+  const under = option.under ?? [];
+  const rest = (k) => squash(under.slice(k).join(' '));
+  const describedHere = (k) => description === undefined || !rest(k) || (squash(description) && rest(k).startsWith(squash(description).slice(0, 40)));
+  let text = option.label;
+  for (let k = 0; k <= under.length; k++) {
+    if (k > 0) text += ` ${under[k - 1]}`;
+    if (squash(text) === want && describedHere(k)) return true;
+  }
+  return false;
 }
 
 /**
  * @param {ReturnType<typeof readQuestionPicker>} screen
- * @param {{question: string, options: string[]}} want  as the transcript holds it
+ * @param {{question: string, options: string[], descriptions?: string[]}} want  as the transcript holds it
  * @returns {{ok: true}|{ok: false, why: string}}  why is a code: no-picker, other-question, multi-select, other-options
  */
 export function matchQuestion(screen, want) {
   if (!screen) return { ok: false, why: 'no-picker' };
   if (screen.step !== 'question' || squash(screen.question) !== squash(want.question)) return { ok: false, why: 'other-question' };
   if (screen.multiSelect) return { ok: false, why: 'multi-select' };
-  if (screen.options.length !== want.options.length || !screen.options.every((o, i) => sameLabel(o.label, want.options[i], o.wrapped))) {
+  if (screen.options.length !== want.options.length || !screen.options.every((o, i) => sameLabel(o, want.options[i], want.descriptions?.[i]))) {
     return { ok: false, why: 'other-options' };
   }
   return { ok: true };

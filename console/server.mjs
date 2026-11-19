@@ -1703,8 +1703,10 @@ export function createHandler({
   function answerBody(body) {
     const str = (v) => typeof v === 'string' && v.length <= 1000;
     if (body?.kind === 'question' && Array.isArray(body.questions) && body.questions.length >= 1 && body.questions.length <= 4) {
+      const descriptionsOf = (q) => (Array.isArray(q.descriptions) && q.descriptions.length === q.options.length
+        && q.descriptions.every((d) => typeof d === 'string' && d.length <= 300) ? { descriptions: q.descriptions } : {});
       const questions = body.questions.map((q) => (str(q?.question) && Array.isArray(q.options) && q.options.length <= 8 && q.options.every(str)
-        && Number.isInteger(q.pick) && q.pick >= 0 && q.pick < q.options.length ? { question: q.question, options: q.options, pick: q.pick } : null));
+        && Number.isInteger(q.pick) && q.pick >= 0 && q.pick < q.options.length ? { question: q.question, options: q.options, ...descriptionsOf(q), pick: q.pick } : null));
       return questions.every(Boolean) ? { kind: 'question', questions } : null;
     }
     if (body?.kind === 'approval' && (body.decision === 'approve' || body.decision === 'deny')

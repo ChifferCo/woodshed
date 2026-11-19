@@ -284,7 +284,9 @@ export function parseAnswerBody(raw) {
         || !options.every((o) => filled(o, MAX_ANSWER_TEXT)) || !Number.isInteger(q.pick) || q.pick < 0 || q.pick >= options.length) {
         throw new Error('each question needs its text, its options and the index of the one picked');
       }
-      return { question: q.question, options: [...options], pick: q.pick };
+      const descriptions = Array.isArray(q.descriptions) && q.descriptions.length === options.length
+        && q.descriptions.every((d) => typeof d === 'string' && d.length <= MAX_ANSWER_TEXT) ? { descriptions: [...q.descriptions] } : {};
+      return { question: q.question, options: [...options], ...descriptions, pick: q.pick };
     });
     return { kind: 'question', questions };
   }

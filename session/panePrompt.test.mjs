@@ -33,7 +33,9 @@ test('claude\'s picker is read from a real capture: the question, its options, t
 test('a picker the person moved in: the highlight on the second row, its pick marked, the tab answered', () => {
   const screen = readQuestionPicker(pane('pane-ask-two-moved.txt'));
   assert.equal(screen.highlighted, 1);
-  assert.deepEqual(screen.options[1], { n: 2, label: 'Green', highlighted: true, chosen: true, wrapped: false }, 'the ✔ is not part of the label');
+  const { under, ...green } = screen.options[1];
+  assert.ok(Array.isArray(under));
+  assert.deepEqual(green, { n: 2, label: 'Green', highlighted: true, chosen: true }, 'the ✔ is not part of the label');
   assert.equal(screen.tabs.questions[0].answered, true);
   assert.deepEqual(planMoves(screen, 0), ['Up']);
   assert.deepEqual(planMoves(screen, 2), ['Down']);
@@ -516,8 +518,23 @@ test('a stale answer never picks a shorter option whose label starts the one it 
   assert.ok(matchQuestion(readQuestionPicker(picker(['❯ 1. Deploy to staging now', '  2. Wait'])), want).ok);
 });
 
-test('a label the screen cut where it wraps still matches the one given, from a real capture', () => {
+test('a label claude wrapped at a word matches the one given whole, and another with the same first line does not', () => {
+  // From a real capture: the long label wraps at a word, well short of the pane's edge, and its description follows,
+  // indented alike.
   const screen = readQuestionPicker(fs.readFileSync(new URL('../shared/__fixtures__/pane-ask-wrapped.txt', import.meta.url), 'utf8'));
-  assert.ok(screen.options.some((o) => o.wrapped), 'the long label runs to the edge and on under it');
-  assert.ok(screen.options.filter((o) => !o.wrapped).length > 0);
+  const question = 'Which deployment strategy should we use for the console?';
+  const label = 'Blue-green deployment behind the load balancer with an automatic rollback when health checks fail';
+  // Each option's description, as the agent's record holds it: what tells the label's wrapped lines from it.
+  const descriptions = [
+    'Run two environments and switch traffic at the load balancer, rolling back automatically on failed health checks.',
+    'Replace instances gradually, a few at a time, without a second full environment.',
+  ];
+  assert.ok(matchQuestion(screen, { question, options: [label, 'Rolling update'], descriptions }).ok);
+  assert.ok(matchQuestion(screen, { question, options: [label, 'Rolling update'] }).ok, 'from a page that sends no descriptions too');
+  // The review's case: the same first line, and another end.
+  const other = 'Blue-green deployment behind the load balancer with an automatic rollback when health checks pass';
+  assert.equal(matchQuestion(screen, { question, options: [other, 'Rolling update'], descriptions }).why, 'other-options');
+  // A label that is only the first line of the one on screen: what follows it is not its description.
+  const firstLine = 'Blue-green deployment behind the load balancer with an automatic';
+  assert.equal(matchQuestion(screen, { question, options: [firstLine, 'Rolling update'], descriptions }).why, 'other-options');
 });

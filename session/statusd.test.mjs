@@ -1055,3 +1055,10 @@ test('a message\'s control characters are not typed: an ESC would be the Escape 
   assert.equal(parseSendBody(JSON.stringify({ text: 'hi\u0000 there' })), 'hi there');
   assert.throws(() => parseSendBody(JSON.stringify({ text: '\u0000\u001b' })), /non-empty/, 'nothing left to type: refused, and the fleet drops it');
 });
+
+test('parseAnswerBody keeps the options\' descriptions, which tell a wrapped label from its description', () => {
+  const q = { question: 'Which?', options: ['A long label', 'B'], descriptions: ['what A does', ''], pick: 0 };
+  assert.deepEqual(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [q] })).questions[0].descriptions, ['what A does', '']);
+  const mismatched = { ...q, descriptions: ['only one'] };
+  assert.equal(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [mismatched] })).questions[0].descriptions, undefined, 'not one each: left out');
+});

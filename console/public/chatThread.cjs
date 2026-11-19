@@ -361,7 +361,7 @@
    */
   function answerBody(item, picks) {
     if (!item.questions.every((q, i) => Number.isInteger(picks[i]) && picks[i] >= 0 && picks[i] < q.options.length)) return null;
-    return { kind: 'question', questions: item.questions.map((q, i) => ({ question: q.question, options: q.options, pick: picks[i] })) };
+    return { kind: 'question', questions: item.questions.map((q, i) => ({ question: q.question, options: q.options, ...(Array.isArray(q.descriptions) && { descriptions: q.descriptions }), pick: picks[i] })) };
   }
 
   /**
