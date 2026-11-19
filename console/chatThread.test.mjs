@@ -352,8 +352,7 @@ test('a send whose answer was lost waits as held once the console lists it held,
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now, state: 'unconfirmed' };
   assert.match(chat.pendingLabel('unconfirmed', 'claude'), /no word back/);
-  assert.equal(chat.reconcile([a], { heldIds: [] }, now).changed, false);
-  assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0, 'never held: it went in or never arrived');
+  assert.equal(chat.stillPending([a], [], now + 60 * 60_000).length, 1, 'not by the clock: the session list may be late');
   assert.equal(chat.reconcile([a], { heldIds: ['aaaaaaaa-1'] }, now + 60_000).changed, true);
   assert.equal(a.state, 'held');
   assert.equal(chat.stillPending([a], [], now + 60 * 60_000).length, 1, 'held: it waits for the turn, however long');
@@ -375,6 +374,28 @@ test('the phone box keeps its draft only for a refusal that typed nothing, and s
   for (const err of [new TypeError('Failed to fetch'), Object.assign(new Error('t'), { name: 'TimeoutError' }), Object.assign(new Error('502'), { status: 502, answered: false })]) {
     assert.deepEqual(o({ err }), { clear: true, toast: 'No answer: it may have gone in. Check codex\'s screen before sending it again' });
   }
+});
+
+test('a lost answer not held on two reads of the session goes as sent; one read, or the same read again, is not enough', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now, state: 'unconfirmed' };
+  const read1 = { heldIds: [] };
+  chat.reconcile([a], read1, now);
+  chat.reconcile([a], read1, now + 1000);
+  assert.equal(a.state, 'unconfirmed', 'one read, maybe asked for before the console took it');
+  chat.reconcile([a], { heldIds: [] }, now + 5000);
+  assert.equal(a.state, 'sent');
+  assert.equal(chat.stillPending([a], [], now + 5000 + 11 * 60_000).length, 0);
+});
+
+test('a held message is never settled by the same words in the record: the console says when it went', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'run the tests', sentAt: now, state: 'held', after: null };
+  const typedInTui = [{ role: 'user', text: 'run the tests', at: '2026-11-19T12:00:05.000Z' }];
+  assert.equal(chat.stillPending([a], typedInTui, now + 6000).length, 1, 'the same words typed in the TUI tab');
+  chat.reconcile([a], { deliveredIds: ['aaaaaaaa-1'] }, now + 60_000);
+  const sentToo = [...typedInTui, { role: 'user', text: 'run the tests', at: '2026-11-19T12:01:00.000Z' }];
+  assert.equal(chat.stillPending([a], sentToo, now + 61_000).length, 0, 'once sent, the record settles it');
 });
 
 test('a held bubble the session could not take safely says it was not sent, and goes in time', () => {

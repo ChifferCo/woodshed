@@ -159,13 +159,20 @@
         const words = abortListening();
         if (words) field.value = `${field.value.replace(/\s*$/, '')} ${words}`.trimStart();
       }
-      const paths = mine().filter((f) => f.path).map((f) => f.path);
-      const text = [field.value.trim(), ...paths].filter(Boolean).join('\n');
+      const sentFiles = mine().filter((f) => f.path);
+      const typed = field.value.trim();
+      const text = [typed, ...sentFiles.map((f) => f.path)].filter(Boolean).join('\n');
       if (!text) return draw();
       sending.add(id);
+      // Out of the box as it goes, as Chat's: what the person writes meanwhile is a new draft, which no outcome of this
+      // send touches. Files still uploading stay, for the next message.
+      files.set(id, mine().filter((f) => !sentFiles.includes(f)));
+      field.value = '';
+      keepDraft(id, '');
+      fit();
       draw();
-      // Held, sent, or maybe in: said as it is (chatThread.cjs, boxSendOutcome). The draft stays only for a refusal that
-      // typed nothing, so a second Send never types one that may have gone in.
+      // Held, sent, or maybe in: said as it is (chatThread.cjs, boxSendOutcome). The words come back only for a refusal
+      // that typed nothing, so a second Send never types one that may have gone in.
       const agent = agentName;
       let outcome;
       try {
@@ -176,15 +183,18 @@
         outcome = window.WoodshedChatThread.boxSendOutcome({ err, agent });
       }
       try {
-        if (outcome.clear) {
-          files.delete(id);
-          keepDraft(id, '');
+        if (!outcome.clear) {
+          // Back before any newer draft, a blank line between, and its files with it: neither is lost.
+          const withDraft = (draft) => (draft.trim() ? `${typed}\n\n${draft}` : typed);
+          files.set(id, [...sentFiles, ...(files.get(id) ?? [])]);
           if (id === sessionId) {
-            field.value = '';
+            field.value = withDraft(field.value);
+            keepDraft(id, field.value);
             fit();
-            // The keyboard goes down, so the agent's answer has the screen.
-            field.blur();
-          }
+          } else keepDraft(id, withDraft(readDraft(id)));
+        } else if (id === sessionId && !field.value) {
+          // The keyboard goes down, so the agent's answer has the screen.
+          field.blur();
         }
         W.shell.toast(outcome.toast, { ms: outcome.toast === 'Sent' ? undefined : 6000 });
       } finally {

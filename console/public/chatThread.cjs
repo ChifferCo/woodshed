@@ -296,11 +296,12 @@
     return got.endsWith('…') && got.length > 8000 && want.startsWith(got.slice(0, -1));
   }
 
-  // Held by the console: waits for the record to hold it, or for the console to say by its id what became of it, however
-  // long the agent's turn runs. One whose answer was lost (`unconfirmed`) waits so once a read of the session lists it
-  // as held (reconcile); else it went in or never arrived, and goes ten minutes on, as a sent one does.
+  // Held by the console, or one whose answer was lost (`unconfirmed`, which may be held): neither goes by the clock, nor
+  // by a message in the record that reads the same (the person may have typed the same words in the TUI tab). Only the
+  // console says what became of it, by its id (reconcile): sent (`deliveredIds`), then the record settles it as any sent
+  // one; or, for an unconfirmed one, not held on two reads of the session after the send, so it went in or never arrived.
   function waiting(p) {
-    return p.state === 'held';
+    return p.state === 'held' || p.state === 'unconfirmed';
   }
 
   function stillPending(pending, entries, now = Date.now()) {
@@ -314,6 +315,11 @@
       if (settledAt && (p.after == null || Date.parse(p.after) < Date.parse(settledAt))) p.after = settledAt;
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
       // A sent one is let go ten minutes after it went in: its send, or the console's sending it later.
+      // One with no id the console cannot name, so the record settles it, though never by the clock.
+      if (waiting(p) && p.id) {
+        left.push(p);
+        continue;
+      }
       if (!waiting(p) && p.state !== 'in-box' && now - (p.deliveredAt ?? p.sentAt) > PENDING_MS) continue;
       const want = squash(typeable(p.text));
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
@@ -508,7 +514,8 @@
    *   whose send got no answer in time, which may have gone in
    * @returns {{pending: object[], changed: boolean}}
    */
-  function reconcile(pending, { deliveredIds = [], leftInBox = null, unknownIds = [], refusedIds = [], heldIds = [] } = {}, now = Date.now()) {
+  function reconcile(pending, session = {}, now = Date.now()) {
+    const { deliveredIds = [], leftInBox = null, unknownIds = [], refusedIds = [], heldIds = [] } = session;
     let changed = false;
     const left = [];
     for (const p of pending) {
@@ -516,6 +523,17 @@
       if (p.state === 'unconfirmed' && p.id && heldIds.includes(p.id)) {
         p.state = 'held';
         changed = true;
+      } else if (p.state === 'unconfirmed' && p.id && p.lastRead !== session) {
+        // Not held, on a read of the session (each a new object): the first may have been asked for before the console
+        // took the send, the second was asked for after the first arrived, so after it. Not held then: sent, or never
+        // arrived; the record settles it, or ten minutes do.
+        p.lastRead = session;
+        p.unlistedReads = (p.unlistedReads ?? 0) + 1;
+        if (p.unlistedReads >= 2 && ![deliveredIds, unknownIds, refusedIds].some((ids) => ids.includes(p.id))) {
+          p.state = 'sent';
+          p.deliveredAt = now;
+          changed = true;
+        }
       }
       if (p.id && leftInBox?.id === p.id) {
         if (p.state !== 'in-box') {
@@ -525,17 +543,17 @@
       } else if (p.state === 'in-box') {
         changed = true;
         continue;
-      } else if ((waiting(p) || p.state === 'unconfirmed') && p.id && deliveredIds.includes(p.id)) {
+      } else if (waiting(p) && p.id && deliveredIds.includes(p.id)) {
         p.state = 'sent';
         p.deliveredAt = now;
         changed = true;
-      } else if ((waiting(p) || p.state === 'unconfirmed') && p.id && unknownIds.includes(p.id)) {
+      } else if (waiting(p) && p.id && unknownIds.includes(p.id)) {
         // The console's send got no answer in time: it may have gone in, and is not sent again. The bubble says so, and
         // goes when the record shows it, or ten minutes on.
         p.state = 'unknown';
         p.deliveredAt = now;
         changed = true;
-      } else if ((waiting(p) || p.state === 'unconfirmed') && p.id && refusedIds.includes(p.id)) {
+      } else if (waiting(p) && p.id && refusedIds.includes(p.id)) {
         // The session came back on a statusd that types blind: never typed. The bubble says so, for ten minutes.
         p.state = 'refused';
         p.deliveredAt = now;
