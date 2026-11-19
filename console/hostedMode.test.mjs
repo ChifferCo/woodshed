@@ -349,13 +349,42 @@ test('a program embedding the console adds to the user menu, and only links a pa
   assert.equal(me.menuSubtitle, 'Platform team');
   assert.deepEqual(me.menuGroups, [
     { label: 'Workspace', items: [{ label: 'Platform team', href: null, current: true, note: 'Admin' }, { label: 'Mobile team', href: '/switch?to=mobile', current: false, note: null }] },
-    { label: null, items: [{ label: 'Billing', href: 'https://billing.example/', note: null }] },
   ]);
+  assert.deepEqual(me.menuYou, [{ label: 'Billing', href: 'https://billing.example/' }], 'a group of links with no label is read as the person\'s own');
   const signedOut = (await send(port, { path: '/api/me' })).body;
   assert.equal(signedOut.menuGroups, undefined, 'nothing for someone not signed in');
   t.mock.method(console, 'warn', () => {});
   const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
   assert.deepEqual([failed.login, failed.menuGroups], ['sam-member', undefined], 'a menu that throws leaves /api/me as it was');
+});
+
+test('a program embedding the console adds the person\'s own pages and sections of its own, with only links a page may hold', async (t) => {
+  const many = (n, at) => Array.from({ length: n }, (_, i) => ({ label: `Page ${i}`, href: `${at}/${i}` }));
+  const userMenu = () => ({
+    you: [{ label: 'Your workspaces', href: '/account' }, { label: 'Bad', href: 'javascript:alert(1)' }, { label: 'Odd', href: '//elsewhere.example' }, { href: '/no-label' }],
+    groups: [{ label: 'Workspace', items: [{ label: 'Platform team', current: true }] }, { items: [{ label: 'Docs', href: 'https://docs.example/' }] }],
+    sections: [
+      { label: 'Service', items: [
+        { label: 'Admin', href: '/admin', items: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }, { label: 'Tab', href: '/\t/elsewhere.example' }] },
+        { label: 'Gone', href: 'javascript:void(0)', items: [{ label: 'Under it', href: '/under' }] },
+      ] },
+      { items: [{ label: 'No heading', href: '/x' }] },
+      { label: 'Empty', items: [{ label: 'Bad', href: 'data:text/html,x' }] },
+      { label: 'Many', items: [{ label: 'Lots', href: '/lots', items: many(60, '/lots') }] },
+    ],
+  });
+  const { port } = await hostedConsole(t, { extra: { userMenu } });
+  const me = (await send(port, { path: '/api/me', headers: MEMBER() })).body;
+  assert.deepEqual(me.menuYou, [{ label: 'Your workspaces', href: '/account' }, { label: 'Docs', href: 'https://docs.example/' }],
+    'the program\'s own first, then an old group of links');
+  assert.deepEqual(me.menuGroups, [{ label: 'Workspace', items: [{ label: 'Platform team', href: null, current: true, note: null }] }]);
+  assert.deepEqual(me.menuSections[0], { label: 'Service', items: [
+    { label: 'Admin', href: '/admin', items: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }] },
+  ] }, 'a bad link goes with what is under it, and a section with no heading or nothing left is dropped');
+  assert.deepEqual(me.menuSections.map((s) => s.label), ['Service', 'Many']);
+  const count = me.menuYou.length + me.menuGroups[0].items.length + me.menuSections.flatMap((s) => s.items).reduce((n, i) => n + 1 + i.items.length, 0);
+  assert.equal(count, 50, 'fifty links in all');
+  assert.equal((await send(port, { path: '/api/me' })).body.menuSections, undefined, 'nothing for someone not signed in');
 });
 
 test('a program embedding the console adds tabs to Settings, each a path on the console', async (t) => {
@@ -426,6 +455,17 @@ test('a program\'s page in the settings frame: its part in a template hostSettin
   const styled = settingsFrame({ title: 'Acme', current: '/x', body: '', styles: ['/assets/frame.css?v="1', 'https://elsewhere.example/a.css', '//x.example/b.css'] });
   assert.match(styled, /<link rel="stylesheet" href="\/static\/style\.css\?v=[0-9a-f]{12}">\n<link rel="stylesheet" href="\/assets\/frame\.css\?v=&#34;1">\n<\/head>/,
     'the program\'s stylesheet after the console\'s, escaped, and nothing from elsewhere');
+});
+
+test('a program\'s own page in the settings frame has its own heading, and the row of its own pages or none', () => {
+  const own = settingsFrame({ title: 'Acme', current: '/admin/pool', heading: 'Admin', body: '<p>Pool</p>',
+    tabs: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }, { label: 'Away', href: 'https://elsewhere.example/' }, { label: 'Odd', href: '//x.example' }] });
+  assert.match(own, /<template id="woodshed-host-page" data-current="\/admin\/pool" data-heading="Admin" data-tabs="\[\{&#34;label&#34;:&#34;Overview&#34;,&#34;href&#34;:&#34;\/admin&#34;\},\{&#34;label&#34;:&#34;Pool&#34;,&#34;href&#34;:&#34;\/admin\/pool&#34;\}\]"><p>Pool<\/p><\/template>/,
+    'paths on the console alone, as Settings\' tabs');
+  const plain = settingsFrame({ title: 'Acme', current: '/account', heading: 'Your <workspaces>', body: '' });
+  assert.match(plain, /data-heading="Your &#60;workspaces&#62;" data-tabs="\[\]">/, 'escaped, with no row');
+  assert.match(settingsFrame({ title: 'Acme', current: '/x', body: '', tabs: [{ label: 'T', href: '/t' }] }), /<template id="woodshed-host-page" data-current="\/x">/,
+    'with no heading it is one of Settings\' tabs, as before');
 });
 
 test('a page carries the console\'s link query for the links it copies, escaped as a query', () => {

@@ -97,7 +97,8 @@ function makeDom(location) {
 /**
  * common.js on a settings page at `path`, with the pages `makePages(W, window)` gives registered as the page scripts
  * would, then loaded. `me` is what /api/me answers (none: it never does); `hostPage`, a program's page as settingsFrame
- * sends it, its template's `current` and `body` (a node), run through hostSettings.js.
+ * sends it, its template's `current`, `body` (a node) and, for one of the program's own entries, `heading` and `tabs`,
+ * run through hostSettings.js.
  */
 function load(path, makePages = () => [], { me = null, hostPage = null } = {}) {
   const location = {};
@@ -137,7 +138,10 @@ function load(path, makePages = () => [], { me = null, hostPage = null } = {}) {
     document: {
       addEventListener: on('document'), removeEventListener: off('document'), querySelector() { return null; },
       getElementById: (id) => (id === 'app' ? app
-        : id === 'woodshed-host-page' && hostPage ? { getAttribute: (a) => (a === 'data-current' ? hostPage.current : null), content: { cloneNode: () => hostPage.body } }
+        : id === 'woodshed-host-page' && hostPage ? {
+          getAttribute: (a) => ({ 'data-current': hostPage.current, 'data-heading': hostPage.heading, 'data-tabs': hostPage.tabs && JSON.stringify(hostPage.tabs) })[a] ?? null,
+          content: { cloneNode: () => hostPage.body },
+        }
           : null),
       createElement: (tag) => new El(tag), createTextNode: (text) => new Text(text),
     },
@@ -419,4 +423,85 @@ test('the user menu\'s Sign out: always on a console of its own, and behind a ho
   assert.equal(await signOutIn({}), '/auth/sign-out');
   assert.equal(await signOutIn({ hosted: true }), null);
   assert.equal(await signOutIn({ hosted: true, signOut: true }), '/auth/sign-out');
+});
+
+// What a program embedding the console gives /api/me (server.mjs, menuOf): the person's own page, a switcher, and a
+// section of its own whose entry has pages under it.
+const HOST_MENU = {
+  login: 'sam', admin: true, hosted: true, signOut: true, settingsTabs: HOST_TABS,
+  menuYou: [{ label: 'Your workspaces', href: '/account' }],
+  menuGroups: [{ label: 'Organization', items: [{ label: 'Acme', href: null, current: true, note: 'Owner' }, { label: 'Globex', href: '/switch/globex', current: false, note: null }] }],
+  menuSections: [{ label: 'Service', items: [{ label: 'Admin', href: '/admin', items: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }] }] }],
+};
+
+// The avatar menu, top to bottom: each heading, link and rule, and the sub-items' rows as `› label`.
+function menuRows(t) {
+  const rows = [];
+  for (const el of t.side().querySelector('div.user-menu').children) {
+    if (el.matches('div.menu-head')) rows.push('head');
+    else if (el.matches('div.menu-rule')) rows.push('—');
+    else if (el.matches('div.menu-label')) rows.push(`[${el.textContent}]`);
+    else if (el.matches('div.menu-subs')) rows.push(...el.children.map((a) => `› ${a.textContent}`));
+    else if (el.matches('form')) rows.push(el.textContent);
+    else rows.push(el.querySelector('span.menu-choice-name')?.textContent ?? el.textContent);
+  }
+  return rows;
+}
+
+// The side list's groups and entries in order, each entry's mark after it, and This browser's buttons left out.
+function sideRows(t) {
+  const rows = [];
+  const walk = (el) => {
+    for (const c of el.children) {
+      if (!c.matches) continue;
+      if (c.matches('div.side-group')) rows.push(`[${c.textContent}]`);
+      else if (c.matches('a.side-item')) rows.push(`${c.matches('a.side-sub') ? '› ' : ''}${c.textContent.replace(/^[^A-Za-z]+/, '')}${c.getAttribute('aria-current') ? ` (${c.getAttribute('aria-current')})` : ''}`);
+      else if (c.matches('div')) walk(c);
+    }
+  };
+  walk(t.side().querySelector('nav.side-list'));
+  return rows;
+}
+
+test('the avatar menu: My settings and the program\'s pages under the name, its switcher, Console, its sections, Sign out', async () => {
+  const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
+  await answered();
+  assert.deepEqual(menuRows(t), [
+    'head', 'My settings', 'Your workspaces', '—',
+    '[Organization]', 'Acme', 'Globex',
+    '[Console]', 'Settings', '› General', '› Secrets & webhooks', '› Members', '› Credits',
+    '[Service]', 'Admin', '› Overview', '› Pool',
+    'Sign out',
+  ], 'the entry\'s own pages always listed in the menu, as Settings\' tabs are');
+  const plain = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: { login: 'sam', admin: true } });
+  await answered();
+  assert.deepEqual(menuRows(plain).slice(0, 4), ['head', 'My settings', '—', '[Console]'], 'with no program, My settings alone under the name');
+});
+
+test('the side list: You with the program\'s pages, Console, then the program\'s sections, an entry\'s pages open on its own', async () => {
+  const t = load('/settings', (W) => [['/settings', (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/settings')))]], { me: HOST_MENU });
+  await answered();
+  assert.deepEqual(sideRows(t), ['[You]', 'My settings (page)', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin', '[This browser]'],
+    'Admin one entry away from its pages');
+
+  const first = load('/nowhere');
+  const part = new first.El('p');
+  part.append('The pool');
+  const admin = load('/admin/pool', () => [], { me: HOST_MENU, hostPage: { current: '/admin/pool', heading: 'Admin', tabs: [{ label: 'Overview', href: '/admin' }, { label: 'Pool', href: '/admin/pool' }], body: part } });
+  await answered();
+  assert.equal(admin.title(), 'Admin', 'the page\'s own heading, not Settings');
+  assert.deepEqual(admin.tabs(), [['Overview', '/admin', null], ['Pool', '/admin/pool', 'page']], 'and the row of its entry\'s pages');
+  assert.match(admin.app.querySelector('div.host-page').textContent, /The pool/);
+  assert.deepEqual(sideRows(admin), ['[You]', 'My settings', 'Your workspaces', '[Console]', 'Settings', '[Service]', 'Admin (true)', '› Overview', '› Pool (page)', '[This browser]'],
+    'its pages open under it, the page marked, Settings closed');
+  assert.deepEqual(menuRows(admin).slice(-4), ['Admin', '› Overview', '› Pool', 'Sign out']);
+  const menu = admin.side().querySelector('div.user-menu');
+  assert.deepEqual(menu.querySelectorAll('a.menu-item').filter((a) => a.getAttribute('aria-current')).map((a) => [a.textContent, a.getAttribute('aria-current')]),
+    [['Admin', 'true'], ['Pool', 'page']], 'and in the menu');
+
+  const account = load('/account', () => [], { me: HOST_MENU, hostPage: { current: '/account', heading: 'Your workspaces', tabs: [], body: new first.El('p') } });
+  await answered();
+  assert.equal(account.title(), 'Your workspaces');
+  assert.equal(account.tabs(), undefined, 'with no row of tabs');
+  assert.deepEqual(account.current(), ['/account'], 'the You entry marked');
 });

@@ -1519,14 +1519,26 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   proxy's header says on a single console.
 - `config.githubBroker.source`: a GitHub token source called in the process (`createInProcessBroker`), with the HTTP
   broker's checks and cache.
-- `userMenu(headers)`: a line under the person's name and groups of links at the top of the user menu (`menuOf` in
-  `server.mjs`, `designSystem/components/MenuGroups`).
+- `userMenu(headers)`: what the program adds to the user menu and the settings pages' side list (`menuOf` in
+  `server.mjs`, `designSystem/components/MenuGroups`), `{subtitle?, you?, groups?, sections?}`: `subtitle`, a line under
+  the person's name on the user button; `you: [{label, href}]`, the person's own pages, after My settings under their
+  name in the menu and in the side list's You group; `groups: [{label, items: [{label, href?, current, note?}]}]`, what
+  the person switches between, after those, the one in use `current: true` (it needs no `href`); and
+  `sections: [{label, items: [{label, href, items?: [{label, href}]}]}]`, the program's own headed groups after the
+  Console group, in the menu and the side list, an entry with its own pages under it as Settings has its tabs (listed
+  always in the menu, and in the side list on those pages). Each `href` is a path on the console's name or an http(s)
+  address, text is cut at 100 characters, fifty links in all, and anything else is dropped; a hook that throws adds
+  nothing and logs `console: user menu not given`. A group with no label and no `current` items, the way to put links
+  under the name before `you`, is still read as `you` links: move them to `you`.
 - `settingsTabs(headers)`: tabs of the program's own pages on Settings, `[{label, href}]`, after General and Secrets &
   webhooks (`settingsTabsOf` in `server.mjs`: at most eight, each `href` a path on the console's name, the rest
   dropped; a hook that throws adds none and logs `console: settings tabs not given`). The program serves each page
-  itself, rendered with `settingsFrame({title, body, current, login?, linkQuery?, styles?})` from `server.mjs`: its own
-  HTML (`body`, which it has escaped) under the title Settings and the tabs, with `current` (the tab's `href`) marked,
-  in the settings pages' frame, with the side list and avatar menu (`public/hostSettings.js`). `styles` are its
+  itself, rendered with `settingsFrame({title, body, current, heading?, tabs?, login?, linkQuery?, styles?})` from
+  `server.mjs`: its own HTML (`body`, which it has escaped) under the title Settings and the tabs, with `current` (the tab's `href`) marked,
+  in the settings pages' frame, with the side list and avatar menu (`public/hostSettings.js`). A page that is one of
+  `userMenu`'s `you` or `sections` entries instead passes `heading`, its title in place of Settings, and `tabs`
+  (`[{label, href}]`, paths, at most eight), the row under it, such as the entry's own pages, or none: `current` then
+  marks its entry in the side list and menu, and its tab in the row and among the entry's pages. `styles` are its
   stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
   theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
   first of them; with no tabs, nothing changes for them.

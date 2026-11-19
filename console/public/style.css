@@ -390,7 +390,7 @@ dialog.wizard:focus { outline: none; }
 .side-head .user-name { display: none; }
 .side-head .user-btn { padding-right: 8px; }
 .side-list { flex: 1; overflow-y: auto; padding: 8px 6px; display: flex; flex-direction: column; gap: 2px; }
-.side-console { display: contents; }
+.side-you, .side-console, .side-sections { display: contents; }
 .side-group { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--label); }
 .side-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); font: inherit; font-size: 13.5px; text-align: left; text-decoration: none; cursor: pointer; }
 .side-item:hover { background: var(--stopped); }

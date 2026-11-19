@@ -1190,6 +1190,12 @@
     return tabsOf(me).map((tab) => h('a', { class: cls, href: tab.href, ...extra, 'aria-current': tab.href === current ? 'page' : null }, tab.label));
   }
   const settingsMark = (link, current) => (!isCurrent(link, current) ? null : link.label === 'Settings' ? 'true' : 'page');
+  // A program embedding the console's own entries (server.mjs, menuOf): the person's pages after My settings (`menuYou`),
+  // and its sections after the Console group (`menuSections`), where an entry may have pages of its own under it, as
+  // Settings has its tabs. Such an entry is the set the page is in on one of those, and the page on its own otherwise.
+  const hostEntries = (me) => [...(me?.menuYou ?? []), ...(me?.menuSections ?? []).flatMap((section) => section.items)];
+  const entryOpen = (entry, current) => entry.href === current || Boolean(entry.items?.some((sub) => sub.href === current));
+  const entryMark = (entry, current) => (entry.items?.some((sub) => sub.href === current) ? 'true' : entry.href === current ? 'page' : null);
   // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page. Settings
   // also stays current on a host's tabs, and someone who is not an admin, given tabs, has Settings alone, opening the first.
   function consoleLinks(me) {
@@ -1241,15 +1247,25 @@
     const consoleItem = (link) => (link.label === 'Settings'
       ? [item(link), h('div', { class: 'menu-subs' }, subItems(me, current, 'menu-item menu-sub', { role: 'menuitem' }))]
       : item(link));
+    // The program's entries, each with its own pages under it always, as Settings has its tabs.
+    const hostItem = (entry) => h('a', { class: 'menu-item', role: 'menuitem', href: entry.href, 'aria-current': entryMark(entry, current) }, entry.label);
+    const hostEntry = (entry) => (entry.items?.length
+      ? [hostItem(entry), h('div', { class: 'menu-subs' }, entry.items.map((sub) =>
+        h('a', { class: 'menu-item menu-sub', role: 'menuitem', href: sub.href, 'aria-current': sub.href === current ? 'page' : null }, sub.label)))]
+      : hostItem(entry));
+    const yours = [...(me.login ? MY_LINKS.map(item) : []), ...(me.menuYou ?? []).map(hostItem)];
     const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
       h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : CONSOLE_NAME), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
+      // Your own pages first, under your name: My settings, then the program's (Keyboard shortcuts is not here: `?`, the
+      // command palette and the settings list's This browser group open it). Then what the program lets you switch
+      // between, the console's own pages, and the program's sections.
+      yours.length > 0 && [yours, h('div', { class: 'menu-rule', role: 'separator' })],
       menuGroups(me),
-      // Keyboard shortcuts is not here: `?`, the command palette and the settings list's This browser group open it.
-      me.login && MY_LINKS.map(item),
       consoleLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(consoleItem)],
+      (me.menuSections ?? []).map((section) => [h('div', { class: 'menu-label' }, section.label), section.items.map(hostEntry)]),
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it. Behind a
@@ -1273,8 +1289,9 @@
     return [button, menu];
   }
 
-  // What a program embedding the console adds to the top of the menu (server.mjs, menuOf): groups of links, where a
-  // choice is checked when it is the one in use and is otherwise a link to choose it. designSystem/components/MenuGroups.
+  // What a program embedding the console lets you switch between, after your own pages (server.mjs, menuOf): groups,
+  // where a choice is checked when it is the one in use and is otherwise a link to choose it. Labels set them apart from
+  // the Console group after them. designSystem/components/MenuGroups.
   function menuGroups(me) {
     if (!Array.isArray(me.menuGroups) || !me.menuGroups.length) return null;
     const note = (item) => item.note && h('span', { class: 'menu-note' }, item.note);
@@ -1284,13 +1301,10 @@
       : h('a', { class: 'menu-item menu-choice', role: 'menuitemradio', 'aria-checked': 'false', href: item.href },
         h('span', { class: 'menu-check', 'aria-hidden': 'true' }), h('span', { class: 'menu-choice-name' }, item.label), note(item)));
     const link = (item) => h('a', { class: 'menu-item', role: 'menuitem', href: item.href }, item.label, note(item));
-    return [
-      me.menuGroups.map((group) => [
-        group.label && h('div', { class: 'menu-label' }, group.label),
-        group.items.map((item) => (typeof item.current === 'boolean' ? choice(item) : link(item))),
-      ]),
-      h('div', { class: 'menu-rule', role: 'separator' }),
-    ];
+    return me.menuGroups.map((group) => [
+      group.label && h('div', { class: 'menu-label' }, group.label),
+      group.items.map((item) => (typeof item.current === 'boolean' ? choice(item) : link(item))),
+    ]);
   }
 
   /** @returns {string}  what Shared says with no session to list, on the rail and on / alike */
@@ -1307,8 +1321,26 @@
 
   let navCurrent = null;
   let meNow = null;
-  // The settings list's Console group, filled once /api/me says you are an admin. One node, like userSlot.
+  // The settings list's groups that /api/me decides: You (My settings, then a program's pages for you), Console, once it
+  // says you are an admin, and a program's sections. One node each, like userSlot, filled again as the page moves.
+  const youSlot = h('div', { class: 'side-you' });
   const consoleSlot = h('div', { class: 'side-console' });
+  const sectionsSlot = h('div', { class: 'side-sections' });
+  function fillSideSlots() {
+    const mine = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': settingsMark(link, navCurrent) },
+      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
+    // A program's entry has no icon of its own: one plain ring for all of them. Its own pages open under it on them.
+    const hostItem = (entry) => h('a', { class: 'side-item', href: entry.href, 'aria-current': entryMark(entry, navCurrent) },
+      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '○'), entry.label);
+    const hostEntry = (entry) => (entry.items?.length && entryOpen(entry, navCurrent)
+      ? [hostItem(entry), h('div', { class: 'side-subs' }, entry.items.map((sub) =>
+        h('a', { class: 'side-item side-sub', href: sub.href, 'aria-current': sub.href === navCurrent ? 'page' : null }, sub.label)))]
+      : hostItem(entry));
+    youSlot.replaceChildren(h('div', { class: 'side-group' }, 'You'), ...MY_LINKS.map(mine), ...(meNow?.menuYou ?? []).map(hostItem));
+    sectionsSlot.replaceChildren(...(meNow?.menuSections ?? []).flatMap((section) =>
+      [h('div', { class: 'side-group' }, section.label), ...section.items.flatMap(hostEntry)]));
+    fillConsoleSlot();
+  }
   function fillConsoleSlot() {
     const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': settingsMark(link, navCurrent) },
       h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.icon ?? link.href]), link.label, waitingOn(link, meNow));
@@ -1322,7 +1354,7 @@
   fetch('/api/me', { cache: 'no-store' }).then((r) => r.json()).then(learnNames).then((me) => {
     meNow = me;
     userSlot.replaceChildren(...userMenu(me, navCurrent));
-    fillConsoleSlot();
+    fillSideSlots();
     if (tabRow) fillTabs(tabRow, tabRow.current);
     // A page drawn before this answer showed the non-admin version of what isAdmin() decides: it draws again.
     window.dispatchEvent(new Event('woodshed:me'));
@@ -1346,8 +1378,10 @@
         else a.removeAttribute('aria-current');
         continue;
       }
-      const link = [...MY_LINKS, ...consoleLinks(meNow)].find((l) => l.href === a.getAttribute('href'));
-      const mark = link && settingsMark(link, navCurrent);
+      const href = a.getAttribute('href');
+      const link = [...MY_LINKS, ...consoleLinks(meNow)].find((l) => l.href === href);
+      const entry = !link && hostEntries(meNow).find((e) => e.href === href);
+      const mark = link ? settingsMark(link, navCurrent) : entry ? entryMark(entry, navCurrent) : null;
       if (mark) a.setAttribute('aria-current', mark);
       else a.removeAttribute('aria-current');
     }
@@ -1356,27 +1390,25 @@
     const moved = current !== navCurrent;
     navCurrent = current;
     if (moved) {
-      fillConsoleSlot();
+      fillSideSlots();
       // The avatar menu is drawn once /api/me answers; a page shown in place since only moves its current mark.
       markCurrent(userSlot, 'a.menu-item');
     }
     if (!sideNav) {
-      const item = (link) => h('a', { class: 'side-item', href: link.href },
-        h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label);
       sideNav = h('aside', { class: 'settings-side', 'aria-label': 'Settings' },
         h('div', { class: 'side-head' }, h('a', { class: 'side-back', href: '/' }, '‹ ', h('b', null, 'Back to sessions')), userSlot),
         // The settings search (settingsSearch.js), the same box on every settings page, kept between redraws.
         window.Woodshed.settingsSearch?.(),
         h('nav', { class: 'side-list' },
-          h('div', { class: 'side-group' }, 'You'), MY_LINKS.map(item),
+          youSlot,
           consoleSlot,
+          sectionsSlot,
           h('div', { class: 'side-group' }, 'This browser'),
           h('button', { type: 'button', class: 'side-item', 'data-keys': 'settings', onclick: () => window.Woodshed.shell?.openSettings() },
             h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '◐'), 'Theme and review files', h('kbd', { class: 'side-hint' }, window.Woodshed.shell?.keyText('settings') ?? '⇧⌘,')),
           h('button', { type: 'button', class: 'side-item', 'data-keys': 'keys', onclick: () => window.Woodshed.shell?.openKeys() },
             h('span', { class: 'side-ico', 'aria-hidden': 'true' }, '?'), 'Keyboard shortcuts', h('kbd', { class: 'side-hint' }, '?'))));
     }
-    if (moved) markCurrent(sideNav.querySelector('.side-list'), ':scope > a.side-item');
     return sideNav;
   }
 
