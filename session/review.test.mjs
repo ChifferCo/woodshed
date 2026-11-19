@@ -144,6 +144,16 @@ test('a Codex that fails leaves Claude Code\'s review, which says Codex wrote no
   assert.match(reports[0].body.summary, /Codex wrote no verdict/);
 });
 
+test('with Codex alone, claude is never run and Codex\'s verdict is the one sent, as its own', async (t) => {
+  const { reports, output } = await runReview(t, { agents: 'codex', via: 'key' });
+  assert.match(output, /Reviewing the diff of Acme\/widgets with Codex\n/);
+  assert.doesNotMatch(output, /Claude ended/);
+  const { body } = reports.find((r) => r.path === '/review-report');
+  assert.equal(body.conclusion, 'REQUEST_CHANGES');
+  assert.equal(body.summary, 'The link is wrong.', 'no sections: one reviewer');
+  assert.deepEqual(body.inlineComments, [{ path: 'README.md', line: 1, body: 'This link 404s.' }]);
+});
+
 test('with Claude Code alone, codex is never run', async (t) => {
   const { reports, output } = await runReview(t, { codex: '#!/bin/bash\ntouch "$REPO_DIR/codex-ran"\nexit 1\n' });
   assert.doesNotMatch(output, /Codex/);

@@ -19,6 +19,8 @@
 //   POST /api/my/codex-auth      {"value": "sk-..." or the text of ~/.codex/auth.json}
 //   POST /api/my/codex-auth/remove
 //   POST /api/my/codex-auth/reviews  {"on": true|false}   reviews of my pull requests run Codex on this sign-in (reviewAgents.mjs)
+//   GET  /api/my/reviews              who reviews my pull requests, and the choices this console can run for me
+//   POST /api/my/reviews              {"choice": "none"|"claude"|"codex"|"both"|null}   null is the most there is
 //   POST /api/my/claude-token/remove
 //   POST /api/my/claude-token/shared {"on": true}   shared sessions you start from GitHub run on your token
 //   POST /api/my/remove          {"confirm": "<your login>"}  Remove My Woodshed: stops your sessions, deletes your settings
@@ -85,7 +87,6 @@
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/webhooks  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
-//   POST /api/console-settings/reviews   {"agents": "claude"|"both"}   who reviews in a review session (reviewAgents.mjs)
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
@@ -1633,7 +1634,6 @@ export function createHandler({
       settings: consoleSettings.view(),
       slack: slack?.view() ?? null,
       webhooks: webhookState(),
-      reviews: reviewAgents ? await reviewAgents.view() : null,
       projects: addedProjects?.view().map((p) => ({ ...p, color: colors.get(p.name) ?? null, slackChannel: slack?.projectChannel(p.name) ?? '', blocker: blockers[p.name] ?? null })) ?? null,
       // False where the program the console is embedded in names each repo itself: Add a repo asks for no name.
       repoNames: addedProjects ? addedProjects.names !== false : null,
@@ -1681,8 +1681,16 @@ export function createHandler({
     return reply(res, 200, { webhooks: webhookState() });
   }
 
-  async function reviewAgentsWrite(req, res, login) {
-    if (!reviewAgents) return reply(res, 404, { error: 'this console runs no review sessions' });
+  /** My settings' Reviews card: who reviews my pull requests, and what this console can run for me (reviewAgents.mjs). */
+  async function myReviewsView(login) {
+    if (!reviewAgents) return { available: { claude: false, codex: false }, best: 'none', choice: null };
+    const { available, own, best } = await reviewAgents.options(login);
+    return { available, own, best, choice: userSettings?.reviewAgents(login) ?? null };
+  }
+
+  async function myReviewsWrite(req, res, login) {
+    if (!login) return reply(res, 409, { error: 'My Woodshed needs GitHub sign-in, which this console does not have' });
+    if (!userSettings) return reply(res, 409, { error: 'this console has no secret store, so My settings cannot be saved' });
     let body;
     try {
       body = await readJson(req);
@@ -1690,13 +1698,14 @@ export function createHandler({
       return reply(res, 400, { error: err.message });
     }
     try {
-      await reviewAgents.set({ agents: body?.agents, by: login ?? 'console' });
+      userSettings.setReviewAgents(login, body?.choice ?? null);
     } catch (err) {
       if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
       throw err;
     }
-    return reply(res, 200, { reviews: await reviewAgents.view() });
+    return reply(res, 200, await myReviewsView(login));
   }
+
 
   // The same typed confirm as every other admin change is the page's; the server checks the value's bounds.
   async function consoleSettingsWrite(req, res, pathname, login) {
@@ -1834,7 +1843,7 @@ export function createHandler({
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
-    if (pathname === '/api/console-settings/reviews') return reviewAgentsWrite(req, res, login);
+    if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
     if (pathname === '/api/my/sessions' || pathname === '/api/my/remove' || pathname === MY_DEFAULT_PROJECT_PATH || MY_TOKEN_RE.test(pathname) || pathname === MY_LIMITS_PATH || MY_CODEX_AUTH_RE.test(pathname) || MY_FILE_RE.test(pathname)
@@ -1995,6 +2004,7 @@ export function createHandler({
       await Promise.all([readProjectBlockers(user.login), first ? looking : null, readTeamOpenAiKey()]);
       return reply(res, 200, myView(user.login));
     }
+    if (pathname === '/api/my/reviews') return reply(res, 200, await myReviewsView(user.login));
     if (pathname === '/api/my/pulls') return pullsReply(res, user.login);
     if (pathname === '/api/my/projects') return reply(res, 200, await projectsView(user.login));
     if (pathname === '/api/my/codex-models') return reply(res, 200, codexModels ? await codexModels.list(user.login) : { models: BUILT_IN_CODEX_MODELS, source: 'built-in', note: null });

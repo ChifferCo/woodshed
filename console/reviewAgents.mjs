@@ -1,80 +1,102 @@
-// The Reviews card on Console settings: which agents review a pull request in a review session
-// (pullRequests.review.runner: woodshed). Claude Code alone, or Claude Code and Codex together, whose verdicts become one
-// (shared/codeReview/codeReview.mjs, mergeVerdicts). Codex runs on the pull request author's own Codex sign-in when
-// they turned that on for reviews on My settings (userSettings.mjs, ownCodexForReviews), and on the team's OpenAI key
-// otherwise. Either way the console's proxy adds it (openaiProxy.mjs), so no sign-in enters the review session. A review
-// with neither runs on Claude Code alone.
+// Who reviews a pull request in a review session (pullRequests.review.runner: woodshed), as its author chose on My
+// settings' Reviews card: no review, Claude Code, Codex, or both, whose verdicts become one
+// (shared/codeReview/codeReview.mjs, mergeVerdicts). A choice is offered only while something can run it:
+//
+//   Claude Code   the team's anthropic-api-key, or the author's own Claude token while they run shared sessions on it
+//   Codex         the team's openai-api-key, or the author's own Codex sign-in while they use it for reviews
+//
+// With no choice saved, a review runs the most it can: both, else the one there is, else none. A saved choice that can
+// no longer run (a key removed since) falls back the same way, and says why. Either way the console's proxies add the
+// credential to each call (anthropicProxy.mjs, openaiProxy.mjs): no sign-in enters the review session.
+// The choice itself is kept with the person's settings (userSettings.mjs, reviewAgents).
 import { credentialOf } from './codexModels.mjs';
-// Kept in state.json under `reviewAgents`, so it survives a restart.
 
-export const CHOICES = ['claude', 'both'];
+export const CHOICES = ['none', 'claude', 'codex', 'both'];
+const AGENTS_OF = { none: [], claude: ['claude'], codex: ['codex'], both: ['claude', 'codex'] };
+
+/** The most a review can run with these: both, else the one there is, else none. */
+export function bestChoice({ claude, codex }) {
+  if (claude && codex) return 'both';
+  if (claude) return 'claude';
+  return codex ? 'codex' : 'none';
+}
 
 /**
- * @param {{store: {state: object, save: () => void},
- *          connected: () => Promise<{claude: boolean, codex: boolean}>,
- *          userSettings?: {usesOwnCodexForReviews: (login: string) => boolean, codexAuth: (login: string) => Promise<string|null>}|null,
+ * @param {{connected: () => Promise<{claude: boolean, codex: boolean}>,
+ *          userSettings?: {reviewAgents: (login: string) => string|null, usesOwnTokenForShared: (login: string) => boolean,
+ *            usesOwnCodexForReviews: (login: string) => boolean, codexAuth: (login: string) => Promise<string|null>}|null,
  *          now?: () => number}} deps
- *   `connected` says whether the console reaches each on its team keys: Anthropic's and OpenAI's
+ *   `connected` says whether the console has each team key: Anthropic's and OpenAI's
  */
-export function createReviewAgents({ store, connected, userSettings = null, now = Date.now }) {
-  const saved = () => store.state.reviewAgents ?? {};
-  const choice = () => (CHOICES.includes(saved().agents) ? saved().agents : 'claude');
+export function createReviewAgents({ connected, userSettings = null, now = Date.now }) {
+  async function teamKeys() {
+    try {
+      return { ...(await connected()), why: null };
+    } catch (err) {
+      return { claude: false, codex: false, why: `the team keys could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
+    }
+  }
 
-  /** @returns {boolean}  whether it changed */
-  function set({ agents, by }) {
-    if (!CHOICES.includes(agents)) throw Object.assign(new Error(`agents must be ${CHOICES.join(' or ')}`), { shown: true, status: 400 });
-    if (choice() === agents) return false;
-    store.state.reviewAgents = { agents, by, at: new Date(now()).toISOString() };
-    store.save();
-    console.log('reviewAgents: changed', { agents, by });
-    return true;
+  // The author's own Codex sign-in, when they use it for reviews and it can still be used: how codex reaches it.
+  async function ownCodex(login) {
+    if (!login || !userSettings?.usesOwnCodexForReviews(login)) return { cred: null, why: null };
+    try {
+      const cred = credentialOf(await userSettings.codexAuth(login), now());
+      if (!cred) return { cred: null, why: 'the author\'s saved Codex sign-in has no access token' };
+      if (cred.expired) return { cred: null, why: 'the author\'s saved Codex sign-in has expired' };
+      return { cred, why: null };
+    } catch (err) {
+      return { cred: null, why: `the author's Codex sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}` };
+    }
   }
 
   /**
-   * The agents a review of `login`'s pull request runs, starting now: `codexLogin` when Codex runs on that person's own
-   * sign-in, `codexVia` how the session's codex reaches it (`chatgpt` for a ChatGPT login, `key` for an API key, the
-   * author's or the team's) with `codexAccount` for a ChatGPT login, and why when Codex was asked for and is left out, or its author's sign-in was not used.
+   * What `login` may choose from, and what they get with no choice saved.
+   * @param {string|null} login  null for nobody's own sign-ins: team keys only
+   */
+  async function options(login) {
+    const team = await teamKeys();
+    const own = { claude: Boolean(login && userSettings?.usesOwnTokenForShared(login)), codex: Boolean((await ownCodex(login)).cred) };
+    const available = { claude: team.claude || own.claude, codex: team.codex || own.codex };
+    return { available, own, best: bestChoice(available) };
+  }
+
+  /**
+   * The agents a review of `login`'s pull request runs, starting now. `codexLogin` when Codex runs on that person's own
+   * sign-in, `codexVia` how the session's codex reaches its credential (`chatgpt` for a ChatGPT login, `key` for an API
+   * key, the author's or the team's) with `codexAccount` for a ChatGPT login, `choice` what they chose (null for none
+   * saved), and `why` when what runs is not what they chose, or not on their own sign-in.
    * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
-   * @returns {Promise<{agents: string[], codexLogin: string|null, codexVia: 'chatgpt'|'key'|null, why: string|null}>}
+   * @returns {Promise<{agents: string[], choice: string|null, codexLogin: string|null, codexVia: 'chatgpt'|'key'|null,
+   *   codexAccount?: string, why: string|null}>}
    */
   async function forReview({ login = null } = {}) {
-    const claudeAlone = (why) => ({ agents: ['claude'], codexLogin: null, codexVia: null, why });
-    if (choice() !== 'both') return claudeAlone(null);
-    let ownWhy = null;
-    if (login && userSettings?.usesOwnCodexForReviews(login)) {
-      let cred = null;
-      try {
-        cred = credentialOf(await userSettings.codexAuth(login), now());
-      } catch (err) {
-        ownWhy = `the author's Codex sign-in could not be read: ${String(err?.message ?? err).split('\n')[0]}`;
-      }
-      if (cred && !cred.expired) {
-        // A ChatGPT login's account, an id and no credential: the session's stand-in login names it, as codex checks.
-        const account = cred.apiKey ? null : cred.headers['chatgpt-account-id'] ?? null;
-        return { agents: ['claude', 'codex'], codexLogin: login, codexVia: cred.apiKey ? 'key' : 'chatgpt', ...(account ? { codexAccount: account } : {}), why: null };
-      }
-      ownWhy ??= cred?.expired ? 'the author\'s saved Codex sign-in has expired' : 'the author\'s saved Codex sign-in has no access token';
+    const team = await teamKeys();
+    const codexOwn = await ownCodex(login);
+    const claudeOwn = Boolean(login && userSettings?.usesOwnTokenForShared(login));
+    const available = { claude: team.claude || claudeOwn, codex: team.codex || Boolean(codexOwn.cred) };
+    const saved = login ? userSettings?.reviewAgents?.(login) ?? null : null;
+    const choice = CHOICES.includes(saved) ? saved : null;
+    const why = [];
+    let agents = AGENTS_OF[choice ?? bestChoice(available)];
+    if (choice && agents.some((a) => !available[a])) {
+      const left = agents.filter((a) => available[a]);
+      agents = left.length ? left : AGENTS_OF[bestChoice(available)];
+      why.push(`the author chose ${choice}, which this console cannot run now`);
     }
-    let codex = false;
-    try {
-      ({ codex } = await connected());
-    } catch (err) {
-      return claudeAlone(`the OpenAI key could not be read: ${String(err?.message ?? err).split('\n')[0]}`);
+    if (team.why) why.push(team.why);
+    let codex = { codexLogin: null, codexVia: null };
+    if (agents.includes('codex')) {
+      if (codexOwn.cred) {
+        const account = codexOwn.cred.apiKey ? null : codexOwn.cred.headers['chatgpt-account-id'] ?? null;
+        codex = { codexLogin: login, codexVia: codexOwn.cred.apiKey ? 'key' : 'chatgpt', ...(account ? { codexAccount: account } : {}) };
+      } else {
+        codex = { codexLogin: null, codexVia: 'key' };
+        if (codexOwn.why) why.push(codexOwn.why);
+      }
     }
-    if (codex) return { agents: ['claude', 'codex'], codexLogin: null, codexVia: 'key', why: ownWhy };
-    return claudeAlone(ownWhy ? `${ownWhy}, and the console has no OpenAI key`
-      : 'the author uses no Codex sign-in of their own for reviews, and the console has no OpenAI key');
+    return { agents, choice, ...codex, why: why.length ? why.join('; ') : null };
   }
 
-  async function view() {
-    let state = { claude: false, codex: false };
-    try {
-      state = await connected();
-    } catch (err) {
-      console.warn('reviewAgents: connections not read', { message: String(err?.message ?? err).split('\n')[0] });
-    }
-    return { agents: choice(), by: saved().by ?? null, at: saved().at ?? null, connected: state };
-  }
-
-  return { set, forReview, view, choice };
+  return { forReview, options };
 }

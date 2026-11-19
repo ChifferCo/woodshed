@@ -796,14 +796,29 @@ part. The session cannot write to GitHub, so it writes files and the console pos
   A session that ends without a review turns it into `The review did not finish` with the reason
   (`fleet: review ended without a report`).
 
-### Claude Code and Codex together
+### Who reviews: Claude Code, Codex, both or none
 
-Console settings' **Reviews** card (`reviewAgents.mjs`, kept in `state.json` under `reviewAgents`) has one switch,
-**Review with Claude Code and Codex**. While it is on, each review that starts gets `review.agents: ['claude',
-'codex']` and `REVIEW_AGENTS`, and `session/review.sh` runs `codex exec` beside Claude with the same prompt and
-context, in `.review/codex/`. Codex works as in a Codex session: it reads the checkout, runs what it likes (the
-container is the sandbox) and writes its verdict's files itself. It gets `REVIEW_CODEX_MINUTES` (20 by default), then
-is stopped, and Claude's verdict goes out alone.
+Each person picks who reviews the pull requests they open, on My settings' **Reviews of my pull requests** card
+(`reviewAgents.mjs`; kept with their settings, `userSettings.mjs` `reviewAgents`): **Claude Code and Codex**, **Claude
+Code only**, **Codex only** or **No code review**. A choice is offered only while something can run it:
+
+- Claude Code: the team's `anthropic-api-key`, or their own Claude token while they run shared sessions on it;
+- Codex: the team's `openai-api-key`, or their own Codex sign-in while they use it for reviews (below).
+
+With no choice saved, a review runs the most there is: both, else the one there is, else none. A saved choice that can
+no longer run keeps what of it can, else falls back the same way, and the console says why. A pull request is the
+person's whose session opened it, or its GitHub author otherwise (`pullOwner`); one whose author fails the identity
+checks of their Claude plan (`teamKeyReason`), or a bot, gets the most the team keys can run.
+
+The review gets `review.agents` and `REVIEW_AGENTS` (`claude`, `codex` or both), and `session/review.sh` runs each.
+Codex works as in a Codex session: it reads the checkout, runs what it likes (the container is the sandbox) and writes
+its verdict's files itself, in `.review/codex/`. It gets `REVIEW_CODEX_MINUTES` (20 by default), then is stopped, and
+Claude's verdict goes out alone. Codex alone sends its own verdict.
+
+**No code review** starts no session and posts nothing on the pull request. The console keeps the skip in `state.json`
+(`reviewSkips`, by project and number), and what waits for a review goes on without one for that pull request: the
+Slack post and its brief (the gates come without `review`, `gatesFor` in `fleet.mjs`) and QA (`reviewApproved`). A
+review that runs on it later clears the skip.
 
 The two verdicts become one (`codeReview.mjs merge`):
 
@@ -845,16 +860,14 @@ claude:
 - **The team's `openai-api-key`**, on `/openai`, for everyone else (`REVIEW_CODEX_AUTH=key`), and for an author whose
   saved ChatGPT login has expired.
 
-With neither, the review runs on Claude Code alone. The admin switch needs no team OpenAI key, since authors' own
-sign-ins can carry it.
 
 The console logs:
 
-- `reviewAgents: changed` with who changed it;
+- `userSettings: reviews of my pull requests` with the `choice`;
 - `userSettings: own Codex sign-in for reviews` on each person's switch;
 - `fleet: review session started` with its `agents` and `codex` (`own ChatGPT login`, `own key` or `team key`);
-- `fleet: review's Codex runs on the team key, not the author's sign-in` with `why`;
-- `fleet: review runs on Claude Code alone, though Console settings ask for Codex too` with `why`;
+- `fleet: review runs other than the author chose` with `choice`, `agents` and `why`;
+- `fleet: review not started` with `reason: 'the author chose no code review'`;
 - `openaiProxy: first call on the author's ChatGPT login`, `on the author's key` or `on the team key`;
 - `openaiProxy: refused, the author's sign-in not usable` with `why`.
 

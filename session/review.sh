@@ -51,10 +51,16 @@ runClaude() {
 }
 
 withCodex() { [[ " $AGENTS " == *" codex "* ]]; }
+withClaude() { [[ " $AGENTS " == *" claude "* ]]; }
 
 # Codex is told how the prompt's tool names map to its own, and reads what Claude reads, from its own copy.
 codexPrompt() {
-  printf '%s\n\n' "You are Codex, reviewing beside another reviewer whose verdict is combined with yours. Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
+  if withClaude; then
+    printf '%s ' "You are Codex, reviewing beside another reviewer whose verdict is combined with yours."
+  else
+    printf '%s ' "You are Codex, the pull request's reviewer."
+  fi
+  printf '%s\n\n' "Where the steps below say the Write tool, write that file with your own tools. Change nothing in the repository but the files the steps name."
   cat "$CODEX_DIR/review-prompt.md"
 }
 
@@ -163,7 +169,9 @@ gatherContext() {
 sendReport() {
   local verdict code body
   # No verdict still reports, with a null conclusion, so the console stops the session rather than leaving it idle.
-  if withCodex; then verdict=$(node "$REVIEW" merge "$DIR" "$CODEX_DIR"); else verdict=$(node "$REVIEW" verdict "$DIR"); fi || { say "The reviewer wrote no verdict, so nothing is submitted"; verdict='{"conclusion":null}'; }
+  if withCodex && withClaude; then verdict=$(node "$REVIEW" merge "$DIR" "$CODEX_DIR")
+  elif withCodex; then verdict=$(node "$REVIEW" verdict "$CODEX_DIR")
+  else verdict=$(node "$REVIEW" verdict "$DIR"); fi || { say "The reviewer wrote no verdict, so nothing is submitted"; verdict='{"conclusion":null}'; }
   cost_of() { [ -f "$1" ] && jq -rR 'fromjson? | select(.type == "result") | .total_cost_usd // empty' "$1" | tail -1; }
   body=$(mktemp)
   jq -n --argjson v "$verdict" --arg sha "$(git -C "$REPO_DIR" rev-parse HEAD)" \
@@ -190,7 +198,10 @@ main() {
     --reviewer "${REVIEW_AUTHOR:-}"; then
     say "Could not write the review prompt (repo: ${repo:-unknown}), so there is no review"
   else
-    if withCodex; then
+    if withCodex && ! withClaude; then
+      say "Reviewing the diff of $repo with Codex"
+      runCodex "$repo"
+    elif withCodex; then
       say "Reviewing the diff of $repo with Claude Code and Codex"
       runCodex "$repo" &
       local codex=$!

@@ -1,5 +1,5 @@
 // The Settings page: the limits, retention numbers and Slack channel, one save per card, each behind the
-// typed confirm; the reviews and webhook switches, each applied as it is turned; then the sessions holding data, and anything
+// typed confirm; the webhook switches, each applied as it is turned; then the sessions holding data, and anything
 // stalled, with what fixes it. The data list is read again every minute; the cards are left alone, so a half-typed
 // change survives.
 window.Woodshed.settingsPage('/console-settings', (app, life) => {
@@ -714,56 +714,6 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       h('div', { class: 'webhook-switches' }, rows));
   }
 
-  // Who reviews a pull request in a review session (pullRequests.review.runner: woodshed). Codex runs on the author's own
-  // sign-in when they turned that on (My settings, Codex card), and on the team's OpenAI key otherwise, so the switch
-  // stays usable with no team key: a review then runs Codex only for authors who use their own.
-  let reviewSaving = false;
-  let reviewError = null;
-
-  async function setReviewAgents(agents) {
-    reviewSaving = true;
-    reviewError = null;
-    render();
-    try {
-      data = { ...data, ...(await W.postJson('/api/console-settings/reviews', { agents })) };
-    } catch (err) {
-      reviewError = err.message;
-    }
-    reviewSaving = false;
-    render();
-  }
-
-  function connection(name, on) {
-    return h('span', { class: 'review-agent' }, `${name} `, h('span', { class: `pill ${on ? 'is-ok' : 'is-warn'}` }, on ? 'Set' : 'Not set'));
-  }
-
-  function reviewsCard() {
-    const r = data.reviews;
-    if (!r) return null;
-    const both = r.agents === 'both';
-    const since = r.at ? ` Since ${W.when(r.at)}${r.by && r.by !== 'console' ? `, by ${r.by}` : ''}.` : '';
-    const codexOn = r.connected.codex
-      ? 'on the author\u2019s own Codex sign-in when they turned that on in My settings, and on the team\u2019s OpenAI key otherwise'
-      : 'on the author\u2019s own Codex sign-in when they turned that on in My settings. With no team OpenAI key, other authors\u2019 pull requests get Claude Code alone';
-    const sub = both
-      ? `On: Codex reviews each pull request beside Claude Code, ${codexOn}. The two become one review: the stricter verdict and the higher merge risk win, so a pull request is approved only when both approve.${since}`
-      : 'Off: Claude Code reviews each pull request alone.';
-    return h('section', { class: 'settings-card', id: 'reviews', 'aria-labelledby': 'card-reviews' },
-      h('h2', { id: 'card-reviews', class: 'label' }, 'Reviews'),
-      h('p', { class: 'sub' }, 'The review sessions this console runs on pull requests, for repos whose project file says ', h('code', null, 'pullRequests.review.runner: woodshed'), '. Each runs on its author\u2019s own Claude plan or Codex sign-in when they chose that in My settings, and on the team\u2019s keys otherwise (anthropic-api-key and openai-api-key, on ',
-        h('a', { href: '/secrets' }, 'Secrets & webhooks'), '). A change applies to the next review, and is logged with who made it.'),
-      h('p', { class: 'review-agents' }, connection('Team Anthropic key', r.connected.claude), connection('Team OpenAI key', r.connected.codex)),
-      h('div', { class: `toggle-row${both ? '' : ' is-off'}` },
-        h('button', {
-          type: 'button', class: 'switch-ui', role: 'switch', 'aria-checked': String(both), 'aria-labelledby': 'reviews-switch-both',
-          disabled: reviewSaving,
-          onclick: () => setReviewAgents(both ? 'claude' : 'both'),
-        }),
-        h('span', { class: 'toggle-label', id: 'reviews-switch-both' }, 'Review with Claude Code and Codex'),
-        h('p', { class: 'sub' }, sub),
-        reviewError ? h('p', { class: 'form-error', role: 'alert' }, reviewError) : null));
-  }
-
   // Fields render as they are typed in, so a Save turns on before the field loses focus: the page is drawn again with
   // the same field focused, its caret where it was. A render that starts inside another (a blur the swap fired) is
   // skipped, since the outer one draws the same state.
@@ -796,7 +746,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), reviewsCard(), webhooksCard(), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
   }
 
   async function load() {

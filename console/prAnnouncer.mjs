@@ -277,7 +277,7 @@ export function createPrAnnouncer({
   }
 
   async function checkOne(item) {
-    const gates = await gatesOf(item.project ?? null);
+    const gates = await gatesOf(item.project ?? null, item.number);
     const pull = await gh(item).pull(item.number);
     if (pull.state !== 'open') return drop(item, 'closed');
     const gaveUp = now() - Date.parse(item.since) > giveUpMs();

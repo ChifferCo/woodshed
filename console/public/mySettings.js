@@ -47,6 +47,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         me = await W.postJson(path, body);
         tokenInput.value = '';
         tokenInput.type = 'password';
+        loadReviews();
       },
     });
   }
@@ -66,7 +67,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
   const codexStatus = h('p', { class: 'form-note', role: 'status' });
 
   function codexChange(path, body, done, working) {
-    return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; } });
+    return act({ card: 'codex', note: codexStatus, working, done, call: async () => { me = await W.postJson(path, body); codexInput.value = ''; loadReviews(); } });
   }
 
   const codexInput = h('textarea', { id: 'codex-auth', class: 'field mono', rows: '3', autocomplete: 'off', spellcheck: 'false', placeholder: 'sk-… or the contents of ~/.codex/auth.json' });
@@ -112,8 +113,8 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       }),
       h('span', { class: 'toggle-label', id: 'codex-reviews-label' }, 'Also use it for reviews of my pull requests'),
       h('p', { class: 'sub' }, on
-        ? 'On: when Settings has Codex review beside Claude Code, the review of a pull request you opened runs Codex on your plan. The console adds your sign-in to Codex\u2019s calls; it never goes into the review session. A ChatGPT sign-in that has expired is not used: a Codex session of yours refreshes it.'
-        : 'Off: when Settings has Codex review beside Claude Code, it runs on the team\u2019s OpenAI key, or not at all without one.'),
+        ? 'On: when Codex reviews a pull request you opened (Reviews of my pull requests, below), it runs on your plan. The console adds your sign-in to Codex\u2019s calls; it never goes into the review session. A ChatGPT sign-in that has expired is not used: a Codex session of yours refreshes it.'
+        : 'Off: when Codex reviews a pull request you opened, it runs on the team\u2019s OpenAI key, or not at all without one.'),
       !saved && h('p', { class: 'why-off' }, 'Save a sign-in above to turn this on.'));
   }
 
@@ -504,6 +505,40 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
       projectStatus);
   }
 
+  // Who reviews the pull requests you open (console/reviewAgents.mjs): a choice is offered only while the team's keys or
+  // your own sign-ins can run it, and with none saved, the most there is runs.
+  let reviews = null;
+  const reviewSelect = h('select', { id: 'my-reviews-choice', class: 'field' });
+  const reviewStatus = h('p', { class: 'form-note', role: 'status' });
+  const REVIEW_NAMES = { both: 'Claude Code and Codex', claude: 'Claude Code only', codex: 'Codex only', none: 'No code review' };
+  const loadReviews = () => W.getJson('/api/my/reviews').then((answer) => { reviews = answer; if (me) render(); }, () => {});
+
+  function reviewsCard() {
+    if (!reviews) return null;
+    const { available, best, choice } = reviews;
+    const can = { both: available.claude && available.codex, claude: available.claude, codex: available.codex, none: true };
+    const needs = { both: 'needs both', claude: 'needs a Claude token or the team key', codex: 'needs a Codex sign-in or the team key' };
+    if (document.activeElement !== reviewSelect && !busy.has('reviews')) {
+      reviewSelect.replaceChildren(
+        h('option', { value: '' }, `Default: the most there is (now ${REVIEW_NAMES[best]})`),
+        ...['both', 'claude', 'codex', 'none'].map((c) => h('option', { value: c, disabled: !can[c] && c !== choice }, can[c] ? REVIEW_NAMES[c] : `${REVIEW_NAMES[c]} (${needs[c]})`)));
+      reviewSelect.value = choice ?? '';
+    }
+    const runs = choice && !can[choice] ? `${REVIEW_NAMES[choice]} cannot run now, so your reviews get the most there is: ${REVIEW_NAMES[best]}.` : null;
+    return h('section', { class: 'set-card', id: 'my-reviews' },
+      h('div', { class: 'set-head' }, h('h2', null, 'Reviews of my pull requests'), h('span', { class: choice ? 'pill is-ok' : 'pill' }, choice ? 'Your own' : 'Default')),
+      h('p', { class: 'sub' }, 'Who reviews a pull request you open, in repos that review with Woodshed sessions. With both, the stricter verdict wins, so it is approved only when both approve. With no code review, the Slack post and QA go on without one. A choice needs your own sign-in above or the team\u2019s key; with none saved, the most there is runs.'),
+      h('label', { class: 'field-label', for: 'my-reviews-choice' }, h('span', null, 'Reviewed by')),
+      reviewSelect,
+      runs && h('p', { class: 'why-off' }, runs),
+      h('div', { class: 'set-actions' },
+        h('button', {
+          type: 'button', class: 'btn btn-open', disabled: busy.has('reviews'),
+          onclick: () => act({ card: 'reviews', note: reviewStatus, done: 'Saved. It applies to the next review.', call: async () => { reviews = await W.postJson('/api/my/reviews', { choice: reviewSelect.value || null }); } }),
+        }, 'Save')),
+      reviewStatus);
+  }
+
   function saveLimits(values, done) {
     limitsTyped = true;
     return act({ card: 'limits', note: limitStatus, done, call: async () => { me = await W.postJson('/api/my/limits', { limits: values }); limitsTyped = false; } });
@@ -573,6 +608,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
         h('p', { class: 'sub' }, `For ${W.personText(me.login)}'s My Woodshed sessions only. Shared sessions get none of it, but for your Claude token when you switch that on below. What applies to everyone is on `, W.isAdmin() ? h('a', { href: '/console-settings' }, 'Settings') : 'Settings (admins)', '.'))),
       tokenCard(),
       codexCard(),
+      reviewsCard(),
       projectCard(),
       limitsCard(),
       databasesCard(),
@@ -600,6 +636,7 @@ window.Woodshed.settingsPage('/settings', (app, life) => {
 
   W.getJson('/api/my').then((answer) => { me = answer; }, (err) => { loadError = err.message; }).then(() => (me ? openFile(fileKey ?? fileKeys()[0]) : render()));
   W.getJson('/api/my/projects').then((answer) => { projects = answer; if (me) render(); }, () => {});
+  loadReviews();
   render();
   life.on(window, 'woodshed:me', render);
 });

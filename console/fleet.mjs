@@ -255,7 +255,7 @@ export function createFleet({
   const secondsSince = (iso) => (iso ? Math.round((now() - Date.parse(iso)) / 1000) : null);
   const retention = () => config.retention ?? DEFAULT_RETENTION;
   const announcer = createPrAnnouncer({
-    store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: pullRequests, now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
+    store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: (name, number) => gatesFor(name, number), now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
     events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
     webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
   });
@@ -343,10 +343,10 @@ export function createFleet({
       env.REVIEW_BASE = session.review.base;
       // Whose earlier inline comments are the review's own, for the session to check whether the head fixes them.
       if (session.review.author) env.REVIEW_AUTHOR = session.review.author;
-      // Codex reviews beside Claude when Console settings asked for it as the review started (reviewAgents.mjs).
-      // How its codex reaches OpenAI, through the console either way: the author's ChatGPT login, or a key.
+      // Who reviews, as the author chose on My settings when the review started (reviewAgents.mjs), and how its codex
+      // reaches OpenAI, through the console either way: the author's ChatGPT login, or a key.
+      if (session.review.agents?.length) env.REVIEW_AGENTS = session.review.agents.join(' ');
       if (session.review.agents?.includes('codex')) {
-        env.REVIEW_AGENTS = session.review.agents.join(' ');
         env.REVIEW_CODEX_AUTH = session.review.codexVia === 'chatgpt' ? 'chatgpt' : 'key';
         if (env.REVIEW_CODEX_AUTH === 'chatgpt' && session.review.codexAccount) env.REVIEW_CODEX_ACCOUNT = session.review.codexAccount;
       }
@@ -1752,6 +1752,23 @@ export function createFleet({
   // The review runs as a session (pullRequests.review.runner: woodshed) instead of the Actions workflow: the
   // `[woodshed-review]` tag on the head commit starts it, session/review.sh runs the review, and the console submits
   // the verdict and the Merge risk check here (reviewFinished), as its own App. One review session per commit.
+  const skipKey = (project, number) => `${project?.name ?? ''}#${number}`;
+
+  /**
+   * Whether this pull request's author chose no code review (or nothing could run one) at its last review: then what
+   * waits for a review, the Slack post and QA, goes on without it. A later review that runs clears it.
+   */
+  function reviewSkipped(projectName, number) {
+    return Boolean(state.reviewSkips?.[`${projectName ?? ''}#${number}`]);
+  }
+
+  /** The project's pull request gates, without the review for a pull request whose review was skipped. */
+  async function gatesFor(projectName, number) {
+    const gates = await pullRequests(projectName);
+    if (!gates?.review || number == null || !reviewSkipped(projectName ?? defaultProject(config).name, number)) return gates;
+    return { ...gates, review: null };
+  }
+
   async function startReview({ project, gates, number, login, owner = null, pull: known = null }) {
     const { review, mergeRisk } = gates;
     const gh = githubOf(project);
@@ -1773,11 +1790,22 @@ export function createFleet({
       return ignored('a review session is already running on it');
     }
     const commentId = state.sessions.filter((s) => isReview(s) && s.number === number && onProject(s, project) && s.review.commentId).at(-1)?.review.commentId ?? null;
-    // Codex on the author's own sign-in only for someone who passed the same checks as their Claude plan; never a bot's.
-    const ownCodexLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy } = reviewAgents ? await reviewAgents.forReview({ login: ownCodexLogin }) : { agents: ['claude'], why: null };
-    if (agentsWhy && !agents.includes('codex')) console.warn('fleet: review runs on Claude Code alone, though Console settings ask for Codex too', { number, why: agentsWhy, ...projectField(project) });
-    else if (agentsWhy) console.warn('fleet: review\'s Codex runs on the team key, not the author\'s sign-in', { number, why: agentsWhy, ...projectField(project) });
+    // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
+    // bot's. Anyone else's review runs the most the team keys can.
+    const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
+    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy } = reviewAgents
+      ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
+    if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
+    if (!agents.length) {
+      // No review: what waits for one (the Slack post, QA) goes on without it for this pull request (reviewSkipped).
+      state.reviewSkips = { ...state.reviewSkips, [skipKey(project, number)]: { login, sha: pull.head.sha, at: nowIso(), why: choice === 'none' ? 'the author chose no review' : 'nothing can run a review' } };
+      store.save();
+      return ignored(choice === 'none' ? 'the author chose no code review' : 'no team key and no sign-in of the author\'s can run a review');
+    }
+    if (state.reviewSkips?.[skipKey(project, number)]) {
+      const { [skipKey(project, number)]: _dropped, ...rest } = state.reviewSkips;
+      state.reviewSkips = rest;
+    }
     const session = await createSession({
       kind: 'pr', number, title: `Review: ${pull.title}`, startedBy: login, trigger: 'review', branch: pull.head.ref, project,
       review: {
@@ -1786,7 +1814,7 @@ export function createFleet({
         ...(teamKeyWhy ? { teamKey: true } : {}),
       },
     });
-    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null, ...projectField(project) });
+    console.log('fleet: review session started', { id: session.id, number, login, base: pull.base.ref, agents, choice: choice ?? 'the most there is', codex: agents.includes('codex') ? (codexLogin ? `own ${codexVia === 'chatgpt' ? 'ChatGPT login' : 'key'}` : 'team key') : null, ...projectField(project) });
     update(session, { review: { ...session.review, runningPosted: true } });
     await postReviewComment(session, gh, reviewRunningComment({ sessionUrl: await qaSessionUrl(session, project), agents }));
     return { outcome: 'started', sessionId: session.id };
@@ -1894,6 +1922,7 @@ export function createFleet({
 
   async function reviewApproved({ project, gates, gh, number, sha }) {
     if (heldApproval(project, number, sha)) return { approved: true, state: 'held for QA' };
+    if (reviewSkipped(project?.name ?? null, number)) return { approved: true, state: 'no review, by the author\'s choice' };
     const verdict = reviewVerdict(await gh.reviews(number), gates.review);
     return { approved: verdict?.state === 'APPROVED' && verdict.commit_id === sha, state: verdict?.state ?? null };
   }

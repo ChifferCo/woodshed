@@ -2554,7 +2554,7 @@ test('the review tag on the head starts a review session, once for the commit, o
   assert.deepEqual(await actions.fleet.reviewOnTag({ number: 7 }), { unrecorded: true }, 'the actions runner stays in CI');
 });
 
-test('a review started while Console settings ask for Codex too runs both, and says so on the pull request', async () => {
+test('a review runs whom its author chose, and says so on the pull request', async () => {
   const both = { forReview: async () => ({ agents: ['claude', 'codex'], why: null }) };
   const { fleet, calls } = reviewSetup({ reviewAgents: both });
   await fleet.reviewOnTag({ number: 7 });
@@ -2578,8 +2578,37 @@ test('a review started while Console settings ask for Codex too runs both, and s
   await alone.fleet.reviewOnTag({ number: 7 });
   await alone.fleet.tick();
   assert.deepEqual(alone.fleet.sessions()[0].review.agents, ['claude']);
-  assert.equal(alone.calls.started[0].env.REVIEW_AGENTS, undefined, 'Claude alone, as before the setting');
+  assert.equal(alone.calls.started[0].env.REVIEW_AGENTS, 'claude');
   assert.doesNotMatch(alone.calls.comments[0].body, /Codex/);
+
+  const codex = reviewSetup({ reviewAgents: { forReview: async () => ({ agents: ['codex'], choice: 'codex', codexVia: 'key', why: null }) } });
+  await codex.fleet.reviewOnTag({ number: 7 });
+  await codex.fleet.tick();
+  assert.equal(codex.calls.started[0].env.REVIEW_AGENTS, 'codex');
+  assert.equal(codex.calls.started[0].env.REVIEW_CODEX_AUTH, 'key');
+  assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
+});
+
+test('an author who chose no code review gets none, and QA and the Slack post go on without waiting for one', async () => {
+  const none = { forReview: async () => ({ agents: [], choice: 'none', why: null }) };
+  const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };
+  const { fleet, calls, github, store } = setup({ gates, reviewAgents: none });
+  github.pull = async () => ({ ...REVIEW_PULL, labels: [{ name: 'qa' }] });
+  github.reviews = async () => [];
+  github.labeledBy = async () => 'joel';
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'the author chose no code review' });
+  assert.equal(fleet.sessions().length, 0, 'no review session');
+  assert.equal(calls.comments.length, 0, 'nothing posted on the pull request');
+  assert.equal(Object.values(store.state.reviewSkips)[0].why, 'the author chose no review');
+  const qa = await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' });
+  assert.equal(qa.outcome, 'started', 'QA does not wait for a review that will not come');
+
+  const later = { forReview: async () => ({ agents: ['claude'], choice: 'claude', why: null }) };
+  const again = setup({ gates, reviewAgents: later });
+  again.store.state.reviewSkips = { ...store.state.reviewSkips };
+  again.github.pull = async () => REVIEW_PULL;
+  await again.fleet.reviewOnTag({ number: 7 });
+  assert.deepEqual(again.store.state.reviewSkips, {}, 'a review that runs again clears the skip');
 });
 
 test('a review runs Codex on its author\'s own sign-in only when they pass the checks their Claude plan needs', async () => {

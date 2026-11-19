@@ -1607,26 +1607,31 @@ test('Console settings turns each source\'s webhooks off and on, says who did, a
   assert.equal((await get()).webhooks.github.off, true, 'and Webhook events says what is off');
 });
 
-test('Console settings\' Reviews card turns Codex beside Claude Code on and off, says who did, and which team keys are set', async (t) => {
+test('My settings\' Reviews card: each person picks who reviews their pull requests, from what can run for them', async (t) => {
   const { createReviewAgents } = await import('./reviewAgents.mjs');
-  const store = { state: {}, save() {} };
-  const reviewAgents = createReviewAgents({ store, connected: async () => ({ claude: true, codex: false }) });
-  const config = {
-    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
-    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
-  };
-  const handle = createHandler({ config, fleet: { sessions: () => [] }, reviewAgents, consoleSettings: createConsoleSettings({ store, config }) });
+  const { createUserSettings } = await import('./userSettings.mjs');
+  const secrets = { values: new Map(), async read(n) { return this.values.get(n) ?? null; }, async write(n, v) { this.values.set(n, v); }, async remove(n) { this.values.delete(n); }, async list() { return [...this.values.keys()]; } };
+  const userSettings = createUserSettings({ store: { state: {}, save() {} }, secrets });
+  const reviewAgents = createReviewAgents({ userSettings, connected: async () => ({ claude: true, codex: false }) });
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => ({ login: /woodshed_session=([\w-]+)/.exec(cookie)[1] }) };
+  const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
+  const handle = createHandler({ config, fleet: { sessions: () => [], find: () => null }, auth, userSettings, reviewAgents });
   const server = http.createServer((req, res) => { handle(req, res); });
   const port = await listen(server);
   t.after(() => server.close());
+  const as = { cookie: 'woodshed_session=mia-dev' };
+  const get = async () => (await fetch(`http://127.0.0.1:${port}/api/my/reviews`, { headers: as })).json();
 
-  const page = await (await fetch(`http://127.0.0.1:${port}/api/console-settings`)).json();
-  assert.deepEqual(page.reviews, { agents: 'claude', by: null, at: null, connected: { claude: true, codex: false } });
-  const on = await post(port, '/api/console-settings/reviews', { agents: 'both' });
-  assert.equal(on.status, 200, 'with no team OpenAI key: authors\' own sign-ins can run it');
-  assert.deepEqual([on.body.reviews.agents, on.body.reviews.by], ['both', 'console']);
-  assert.equal((await post(port, '/api/console-settings/reviews', { agents: 'everyone' })).status, 400);
-  assert.equal((await post(port, '/api/console-settings/reviews', { agents: 'claude' })).body.reviews.agents, 'claude');
+  assert.deepEqual(await get(), { available: { claude: true, codex: false }, own: { claude: false, codex: false }, best: 'claude', choice: null },
+    'the team Anthropic key alone: Claude Code is the most there is');
+  const none = await post(port, '/api/my/reviews', { choice: 'none', login: 'joel' }, as);
+  assert.equal(none.status, 200);
+  assert.equal(none.body.choice, 'none');
+  assert.equal(userSettings.reviewAgents('mia-dev'), 'none', 'the body cannot say whose it is');
+  assert.equal(userSettings.reviewAgents('joel'), null);
+  assert.equal((await post(port, '/api/my/reviews', { choice: 'everyone' }, as)).status, 400);
+  assert.equal((await post(port, '/api/my/reviews', { choice: null }, as)).body.choice, null, 'back to the default');
+  assert.equal((await post(port, '/api/my/reviews', { choice: 'both' }, { ...as, origin: 'https://evil.example' })).status, 403);
 });
 
 test('a console that borrows its GitHub access shows no webhook switches, unless its host delivers webhooks', async (t) => {

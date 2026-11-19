@@ -37,7 +37,8 @@ function resolvedOf(raw) {
  */
 export function reviewRunningComment({ sessionUrl, agents = ['claude'] }) {
   const where = sessionUrl ? `[a Woodshed session](${sessionUrl})` : 'a Woodshed session';
-  const who = agents.includes('codex') ? ' with Claude Code and Codex' : '';
+  const names = { claude: 'Claude Code', codex: 'Codex' };
+  const who = agents.includes('codex') ? ` with ${agents.map((a) => names[a] ?? a).join(' and ')}` : '';
   return `**Reviewing**${who} in ${where}: the review and its merge risk follow here when it ends. ${SPINNER_HTML}\n`;
 }
 

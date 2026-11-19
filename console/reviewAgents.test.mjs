@@ -1,63 +1,92 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createReviewAgents } from './reviewAgents.mjs';
+import { createReviewAgents, bestChoice } from './reviewAgents.mjs';
 
 const jwt = (exp) => `h.${Buffer.from(JSON.stringify({ exp })).toString('base64url')}.s`;
-const FUTURE = Date.parse('2026-11-25T10:00:00Z') / 1000;
+const NOW = Date.parse('2026-11-18T10:00:00Z');
+const FUTURE = NOW / 1000 + 7 * 86400;
 const SIGN_INS = {
   ana: JSON.stringify({ tokens: { access_token: jwt(FUTURE), account_id: 'acct-ana' } }),
   cy: 'sk-cy',
-  old: JSON.stringify({ tokens: { access_token: jwt(FUTURE - 30 * 86400), account_id: 'acct-old' } }),
+  old: JSON.stringify({ tokens: { access_token: jwt(NOW / 1000 - 60), account_id: 'acct-old' } }),
 };
 
-function setup({ connected = { claude: true, codex: true }, own = [] } = {}) {
-  const store = { state: {}, saves: 0, save() { this.saves += 1; } };
-  const now = { claude: connected.claude, codex: connected.codex };
-  const userSettings = { usesOwnCodexForReviews: (login) => own.includes(login), codexAuth: async (login) => SIGN_INS[login] ?? null };
-  const agents = createReviewAgents({ store, userSettings, connected: async () => ({ ...now }), now: () => Date.parse('2026-11-18T10:00:00Z') });
-  return { store, agents, now };
+/**
+ * @param {{team?: {claude: boolean, codex: boolean}, claudeOwn?: string[], codexOwn?: string[], choices?: Record<string, string>}} opts
+ */
+function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], choices = {} } = {}) {
+  const userSettings = {
+    reviewAgents: (login) => choices[login] ?? null,
+    usesOwnTokenForShared: (login) => claudeOwn.includes(login),
+    usesOwnCodexForReviews: (login) => codexOwn.includes(login),
+    codexAuth: async (login) => SIGN_INS[login] ?? null,
+  };
+  return createReviewAgents({ userSettings, connected: async () => ({ ...team }), now: () => NOW });
 }
 
-test('reviews run on Claude Code alone until an admin asks for Codex too, whatever the author chose', async () => {
-  const { agents } = setup({ own: ['ana'] });
-  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude'], codexLogin: null, codexVia: null, why: null });
-  assert.equal((await agents.view()).agents, 'claude');
+test('the default is the most there is: both, else the one there is, else none', () => {
+  assert.equal(bestChoice({ claude: true, codex: true }), 'both');
+  assert.equal(bestChoice({ claude: true, codex: false }), 'claude');
+  assert.equal(bestChoice({ claude: false, codex: true }), 'codex');
+  assert.equal(bestChoice({ claude: false, codex: false }), 'none');
 });
 
-test('both, once set, is kept in state.json with who set it', async () => {
-  const { store, agents } = setup();
-  assert.equal(agents.set({ agents: 'both', by: 'joel' }), true);
-  assert.deepEqual(store.state.reviewAgents, { agents: 'both', by: 'joel', at: '2026-11-18T10:00:00.000Z' });
-  assert.deepEqual(await agents.view(), { agents: 'both', by: 'joel', at: '2026-11-18T10:00:00.000Z', connected: { claude: true, codex: true } });
-  assert.equal(agents.set({ agents: 'both', by: 'joel' }), false, 'no change, nothing saved');
-  assert.equal(store.saves, 1);
-  assert.throws(() => agents.set({ agents: 'codex', by: 'joel' }), /agents must be claude or both/);
+test('with no choice saved, a review runs both when the team keys can, on the team keys', async () => {
+  const agents = setup();
+  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null });
 });
 
-test('Codex runs on the author\'s own sign-in when they turned it on for reviews, through the console as it is, and on the team key otherwise', async (t) => {
-  const { agents } = setup({ own: ['ana', 'cy'] });
-  agents.set({ agents: 'both', by: 'joel' });
-  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null }, 'a ChatGPT login, with its account');
-  assert.deepEqual(await agents.forReview({ login: 'cy' }), { agents: ['claude', 'codex'], codexLogin: 'cy', codexVia: 'key', why: null }, 'an API key');
-  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: ['claude', 'codex'], codexLogin: null, codexVia: 'key', why: null }, 'the team key');
-  assert.deepEqual(await agents.forReview({ login: null }), { agents: ['claude', 'codex'], codexLogin: null, codexVia: 'key', why: null }, 'nobody\'s own');
+test('each choice runs what it says: none, Claude Code, Codex or both', async () => {
+  const agents = setup({ choices: { a: 'none', b: 'claude', c: 'codex', d: 'both' } });
+  assert.deepEqual((await agents.forReview({ login: 'a' })).agents, []);
+  assert.deepEqual((await agents.forReview({ login: 'b' })).agents, ['claude']);
+  assert.deepEqual((await agents.forReview({ login: 'c' })).agents, ['codex']);
+  assert.deepEqual((await agents.forReview({ login: 'd' })).agents, ['claude', 'codex']);
 });
 
-test('an author whose saved ChatGPT login has expired gets the team key, or Claude Code alone, and is told why', async (t) => {
-  const { agents } = setup({ own: ['old'] });
-  agents.set({ agents: 'both', by: 'joel' });
-  assert.deepEqual(await agents.forReview({ login: 'old' }), { agents: ['claude', 'codex'], codexLogin: null, codexVia: 'key', why: 'the author\'s saved Codex sign-in has expired' });
-  const none = setup({ connected: { claude: true, codex: false }, own: ['old'] });
-  none.agents.set({ agents: 'both', by: 'joel' });
-  assert.match((await none.agents.forReview({ login: 'old' })).why, /expired, and the console has no OpenAI key/);
+test('what is offered follows the tokens: the team keys, or the person\'s own sign-ins', async () => {
+  const none = setup({ team: { claude: false, codex: false } });
+  assert.deepEqual(await none.options('bo'), { available: { claude: false, codex: false }, own: { claude: false, codex: false }, best: 'none' });
+  const own = setup({ team: { claude: false, codex: false }, claudeOwn: ['ana'], codexOwn: ['ana'] });
+  assert.deepEqual(await own.options('ana'), { available: { claude: true, codex: true }, own: { claude: true, codex: true }, best: 'both' });
+  assert.equal((await own.options('bo')).best, 'none', 'someone else\'s sign-ins are not theirs');
+  const claudeTeam = setup({ team: { claude: true, codex: false } });
+  assert.equal((await claudeTeam.options('bo')).best, 'claude');
+  const expired = setup({ team: { claude: false, codex: false }, codexOwn: ['old'] });
+  assert.deepEqual((await expired.options('old')).available, { claude: false, codex: false }, 'an expired login runs nothing');
 });
 
-test('with no team OpenAI key, both can still be set: only authors with their own sign-in get Codex, and the rest say why not', async (t) => {
-  const { agents } = setup({ connected: { claude: true, codex: false }, own: ['ana'] });
-  assert.equal(agents.set({ agents: 'both', by: 'joel' }), true);
-  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null });
-  const other = await agents.forReview({ login: 'bo' });
-  assert.deepEqual(other.agents, ['claude']);
-  assert.match(other.why, /no Codex sign-in of their own for reviews, and the console has no OpenAI key/);
+test('with nothing to run a review on, the default is no review', async () => {
+  const agents = setup({ team: { claude: false, codex: false } });
+  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: [], choice: null, codexLogin: null, codexVia: null, why: null });
+});
+
+test('a choice that cannot run now keeps what of it can, else falls back to the most there is, and says why', async () => {
+  const agents = setup({ team: { claude: true, codex: false }, choices: { a: 'both', b: 'codex' } });
+  const a = await agents.forReview({ login: 'a' });
+  assert.deepEqual(a.agents, ['claude']);
+  assert.match(a.why, /the author chose both, which this console cannot run now/);
+  const b = await agents.forReview({ login: 'b' });
+  assert.deepEqual(b.agents, ['claude'], 'Codex alone cannot run: the most there is');
+  assert.match(b.why, /chose codex/);
+});
+
+test('Codex runs on the author\'s own sign-in when they use it for reviews, as it is, and on the team key otherwise', async () => {
+  const agents = setup({ team: { claude: true, codex: true }, codexOwn: ['ana', 'cy'] });
+  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null });
+  assert.deepEqual(await agents.forReview({ login: 'cy' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'cy', codexVia: 'key', why: null });
+  assert.deepEqual(await agents.forReview({ login: null }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null }, 'nobody\'s own');
+});
+
+test('an author whose ChatGPT login has expired gets Codex on the team key, and is told why', async () => {
+  const agents = setup({ codexOwn: ['old'] });
+  const r = await agents.forReview({ login: 'old' });
+  assert.deepEqual([r.agents, r.codexLogin, r.codexVia], [['claude', 'codex'], null, 'key']);
+  assert.match(r.why, /expired/);
+});
+
+test('nobody\'s own choice or sign-in counts for a review with no login: the team keys decide', async () => {
+  const agents = setup({ team: { claude: false, codex: true }, choices: { ana: 'none' } });
+  assert.deepEqual((await agents.forReview({ login: null })).agents, ['codex']);
 });
