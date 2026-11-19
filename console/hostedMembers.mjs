@@ -139,7 +139,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     failures += 1;
     timer = setTimer(() => {
       timer = null;
-      refresh().catch((err) => console.warn('members: the program\'s list not read again', { message: String(err?.message ?? err).split('\n')[0], nextInMs: Math.min(retryMs * 2 ** failures, maxRetryMs) }));
+      refresh().catch((err) => console.warn('members: the program\'s list not read again', { message: String(err?.message ?? err).split('\n')[0], nextInMs: Math.min(retryMs * 2 ** (failures - 1), maxRetryMs) }));
     }, wait);
     timer?.unref?.();
   }
