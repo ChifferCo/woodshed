@@ -296,6 +296,12 @@
     return got.endsWith('…') && got.length > 8000 && want.startsWith(got.slice(0, -1));
   }
 
+  // Held by the console, or sent with an answer that could not be read (held or not): either waits for the record to
+  // hold it, or for the console to say by its id what became of it.
+  function waiting(p) {
+    return p.state === 'held' || p.state === 'unconfirmed';
+  }
+
   function stillPending(pending, entries, now = Date.now()) {
     const used = new Set();
     // The entry that settled a message is no later message's: each after it must be matched by an entry after that one,
@@ -307,7 +313,7 @@
       if (settledAt && (p.after == null || Date.parse(p.after) < Date.parse(settledAt))) p.after = settledAt;
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
       // A sent one is let go ten minutes after it went in: its send, or the console's sending it later.
-      if (p.state !== 'held' && p.state !== 'in-box' && now - (p.deliveredAt ?? p.sentAt) > PENDING_MS) continue;
+      if (!waiting(p) && p.state !== 'in-box' && now - (p.deliveredAt ?? p.sentAt) > PENDING_MS) continue;
       const want = squash(typeable(p.text));
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
       // clock): an earlier prompt that starts the same is never taken for it. A message from before `after` was kept
@@ -458,13 +464,15 @@
 
   /**
    * What a message sent from the page says under it until the agent's record holds it.
-   * @param {'sending'|'sent'|'held'} state  held: the console keeps it while the agent is busy, nothing has reached it
+   * @param {'sending'|'sent'|'held'|'unconfirmed'|'unknown'|'refused'|'in-box'} state  unconfirmed: answered, but not
+   *   readably, so held or sent is not known  held: the console keeps it while the agent is busy, nothing has reached it
    */
   function pendingLabel(state, agent) {
     if (state === 'sending') return 'Sending…';
     if (state === 'in-box') return `In ${agent}'s box, not sent: send or clear it in the TUI tab`;
     if (state === 'refused') return `Not sent: this session runs a Woodshed that cannot send safely. Type it in the TUI tab`;
     if (state === 'unknown') return `No answer in time: it may have gone in. Check ${agent}'s reply before sending it again`;
+    if (state === 'unconfirmed') return `Sent, with no word back on whether it went in or waits: watch for ${agent}'s reply`;
     if (state === 'held') return `Not sent yet: it goes in when ${agent} is back at its prompt`;
     return `Sent, waiting for ${agent}`;
   }
@@ -511,17 +519,17 @@
       } else if (p.state === 'in-box') {
         changed = true;
         continue;
-      } else if (p.state === 'held' && p.id && deliveredIds.includes(p.id)) {
+      } else if (waiting(p) && p.id && deliveredIds.includes(p.id)) {
         p.state = 'sent';
         p.deliveredAt = now;
         changed = true;
-      } else if (p.state === 'held' && p.id && unknownIds.includes(p.id)) {
+      } else if (waiting(p) && p.id && unknownIds.includes(p.id)) {
         // The console's send got no answer in time: it may have gone in, and is not sent again. The bubble says so, and
         // goes when the record shows it, or ten minutes on.
         p.state = 'unknown';
         p.deliveredAt = now;
         changed = true;
-      } else if (p.state === 'held' && p.id && refusedIds.includes(p.id)) {
+      } else if (waiting(p) && p.id && refusedIds.includes(p.id)) {
         // The session came back on a statusd that types blind: never typed. The bubble says so, for ten minutes.
         p.state = 'refused';
         p.deliveredAt = now;

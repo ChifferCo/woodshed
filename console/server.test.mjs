@@ -1853,7 +1853,8 @@ test('the message box types its text into the owner\'s session, and its files ar
   // The fleet sends it, or holds it in the session's saved pendingMessages while the agent is busy (fleet.mjs).
   const sent = [];
   let outcome = 'sent';
-  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), send: async (session, text) => { sent.push({ id: session.id, text }); return outcome; } };
+  const ids = [];
+  const fleet = { sessions: () => [mine], find: (id) => (id === mine.id ? mine : null), send: async (session, text, opts) => { sent.push({ id: session.id, text }); ids.push(opts?.id); return outcome; } };
   const auth = { enabled: () => true, available: () => true, sessionFor: async () => ({ login: 'octocat' }) };
   const config = { host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed', maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 } };
   const server = http.createServer(createHandler({ config, fleet, auth }));
@@ -1867,6 +1868,11 @@ test('the message box types its text into the owner\'s session, and its files ar
   assert.equal(first.status, 200);
   assert.deepEqual(await first.json(), { ok: true, held: false });
   assert.deepEqual(sent, [{ id: mine.id, text }], 'the whole text, newlines kept, as one message, through the fleet');
+  assert.match(ids[0], /^[0-9a-f-]{36}$/, 'a message with no id of the page\'s (the phone\'s box) gets one: it is a person\'s');
+  await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'mine', id: 'page-id-0042' }), 'application/json');
+  assert.equal(ids[1], 'page-id-0042');
+  sent.pop();
+  ids.pop();
   outcome = 'queued';
   assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'later' }), 'application/json')).json(), { ok: true, held: true }, 'held while the agent is busy');
   // A statusd from before the guarded send types blind: the page's message is refused, not typed or held, and not

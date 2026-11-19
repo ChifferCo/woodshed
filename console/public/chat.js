@@ -273,7 +273,9 @@
         const answer = await W.postJson(`/api/sessions/${id}/send`, { text, id: sent.id }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
         // Held by the console while the agent is busy: nothing has reached it yet, and the bubble says so until the
         // agent's record holds it.
-        sent.state = answer?.held ? 'held' : answer?.unknown ? 'unknown' : 'sent';
+        // An answer that could not be read (postJson gives {}) says neither: it waits as a held one does, never let go
+        // before the record or the console says what became of it.
+        sent.state = answer?.ok !== true ? 'unconfirmed' : answer.held ? 'held' : answer.unknown ? 'unknown' : 'sent';
         if (answer?.unknown) sent.deliveredAt = Date.now();
       } catch (err) {
         // No answer from the console (none in time, the connection lost, a reply cut off or not the console's): it may
