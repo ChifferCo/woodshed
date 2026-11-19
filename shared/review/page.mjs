@@ -3103,11 +3103,19 @@ ${DARK_PALETTE}
       } else if (!open && children.length) {
         q.appendChild(el('span', 'kids', children.length + (children.length === 1 ? ' follow-up' : ' follow-ups')));
       }
+      q.dataset.qa = item.id;
       q.addEventListener('click', function toggle() {
         if (!item.answer) return;
         if (qaView.open[item.id]) delete qaView.open[item.id];
         else qaView.open[item.id] = true;
         render();
+        // The render built a new button for this question: give it the focus
+        // the old one had, so a keyboard reader goes on from here into the
+        // answer and its follow-ups rather than from the top of the page.
+        var again = document.querySelectorAll('.qa-q');
+        for (var k = 0; k < again.length; k++) {
+          if (again[k].dataset.qa === item.id) { again[k].focus({ preventScroll: true }); break; }
+        }
       });
       li.appendChild(q);
       if (open) {

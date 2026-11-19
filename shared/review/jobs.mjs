@@ -28,8 +28,23 @@ import {
 // One analysis at a time, one explain alongside it. Three concurrent `claude`
 // processes would be well over a gigabyte on top of the interactive sessions
 // the box exists to run.
+//
+// So the limit is per SLOT, not per kind: counted per kind, every kind added
+// (the chat, then the Q&A) was another process alongside. The Q&A shares the
+// analysis's slot, being background work nobody is waiting on a sentence of;
+// the chat shares the explain's, so a question someone typed never queues
+// behind a Q&A round.
 const MAX_ANALYSIS_JOBS = 1;
 const MAX_EXPLAIN_JOBS = 1;
+const BACKGROUND_KINDS = ['analysis', 'qa'];
+
+function slotOf(kind) {
+  return BACKGROUND_KINDS.includes(kind) ? 'background' : 'interactive';
+}
+
+function limitOf(kind) {
+  return slotOf(kind) === 'background' ? MAX_ANALYSIS_JOBS : MAX_EXPLAIN_JOBS;
+}
 const MAX_QUEUED = 4;
 
 const ANALYSIS_TIMEOUT_MS = 10 * 60_000;
@@ -51,6 +66,13 @@ const jobs = new Map();
 const queue = [];
 let seq = 0;
 
+/** For tests: how many `claude` children are running and queued now. */
+export function jobCounts() {
+  let running = 0;
+  for (const job of jobs.values()) if (job.phase === 'running') running += 1;
+  return { running, queued: queue.length };
+}
+
 export function findJob(predicate) {
   for (const job of jobs.values()) {
     if (predicate(job)) return job;
@@ -58,10 +80,11 @@ export function findJob(predicate) {
   return null;
 }
 
+/** Running jobs in the same slot as `kind`. */
 function activeCount(kind) {
   let n = 0;
   for (const job of jobs.values()) {
-    if (job.kind === kind && job.phase === 'running') n += 1;
+    if (slotOf(job.kind) === slotOf(kind) && job.phase === 'running') n += 1;
   }
   return n;
 }
@@ -92,7 +115,7 @@ export function availableBytes(readMeminfo) {
  * @returns {{ok: true, job: object} | {ok: false, status: number, error: string}}
  */
 export function startJob({ kind, session, argv, cwd, log, onLine, readMeminfo }) {
-  const limit = kind === 'analysis' ? MAX_ANALYSIS_JOBS : MAX_EXPLAIN_JOBS;
+  const limit = limitOf(kind);
 
   if (availableBytes(readMeminfo) < MIN_AVAILABLE_BYTES) {
     return {
@@ -319,8 +342,7 @@ function finish(job, { error }) {
 function drain() {
   for (let i = 0; i < queue.length; i += 1) {
     const next = queue[i];
-    const limit = next.kind === 'analysis' ? MAX_ANALYSIS_JOBS : MAX_EXPLAIN_JOBS;
-    if (activeCount(next.kind) >= limit) continue;
+    if (activeCount(next.kind) >= limitOf(next.kind)) continue;
     queue.splice(i, 1);
     launch(next);
     return;
