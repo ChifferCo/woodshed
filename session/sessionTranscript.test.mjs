@@ -387,3 +387,9 @@ test('a slash command claude keeps in tags is the person\'s message, as typed', 
   ].join('\n'));
   assert.deepEqual(entries.map((e) => [e.role, e.text]), [['user', '/mcp notion'], ['user', '/compact']], 'its output is not the person\'s');
 });
+
+test('a prompt that quotes a command tag in its prose is the prompt, not the command', () => {
+  const user = (content) => line({ type: 'user', timestamp: at, message: { role: 'user', content } });
+  const entries = parseClaudeTranscript(user('Explain <command-name>/help</command-name> in the transcript format.'));
+  assert.deepEqual(entries.map((e) => e.text), ['Explain <command-name>/help</command-name> in the transcript format.']);
+});

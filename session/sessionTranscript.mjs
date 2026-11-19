@@ -108,7 +108,11 @@ const resultText = (block) => (typeof block.content === 'string' ? block.content
 
 // claude's record of a slash command: `<command-name>/mcp</command-name> <command-message>mcp</command-message>
 // <command-args>notion</command-args>`. Its output (`<local-command-stdout>`) is not the person's.
+// Only a record that is that wrapper and nothing else: a prompt that quotes a tag in its prose is the prompt.
+const COMMAND_WRAPPER = /^\s*(?:<command-(name|message|args)>[^<]*<\/command-\1>\s*)+$/;
+
 function typedCommand(text) {
+  if (!COMMAND_WRAPPER.test(text)) return null;
   const name = /<command-name>\s*(\/[^<\s]+)\s*<\/command-name>/.exec(text)?.[1];
   if (!name) return null;
   const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();

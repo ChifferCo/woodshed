@@ -1762,7 +1762,9 @@ export function createHandler({
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
       // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
       // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.
-      const outcome = await fleet.send(session, body.text);
+      // The page's own id for it, which the console gives back when it sends a message it held (deliveredIds).
+      const id = typeof body.id === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(body.id) ? body.id : null;
+      const outcome = await fleet.send(session, body.text, { id });
       // Typed with no Enter: not sent, and not to send again, since it is in the agent's box.
       if (outcome === 'in-box') return reply(res, 409, { typed: true, error: 'it went into the agent\'s box but was not sent: a prompt came up as it was typed. Answer it, then send or clear the box in the TUI tab' });
       return reply(res, 200, { ok: true, held: outcome === 'queued' });

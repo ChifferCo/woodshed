@@ -259,15 +259,6 @@ test('the page waits on a send longer than the console waits on statusd typing i
   }
 });
 
-test('a message of the page left in the agent\'s box says so, and is let go once the box is empty again', () => {
-  const t0 = Date.parse('2026-11-19T12:00:00.000Z');
-  const pending = [{ text: 'first', sentAt: t0, state: 'sent' }, { text: 'held one', sentAt: t0 + 1000, state: 'held' }];
-  const marked = chat.inBox(pending, { at: '2026-11-19T12:00:05.000Z', chars: 'held one'.length });
-  assert.deepEqual(marked.map((p) => p.state), ['sent', 'in-box']);
-  assert.equal(chat.pendingLabel('in-box', 'codex'), "In codex's box, not sent: send or clear it in the TUI tab");
-  assert.deepEqual(chat.stillPending(marked, [], t0 + 60 * 60_000).map((p) => p.text), ['held one'], 'not let go after ten minutes');
-  assert.deepEqual(chat.inBox(marked, null).map((p) => p.text), ['first'], 'the box empty again: let go');
-});
 
 test('a queued message is not taken as arrived by an earlier prompt that starts the same', () => {
   // The review's case: "Run the tests" was sent a moment ago, and "Run the tests again" is queued behind a busy turn.
@@ -320,14 +311,32 @@ test('a longer message that starts the same never settles a queued one, and stri
   assert.equal(chat.typeable('a\r\nb\u001bc'), 'a\nbc');
 });
 
-test('a held message the console has since sent is a sent one, let go in time if the record never shows it', () => {
+
+test('a held bubble moves only on a word about its own id: sent once the console sent it, never on an older read', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
-  const a = { text: '/compact', sentAt: now - 60_000, state: 'held' };
-  const b = { text: 'then go on', sentAt: now - 30_000, state: 'held' };
-  assert.equal(chat.deliveredHeld([a, b], 2, now), false, 'both still held');
-  assert.equal(chat.deliveredHeld([a, b], 1, now), true);
-  assert.deepEqual([a.state, b.state], ['sent', 'held'], 'the oldest went in first');
-  assert.equal(a.sentAt, now);
-  // The agent keeps no record of a command like it: let go ten minutes on, not held for ever.
-  assert.deepEqual(chat.stillPending([a, b], [], now + 11 * 60_000).map((p) => p.text), ['then go on']);
+  const a = { id: 'aaaaaaaa-1', text: '/compact', sentAt: now - 60_000, state: 'held' };
+  const b = { id: 'bbbbbbbb-2', text: 'then go on', sentAt: now - 30_000, state: 'held' };
+  // An older read of the session, from before either was held: no word on them, so nothing moves (the review's stale count).
+  assert.equal(chat.reconcile([a, b], { deliveredIds: [], leftInBox: null }, now).changed, false);
+  assert.deepEqual([a.state, b.state], ['held', 'held']);
+  const r = chat.reconcile([a, b], { deliveredIds: ['zzzz', 'aaaaaaaa-1'] }, now);
+  assert.equal(r.changed, true);
+  assert.deepEqual([a.state, b.state], ['sent', 'held']);
+  assert.equal(a.sentAt, now - 60_000, 'its send time kept');
+  assert.equal(r.pending[0], a, 'the bubble itself, not a copy');
+  // Sent ten minutes ago from when it went in, not from when it was first sent: let go only then.
+  assert.equal(chat.stillPending([a], [], now + 9 * 60_000).length, 1);
+  assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0);
+});
+
+test('a held bubble the console left in the agent\'s box says so by its id, and goes once the box is empty again', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'same length', sentAt: now - 60_000, state: 'held' };
+  const b = { id: 'bbbbbbbb-2', text: 'same length', sentAt: now - 30_000, state: 'held' };
+  chat.reconcile([a, b], { leftInBox: { id: 'bbbbbbbb-2' } }, now);
+  assert.deepEqual([a.state, b.state], ['held', 'in-box'], 'by its id, not its length');
+  assert.equal(chat.pendingLabel('in-box', 'codex'), "In codex's box, not sent: send or clear it in the TUI tab");
+  assert.deepEqual(chat.stillPending([a, b], [], now + 60 * 60_000).map((p) => p.id), ['aaaaaaaa-1', 'bbbbbbbb-2'], 'neither let go in an hour');
+  const r = chat.reconcile([a, b], { leftInBox: null }, now);
+  assert.deepEqual(r.pending.map((p) => p.id), ['aaaaaaaa-1'], 'the box empty again: let go');
 });

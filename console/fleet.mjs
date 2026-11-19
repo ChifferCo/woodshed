@@ -515,8 +515,8 @@ export function createFleet({
     return session;
   }
 
-  function hold(session, text) {
-    update(session, { pendingMessages: [...session.pendingMessages, text] });
+  function hold(session, text, id = null) {
+    update(session, { pendingMessages: [...session.pendingMessages, id ? { id, text } : text] });
     console.log('fleet: message held until the agent is at its prompt', { id: session.id, pending: session.pendingMessages.length });
   }
 
@@ -538,11 +538,18 @@ export function createFleet({
   // the agent's box twice. It is there, for the agent to read once the prompt is answered.
   // The page is told which of its messages that was, by its length and when, never its text (`leftInBox`), so its bubble
   // can say it sits in the box; a status read with the box empty again forgets it (readStatus).
-  function inTheBox(session, err, text) {
+  function inTheBox(session, err, messageId = null) {
     if (!(err?.status === 409 && err.body?.typed === true)) return false;
     console.warn('fleet: message left in the agent\'s box, not sent', { id: session.id, why: err.body?.why ?? null });
-    update(session, { leftInBox: { at: nowIso(), chars: text.length } });
+    update(session, { leftInBox: { at: nowIso(), id: messageId } });
     return true;
+  }
+
+  // The page's id for each message the console held and has since sent, the last 20: its bubble turns sent on its own id
+  // alone, which an older read of the session never holds.
+  function noteDelivered(session, messageId) {
+    if (!messageId) return;
+    update(session, { deliveredIds: [...(session.deliveredIds ?? []), messageId].slice(-20) });
   }
 
   // statusd typed nothing because the agent is not at its prompt for it (working, asking, a message not yet taken):
@@ -564,7 +571,7 @@ export function createFleet({
    * @returns {Promise<'sent'|'queued'|'in-box'>}  in-box: typed with no Enter (a prompt came up as it went in), so it sits
    *   in the agent's box unsent, for the person to send or clear in the TUI tab; never typed again
    */
-  async function send(session, raw) {
+  async function send(session, raw, { id = null } = {}) {
     // As statusd will take it (session/statusd.mjs, typeableText), so what is held is what can be typed, and the same
     // length the page is told of.
     const text = String(raw).replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
@@ -574,17 +581,17 @@ export function createFleet({
     }
     // Behind the ones already waiting, in the order they were sent.
     if (!canType(session) || session.pendingMessages.length) {
-      hold(session, text);
+      hold(session, text, id);
       return 'queued';
     }
     try {
       await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });
     } catch (err) {
-      if (inTheBox(session, err, text)) return 'in-box';
+      if (inTheBox(session, err, id)) return 'in-box';
       if (unknownOutcome(session, err)) return 'sent';
       // Busy is not a failure: hold() says it is held.
       if (!busyWhy(err)) console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
-      hold(session, text);
+      hold(session, text, id);
       return 'queued';
     }
     console.log('fleet: message sent', { id: session.id, chars: text.length });
@@ -593,7 +600,9 @@ export function createFleet({
 
   async function deliverHeld(session) {
     while (session.pendingMessages.length && canType(session)) {
-      const [text] = session.pendingMessages;
+      const [held] = session.pendingMessages;
+      const text = typeof held === 'string' ? held : held.text;
+      const messageId = typeof held === 'string' ? null : held.id;
       let boxed = false;
       try {
         await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });
@@ -601,10 +610,10 @@ export function createFleet({
         // One statusd will never take (too long, not text) would hold every message behind it: it goes, said so.
         if (err?.status === 400) {
           console.warn('fleet: held message dropped, the session refuses it', { id: session.id, chars: text.length, message: firstLine(err) });
-          update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
+          update(session, { pendingMessages: withoutFirst(session.pendingMessages, held) });
           continue;
         }
-        boxed = inTheBox(session, err, text) || unknownOutcome(session, err);
+        boxed = inTheBox(session, err, messageId) || unknownOutcome(session, err);
         if (!boxed) {
           // Busy is the usual answer mid-turn: said once per reason, not on every status read.
           const why = busyWhy(err) ?? firstLine(err);
@@ -615,7 +624,8 @@ export function createFleet({
       }
       heldWhy.delete(session.id);
       // The list as it is now: a message held while this one went in stays.
-      update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
+      update(session, { pendingMessages: withoutFirst(session.pendingMessages, held) });
+      if (!boxed) noteDelivered(session, messageId);
       // In the agent's box with no Enter: inTheBox said so; it is not sent, and not typed again.
       if (!boxed) console.log('fleet: held message sent', { id: session.id, chars: text.length, left: session.pendingMessages.length });
     }

@@ -306,7 +306,8 @@
       // On the bubble itself, which the page keeps and its send() goes on updating: never a copy.
       if (settledAt && (p.after == null || Date.parse(p.after) < Date.parse(settledAt))) p.after = settledAt;
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
-      if (p.state !== 'held' && p.state !== 'in-box' && now - p.sentAt > PENDING_MS) continue;
+      // A sent one is let go ten minutes after it went in: its send, or the console's sending it later.
+      if (p.state !== 'held' && p.state !== 'in-box' && now - (p.deliveredAt ?? p.sentAt) > PENDING_MS) continue;
       const want = squash(typeable(p.text));
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
       // clock): an earlier prompt that starts the same is never taken for it. A message from before `after` was kept
@@ -475,23 +476,6 @@
     return 15_000 + steps * 60;
   }
 
-  /**
-   * The page's messages after the console said one sits in the agent's box unsent (`leftInBox`: its length and when):
-   * the one of that length sent before then says so; once the box is empty again (no leftInBox) it is let go, since it
-   * was sent from the TUI tab (the record shows it) or cleared.
-   * @param {{text: string, sentAt: number, state: string}[]} pending
-   * @param {{at: string, chars: number}|null} leftInBox
-   */
-  function inBox(pending, leftInBox) {
-    if (!leftInBox) return pending.filter((p) => p.state !== 'in-box');
-    const at = Date.parse(leftInBox.at);
-    let marked = false;
-    return pending.map((p) => {
-      if (marked || p.state === 'sending' || p.text.length !== leftInBox.chars || p.sentAt > at) return p;
-      marked = true;
-      return { ...p, state: 'in-box' };
-    });
-  }
 
   /** @returns {string|null}  when the last message of the person's in the record was written, by the session's clock */
   function lastUserAt(entries) {
@@ -501,24 +485,38 @@
     return null;
   }
 
+
   /**
-   * Held bubbles the console has since sent: it holds `holds` messages now, so the page's held ones past that count, the
-   * oldest first, went in. Each becomes a sent one from now on, let go after ten minutes if the record never shows it
-   * (a slash command the agent keeps no record of, say), instead of waiting for ever. Changed on the bubbles themselves.
-   * @param {{state: string, sentAt: number}[]} pending
-   * @param {number|undefined} holds  the session's pendingMessages count, as the console reports it
-   * @returns {boolean}  whether any changed
+   * The page's own bubbles against what the console says of the messages it held, each by the page's id for it: one in
+   * `deliveredIds` has gone in (sent from now, kept with its send time); the one `leftInBox` names sits in the agent's box
+   * unsent; one that sat there is let go once the box is empty again (sent from the TUI tab, which the record shows, or
+   * cleared). Only a positive word on a bubble's own id moves it, which an older read of the session never holds.
+   * Changed on the bubbles themselves.
+   * @param {{id?: string, state: string}[]} pending
+   * @param {{deliveredIds?: string[], leftInBox?: {id: string|null}|null}} session
+   * @returns {{pending: object[], changed: boolean}}
    */
-  function deliveredHeld(pending, holds, now = Date.now()) {
-    if (!Number.isInteger(holds)) return false;
-    const held = pending.filter((p) => p.state === 'held');
-    const gone = held.length - holds;
-    for (const p of held.slice(0, Math.max(0, gone))) {
-      p.state = 'sent';
-      p.sentAt = now;
+  function reconcile(pending, { deliveredIds = [], leftInBox = null } = {}, now = Date.now()) {
+    let changed = false;
+    const left = [];
+    for (const p of pending) {
+      if (p.id && leftInBox?.id === p.id) {
+        if (p.state !== 'in-box') {
+          p.state = 'in-box';
+          changed = true;
+        }
+      } else if (p.state === 'in-box') {
+        changed = true;
+        continue;
+      } else if (p.state === 'held' && p.id && deliveredIds.includes(p.id)) {
+        p.state = 'sent';
+        p.deliveredAt = now;
+        changed = true;
+      }
+      left.push(p);
     }
-    return gone > 0;
+    return { pending: left, changed };
   }
 
-  return { deliveredHeld, typeable, lastUserAt, inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  return { reconcile, typeable, lastUserAt, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

@@ -3353,9 +3353,9 @@ test('a queued message left in the agent\'s box is noted for the page, by length
   statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
   await fleet.tick();
   fail.sendTyped = true;
-  assert.equal(await fleet.send(session, 'a held message'), 'in-box');
-  assert.equal(session.leftInBox.chars, 'a held message'.length);
-  assert.equal(JSON.stringify(session.leftInBox).includes('held message'), false, 'its length, never its text');
+  assert.equal(await fleet.send(session, 'a held message', { id: 'page-id-0001' }), 'in-box');
+  assert.equal(session.leftInBox.id, 'page-id-0001', 'the page\'s own id for it');
+  assert.equal(JSON.stringify(session.leftInBox).includes('held message'), false, 'never its text');
   fail.sendTyped = false;
   statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', boxText: true };
   await fleet.tick();
@@ -3376,4 +3376,21 @@ test('a message is held as statusd can type it: no control characters to block t
   assert.deepEqual(session.pendingMessages, ['fix it now\nplease']);
   assert.equal(await fleet.send(session, '\u0000\u001b'), 'sent', 'nothing to type: not held to block the rest');
   assert.deepEqual(session.pendingMessages, ['fix it now\nplease']);
+});
+
+test('a held message the console sends is named by the page\'s id, so its bubble turns sent on that alone', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'go on', { id: 'page-id-0002' }), 'queued');
+  assert.deepEqual(session.pendingMessages, [{ id: 'page-id-0002', text: 'go on' }]);
+  assert.equal(await fleet.send(session, 'from a comment'), 'queued', 'one with no id, as a comment\'s');
+  fail.sendBusy = false;
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, []);
+  assert.deepEqual(session.deliveredIds, ['page-id-0002']);
 });

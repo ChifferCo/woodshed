@@ -260,7 +260,8 @@
       sending.add(id);
       // `after`: the last message of the person's in the record now, by the session's clock; only a later one can be
       // this one arriving. Unknown while the record was never read.
-      const sent = { text, sentAt: Date.now(), state: 'sending', ...(record?.id === id && { after: T.lastUserAt(record.entries) }) };
+      // `id`: the page's own, which the console gives back once it sends a message it held.
+      const sent = { id: crypto.randomUUID(), text, sentAt: Date.now(), state: 'sending', ...(record?.id === id && { after: T.lastUserAt(record.entries) }) };
       pending.set(id, [...pendingOf(id), sent]);
       field.value = '';
       keepDraft(id, '');
@@ -269,7 +270,7 @@
       drawComposer();
       drawThread(true);
       try {
-        const answer = await W.postJson(`/api/sessions/${id}/send`, { text }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
+        const answer = await W.postJson(`/api/sessions/${id}/send`, { text, id: sent.id }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
         // Held by the console while the agent is busy: nothing has reached it yet, and the bubble says so until the
         // agent's record holds it.
         sent.state = answer?.held ? 'held' : 'sent';
@@ -698,12 +699,10 @@
       session = s;
       // A message of the page's left in the agent's box unsent, as the console says: its bubble says so, and goes once
       // the box is empty again.
-      // A held message the console has since sent is a sent one now: the record shows it, or it goes after ten minutes.
-      const sentOn = T.deliveredHeld(pendingOf(s.id), s.pendingMessages);
-      const before = pendingOf(s.id);
-      const after = T.inBox(before, s.leftInBox ?? null);
-      const boxMoved = sentOn || after.length !== before.length || after.some((p, i) => p.state !== before[i].state);
-      if (boxMoved) pending.set(s.id, after);
+      // What the console says of the messages it held, each by the page's id: sent, or sitting in the agent's box.
+      const reconciled = T.reconcile(pendingOf(s.id), s);
+      const boxMoved = reconciled.changed;
+      if (boxMoved) pending.set(s.id, reconciled.pending);
       if (moved) {
         prompt = null;
         approval = null;
