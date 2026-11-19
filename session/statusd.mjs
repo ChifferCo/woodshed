@@ -996,6 +996,8 @@ let periodicSave = null;
 let homeSavedFrom = STARTED_AT;
 // Set by the checkpoint: a periodic save after it could write back a home Remove My Woodshed has just deleted.
 let homeSavesOver = false;
+// Set once the stop's checkpoint starts: guarded sends (agentOnly) type nothing from then on.
+let stopping = false;
 
 function saveHomeInTurn(why) {
   if (why === 'stop') periodicSave?.abort();
@@ -1068,6 +1070,8 @@ async function lastSettingsRound() {
 
 async function checkpoint() {
   homeSavesOver = true;
+  // The session is stopping: a guarded send still checking GitHub types nothing now.
+  stopping = true;
   await keepCodexAuth();
   await lastSettingsRound();
   // Before the push, which can fail: the home is worth keeping either way.
@@ -1335,6 +1339,10 @@ async function handle(req, res) {
         return reply(res, 409, { error: 'the branch checked out is not on that pull request now' });
       }
       // GitHub was slow: its caller has given up on this request by now, and will send it again.
+      if (stopping) {
+        console.log('statusd: text not sent, the session is stopping');
+        return reply(res, 409, { error: 'the session is stopping' });
+      }
       const within = sendWithinMs(raw);
       const notAfter = sendNotAfter(raw);
       if ((within && Date.now() - receivedAt > within) || (notAfter && Date.now() > notAfter)) {

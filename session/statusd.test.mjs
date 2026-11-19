@@ -886,6 +886,13 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   assert.equal((await send(forNine)).status, 200);
   for (let i = 0; i < 50 && !(await typed('agent')).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await typed('agent'), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request');
+
+  // Once the stop's checkpoint has started, nothing guarded is typed.
+  await call('POST', '/checkpoint');
+  const stopping = await send(forNine);
+  assert.deepEqual([stopping.status, stopping.body.error], [409, 'the session is stopping']);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(await typed('agent'), 'The review asks for changes\nFix PR 9\n');
 });
 
 test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
