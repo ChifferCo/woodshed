@@ -20,7 +20,13 @@ process.stdin.on('data', (c) => {
     const msg = JSON.parse(buf.slice(0, i));
     buf = buf.slice(i + 1);
     fs.appendFileSync(log, (msg.params?.name ?? msg.method) + '\\n');
-    if (msg.params?.name === 'browser_close') {
+    if (msg.params?.name === 'browser_snapshot') {
+      // A page's text, its arrow split between two pipe writes as a long snapshot's can be.
+      const line = Buffer.from(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { text: 'Next → Done' } }) + '\\n');
+      const cut = line.indexOf(Buffer.from('→')) + 1;
+      process.stdout.write(line.subarray(0, cut));
+      setTimeout(() => process.stdout.write(line.subarray(cut)), 50);
+    } else if (msg.params?.name === 'browser_close') {
       setTimeout(() => { fs.writeFileSync(video, 'whole'); process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: {} }) + '\\n'); }, 300);
     } else {
       process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { echoed: msg.params?.name ?? msg.method } }) + '\\n');
@@ -60,6 +66,15 @@ test('when claude goes, the proxy closes the browser and waits for it before let
   assert.deepEqual(log(), ['browser_navigate', 'browser_close', 'stdin ended'], 'the server ends only after the close');
   assert.equal(fs.readFileSync(video, 'utf8'), 'whole');
   assert.equal(lines().length, 1, 'the close\'s answer is the proxy\'s own, never claude\'s');
+});
+
+test('a character split between two of the server\'s writes reaches claude whole', async (t) => {
+  const { proxy, send, lines, exited } = start(t);
+  send({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'browser_snapshot' } });
+  await until(() => lines().length === 1);
+  assert.equal(lines()[0].result.text, 'Next → Done');
+  proxy.stdin.end();
+  await exited;
 });
 
 test('a signal to claude\'s process group closes the browser the same way', async (t) => {

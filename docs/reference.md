@@ -484,7 +484,8 @@ pull request starts a QA session on its branch. It needs nothing in the repo's C
   the report into it when the session ends, with the browser's recording: a still from it, which opens the video on the
   console. The console keeps the recordings where its provider keeps files (the Claude homes' S3 bucket on AWS, under
   `_qa/`; the state folder on a local install), never in the repo, and deletes them 14 days after the run
-  (`console/qaRecordings.mjs`). A video plays for whoever is signed in to the console and may open the QA session. The
+  (`console/qaRecordings.mjs`). A video plays for whoever is signed in to the console and may open the QA session, which
+  stays on the list as long as its recordings do (unless someone removes it by hand). The
   still alone needs no sign-in, since GitHub fetches a comment's images with none: it sits at a name nobody can guess,
   and shows as a broken image once deleted. GitHub plays no video an app links, only one attached by hand. Each later
   run writes over that comment. It also posts the

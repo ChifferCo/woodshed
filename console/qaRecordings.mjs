@@ -102,7 +102,7 @@ export function createQaRecordings({ store, now = Date.now }) {
     return old.length;
   }
 
-  return { saveVideo, savePoster, serveVideo, servePoster, sweep };
+  return { saveVideo, savePoster, serveVideo, servePoster, sweep, gone };
 }
 
 // A file with HTTP ranges, which a browser's video player asks for to seek.

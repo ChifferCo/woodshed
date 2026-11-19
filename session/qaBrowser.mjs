@@ -22,7 +22,9 @@ const server = spawn(command, args, { stdio: ['pipe', 'pipe', 'inherit'], detach
 let closing = null;
 let answered = () => {};
 
-// The server's lines go to claude, all but the answer to our own close.
+// The server's lines go to claude, all but the answer to our own close. Read as UTF-8 across chunks: a page snapshot
+// is one long line, and a character split between two pipe reads would otherwise reach claude as two U+FFFD.
+server.stdout.setEncoding('utf8');
 let pending = '';
 server.stdout.on('data', (chunk) => {
   pending += chunk;

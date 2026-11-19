@@ -1984,8 +1984,10 @@ export function createHandler({
     }
     const qaVideo = QA_VIDEO_RE.exec(pathname);
     if (qaVideo) {
-      // Whoever may open the QA session watches its recording; the session's id is no secret.
-      if (!qaRecordings || !findFor(qaVideo[1], user.login)) return reply(res, 404, { error: 'no such recording' });
+      // Whoever may open the QA session watches its recording; the session's id is no secret. One no longer listed
+      // (removed by hand) has none to watch, which the page says as for one past its days.
+      if (!qaRecordings) return reply(res, 404, { error: 'this console keeps no QA recordings' });
+      if (!findFor(qaVideo[1], user.login)) return qaRecordings.gone(res);
       return qaRecordings.serveVideo(req, res, { id: qaVideo[1], n: Number(qaVideo[2]) });
     }
     const shareRead = APP_SHARE_RE.exec(pathname);

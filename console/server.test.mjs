@@ -156,7 +156,7 @@ test('a QA recording plays only for someone signed in who may open its session, 
   assert.deepEqual(await getWith(port, '/qa/0a1b2c3d/video/1', { accept: 'text/html' }), { status: 302, location: '/login?next=%2Fqa%2F0a1b2c3d%2Fvideo%2F1' });
   assert.equal(served.length, 0);
   assert.equal((await getWith(port, '/qa/0a1b2c3d/video/1', good)).status, 200);
-  assert.equal((await getWith(port, '/qa/99999999/video/1', good)).status, 404, 'no session, no recording');
+  assert.equal((await getWith(port, '/qa/99999999/video/1', good)).status, 410, 'no session listed, no recording, said as for one past its days');
   assert.equal((await getWith(port, `/qa-poster/0a1b2c3d/${secret}.png`)).status, 200, 'GitHub\'s image proxy signs in nowhere');
   assert.equal((await getWith(port, '/qa-poster/0a1b2c3d/short.png')).status, 401, 'anything else under it is behind sign-in');
   assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);

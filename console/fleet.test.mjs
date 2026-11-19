@@ -2685,6 +2685,26 @@ test('an ended review stays on the list while its approval is held for QA, then 
   assert.equal(fleet.sessions().length, 0, 'then it goes');
 });
 
+test('an ended QA run with recordings stays on the list as long as they are kept, since they are watched as its session', async () => {
+  const retention = { afterCloseMs: 3 * 24 * HOUR, withoutPrMs: 7 * 24 * HOUR, openPrMs: 14 * 24 * HOUR, slackGiveUpMs: 7 * 24 * HOUR, removeAfterDeleteMs: 2 * 24 * HOUR };
+  const { fleet, store, advance } = qaSetup({ retention });
+  const run = (id, qa) => ({
+    id, repo: 'o/r', kind: 'pr', number: 7, title: 'QA: x', startedBy: 'joel', trigger: 'qa', status: 'stopped',
+    createdAt: '2026-10-21T09:00:00.000Z', stoppedAt: '2026-10-21T09:00:00.000Z', cleanedAt: '2026-10-21T09:00:00.000Z',
+    pendingMessages: [], homeDeletePending: false, qa: { base: 'main', sha: 'a'.repeat(40), conclusion: 'success', ...qa },
+  });
+  store.state.sessions.push(run('a1a1a1a1', { videos: [{ n: 1, bytes: 10 }] }), run('b2b2b2b2', {}));
+  advance(3 * 24 * HOUR);
+  await fleet.tick();
+  assert.deepEqual(fleet.sessions().map((s) => s.id), ['a1a1a1a1'], 'one with no recording goes when the setting says');
+  advance(10 * 24 * HOUR);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 1, 'thirteen days on, its recording still plays');
+  advance(2 * 24 * HOUR);
+  await fleet.tick();
+  assert.equal(fleet.sessions().length, 0, 'then it goes with them');
+});
+
 test('with a reviewer App, the verdict is submitted as it and not as the console App, which may be the author', async () => {
   const submitted = [];
   const reviewerApp = { configured: () => true, async submitReview(args) { submitted.push(args); return 1; } };

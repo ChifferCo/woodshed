@@ -12,7 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
-import { qaVideoPath } from './qaRecordings.mjs';
+import { QA_RECORDING_DAYS, qaVideoPath } from './qaRecordings.mjs';
 import { reviewDoneComment, reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
@@ -929,7 +929,9 @@ export function createFleet({
     if (session.homeDeletePending || (isAsk(session) && !session.noticedAt) || session.review?.held) return;
     const from = Date.parse(session.cleanedAt ?? session.stoppedAt ?? session.createdAt);
     const removeMs = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
-    const ms = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
+    const listed = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
+    // A QA run's recordings are watched as its session (qaRecordings.mjs): it stays listed as long as they are kept.
+    const ms = isQa(session) && session.qa?.videos?.length ? Math.max(listed, QA_RECORDING_DAYS * 86_400_000) : listed;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
   }
