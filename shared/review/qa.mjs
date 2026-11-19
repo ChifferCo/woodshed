@@ -19,6 +19,14 @@
 // steps in it it did not follow, and so on, MAX_DEPTH levels down. Most answers
 // draw no follow-up, and a round with none ends it early. The page draws the
 // result as a tree, folded, so a reader opens only the questions they have.
+//
+// The answerer reads the session's LIVE worktree, as the analysis, an explain
+// and the chat do (see explain.mjs): an answer describes the code as it stands
+// when it is written, which may have moved past the saved diff, and the page's
+// header says so for the whole review ("Working tree as of …, it may have
+// changed since"). Pinning the Q&A alone to a snapshot would make it the one
+// reading on the page that disagrees with the rest. What `forDiff` ties it to is
+// the review it was asked from: a Re-review or Discard ends it.
 
 import { randomBytes } from 'node:crypto';
 
