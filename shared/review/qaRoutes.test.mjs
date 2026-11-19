@@ -112,4 +112,15 @@ test('Discard during a run stops it, and nothing it was doing is written back', 
   await call('POST', `/reviews/${session}/discard`);
 });
 
+test('a page asking about a diff that was replaced is refused, and nothing is started', async () => {
+  const session = 'claude-4e4e4e4e';
+  makeReview(session, path.join(DIR, 'fast'), '2026-11-19T12:00:00.000Z');
+  const stale = await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T10:00:00.000Z')}`);
+  assert.deepEqual([stale.status, stale.body.code], [409, 'other-diff']);
+  assert.equal(readQa(session), null, 'no run was started');
+  const current = await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T12:00:00.000Z')}`);
+  assert.equal(current.body.status, 'running');
+  await until(() => readQa(session)?.status === 'ready');
+});
+
 test.after(() => fs.rmSync(DIR, { recursive: true, force: true }));

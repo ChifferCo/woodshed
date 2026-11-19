@@ -927,7 +927,7 @@ export async function handleReviewRequest(req, res, ctx) {
     return true;
   }
   if (req.method === 'POST' && section === '/qa') {
-    await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session));
+    await gated(res, ctx, 'qa', () => handleQaStart(res, ctx, session, url.searchParams.get('forDiff')));
     return true;
   }
   if (req.method === 'GET' && section === '/chat') {
@@ -2037,10 +2037,21 @@ function handleQaRead(res, ctx, session) {
   return json(res, 200, { ok: true, qa, showCosts: SHOW_COSTS });
 }
 
-function handleQaStart(res, ctx, session) {
+// `forDiff` is the diff the asking page shows (the review's createdAt). A page
+// left open across a Re-review elsewhere would otherwise pay for a Q&A about a
+// diff it is not showing, and could not show; a caller that names none (a
+// script) asks about whatever the review is now.
+function handleQaStart(res, ctx, session, forDiff) {
   const { json, log, reqId } = ctx;
   const review = readSessionReview(session);
   if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  if (forDiff !== null && forDiff !== (review.createdAt ?? '')) {
+    log('review.qa_refused_other_diff', { reqId, session });
+    return json(res, 409, {
+      ok: false, code: 'other-diff',
+      error: 'this review was taken again since the page loaded: reload it to ask about the newer diff',
+    });
+  }
   if (qaRuns.has(session)) return json(res, 200, { ok: true, status: 'running' });
   qaGen += 1;
   const gen = qaGen;

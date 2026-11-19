@@ -2927,6 +2927,12 @@ ${DARK_PALETTE}
 
     // Reads what there is; starts a run only when asked to, which is when the
     // Q&A tab is open. The tab's count comes from the same read on any tab.
+    // Names the diff this page shows, so the server refuses to start a Q&A for
+    // one that replaced it in another tab.
+    function qaStartUrl() {
+      return '/reviews/' + state.session + '/qa?forDiff=' + encodeURIComponent(state.createdAt || '');
+    }
+
     function freshQaView(started) {
       return { session: state.session, data: null, loading: false, error: null, started: started, timer: null, open: {} };
     }
@@ -2962,13 +2968,14 @@ ${DARK_PALETTE}
         // is for the analysis. Once per view, so a failure is not retried in a loop.
         if (!view.data && start && !view.started && !view.otherDiff) {
           view.started = true;
-          await api('POST', '/reviews/' + state.session + '/qa');
+          await api('POST', qaStartUrl());
           if (view !== qaView) return;
           view.data = { status: 'running', phase: 'asking', depth: 1, items: [] };
         }
       } catch (e) {
         if (view !== qaView) return;
-        view.error = e.message;
+        if (e.code === 'other-diff') view.otherDiff = true;
+        else view.error = e.message;
       } finally {
         view.loading = false;
       }
@@ -3004,10 +3011,15 @@ ${DARK_PALETTE}
       if (!state.session) return;
       var was = qaView;
       try {
-        await api('POST', '/reviews/' + state.session + '/qa');
+        await api('POST', qaStartUrl());
       } catch (e) {
         if (was !== qaView) return;
-        was.error = 'Not asked again: ' + e.message;
+        if (e.code === 'other-diff') {
+          was.data = null;
+          was.otherDiff = true;
+        } else {
+          was.error = 'Not asked again: ' + e.message;
+        }
         render();
         return;
       }
