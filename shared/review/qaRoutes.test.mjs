@@ -594,6 +594,20 @@ test('the worktree review records its tree and holds it with a ref, or records w
 
   await removeReviewSession({ ctx, sessionName: session });
   assert.equal(held(), null, 'removing the review lets the tree go');
+
+  // A take whose record cannot be saved leaves no review, and so must leave no held tree either: nothing would ever
+  // let it go, and it keeps the working tree's files, uncommitted ones included.
+  fs.writeFileSync(path.join(wt, 'd.txt'), 'uncommitted\n');
+  const realRenameSync = fs.renameSync;
+  fs.renameSync = (from, to, ...rest) => {
+    if (String(to).endsWith(`${session}/diff.json`)) throw new Error('ENOSPC: injected');
+    return realRenameSync(from, to, ...rest);
+  };
+  let unsaved;
+  try { unsaved = await post(); } finally { fs.renameSync = realRenameSync; }
+  assert.equal(unsaved.status, 500, JSON.stringify(unsaved.body));
+  assert.match(unsaved.body.error, /could not write review state: ENOSPC: injected/);
+  assert.equal(held(), null, 'no tree held for a review that was not saved');
 });
 
 // The rule overlapping Re-reviews rely on, without their timing: every tree is held by a ref of its own, and pruning

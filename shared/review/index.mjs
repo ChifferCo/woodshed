@@ -495,6 +495,10 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     // old record while the new diff may or may not be on disk beside it, which
     // is the pairing this whole path exists to keep straight.
     removeReviewState(sessionName);
+    // And the trees held for it: with no record left, nothing would ever let them
+    // go, and they keep the working tree's files, uncommitted ones included.
+    const released = await releaseTree({ worktreePath, sessionName });
+    if (!released.ok) log('review.snapshot_refs_not_released', { reqId, session: sessionName, error: released.error });
     return { ok: false, status: 500, error: `could not write review state: ${err?.message}` };
   }
 
