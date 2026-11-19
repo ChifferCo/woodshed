@@ -253,3 +253,15 @@ test('a My Woodshed session that may use production works on databases of its ow
   assert.ok(kept.has(joel.id), 'kept for its Resume until it is removed');
   assert.ok(!kept.has(ana.id));
 });
+
+test('a session started before it could use production is never tainted, whatever the servers say now', async (t) => {
+  quietly(t);
+  const { fleet, store, calls } = setup({ settings: mcpSettings({}, 'https://console.test') });
+  const session = await runningPrivate(fleet);
+  assert.equal(session.mayUseProduction, undefined);
+  // An admin adds a production server listing its owner while it runs.
+  store.state.mcpServers = [{ name: 'orders', url: 'https://orders.test', production: true, shared: false, people: ['joel'], repos: '*', auth: 'oidc', audience: 'woodshed-prod-mcp' }];
+  await assert.rejects(fleet.taint(session), (err) => err.shown && /started before it could use production/.test(err.message));
+  assert.equal(calls.lockDowns.length, 0);
+  assert.equal(session.taintedAt, undefined);
+});

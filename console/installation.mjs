@@ -432,8 +432,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const egressProxy = access.certs ? createEgressProxy({
     sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: access.certs,
     orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
-    // Untainted sessions use it only where their launcher sends them out through it (AWS's guarded network).
-    passThrough: () => Boolean(provider.launcher?.guardsEgress),
+    // Untainted sessions use it only where their launcher sends them out through it: AWS's guarded network, which only a
+    // session that may use production starts on.
+    passThrough: (session) => Boolean(provider.launcher?.guardsEgress) && Boolean(session.mayUseProduction),
   }) : null;
   // What a session has open that its lockdown would not close goes the moment it starts.
   if (egressProxy) fleet.onLocking((id) => egressProxy.cut(id));

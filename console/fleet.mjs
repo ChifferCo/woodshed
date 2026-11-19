@@ -403,6 +403,11 @@ export function createFleet({
     if (locking.has(session.id)) return locking.get(session.id);
     const run = (async () => {
       if (session.status !== 'running' || !session.ref || !session.endpoint) throw shown('the session is not running');
+      // One started before it could use production holds what an untainted session does (its owner's databases, maybe
+      // the machine's Docker): it is never tainted, whatever the servers say now.
+      if (!session.mayUseProduction) {
+        throw shown('this session started before it could use production, so it holds its owner\'s databases: start a new My Woodshed session, which starts ready for it');
+      }
       // Whatever it has open that the lockdown does not cover (the egress proxy's tunnels, an ordinary MCP server's
       // stream) is cut before anything of production reaches it.
       for (const cut of lockingListeners) {
@@ -530,11 +535,13 @@ export function createFleet({
       update(session, { plan });
       console.log('fleet: whose Claude the session runs on', { id: session.id, plan: plan ?? 'team key' });
     }
-    // A My Woodshed session that may use production works on databases of its own, as a shared session does, never its
-    // owner's: what it writes there after a taint is dropped with it (keptIds), and no untainted session reads it.
-    if (session.owner && !session.ownDatabases && databases?.available && mcpServers?.forSession(session, projectFor(config, session).repo ?? null).some((s) => s.production)) {
-      update(session, { ownDatabases: true });
-      console.log('fleet: a session that may use production gets databases of its own', { id: session.id, owner: session.owner });
+    // Whether this session may use production is decided at its first start, and only such a session can ever be tainted
+    // (taint): it starts as one must be for the lockdown (no machine's Docker, on AWS the guarded network), and works on
+    // databases of its own, as a shared session does, never its owner's: what it writes there after a taint is dropped
+    // with it (keptIds), and no untainted session reads it.
+    if (session.owner && !session.mayUseProduction && mcpServers?.forSession(session, projectFor(config, session).repo ?? null).some((s) => s.production)) {
+      update(session, { mayUseProduction: true, ...(databases?.available ? { ownDatabases: true } : {}) });
+      console.log('fleet: a session that may use production', { id: session.id, owner: session.owner, ownDatabases: Boolean(session.ownDatabases) });
     }
     let started;
     try {

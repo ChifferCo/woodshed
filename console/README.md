@@ -739,6 +739,10 @@ with `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS`).
 - **The session.** An eligible session's claude gets the production server from `--mcp-config` (`/tmp/woodshed-mcp.json`),
   in its `disabledMcpServers` for the checkout: claude makes no call to it until its person turns it on in `/mcp`. It is
   never started without the machine's Docker socket, which would let it undo a lockdown (its own, under Sysbox, stays).
+- **Who can be tainted**: only a session that could use a production server at its first start (`mayUseProduction` on
+  its record, `fleet: a session that may use production`), which started as the lockdown needs: no machine's Docker,
+  its own databases, and on AWS the guarded network. One started before a server listed it is refused (503, `started
+  before it could use production`): a new session is ready for it. Its pass-through on AWS is likewise for those alone.
 - **The taint** (`fleet.taint`): the first relayed call of any kind to a production server locks the session down through the launcher
   (`lockDown`), and only then sets `taintedAt` and forwards the call; the egress proxy holds the session to the
   lockdown's rules from the moment it starts. A lockdown that fails answers the call 503 and leaves the session as it

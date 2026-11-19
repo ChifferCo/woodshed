@@ -76,6 +76,9 @@ test('GraphQL is read as GitHub reads it: no string, comment, comma, alias or va
   });
   assert.deepEqual(names, { kind: 'mutation', mutations: ['addComment', 'addComment'], ids: ['I_public', 'PR_ok'] });
   assert.deepEqual(graphqlRule({ query: 'mutation($i:UpdateIssueInput!){ updateIssue(input:$i){clientMutationId} }', variables: { i: { id: 'I_1', body: 'x' } } }).ids, ['I_1']);
+  // A default is a value GitHub would use that the request's variables never held, so never checked.
+  assert.match(graphqlRule({ query: 'mutation($s:ID=\"I_public\",$ok:ID!){ a:addComment(input:{subjectId:$s,body:\"x\"}){clientMutationId} }', variables: { ok: 'PR_ok' } }).why, /defaults|variables/);
+  assert.match(graphqlRule({ query: 'mutation($s:ID="I_public",$ok:ID!,$b:String!){ a:addComment(input:{subjectId:$s,body:$b}){clientMutationId} b:addComment(input:{subjectId:$ok,body:$b}){clientMutationId} }', variables: { ok: 'PR_ok', b: 'x' } }).why, /defaults/);
   // What it asks back may use inline fragments: they are reads.
   assert.equal(graphqlRule({ query: 'mutation($i:AddCommentInput!){ addComment(input:$i){ subject { ... on PullRequest { url } } } }', variables: { i: { subjectId: 'PR_1' } } }).kind, 'mutation');
   assert.match(graphqlRule({ query: 'mutation($i:AddCommentInput!){ ...M }', variables: { i: { subjectId: 'PR_1' } } }).why, /field/);

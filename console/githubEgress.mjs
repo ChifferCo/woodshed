@@ -223,7 +223,7 @@ export function parseGraphql(text) {
   const operations = [];
   const fragments = [];
   while (at < tokens.length) {
-    if (peek('{')) { operations.push({ kind: 'query', variables: {}, selections: selectionSet() }); continue; }
+    if (peek('{')) { operations.push({ kind: 'query', variables: {}, defaults: [], selections: selectionSet() }); continue; }
     const keyword = name();
     if (keyword === 'fragment') {
       const fragmentName = name();
@@ -236,6 +236,7 @@ export function parseGraphql(text) {
     if (!['query', 'mutation', 'subscription'].includes(keyword)) throw new Error(`${keyword} is not an operation`);
     if (tokens[at]?.kind === 'name') next();
     const variables = {};
+    const defaults = [];
     if (peek('(')) {
       next();
       while (!peek(')')) {
@@ -243,13 +244,13 @@ export function parseGraphql(text) {
         const variable = name();
         expect(':');
         variables[variable] = type().base;
-        if (peek('=')) { next(); value(); }
+        if (peek('=')) { next(); value(); defaults.push(variable); }
         directives();
       }
       next();
     }
     directives();
-    operations.push({ kind: keyword, variables, selections: selectionSet() });
+    operations.push({ kind: keyword, variables, defaults, selections: selectionSet() });
   }
   if (!operations.length) throw new Error('no operation');
   return { operations, fragments };
@@ -306,6 +307,8 @@ export function graphqlRule(body) {
   // top-level selection a field it may make. What it asks back is read only, inline fragments and all.
   if (doc.operations.length !== 1 || doc.fragments.length) return deny('a GraphQL mutation must be the document\'s only operation, with no fragments');
   const [operation] = doc.operations;
+  // A default would be a value GitHub uses that the request's variables, which are what is checked, never held.
+  if (operation.defaults.length) return deny('a GraphQL mutation\'s variables may not have defaults');
   const mutations = [];
   const used = [];
   for (const selection of operation.selections) {

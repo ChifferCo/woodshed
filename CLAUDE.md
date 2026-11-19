@@ -176,7 +176,10 @@ URL on top of each env file's Repo settings values
   session down (no session API, no egress proxy address, or on AWS no guarded network: Terraform's `prod_mcp`), and
   the console logs `mcpServers: production access is off, this console cannot lock a session down` at start for the
   environment's. A call refused with 503 logs `mcpRelay: refused, the session was not locked down` with the launcher's
-  reason, after `fleet: lockdown failed, the session stays untainted`: `machine's Docker socket` is a session started
+  reason, after `fleet: lockdown failed, the session stays untainted`, or with `started before it could use production`
+  for a session that was not eligible at its first start (`fleet: a session that may use production` is logged for
+  those that are: they start on databases of their own and, on AWS, the guarded network), which a new My Woodshed
+  session fixes: `machine's Docker socket` is a session started
   with it (a new one is not), `Docker 28 or newer` the docker launcher's isolated network, `given by its address` a
   destination in the session env the gateway cannot carry, and on AWS `outside the guarded network` a session started
   before `prod_mcp`. On the local provider the call that taints loses its connection as the session changes networks:
