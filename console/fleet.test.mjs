@@ -116,7 +116,7 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
       isMember: (login) => (memberList ?? writers).some((e) => e.toLowerCase() === String(login).toLowerCase()),
     },
     statusd: (session, method, path, opts) => {
-      if (path === '/send' && fail.send) return Promise.reject(new Error('statusd /send timed out'));
+      if (path === '/send' && fail.send) return Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } }));
       if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
       // A test's own answer for one send: an error to refuse it with, or a promise to wait on before it goes.
       if (path === '/send' && fail.sendFor) {
@@ -669,6 +669,45 @@ test('a session this console is still launching is not looked for: its own start
   finish();
   await starting;
   assert.equal(session.ref, `c-${session.id}`);
+});
+
+test('a send whose connection drops after it reached statusd is unknown and never sent again; one never connected is held', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  const sends = () => calls.statusd.filter((c) => c.path === '/send').length;
+  fail.sendFor = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+  assert.equal(await fleet.send(session, 'reset', { id: 'page-id-0010' }), 'unknown');
+  assert.deepEqual(session.pendingMessages, [], 'not held to type again');
+  fail.sendFor = () => new SyntaxError('Unexpected end of JSON input');
+  assert.equal(await fleet.send(session, 'cut off'), 'unknown', 'a reply cut off after statusd took it');
+  fail.sendFor = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNREFUSED' } });
+  assert.equal(await fleet.send(session, 'refused'), 'queued', 'never reached statusd: held to try again');
+  fail.sendFor = null;
+  const before = sends();
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').slice(before).map((c) => c.body.text), ['refused']);
+});
+
+test('a Chat message held across a resume onto a statusd that types blind is dropped and the page told; the console\'s own goes', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  assert.equal(await fleet.send(session, 'from chat', { id: 'page-id-0011' }), 'queued');
+  assert.equal(await fleet.send(session, 'review feedback'), 'queued');
+  fail.sendBusy = false;
+  const typed = () => calls.statusd.filter((c) => c.path === '/send' && !c.refused);
+  assert.deepEqual(typed(), []);
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  assert.deepEqual(typed().map((c) => c.body.text), ['review feedback']);
+  assert.deepEqual(session.pendingMessages, []);
+  assert.deepEqual(session.refusedIds, ['page-id-0011']);
 });
 
 test('a message whose send fails is held, not lost, and goes out on a later tick', async () => {

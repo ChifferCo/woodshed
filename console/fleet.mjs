@@ -140,6 +140,9 @@ export function sendTimeoutMs(text) {
  * @param {string} path
  * @param {{body?: object, timeoutMs?: number}} [opts]
  */
+// fetch's codes for a connection that was never made: nothing reached statusd (undici's, and Node's own).
+const NEVER_CONNECTED = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN', 'UND_ERR_CONNECT_TIMEOUT']);
+
 export async function callStatusd(session, method, path, { body, timeoutMs = STATUS_TIMEOUT_MS } = {}) {
   const { host, statusPort } = session.endpoint;
   const res = await fetch(`http://${host}:${statusPort}${path}`, {
@@ -534,12 +537,15 @@ export function createFleet({
     return session.safeSend === true;
   }
 
-  // A send that got no answer in time may have gone in: statusd may still be typing it, and press its Enter after. Sent
-  // again it could reach the agent twice, so it is not: the agent's record says whether it arrived. Only a timeout is;
-  // a refused connection never reached statusd, and is held to try again.
+  // A send statusd never answered may have gone in: it may still be typing it and press its Enter after (a timeout), or
+  // have sent it before the connection dropped (a reset, a reply cut off). Sent again it could reach the agent twice, so
+  // it is not: the agent's record says whether it arrived. Only a connection that was never made, or an answer statusd
+  // gave (`status`), says it typed nothing; that is held to try again.
   function unknownOutcome(session, err) {
-    if (err?.name !== 'TimeoutError' && err?.name !== 'AbortError') return false;
-    console.warn('fleet: message send timed out, not sent again: it may have gone in', { id: session.id });
+    if (typeof err?.status === 'number') return false;
+    const code = err?.cause?.code ?? err?.code ?? null;
+    if (NEVER_CONNECTED.has(code)) return false;
+    console.warn('fleet: message send got no answer, not sent again: it may have gone in', { id: session.id, why: code ?? err?.name ?? null });
     return true;
   }
 
@@ -613,6 +619,16 @@ export function createFleet({
       const [held] = session.pendingMessages;
       const text = typeof held === 'string' ? held : held.text;
       const messageId = typeof held === 'string' ? null : held.id;
+      // A message from Chat (it has the page's id) held before the session came back on a statusd that types blind (a
+      // resume on an older image): never typed there, as the page's own send is refused (server.mjs). The page is told.
+      if (messageId && !guarded(session)) {
+        console.warn('fleet: held message from the page dropped, the session cannot send safely', { id: session.id, chars: text.length });
+        update(session, {
+          pendingMessages: withoutFirst(session.pendingMessages, held),
+          refusedIds: [...(session.refusedIds ?? []), messageId].slice(-20),
+        });
+        continue;
+      }
       let boxed = false;
       try {
         await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });

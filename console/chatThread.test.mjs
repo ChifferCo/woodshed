@@ -341,6 +341,16 @@ test('a held bubble the console left in the agent\'s box says so by its id, and 
   assert.deepEqual(r.pending.map((p) => p.id), ['aaaaaaaa-1'], 'the box empty again: let go');
 });
 
+test('a held bubble the session could not take safely says it was not sent, and goes in time', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'yes do it', sentAt: now - 60_000, state: 'held' };
+  assert.equal(chat.reconcile([a], { refusedIds: ['aaaaaaaa-1'] }, now).changed, true);
+  assert.equal(a.state, 'refused');
+  assert.match(chat.pendingLabel('refused', 'claude'), /^Not sent: .*TUI tab/);
+  assert.equal(chat.stillPending([a], [], now + 9 * 60_000).length, 1);
+  assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0);
+});
+
 test('a held bubble whose send got no answer in time stops promising delivery, says so, and goes in time', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now - 60 * 60_000, state: 'held' };

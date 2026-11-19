@@ -1876,6 +1876,12 @@ test('the message box types its text into the owner\'s session, and its files ar
   assert.equal(blind.status, 409);
   assert.match((await blind.json()).error, /started before Chat could send safely: type it in the TUI tab/);
   assert.equal(sent.length, 2, 'never reached the fleet');
+  // Not read since the console started: said as not known yet, not as an old session.
+  delete mine.safeSend;
+  const unread = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'yes do it' }), 'application/json');
+  assert.equal(unread.status, 409);
+  assert.match((await unread.json()).error, /has not read this session since it started: try again in a few seconds/);
+  assert.equal(sent.length, 2);
   mine.safeSend = true;
   // No answer in time: it may have gone in, said as not known.
   outcome = 'unknown';

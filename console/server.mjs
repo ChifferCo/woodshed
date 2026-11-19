@@ -1762,8 +1762,12 @@ export function createHandler({
       // A statusd from before the guarded send types blind, Enter and all: a message from here could answer an approval
       // that came up after the last status read. The person's own words never go that way; the TUI tab shows the screen.
       if (session.safeSend !== true) {
-        console.log('console: message from the page refused, the session cannot send safely', { id: session.id });
-        return reply(res, 409, { error: 'this session started before Chat could send safely: type it in the TUI tab' });
+        // Not read since the console started (an upgrade, a restart): not known yet, which a status read says soon.
+        const unread = session.safeSend === undefined;
+        console.log('console: message from the page refused, the session cannot send safely', { id: session.id, unread });
+        return reply(res, 409, { error: unread
+          ? 'the console has not read this session since it started: try again in a few seconds'
+          : 'this session started before Chat could send safely: type it in the TUI tab' });
       }
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
       // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
