@@ -2065,7 +2065,10 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
   if (qaRuns.has(session)) return json(res, 200, { ok: true, status: 'running' });
   if (first) {
     const had = readQa(session);
-    if (had && (had.forDiff ?? null) === (review.createdAt ?? null) && had.status !== 'running') {
+    // Whatever its state: ready, failed, or cut off by a restart (still 'running'
+    // on disk, with no run going; one going was joined above). The page offers
+    // Ask again for each, and a first ask is not a person choosing to pay again.
+    if (had && (had.forDiff ?? null) === (review.createdAt ?? null)) {
       log('review.qa_first_ask_kept', { reqId, session, status: had.status });
       return json(res, 200, { ok: true, status: had.status, kept: true });
     }

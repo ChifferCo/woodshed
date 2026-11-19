@@ -357,6 +357,9 @@ export async function makeSnapshot({
   const blobs = [];
   const notes = [];
   const folders = [];
+  // Every folder the copy will have takes a block too, not only a submodule's:
+  // each entry's parents are counted once.
+  const parents = new Set();
   let total = 0;
   for (const entry of splitRecords(listing.bytes)) {
     const tab = entry.indexOf(9);
@@ -368,6 +371,9 @@ export async function makeSnapshot({
     // A path git would never write (absolute, empty parts, or climbing out) is refused, not followed.
     if (!safeRelative(rel)) return failed(`a path outside the tree: ${rel.toString('utf8').slice(0, 80)}`);
     const target = Buffer.concat([root, rel]);
+    for (let at = rel.indexOf(0x2f); at !== -1; at = rel.indexOf(0x2f, at + 1)) {
+      parents.add(rel.subarray(0, at).toString('latin1'));
+    }
     if (type === 'commit') {
       folders.push(target);
       total += onDisk(0);
@@ -382,6 +388,7 @@ export async function makeSnapshot({
       }
     }
   }
+  total += parents.size * onDisk(0);
   const mb = (n) => Math.round(n / 1048576);
   if (total > maxTotalBytes) {
     return failed(`its files come to ${mb(total)} MB, past the ${mb(maxTotalBytes)} MB a copy may take`);

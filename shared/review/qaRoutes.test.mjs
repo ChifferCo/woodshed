@@ -186,6 +186,12 @@ test('a first-open ask keeps the Q&A the diff already has; Ask again replaces it
   const first = await call('POST', `/reviews/${session}/qa?first=1`);
   assert.deepEqual([first.body.status, first.body.kept], ['ready', true]);
   assert.equal(readQa(session).startedAt, done.startedAt, 'the same run, nothing new paid for');
+  // A Q&A a restart cut off is still 'running' on disk with no run going: a first ask keeps it too.
+  const qaFile = path.join(process.env.WOODSHED_REVIEWS, session, 'qa.json');
+  const saved = JSON.parse(fs.readFileSync(qaFile, 'utf8'));
+  fs.writeFileSync(qaFile, JSON.stringify({ ...saved, status: 'running', phase: 'answering' }));
+  const cutOff = await call('POST', `/reviews/${session}/qa?first=1`);
+  assert.deepEqual([cutOff.body.kept, readQa(session).startedAt], [true, done.startedAt]);
   const again = await call('POST', `/reviews/${session}/qa`);
   assert.equal(again.body.status, 'running');
   await until(() => (readQa(session)?.status === 'ready' && readQa(session).startedAt !== done.startedAt));
@@ -424,6 +430,24 @@ test('a tree of many small files is counted for the room it takes on disk', asyn
   const got = await makeSnapshot({ repoDir: repo, treeish: git('rev-parse', 'HEAD^{tree}'), session: 'claude-d4d4d4d4', maxTotalBytes: 1024 * 1024, free: () => Infinity });
   assert.deepEqual([got.ok, /past the 1 MB a copy may take/.test(got.error)], [false, true]);
   assert.equal(reservedSnapshotBytes(), 0);
+});
+
+// Folders take room too. 200 empty-ish files in 200 folders of their own count twice what the files alone would.
+test('every folder in the copy is counted for its block', async () => {
+  const repo = path.join(DIR, 'many-folders');
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  fs.mkdirSync(repo, { recursive: true });
+  git('init', '-q');
+  for (let i = 0; i < 200; i += 1) {
+    fs.mkdirSync(path.join(repo, `d${i}`));
+    fs.writeFileSync(path.join(repo, `d${i}`, 'x'), `${i}`);
+  }
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  // 200 files are 800 KB of blocks; with their 200 folders, 1.6 MB.
+  const got = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-e5e5e5e5', maxTotalBytes: 1024 * 1024, free: () => Infinity });
+  assert.deepEqual([got.ok, /past the 1 MB a copy may take/.test(got.error)], [false, true]);
 });
 
 test('copies a restart left behind are swept at the next copy, and a live one is not', () => {
