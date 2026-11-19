@@ -36,10 +36,18 @@ else {
   process.stdout.write(JSON.stringify({ type: 'result', is_error: false, num_turns: 1, total_cost_usd: 0.001, structured_output: out }));
 }
 `, { mode: 0o755 });
+// git, as the route runs it, with one failure on demand: `write-tree` refused while WOODSHED_TEST_FAIL_WRITE_TREE=1.
+const REAL_GIT = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+fs.writeFileSync(path.join(BIN, 'git'), `#!/bin/sh
+if [ "$WOODSHED_TEST_FAIL_WRITE_TREE" = 1 ]; then
+  for a in "$@"; do [ "$a" = write-tree ] && { echo "fatal: injected write-tree failure" >&2; exit 128; }; done
+fi
+exec ${REAL_GIT} "$@"
+`, { mode: 0o755 });
 process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest, failedQaRecord } = await import('./index.mjs');
+const { handleReviewRequest, failedQaRecord, removeReviewSession } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
@@ -496,6 +504,55 @@ test('a review whose tree could not be recorded says why, not to press Re-review
   const qa = await until(() => (readQa(session)?.status === 'failed' ? readQa(session) : null));
   assert.match(qa.error, /was not recorded when this review was taken \(git write-tree failed: error: invalid object\)/);
   assert.doesNotMatch(qa.error, /press Re-review/);
+});
+
+// Through the real route: a review taken when git would not write the tree records why and logs it, and a Re-review
+// that can records the tree and holds it with a ref of its own, which removing the review lets go.
+test('the worktree review records its tree and holds it with a ref, or records why it could not', async () => {
+  const session = 'claude-a7a7a7a7';
+  const origin = path.join(DIR, 'origin.git');
+  const wt = path.join(DIR, 'route-wt');
+  const g = (cwd, ...args) => execFileSync(REAL_GIT, ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, wt], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'one\n');
+  g(wt, 'add', '-A');
+  g(wt, 'commit', '-q', '-m', 'base');
+  g(wt, 'push', '-q', 'origin', 'HEAD:main');
+  g(wt, 'remote', 'set-head', 'origin', 'main');
+  g(wt, 'checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(wt, 'a.txt'), 'two\n');
+  const logs = [];
+  const ctx = {
+    reqId: 't', repoRoot: wt, worktreePathFor: () => wt, log: (event, fields) => logs.push([event, fields]),
+    json: (res, status, body) => { res.status = status; res.body = body; },
+  };
+  const post = async () => {
+    const res = {};
+    await handleReviewRequest({ method: 'POST', url: `/reviews/${session}`, headers: {} }, res, ctx);
+    return res;
+  };
+  const record = () => JSON.parse(fs.readFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'session.json'), 'utf8'));
+  const held = () => { try { return g(wt, 'rev-parse', '--verify', '-q', `refs/woodshed-qa/${session}`); } catch { return null; } };
+
+  process.env.WOODSHED_TEST_FAIL_WRITE_TREE = '1';
+  let failedTake;
+  try { failedTake = await post(); } finally { delete process.env.WOODSHED_TEST_FAIL_WRITE_TREE; }
+  assert.equal(failedTake.status, 200, JSON.stringify(failedTake.body));
+  assert.equal(record().snapshot, null);
+  assert.match(record().snapshotError, /git write-tree failed: fatal: injected write-tree failure/);
+  assert.ok(logs.some(([e, f]) => e === 'review.snapshot_not_recorded' && /injected/.test(f.error)), 'logged');
+  assert.equal(held(), null);
+
+  const retaken = await post();
+  assert.equal(retaken.status, 200, JSON.stringify(retaken.body));
+  assert.match(record().snapshot, /^[0-9a-f]{40}$/);
+  assert.equal(record().snapshotError, null);
+  assert.equal(held(), record().snapshot, 'the ref holds the recorded tree');
+  assert.equal(g(wt, 'cat-file', '-t', record().snapshot), 'tree');
+
+  await removeReviewSession({ ctx, sessionName: session });
+  assert.equal(held(), null, 'removing the review lets the tree go');
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {

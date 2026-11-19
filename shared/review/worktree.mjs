@@ -645,9 +645,9 @@ const INDEX_TIMEOUT_MS = 120_000;
  * The scratch index is also written out as a tree object (`write-tree`): the
  * exact tree this diff describes, uncommitted and untracked files included, so
  * the Q&A can answer from it rather than from a tree that has moved on since.
- * Unreferenced, so git's gc may take it after its grace period (two weeks by
- * default); `treeSha` is null when it could not be written, which costs only
- * the Q&A.
+ * The caller holds it with a ref (holdTree), so git's gc keeps it while the
+ * review stands; `treeSha` is null, with `treeError` saying why, when it could
+ * not be written, which costs only the Q&A.
  *
  * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, treeSha: string|null, treeError: string|null, baseFetched: boolean}
  *                 | {ok: false, status: number, error: string, stderr?: string}>}
@@ -739,6 +739,27 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
       // Nothing useful to do about it, and the diff already succeeded.
     }
   }
+}
+
+/**
+ * Hold a worktree review's tree with a ref of its own, so git's gc cannot prune
+ * it while the review stands: written by no commit and named by nothing else,
+ * the tree would otherwise go after gc's grace period, and the Q&A with it.
+ * `refs/woodshed-qa/<session>` is outside refs/heads and refs/tags, so no push
+ * carries it; a Re-review moves it, and removing the review deletes it.
+ *
+ * @returns {Promise<{ok: boolean, error?: string}>}
+ */
+export async function holdTree({ worktreePath, sessionName, treeSha }) {
+  const held = await git(worktreePath, ['update-ref', `refs/woodshed-qa/${sessionName}`, treeSha], 30_000);
+  return held.status === 0 ? { ok: true } : { ok: false, error: (held.stderr || '').trim().slice(0, 200) || `exit ${held.status}` };
+}
+
+/** Let go of the tree holdTree held. Nothing held is nothing to do. */
+export async function releaseTree({ worktreePath, sessionName }) {
+  if (!worktreePath || !fs.existsSync(worktreePath)) return { ok: true };
+  const gone = await git(worktreePath, ['update-ref', '-d', `refs/woodshed-qa/${sessionName}`], 30_000);
+  return { ok: gone.status === 0 };
 }
 
 /**

@@ -400,7 +400,8 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
   Grep and Glob) answers them all in one run, quoting real code where it helps. Unlike every other run here, the
   answerer does not read the live worktree: it reads a copy of the tree the diff was taken from (`snapshot`, the
-  scratch index's `write-tree` for a worktree review, or the head commit), whose blobs are written as git stores them
+  scratch index's `write-tree` for a worktree review, held from gc by `refs/woodshed-qa/<session>` until the review
+  is removed, or the head commit), whose blobs are written as git stores them
   (`ls-tree` and one `cat-file --batch`) into a scratch folder for the run: not `git archive`, whose `export-ignore`
   could drop a file the diff shows, nor `checkout-index`, whose line-ending and filter conversions could change one.
   The folder is deleted after the run, and the next copy removes any a restart left (more than 3 hours old), so its answers never quote code the diff beside them
