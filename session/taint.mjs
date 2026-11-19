@@ -20,6 +20,9 @@ import path from 'node:path';
 import { isMain } from '../shared/isMain.mjs';
 
 export const TAINT_MARKER = '/tmp/woodshed-tainted';
+// Written once the session's side of the taint is all in place (statusd's POST /taint): the marker alone says only that
+// it began, so a notice after a setup that failed partway finishes it rather than answering that it was done.
+export const TAINT_SET_UP = '/tmp/woodshed-taint-set-up';
 export const EGRESS_ENV_FILE = '/tmp/woodshed-egress.env';
 export const EGRESS_CA_BUNDLE = '/tmp/woodshed-egress-ca.pem';
 export const MCP_CONFIG_FILE = '/tmp/woodshed-mcp.json';
@@ -31,6 +34,16 @@ const SYSTEM_BUNDLES = ['/etc/ssl/certs/ca-certificates.crt', '/etc/pki/tls/cert
 /** @returns {boolean} */
 export function isTainted(marker = TAINT_MARKER) {
   return existsSync(marker);
+}
+
+/** @returns {boolean}  whether the session's side of its taint was all set up */
+export function isTaintSetUp(file = TAINT_SET_UP) {
+  return existsSync(file);
+}
+
+/** Says the session's side of its taint is all in place. */
+export async function markTaintSetUp(file = TAINT_SET_UP) {
+  await fs.writeFile(file, `${JSON.stringify({ at: new Date().toISOString() })}\n`);
 }
 
 function hostOf(value) {
@@ -214,6 +227,8 @@ if (isMain(import.meta.url)) {
   if (what === 'apply') {
     const answer = JSON.parse(await fs.readFile(arg, 'utf8'));
     const { egress } = await applyTaint({ proxy: answer.proxy, ca: answer.ca, token, env: process.env, repoDir });
+    // A resumed tainted session's start sets the rest up itself, before claude opens: statusd has nothing to finish.
+    await markTaintSetUp();
     console.log(`egress: ${egress ? 'through the console' : 'none'}`);
   } else if (what === 'proxy') {
     await fs.writeFile(EGRESS_ENV_FILE, egressEnvText({ proxy: arg, token, env: process.env }), { mode: 0o600 });

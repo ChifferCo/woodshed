@@ -55,7 +55,7 @@ function subjectOf(session) {
 
 /**
  * @param {{servers: ReturnType<typeof import('./mcpServers.mjs').createMcpServers>, issuer: {sign: Function},
- *          fleet: {taint: (session: object, opts: object) => Promise<object>},
+ *          fleet: {taint: (session: object, opts: object) => Promise<object>, isLocked?: (session: object) => boolean},
  *          repoOf: (session: object) => string|null, now?: () => number}} opts
  *   `repoOf` names the session's project's repo; `fleet.taint` locks the session down and marks it, or throws
  */
@@ -64,6 +64,28 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
   const headers = new Map();
   // The first relayed call of each session to each server, logged once.
   const relayed = new Set();
+  // Each session's calls to ordinary servers in flight, cut the moment its lockdown starts (cut).
+  const ordinary = new Map();
+
+  /** Cuts a session's calls to ordinary servers, open or opening: called as its lockdown starts. */
+  function cut(sessionId) {
+    const held = ordinary.get(sessionId);
+    if (!held) return 0;
+    ordinary.delete(sessionId);
+    for (const destroy of held) destroy();
+    if (held.size) console.log('mcpRelay: ordinary calls cut at the lockdown', { sessionId, calls: held.size });
+    return held.size;
+  }
+
+  function hold(session, destroy) {
+    if (!ordinary.has(session.id)) ordinary.set(session.id, new Set());
+    const held = ordinary.get(session.id);
+    held.add(destroy);
+    return () => {
+      held.delete(destroy);
+      if (!held.size && ordinary.get(session.id) === held) ordinary.delete(session.id);
+    };
+  }
 
   async function tokenFor(session, server) {
     const key = `${session.id}\n${server.name}\n${server.audience}`;
@@ -106,13 +128,17 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
     const target = new URL(server.url);
     const transport = target.protocol === 'http:' ? http : https;
     const url = new URL(req.url, 'http://console');
+    // The server's own query (a tenant, say) is kept; the client's parameters are added, never over one of its.
+    const query = new URLSearchParams(target.search);
+    for (const [key, value] of url.searchParams) if (!query.has(key)) query.append(key, value);
+    const search = query.size ? `?${query}` : '';
     const out = {};
     for (const name of REQUEST_HEADERS) if (req.headers[name] !== undefined) out[name] = req.headers[name];
     Object.assign(out, added);
     out.host = target.host;
     const call = transport.request({
       protocol: target.protocol, hostname: target.hostname, port: target.port || undefined,
-      method: req.method, path: `${target.pathname.replace(/\/+$/, '')}${suffix}${url.search}` || '/', headers: out,
+      method: req.method, path: `${target.pathname.replace(/\/+$/, '')}${suffix}${search}` || '/', headers: out,
     }, (answer) => {
       const back = {};
       for (const [name, value] of Object.entries(answer.headers)) if (!RESPONSE_DROPPED.has(name)) back[name] = value;
@@ -128,7 +154,11 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
       res.destroy();
     });
     // claude closes a stream it no longer wants (a cancelled call, the server's SSE on its way out): the call goes with it.
-    res.on('close', () => { if (!res.writableFinished) call.destroy(); });
+    const release = server.production ? () => {} : hold(session, () => { call.destroy(); res.destroy(); req.destroy(); });
+    res.on('close', () => {
+      release();
+      if (!res.writableFinished) call.destroy();
+    });
     req.pipe(call);
   }
 
@@ -150,6 +180,11 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
     const allowed = serverEligibility(server, session, repoOf(session));
     if (!allowed.ok) {
       return refuse(403, allowed.why, { message: 'mcpRelay: refused', fields: { sessionId: session.id, server: server.name, production: server.production, owner: session.owner ?? null, why: allowed.why } });
+    }
+    // An ordinary server while the session's lockdown is under way: it is as good as tainted.
+    if (!server.production && fleet.isLocked?.(session)) {
+      return refuse(403, 'this session is being locked down for production data, so only its production servers are open to it',
+        { message: 'mcpRelay: refused', fields: { sessionId: session.id, server: server.name, production: false, owner: session.owner ?? null, why: 'locking down' } });
     }
     // A production server's taint comes first, whatever the call: the body is not read until the session is locked down.
     if (server.production && !session.taintedAt) {
@@ -175,8 +210,12 @@ export function createMcpRelay({ servers, issuer, fleet, repoOf, now = Date.now 
       relayed.add(key);
       console.log('mcpRelay: first call relayed', { sessionId: session.id, server: server.name, production: server.production, owner: session.owner ?? null, repo: repoOf(session), taintedAt: session.taintedAt ?? null });
     }
+    // A lockdown that started while the auth was made: the call does not go.
+    if (!server.production && (session.taintedAt || fleet.isLocked?.(session))) {
+      return refuse(403, 'this session is being locked down for production data, so only its production servers are open to it');
+    }
     return forward(req, res, session, server, path.suffix, added);
   }
 
-  return { isProxyPath: isMcpPath, handle };
+  return { isProxyPath: isMcpPath, handle, cut };
 }

@@ -46,10 +46,46 @@ test('GraphQL: queries pass, and only the pull request mutations, with every id 
   });
   assert.deepEqual(create, { kind: 'mutation', mutations: ['createPullRequest'], ids: ['R_1', 'R_2'] });
   assert.match(graphqlRule({ query: 'mutation($i: CreateRepositoryInput!) { createRepository(input: $i) { repository { url } } }', variables: { i: { name: 'x' } } }).why, /createRepository/);
-  assert.match(graphqlRule({ query: 'mutation { updateRepository(input: {repositoryId: "R_1", visibility: PUBLIC}) { clientMutationId } }' }).why, /variables/);
+  assert.match(graphqlRule({ query: 'mutation { updateRepository(input: {repositoryId: "R_1", visibility: PUBLIC}) { clientMutationId } }' }).why, /updateRepository/);
+  assert.match(graphqlRule({ query: 'mutation { addComment(input: {subjectId: "I_1", body: "x"}) { clientMutationId } }' }).why, /variables/);
   assert.match(graphqlRule({ query: 'mutation($i: AddCommentInput!) { addComment(input: $i) { clientMutationId } }', variables: { i: { body: 'x' } } }).why, /nothing to check/);
   assert.equal(graphqlRule({ query: 'subscription { x }' }).kind, 'deny');
   assert.equal(graphqlRule('nope').kind, 'deny');
+});
+
+test('GraphQL is read as GitHub reads it: no string, comment, comma, alias or variable name hides a mutation or its target', () => {
+  // A # inside a string, with the mutation in a fragment on Mutation.
+  const hidden = graphqlRule({
+    query: 'fragment F on Mutation { createIssue(input:{repositoryId:$r, title:"#", body:$b}){issue{url}} } mutation($r:ID!,$b:String!){ ...F }',
+    variables: { r: 'R_public', b: 'data' },
+  });
+  assert.equal(hidden.kind, 'deny');
+  assert.match(hidden.why, /only operation, with no fragments/);
+  // A leading comma, beside an allowed mutation.
+  const comma = graphqlRule({
+    query: 'mutation($a:AddCommentInput!,$c:CreateRepositoryInput!){ addComment(input:$a){clientMutationId} createRepository(,input:$c){repository{url}} }',
+    variables: { a: { subjectId: 'PR_ok', body: 'x' }, c: { name: 'leak', visibility: 'PUBLIC' } },
+  });
+  assert.match(comma.why, /createRepository/);
+  // An alias does not rename the field.
+  assert.match(graphqlRule({ query: 'mutation($c:CreateRepositoryInput!){ x: createRepository(input:$c){clientMutationId} }', variables: { c: { name: 'x' } } }).why, /createRepository/);
+  // Every target is checked, whatever its variable is called, and updateIssue's `id` too.
+  const names = graphqlRule({
+    query: 'mutation($s:ID!,$b:String!,$okId:ID!){ addComment(input:{subjectId:$s,body:$b}){clientMutationId} b:addComment(input:{subjectId:$okId,body:$b}){clientMutationId} }',
+    variables: { s: 'I_public', b: 'data', okId: 'PR_ok' },
+  });
+  assert.deepEqual(names, { kind: 'mutation', mutations: ['addComment', 'addComment'], ids: ['I_public', 'PR_ok'] });
+  assert.deepEqual(graphqlRule({ query: 'mutation($i:UpdateIssueInput!){ updateIssue(input:$i){clientMutationId} }', variables: { i: { id: 'I_1', body: 'x' } } }).ids, ['I_1']);
+  // What it asks back may use inline fragments: they are reads.
+  assert.equal(graphqlRule({ query: 'mutation($i:AddCommentInput!){ addComment(input:$i){ subject { ... on PullRequest { url } } } }', variables: { i: { subjectId: 'PR_1' } } }).kind, 'mutation');
+  assert.match(graphqlRule({ query: 'mutation($i:AddCommentInput!){ ...M }', variables: { i: { subjectId: 'PR_1' } } }).why, /field/);
+  // The word mutation in a string or a comment, in a query, is only a query.
+  assert.deepEqual(graphqlRule({ query: '# mutation\nquery { search(query: "mutation { x }", type: ISSUE, first: 1) { issueCount } }' }), { kind: 'query' });
+  // A block string and an escaped quote; a document GraphQL would not read; more than one operation; an undeclared variable.
+  assert.deepEqual(graphqlRule({ query: 'query { a(b: """x " # y""", c: "d\\"e") { f } }' }), { kind: 'query' });
+  assert.match(graphqlRule({ query: 'mutation { addComment(input: $a' }).why, /could not read/);
+  assert.match(graphqlRule({ query: 'query { a } mutation($a:AddCommentInput!){ addComment(input:$a){clientMutationId} }', variables: { a: { subjectId: 'x' } } }).why, /only operation/);
+  assert.match(graphqlRule({ query: 'mutation($a:AddCommentInput!){ addComment(input:$x){clientMutationId} }', variables: { a: { subjectId: 'x' } } }).why, /does not declare/);
 });
 
 test('a mutation\'s ids must each be the organization\'s private repo\'s, or a person', () => {

@@ -153,7 +153,13 @@ URL on top of each env file's Repo settings values
   GitHub not answering anonymously (60 calls an hour). In the session, `cat /tmp/woodshed-egress.env` shows the proxy's
   variables, and `/tmp/woodshed-tainted` its taint. A git call that says `Proxy CONNECT aborted` is a git without
   `GIT_HTTP_PROXY_AUTHMETHOD=basic` (an image from before it). Nothing undoes a taint: what it needs that is not
-  installed, a new untainted session installs.
+  installed, a new untainted session installs. Before a taint, an AWS guarded session's call refused with `not a public
+  address` is a name or address on the console's own network (loopback, the instance's metadata, the VPC), which the
+  proxy never reaches for it; `reaches the internet itself` is a session whose launcher does not send it through the
+  proxy. A tainted session's GraphQL call refused with `could not read`, `only operation`, `as variables` or `does not
+  declare` is a mutation document shaped otherwise than `gh` makes them. Its Anthropic calls are refused for an image
+  or document given by URL, and for a body that is not JSON (`anthropicProxy: refused, a tainted session's call the
+  console cannot read`).
 - **An MCP server from Console settings fails in `/mcp`, or a session does not have it.** A session gets the servers
   that existed when it started: its log says `MCP servers offered` with them, or nothing when it got none
   (`WOODSHED_MCP_SERVERS`, from `mcpServers.forSession`: a QA run, a review and a Codex session get none, a shared one

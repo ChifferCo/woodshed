@@ -74,6 +74,43 @@ resource "aws_vpc_security_group_ingress_rule" "endpoints" {
   to_port                      = 443
 }
 
+# What the endpoints let through: this account's own ECR repositories, log groups and secrets, and nothing of another
+# account's, so AWS keys a session might be handed (by a prompt injection, say) cannot write out through them. Every
+# action Fargate's pull, log writes and secret reads make names a resource, so aws:ResourceAccount is set on each, but
+# ecr:GetAuthorizationToken, which names none (its service reference lists no resource, so the key would be missing and
+# refuse it).
+data "aws_iam_policy_document" "guarded_endpoint" {
+  for_each = local.guarded_endpoints
+
+  statement {
+    sid = "ThisAccountOnly"
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    actions   = ["*"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:ResourceAccount"
+      values   = [local.account_id]
+    }
+  }
+
+  dynamic "statement" {
+    for_each = each.key == "ecr.api" ? [1] : []
+    content {
+      sid = "EcrToken"
+      principals {
+        type        = "*"
+        identifiers = ["*"]
+      }
+      actions   = ["ecr:GetAuthorizationToken"]
+      resources = ["*"]
+    }
+  }
+}
+
 resource "aws_vpc_endpoint" "guarded" {
   for_each = local.guarded_endpoints
 
@@ -83,8 +120,24 @@ resource "aws_vpc_endpoint" "guarded" {
   subnet_ids          = aws_subnet.guarded[*].id
   security_group_ids  = [aws_security_group.endpoints[0].id]
   private_dns_enabled = true
+  policy              = data.aws_iam_policy_document.guarded_endpoint[each.key].json
 
   tags = { Name = "${local.p}-${each.key}" }
+}
+
+# The S3 endpoint reads ECR's image layers alone: the bucket AWS keeps them in for this region, as ECR's docs give it.
+data "aws_iam_policy_document" "guarded_s3" {
+  count = local.prod_mcp ? 1 : 0
+
+  statement {
+    sid = "EcrLayersOnly"
+    principals {
+      type        = "*"
+      identifiers = ["*"]
+    }
+    actions   = ["s3:GetObject"]
+    resources = ["arn:aws:s3:::prod-${var.region}-starport-layer-bucket/*"]
+  }
 }
 
 # ECR's image layers are in S3: a gateway endpoint, which costs nothing, on the guarded route table alone.
@@ -95,6 +148,7 @@ resource "aws_vpc_endpoint" "s3" {
   service_name      = "com.amazonaws.${var.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.guarded[0].id]
+  policy            = data.aws_iam_policy_document.guarded_s3[0].json
 
   tags = { Name = "${local.p}-s3" }
 }

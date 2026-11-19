@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { TAINTED_CLAUDE_FLAGS, applyTaint, egressEnvText, mcpConfig, noProxyFor, proxyWithToken, serversOf, withProdServers, writeMcpConfig } from './taint.mjs';
+import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp, egressEnvText, mcpConfig, noProxyFor, proxyWithToken, serversOf, withProdServers, writeMcpConfig } from './taint.mjs';
 
 const ENV = {
   WOODSHED_CONSOLE_URL: 'http://host.docker.internal:7691', PGHOST: 'postgres', WOODSHED_MONGO_HOST: 'mongo:27017',
@@ -68,4 +68,30 @@ test('the entrypoint and statusd add the same flags to a tainted claude', () => 
   const entrypoint = fs.readFileSync(path.join(import.meta.dirname, 'entrypoint.sh'), 'utf8');
   assert.ok(entrypoint.includes(`TAINTED_CLAUDE_FLAGS='${TAINTED_CLAUDE_FLAGS}'`));
   assert.match(TAINTED_CLAUDE_FLAGS, /--disallowedTools WebSearch,WebFetch/);
+});
+
+test('a setup that failed after the marker is not taken for done: the next notice runs it again, and it finishes', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taint-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const setUp = path.join(dir, 'set-up');
+  const files = { marker: path.join(dir, 'tainted'), envFile: path.join(dir, 'egress.env'), bundle: path.join(dir, 'ca.pem'), mcpConfig: path.join(dir, 'mcp.json'), profiles: [path.join(dir, '.profile')],
+    claudeJson: path.join(dir, 'missing', 'claude.json') };
+  const env = { ...ENV, SESSION_TOKEN: 'tok', WOODSHED_MCP_SERVERS: JSON.stringify([{ name: 'woodshed-prod', production: true }]) };
+  // Claude's config cannot be written: the marker is down, the setup is not.
+  await assert.rejects(applyTaint({ proxy: 'http://gw:7693', ca: 'x', token: 'tok', env, repoDir: '/work/r', files }));
+  assert.equal(isTainted(files.marker), true);
+  assert.equal(isTaintSetUp(setUp), false, 'statusd answers the next notice by running the setup again');
+  fs.mkdirSync(path.join(dir, 'missing'));
+  await applyTaint({ proxy: 'http://gw:7693', ca: 'x', token: 'tok', env, repoDir: '/work/r', files });
+  await markTaintSetUp(setUp);
+  assert.equal(isTaintSetUp(setUp), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(files.claudeJson, 'utf8')).projects['/work/r'].disabledMcpServers, []);
+});
+
+test('statusd takes a notice as done only once the whole setup was, never from the marker alone', () => {
+  const statusd = fs.readFileSync(path.join(import.meta.dirname, 'statusd.mjs'), 'utf8');
+  const body = statusd.slice(statusd.indexOf('async function taint('), statusd.indexOf('// The processes a pid started'));
+  assert.match(body, /if \(isTaintSetUp\(\)\) return \{ already: true \}/);
+  assert.ok(body.indexOf('await markTaintSetUp()') > body.indexOf('await applyTaint('), 'marked after the setup');
+  assert.ok(!/isTainted\(\)/.test(body));
 });

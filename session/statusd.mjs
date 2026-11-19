@@ -61,7 +61,7 @@ import { imageFor, saveUpload, scrollPane, typePaths } from './terminalFiles.mjs
 import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
-import { TAINTED_CLAUDE_FLAGS, applyTaint, isTainted } from './taint.mjs';
+import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { classifyCodexPane } from './codexState.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
@@ -941,7 +941,8 @@ const TAINT_TURN_WAIT_MS = 5 * 60_000;
 let tainting = null;
 
 async function taint({ proxy = null, ca = null, message = '' }) {
-  if (isTainted()) return { already: true };
+  // Done only once every step below was: a setup that failed partway is finished by the console's next notice.
+  if (isTaintSetUp()) return { already: true };
   const { egress, variables } = await applyTaint({ proxy, ca, token: TOKEN, env: process.env, repoDir: REPO_DIR });
   // statusd's own git (the stop's checkpoint push) goes out the same way.
   Object.assign(process.env, variables);
@@ -952,6 +953,7 @@ async function taint({ proxy = null, ca = null, message = '' }) {
   // First: --disallowedTools takes several values, so the flag after it must be another flag, never the message.
   if (!flags.includes('--strict-mcp-config')) await fs.writeFile(CLAUDE_FLAGS_FILE, `${TAINTED_CLAUDE_FLAGS}${flags.trimEnd()}`);
   await fs.writeFile(TAINT_MESSAGE_FILE, String(message || 'This session has seen production data and is now locked down.'));
+  await markTaintSetUp();
   console.log('statusd: tainted', { egress, reopens: !CODEX });
   if (!CODEX) tainting ??= reopenClaude().catch((err) => console.warn('statusd: claude not reopened after the taint', { message: err?.message }));
   return { tainted: true, egress };

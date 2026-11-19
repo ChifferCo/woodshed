@@ -10,7 +10,7 @@ import path from 'node:path';
 import tls from 'node:tls';
 
 import { createEgressCerts } from './egressCerts.mjs';
-import { createEgressProxy, proxyTokenOf } from './egressProxy.mjs';
+import { createEgressProxy, isPublicAddress, proxyTokenOf } from './egressProxy.mjs';
 import { GITHUB_HOSTS } from './githubEgress.mjs';
 
 const tmp = (t, name) => {
@@ -47,7 +47,7 @@ async function fakeGitHub(t) {
   return { seen, port, ca: await certs.caPem() };
 }
 
-async function setup(t) {
+async function setup(t, { passThrough = () => true, names = {}, connect: connectTo = null } = {}) {
   t.mock.method(console, 'log', () => {});
   t.mock.method(console, 'warn', () => {});
   const github = await fakeGitHub(t);
@@ -60,10 +60,13 @@ async function setup(t) {
   const proxy = createEgressProxy({
     sessions: () => sessions, isLocked: (s) => Boolean(s.taintedAt), orgOf: () => 'acme', certs,
     visibility: async (owner, name) => (name === 'site' || owner === 'octocat' ? 'public' : 'unknown'),
-    upstream: { ca: github.ca, port: github.port, lookup },
+    upstream: { ca: github.ca, port: github.port, lookup, ...(connectTo && { connect: connectTo }) },
+    passThrough,
+    // Names as the session's pass-through resolves them.
+    lookup: (host, opts, cb) => (names[host] ? cb(null, names[host].map((address) => ({ address, family: net.isIP(address) }))) : cb(new Error('ENOTFOUND'))),
   });
   const port = await listen(t, proxy);
-  return { github, port, ca: await certs.caPem() };
+  return { github, port, ca: await certs.caPem(), proxy, sessions };
 }
 
 const auth = (token) => `Basic ${Buffer.from(`woodshed:${token}`).toString('base64')}`;
@@ -116,18 +119,46 @@ test('a tainted session reaches no host but GitHub\'s, and is told why', async (
   }
 });
 
-test('an untainted guarded session goes wherever it asks, untouched', async (t) => {
-  const { port } = await setup(t);
+test('an untainted guarded session goes wherever on the public internet it asks, untouched, and to the console\'s own network never', async (t) => {
   const echo = net.createServer((s) => s.pipe(s));
   const echoPort = await listen(t, echo);
-  const tunnel = await connect(port, `127.0.0.1:${echoPort}`, 'tok-guarded');
+  const dialed = [];
+  // The public internet, here: the address a public name resolves to is the one dialed, and it reaches the echo.
+  const connectTo = (port, address) => { dialed.push(`${address}:${port}`); return net.connect(echoPort, '127.0.0.1'); };
+  const { port, proxy } = await setup(t, { connect: connectTo, names: { 'public.test': ['93.184.216.34'], 'sneaky.test': ['93.184.216.34', '10.0.0.5'], 'meta.test': ['169.254.169.254'] } });
+  const tunnel = await connect(port, 'public.test:443', 'tok-guarded');
   assert.equal(tunnel.status, 200);
   const back = await new Promise((resolve) => {
     tunnel.socket.once('data', (d) => resolve(String(d)));
     tunnel.socket.write('ping');
   });
   assert.equal(back, 'ping');
-  tunnel.socket.destroy();
+  assert.deepEqual(dialed, ['93.184.216.34:443']);
+  for (const target of ['127.0.0.1:7691', '169.254.169.254:80', '[::1]:22', '10.0.1.5:27017', 'sneaky.test:443', 'meta.test:80', '[::ffff:169.254.169.254]:80']) {
+    const refused = await connect(port, target, 'tok-guarded');
+    assert.equal(refused.status, 403, target);
+    assert.match(refused.body, /not a public address/, target);
+  }
+  assert.deepEqual(dialed, ['93.184.216.34:443'], 'nothing inside was dialed');
+
+  // Its lockdown starts: the tunnel it has open is cut, before anything of production reaches it.
+  const closed = new Promise((resolve) => tunnel.socket.once('close', resolve));
+  assert.equal(proxy.cut('bbbb2222'), 2);
+  await closed;
+});
+
+test('a session whose launcher does not send it out through the console has no pass-through', async (t) => {
+  const { port } = await setup(t, { passThrough: () => false, names: { 'public.test': ['93.184.216.34'] } });
+  const refused = await connect(port, 'public.test:443', 'tok-guarded');
+  assert.equal(refused.status, 403);
+  assert.match(refused.body, /reaches the internet itself/);
+});
+
+test('isPublicAddress: the public internet only', () => {
+  for (const address of ['93.184.216.34', '1.1.1.1', '2606:4700::1111', '::ffff:8.8.8.8']) assert.equal(isPublicAddress(address), true, address);
+  for (const address of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1', '64:ff9b::a9fe:a9fe', 'nope']) {
+    assert.equal(isPublicAddress(address), false, address);
+  }
 });
 
 test('a tainted session reaches its organization\'s private repos over git and the API, and nothing public or anyone else\'s', async (t) => {

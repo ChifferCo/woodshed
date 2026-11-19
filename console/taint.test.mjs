@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 
 import { createFleet } from './fleet.mjs';
 import { createMcpServers, mcpSettings } from './mcpServers.mjs';
+import { keptIds } from './sessions.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
 
 const PROD = mcpSettings({ WOODSHED_PROD_MCP_URL: 'https://prod-mcp.test/mcp', WOODSHED_PROD_MCP_PEOPLE: 'joel', WOODSHED_PROD_MCP_REPOS: 'o/r' }, 'https://console.test');
 
-function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, statusPort: 12, shellPort: 13, locked: true }), docker = null, homes = null, settings = PROD, servers = [] } = {}) {
+function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, statusPort: 12, shellPort: 13, locked: true }), docker = null, homes = null, settings = PROD, servers = [], databases = null } = {}) {
   let clock = Date.parse('2026-11-19T10:00:00.000Z');
   const calls = { lockDowns: [], statusd: [], started: [], cleared: [], homesRemoved: [] };
   const launcher = {
@@ -33,7 +34,7 @@ function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, stat
   if (servers.length) store.state.mcpServers = servers;
   const mcpServers = createMcpServers({ store, settings, lockdown: () => ({ available: true }) });
   const fleet = createFleet({
-    config, store, launcher, github: {}, now: () => clock, homes, mcpServers, appShares, egress,
+    config, store, launcher, github: {}, now: () => clock, homes, mcpServers, appShares, egress, databases,
     statusd: async (session, method, path, opts) => {
       calls.statusd.push({ id: session.id, method, path, body: opts?.body ?? null });
       return path === '/status' ? { state: 'done' } : { tainted: true };
@@ -208,4 +209,47 @@ test('a tainted session gets no Remote Control, and its container\'s log is neve
   session.endpoint = { host: '127.0.0.1', termPort: 1, statusPort: 2 };
   await fleet.taint(session);
   await assert.rejects(fleet.startClaudeLogin(session), /Remote Control is off/);
+});
+
+test('what a session has open that its lockdown would not close is cut before the lockdown runs', async (t) => {
+  quietly(t);
+  const order = [];
+  const { fleet } = setup({ lockDown: async () => { order.push('lockDown'); return null; } });
+  fleet.onLocking((id) => order.push(`cut ${id}`));
+  fleet.onLocking(() => { throw new Error('one cut failing stops nothing'); });
+  const session = await runningPrivate(fleet);
+  await fleet.taint(session);
+  assert.deepEqual(order, [`cut ${session.id}`, 'lockDown']);
+});
+
+test('a home queued for deletion while the retry sweep awaits storage stays queued', async (t) => {
+  quietly(t);
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const homes = { async remove(name) { if (name === 'joel/sessions/first') await gate; else throw new Error('S3 is down'); }, async get() { return null; } };
+  const { fleet, store } = setup({ homes });
+  store.state.taintedHomesPending = [{ id: 'first', name: 'joel/sessions/first' }];
+  const sweep = fleet.tick();
+  await new Promise((r) => setTimeout(r, 20));
+  store.state.taintedHomesPending = [...store.state.taintedHomesPending, { id: 'second', name: 'joel/sessions/second' }];
+  release();
+  await sweep;
+  assert.deepEqual(store.state.taintedHomesPending.map((h) => h.id), ['second']);
+});
+
+test('a My Woodshed session that may use production works on databases of its own, kept while it is listed, never its owner\'s', async (t) => {
+  quietly(t);
+  const copied = [];
+  const databases = { available: true, async createForSession(id) { copied.push(id); }, async sweep() {} };
+  const { fleet, store } = setup({ databases });
+  const joel = await runningPrivate(fleet);
+  const ana = await runningPrivate(fleet, { startedBy: 'ana', owner: 'ana' });
+  assert.equal(joel.ownDatabases, true);
+  assert.equal(ana.ownDatabases, undefined, 'one who may not use production keeps working on their own databases');
+  assert.deepEqual(copied, [joel.id]);
+  Object.assign(joel, { status: 'stopped' });
+  Object.assign(ana, { status: 'stopped' });
+  const kept = keptIds(store.state.sessions);
+  assert.ok(kept.has(joel.id), 'kept for its Resume until it is removed');
+  assert.ok(!kept.has(ana.id));
 });

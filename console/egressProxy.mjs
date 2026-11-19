@@ -8,11 +8,16 @@
 // A tainted session reaches GitHub's hosts alone (githubEgress.mjs): the proxy opens the TLS itself with a certificate
 // of its own authority (egressCerts.mjs), reads each request, checks its repo, and sends it on to GitHub. Every other
 // host is refused. A session not tainted yet, which on AWS reaches the internet only through here (a guarded session,
-// providers/aws/README.md), goes wherever it asks, untouched: no certificate, nothing read.
+// providers/aws/README.md), goes wherever on the public internet it asks, untouched: no certificate, nothing read. Never
+// to an address of the console's own network (loopback, link-local and so the instance's metadata, private ranges),
+// checked on the address the name resolves to, which is the one connected to. Only a launcher that guards its
+// sessions' egress (`passThrough`) has its sessions use it so; another's are refused. Every tunnel an untainted session
+// has open is cut the moment its lockdown starts (`cut`), before anything of production reaches it.
 //
 // The proxy says why it refused, in a 403's body and in the console's log (`egress: refused`, once per session, host
 // and reason), never with the request's path or body, which may carry what the session saw.
 
+import dns from 'node:dns';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
@@ -72,9 +77,50 @@ export function anonymousVisibility({ request = https.request } = {}) {
  *   session may reach: its project's. `upstream` is where calls go, the real GitHub and internet but in tests
  * @returns {http.Server}  not yet listening
  */
-export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility = anonymousVisibility(), upstream = {}, now = Date.now }) {
+export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility = anonymousVisibility(), upstream = {}, now = Date.now, passThrough = () => true, lookup = dns.lookup }) {
   const request = upstream.request ?? https.request;
   const connect = upstream.connect ?? ((port, host) => net.connect(port, host));
+  const plainRequest = upstream.plainRequest ?? http.request;
+  // Each untainted session's open pass-through sockets, both ends, cut at its lockdown.
+  const passing = new Map();
+
+  function track(sessionId, ...sockets) {
+    if (!passing.has(sessionId)) passing.set(sessionId, new Set());
+    const held = passing.get(sessionId);
+    for (const socket of sockets) {
+      held.add(socket);
+      socket.once('close', () => {
+        held.delete(socket);
+        if (!held.size && passing.get(sessionId) === held) passing.delete(sessionId);
+      });
+    }
+  }
+
+  /** Cuts every pass-through connection a session has open or opening. */
+  function cut(sessionId) {
+    const held = passing.get(sessionId);
+    if (!held) return 0;
+    passing.delete(sessionId);
+    for (const socket of held) socket.destroy();
+    if (held.size) console.log('egress: open connections cut at the lockdown', { sessionId, sockets: held.size });
+    return held.size;
+  }
+
+  /** @returns {Promise<string>}  the public address a host resolves to, which is the one connected to; throws otherwise */
+  function publicAddress(host) {
+    if (net.isIP(host)) {
+      if (!isPublicAddress(host)) return Promise.reject(Object.assign(new Error(`${host} is not a public address`), { shown: true }));
+      return Promise.resolve(host);
+    }
+    return new Promise((resolve, reject) => {
+      lookup(host, { all: true }, (err, addresses) => {
+        if (err || !addresses?.length) return reject(new Error(`${host} not found`));
+        const inside = addresses.find((a) => !isPublicAddress(a.address));
+        if (inside) return reject(Object.assign(new Error(`${host} resolves to ${inside.address}, which is not a public address`), { shown: true }));
+        resolve(addresses[0].address);
+      });
+    });
+  }
   const visibilities = new Map();
   const refusals = new Set();
   const contexts = new Map();
@@ -257,12 +303,26 @@ export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility
       req.resume();
       return refuseHttp(res, 400, 'not an http:// request: use CONNECT');
     }
-    const out = http.request({ hostname: target.hostname, port: target.port || 80, method: req.method, path: `${target.pathname}${target.search}`, headers: upstreamHeaders(req.headers, target.host) }, (answer) => {
-      res.writeHead(answer.statusCode, answer.headers);
-      answer.pipe(res);
+    if (!passThrough(session)) {
+      req.resume();
+      return refuseHttp(res, 403, 'this session reaches the internet itself, not through the console');
+    }
+    const hostname = target.hostname.replace(/^\[|\]$/g, '');
+    publicAddress(hostname).then((address) => {
+      if (isLocked(session) || req.socket.destroyed) return req.socket.destroy();
+      track(session.id, req.socket);
+      const out = plainRequest({ hostname: address, port: target.port || 80, method: req.method, path: `${target.pathname}${target.search}`, headers: upstreamHeaders(req.headers, target.host) }, (answer) => {
+        res.writeHead(answer.statusCode, answer.headers);
+        answer.pipe(res);
+      });
+      out.on('socket', (socket) => track(session.id, socket));
+      out.on('error', () => { if (!res.headersSent) refuseHttp(res, 502, `${target.hostname} not reached`); else res.destroy(); });
+      req.pipe(out);
+    }, (err) => {
+      req.resume();
+      if (err.shown) noteRefusal(session, hostname, 'not a public address');
+      refuseHttp(res, err.shown ? 403 : 502, err.shown ? `refused: ${err.message}` : `${target.hostname} not reached`);
     });
-    out.on('error', () => { if (!res.headersSent) refuseHttp(res, 502, `${target.hostname} not reached`); else res.destroy(); });
-    req.pipe(out);
   });
 
   server.on('connect', (req, socket, head) => {
@@ -275,16 +335,27 @@ export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility
     if (!session) return fail(407, 'Proxy Authentication Required', 'proxy-authenticate: Basic realm="woodshed"\r\n');
     if (!target) return fail(400, 'Bad Request');
     if (!isLocked(session)) {
-      // Untainted: wherever it asks, as its own network would take it.
-      const out = connect(target.port, target.host);
-      out.on('connect', () => {
-        socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-        if (head?.length) out.write(head);
-        out.pipe(socket);
-        socket.pipe(out);
+      // Untainted: wherever on the public internet it asks, for a session whose launcher guards its egress.
+      if (!passThrough(session)) return fail(403, 'Forbidden', '', 'Woodshed: this session reaches the internet itself, not through the console\n');
+      publicAddress(target.host).then((address) => {
+        // Its lockdown may have started while the name resolved.
+        if (isLocked(session) || socket.destroyed) return socket.destroy();
+        track(session.id, socket);
+        const out = connect(target.port, address);
+        track(session.id, out);
+        out.on('connect', () => {
+          if (isLocked(session)) return socket.destroy();
+          socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+          if (head?.length) out.write(head);
+          out.pipe(socket);
+          socket.pipe(out);
+        });
+        out.on('error', () => fail(502, 'Bad Gateway'));
+        socket.on('close', () => out.destroy());
+      }, (err) => {
+        if (err.shown) noteRefusal(session, target.host, 'not a public address');
+        fail(err.shown ? 403 : 502, err.shown ? 'Forbidden' : 'Bad Gateway', '', `Woodshed: ${err.shown ? `refused: ${err.message}` : `${target.host} not reached`}\n`);
       });
-      out.on('error', () => fail(502, 'Bad Gateway'));
-      socket.on('close', () => out.destroy());
       return;
     }
     if (!GITHUB_HOSTS.has(target.host) || target.port !== 443) {
@@ -305,5 +376,32 @@ export function createEgressProxy({ sessions, isLocked, orgOf, certs, visibility
     });
   });
 
+  server.cut = cut;
   return server;
+}
+
+// Addresses that are not the public internet's: the console's own network, its loopback, link-local (the instance's
+// metadata among them), private and shared ranges, and those that are no host at all.
+const INSIDE = new net.BlockList();
+for (const [address, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12],
+  ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.168.0.0', 16], ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['224.0.0.0', 4], ['240.0.0.0', 4]]) {
+  INSIDE.addSubnet(address, prefix, 'ipv4');
+}
+for (const [address, prefix] of [['::', 128], ['::1', 128], ['fc00::', 7], ['fe80::', 10], ['ff00::', 8], ['2001:db8::', 32], ['100::', 64], ['fec0::', 10]]) {
+  INSIDE.addSubnet(address, prefix, 'ipv6');
+}
+
+/** @returns {boolean}  whether an IP address is on the public internet */
+export function isPublicAddress(address) {
+  const text = String(address).replace(/^\[|\]$/g, '').split('%')[0];
+  const family = net.isIP(text);
+  if (!family) return false;
+  if (family === 6) {
+    // An IPv4 address written as IPv6 (mapped, or NAT64's) is that address.
+    const mapped = /^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/i.exec(text);
+    if (mapped) return isPublicAddress(mapped[1]);
+    if (/^::ffff:/i.test(text) || /^64:ff9b::/i.test(text)) return false;
+    return !INSIDE.check(text, 'ipv6');
+  }
+  return !INSIDE.check(text, 'ipv4');
 }

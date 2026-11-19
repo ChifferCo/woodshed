@@ -249,11 +249,13 @@ masks what it returns and audits each call (its own docs), and Woodshed locks do
     groups cannot change once it runs. Its traffic out goes through the egress proxy from the start: open before the
     taint, GitHub only after it.
 - **What it kept.** Its Claude home is its own alone: saved for its Resume, never copied into the owner's or synced
-  to their other sessions. It is removed `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` (24 by default) after it stops, with
+  to their other sessions. Its databases are its own too: a session that may use production starts on a copy made
+  for it, never its owner's, and the copy is dropped when it is removed. It is removed `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` (24 by default) after it stops, with
   its home, attachments and record, or by Remove before that. Console settings' Retention card changes the hours.
 - **What it does not cover.** What leaves through the paths it still has: a commit, a branch name, a pull request or
   issue, a comment, and the CI those trigger (a workflow the session pushes runs on GitHub, with the internet), or what
-  the model is sent. The session is told never to put production values there. On AWS the VPC's DNS resolver still
+  the model is sent, and the installation's shared services (a fake S3, say), which every session reaches. The
+  session is told never to put production values there. On AWS the VPC's DNS resolver still
   answers a guarded session (providers/aws/README.md, "Production access").
 
 ## The project file

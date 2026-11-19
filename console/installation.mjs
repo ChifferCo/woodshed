@@ -432,7 +432,12 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const egressProxy = access.certs ? createEgressProxy({
     sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: access.certs,
     orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
+    // Untainted sessions use it only where their launcher sends them out through it (AWS's guarded network).
+    passThrough: () => Boolean(provider.launcher?.guardsEgress),
   }) : null;
+  // What a session has open that its lockdown would not close goes the moment it starts.
+  if (egressProxy) fleet.onLocking((id) => egressProxy.cut(id));
+  fleet.onLocking((id) => mcpRelay.cut(id));
   // Sessions of anyone the program's list does not have go back to Unassigned, now for the first read and at each after.
   members?.whenGone?.((login) => fleet.releaseAssignments({ login, by: 'the program' }));
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });

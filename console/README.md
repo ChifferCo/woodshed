@@ -752,16 +752,28 @@ with `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS`).
   session's token as its proxy credential. A tainted session reaches GitHub's hosts alone, through TLS the proxy opens
   with its own authority (made by `openssl` in `egress/` in the state folder, name-constrained to github.com): git and
   the API on its project's owner's repos that are not public, and the API's pull request writes and GraphQL mutations,
-  each id checked. A guarded session not tainted yet (AWS) goes anywhere, untouched. It logs `egress: refused` with the
-  host and why, never the path.
+  each id checked (the GraphQL document read with a tokenizer as GitHub reads it: a mutation must be the document's only
+  operation, with no fragments, each top-level field an allowed one, every value a variable, and every value that lands
+  in an `ID` variable or an `id`/`…Id`/`…Ids` field checked). A guarded session not tainted yet (AWS) goes anywhere on
+  the public internet, untouched, but never to the console's own network: the name is resolved and every address it
+  has must be public (no loopback, link-local and so no instance metadata, private or shared ranges), and that address
+  is the one dialed. A session whose launcher does not guard its egress is refused pass-through altogether
+  (`passThrough`). Every tunnel an untainted session has open is cut the moment its lockdown starts (`fleet.onLocking`,
+  `egress: open connections cut at the lockdown`), as are its calls to ordinary MCP servers (`mcpRelay: ordinary calls
+  cut at the lockdown`), and none opens while it runs. It logs `egress: refused` with the host and why, never the path.
 - **What it kept** (`sessionApi.mjs`, `fleet.mjs`): its Claude home is saved for its Resume but never copied to the
   owner's, `/claude-settings` refuses it, and its container's log is never read into the console's. It is removed
   Console settings' **Remove a stopped session that saw production data after** (24 hours, or
   `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS`) after it stops, home and attachments with it; a home that would not delete is
   tried again (`taintedHomesPending` in `state.json`). Its record goes with it, statusd's readings and all.
 - **The Anthropic proxy** reads a tainted session's calls and refuses one that would have Anthropic reach the internet
-  for it (`web_search`, `web_fetch`, `mcp_servers`): `anthropicProxy: refused, a tainted session asked Anthropic to reach
-  the internet`.
+  for it (`web_search`, `web_fetch`, `mcp_servers`, or an image or document anywhere in it with a `url` source):
+  `anthropicProxy: refused, a tainted session asked Anthropic to reach the internet`. A POST it cannot read as JSON is
+  refused too (`anthropicProxy: refused, a tainted session's call the console cannot read`).
+- **Its databases**: a My Woodshed session that may use production is given a copy of its own at its first start, as
+  a shared session is (`ownDatabases` on its record, `woodshed__<id>`), never its owner's `woodshed_<login>`, which the
+  owner's other sessions read: `fleet: a session that may use production gets databases of its own`. The copy is
+  kept while the session is on the list and dropped once it is removed (`keptIds`, the databases sweep).
 
 What woodshed-prod-mcp could add to tie its audit to Woodshed: its audit entries could carry the token's `session_id`
 and `login`, so a call is traced to the session that made it.

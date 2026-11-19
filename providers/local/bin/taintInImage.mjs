@@ -161,6 +161,9 @@ async function main() {
     visibility: async (owner, name) => (`${owner}/${name}`.toLowerCase() === PRIVATE_STUB ? 'private' : anonymous(owner, name)),
   });
   await new Promise((r) => egressServer.listen(EGRESS_PORT, '0.0.0.0', r));
+  // As the installation wires them: what the lockdown would not close is cut as it starts.
+  fleet.onLocking((id) => egressServer.cut(id));
+  fleet.onLocking((id) => relay.cut(id));
 
   say('A private session that may use production starts as any other, on the open network');
   const session = await fleet.createSession({

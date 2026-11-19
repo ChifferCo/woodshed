@@ -392,11 +392,26 @@ export function createFleet({
    * @param {{why?: string}} [opts]
    * @returns {Promise<object>}  the session, tainted
    */
+  // Called with a session's id the moment its lockdown starts (onLocking).
+  const lockingListeners = [];
+  function onLocking(fn) {
+    lockingListeners.push(fn);
+  }
+
   function taint(session, { why = null } = {}) {
     if (session.taintedAt) return Promise.resolve(session);
     if (locking.has(session.id)) return locking.get(session.id);
     const run = (async () => {
       if (session.status !== 'running' || !session.ref || !session.endpoint) throw shown('the session is not running');
+      // Whatever it has open that the lockdown does not cover (the egress proxy's tunnels, an ordinary MCP server's
+      // stream) is cut before anything of production reaches it.
+      for (const cut of lockingListeners) {
+        try {
+          cut(session.id);
+        } catch (err) {
+          console.warn('fleet: a cut at the lockdown failed', { id: session.id, message: firstLine(err) });
+        }
+      }
       // Root on the machine could join the session to any network again: only a session without it is locked down.
       if (session.endpoint.docker === 'host') {
         throw shown('this session holds the machine\'s Docker socket, which could undo a lockdown: start a new My Woodshed session, which production access starts without it');
@@ -470,8 +485,10 @@ export function createFleet({
         left.push(item);
       }
     }
-    if (left.length !== pending.length) {
-      state.taintedHomesPending = left;
+    // Only what this sweep deleted goes: an entry added while it awaited storage stays in the queue.
+    const done = new Set(pending.filter((item) => !left.includes(item)));
+    if (done.size) {
+      state.taintedHomesPending = (state.taintedHomesPending ?? []).filter((item) => !done.has(item));
       store.save();
     }
   }
@@ -513,10 +530,16 @@ export function createFleet({
       update(session, { plan });
       console.log('fleet: whose Claude the session runs on', { id: session.id, plan: plan ?? 'team key' });
     }
+    // A My Woodshed session that may use production works on databases of its own, as a shared session does, never its
+    // owner's: what it writes there after a taint is dropped with it (keptIds), and no untainted session reads it.
+    if (session.owner && !session.ownDatabases && databases?.available && mcpServers?.forSession(session, projectFor(config, session).repo ?? null).some((s) => s.production)) {
+      update(session, { ownDatabases: true });
+      console.log('fleet: a session that may use production gets databases of its own', { id: session.id, owner: session.owner });
+    }
     let started;
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
-      if (!session.owner && !isAsk(session) && !isReview(session) && databases?.available) await databases.createForSession(session.id);
+      if (((!session.owner && !isAsk(session) && !isReview(session)) || session.ownDatabases) && databases?.available) await databases.createForSession(session.id);
       started = await launcher.start(session.id, sessionEnv(session));
     } catch (err) {
       const error = startError(err);
@@ -2466,7 +2489,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

@@ -357,8 +357,18 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
     console.warn('sessionApi: no Claude token for the owner', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner} has no Claude token saved on My settings` });
   }
-  // The private task definition holds no database password, so a private session has its owner's or none.
-  const database = databases?.available ? await databases.credentials(session.owner) : null;
+  // The private task definition holds no database password, so a private session has its owner's or none; one that may
+  // use production its own copy (fleet.mjs, ownDatabases), never its owner's, which its owner's other sessions read.
+  let database = null;
+  if (databases?.available && session.ownDatabases) {
+    const own = await databases.sessionDatabase(session.id);
+    if (own.status === 'working') return reply(res, 503, { error: 'its databases are still being copied' });
+    if (!own.database) {
+      console.warn('sessionApi: the session\'s databases are not there', { sessionId: session.id, status: own.status, error: own.error });
+      return reply(res, 409, { error: `the session's databases could not be made: ${own.error ?? 'the console has no record of them'}` });
+    }
+    database = own.database;
+  } else if (databases?.available) database = await databases.credentials(session.owner);
   if (databases?.available && !database) {
     console.warn('sessionApi: the owner\'s databases are not ready', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner}'s own databases are not ready: see My settings` });

@@ -15,8 +15,8 @@
 // credential and is answered here.
 //
 // A tainted session (mcpRelay.mjs) reaches Anthropic only through here, and its calls are read before they go: one that
-// asks Anthropic to reach anywhere on its behalf (web search, web fetch, or an MCP server of the API's own connector)
-// is refused, since those would take what the session saw past its network's lockdown (serverSideReach).
+// asks Anthropic to reach anywhere on its behalf (web search, web fetch, an MCP server of the API's own connector, or an
+// image or document given by URL) is refused, and so is one it cannot read as JSON, since those would take what the session saw past its network's lockdown (serverSideReach).
 
 import http from 'node:http';
 import https from 'node:https';
@@ -44,8 +44,17 @@ export function serverSideReach(body) {
     if (call.mcp_servers !== undefined) return 'the API\'s MCP connector';
     const tool = (Array.isArray(call.tools) ? call.tools : []).find((t) => SERVER_REACH_RE.test(String(t?.type ?? '')));
     if (tool) return `the ${String(tool.type).replace(/_\d+$/, '')} tool`;
+    // An image or a document given by URL, anywhere in the call (a tool result's content too): Anthropic fetches it.
+    if (urlSourceIn(call)) return 'content given by URL';
   }
   return null;
+}
+
+function urlSourceIn(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 64) return false;
+  if (Array.isArray(value)) return value.some((item) => urlSourceIn(item, depth + 1));
+  if (value.source && typeof value.source === 'object' && String(value.source.type ?? '').toLowerCase() === 'url') return true;
+  return Object.values(value).some((item) => urlSourceIn(item, depth + 1));
 }
 
 /** @returns {boolean}  whether a session API path is this proxy's */
@@ -155,7 +164,14 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
 
   // A tainted session's call, read whole and checked before it goes: null when it was refused (and answered).
   async function checkedBody(req, res, session) {
-    if (!session.taintedAt || req.method !== 'POST' || !/json/i.test(String(req.headers['content-type'] ?? ''))) return undefined;
+    if (!session.taintedAt || req.method === 'GET' || req.method === 'HEAD') return undefined;
+    // Read, or not sent: a call the console cannot check never goes.
+    if (req.method !== 'POST' || !/json/i.test(String(req.headers['content-type'] ?? ''))) {
+      req.resume();
+      console.warn('anthropicProxy: refused, a tainted session\'s call the console cannot read', { sessionId: session.id, method: req.method });
+      refuse(res, 415, 'this session has seen production data, so only JSON calls the console can check go to Anthropic');
+      return null;
+    }
     const chunks = [];
     let bytes = 0;
     for await (const chunk of req) {
@@ -172,7 +188,8 @@ export function createAnthropicProxy({ userSettings = null, secrets = null, team
     try {
       parsed = JSON.parse(body.toString('utf8'));
     } catch {
-      // Not JSON after all: Anthropic says so itself.
+      refuse(res, 400, 'this session has seen production data, so a call the console cannot read as JSON does not go to Anthropic');
+      return null;
     }
     const reach = serverSideReach(parsed);
     if (reach) {
