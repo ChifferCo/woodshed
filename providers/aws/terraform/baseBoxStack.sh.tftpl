@@ -137,6 +137,18 @@ services:
     network_mode: host
     environment:
       - AWS_REGION=${region}
+%{ if prod_mcp != null ~}
+      # Production debugging (the prod_mcp variable, console/mcpServers.mjs): new settings, under their new names alone.
+%{ if prod_mcp.url != null ~}
+      - ${jsonencode("WOODSHED_PROD_MCP_URL=${replace(prod_mcp.url, "$", "$$")}")}
+      - ${jsonencode("WOODSHED_PROD_MCP_PEOPLE=${join(",", prod_mcp.people)}")}
+      - ${jsonencode("WOODSHED_PROD_MCP_REPOS=${join(",", prod_mcp.repos)}")}
+%{ endif ~}
+      - WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS=${prod_mcp.remove_after_hours}
+      - WOODSHED_EGRESS_PROXY_URL=http://${private_ip}:7693
+      - WOODSHED_ECS_GUARDED_SUBNETS=${guarded_subnets}
+      - WOODSHED_ECS_GUARDED_SECURITY_GROUP=${guarded_sg}
+%{ endif ~}
       # Each setting twice, by its name and by the WOODSHED_CLOUD_ one it had (shared/envNames.mjs): the base box can
       # take this config before the console image that reads the new names reaches it, and an older console reads only
       # the old ones. A console that reads both takes the new name and says nothing. The old names go in a later release.

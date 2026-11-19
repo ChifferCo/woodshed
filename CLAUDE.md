@@ -20,6 +20,24 @@ is applied (`docs/reference.md` here, then `console/`, `session/` and
   Claude home. A shared session never gets the default plugins or anyone's
   login, and nothing team-wide (a bot token) goes in any session. An installation's env files set `AWS_ACCESS_KEY_ID=test`
   on purpose when its backend uses localstack: it accepts anything.
+- **An MCP server reaches a session only through the console's relay, which holds what it takes.** Admins add servers
+  on Console settings' MCP servers card or its API (`console/mcpServers.mjs`, console/README.md "MCP servers"); the
+  relay (`console/mcpRelay.mjs`) adds a token the console signs, or a header whose value is in the console's secret
+  store, to each call. The session gets the server's name and the relay's address, never the value: no MCP credential
+  in the image, a project file, a session's env or a Claude home. What the relay lets a session do with a team's
+  header is the admin's choice, and is logged with who made it; a server that reads production data is marked
+  production, never added as ordinary.
+- **Production data reaches a session only through a production MCP server, and locks it down.** The one exception to
+  the first rule, and it is narrow: a My Woodshed session running claude, of a person and on a repo a production
+  server lists, may read production through it (such as woodshed-prod-mcp), relayed by the console (docs/reference.md
+  "Production access"). Admins add one on Console settings, or the installation names one (`WOODSHED_PROD_MCP_URL`),
+  and only where the console can lock a session down. Its first relayed call taints the session, and the call goes on
+  only once its network is locked down, outside its container (the docker launcher's isolated network, AWS's guarded
+  security group, and the console's egress proxy); a lockdown that fails refuses the call. Nothing untaints a session,
+  a tainted session's calls to any other server are refused, and nothing it holds is copied anywhere that outlives it.
+  Never extend it without the same lockdown: no production access for a shared session, a question from Slack, QA or
+  a review, no MCP server of production in the image, a project file or a Claude home, and no enforcing it with
+  anything inside the container (iptables, `HTTPS_PROXY`), which its agent can undo.
 - **On one local server, whoever can start a session is trusted with the other sessions on it.** Where the machine has
   Sysbox, every session runs its own Docker (providers/local/README.md, "Docker in a session"), whose root reaches
   nothing of the machine's but can reach the network the sessions share, and so another session's calls to the
@@ -106,6 +124,8 @@ All in us-east-1, everything named `<prefix>*` and tagged
 | --- | --- | --- |
 | `anthropic-api-key` | The console only: its Anthropic proxy adds it to claude's calls in every session not on a Claude plan, and the console's Haiku call that names a My Woodshed session started with no name reads it through the proxy. An app in a session uses whatever key its own env files hold (or the owner's own line) instead, directly. Write-only on the Secrets tab. Never in a session: not in the task definition, and the session holds its `SESSION_TOKEN` in its place | claude says `the console has no Anthropic key` (the proxy's 503) or stops with a 401 from Anthropic. The console logs `anthropicProxy: team key read` with `set`, and `anthropicProxy: credential not read` when Secrets Manager failed. A private session named after its prompt's first line means the naming failed: the console logs `autoName: Anthropic refused` with the status, `autoName: failed`, or `autoName: no team Anthropic key`. Spend-capped by its Anthropic workspace |
 | `openai-api-key` | The console only: its OpenAI proxy (`console/openaiProxy.mjs`) adds it to the calls of private Codex sessions with no sign-in of their own, and of review sessions whose author's choice on My settings has Codex review (unless the author's own sign-in is used, below). Write-only on the Secrets tab. Never in a session, which holds its `SESSION_TOKEN` in its place | codex says `the console has no OpenAI key` (the proxy's 503). The console logs `openaiProxy: team key read` with `set`, `openaiProxy: refused, not a Codex session`, and `credential not read` when Secrets Manager failed |
+| `oidc-signing-key` | The console only, to sign the tokens its MCP relay adds for a server whose auth is a signed token (`console/oidcIssuer.mjs`); made by the console the first time one is signed. Its public half is at `<console>/.well-known/jwks.json`. Never in a session | `oidcIssuer: signing key not read` or `not saved`, and the relay answers 503; replacing it by hand keeps the old key in the JWKS for 15 minutes, so tokens in flight still check |
+| `mcp-servers/<name>/header` | The console only: the value of the header its MCP relay adds to that server's calls (`console/mcpServers.mjs`), set on Console settings' MCP servers card or its API, write-only there, and deleted with the server or when its auth stops being a header. Never in a session, which reaches the server through the relay | The session's call answers 503 `has no value yet` (`mcpRelay: auth not added`) when none is saved, and `mcpRelay: the MCP server refused what the console added` with the status when the server takes it no more: save a new one on the card (`mcpServers: header saved` with the bytes, never the value). On AWS an `AccessDeniedException` saving it means the base box role lacks `mcp-servers/*` in `PeoplesAndSessionsOwnSecrets` (an apply is due) |
 | `github-app-key` | The console only, to mint installation tokens for itself and for sessions. Read straight from Secrets Manager, never written to disk, and write-only on the Secrets tab. Never in a session | With no value the console logs `no GitHub App key yet` at start and skips polling until one is uploaded. Otherwise it logs `GitHub refused an installation token` with GitHub's reason. A session's `gh` says `could not get a GitHub token`: check `sessionApi:` lines in the console's log, then that port 7691 is open from the sessions' security group |
 | `slack-bot-token` | The console only, to post each pull request a session opens to its project's channel on the Console settings page (or the Slack card's), and to answer questions from Slack in their threads. Set on Console settings' Slack card (Set up Slack, Replace keys), which checks it with Slack's `auth.test` first and never shows it back; the Secrets page no longer lists it. Never in a session | The card says **Token refused** with Slack's error. The console logs `slack: no bot token yet, nothing sent`, or `slack: call refused` with the method and Slack's error: `not_in_channel` means the bot was not invited, `invalid_auth` a wrong token, `channel_not_found` a name where the ID belongs, `missing_scope` a scope console/README.md's "Setting it up: the Slack card" lists (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`, `users:read.email`) and the app lacks. `missing_scope` for `conversations.list` is an app made before the channel picker: the picker asks for the channel's ID until `channels:read` and `groups:read` are added and the app reinstalled. `slack: keys saved` says who set it, never the value |
 | `slack-signing-secret` | The webhooks Lambda only, to check each Slack event (`/slack`). Set on Console settings' Slack card with the bot token, never shown back | Every mention is refused: the Lambda logs `webhooks: bad or missing Slack signature`, and Slack's Event Subscriptions page says the Request URL failed. With no value at all the Lambda fails the read, and Slack sees a 502 |
@@ -124,6 +144,49 @@ URL on top of each env file's Repo settings values
 (`writeEnvFiles` in `session/entrypoint.sh`), so those never belong in them.
 
 ## By symptom
+
+- **A session cannot reach something since it was tainted.** That is the lockdown (docs/reference.md, "Production
+  access"): the console logged `fleet: session tainted`, and its card says Production. A call through the egress proxy
+  answers 403 `refused by this session's lockdown: <why>`, and the console logs `egress: refused` with the session, the
+  host and why (once each); a call round it finds no DNS and no route. GitHub is allowed only for its own project's
+  owner's private repos, and its own project's repo to read even when public: a push to a public repo answers `is public`, `is not <org>'s` is another owner's, `could not tell whether <repo> is private` is
+  GitHub not answering anonymously (60 calls an hour). In the session, `cat /tmp/woodshed-egress.env` shows the proxy's
+  variables, and `/tmp/woodshed-tainted` its taint. A git call that says `Proxy CONNECT aborted` is a git without
+  `GIT_HTTP_PROXY_AUTHMETHOD=basic` (an image from before it). Nothing undoes a taint: what it needs that is not
+  installed, a new untainted session installs. Before a taint, an AWS guarded session's call refused with `not a public
+  address` is a name or address on the console's own network (loopback, the instance's metadata, the VPC), which the
+  proxy never reaches for it; `reaches the internet itself` is a session whose launcher does not send it through the
+  proxy. A tainted session's GraphQL call refused with `could not read`, `only operation`, `as variables` or `does not
+  declare` is a mutation document shaped otherwise than `gh` makes them. Its Anthropic calls are refused for an image
+  or document given by URL, and for a body that is not JSON (`anthropicProxy: refused, a tainted session's call the
+  console cannot read`).
+- **An MCP server from Console settings fails in `/mcp`, or a session does not have it.** First press **Test** on its row:
+  it calls the server as the relay would and says what failed in one sentence (`mcpServers: server tested` with `ok` and
+  `status`). A server at a link-local address, or a name resolving to one, is refused by both (`mcpRelay: refused, a
+  link-local address`). A session gets the servers
+  that existed when it started: its log says `MCP servers offered` with them, or nothing when it got none
+  (`WOODSHED_MCP_SERVERS`, from `mcpServers.forSession`: a QA run, a review and a Codex session get none, a shared one
+  only those marked for shared sessions, a production one only where the console can lock a session down). The console
+  logs `mcpRelay: refused` with `server` and `why` (a person or repo the server does not list, a session that is not
+  private, a tainted session calling an ordinary server), `mcpRelay: refused, no such server` for one removed since,
+  `mcpRelay: auth not added` for a header with no value yet (set it on the card), `mcpRelay: the MCP server refused what
+  the console added` with the `status`, and `mcpRelay: MCP server not reached` when the console cannot reach its URL
+  (on AWS, the server's allowlist must have the base box's Elastic IP). For a signed token the server must trust this
+  console: its issuer, audience (the card's, `woodshed-prod-mcp` for woodshed-prod-mcp) and JWKS URL
+  (`<console>/.well-known/jwks.json`, shown on the card) must match, and that URL must answer from where it runs. Who
+  changed a server: `mcpServers: server added`, `server changed`, `server removed`, `header saved` or `header cleared`.
+- **A production server refuses, or Console settings will not add one.** The card says why the console cannot lock a
+  session down (no session API, no egress proxy address, or on AWS no guarded network: Terraform's `prod_mcp`), and
+  the console logs `mcpServers: production access is off, this console cannot lock a session down` at start for the
+  environment's. A call refused with 503 logs `mcpRelay: refused, the session was not locked down` with the launcher's
+  reason, after `fleet: lockdown failed, the session stays untainted`, or with `started before it could use production`
+  for a session that was not eligible at its first start (`fleet: a session that may use production` is logged for
+  those that are: they start on databases of their own and, on AWS, the guarded network), which a new My Woodshed
+  session fixes: `machine's Docker socket` is a session started
+  with it (a new one is not), `Docker 28 or newer` the docker launcher's isolated network, `given by its address` a
+  destination in the session env the gateway cannot carry, and on AWS `outside the guarded network` a session started
+  before `prod_mcp`. On the local provider the call that taints loses its connection as the session changes networks:
+  claude reopens and reconnects (`statusd: claude reopened on the console's proxy`).
 
 - **The console URL does not load.** On the base box: `systemctl status
   <prefix>`. Its first start fails until the console image exists;
@@ -536,7 +599,10 @@ URL on top of each env file's Repo settings values
 - **A review asked for changes and the session did nothing.** The console logs
   `slack: pull request feedback for its session`, then `fleet: review feedback
   typed in` for a running session or `fleet: resuming a shared session` with
-  `why: 'review feedback'` for a paused one. Each verdict, and each commit's
+  `why: 'review feedback'` for a paused one. A My Woodshed session's pull request is watched (`slack: pull request
+  watched for its session`): `fleet: review feedback typed in` has `owner: true`, the pass logs `slack: watched pull
+  request passed its review and suites`, and a stopped one is never resumed (`fleet: review feedback dropped, the My
+  Woodshed session is not running`, then `no longer waiting` with `its session ended`). Each verdict, and each commit's
   failed or skipped suite, is handed over once. A verdict on an older commit
   than the pull request's head is not. An APPROVE is handed over too, once per pull request
   (`slack: approved, holding the post for the session to read the notes`), and the Slack post waits 5 minutes

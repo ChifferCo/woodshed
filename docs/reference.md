@@ -203,8 +203,63 @@ requests and issues, no workflows.
   session's own, copied as it first starts and dropped once it is cleaned up, or a My Woodshed
   session's owner's (see "Databases" in `console/README.md`). Nothing one session does to its data
   reaches another. All of them share the installation's shared services, such as a fake S3.
-- **Never has:** AWS credentials (sessions run with no task role), production
-  data, or production integration tokens. See `CLAUDE.md` for the rules.
+- **Never has:** AWS credentials (sessions run with no task role), or production integration tokens, and no
+  production data except through the one door below. See `CLAUDE.md` for the rules.
+- **MCP servers, through the console alone:** the servers an admin adds on Console settings (console/README.md, "MCP
+  servers"), each reached through the console's relay, which adds what the server takes: a token the console signs, or
+  a header it keeps. The session never holds either.
+- **Production, through the console alone:** where an admin adds a production server (or the installation names one,
+  WOODSHED_PROD_MCP_URL), a My Woodshed session of a person and repo it lists has it, turned off until its person turns
+  it on in `/mcp`. Its first call taints the session, for good: "Production access", below.
+
+## Production access
+
+Debugging a real production bug from a My Woodshed session, without the data leaving through it. Two layers: woodshed-prod-mcp
+masks what it returns and audits each call (its own docs), and Woodshed locks down any session that has seen it.
+
+- **Who.** Off until an admin adds a production MCP server on Console settings' MCP servers card (or its API), or the
+  installation names one with `WOODSHED_PROD_MCP_URL` (Terraform's `prod_mcp.url` on AWS, listed as `woodshed-prod`).
+  A production server can be added only where the console can lock a session down: the local provider's docker
+  launcher, or AWS with Terraform's `prod_mcp` set, which makes the guarded network. Then only a My Woodshed session
+  running claude, whose owner and repo the server lists (`*` for all). Never a shared session, a question from Slack,
+  a QA run, a review, or a Codex session.
+- **The relay.** claude reaches the server by its name, at `<console>/mcp/<name>` on the session API (`/prod-mcp` for
+  `woodshed-prod`), with the session's own token. The console forwards each call with a token of its own: a
+  five-minute JWT it signs as an OpenID Connect issuer (`/.well-known/openid-configuration` and
+  `/.well-known/jwks.json` on the console's address), audience `woodshed-prod-mcp` unless the server says otherwise,
+  `sub` `private:<login>`, with `login`, `session_id` and `repo`.
+  woodshed-prod-mcp's `auth.oidc` takes the console's address as `issuer`, `woodshed-prod-mcp` as `audience`, and
+  `<console>/.well-known/jwks.json` as `jwks_url`; its `profile_claim` can be `sub` or `login`. Only the console reaches
+  the server, so on AWS the customer can allow the base box's Elastic IP alone.
+- **The taint.** The first relayed call of any kind to a production server, `initialize` included, taints the session before it is
+  forwarded: the console locks its network down, and only once that is in place marks it (`taintedAt`) and sends the
+  call on. A lockdown that fails refuses the call (503) and leaves the session untainted. Nothing untaints a session:
+  Resume starts it locked down. Its other MCP servers are gone from claude's config, and the relay refuses them. Its card says **Production**, its pane bar **Production data**.
+- **The lockdown.** Enforced outside the session's container, by its network. A tainted session reaches only the
+  console (its session API, the Anthropic proxy, the MCP relay and the egress proxy), its own databases and the shared
+  services. The console's egress proxy lets it reach GitHub's git and API on its own organization's private repos, and
+  read its own project's repo even when that is public (so a resumed session gets its branch), and nothing else: no
+  other public repo, no push to a public one, no gist, other organization, new or forked repo, or change of a repo's
+  settings. A session on a public repo can push its work nowhere once tainted. No package
+  registry, no other website, no DNS for the internet, no Docker of the machine's, no other MCP server, no web search
+  or fetch (the Anthropic proxy refuses calls that would have Anthropic reach the internet), no Remote Control, no
+  editor and no shared app. claude reopens on the console's Anthropic proxy, and is told what changed.
+  - Local: the session moves to a docker network of its own with no route out and no address of the machine's
+    (`--internal`, `gateway_mode_ipv4=isolated`, so Docker 28 or newer), whose only other member is a gateway container
+    that carries the console's ports, its databases' and the shared services' (`shared/sessionGateway.mjs`).
+  - AWS: a session that may use production starts on a guarded network of its own (subnets with no route out, a
+    security group that reaches the base box, RDS and the AWS endpoints alone), since a Fargate task's security
+    groups cannot change once it runs. Its traffic out goes through the egress proxy from the start: open before the
+    taint, GitHub only after it.
+- **What it kept.** Its Claude home is its own alone: saved for its Resume, never copied into the owner's or synced
+  to their other sessions. Its databases are its own too: a session that may use production starts on a copy made
+  for it, never its owner's, and the copy is dropped when it is removed. It is removed `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` (24 by default) after it stops, with
+  its home, attachments and record, or by Remove before that. Console settings' Retention card changes the hours.
+- **What it does not cover.** What leaves through the paths it still has: a commit, a branch name, a pull request or
+  issue, a comment, and the CI those trigger (a workflow the session pushes runs on GitHub, with the internet), or what
+  the model is sent, and the installation's shared services (a fake S3, say), which every session reaches. The
+  session is told never to put production values there. On AWS the VPC's DNS resolver still
+  answers a guarded session (providers/aws/README.md, "Production access").
 
 ## The project file
 

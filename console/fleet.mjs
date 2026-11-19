@@ -18,6 +18,7 @@ import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
+import { TAINT_MESSAGE } from './taint.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
   parseWorkOn, pullNumber, QA_ALREADY_RUNNING, routeQa, routeTrigger, sessionOptions, sessionsToStart, statusUpdate, stopReason, waitProgressFrom, waitsForRetry,
@@ -27,6 +28,8 @@ const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
 const STATUS_TIMEOUT_MS = 5_000;
+// How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
+const GUARDED_SEND_WITHIN_MS = 20_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
 const STARTING_STATUS_TIMEOUT_MS = 1_500;
 // After the agent opened, a start the console has not reached in this long is logged (noteUnreached): it takes a second
@@ -248,6 +251,7 @@ export function createFleet({
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
+  mcpServers = null, appShares = null, egress = null,
 }) {
   const { state } = store;
   // Each repo's label and whether its label and /woodshed comments start anything (repoTriggers.mjs).
@@ -257,12 +261,14 @@ export function createFleet({
   const retention = () => config.retention ?? DEFAULT_RETENTION;
   const announcer = createPrAnnouncer({
     store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: (name, number) => gatesFor(name, number), now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
-    events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
-    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
+    events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention, listening: prListening },
+    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp, sessionKnown: (id) => Boolean(find(id)),
   });
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
   const prCheckedAt = new Map();
+  // Private sessions whose statusd last refused or missed review feedback, so it is warned of once.
+  const untypedSaid = new Set();
   const homeDeleteTriedAt = new Map();
   let ticking = false;
   // The quick check has its own guard: sharing the tick's would skip ticks while starting sessions time out.
@@ -287,6 +293,10 @@ export function createFleet({
   const unpolledProjects = new Set();
   // Another project's poll error, by its name, while it keeps failing.
   const failingProjects = new Map();
+  // Lockdowns in flight (taint): a session is treated as locked from the moment its lockdown starts.
+  const locking = new Map();
+  // When each tainted session's notice to its statusd was last tried, so the tick tries again until it lands.
+  const taintNoticeTriedAt = new Map();
 
   function update(session, fields) {
     Object.assign(session, fields);
@@ -359,7 +369,137 @@ export function createFleet({
     if (session.prompt) env.PROMPT = session.prompt;
     // Claude opens with nothing to do: the person came to read the review, which the session starts itself.
     if (session.reviewOnly) env.REVIEW_ONLY = '1';
+    // The MCP servers the console hands this session (mcpServers.mjs), each reached through its relay: names only, the
+    // session never holds what a server takes. A production one is turned off until its person turns it on. A launcher
+    // whose sessions cannot be moved onto a locked network later (AWS) starts a session that may use one on a guarded
+    // network at once, whose only way out is the console's egress proxy. A tainted session starts locked down, whatever
+    // it is resumed as, with its production servers alone.
+    const servers = mcpServers?.forSession(session, project.repo ?? null) ?? [];
+    if (servers.length) env.WOODSHED_MCP_SERVERS = JSON.stringify(servers);
+    const production = Boolean(session.taintedAt) || servers.some((s) => s.production);
+    if (production) env.WOODSHED_PROD_MCP = '1';
+    if (session.taintedAt) env.WOODSHED_TAINTED = '1';
+    if (production && egress?.sessionUrl && (session.taintedAt || launcher.guardsEgress)) env.WOODSHED_EGRESS_PROXY = egress.sessionUrl;
     return env;
+  }
+
+  /** @returns {boolean}  whether the session's egress is held to the lockdown's: tainted, or its lockdown under way */
+  function isLocked(session) {
+    return Boolean(session?.taintedAt) || locking.has(session?.id);
+  }
+
+  /**
+   * Taints a session: its network is locked down by the launcher, outside the container, and only once that is in
+   * place is it marked, which nothing ever undoes. A lockdown that fails leaves the session untainted and throws, so
+   * the call that asked for it is refused (mcpRelay.mjs). Called again while one is under way, it waits for that one.
+   * @param {object} session
+   * @param {{why?: string}} [opts]
+   * @returns {Promise<object>}  the session, tainted
+   */
+  // Called with a session's id the moment its lockdown starts (onLocking).
+  const lockingListeners = [];
+  function onLocking(fn) {
+    lockingListeners.push(fn);
+  }
+
+  function taint(session, { why = null } = {}) {
+    if (session.taintedAt) return Promise.resolve(session);
+    if (locking.has(session.id)) return locking.get(session.id);
+    const run = (async () => {
+      if (session.status !== 'running' || !session.ref || !session.endpoint) throw shown('the session is not running');
+      // One started before it could use production holds what an untainted session does (its owner's databases, maybe
+      // the machine's Docker): it is never tainted, whatever the servers say now.
+      if (!session.mayUseProduction) {
+        throw shown('this session started before it could use production, so it holds its owner\'s databases: start a new My Woodshed session, which starts ready for it');
+      }
+      // Whatever it has open that the lockdown does not cover (the egress proxy's tunnels, an ordinary MCP server's
+      // stream) is cut before anything of production reaches it.
+      for (const cut of lockingListeners) {
+        try {
+          cut(session.id);
+        } catch (err) {
+          console.warn('fleet: a cut at the lockdown failed', { id: session.id, message: firstLine(err) });
+        }
+      }
+      // Root on the machine could join the session to any network again: only a session without it is locked down.
+      if (session.endpoint.docker === 'host') {
+        throw shown('this session holds the machine\'s Docker socket, which could undo a lockdown: start a new My Woodshed session, which production access starts without it');
+      }
+      if (typeof launcher.lockDown !== 'function') throw shown(`this console's sessions (${launcher.kind}) cannot be locked down`);
+      console.log('fleet: locking a session down', { id: session.id, owner: session.owner ?? null, why });
+      let endpoint;
+      try {
+        endpoint = await launcher.lockDown(session.ref, { sessionId: session.id, endpoint: session.endpoint, env: sessionEnv(session), egressUrl: egress?.sessionUrl ?? null });
+      } catch (err) {
+        console.warn('fleet: lockdown failed, the session stays untainted', { id: session.id, message: firstLine(err) });
+        throw shown(`the session could not be locked down: ${firstLine(err)}`);
+      }
+      update(session, { taintedAt: nowIso(), taintedWhy: why, ...(endpoint ? { endpoint: { ...session.endpoint, ...endpoint } } : {}) });
+      console.log('fleet: session tainted', { id: session.id, owner: session.owner ?? null, taintedAt: session.taintedAt, launcher: launcher.kind, why });
+      // Nobody outside the session's people sees its app from now on.
+      appShares?.clearSession(session.id);
+      tellTainted(session).catch(() => {});
+      return session;
+    })().finally(() => locking.delete(session.id));
+    locking.set(session.id, run);
+    return run;
+  }
+
+  // The session's statusd is told, so claude reopens on the console's Anthropic proxy with the lockdown's rules and the
+  // agent is told what is blocked. Tried again on each tick until it lands: an image from before it answers 404.
+  async function tellTainted(session) {
+    if (!session.taintedAt || session.taintNoticedAt || session.status !== 'running' || !session.endpoint) return;
+    if (now() - (taintNoticeTriedAt.get(session.id) ?? -Infinity) < 20_000) return;
+    taintNoticeTriedAt.set(session.id, now());
+    try {
+      const ca = egress?.caPem ? await egress.caPem() : null;
+      await statusd(session, 'POST', '/taint', { body: { proxy: egress?.sessionUrl ?? null, ca, message: TAINT_MESSAGE }, timeoutMs: 15_000 });
+    } catch (err) {
+      console.warn('fleet: the tainted session was not told yet', { id: session.id, message: firstLine(err) });
+      return;
+    }
+    taintNoticeTriedAt.delete(session.id);
+    update(session, { taintNoticedAt: nowIso() });
+    console.log('fleet: tainted session told', { id: session.id });
+  }
+
+  // A tainted session goes once it has been stopped for the Console settings page's time (24 hours by default),
+  // with everything it kept: its Claude home, its attachments, its record.
+  async function removeTainted(session) {
+    if (!session.taintedAt || !session.owner || ACTIVE_STATUSES.has(session.status) || session.status === 'stopping') return;
+    const after = retention().taintedRemoveAfterMs ?? 24 * 3_600_000;
+    const from = Date.parse(session.stoppedAt ?? session.taintedAt);
+    if (!Number.isFinite(from) || now() < from + after) return;
+    console.log('fleet: tainted session removed', { id: session.id, owner: session.owner, why: `stopped ${spanText(after)} ago` });
+    await removePrivateSession({ owner: session.owner, id: session.id });
+  }
+
+  // A tainted session's saved home that could not be deleted when it was removed: tried again until it goes.
+  async function retryTaintedHomes() {
+    const pending = state.taintedHomesPending ?? [];
+    if (!pending.length || !homes) return;
+    const left = [];
+    for (const item of pending) {
+      if (now() - (homeDeleteTriedAt.get(item.name) ?? -Infinity) < HOME_DELETE_RETRY_MS) {
+        left.push(item);
+        continue;
+      }
+      homeDeleteTriedAt.set(item.name, now());
+      try {
+        await homes.remove(item.name);
+        homeDeleteTriedAt.delete(item.name);
+        console.log('fleet: tainted session\'s Claude home deleted', { id: item.id });
+      } catch (err) {
+        console.warn('fleet: tainted session\'s Claude home not deleted yet, tried again later', { id: item.id, message: firstLine(err) });
+        left.push(item);
+      }
+    }
+    // Only what this sweep deleted goes: an entry added while it awaited storage stays in the queue.
+    const done = new Set(pending.filter((item) => !left.includes(item)));
+    if (done.size) {
+      state.taintedHomesPending = (state.taintedHomesPending ?? []).filter((item) => !done.has(item));
+      store.save();
+    }
   }
 
   // Decided at each start and resume, from whoever started the session: its token itself never leaves the console,
@@ -399,10 +539,19 @@ export function createFleet({
       update(session, { plan });
       console.log('fleet: whose Claude the session runs on', { id: session.id, plan: plan ?? 'team key' });
     }
+    // Whether this session may use production is decided at a start, its first or a Resume (a new container either way),
+    // once and for good, and only such a session can ever be tainted
+    // (taint): it starts as one must be for the lockdown (no machine's Docker, on AWS the guarded network), and works on
+    // databases of its own, as a shared session does, never its owner's: what it writes there after a taint is dropped
+    // with it (keptIds), and no untainted session reads it.
+    if (session.owner && !session.mayUseProduction && mcpServers?.forSession(session, projectFor(config, session).repo ?? null).some((s) => s.production)) {
+      update(session, { mayUseProduction: true, ...(databases?.available ? { ownDatabases: true } : {}) });
+      console.log('fleet: a session that may use production', { id: session.id, owner: session.owner, ownDatabases: Boolean(session.ownDatabases) });
+    }
     let started;
     try {
       // Copied while the container starts: the session waits for them at the session API before it writes its env.
-      if (!session.owner && !isAsk(session) && !isReview(session) && databases?.available) await databases.createForSession(session.id);
+      if (((!session.owner && !isAsk(session) && !isReview(session)) || session.ownDatabases) && databases?.available) await databases.createForSession(session.id);
       started = await launcher.start(session.id, sessionEnv(session));
     } catch (err) {
       const error = startError(err);
@@ -481,6 +630,8 @@ export function createFleet({
     const session = {
       id, project: project.name, repo: project.repo, kind, number, title, startedBy, trigger, prompt, owner, options, resumeClaude, slack: thread,
       branch: branch || defaultBranch,
+      // The branch the console made for it, when it made one: `branch` follows what statusd says is checked out.
+      ...(!branch && defaultBranch ? { madeBranch: defaultBranch } : {}),
       status: 'queued', state: null, createdAt: nowIso(), startedAt: null, stoppedAt: null,
       lastActiveAt: null, checkedAt: null, stopReason: null, error: null,
       head: null, prUrl: null, lastMessage: null, commentId: null,
@@ -608,7 +759,8 @@ export function createFleet({
   }
 
   async function containerGone(session) {
-    const tail = await launcher.logTail(session.ref);
+    // A tainted session's own output may hold what it saw: its log is never read into the console's.
+    const tail = session.taintedAt ? '' : await launcher.logTail(session.ref);
     const reason = failureReason(tail) || 'container exited';
     const failed = session.status === 'starting';
     console.warn('fleet: container is gone', { id: session.id, failed, reason });
@@ -703,17 +855,32 @@ export function createFleet({
     }
   }
 
-  // Shared sessions only: a My Woodshed session's work is its owner's own. A GitHub that cannot be read is tried
-  // again on the next tick. Each pull request a session reports is tracked once, so a session that closes its
-  // pull request and opens another from a new branch gets the new one posted too.
+  // A shared session's pull request is posted to Slack once it passes; a My Woodshed session's is only watched, its
+  // owner's work being their own, so its session hears each verdict and broken suite until it passes, with or without
+  // Slack. A GitHub that cannot be read is tried again on the next tick. Each pull request a session reports is tracked
+  // once, so a session that closes its pull request and opens another from a new branch gets the new one too.
   async function announcePull(session) {
-    if (!announcer.available || session.owner || !session.prUrl || session.announcedPrUrl === session.prUrl) return;
+    if (!session.prUrl || session.announcedPrUrl === session.prUrl) return;
     const project = projectFor(config, session);
-    if (!announcer.postsFor(project)) return;
-    const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session, project);
-      return true;
-    });
+    const watch = Boolean(session.owner);
+    // A review-only session reads someone's pull request: it is never told to fix and push it.
+    if (watch && session.reviewOnly) return;
+    // An older image's statusd would type into the shell of an agent that exited: nothing is typed into it unasked.
+    if (watch && !session.agentOnlySend) {
+      if (!session.watchSkippedSaid) {
+        console.log('fleet: pull request not watched, the session\'s image types into its pane unchecked', { id: session.id });
+        update(session, { watchSkippedSaid: true });
+      }
+      return;
+    }
+    // Its pull request is read on its project's repo by number: one on another repo is not that one.
+    if (watch && !onProjectRepo(session.prUrl, project)) {
+      console.log('fleet: pull request on another repo than the session\'s project, not watched', { id: session.id, project: project.name });
+      update(session, { announcedPrUrl: session.prUrl });
+      return;
+    }
+    if (!watch && (!announcer.available || !announcer.postsFor(project))) return;
+    const tracked = await safely('pull request read for Slack', async () => (await announcer.track(session, project, { watch })) !== 'later');
     if (tracked) update(session, { announcedPrUrl: session.prUrl });
   }
 
@@ -831,6 +998,9 @@ export function createFleet({
       for (const session of [...state.sessions]) await safely('QA run ended without a report', () => qaEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('review ended without a report', () => reviewEndedUnreported(session));
       for (const session of [...state.sessions]) await safely('retention check', () => retain(session));
+      for (const session of [...state.sessions]) await safely('tainted session removal', () => removeTainted(session));
+      for (const session of [...state.sessions]) await safely('taint notice', () => tellTainted(session));
+      await safely('tainted homes', () => retryTaintedHomes());
       await sweepDatabases();
       await announcer.check();
     } finally {
@@ -1052,11 +1222,79 @@ export function createFleet({
     return session && pings ? pings.mentionFor(session) : null;
   }
 
-  // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
-  // or resumed with it. True when the session was told.
-  async function prFeedback(item, text) {
+  // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
+  // nothing but its owner resumes it. A stopping one cannot: a message held for it would be typed in at a later Resume.
+  const ownListening = (session) => Boolean(session && ACTIVE_STATUSES.has(session.status) && session.status !== 'stopping');
+  // It listens only for the pull request it reports now, on the item's repo: while it reports another or none (or
+  // statusd's lookup failed), the watch waits for it to be back.
+  function prListening(item) {
     const session = find(item.sessionId);
-    if (!session || session.owner) return false;
+    if (!ownListening(session)) return 'ended';
+    const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    // Its project left the console, or its repo is another now (a default project replaced): its pull request is no
+    // longer that project's.
+    if (!project || (item.repo && item.repo.toLowerCase() !== String(project.repo ?? '').toLowerCase())) return 'ended';
+    const current = session.reportedPrUrl === undefined ? session.prUrl : session.reportedPrUrl;
+    return pullNumber(current) === item.number && onProjectRepo(current, project) ? 'yes' : 'elsewhere';
+  }
+
+  // Whether a pull request URL is the item's pull request, on its project's repo.
+  function samePull(prUrl, item) {
+    const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    return pullNumber(prUrl) === item.number && onProjectRepo(prUrl, project);
+  }
+
+  // Whether a pull request URL is on a project's repo.
+  function onProjectRepo(prUrl, project) {
+    const repo = /github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/i.exec(prUrl ?? '')?.[1];
+    return Boolean(repo && project?.repo && repo.toLowerCase() === project.repo.toLowerCase());
+  }
+
+  // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
+  // or resumed with it (a shared one: a stopped My Woodshed session is not). True when the session was told.
+  async function prFeedback(item, text, { stillWanted = async () => true, sha = null, untilMs = () => Infinity } = {}) {
+    const session = find(item.sessionId);
+    if (!session) return false;
+    // A My Woodshed session is typed into now or told again at the next check, never held: a held message would be
+    // typed in at a later Resume, after its watch ended.
+    if (session.owner) {
+      if (!ownListening(session)) {
+        console.log('fleet: review feedback dropped, the My Woodshed session is not running', { id: session.id, number: item.number });
+        return false;
+      }
+      if (!canType(session)) return 'later';
+      try {
+        // claude may have closed since the last status read, and the pane would then be a shell that runs the text:
+        // its state is read again just before.
+        const fresh = await statusd(session, 'GET', '/status');
+        // The session may have started stopping, or the watch ended or been renewed, while statusd answered.
+        if (!ownListening(session) || !(await stillWanted()) || !ownListening(session)) return 'later';
+        if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting' || fresh.agentOnlySend !== true) return 'later';
+        // And it must still be on this pull request.
+        if ('prUrl' in fresh && !samePull(fresh.prUrl, item)) return 'later';
+        // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).
+        // With the pull request it is about, which statusd checks afresh on the branch checked out, just before typing.
+        const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+        // statusd reads GitHub before typing: it may take a while, and types only within withinMs of getting it, while
+        // the console still waits, so a reply the console gave up on never types a text it then sends again.
+        // Never past the watch's own end: what is left of its wait, if that is shorter.
+        const withinMs = Math.floor(Math.min(GUARDED_SEND_WITHIN_MS, untilMs()));
+        if (withinMs < 1000) return 'later';
+        await statusd(session, 'POST', '/send', {
+          // notAfter as well: withinMs counts from statusd getting it, and time in transit must count too.
+          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs, notAfter: now() + withinMs },
+          timeoutMs: withinMs + 10_000,
+        });
+      } catch (err) {
+        // Once until it is typed in: it is tried every minute while the session refuses it.
+        if (!untypedSaid.has(session.id)) console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
+        untypedSaid.add(session.id);
+        return 'later';
+      }
+      untypedSaid.delete(session.id);
+      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome: 'sent', owner: true });
+      return true;
+    }
     if (ACTIVE_STATUSES.has(session.status)) {
       const outcome = await send(session, text);
       console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome });
@@ -1332,8 +1570,14 @@ export function createFleet({
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
+      // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
+      announcedPrUrl: null,
+      // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
+      ...(session.taintedAt ? { taintNoticedAt: nowIso() } : {}),
     });
-    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background });
+    // Or, when its stop was not read yet, the watch starts a new run for this one.
+    announcer.renew(session.id);
+    console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt) });
     await runStartQueued({ background });
     return session;
   }
@@ -1372,11 +1616,16 @@ export function createFleet({
   }
 
   // Best effort: a home left behind costs storage, and Forget or Remove My Woodshed deletes it with the rest.
+  // A tainted session's is tried again until it goes (retryTaintedHomes): it may hold what the session saw.
   async function forgetPrivateData(session) {
     await dropAttachments(session);
     if (!homes) return;
-    await homes.remove(privateSessionHomeName(session.owner, session.id)).catch((err) => {
-      console.warn('fleet: private session\'s Claude home not deleted', { id: session.id, message: firstLine(err) });
+    const name = privateSessionHomeName(session.owner, session.id);
+    await homes.remove(name).catch((err) => {
+      console.warn('fleet: private session\'s Claude home not deleted', { id: session.id, tainted: Boolean(session.taintedAt), message: firstLine(err) });
+      if (!session.taintedAt) return;
+      state.taintedHomesPending = [...(state.taintedHomesPending ?? []), { id: session.id, name }];
+      store.save();
     });
   }
 
@@ -2324,6 +2573,8 @@ export function createFleet({
   async function startClaudeLogin(session) {
     if (session.status !== 'running' || !session.endpoint) throw Object.assign(new Error('the session is not running'), { notRunning: true });
     if (!session.owner) throw Object.assign(new Error('only a My Woodshed session can sign in'), { notPrivate: true });
+    // Remote Control would carry the session's screen to claude.ai: a session that has seen production data never has it.
+    if (session.taintedAt) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { notPrivate: true });
     const result = await statusd(session, 'POST', '/claude-login');
     const where = result?.where === 'agent' ? 'agent' : 'terminal';
     console.log('fleet: Claude login started', { id: session.id, where });
@@ -2339,7 +2590,7 @@ export function createFleet({
   }
 
   return {
-    createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
+    createSession, assign, releaseAssignments, startManual, startPrivate, taint, isLocked, onLocking, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
     handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),

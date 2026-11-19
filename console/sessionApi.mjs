@@ -40,6 +40,16 @@
 //                        refused it
 //   POST /qa-poster      a PNG body  ->  {"saved": true}: a still from the first video, which the comment shows
 //                        (fleet.qaPoster). The same refusals, past MAX_QA_POSTER_BYTES and for anything but PNG
+//   *    /mcp/<name>[/...] a session's calls to one of the console's MCP servers (mcpServers.mjs), relayed with what
+//                        the server takes, which the session never holds (mcpRelay.mjs); /prod-mcp is the environment's
+//                        woodshed-prod. A production server's first call taints the session: it is locked down before
+//                        the call goes on, or refused (503) and left untainted when the lockdown fails
+//   POST /egress         ->  {"proxy", "ca"}: a tainted session's way out, the console's egress proxy (egressProxy.mjs),
+//                        and the certificate authority it shows for GitHub. 404 for a session that is not tainted
+//
+// A tainted session's Claude home is its own alone: /home keeps it for its Resume and never copies it to its owner's,
+// /home/restore hands back only its own, and /claude-settings refuses it (409), so nothing it saw reaches its owner's
+// other sessions. Its home goes when the session is removed (fleet.mjs).
 //
 // A session's git credential helper and its `gh` wrapper call /github-token, so a
 // session only ever holds a token that expires within hours: an installation
@@ -59,6 +69,7 @@
 import { timingSafeEqual } from 'node:crypto';
 
 import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
+import { isMcpPath } from './mcpRelay.mjs';
 import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
@@ -102,6 +113,8 @@ function sameToken(given, expected) {
 export function sessionTokenOf(req) {
   const pathname = new URL(req.url || '/', 'http://console').pathname;
   if (isAnthropicPath(pathname)) return proxyCredential(req.headers)?.token ?? null;
+  // The MCP relay takes the session token as a bearer, as every other route does.
+  if (isMcpPath(pathname)) return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
   if (isOpenAiPath(pathname)) return bearerOf(req.headers);
   return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
 }
@@ -132,7 +145,10 @@ export function sessionForToken(given, sessions) {
  *          asks?: {answer: (session: object, text: string) => Promise<boolean>}|null,
  *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null,
  *          repoSettings?: {forSession: (session: object) => Promise<object|null>,
- *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null}} opts
+ *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null,
+ *          mcpRelay?: ReturnType<typeof import('./mcpRelay.mjs').createMcpRelay>|null,
+ *          egress?: {sessionUrl: string|null, caPem: () => Promise<string>}|null}} opts
+ *   `mcpRelay` relays sessions' calls to the console's MCP servers, and `egress` is the proxy a tainted session leaves through
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `ownerTokenRepos`, for a console whose GitHub App is installed beyond its own repos (a host's, installation.mjs's
  *   `githubConnect`), gives the console's repos (owner/name): the person's own token would reach all the App's, so a
@@ -145,7 +161,7 @@ export function sessionForToken(given, sessions) {
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
   attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null,
-  ownerTokenRepos = null,
+  ownerTokenRepos = null, mcpRelay = null, egress = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -183,7 +199,14 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report'];
+    if (isMcpPath(pathname)) {
+      if (!mcpRelay) {
+        req.resume();
+        return reply(res, 404, { error: 'this console relays no MCP servers' });
+      }
+      return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
+    }
+    const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });
     const session = sessionForAuthorization(req.headers.authorization, fleet.sessions());
     if (!session) {
@@ -199,6 +222,7 @@ export function createSessionApi({
     if (pathname === '/qa-video') return qaRecordingReply(req, res, session, fleet, VIDEO);
     if (pathname === '/qa-poster') return qaRecordingReply(req, res, session, fleet, POSTER);
     if (pathname === '/review-report') return reviewReportReply(req, res, session, fleet);
+    if (pathname === '/egress') return egressReply(req, res, session, egress);
     if (pathname === '/attachments') {
       if (!attachments || !(await attachments.has(session.id))) {
         res.writeHead(204).end();
@@ -206,10 +230,10 @@ export function createSessionApi({
       }
       return attachments.send(session.id, res);
     }
-    if (pathname === '/claude-settings') return claudeSettingsReply(req, res, session, { claudeSettings, userSettings });
+    if (pathname === '/claude-settings') return claudeSettingsReply(req, res, session, { claudeSettings, userSettings, fleet });
     if (pathname.startsWith('/home')) {
       const periodic = new URL(req.url, 'http://console').searchParams.get('why') === 'periodic';
-      return homeReply(req, res, session, { homes, userSettings, restore: pathname === '/home/restore', periodic });
+      return homeReply(req, res, session, { homes, userSettings, restore: pathname === '/home/restore', periodic, fleet });
     }
     const own = tokensFor?.(session);
     // A private session acts as its owner. Their own token reaches every repo the App is on that they can write to; the
@@ -333,8 +357,18 @@ async function settingsReply(res, session, userSettings, databases, repoSettings
     console.warn('sessionApi: no Claude token for the owner', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner} has no Claude token saved on My settings` });
   }
-  // The private task definition holds no database password, so a private session has its owner's or none.
-  const database = databases?.available ? await databases.credentials(session.owner) : null;
+  // The private task definition holds no database password, so a private session has its owner's or none; one that may
+  // use production its own copy (fleet.mjs, ownDatabases), never its owner's, which its owner's other sessions read.
+  let database = null;
+  if (databases?.available && session.ownDatabases) {
+    const own = await databases.sessionDatabase(session.id);
+    if (own.status === 'working') return reply(res, 503, { error: 'its databases are still being copied' });
+    if (!own.database) {
+      console.warn('sessionApi: the session\'s databases are not there', { sessionId: session.id, status: own.status, error: own.error });
+      return reply(res, 409, { error: `the session's databases could not be made: ${own.error ?? 'the console has no record of them'}` });
+    }
+    database = own.database;
+  } else if (databases?.available) database = await databases.credentials(session.owner);
   if (databases?.available && !database) {
     console.warn('sessionApi: the owner\'s databases are not ready', { sessionId: session.id, owner: session.owner });
     return reply(res, 409, { error: `@${session.owner}'s own databases are not ready: see My settings` });
@@ -529,11 +563,30 @@ async function reportReply(req, res, session, { kind, mine, sent, parse, finish 
   res.writeHead(204).end();
 }
 
+// A tainted session's way out, for its entrypoint when it is resumed: its statusd is handed the same when it is tainted.
+async function egressReply(req, res, session, egress) {
+  req.resume();
+  if (!session.taintedAt || !egress?.sessionUrl) return reply(res, 404, { error: 'only a tainted session leaves through the egress proxy' });
+  let ca;
+  try {
+    ca = await egress.caPem();
+  } catch (err) {
+    console.warn('sessionApi: egress certificate not read', { sessionId: session.id, message: String(err?.message ?? err).split('\n')[0] });
+    return reply(res, 503, { error: 'the console could not read its egress certificate' });
+  }
+  return reply(res, 200, { proxy: egress.sessionUrl, ca });
+}
+
 // A private session's turn at its owner's shared Claude settings.
-async function claudeSettingsReply(req, res, session, { claudeSettings, userSettings }) {
+async function claudeSettingsReply(req, res, session, { claudeSettings, userSettings, fleet = null }) {
   if (!claudeSettings || !session.owner) {
     req.resume();
     return reply(res, 404, { error: 'no shared Claude settings for this session' });
+  }
+  // What a tainted session's claude changed may hold what it saw: it never reaches the owner's other sessions.
+  if (session.taintedAt) {
+    req.resume();
+    return reply(res, 409, { error: 'this session has seen production data, so its settings stay its own' });
   }
   if (!userSettings?.view(session.owner).setUp) {
     req.resume();
@@ -551,6 +604,12 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
     body = null;
   }
   if (!body) return reply(res, 400, { error: 'expected {"version", "changed", "removed"}' });
+  // Its lockdown may have started while the body came in: what came after it may hold what it saw. Production data
+  // reaches a session only once its lockdown has started, so a body read whole before then cannot carry any.
+  if (session.taintedAt || fleet?.isLocked?.(session)) {
+    console.log('sessionApi: shared Claude settings refused, the session was being locked down', { sessionId: session.id });
+    return reply(res, 409, { error: 'this session has seen production data, so its settings stay its own' });
+  }
   try {
     return reply(res, 200, await claudeSettings.sync({ login: session.owner, sessionId: session.id, ...body }));
   } catch (err) {
@@ -563,15 +622,15 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
 // A Claude home, in and out: a session's own, and for a private session its owner's too. A private session starts
 // from its owner's latest home, and a resumed one from its own, so its conversation is the one it left; one saved
 // before sessions kept their own falls back to the owner's.
-async function homeReply(req, res, session, { homes, userSettings, restore, periodic = false }) {
+async function homeReply(req, res, session, { homes, userSettings, restore, periodic = false, fleet = null }) {
   if (!homes) {
     req.resume();
     return reply(res, 404, { error: 'this console keeps no Claude homes' });
   }
   const own = session.owner ? privateSessionHomeName(session.owner, session.id) : sharedHomeName(session.id);
   if (restore) {
-    const fromOwn = !session.owner || Boolean(session.resumeClaude);
-    const saved = (fromOwn ? await homes.get(own) : null) ?? (session.owner ? await homes.get(session.owner) : null);
+    const fromOwn = !session.owner || Boolean(session.resumeClaude) || Boolean(session.taintedAt);
+    const saved = (fromOwn ? await homes.get(own) : null) ?? (session.owner && !session.taintedAt ? await homes.get(session.owner) : null);
     if (!saved) return reply(res, 404, { error: 'nothing saved yet' });
     console.log('sessionApi: Claude home handed out', { sessionId: session.id, owner: session.owner ?? null, bytes: saved.bytes, own: fromOwn });
     res.writeHead(200, { 'content-type': 'application/gzip', 'cache-control': 'no-store' });
@@ -588,13 +647,16 @@ async function homeReply(req, res, session, { homes, userSettings, restore, peri
     // The owner's, which their next new session starts from, only at stop. A periodic save is for this session's own
     // Resume after a crash; copying it would swap the owner's between their running sessions every few minutes, or put
     // a session's empty home over theirs when its restore failed.
-    if (session.owner && !periodic) {
+    // Never a tainted session's: what it saw stays in its own home, which goes when it is removed.
+    // Checked once the home is all in: a lockdown that started while it came in counts, as what came after may hold it.
+    const locked = Boolean(session.taintedAt) || Boolean(fleet?.isLocked?.(session));
+    if (session.owner && !periodic && !locked) {
       await homes.copy(own, session.owner).catch((err) => console.warn('sessionApi: owner\'s Claude home not updated', {
         sessionId: session.id, owner: session.owner, message: String(err?.message ?? err).split('\n')[0],
       }));
       userSettings?.noteHome(session.owner, bytes);
     }
-    console.log('sessionApi: Claude home saved', { sessionId: session.id, owner: session.owner ?? null, bytes, periodic });
+    console.log('sessionApi: Claude home saved', { sessionId: session.id, owner: session.owner ?? null, bytes, periodic, ...(locked ? { tainted: true, toOwner: false } : {}) });
     return reply(res, 200, { bytes });
   } catch (err) {
     if (!err.shown) throw err;

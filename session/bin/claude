@@ -19,6 +19,13 @@ set -euo pipefail
 export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1
 
 real=${WOODSHED_REAL_CLAUDE:-$HOME/.local/bin/claude}
+# A tainted session (session/taint.mjs) reaches Anthropic only through the console, which reads each call, and the
+# rest of the world only through its egress proxy: whatever started this claude, the Terminal tab's included.
+if [ -f "${WOODSHED_TAINT_MARKER:-/tmp/woodshed-tainted}" ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ]; then
+  # shellcheck disable=SC1091
+  [ ! -f /tmp/woodshed-egress.env ] || . /tmp/woodshed-egress.env
+  WOODSHED_CLAUDE_AUTH=plan
+fi
 case "${WOODSHED_CLAUDE_AUTH:-}" in
   key) export ANTHROPIC_API_KEY=$SESSION_TOKEN ANTHROPIC_BASE_URL=$WOODSHED_CONSOLE_URL/anthropic ;;
   plan)

@@ -34,11 +34,25 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - CPU and memory, the Plan chip and Start app are in the pane bar, never on a card. The CPU and memory badge is a quiet button: it opens a dialog of the machine (CPU, memory with its peak, the checkout's disk), each a bar against its limit, `slate` until `amber` (with `amber-ink` for the number) as it runs high and `bad` when nearly full, the same lines the badge turns color at. So is **Editor ↗**, a quiet `pbtn` link to a new tab, never filled. The Plan chip shows the private session's agent's plan (Claude or Codex); only sessions on that agent share its readings and running count, and no chip appears before that agent reports limits: `bar-amber` from 70% of a window, with the word `out` at 100%. Its detail, in the bar's menu, colors a window from 70% `amber` with `amber-ink` for the number, never `wait`: the plan running low is not a session that needs a person.
 - A pull request row has two lines, as a card does: its title and its checks' dot, then (`meta`) the project's name and the number, the checks in their colour and how long since it moved, with Open, Resume or Start and a `slate` ↗ to GitHub at the right end. With more than one project it has its project's 3px edge, and the name is always on line two.
 - Group heads are `group-label` with a dot and a count. On Mine: Needs you (stopped sessions waiting on you), Active (every live session, those waiting on you first), Finished (shared sessions you started or have whose pull request is in Slack), Stopped, then Pull requests. On Everyone: Unassigned first (shared sessions nobody has, with a primary **Take it** on each card), then the console's groups. Both end with Reviews and QA (sessions the console started to review or QA a pull request), folded until opened: they run by themselves, so they are never Unassigned and carry no **Take it**, nor Assign to me, Hand over to or Unassign in their ⋯ menu. A status chip on the phone's Everyone shows those of that status in it.
+- A session that has seen production data carries the Production tag (`prod`, `components/Tag`) on its card in place
+  of Private, on every rail, and **Production data** on its pane bar after the status word. Its pane has no Share the
+  app, Editor ↗ or Sign in for Remote Control, and its Details say since when. Never a status color: it is still
+  Working, Needs you or Paused like any other.
 - A shared session someone has carries the Assigned tag: on Mine the word Assigned when it is yours, and the name of whoever has it for one you started and handed over; on Everyone the name of whoever has it. Line two names who started a session only where nothing else does: on Mine a shared session someone else started, on Everyone one nobody has (`from <person>`). Who started it is always under Details. The card's ⋯ menu has Assign to me, Hand over to and Unassign; only someone who can be assigned (People) sees them. Someone without Sessions from GitHub has no Mine | Everyone switch, nor has anyone on a console one person uses: the rail head reads My sessions. Mine holds the shared sessions you started as well as those assigned to you. **People** on Everyone filters by assignee. A resume keeps the assignee.
 
 ## Settings pages
 
 - A few things each set on or off at once, such as who reviews your pull requests on My settings, are an on/off grid (`components/OnOffGrid`): radios under Off and On, a row each, saved as they are picked.
+- Two or three exclusive choices whose difference matters, such as an MCP server's Ordinary or Production, are choice
+  cards (`components/ChoiceCards`): side by side, each a title and one line saying what it does, the picked one in the
+  `amber` outline. A choice with a cost (Production) fills with its own colours (`prod`) when picked, with a callout under
+  the cards saying what will happen. One not available here stays, disabled, and says why.
+- Some of the console's repos, or all, is a repo pick (`components/RepoPick`): a fold whose summary says the pick, over
+  **All repos** and a checkbox per repo. A saved repo the console no longer has stays listed, ticked. Never a typed list.
+- A server or anything the console calls on a person's behalf is tested before it is saved: the button says
+  `Testing…`, a failure is a `form-error` with a quiet **Add anyway** beside it, and the form keeps what was typed.
+  A saved one's row has a quiet **Test**, whose answer is a line under the row.
+- An HTTP header's name is shown in Title-Case (`Authorization`, `X-Api-Key`), whatever case it is kept in.
 - Each settings page has a quiet `Only you` or `Everyone` tag beside its title, and the settings rail has a search at its top (`components/SettingsSearch`).
   Name a card by whose it is when the same thing exists on both sides: "My repo settings", "My session timeouts".
 

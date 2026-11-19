@@ -154,6 +154,13 @@ const sessions = [
     kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'done', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
     app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
   }),
+  // A private session that has seen production data (console/mcpRelay.mjs), owned by `local`: its card says Production in
+  // place of Private, its pane bar Production data, and its pane offers no Share the app, Editor or Remote Control.
+  session('7a1e7ed1', null, 'Why order 42 shows as unpaid', {
+    kind: 'task', trigger: 'my-woodshed', owner: 'local', status: 'running', state: 'working', stoppedAt: null, stopReason: null, prUrl: null, hasShell: true, editor: true,
+    taintedAt: new Date(Date.now() - 12 * 60_000).toISOString(), taintNoticedAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+    app: 'running', appServers: { frontend: true, backend: true, frontendPort: 5173, backendPort: 8080 },
+  }),
   // Paused when idle, so it waits in Mine's Needs you, with Move to Stopped in its ⋯ menu.
   session('ba5ed001', null, 'A private session paused when idle', { kind: 'task', trigger: 'my-woodshed', owner: 'local', stopReason: 'idle for 1 h', prUrl: null }),
   session('c0dec0d1', null, 'Stopped Codex session', { kind: 'task', trigger: 'my-woodshed', owner: 'local', options: { agent: 'codex' }, prUrl: null }),
@@ -213,7 +220,12 @@ const sessions = [
     ] },
   }),
 ];
-fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null }));
+// Made-up MCP servers for Console settings' card (console/mcpServers.mjs): nothing answers at their addresses.
+const mcpServers = [
+  { name: 'docs', url: 'https://docs.example.com/mcp', production: false, shared: true, people: '*', repos: '*', auth: 'oidc', audience: 'docs', header: null, headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
+  { name: 'tracker', url: 'https://tracker.example.com/mcp', production: false, shared: false, people: ['local'], repos: '*', auth: 'header', audience: null, header: 'x-api-key', headerSavedAt: null, updatedBy: 'local', updatedAt: '2026-11-19T09:00:00.000Z' },
+];
+fs.writeFileSync(path.join(stateDir, 'state.json'), JSON.stringify({ sessions, github: null, mcpServers }));
 
 // The shell's own console settings, under either name (shared/envNames.mjs: a GitHub App, required sign-in, the ECS
 // launcher), would turn this back into the real console, so none of them are passed on, but hosted mode's
