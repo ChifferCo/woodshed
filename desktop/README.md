@@ -27,7 +27,7 @@ It opens the hosted console, `https://console.woodshed.run`, until you pick anot
 **File → Change console…** asks for the console's address: the one you open in your browser (`https://woodshed.example.com`,
 or `localhost:7690` for a console on this computer). Plain `http://` is accepted only for a console on this computer,
 since sign-in cookies need https anywhere else. The app checks that the address answers like a console (its
-`/manifest.webmanifest`), keeps it, and opens it on every start after.
+`/api/me`, which a console gives signed out too), keeps it, and opens it on every start after.
 
 `npm start -- --console=localhost:7690` opens a console for that run without saving it, for trying a dev console
 (`node console/bin/devConsole.mjs`). It is a flag, not an environment variable, on purpose: `WOODSHED_CONSOLE_URL` is
@@ -70,11 +70,14 @@ As native apps do, the app signs in through your default browser, where you are 
 
 1. **Sign in with GitHub** on the console's page opens the browser at the console's `/auth/desktop`, with the SHA-256
    of a verifier only the app holds. The window says to finish there.
-2. The browser signs in to the console as it always does (a click, when GitHub knows you), and its last page opens
-   `woodshed://signed-in?code=…`. The browser asks whether to open Woodshed: say yes.
+2. The browser signs in to the console as it always does (a click, when GitHub knows you), then asks **Sign in to the
+   Woodshed app?** as whom. Its button, and only that, makes the code: another program could open the browser at the
+   same page, but not press it. The next page opens `woodshed://signed-in?code=…`, and the browser asks whether to open
+   Woodshed: say yes.
 3. The app claims the code with its verifier, gets a session of its own, and opens where you were going. A code
    another program catches is no use without the verifier, works once, and lasts two minutes; a link the app started
-   no sign-in for is ignored.
+   no sign-in for, or one for another console than the one open now, is ignored, and the page to open after it is
+   always a path on that console.
 
 A console that cannot hand the sign-in back (one from before this, or the hosted one, whose hosting layer signs people
 in itself and does not answer `/auth/desktop/ready`) is signed in to inside the window, as in a browser. The waiting
@@ -85,11 +88,10 @@ with this folder as its argument.
 
 ## Notifications and the badge
 
-The main process reads `/api/sessions` every 20 seconds with the window's cookie, as the rail does, and
-`attention.mjs` picks out your sessions, as the rail's Mine does (your private sessions, and the shared ones you
-started or have; every session on a console one person uses). The badge counts your running sessions whose claude asks
-for you (`needs-you`). A notification is a change between two reads, in the console's words, and clicking it opens
-that session:
+The main process reads `/api/sessions` every 20 seconds with the window's cookie, as the rail does, and `attention.mjs`
+picks out your sessions, as the rail's Mine does (your private sessions, and the shared ones you started or have; every
+session on a console one person uses). The badge counts your running sessions whose claude asks for you (`needs-you`). A
+notification is a change between two reads, in the console's words, and clicking it opens that session:
 
 | Kind | Says | On at first |
 | --- | --- | --- |
@@ -106,11 +108,13 @@ that session:
 
 **File → Notifications** switches each kind on or off, kept in the app's `settings.json` under `notifications`; the
 badge counts whatever they say. A switched-off kind is still followed, so switching it on replays nothing. A session
-with several changes in one read rings once, for the most pressing. The first read after a start notifies about
-nothing, so opening the app does not replay every waiting session, nor does a session you are looking at. A
-pull request's review decision is left out: Woodshed's own review rings from its review session, and a person's
-review reaches the session that opened the pull request, whose next needs-you or done rings. Questions from Slack never
-count, and reviews and QA runs only for their verdict. Signed out, nothing is read.
+with several changes in one read rings once, for the most pressing. The first read after a start notifies about nothing,
+so opening the app does not replay every waiting session, nor does a session you are looking at. A pull request's review
+decision is left out: Woodshed's own review rings from its review session, and a person's review reaches the session
+that opened the pull request, whose next needs-you or done rings. Questions from Slack never count, and reviews and QA
+runs only for their verdict. Signed out, the badge is cleared and what was seen forgotten, so signing in again starts
+from a first read. A read that answers after Change console… (or a sign-in) is dropped: it can neither change the new
+console's badge nor notify about the old one's sessions.
 
 ## What a page may do
 

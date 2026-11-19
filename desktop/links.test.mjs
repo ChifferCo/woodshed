@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { consoleUrlFrom, destination, isLoopbackHost } from './links.mjs';
+import { consolePath, consoleUrlFrom, destination, isConsoleMe, isLoopbackHost } from './links.mjs';
 
 test('a typed console address becomes its origin', () => {
   assert.equal(consoleUrlFrom('woodshed.example.com'), 'https://woodshed.example.com/');
@@ -61,4 +61,24 @@ test('a local console\'s apps on a loopback app domain stay in the app over http
   const where = { consoleUrl: 'http://localhost:7690/', appDomain: 'apps.localhost' };
   assert.equal(destination('http://aaaa1111.apps.localhost:7690/', where), 'app');
   assert.equal(destination('http://aaaa1111.apps.localhost:7690/__woodshed/code/', where), 'app');
+});
+
+test('only a Woodshed console\'s /api/me passes setup, not any web app', () => {
+  assert.ok(isConsoleMe({ supported: true, signIn: true, available: true, login: null, visitor: null, admin: false }));
+  assert.ok(isConsoleMe({ supported: false, signIn: false, available: false, login: null, admin: true }), 'a console with no sign-in');
+  assert.ok(isConsoleMe({ supported: true, signIn: true, available: true, hosted: true, login: 'octocat', admin: false }), 'the hosted console');
+  for (const other of [null, {}, { name: 'Some PWA' }, { supported: 'yes', signIn: true, login: null, admin: false }, { supported: true, signIn: true }, 'text']) {
+    assert.equal(isConsoleMe(other), false, JSON.stringify(other));
+  }
+});
+
+test('a path to open after signing in stays on the console', () => {
+  const home = 'http://localhost:7690/';
+  assert.equal(consolePath(home, '/s/aaaa1111?tab=review'), 'http://localhost:7690/s/aaaa1111?tab=review');
+  assert.equal(consolePath(home, '/'), home);
+  for (const away of ['//evil.test/x', '/\\evil.test', 'https://evil.test/', 'https:evil.test', 'javascript:alert(1)', '', null, 's/aaaa1111']) {
+    assert.equal(consolePath(home, away), home, String(away));
+  }
+  // What stripping the slash used to make of it: a scheme, and so another site.
+  assert.equal(consolePath(home, '/https:evil.test'), 'http://localhost:7690/https:evil.test');
 });

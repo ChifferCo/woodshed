@@ -71,3 +71,29 @@ export function destination(target, { consoleUrl, appDomain }) {
   if (url.protocol === 'https:' && url.hostname === 'github.com' && GITHUB_SIGN_IN.test(url.pathname)) return 'signIn';
   return 'external';
 }
+
+/**
+ * Whether an answer is a Woodshed console's /api/me, which every console gives signed out too (console/server.mjs,
+ * authRoute): the setup page's check that the address is a console, not any web app.
+ * @returns {boolean}
+ */
+export function isConsoleMe(me) {
+  return Boolean(me) && typeof me === 'object' && typeof me.supported === 'boolean' && typeof me.signIn === 'boolean'
+    && Object.hasOwn(me, 'login') && Object.hasOwn(me, 'admin');
+}
+
+/**
+ * A path on the console as a URL on it, and never anywhere else: `/s/x` is the console's, and anything that would
+ * resolve off it (`//host`, `/\\host`, a scheme) is the console's home.
+ * @returns {string}
+ */
+export function consolePath(consoleUrl, path) {
+  const home = new URL(consoleUrl);
+  if (typeof path !== 'string' || !/^\/(?![/\\])/.test(path)) return home.href;
+  try {
+    const url = new URL(path, home);
+    return url.origin === home.origin ? url.href : home.href;
+  } catch {
+    return home.href;
+  }
+}

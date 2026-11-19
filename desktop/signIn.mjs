@@ -66,9 +66,10 @@ export function parseSignedInLink(link) {
 export function createPending({ now = Date.now } = {}) {
   let current = null;
   return {
-    begin(next) {
+    /** `consoleUrl`: the console the sign-in is for, whose code alone it claims */
+    begin(next, consoleUrl = null) {
       const pair = pkcePair();
-      current = { ...pair, next, startedAt: now() };
+      current = { ...pair, next, consoleUrl, startedAt: now() };
       return current;
     },
     /** @returns {{verifier: string, next: string}|null}  and forgets it: a sign-in is claimed once */

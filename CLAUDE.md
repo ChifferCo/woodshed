@@ -135,8 +135,9 @@ URL on top of each env file's Repo settings values
   certificate asked` with `allowed` and `why` for each name, as in "Open app answers with a certificate error on a local
   install, or on AWS with no `domain`" below. `sudo docker compose logs caddy` on the base box has the issuer's answer; a Let's Encrypt rate limit
   on `sslip.io` is shared with everyone, and Caddy then tries ZeroSSL.
-- **The desktop app's sign-in opens the browser, which signs in, and the app stays signed out.** The browser's last page
-  hands the app a `woodshed://` link: the console logs `auth: desktop sign-in code issued`, then `auth: desktop signed
+- **The desktop app's sign-in opens the browser, which signs in, and the app stays signed out.** The browser asks
+  **Sign in to the Woodshed app?** first (a 403 on its button means the form did not come from the console's own page),
+  and the page after it hands the app a `woodshed://` link: the console logs `auth: desktop sign-in code issued`, then `auth: desktop signed
   in` once the app claimed it, or `auth: desktop sign-in code refused` with `known` (false: used, expired, or from
   another console) and `verified` (false: not the verifier of the sign-in the app started). No claim at all means the
   link never reached the app: the browser asked whether to open Woodshed and was told no, or the OS has no app for

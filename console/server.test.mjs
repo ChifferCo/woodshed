@@ -2316,7 +2316,22 @@ test('a browser signed in to the console signs the desktop app in, through the c
   assert.equal(back.headers.get('location'), desktop);
   const browser = cookieOf(back);
 
-  const page = await get(desktop, browser);
+  // Signed in, the browser asks first: no code is made until the person presses the button on the console's page.
+  const ask = await get(desktop, browser);
+  assert.equal(ask.status, 200);
+  assert.equal(ask.headers.get('x-frame-options'), 'DENY');
+  assert.equal(ask.headers.get('referrer-policy'), 'same-origin', 'no-referrer would make Chrome send the form with Origin: null');
+  const askPage = await ask.text();
+  assert.match(askPage, /Sign in to the Woodshed app\?/);
+  assert.match(askPage, /as <strong>@octo<\/strong>/);
+  assert.doesNotMatch(askPage, /woodshed:\/\//);
+  const form = new URLSearchParams({ challenge, next: '/s/0a1b2c3d' }).toString();
+  const press = (headers) => fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: browser, ...headers }, body: form });
+  assert.equal((await press({})).status, 403, 'no Origin: not the console\'s form');
+  assert.equal((await press({ origin: 'https://evil.example' })).status, 403, 'another site\'s form');
+  const signedOut = await fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: base }, body: form });
+  assert.equal(signedOut.status, 303, 'a signed-out press goes back to sign in');
+  const page = await press({ origin: base });
   assert.equal(page.status, 200);
   const link = /url=(woodshed:\/\/signed-in\?[^"]+)"/.exec(await page.text())?.[1].replaceAll('&amp;', '&');
   const code = new URL(link).searchParams.get('code');

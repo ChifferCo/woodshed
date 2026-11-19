@@ -202,3 +202,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 ## Iconography
 
 No icon set. The console uses text glyphs (`▾ ▸ ✓ ✗ ⋯ ☆ ↗`) and 6px status dots; a stopped session's dot is a ring. A lock on the Private tag is drawn in CSS, not an image. The phone's message box under the terminal is the one place with drawn icons (📎 and the mic, as round buttons): on a desktop, the same actions are outline buttons with words, Attach files and Dictate (Stop while it listens, with a plain "Listening." line in `sub` under the field, no motion).
+
+## Pages outside the console
+
+- The desktop app's sign-in, in the browser and in the app, is one card on the `stopped` ground (`components/DesktopSignIn`):
+  a `title` sentence of where the person stands, one `sub` paragraph, one orange button, and a quiet way back. The
+  card that asks before signing the app in names the account and is never shortened.

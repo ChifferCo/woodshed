@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
-import { consoleUrlFrom, destination } from './links.mjs';
+import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
 import { PROTOCOL, browserUrl, createPending, linkInArgs, parseSignedInLink, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -139,16 +139,20 @@ ipcMain.handle('console:connect', async (event, typed) => {
   } catch (err) {
     return { error: err.message };
   }
+  // The console's own /api/me, which answers signed out too: a web app's manifest alone would let any site through,
+  // and the page of whatever is saved here gets the console's permissions (the microphone, notifications).
   try {
-    const res = await net.fetch(new URL('manifest.webmanifest', url).href, { redirect: 'follow' });
-    const manifest = res.ok ? await res.json().catch(() => null) : null;
-    if (!manifest?.name) return { error: `${url} answered, but not as a Woodshed console (status ${res.status}).` };
+    const res = await net.fetch(new URL('api/me', url).href, { redirect: 'follow', headers: { Accept: 'application/json' } });
+    const me = res.ok ? await res.json().catch(() => null) : null;
+    if (!isConsoleMe(me)) return { error: `${url} answered, but not as a Woodshed console (status ${res.status}).` };
   } catch (err) {
     return { error: `${url} did not answer: ${err.message}` };
   }
   writeSettings({ consoleUrl: url });
   consoleUrl = url;
   appDomain = null;
+  // A sign-in started on the console before is not this one's.
+  pending.take();
   mainWindow.loadURL(url);
   startWatching();
   return { ok: true };
@@ -176,7 +180,7 @@ async function signInInBrowser(next, inWindow) {
     mainWindow?.loadURL(inWindow);
     return;
   }
-  const { challenge } = pending.begin(next);
+  const { challenge } = pending.begin(next, consoleUrl);
   shell.openExternal(browserUrl(consoleUrl, { challenge, next }));
   mainWindow?.loadFile(path.join(here, 'signin.html'));
 }
@@ -184,9 +188,10 @@ async function signInInBrowser(next, inWindow) {
 async function finishSignIn(link) {
   const signedIn = parseSignedInLink(link);
   if (!signedIn || !consoleUrl) return;
+  // Only the sign-in started on the console open now: its code and verifier go to no other.
   const started = pending.take();
-  if (!started) {
-    console.warn('woodshed-desktop: a sign-in link arrived with no sign-in started, ignored');
+  if (!started || started.consoleUrl !== consoleUrl) {
+    console.warn('woodshed-desktop: a sign-in link arrived with no sign-in started on this console, ignored');
     return;
   }
   if (!mainWindow) createMainWindow();
@@ -208,7 +213,7 @@ async function finishSignIn(link) {
     mainWindow.loadFile(path.join(here, 'signin.html'), { query: { error } });
     return;
   }
-  mainWindow.loadURL(new URL(signedIn.next.replace(/^\//, ''), consoleUrl).href);
+  mainWindow.loadURL(consolePath(consoleUrl, signedIn.next));
   startWatching();
 }
 
@@ -233,10 +238,22 @@ ipcMain.handle('signin:here', (event) => {
 let seen = null;
 let firstRead = true;
 let timer = null;
+// Each start of watching (a new console, a sign-in) is a new generation: a read begun before it is dropped when it
+// answers, so a slow answer from the last console can neither overwrite this one's state nor notify about its sessions.
+let generation = 0;
+let reading = false;
 
-function startWatching() {
+function forget() {
   seen = null;
   firstRead = true;
+  app.setBadgeCount(0);
+  if (process.platform === 'win32') mainWindow?.setOverlayIcon(null, '');
+}
+
+function startWatching() {
+  generation += 1;
+  reading = false;
+  forget();
   clearTimeout(timer);
   poll();
 }
@@ -244,16 +261,30 @@ function startWatching() {
 async function poll() {
   clearTimeout(timer);
   timer = setTimeout(poll, POLL_MS);
-  if (!consoleUrl) return;
-  let body;
+  if (!consoleUrl || reading) return;
+  const mine = generation;
+  const base = consoleUrl;
+  reading = true;
+  let body = null;
+  let signedOut = false;
   try {
-    const res = await session.defaultSession.fetch(new URL('api/sessions', consoleUrl).href, { credentials: 'include', headers: { Accept: 'application/json' } });
+    const res = await session.defaultSession.fetch(new URL('api/sessions', base).href, { credentials: 'include', headers: { Accept: 'application/json' } });
     // Signed out, or a page in place of JSON: nothing to count until the person signs in.
-    if (!res.ok || !String(res.headers.get('content-type')).includes('json')) return;
-    body = await res.json();
+    if (res.ok && String(res.headers.get('content-type')).includes('json')) body = await res.json();
+    else signedOut = res.status === 401 || res.status === 302 || res.status === 403 || res.ok;
   } catch {
+    // The console did not answer: keep what the badge says until it does.
+  } finally {
+    if (mine === generation) reading = false;
+  }
+  if (mine !== generation || base !== consoleUrl) return;
+  // Signed out: the badge and what was seen go, so signing in again (as anyone) starts from a first read.
+  if (signedOut) {
+    if (seen) console.log('woodshed-desktop: signed out, the badge cleared');
+    forget();
     return;
   }
+  if (!body) return;
   appDomain = body.appDomain || null;
   // A kind switched off is still followed, so switching it on later replays nothing.
   const { badge, now, notify } = attention(body, seen, { first: firstRead, enabled: enabledKinds(readSettings().notifications) });
@@ -268,7 +299,9 @@ async function poll() {
     const shown = new Notification({ title: n.title, body: n.body, icon, silent: false });
     shown.on('click', () => {
       if (!mainWindow) createMainWindow();
-      mainWindow.loadURL(new URL(`s/${encodeURIComponent(n.id)}`, consoleUrl).href);
+      // The console this read came from: a notification from before Change console… does not open on the new one.
+      if (base !== consoleUrl) return;
+      mainWindow.loadURL(new URL(`s/${encodeURIComponent(n.id)}`, base).href);
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.show();
       mainWindow.focus();

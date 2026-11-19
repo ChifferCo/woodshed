@@ -42,7 +42,8 @@ test('a sign-in is claimed once, and only within ten minutes', () => {
   const clock = { now: 0 };
   const pending = createPending({ now: () => clock.now });
   assert.equal(pending.take(), null, 'nothing started');
-  const started = pending.begin('/s/aaaa1111');
+  const started = pending.begin('/s/aaaa1111', 'https://woodshed.example.com/');
+  assert.equal(started.consoleUrl, 'https://woodshed.example.com/', 'a sign-in remembers its console, whose code alone it claims');
   assert.ok(pending.waiting());
   assert.deepEqual(pending.take(), started);
   assert.equal(pending.take(), null);

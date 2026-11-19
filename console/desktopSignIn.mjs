@@ -5,9 +5,15 @@
 //                                   (an older console, or one behind a hosting proxy) signs in inside its own window
 //   GET  /auth/desktop?challenge=&next=
 //                               ->  signed out: GitHub sign-in in this browser, which comes back here
-//                                   signed in: a page that opens woodshed://signed-in?code=&next=
+//                                   signed in: a page that asks whether to sign the app in, as whom
+//   POST /auth/desktop          ->  (that page's button, same origin) a page that opens woodshed://signed-in?code=&next=
 //   POST /auth/desktop/claim    ->  {code, verifier} for the app's own session cookie
+//
+// The button is what keeps another program on the machine from signing itself in: anything can open a browser at
+// /auth/desktop with a challenge of its own, and register woodshed:// to catch the link, so the code is made only
+// when the person presses Sign in on a page that says it is for the Woodshed app, and only from the console's own page.
 import { DESKTOP_CHALLENGE_RE, safeNext } from './auth.mjs';
+import { isSameOrigin } from '../shared/sameOrigin.mjs';
 
 const MAX_CLAIM_BYTES = 4096;
 
@@ -28,6 +34,42 @@ export function desktopLink({ code, next }) {
   return link.href;
 }
 
+const PAGE_STYLE = `
+  :root { color-scheme: light dark; --ink: #1b2232; --sub: #666666; --ground: #ffffff; --stopped: #f6f5f2; --line: #e2e2e2; --action: #b45a05; --action-ink: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e8ecf5; --sub: #a3aabb; --ground: #12151c; --stopped: #10131a; --line: #2a3142; --action: #f59433; --action-ink: #1b1204; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: var(--stopped); color: var(--ink); font: 15px/1.5 "Red Hat Display", system-ui, sans-serif; }
+  main { width: min(440px, 100%); background: var(--ground); border: 1px solid var(--line); border-radius: 12px; padding: 32px; box-sizing: border-box; }
+  h1 { font: 700 22px/1.3 Merriweather, Georgia, serif; margin: 0 0 8px; }
+  p { color: var(--sub); margin: 0 0 20px; }
+  .btn { display: inline-block; padding: 10px 16px; border-radius: 6px; border: 0; background: var(--action); color: var(--action-ink); font: 600 15px "Red Hat Display", system-ui, sans-serif; text-decoration: none; cursor: pointer; }
+  .quiet { display: inline-block; margin-left: 12px; color: var(--sub); }
+  form { margin: 0; }`;
+
+// Never in a frame: a page of another site could otherwise lay it under a click of its own.
+const PAGE_HEADERS = {
+  // same-origin, not no-referrer: with no-referrer Chrome sends the consent form's POST with `Origin: null`, which the
+  // origin check refuses. Other sites, and the woodshed:// link, still get no referrer.
+  'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
+  'x-frame-options': 'DENY', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'",
+};
+
+// The question before the code: who is signing in, to what, and that it is only for a sign-in the person started.
+function consentPage({ login, challenge, next, consoleName }) {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(consoleName)}: sign in to the app</title>
+<style>${PAGE_STYLE}</style></head>
+<body><main>
+  <h1>Sign in to the Woodshed app?</h1>
+  <p>The Woodshed app on this computer asks to sign in to ${escapeHtml(consoleName)} as <strong>@${escapeHtml(login)}</strong>. Sign in only if you just pressed Sign in with GitHub in the app.</p>
+  <form method="post" action="/auth/desktop">
+    <input type="hidden" name="challenge" value="${escapeHtml(challenge)}">
+    <input type="hidden" name="next" value="${escapeHtml(next)}">
+    <button class="btn" type="submit">Sign in to the app</button><a class="quiet" href="/">Cancel</a>
+  </form>
+</main></body></html>`;
+}
+
 // The browser's last page: it opens the app, and says what to do when the browser asked first and was told no.
 function handOffPage({ link, consoleName }) {
   const href = escapeHtml(link);
@@ -35,15 +77,7 @@ function handOffPage({ link, consoleName }) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="0; url=${href}">
 <title>${escapeHtml(consoleName)}: back to the app</title>
-<style>
-  :root { color-scheme: light dark; --ink: #1b2232; --sub: #666666; --ground: #ffffff; --stopped: #f6f5f2; --line: #e2e2e2; --action: #b45a05; --action-ink: #ffffff; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #e8ecf5; --sub: #a3aabb; --ground: #12151c; --stopped: #10131a; --line: #2a3142; --action: #f59433; --action-ink: #1b1204; } }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; box-sizing: border-box; background: var(--stopped); color: var(--ink); font: 15px/1.5 "Red Hat Display", system-ui, sans-serif; }
-  main { width: min(440px, 100%); background: var(--ground); border: 1px solid var(--line); border-radius: 12px; padding: 32px; }
-  h1 { font: 700 22px/1.3 Merriweather, Georgia, serif; margin: 0 0 8px; }
-  p { color: var(--sub); margin: 0 0 20px; }
-  a.btn { display: inline-block; padding: 10px 16px; border-radius: 6px; background: var(--action); color: var(--action-ink); font-weight: 600; text-decoration: none; }
-</style></head>
+<style>${PAGE_STYLE}</style></head>
 <body><main>
   <h1>You're signed in</h1>
   <p>Your browser is handing the sign-in to the Woodshed app. If it asked whether to open Woodshed, say yes. You can close this tab after.</p>
@@ -51,7 +85,7 @@ function handOffPage({ link, consoleName }) {
 </main></body></html>`;
 }
 
-async function readBody(req) {
+async function readBody(req, parse = (text) => JSON.parse(text || '{}')) {
   let size = 0;
   const chunks = [];
   for await (const chunk of req) {
@@ -59,7 +93,7 @@ async function readBody(req) {
     if (size > MAX_CLAIM_BYTES) throw new Error('too large');
     chunks.push(chunk);
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+  return parse(Buffer.concat(chunks).toString('utf8'));
 }
 
 /**
@@ -80,15 +114,44 @@ export async function handleDesktopSignIn({ req, res, url, auth, consoleName = '
       json(res, 400, { error: 'open this from the Woodshed app' });
       return true;
     }
-    const code = await auth.desktopCode({ cookieHeader: req.headers.cookie, challenge });
-    if (!code) {
+    const user = await auth.visitorFor(req.headers.cookie);
+    if (!user) {
       // Signed out in this browser: GitHub's sign-in, which brings the browser back here, challenge and all.
       const back = `/auth/desktop?${new URLSearchParams({ challenge, next })}`;
       res.writeHead(302, { location: `/auth/start?next=${encodeURIComponent(back)}`, 'cache-control': 'no-store' });
       res.end();
       return true;
     }
-    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+    res.writeHead(200, PAGE_HEADERS);
+    res.end(consentPage({ login: user.login, challenge, next, consoleName }));
+    return true;
+  }
+  if (pathname === '/auth/desktop' && req.method === 'POST') {
+    // The consent page's own button: a browser always sends Origin with a form's POST, and another site's is refused.
+    if (!req.headers.origin || !isSameOrigin(req.headers)) {
+      json(res, 403, { error: 'sign the app in from the console\'s own page' });
+      return true;
+    }
+    let form;
+    try {
+      form = await readBody(req, (text) => new URLSearchParams(text));
+    } catch {
+      json(res, 400, { error: 'the form was too large' });
+      return true;
+    }
+    const challenge = form.get('challenge') ?? '';
+    const next = safeNext(form.get('next'));
+    if (!DESKTOP_CHALLENGE_RE.test(challenge)) {
+      json(res, 400, { error: 'open this from the Woodshed app' });
+      return true;
+    }
+    const code = await auth.desktopCode({ cookieHeader: req.headers.cookie, challenge });
+    if (!code) {
+      res.writeHead(303, { location: `/auth/desktop?${new URLSearchParams({ challenge, next })}`, 'cache-control': 'no-store' });
+      res.end();
+      return true;
+    }
+    res.writeHead(200, PAGE_HEADERS);
     res.end(handOffPage({ link: desktopLink({ code, next }), consoleName }));
     return true;
   }
