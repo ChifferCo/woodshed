@@ -9,7 +9,7 @@ import net from 'node:net';
 
 import { loadConfig, requireClosedWhenReachable } from './config.mjs';
 import { applyStored } from './githubAppSetup.mjs';
-import { createConsoleUpgrade, createHandler, pageShell } from './server.mjs';
+import { createConsoleUpgrade, createHandler, pageShell, settingsFrame } from './server.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { createSettings } from './settings.mjs';
 import { IDENTITY_HEADER, createTrustedIdentity, signIdentity } from './trustedIdentity.mjs';
@@ -356,6 +356,33 @@ test('a program embedding the console adds to the user menu, and only links a pa
   t.mock.method(console, 'warn', () => {});
   const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
   assert.deepEqual([failed.login, failed.menuGroups], ['sam-member', undefined], 'a menu that throws leaves /api/me as it was');
+});
+
+test('a program embedding the console adds tabs to Settings, each a path on the console', async (t) => {
+  const settingsTabs = (headers) => (headers['x-boom'] ? JSON.parse('{') : [
+    { label: 'Members', href: '/orgs/acme/members' },
+    { label: 'Away', href: 'https://billing.example/' }, { label: 'Odd', href: '//elsewhere.example' },
+    { label: 'Bad', href: 'javascript:alert(1)' }, { href: '/no-label' },
+    ...Array.from({ length: 12 }, (_, i) => ({ label: `Tab ${i}`, href: `/t/${i}` })),
+  ]);
+  const { port } = await hostedConsole(t, { extra: { settingsTabs } });
+  const me = (await send(port, { path: '/api/me', headers: MEMBER() })).body;
+  assert.deepEqual(me.settingsTabs.slice(0, 2), [{ label: 'Members', href: '/orgs/acme/members' }, { label: 'Tab 0', href: '/t/0' }]);
+  assert.equal(me.settingsTabs.length, 8, 'eight at most');
+  assert.equal((await send(port, { path: '/api/me' })).body.settingsTabs, undefined, 'nothing for someone not signed in');
+  t.mock.method(console, 'warn', () => {});
+  const failed = (await send(port, { path: '/api/me', headers: { ...MEMBER(), 'x-boom': '1' } })).body;
+  assert.deepEqual([failed.login, failed.settingsTabs], ['sam-member', undefined], 'tabs that throw leave /api/me as it was');
+});
+
+test('a program\'s page in the settings frame: its part in a template hostSettings.js shows, which it cannot close early', () => {
+  const page = settingsFrame({ title: 'Acme', current: '/orgs/acme/credits"x', body: '<h2>Credits</h2></template><script>alert(1)</script>' });
+  assert.match(page, /<template id="woodshed-host-page" data-current="\/orgs\/acme\/credits&#34;x"><h2>Credits<\/h2>&lt;\/template><script>alert\(1\)<\/script><\/template>/);
+  assert.match(page, /<script src="\/static\/hostSettings\.js\?v=[0-9a-f]{12}"><\/script>/);
+  assert.match(page, /<script src="\/static\/common\.js\?v=/, 'with the console\'s own scripts, as on its settings pages');
+  const styled = settingsFrame({ title: 'Acme', current: '/x', body: '', styles: ['/assets/frame.css?v="1', 'https://elsewhere.example/a.css', '//x.example/b.css'] });
+  assert.match(styled, /<link rel="stylesheet" href="\/static\/style\.css\?v=[0-9a-f]{12}">\n<link rel="stylesheet" href="\/assets\/frame\.css\?v=&#34;1">\n<\/head>/,
+    'the program\'s stylesheet after the console\'s, escaped, and nothing from elsewhere');
 });
 
 test('a page carries the console\'s link query for the links it copies, escaped as a query', () => {

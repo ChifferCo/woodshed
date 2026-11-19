@@ -11,6 +11,7 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 const source = fs.readFileSync(new URL('./public/common.js', import.meta.url), 'utf8');
+const hostSource = fs.readFileSync(new URL('./public/hostSettings.js', import.meta.url), 'utf8');
 const ORIGIN = 'http://console.test';
 
 class Node {
@@ -95,9 +96,10 @@ function makeDom(location) {
 
 /**
  * common.js on a settings page at `path`, with the pages `makePages(W, window)` gives registered as the page scripts
- * would, then loaded.
+ * would, then loaded. `me` is what /api/me answers (none: it never does); `hostPage`, a program's page as settingsFrame
+ * sends it, its template's `current` and `body` (a node), run through hostSettings.js.
  */
-function load(path, makePages = () => []) {
+function load(path, makePages = () => [], { me = null, hostPage = null } = {}) {
   const location = {};
   const setLocation = (url) => {
     const u = new URL(url, location.href ?? ORIGIN);
@@ -128,13 +130,15 @@ function load(path, makePages = () => []) {
     window, Node, URL, location, history,
     console: { ...console, error: (...args) => errors.push(args) },
     Event: class { constructor(type) { this.type = type; } },
-    fetch: () => new Promise(() => {}),
+    fetch: (url) => (me && url === '/api/me' ? Promise.resolve({ json: async () => me }) : new Promise(() => {})),
     setInterval: (fn, ms) => { const id = nextId++; intervals.set(id, ms); return id; },
     clearInterval: (id) => intervals.delete(id),
     setTimeout: () => nextId++, clearTimeout: () => {},
     document: {
       addEventListener: on('document'), removeEventListener: off('document'), querySelector() { return null; },
-      getElementById: (id) => (id === 'app' ? app : null),
+      getElementById: (id) => (id === 'app' ? app
+        : id === 'woodshed-host-page' && hostPage ? { getAttribute: (a) => (a === 'data-current' ? hostPage.current : null), content: { cloneNode: () => hostPage.body } }
+          : null),
       createElement: (tag) => new El(tag), createTextNode: (text) => new Text(text),
     },
     matchMedia: () => ({}),
@@ -142,6 +146,7 @@ function load(path, makePages = () => []) {
   vm.runInContext(source, context);
   const W = window.Woodshed;
   for (const [match, start] of makePages(W, window)) W.settingsPage(match, start);
+  if (hostPage) vm.runInContext(hostSource, context);
   for (const fn of listeners.document.DOMContentLoaded ?? []) fn();
   // A click as the browser sends it: the anchor's own handlers, then the document's. `true` when the page took it.
   const click = (el, mods = {}) => {
@@ -154,7 +159,8 @@ function load(path, makePages = () => []) {
   const side = () => app.querySelector('aside.settings-side');
   const title = () => app.querySelector('h1')?.textContent ?? null;
   const current = () => side()?.querySelectorAll('a.side-item').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.getAttribute('href'));
-  return { W, app, location, pushed, intervals, listeners, errors, shown, click, back, side, title, current, link: (href) => app.querySelectorAll('a').find((a) => a.getAttribute('href') === href) };
+  const tabs = () => app.querySelector('nav.settings-tabs')?.querySelectorAll('a').map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('aria-current')]);
+  return { W, El, tabs, app, location, pushed, intervals, listeners, errors, shown, click, back, side, title, current, link: (href) => app.querySelectorAll('a').find((a) => a.getAttribute('href') === href) };
 }
 
 /** A made-up settings page: its title, links to the others, a 5-second timer and a window listener, as events.js has. */
@@ -267,4 +273,42 @@ test('a page that is not a settings page has no switching at all', () => {
   const t = load('/s/aaaa1111');
   assert.equal(t.listeners.document.click, undefined);
   assert.equal(t.listeners.window.popstate, undefined);
+});
+
+const HOST_TABS = [{ label: 'Members', href: '/orgs/acme/members' }, { label: 'Credits', href: '/orgs/acme/credits' }];
+const answered = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a program\'s page shows in the settings frame, under Settings and its tabs, with the program\'s own part as it sent it', async () => {
+  // The template is read as the page starts, so the stand-in's node is made by a first load and handed to a second.
+  const first = load('/nowhere');
+  const part = new first.El('p');
+  part.append('Compute credits: $40');
+  const t = load('/orgs/acme/credits', () => [], { me: { login: 'sam', admin: true, settingsTabs: HOST_TABS }, hostPage: { current: '/orgs/acme/credits', body: part } });
+  assert.equal(t.title(), 'Settings');
+  assert.ok(t.side(), 'with the side list');
+  assert.match(t.app.querySelector('div.host-page').textContent, /Compute credits: \$40/);
+  assert.deepEqual(t.tabs(), [['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null]], 'the console\'s own until /api/me answers');
+  await answered();
+  assert.deepEqual(t.tabs(), [
+    ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page'],
+  ], 'then the program\'s after them, the page\'s own marked, without the page drawing again');
+  assert.deepEqual(t.current(), ['/console-settings'], 'and Settings is the side list\'s current entry');
+  assert.equal(t.click(t.link('/console-settings')), false, 'the console\'s tab is not on this page: the browser loads it');
+});
+
+test('someone who is not an admin sees the program\'s tabs alone, and Settings opens the first', async () => {
+  const first = load('/nowhere');
+  const t = load('/orgs/acme/credits', () => [], { me: { login: 'sam', admin: false, settingsTabs: HOST_TABS }, hostPage: { current: '/orgs/acme/credits', body: new first.El('p') } });
+  await answered();
+  assert.deepEqual(t.tabs(), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']]);
+  assert.deepEqual(t.current(), ['/orgs/acme/members'], 'Settings, opening Members, is current on Credits');
+  assert.equal(t.side().querySelectorAll('a.side-item').find((a) => a.textContent.endsWith('Settings') && a.textContent !== '◉My settings')?.textContent, '⚙Settings', 'with Settings\' own icon');
+  assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings'], 'no People or Webhook events');
+});
+
+test('with no tabs from a program, someone who is not an admin has no Console entries, as before', async () => {
+  const t = load('/settings', () => [], { me: { login: 'sam', admin: false } });
+  await answered();
+  assert.equal(t.W.consoleLinks().length, 0);
 });

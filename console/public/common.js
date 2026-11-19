@@ -1164,13 +1164,33 @@
     { href: '/console-settings', label: 'General' },
     { href: '/secrets', label: 'Secrets & webhooks' },
   ];
-  function settingsTabs(current) {
-    return h('nav', { class: 'rail-seg settings-tabs', 'aria-label': 'Settings' }, SETTINGS_TABS.map((tab) =>
+  // Then the tabs of a program embedding the console (server.mjs, settingsTabsOf), its own pages: those are for whoever
+  // it gives them to, so someone who is not an admin sees them alone. Until /api/me answers, the console's own.
+  function tabsOf(me) {
+    const host = me?.settingsTabs ?? [];
+    return [...(!me || me.admin || !host.length ? SETTINGS_TABS : []), ...host];
+  }
+  // The row on the page shown, filled again once /api/me answers, so a host's tabs join it without the page redrawing.
+  let tabRow = null;
+  function fillTabs(row, current) {
+    row.replaceChildren(...tabsOf(meNow).map((tab) =>
       h('a', { class: 'rail-seg-link', href: tab.href, 'aria-current': tab.href === current ? 'page' : null }, tab.label)));
   }
-  // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page.
+  function settingsTabs(current) {
+    const row = h('nav', { class: 'rail-seg settings-tabs', 'aria-label': 'Settings' });
+    row.current = current;
+    fillTabs(row, current);
+    tabRow = row;
+    return row;
+  }
+  // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page. Settings
+  // also stays current on a host's tabs, and someone who is not an admin, given tabs, has Settings alone, opening the first.
   function consoleLinks(me) {
-    return me?.hosted ? CONSOLE_LINKS.filter((link) => link.href !== '/people') : CONSOLE_LINKS;
+    const host = me?.settingsTabs ?? [];
+    // `icon` keeps Settings' own in the side list when it opens a host's tab.
+    const settings = { ...CONSOLE_LINKS[0], icon: CONSOLE_LINKS[0].href, also: [...CONSOLE_LINKS[0].also, ...host.map((tab) => tab.href)] };
+    if (!me?.admin) return host.length ? [{ ...settings, href: host[0].href }] : [];
+    return [settings, ...CONSOLE_LINKS.slice(1)].filter((link) => !(me.hosted && link.href === '/people'));
   }
 
   // The workflows that build the images and apply the infrastructure, in the installation's repo, as its project file's
@@ -1221,7 +1241,7 @@
         type: 'button', class: 'menu-item', role: 'menuitem', 'data-keys': 'keys',
         onclick: () => { setOpen(false); window.Woodshed.shell?.openKeys(); },
       }, 'Keyboard shortcuts', h('kbd', { class: 'menu-kbd' }, '?')),
-      me.admin && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(item)],
+      consoleLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(item)],
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it.
@@ -1282,13 +1302,15 @@
   const consoleSlot = h('div', { class: 'side-console' });
   function fillConsoleSlot() {
     const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': isCurrent(link, navCurrent) ? 'page' : null },
-      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.href]), link.label, waitingOn(link, meNow));
-    consoleSlot.replaceChildren(...(meNow?.admin ? [h('div', { class: 'side-group' }, 'Console'), ...consoleLinks(meNow).map(item)] : []));
+      h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.icon ?? link.href]), link.label, waitingOn(link, meNow));
+    const links = consoleLinks(meNow);
+    consoleSlot.replaceChildren(...(links.length ? [h('div', { class: 'side-group' }, 'Console'), ...links.map(item)] : []));
   }
   fetch('/api/me', { cache: 'no-store' }).then((r) => r.json()).then(learnNames).then((me) => {
     meNow = me;
     userSlot.replaceChildren(...userMenu(me, navCurrent));
     fillConsoleSlot();
+    if (tabRow) fillTabs(tabRow, tabRow.current);
     // A page drawn before this answer showed the non-admin version of what isAdmin() decides: it draws again.
     window.dispatchEvent(new Event('woodshed:me'));
   }).catch(() => {});
@@ -1305,7 +1327,7 @@
   let sideNav = null;
   function markCurrent(scope, selector) {
     for (const a of scope.querySelectorAll(selector)) {
-      const link = [...MY_LINKS, ...CONSOLE_LINKS].find((l) => l.href === a.getAttribute('href'));
+      const link = [...MY_LINKS, ...consoleLinks(meNow)].find((l) => l.href === a.getAttribute('href'));
       if (link && isCurrent(link, navCurrent)) a.setAttribute('aria-current', 'page');
       else a.removeAttribute('aria-current');
     }

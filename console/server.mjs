@@ -204,6 +204,7 @@ const STATIC_FILES = {
   'common.js': 'text/javascript; charset=utf-8',
   'theme.js': 'text/javascript; charset=utf-8',
   'shell.js': 'text/javascript; charset=utf-8',
+  'hostSettings.js': 'text/javascript; charset=utf-8',
   'terminalCache.js': 'text/javascript; charset=utf-8',
   'terminalScroll.cjs': 'text/javascript; charset=utf-8',
   'terminalFind.cjs': 'text/javascript; charset=utf-8',
@@ -301,6 +302,8 @@ const SETUP_PATH_RE = /^\/(?:api\/)?setup\/github(?:\/|$)/;
 // What a program embedding the console may add to the user menu (menuOf): how much of it, and how long each text.
 const MENU_TEXT_CHARS = 100;
 const MENU_ITEMS = 50;
+// The most tabs a program embedding the console may add beside Settings' own (settingsTabsOf).
+const SETTINGS_TABS = 8;
 const APP_SHARE_RE = /^\/api\/sessions\/([0-9a-f]{8})\/app-share(?:\/(members|links)(?:\/([0-9a-f]{8})\/(revoke))?)?$/;
 
 /**
@@ -322,6 +325,28 @@ function menuHref(href) {
 
 function menuText(value) {
   return typeof value === 'string' ? value.slice(0, MENU_TEXT_CHARS) : '';
+}
+
+/**
+ * The tabs a program embedding the console adds to Settings (createInstallation's `settingsTabs`), as /api/me sends
+ * them: each a label and a path on the console's own name, drawn after General and Secrets & webhooks (common.js,
+ * settingsTabs). A tab is the program's own page, which shows in the settings frame by `settingsFrame`; anything that is
+ * not a path is dropped, since a tab never leaves the console.
+ * @param {(headers: object) => {label: string, href: string}[]|null} settingsTabs
+ * @param {object} headers  the request's
+ * @returns {{settingsTabs?: {label: string, href: string}[]}}
+ */
+export function settingsTabsOf(settingsTabs, headers) {
+  let given;
+  try {
+    given = settingsTabs(headers) ?? [];
+  } catch (err) {
+    console.warn('console: settings tabs not given', { message: String(err?.message ?? err).split('\n')[0] });
+    return {};
+  }
+  const tabs = (Array.isArray(given) ? given : []).map((tab) => ({ label: menuText(tab?.label), href: menuHref(tab?.href) }))
+    .filter((tab) => tab.label && tab.href?.startsWith('/')).slice(0, SETTINGS_TABS);
+  return tabs.length ? { settingsTabs: tabs } : {};
 }
 
 /**
@@ -382,14 +407,15 @@ function staticUrl(file) {
 
 /**
  * @param {{title: string, script: string|string[], login?: string|null, provider?: {name: string, words?: object}|null,
- *          linkQuery?: Record<string, string>|null}} args
+ *          linkQuery?: Record<string, string>|null, hostPage?: string, styles?: string[]}} args
  *   `title` is the console's name (config.consoleName): the page's title, the installed app's on a home screen, and
  *   what the scripts call the console (common.js, W.consoleName); `script` is the page's scripts, loaded in order
  *   after common.js; `provider`'s words are what the page says about where sessions run (providerWords.mjs), the
- *   defaults where it has none; `linkQuery` is config.linkQuery
+ *   defaults where it has none; `linkQuery` is config.linkQuery; `hostPage` is settingsFrame's template, after #app, and
+ *   `styles` its program's stylesheets, after the console's
  * @returns {string}  the page shell; the script renders everything from /api/sessions
  */
-export function pageShell({ title, script, login = null, provider = null, linkQuery = null }) {
+export function pageShell({ title, script, login = null, provider = null, linkQuery = null, hostPage = '', styles = [] }) {
   // Whose page it is, for session.js to draw from what it kept only for the same person. A GitHub login, or nothing.
   const who = /^[A-Za-z0-9-]{1,39}$/.test(String(login ?? '')) ? `\n<meta name="woodshed-login" content="${login}">` : '';
   // What the links a page copies carry (config.linkQuery). URLSearchParams leaves nothing an attribute needs escaped.
@@ -415,10 +441,10 @@ export function pageShell({ title, script, login = null, provider = null, linkQu
 <script src="${staticUrl('theme.js')}"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@700&family=Red+Hat+Display:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="${staticUrl('style.css')}">
+<link rel="stylesheet" href="${staticUrl('style.css')}">${styles.map((href) => `\n<link rel="stylesheet" href="${escapeHtml(href)}">`).join('')}
 </head>
 <body>
-<div id="app"></div>
+<div id="app"></div>${hostPage}
 <script src="${staticUrl('logins.cjs')}"></script>
 <script src="${staticUrl('setupSteps.cjs')}"></script>
 <script src="${staticUrl('inviteLink.cjs')}"></script>
@@ -433,6 +459,26 @@ ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n
 </body>
 </html>
 `;
+}
+
+/**
+ * A page of a program embedding the console, in the settings pages' frame: the side list, the avatar menu, and the title
+ * Settings over its tabs, with `current` marked (a tab `settingsTabs` gave). The program renders `body` itself, as HTML
+ * it has escaped; it is shown as it is, under the tabs (public/hostSettings.js). Its forms and links are the program's,
+ * so a click on another tab loads that page.
+ * @param {{title: string, body: string, current: string, login?: string|null, linkQuery?: object|null, styles?: string[]}} page
+ *   `title` is the browser tab's (the console's name, as on its own pages); `styles` are the program's stylesheets for
+ *   its part, each a path on the console's name (anything else is dropped), loaded after the console's, so its rules
+ *   can use the design system's colours (`var(--ink)` and the rest) and follow the theme
+ * @returns {string}  the whole page
+ */
+export function settingsFrame({ title, body, current, login = null, linkQuery = null, styles = [] }) {
+  // A template is never drawn by the browser, and its contents are not run: hostSettings.js moves them into the frame.
+  // "</template" in the body would end it early, so the body cannot hold one.
+  const html = String(body ?? '').replace(/<\/template/gi, '&lt;/template');
+  const hostPage = `\n<template id="woodshed-host-page" data-current="${escapeHtml(String(current ?? ''))}">${html}</template>`;
+  const sheets = styles.filter((href) => typeof href === 'string' && href.startsWith('/') && !href.startsWith('//'));
+  return pageShell({ title, script: 'hostSettings.js', login, linkQuery, hostPage, styles: sheets });
 }
 
 /**
@@ -574,7 +620,7 @@ export function createHandler({
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
-  projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
+  projectColors = null, githubFor = null, trusted = null, userMenu = null, settingsTabs = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
@@ -666,6 +712,7 @@ export function createHandler({
         ...(woodshedUpdate && { updates: user && isAdmin(user) ? woodshedUpdate.behindBy() : 0 }),
         repo: user ? defaultProject(config).repo : null, workflows: user ? await menuWorkflows() : [],
         ...(user && userMenu ? menuOf(userMenu, req.headers) : {}),
+        ...(user && settingsTabs ? settingsTabsOf(settingsTabs, req.headers) : {}),
       });
       return true;
     }
@@ -686,6 +733,7 @@ export function createHandler({
         repo: user || !auth?.enabled() ? defaultProject(config).repo : null,
         workflows: user || !auth?.enabled() ? await menuWorkflows() : [],
         ...((user || !auth?.enabled()) && userMenu ? menuOf(userMenu, req.headers) : {}),
+        ...((user || !auth?.enabled()) && settingsTabs ? settingsTabsOf(settingsTabs, req.headers) : {}),
       });
       return true;
     }
