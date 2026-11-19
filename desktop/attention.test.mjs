@@ -176,3 +176,11 @@ test('one notification per session per read, the most pressing', () => {
   // With needs-you off, the assignment shows instead.
   assert.deepEqual(attention(after, seen, { enabled: enabledKinds({ 'needs-you': false }) }).notify.map((n) => n.kind), ['assigned']);
 });
+
+test('an answer with a field of an odd shape is read, not thrown on', () => {
+  // A stop reason the console never sends as anything but text: a list, a number.
+  assert.equal(pausedFor({ status: 'stopped', stopReason: ['idle for 2 h'] }), null);
+  assert.equal(pausedFor({ status: 'stopped', stopReason: 7 }), null);
+  const odd = { login: 'octocat', sessions: [{ id: 'a', owner: 'octocat', status: 'stopped', stopReason: ['idle for 2 h'], title: 'T' }] };
+  assert.doesNotThrow(() => attention(odd, attention(odd, null, { first: true }).now));
+});

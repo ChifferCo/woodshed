@@ -598,6 +598,16 @@ async function poll() {
     if (mine === generation) reading = false;
   }
   if (mine !== generation || base !== consoleUrl) return;
+  // Worked out before anything is kept: an answer that throws here (a field of a shape the console never sends) is a
+  // failed read like any other, below, and leaves the badge and what was seen as they were.
+  let result = null;
+  if (!failure && body) {
+    try {
+      result = attention(body, seen, { first: firstRead, enabled: enabledKinds(readSettings().notifications) });
+    } catch (err) {
+      failure = `an answer that could not be read: ${err.message}`;
+    }
+  }
   // The console did not answer: said once for each run of failures. One miss keeps the badge, a console that misses three
   // reads in a row (a minute) clears it, since it no longer says anything true.
   if (failure) {
@@ -617,10 +627,9 @@ async function poll() {
     forget();
     return;
   }
-  if (!body) return;
+  if (!result) return;
   appDomain = body.appDomain || null;
-  // A kind switched off is still followed, so switching it on later replays nothing.
-  const { badge, now, notify } = attention(body, seen, { first: firstRead, enabled: enabledKinds(readSettings().notifications) });
+  const { badge, now, notify } = result;
   seen = now;
   firstRead = false;
   app.setBadgeCount(badge);

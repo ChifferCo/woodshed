@@ -92,7 +92,8 @@ export function hasFailed(s) {
 
 /** @returns {string|null}  why the console paused it, `idle 1 h` or `ran 8 h`, or null when it is not paused */
 export function pausedFor(s) {
-  if (s.status !== 'stopped' || s.stoppedBy || !PAUSE_REASON_RE.test(s.stopReason ?? '')) return null;
+  // Text only: a reason of another shape (a list, a number) from an odd answer is no pause.
+  if (s.status !== 'stopped' || s.stoppedBy || typeof s.stopReason !== 'string' || !PAUSE_REASON_RE.test(s.stopReason)) return null;
   return s.stopReason.replace(PAUSE_REASON_RE, '$1 ');
 }
 
