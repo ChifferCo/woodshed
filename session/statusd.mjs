@@ -324,16 +324,24 @@ export function createPrLookup({ branch, lookup, now = Date.now, cacheMs = PR_CA
 }
 
 /**
- * What a pull request lookup is kept for: the branch, its upstream and that remote's URL, since a branch set to track
- * another remote branch, or a remote pointed at another repo, has another pull request.
+ * What a pull request lookup is kept for: the branch, its upstream, that remote's URL and the branch's own remote and
+ * merge settings, since a branch set to track another remote branch or pull request's ref, or a remote pointed at
+ * another repo, has another pull request.
  * @param {(...args: string[]) => Promise<string>} gitRun
  * @returns {Promise<string>}
  */
 export async function prLookupKey(gitRun) {
+  const branch = await gitRun('branch', '--show-current');
   return [
-    await gitRun('branch', '--show-current'),
+    branch,
     await gitRun('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => ''),
     await gitRun('ls-remote', '--get-url').catch(() => ''),
+    // What the branch merges from and where, as `gh pr checkout` sets them: a pull request's ref
+    // (`refs/pull/<n>/head`) is no remote-tracking branch, so @{u} names none of them.
+    ...(branch ? [
+      await gitRun('config', '--get', `branch.${branch}.remote`).catch(() => ''),
+      await gitRun('config', '--get', `branch.${branch}.merge`).catch(() => ''),
+    ] : []),
   ].join(' ');
 }
 

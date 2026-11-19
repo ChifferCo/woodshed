@@ -784,7 +784,7 @@ test('the pull request lookup is kept for the branch, its upstream and its remot
   const retracked = await prLookupKey(gitRun);
   assert.equal(new Set([first, repointed, retracked]).size, 3, 'each change is another key');
   Object.assign(repo, { upstream: null, url: null });
-  assert.equal(await prLookupKey(gitRun), 'woodshed/joel-1  ', 'no upstream or remote: the branch alone');
+  assert.equal((await prLookupKey(gitRun)).trim(), 'woodshed/joel-1', 'no upstream or remote: the branch alone');
 });
 
 test('a send marked agentOnly types only while claude or codex runs in the pane', () => {
@@ -850,4 +850,21 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   for (let i = 0; i < 50 && !(await typed('agent')); i++) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await typed('agent'), 'The review asks for changes\n');
   assert.equal((await call('GET', '/status')).body.agentOnlySend, true);
+});
+
+test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
+  // A real repository, configured as gh pr checkout leaves a pull request's branch.
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-prkey-'));
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const git = async (...args) => (await promisify(execFile)('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args])).stdout.trim();
+  await git('init', '-q', '-b', 'feat');
+  await git('commit', '-q', '--allow-empty', '-m', 'x');
+  await git('remote', 'add', 'origin', 'https://github.com/o/r.git');
+  await git('config', 'branch.feat.remote', 'origin');
+  await git('config', 'branch.feat.merge', 'refs/pull/9/head');
+  const nine = await prLookupKey(git);
+  await git('config', 'branch.feat.merge', 'refs/pull/12/head');
+  const twelve = await prLookupKey(git);
+  assert.notEqual(nine, twelve);
+  assert.match(twelve, /refs\/pull\/12\/head/);
 });
