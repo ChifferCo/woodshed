@@ -2186,6 +2186,9 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   // Handed to runQa's finally before anything else, cancelled or not: one place
   // removes the copy, and says so when it could not.
   if (snapshot.ok) pin(snapshot.dir);
+  // Logged before the cancel check: a copy that failed and could not be removed
+  // keeps room reserved, and a Discard meanwhile must not hide that.
+  else log('review.qa_copy_failed', { session, error: snapshot.error });
   if (!qaIsLive(session, gen)) return;
   if (!snapshot.ok) return fail(snapshot.error);
   log('review.qa_pinned', { session, treeish: treeish.slice(0, 12) });
