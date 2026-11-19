@@ -753,3 +753,18 @@ test('a checkout during the pull request lookup says nothing and keeps nothing f
   assert.equal(await prUrl(), 'https://github.com/o/r/pull/12', 'the new branch is looked up, not given the old one\'s');
   assert.equal(lookups, 2);
 });
+
+test('a branch set to track another remote branch is looked up again', async () => {
+  let upstream = 'origin/woodshed/joel-1';
+  let lookups = 0;
+  const prUrl = createPrLookup({
+    branch: async () => `woodshed/joel-1 ${upstream}`,
+    lookup: async () => { lookups += 1; return upstream === 'origin/woodshed/joel-1' ? 'https://github.com/o/r/pull/9' : 'https://github.com/o/r/pull/12'; },
+    now: () => 0,
+    cacheMs: 60_000,
+  });
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/9');
+  upstream = 'fork/feature';
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/12');
+  assert.equal(lookups, 2);
+});

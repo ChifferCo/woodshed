@@ -253,8 +253,8 @@ async function git(...args) {
 }
 
 /**
- * The pull request of the branch checked out now, kept a minute for that branch only, so a checkout of another branch
- * is reported at the next read. A checkout during the lookup leaves its answer unkept and unsaid: it may be either
+ * The pull request of the branch checked out now, kept a minute for that branch (and its upstream) only, so a checkout
+ * of another branch, or the branch set to track another, is reported at the next read. A checkout during the lookup leaves its answer unkept and unsaid: it may be either
  * branch's.
  * @param {{branch: () => Promise<string|null>, lookup: () => Promise<string|null>, now?: () => number, cacheMs?: number}} deps
  * @returns {() => Promise<string|null>}
@@ -278,7 +278,8 @@ export function createPrLookup({ branch, lookup, now = Date.now, cacheMs = PR_CA
 }
 
 const lookupPrUrl = createPrLookup({
-  branch: () => git('branch', '--show-current'),
+  // The branch and its upstream: a branch set to track another remote branch has another pull request.
+  branch: async () => `${await git('branch', '--show-current')} ${await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => '')}`,
   lookup: async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim(),
 });
 

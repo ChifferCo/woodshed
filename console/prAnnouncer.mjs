@@ -93,7 +93,10 @@ export function createPrAnnouncer({
   // Each watch is its session's own, so two My Woodshed sessions on one pull request are each told, and neither takes
   // the place of a shared session's post.
   const itemKey = (item) => (item.watch ? `${keyOf(item.number, item.project)}@${item.sessionId}` : keyOf(item.number, item.project));
-  const gh = (item) => (item.project && githubOf ? githubOf(item.project) : github);
+  // The client a check started with, for each item being checked: a project removed during its reads must not move the
+  // rest of them to another repo.
+  const pinned = new Map();
+  const gh = (item) => pinned.get(item) ?? (item.project && githubOf ? githubOf(item.project) : github);
   const projectOf = (item) => item.project ?? defaultProjectName();
   const watched = (item) => item.watch === true;
   const hasChannel = (name) => (slack?.channelFor ? Boolean(slack.channelFor(name).channel) : Boolean(slack?.available));
@@ -271,16 +274,22 @@ export function createPrAnnouncer({
     // A session on another pull request, or a branch with none, for now (or statusd's lookup failed): the watch waits,
     // keeping what it told, so nothing is told twice when the session is back on it. It still ends if the pull request
     // closes meanwhile.
+    // Its session ended, or its project left or changed, during a read: nothing read is acted on.
+    const over = () => watchOver(item);
     if (listening(item) === 'elsewhere') {
       const pull = await gh(item).pull(item.number);
-      if (!renewed() && pull.state !== 'open') return drop(item, 'closed');
+      if (renewed()) return;
+      if (over()) return endWatch(item, over());
+      if (pull.state !== 'open') return drop(item, 'closed');
       return;
     }
     const gates = await gatesOf(item.project ?? null, item.number);
     if (renewed()) return;
+    if (over()) return endWatch(item, over());
     if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
     const pull = await gh(item).pull(item.number);
     if (renewed()) return;
+    if (over()) return endWatch(item, over());
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
@@ -448,7 +457,14 @@ export function createPrAnnouncer({
   }
 
   async function checkOne(item) {
-    if (watched(item)) return watchOne(item);
+    if (watched(item)) {
+      pinned.set(item, gh(item));
+      try {
+        return await watchOne(item);
+      } finally {
+        pinned.delete(item);
+      }
+    }
     const gates = await gatesOf(item.project ?? null, item.number);
     const pull = await gh(item).pull(item.number);
     if (pull.state !== 'open') return drop(item, 'closed');

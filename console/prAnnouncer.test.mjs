@@ -1046,3 +1046,19 @@ test('a waiting watch still ends when its pull request closes', async () => {
   await watcher.check();
   assert.deepEqual([dropped, store.state.slackPending], [['closed'], []]);
 });
+
+test('a project removed while a watch reads its gates ends the watch, reading nothing of another repo', async () => {
+  const { store, session, github, dropped } = setup();
+  let gone = false;
+  const defaultReads = [];
+  const defaultRepo = { pull: async (number) => { defaultReads.push(number); return { number, state: 'closed', head: { sha: 'zzz' } }; } };
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github: defaultRepo, githubOf: (name) => (name === 'web' && !gone ? github : defaultRepo), slack: null,
+    gates: async () => { gone = true; return GATES; }, now: () => Date.parse('2026-10-26T12:00:00.000Z'),
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, listening: () => (gone ? 'ended' : 'yes') },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, { name: 'web', repo: 'acme/web' }, { watch: true });
+  await watcher.check();
+  assert.deepEqual([dropped, defaultReads, told], [['its session ended'], [], []]);
+});
