@@ -899,3 +899,29 @@ test('a resumed session\'s watch tells the new run where the pull request stands
   assert.equal(told.length, 2, 'the verdict is told to the resumed run');
   assert.match(told[1], /asks for changes/);
 });
+
+test('a check whose GitHub reads span a resume tells the new run nothing from them', async () => {
+  const { store, session, github } = setup();
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock,
+    events: { feedback: (item, text) => { told.push(text); return true; } },
+  });
+  const mine = { ...session, owner: 'joel' };
+  await watcher.track(mine, null, { watch: true });
+  const { checkRuns } = github;
+  let resumeDuringRead = true;
+  github.checkRuns = async (sha) => {
+    if (resumeDuringRead) {
+      resumeDuringRead = false;
+      await watcher.track(mine, null, { watch: true });
+    }
+    return checkRuns(sha);
+  };
+  await watcher.check();
+  assert.deepEqual([told, store.state.slackPending[0].passedSha], [[], undefined], 'the old run\'s reads are dropped');
+  clock += MINUTE;
+  await watcher.check();
+  assert.equal(told.length, 1, 'the new run is told on its own check');
+});

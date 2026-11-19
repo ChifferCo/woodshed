@@ -137,7 +137,9 @@ export function createPrAnnouncer({
     // wait over, rather than running out on the old run's clock, and the new run hears where the pull request stands,
     // whatever the old run was told.
     if (known && watch) {
-      Object.assign(known, { since: new Date(now()).toISOString(), fedReview: undefined, fedSuite: undefined, passedSha: undefined, untoldSaid: undefined });
+      Object.assign(known, {
+        since: new Date(now()).toISOString(), run: (known.run ?? 0) + 1, fedReview: undefined, fedSuite: undefined, passedSha: undefined, untoldSaid: undefined,
+      });
       store.save();
     }
     if (!known) {
@@ -205,12 +207,15 @@ export function createPrAnnouncer({
 
   async function watchOne(item) {
     if (watchOver(item)) return drop(item, watchOver(item));
+    // A resume while GitHub is read starts a new run of the watch: what was read for the old one is not told.
+    const run = item.run ?? 0;
     const gates = await gatesOf(item.project ?? null, item.number);
     if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
     const pull = await gh(item).pull(item.number);
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
+    if ((item.run ?? 0) !== run || !pending().includes(item)) return;
     if (watchOver(item)) return drop(item, watchOver(item));
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
