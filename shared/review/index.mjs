@@ -2183,12 +2183,11 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   const treeish = snapshotTreeish(review);
   if (!treeish) return fail('this review was taken before the Q&A could pin its code: press Re-review, then ask again');
   const snapshot = await makeSnapshot({ repoDir: review.worktree, treeish, session });
-  if (!qaIsLive(session, gen)) {
-    if (snapshot.ok) removeSnapshot(snapshot.dir);
-    return;
-  }
+  // Handed to runQa's finally before anything else, cancelled or not: one place
+  // removes the copy, and says so when it could not.
+  if (snapshot.ok) pin(snapshot.dir);
+  if (!qaIsLive(session, gen)) return;
   if (!snapshot.ok) return fail(snapshot.error);
-  pin(snapshot.dir);
   log('review.qa_pinned', { session, treeish: treeish.slice(0, 12) });
 
   const asked = await qaRun({
