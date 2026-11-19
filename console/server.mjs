@@ -120,6 +120,7 @@
 //   GET  /api/sessions/<id>/review     what the session's branch changes, from GitHub (review.mjs)
 //   *    https://<id>.<app domain>/...  the session's running app, through its statusd (appProxy.mjs)
 //   GET  /auth/app?id=&next=     a one-time code that signs this browser in to that app (auth.mjs)
+//   GET  /auth/desktop, POST /auth/desktop/claim   the desktop app's sign-in through the browser (desktopSignIn.mjs)
 //   GET  https://<id>.<app domain>/__woodshed/auth   claims the code: the app's own sign-in cookie
 //   GET  /api/sessions/<id>/app-share   who else may open a My Woodshed session's app, and its links (owner only; appShares.mjs)
 //   POST /api/sessions/<id>/app-share/members  {"on": true}   every signed-in member may open the app
@@ -153,6 +154,7 @@ import { handlePwaRequest, MANIFEST } from '../shared/pwa.mjs';
 import { createReviewProxy, isReviewPath } from './reviewProxy.mjs';
 import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
+import { handleDesktopSignIn } from './desktopSignIn.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
 import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
@@ -684,6 +686,8 @@ export function createHandler({
     }
     // Behind a hosting proxy there is no GitHub sign-in to start, finish or end: the proxy's header is the sign-in.
     if (!auth || trusted) return false;
+    // The desktop app's sign-in through the person's browser (desktopSignIn.mjs).
+    if (pathname.startsWith('/auth/desktop') && auth.desktopCode && await handleDesktopSignIn({ req, res, url, auth, consoleName })) return true;
     if (pathname === '/auth/start' && req.method === 'GET') {
       if (!auth.available()) {
         redirect(res, '/login');

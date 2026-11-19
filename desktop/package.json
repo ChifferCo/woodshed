@@ -19,11 +19,50 @@
   "build": {
     "appId": "run.woodshed.desktop",
     "productName": "Woodshed",
-    "directories": { "output": "dist" },
-    "files": ["*.mjs", "*.cjs", "setup.html", "setup.js", "icon.png", "!*.test.mjs", "!renderIcon.mjs"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "*.mjs",
+      "*.cjs",
+      "setup.html",
+      "setup.js",
+      "signin.html",
+      "signin.js",
+      "icon.png",
+      "!*.test.mjs",
+      "!renderIcon.mjs"
+    ],
     "icon": "icon.png",
-    "mac": { "category": "public.app-category.developer-tools", "target": ["dmg", "zip"] },
-    "win": { "target": ["nsis"] },
-    "linux": { "target": ["AppImage", "deb"], "category": "Development" }
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Development",
+      "mimeTypes": [
+        "x-scheme-handler/woodshed"
+      ]
+    },
+    "protocols": [
+      {
+        "name": "Woodshed sign-in",
+        "schemes": [
+          "woodshed"
+        ]
+      }
+    ]
   }
 }

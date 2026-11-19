@@ -1287,6 +1287,15 @@ hours, and write access is checked again every hour, so leaving the repository
 signs you out. The GitHub user token is used once, to learn the login, and
 dropped.
 
+**The desktop app** (`desktop/`) signs in through the person's own browser, where they are usually signed in to GitHub
+already (`console/desktopSignIn.mjs`). Its Sign in with GitHub opens `/auth/desktop?challenge=` in the browser, which
+signs in as usual if it has to, then opens `woodshed://signed-in?code=` with a code that lives two minutes and works
+once. The app claims it at `POST /auth/desktop/claim` with the verifier the challenge was made from (PKCE's S256), for a
+session of its own: signing the browser out leaves the app signed in, and the other way round. `GET
+/auth/desktop/ready` says the console does this; a console behind a hosting proxy, which signs people in itself,
+answers none of these, and the app signs in inside its window there. The console logs `auth: desktop sign-in code
+issued`, `auth: desktop signed in`, or `auth: desktop sign-in code refused` with `known` and `verified`.
+
 **A console with no repo yet** (neither `WOODSHED_REPO` nor `WOODSHED_PROJECTS`, and nothing added on the
 Repos card) has no repository to ask about. It lets in the owner of the account its GitHub App is installed on: that
 user, or an active admin of that organization (`console/appOwner.mjs`, asked with a token of the installation narrowed

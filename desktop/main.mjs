@@ -5,8 +5,9 @@ import { app, BrowserWindow, Menu, Notification, ipcMain, nativeImage, net, sess
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { attention } from './attention.mjs';
+import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination } from './links.mjs';
+import { PROTOCOL, browserUrl, createPending, linkInArgs, parseSignedInLink, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const iconFile = path.join(here, 'icon.png');
@@ -76,6 +77,13 @@ function guard(win) {
   });
   contents.on('did-create-window', (child) => guard(child));
   contents.on('will-navigate', (event, url) => {
+    // The console's Sign in with GitHub: in the person's browser, when the console can hand it back (signInInBrowser).
+    const step = consoleUrl && win === mainWindow ? signInStep(url, consoleUrl) : null;
+    if (step) {
+      event.preventDefault();
+      signInInBrowser(step.next, url);
+      return;
+    }
     const to = where(url);
     if (to === 'console' || to === 'signIn' || (to === 'app' && win !== mainWindow)) return;
     event.preventDefault();
@@ -146,14 +154,88 @@ ipcMain.handle('console:connect', async (event, typed) => {
   return { ok: true };
 });
 
+// --- Signing in through the browser, where the person is usually signed in to GitHub already (signIn.mjs). The
+// console hands the sign-in back on a woodshed:// link; one that cannot (older, or behind a hosting proxy that signs
+// people in itself) is signed in to in the window, as before. ---
+
+const pending = createPending();
+
+async function desktopSignInReady() {
+  try {
+    const res = await net.fetch(new URL('auth/desktop/ready', consoleUrl).href, { headers: { Accept: 'application/json' } });
+    return res.ok && (await res.json().catch(() => null))?.desktop === true;
+  } catch {
+    return false;
+  }
+}
+
+// `inWindow`: the address the page was going to, for a console that cannot hand the sign-in back.
+async function signInInBrowser(next, inWindow) {
+  if (!(await desktopSignInReady())) {
+    console.log('woodshed-desktop: the console signs in inside the window');
+    mainWindow?.loadURL(inWindow);
+    return;
+  }
+  const { challenge } = pending.begin(next);
+  shell.openExternal(browserUrl(consoleUrl, { challenge, next }));
+  mainWindow?.loadFile(path.join(here, 'signin.html'));
+}
+
+async function finishSignIn(link) {
+  const signedIn = parseSignedInLink(link);
+  if (!signedIn || !consoleUrl) return;
+  const started = pending.take();
+  if (!started) {
+    console.warn('woodshed-desktop: a sign-in link arrived with no sign-in started, ignored');
+    return;
+  }
+  if (!mainWindow) createMainWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  let error = null;
+  try {
+    const res = await session.defaultSession.fetch(new URL('auth/desktop/claim', consoleUrl).href, {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/json', 'x-woodshed': '1' },
+      body: JSON.stringify({ code: signedIn.code, verifier: started.verifier }),
+    });
+    if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The console answered ${res.status}.`;
+  } catch (err) {
+    error = `The console did not answer: ${err.message}`;
+  }
+  if (error) {
+    mainWindow.loadFile(path.join(here, 'signin.html'), { query: { error } });
+    return;
+  }
+  mainWindow.loadURL(new URL(signedIn.next.replace(/^\//, ''), consoleUrl).href);
+  startWatching();
+}
+
+function fromSignInPage(event) {
+  return mainWindow && event.sender === mainWindow.webContents && event.senderFrame?.url.startsWith('file:');
+}
+// The waiting page's two buttons: the browser again, or the window after all.
+ipcMain.handle('signin:browser', (event) => {
+  if (!fromSignInPage(event) || !consoleUrl) return;
+  const { next } = pending.waiting() ? pending.take() : { next: '/' };
+  signInInBrowser(next, new URL(`auth/start?next=${encodeURIComponent(next)}`, consoleUrl).href);
+});
+ipcMain.handle('signin:here', (event) => {
+  if (!fromSignInPage(event) || !consoleUrl) return;
+  const next = pending.take()?.next ?? '/';
+  mainWindow.loadURL(new URL(`auth/start?next=${encodeURIComponent(next)}`, consoleUrl).href);
+});
+
 // --- Attention: the badge and notifications, from the same /api/sessions the rail reads, with the window's cookie. ---
 
-let waiting = new Map();
+// What the last read saw (attention.mjs, Seen), which the next is compared with; null until a first read.
+let seen = null;
 let firstRead = true;
 let timer = null;
 
 function startWatching() {
-  waiting = new Map();
+  seen = null;
   firstRead = true;
   clearTimeout(timer);
   poll();
@@ -173,8 +255,9 @@ async function poll() {
     return;
   }
   appDomain = body.appDomain || null;
-  const { badge, now, notify } = attention(body, waiting, { first: firstRead });
-  waiting = now;
+  // A kind switched off is still followed, so switching it on later replays nothing.
+  const { badge, now, notify } = attention(body, seen, { first: firstRead, enabled: enabledKinds(readSettings().notifications) });
+  seen = now;
   firstRead = false;
   app.setBadgeCount(badge);
   if (process.platform === 'win32' && mainWindow) mainWindow.setOverlayIcon(badge ? icon : null, badge ? `${badge} need you` : '');
@@ -223,6 +306,16 @@ function buildMenu() {
         { label: 'Open in browser', click: () => { const url = BrowserWindow.getFocusedWindow()?.webContents.getURL(); if (url?.startsWith('http')) shell.openExternal(url); } },
         { label: 'Change console…', click: () => mainWindow && showSetup() },
         { type: 'separator' },
+        // One switch per kind (attention.mjs, NOTIFICATION_KINDS), saved in settings.json's `notifications`; the next
+        // read uses it. The badge counts the sessions that need you whatever these say.
+        {
+          label: 'Notifications',
+          submenu: NOTIFICATION_KINDS.map(({ key, label }) => ({
+            label, type: 'checkbox', checked: enabledKinds(readSettings().notifications).has(key),
+            click: (item) => writeSettings({ notifications: { ...readSettings().notifications, [key]: item.checked } }),
+          })),
+        },
+        { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' },
       ],
     },
@@ -248,7 +341,18 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.setName('Woodshed');
   if (process.platform === 'win32') app.setAppUserModelId('run.woodshed.desktop');
-  app.on('second-instance', () => {
+  // The woodshed:// link: macOS hands it to the running app, Windows and Linux start a second one with it as an
+  // argument, which the lock below turns into 'second-instance'. A run from a checkout registers Electron itself, with
+  // this folder as its argument.
+  if (process.defaultApp) app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1] ?? '.')]);
+  else app.setAsDefaultProtocolClient(PROTOCOL);
+  app.on('open-url', (event, link) => {
+    event.preventDefault();
+    app.whenReady().then(() => finishSignIn(link));
+  });
+  app.on('second-instance', (event, argv) => {
+    const link = linkInArgs(argv);
+    if (link) return finishSignIn(link);
     if (!mainWindow) return createMainWindow();
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();

@@ -17,6 +17,15 @@
 // The code lives a minute and works once. An app's cookie leans on the console session that made it, so
 // signing out of the console, or losing write access, ends it too.
 //
+// The desktop app (desktop/) signs in through the person's own browser, where they are usually signed in to GitHub
+// already, as native apps do (RFC 8252), and is handed a session of its own (console/desktopSignIn.mjs):
+//
+//   GET  /auth/desktop?challenge=  (browser, signed in)  ->  woodshed://signed-in?code=
+//   POST /auth/desktop/claim       (the app: code, verifier)  ->  a session cookie for the app
+//
+// The challenge is the SHA-256 of a verifier only the app holds (PKCE's S256), so a code another program catches on
+// its way to the app is no use to it. The code lives two minutes and works once.
+//
 // Saving the App's client secret only makes sign-in available. The console starts requiring it after the
 // first sign-in that completes, so a wrong Callback URL in the App's settings can lock nobody out. A console
 // the internet reaches passes `required` instead: sign-in is then required from the start and stays so.
@@ -28,10 +37,14 @@ export const CLIENT_SECRET = 'github-app-client-secret';
 const STATE_COOKIE = 'woodshed_oauth_state';
 const APP_COOKIE = 'woodshed_app';
 const APP_CODE_MS = 60_000;
+const DESKTOP_CODE_MS = 2 * 60_000;
 const SESSION_MS = 12 * 3_600_000;
 const RECHECK_MS = 3_600_000;
 const RETRY_MS = 5 * 60_000;
 const STATE_MS = 10 * 60_000;
+
+// PKCE's S256 challenge: 32 bytes of SHA-256, base64url with no padding.
+export const DESKTOP_CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;
 
 function hash(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -122,6 +135,7 @@ export function createAuth({
   const rechecks = new Map();
   const retryAfter = new Map();
   const appCodes = new Map();
+  const desktopCodes = new Map();
 
   function sessions() {
     store.state.authSessions ??= {};
@@ -142,6 +156,7 @@ export function createAuth({
     for (const [key, s] of Object.entries(sessions())) if (s.expiresAt <= expiredBefore) delete sessions()[key];
     for (const [state, p] of pending) if (p.expiresAt <= expiredBefore) pending.delete(state);
     for (const [code, c] of appCodes) if (c.expiresAt <= expiredBefore) appCodes.delete(code);
+    for (const [code, c] of desktopCodes) if (c.expiresAt <= expiredBefore) desktopCodes.delete(code);
     for (const [key, a] of Object.entries(appSessions())) if (!sessions()[a.key]) delete appSessions()[key];
   }
 
@@ -380,8 +395,48 @@ export function createAuth({
     return null;
   }
 
+
+  /**
+   * A one-time code for the desktop app, from a browser signed in to the console (a member or a visitor: the app's
+   * session is held to the same list as the browser's, on every request).
+   * @param {{cookieHeader: string|undefined, challenge: string}} args  `challenge`: base64url SHA-256 of the app's verifier
+   * @returns {Promise<string|null>}  null when this browser is not signed in
+   */
+  async function desktopCode({ cookieHeader, challenge }) {
+    if (!DESKTOP_CHALLENGE_RE.test(String(challenge))) throw new Error('not a desktop sign-in challenge');
+    const user = await visitorFor(cookieHeader);
+    if (!user) return null;
+    forget(now());
+    const code = crypto.randomBytes(24).toString('hex');
+    desktopCodes.set(code, { login: user.login, challenge, expiresAt: now() + DESKTOP_CODE_MS });
+    console.log('auth: desktop sign-in code issued', { login: user.login });
+    return code;
+  }
+
+  /**
+   * @param {{code: string, verifier: string}} args
+   * @returns {{login: string, setCookie: string}|null}  a session of the app's own; null for a used, expired or
+   *   unknown code, or a verifier that is not the one the challenge was made from
+   */
+  function claimDesktopCode({ code, verifier }) {
+    const claimed = desktopCodes.get(String(code));
+    desktopCodes.delete(String(code));
+    forget(now());
+    const proven = claimed && typeof verifier === 'string' && verifier.length >= 43 && verifier.length <= 128
+      && crypto.createHash('sha256').update(verifier).digest('base64url') === claimed.challenge;
+    if (!claimed || claimed.expiresAt <= now() || !proven) {
+      console.warn('auth: desktop sign-in code refused', { known: Boolean(claimed), verified: Boolean(proven) });
+      return null;
+    }
+    const id = crypto.randomBytes(32).toString('hex');
+    sessions()[hash(id)] = { login: claimed.login, createdAt: now(), checkedAt: now(), expiresAt: now() + SESSION_MS, desktop: true };
+    store.save();
+    console.log('auth: desktop signed in', { login: claimed.login });
+    return { login: claimed.login, setCookie: cookie(sessionCookie, id, SESSION_MS / 1000) };
+  }
+
   return {
     available, enabled, disarm, start, callback, sessionFor, visitorFor, signOut, redirectUri,
-    appCode, claimAppCode, appSessionFor, appCookie,
+    appCode, claimAppCode, appSessionFor, appCookie, desktopCode, claimDesktopCode,
   };
 }

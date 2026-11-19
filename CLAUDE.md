@@ -135,6 +135,13 @@ URL on top of each env file's Repo settings values
   certificate asked` with `allowed` and `why` for each name, as in "Open app answers with a certificate error on a local
   install, or on AWS with no `domain`" below. `sudo docker compose logs caddy` on the base box has the issuer's answer; a Let's Encrypt rate limit
   on `sslip.io` is shared with everyone, and Caddy then tries ZeroSSL.
+- **The desktop app's sign-in opens the browser, which signs in, and the app stays signed out.** The browser's last page
+  hands the app a `woodshed://` link: the console logs `auth: desktop sign-in code issued`, then `auth: desktop signed
+  in` once the app claimed it, or `auth: desktop sign-in code refused` with `known` (false: used, expired, or from
+  another console) and `verified` (false: not the verifier of the sign-in the app started). No claim at all means the
+  link never reached the app: the browser asked whether to open Woodshed and was told no, or the OS has no app for
+  `woodshed://` (a run from a checkout registers Electron for it; a built one registers itself). **Sign in in this
+  window instead** on the app's waiting page always works (console/README.md, "Sign-in").
 - **Nobody can sign in to a console with no repo yet.** Until an admin adds one (Console settings, Repos), only the
   owner of the account the GitHub App is installed on gets in: the console logs `appOwner: owner checked` with the
   `account`, its `type`, the `role` for an organization and `owner`. `appOwner: the App may not read the org's

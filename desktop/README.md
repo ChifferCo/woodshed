@@ -60,17 +60,57 @@ from Electron's own bundle, and only a built app (`npm run dist`) is called Wood
 | --- | --- |
 | The console itself | The app: the main window, or a window of its own for what the page opens in a new tab (a terminal, a database viewer) |
 | A session's app, editor or viewer on the console's app domain (`appDomain` from `/api/sessions`), or another port of a local console's host | A window of its own, sharing the console's cookie, so its sign-in works as in a browser |
-| GitHub's sign-in pages (`/login…`, `/session`, `/sessions/…`) | The window signing in |
+| The console's **Sign in with GitHub** (`/auth/start`) | The default browser, which hands the sign-in back (below); on a console that cannot, the window, as GitHub's sign-in pages (`/login…`, `/session`, `/sessions/…`) are |
 | Everything else: pull requests, issues, docs | The default browser |
+
+## Signing in
+
+As native apps do, the app signs in through your default browser, where you are usually signed in to GitHub already
+(`signIn.mjs`; the console's side is `console/desktopSignIn.mjs`, and console/README.md's "Sign-in" has the routes):
+
+1. **Sign in with GitHub** on the console's page opens the browser at the console's `/auth/desktop`, with the SHA-256
+   of a verifier only the app holds. The window says to finish there.
+2. The browser signs in to the console as it always does (a click, when GitHub knows you), and its last page opens
+   `woodshed://signed-in?code=…`. The browser asks whether to open Woodshed: say yes.
+3. The app claims the code with its verifier, gets a session of its own, and opens where you were going. A code
+   another program catches is no use without the verifier, works once, and lasts two minutes; a link the app started
+   no sign-in for is ignored.
+
+A console that cannot hand the sign-in back (one from before this, or the hosted one, whose hosting layer signs people
+in itself and does not answer `/auth/desktop/ready`) is signed in to inside the window, as in a browser. The waiting
+page's **Sign in in this window instead** does the same anywhere.
+
+`woodshed://` is the app's: a built app registers it (electron-builder's `protocols`); `npm start` registers Electron,
+with this folder as its argument.
 
 ## Notifications and the badge
 
 The main process reads `/api/sessions` every 20 seconds with the window's cookie, as the rail does, and
 `attention.mjs` picks out your sessions, as the rail's Mine does (your private sessions, and the shared ones you
-started or have; every session on a console one person uses). A running session whose claude asks for you
-(`needs-you`) counts toward the badge and is notified; one that finished its turn (`done`) is notified only. Questions
-from Slack, reviews and QA runs never count. The first read after a start notifies about nothing, so opening the app
-does not replay every waiting session. Signed out, nothing is read.
+started or have; every session on a console one person uses). The badge counts your running sessions whose claude asks
+for you (`needs-you`). A notification is a change between two reads, in the console's words, and clicking it opens
+that session:
+
+| Kind | Says | On at first |
+| --- | --- | --- |
+| A session needs you | `Needs you: claude is asking a question.` | Yes |
+| A session is done with its turn | `Done: claude finished its turn.` (not while it is in review or waiting on a job) | Yes |
+| A session failed | `Failed: <its error's first line>.`, or `Failed: it did not start in time.` | Yes |
+| A session is assigned to you | `Assigned to you by <name>.`, when someone else hands you a shared session | Yes |
+| A pull request is opened | `Pull request opened: PR 12, <title>.` (not the one a session was started on) | Yes |
+| A pull request is merged or closed | `Merged: PR 12, <title>.` or `Closed without merging: …` | Yes |
+| A review of your pull request finished | `Review finished: approved.`, `changes requested`, `commented`, `approved, held until QA reports`, or `Review finished without a verdict.` | Yes |
+| A QA run on your pull request finished | `QA passed: <its check's title>.`, `QA failed: …` or `QA finished: …` | Yes |
+| A pull request's checks fail or pass | `Checks failing: 1 of 5 on PR 12, <title>.` or `Checks passing: all 5 on …` | No: each push runs them again, and claude usually watches them itself |
+| A session is paused at its idle or lifetime limit | `Paused: idle 2 h. Resume it from the console.` | No: an idle pause follows a needs-you or done already heard |
+
+**File → Notifications** switches each kind on or off, kept in the app's `settings.json` under `notifications`; the
+badge counts whatever they say. A switched-off kind is still followed, so switching it on replays nothing. A session
+with several changes in one read rings once, for the most pressing. The first read after a start notifies about
+nothing, so opening the app does not replay every waiting session, nor does a session you are looking at. A
+pull request's review decision is left out: Woodshed's own review rings from its review session, and a person's
+review reaches the session that opened the pull request, whose next needs-you or done rings. Questions from Slack never
+count, and reviews and QA runs only for their verdict. Signed out, nothing is read.
 
 ## What a page may do
 
@@ -80,6 +120,6 @@ session app's page the clipboard and full screen; anything else is refused. No p
 
 ## Checks
 
-`node --test desktop/` (part of Woodshed's `node --test` run) checks `links.mjs` and `attention.mjs`, which need no
+`node --test desktop/*.test.mjs` (part of Woodshed's `node --test` run; a bare `desktop/` would run `main.mjs` too, which needs Electron) checks `links.mjs` and `attention.mjs`, which need no
 Electron. To see the app itself, start a dev console (`bash scripts/devConsoleApp.sh start` from the repo's root) and
 `npm start -- --console=localhost:7690`.
