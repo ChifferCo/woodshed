@@ -233,3 +233,10 @@ test("another login's tabs, left by a Sign out in another browser tab, are delet
   tabs.memory(store, 'bob');
   assert.match(store.items[tabs.KEY], /bbbb2222/);
 });
+
+test('a lookup that answers for another login than the page was drawn for is an account change', () => {
+  assert.equal(tabs.otherLogin('alice', 'bob'), true, 'Bob signed in in another browser tab: nothing kept as Alice');
+  assert.equal(tabs.otherLogin('alice', 'alice'), false);
+  assert.equal(tabs.otherLogin(null, 'bob'), false, 'a page drawn with no sign-in names nobody');
+  assert.equal(tabs.otherLogin('alice', undefined), false, 'a console that sends no login');
+});

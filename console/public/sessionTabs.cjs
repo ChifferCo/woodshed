@@ -78,6 +78,17 @@
   }
 
   /**
+   * Whether a list lookup answered for another login than the page was drawn for: the account changed in another
+   * browser tab with no sign-out here, so nothing it answers may be kept under the page's login. Unknown on either
+   * side (no sign-in, an older console) is no change.
+   * @param {string|null} pageLogin  the page's woodshed-login meta
+   * @param {string|null|undefined} answerLogin  the lookup's `login`
+   */
+  function otherLogin(pageLogin, answerLogin) {
+    return Boolean(pageLogin) && Boolean(answerLogin) && pageLogin !== answerLogin;
+  }
+
+  /**
    * Orders the page's list lookups, which a move and the poll can have in flight at once: an answer to an older one
    * that lands after a newer one's is stale (a session starting that now runs), and must not confirm a tab's fallback.
    * Only an answer that came back applies: a failed lookup is dropped when stale, and never makes an older answer stale.
@@ -136,5 +147,5 @@
     };
   }
 
-  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, lookups, memory };
+  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, otherLogin, lookups, memory };
 });

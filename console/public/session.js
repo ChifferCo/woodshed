@@ -2044,6 +2044,13 @@
       const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
       if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
+      // Signed in as someone else in another browser tab since this page was drawn: nothing of theirs is drawn or kept
+      // under this page's login. What was kept goes, nothing more is written, and the page loads again as them.
+      if (SessionTabs.otherLogin(signedInAs, answer[0]?.login)) {
+        W.forgetSignedIn();
+        window.location.reload();
+        return;
+      }
       [data, me] = answer;
       routePending = false;
       routeConfirmed = true;
