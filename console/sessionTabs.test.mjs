@@ -103,3 +103,12 @@ test('a failed lookup confirms nothing: the tab stays held until one answers', (
   at = tabs.settle({ tab: at.tab, held: at.held, pending: false, s: running, hasShell: true });
   assert.deepEqual(at, { tab: 'diff', held: null, fellBack: false }, 'the retry that answers shows Diff');
 });
+
+test('clicking the tab already showing is a choice when it stands in for another', () => {
+  assert.equal(tabs.picks({ tab: 'agent', next: 'review', held: null, landOnReview: false }), true, 'another tab');
+  assert.equal(tabs.picks({ tab: 'agent', next: 'agent', held: null, landOnReview: false }), false, 'nothing to change');
+  assert.equal(tabs.picks({ tab: 'agent', next: 'agent', held: 'diff', landOnReview: false }), true,
+    'Agent while Diff is held for the lookup: Agent replaces it');
+  assert.equal(tabs.picks({ tab: 'agent', next: 'agent', held: null, landOnReview: true }), true,
+    'Agent on a starting review-only session: it no longer switches to Review once it runs');
+});

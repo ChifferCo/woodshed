@@ -1790,10 +1790,10 @@
   }
 
   function setTab(next) {
-    // Agent picked while another tab is held (the lookup pending) is a choice too: it replaces the held one.
-    const held = heldTab;
+    // Agent picked while it already shows is a choice too when it stands in for another tab (sessionTabs.cjs, picks).
+    const picked = SessionTabs.picks({ tab, next, held: heldTab, landOnReview });
     heldTab = null;
-    if (tab === next && !held) return;
+    if (!picked) return;
     tab = next;
     landOnReview = false;
     tabMemory.remember(id, tab);

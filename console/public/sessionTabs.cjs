@@ -51,6 +51,16 @@
   }
 
   /**
+   * Whether clicking `next` is a choice to keep. A click on the tab showing is one too when that tab stands in for
+   * another: one held while the lookup is pending (settle), or a review-only session's Review, which it switches to
+   * once it runs (`landOnReview`). Either is then replaced by the click.
+   * @param {{ tab: string, next: string, held: string|null, landOnReview: boolean }} at
+   */
+  function picks({ tab, next, held, landOnReview }) {
+    return tab !== next || Boolean(held) || landOnReview;
+  }
+
+  /**
    * The tabs kept for `login` in `storage` (sessionStorage), which may be missing or throw.
    * @returns {{ asked(id: string|null, inAddress: string|null): string|null, remember(id: string, tab: string): void }}
    */
@@ -79,5 +89,5 @@
     };
   }
 
-  return { KEY, TABS, known, shown, settle, memory };
+  return { KEY, TABS, known, shown, settle, picks, memory };
 });
