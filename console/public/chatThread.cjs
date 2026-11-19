@@ -220,6 +220,56 @@
     return out;
   }
 
+  /**
+   * The code each turn changed, from its edits' diffs (session/transcriptDiff.mjs). A turn is a message from the person
+   * and everything after it up to their next one. Its files are listed once each, in the order it first touched them,
+   * with every edit of that file in order and the counts summed; the list shows under the turn's last work log that
+   * edited a file, which is where `key` points.
+   * @param {object[]} list  items()'s answer
+   * @returns {Map<number, {key: number, turn: number, files: object[], add: number, del: number, commands: boolean, cut: boolean}>}
+   *   by the work log's key it shows under. turn: the key of the turn's first work log, which stays put as the turn
+   *   goes on. files: {path, op: 'edit'|'add'|'delete'|'rewrite', to?, add, del, cut, edits: [{hunks, all?, cut?}]}.
+   *   commands: the turn ran commands, which can change files the record does not show
+   */
+  function turnChanges(list) {
+    const out = new Map();
+    let turn = null;
+    const close = () => {
+      if (turn?.files.size) {
+        const files = [...turn.files.values()];
+        out.set(turn.key, {
+          key: turn.key, turn: turn.first, files, commands: turn.commands,
+          add: files.reduce((n, f) => n + f.add, 0), del: files.reduce((n, f) => n + f.del, 0), cut: files.some((f) => f.cut),
+        });
+      }
+      turn = null;
+    };
+    for (const item of list) {
+      if (item.kind === 'user') close();
+      if (item.kind !== 'work') continue;
+      turn ??= { files: new Map(), commands: false, key: null, first: item.key };
+      for (const tool of item.tools) {
+        if (toolKind(tool.tool) === 'command') turn.commands = true;
+        for (const d of Array.isArray(tool.diffs) ? tool.diffs : []) {
+          if (!d || typeof d.path !== 'string') continue;
+          turn.key = item.key;
+          let file = turn.files.get(d.path);
+          if (!file) turn.files.set(d.path, file = { path: d.path, op: d.op, add: 0, del: 0, cut: false, edits: [] });
+          // A file the turn made stays new however often it is edited after; one it deleted, or wrote whole, says so.
+          else if (d.op === 'delete') file.op = 'delete';
+          else if (d.op !== 'edit' && file.op !== 'add') file.op = 'rewrite';
+          if (d.to) file.to = d.to;
+          file.add += Number(d.add) || 0;
+          file.del += Number(d.del) || 0;
+          if (d.cut) file.cut = true;
+          file.edits.push({ hunks: Array.isArray(d.hunks) ? d.hunks : [], ...(d.all && { all: true }), ...(d.cut && { cut: true }), ...(d.op === 'rewrite' && { rewrite: true }) });
+        }
+      }
+    }
+    close();
+    return out;
+  }
+
   const squash = (text) => String(text).replace(/\s+/g, ' ').trim();
   // How long a sent message is shown as sent before it is let go, when the record never shows it: an agent that
   // exited, or a message it took as a command.
@@ -329,5 +379,5 @@
     return { asks: prompt.what ? `${prompt.what}: ${prompt.title}` : prompt.title, lines: reason ? [...lines, reason] : lines };
   }
 
-  return { markdown, inline, items, toolKind, workSummary, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  return { markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

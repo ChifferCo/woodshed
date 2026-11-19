@@ -1246,6 +1246,7 @@ async function handle(req, res) {
     const read = await readSessionTranscript({
       agent: CODEX ? 'codex' : 'claude',
       claudeDir: transcriptDir(),
+      root: REPO_DIR,
       codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
       ...(limit ? { limit: Number(limit) } : {}),
       ...(params.get('since') && Number.isFinite(since) ? { since } : {}),

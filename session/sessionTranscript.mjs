@@ -3,13 +3,16 @@
 // agent's own record of the conversation has it all: claude's transcript (~/.claude/projects/<repo>/<id>.jsonl) and
 // codex's rollout ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl). Each is read from its end and shaped the same
 // way: what the person asked, what the agent said, and a line for each tool it ran, marked `error` when the run failed.
-// Thinking and tool output are left out: the terminal and the Diff tab show those. The console's Chat tab draws the
+// An edit carries what it changed, a small bounded diff (transcriptDiff.mjs), for the Chat to show each turn's changes.
+// Thinking and tool output are left out: the terminal shows those, and the Diff tab the whole branch. The console's Chat tab draws the
 // conversation from this, and asks again with `since` (the last answer's writtenAt): an agent that wrote nothing since
 // costs a stat, not a read.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import zlib from 'node:zlib';
+
+import { capDiffs, claudeInputDiffs, claudeResultDiffs, parsePatch, scriptPatches, shellPatch } from './transcriptDiff.mjs';
 
 // How much of the end of a transcript is read: claude's hold every tool's output, so they run to many megabytes.
 export const TAIL_BYTES = 4 * 1024 * 1024;
@@ -24,8 +27,10 @@ const MAX_COMPRESSED_BYTES = 16 * 1024 * 1024;
 export const MAX_DECOMPRESSED_BYTES = 64 * 1024 * 1024;
 
 /**
- * @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, error?: true, denied?: string, at: string|null}} Entry
- *   denied: on codex's interrupt note, the command whose approval was refused
+ * @typedef {{role: 'user'|'assistant'|'tool', text: string, tool?: string, error?: true, denied?: string, diffs?: object[],
+ *   at: string|null}} Entry
+ *   denied: on codex's interrupt note, the command whose approval was refused. diffs: what an edit changed, file by
+ *   file (transcriptDiff.mjs); an edit that failed has none.
  */
 
 const cut = (text) => (text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text);
@@ -94,12 +99,17 @@ function records(text, partial) {
 // output, a hook's or the harness's notes.
 const NOT_TYPED = /^\s*<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|system-reminder|bash-input|bash-stdout|bash-stderr|task-notification)>/;
 
+// A tool_result's text, for what claude said of the edit ("has been updated").
+const resultText = (block) => (typeof block.content === 'string' ? block.content
+  : Array.isArray(block.content) ? block.content.map((c) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '');
+
 /**
  * @param {string} text  the end of a claude transcript
- * @param {{partial?: boolean}} [opts]  partial: the text starts mid-line
+ * @param {{partial?: boolean, root?: string}} [opts]  partial: the text starts mid-line. root: the repo, which an
+ *   edit's path is given relative to
  * @returns {Entry[]}
  */
-export function parseClaudeTranscript(text, { partial = false } = {}) {
+export function parseClaudeTranscript(text, { partial = false, root } = {}) {
   const entries = [];
   // Each tool run by its id, for the result claude files in the next turn: is_error says it failed.
   const tools = new Map();
@@ -116,12 +126,23 @@ export function parseClaudeTranscript(text, { partial = false } = {}) {
         const entry = { role: 'tool', tool: String(block.name || 'tool'), text: toolLine(block.input), at };
         const questions = askedQuestions(block);
         if (questions) Object.assign(entry, { text: questions[0].question, questions });
+        const diffs = claudeInputDiffs(entry.tool, block.input, { root });
+        if (diffs) entry.diffs = diffs;
         if (typeof block.id === 'string') tools.set(block.id, entry);
         entries.push(entry);
       } else if (block?.type === 'tool_result') {
         const entry = tools.get(block.tool_use_id);
-        if (entry && block.is_error === true) entry.error = true;
-        else if (entry?.questions) entry.answered = true;
+        if (entry && block.is_error === true) {
+          entry.error = true;
+          // An edit that failed changed nothing.
+          delete entry.diffs;
+        } else if (entry?.questions) entry.answered = true;
+        else if (entry?.diffs) {
+          // The result's own hunks, when it is this edit's: a record holds one result's toolUseResult.
+          const single = content.filter((b) => b?.type === 'tool_result').length === 1;
+          const diffs = claudeResultDiffs(entry.tool, single ? r.toolUseResult : null, entry.diffs, resultText(block), { root });
+          if (diffs) entry.diffs = diffs;
+        }
       }
     }
   }
@@ -172,17 +193,47 @@ function scriptValue(literal) {
   return literal.slice(1, -1).replace(/\\(['"`\\])/g, '$1');
 }
 
-/** @returns {{tool: string, text: string}[]|null}  the tools an `exec` script calls, or null for any other input */
-export function codexScriptCalls(name, input) {
+/**
+ * @returns {{tool: string, text: string, diffs?: object[]}[]|null}  the tools an `exec` script calls, or null for any
+ *   other input. Its apply_patch calls take the script's patches in order, each named by its files
+ */
+export function codexScriptCalls(name, input, { root } = {}) {
   if (name !== 'exec' || typeof input !== 'string') return null;
   const starts = [...input.matchAll(SCRIPT_CALL)];
   if (!starts.length) return null;
+  const patches = scriptPatches(input);
   return starts.map((m, i) => {
+    if (m[1] === 'apply_patch' && patches.length) {
+      const diffs = parsePatch(patches.shift(), { root });
+      return { tool: m[1], text: diffs.map((d) => d.path).join(' ').slice(0, 300), ...(diffs.length && { diffs }) };
+    }
     const args = input.slice(m.index + m[0].length, starts[i + 1]?.index ?? input.length);
     const arg = SCRIPT_ARG.exec(args);
     return { tool: m[1], text: arg ? scriptValue(arg[2]).split('\n')[0].slice(0, 300) : '' };
   }).filter((c) => !SCRIPT_QUIET.has(c.tool));
 }
+
+// The diffs of a codex tool call that patches: apply_patch's input, or a shell call that runs apply_patch.
+function codexDiffs(input, root) {
+  let patch = typeof input === 'string' && input.trimStart().startsWith('*** Begin Patch') ? input : null;
+  if (!patch) {
+    let args = input;
+    if (typeof input === 'string') {
+      try {
+        args = JSON.parse(input);
+      } catch {
+        args = null;
+      }
+    }
+    patch = shellPatch(args?.command);
+  }
+  const diffs = patch ? parsePatch(patch, { root }) : [];
+  return diffs.length ? diffs : null;
+}
+
+// What an `exec` script's output says when it threw, and what apply_patch answers once it applied a patch.
+const SCRIPT_ERROR = /^\s*Script error/;
+const PATCH_APPLIED = /Success\. Updated the following files/;
 
 // The exit codes in an `exec` script's output: one JSON part per command it ran, each with its `exit_code`.
 function scriptExitCodes(output) {
@@ -217,7 +268,7 @@ function codexInterrupt(at, denied) {
   return { role: 'user', text: '[Request interrupted by user]', at, ...(denied && { denied }) };
 }
 
-export function parseCodexRollout(text, { partial = false } = {}) {
+export function parseCodexRollout(text, { partial = false, root } = {}) {
   const entries = [];
   const tools = new Map();
   // The call whose output said it was cut short, since the last thing after it: an approval refused when it asked to
@@ -253,8 +304,11 @@ export function parseCodexRollout(text, { partial = false } = {}) {
       if (said) entries.push({ role: item.role, text: cut(said), at });
     } else if (item.type === 'function_call' || item.type === 'custom_tool_call' || item.type === 'local_shell_call') {
       const input = item.arguments ?? item.input ?? item.action;
-      const calls = codexScriptCalls(item.name, input);
-      const made = (calls ?? [{ tool: String(item.name || 'shell'), text: toolLine(input) }]).map((c) => ({ role: 'tool', ...c, at }));
+      const calls = codexScriptCalls(item.name, input, { root });
+      const diffs = calls ? null : codexDiffs(input, root);
+      // A shell call that ran apply_patch is the patch: named by its files, and an edit in the work log.
+      const one = diffs ? { tool: 'apply_patch', text: diffs.map((d) => d.path).join(' ').slice(0, 300), diffs } : { tool: String(item.name || 'shell'), text: toolLine(input) };
+      const made = (calls ?? [one]).map((c) => ({ role: 'tool', ...c, at }));
       if (typeof item.call_id === 'string') tools.set(item.call_id, made);
       const raw = typeof input === 'string' ? input : JSON.stringify(input ?? null);
       if (CODEX_ESCALATED.test(raw)) made.escalated = true;
@@ -269,9 +323,14 @@ export function parseCodexRollout(text, { partial = false } = {}) {
       }
       aborted = null;
       const codes = scriptExitCodes(item.output);
-      // A script's commands in order, each with its own exit code; anything else fails as a whole.
-      if (codes.length) codes.forEach((code, i) => { if (code !== 0) (made[i] ?? made[made.length - 1]).error = true; });
+      // A script's commands in order, each with its own exit code; anything else fails as a whole. A script's patches
+      // answer no exit code: one that threw before any patch said it applied leaves them failed.
+      const commands = made.filter((e) => e.tool !== 'apply_patch');
+      if (codes.length) codes.forEach((code, i) => { if (code !== 0) (commands[i] ?? commands[commands.length - 1] ?? made[made.length - 1]).error = true; });
       else if (codexFailed(item.output)) made[made.length - 1].error = true;
+      const said = Array.isArray(item.output) ? item.output.map((p) => (typeof p?.text === 'string' ? p.text : '')).join('\n') : '';
+      if (SCRIPT_ERROR.test(said) && !PATCH_APPLIED.test(said)) for (const e of made) if (e.tool === 'apply_patch') e.error = true;
+      for (const e of made) if (e.error) delete e.diffs;
     }
   }
   return entries;
@@ -320,13 +379,14 @@ async function newestRollout(codexHome) {
 
 /**
  * The newest conversation of the session's agent, newest entries last.
- * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, limit?: number, since?: number}} opts
- *   claudeDir: claude's transcript folder for the repo. since: the writtenAt of the caller's last answer
+ * @param {{agent: 'claude'|'codex', claudeDir: string, codexHome: string, root?: string, limit?: number, since?: number}} opts
+ *   claudeDir: claude's transcript folder for the repo. root: the repo, which edits' paths are given relative to.
+ *   since: the writtenAt of the caller's last answer
  * @returns {Promise<{agent: string, entries: Entry[], partial: boolean, writtenAt: number|null}|{agent: string, unchanged: true, writtenAt: number}>}
  *   partial: older entries were left out, by the read or by the limit. unchanged: the newest record is still the
  *   one written at `since`, so the caller's entries stand
  */
-export async function readSessionTranscript({ agent, claudeDir, codexHome, limit = MAX_ENTRIES, since = null }) {
+export async function readSessionTranscript({ agent, claudeDir, codexHome, root, limit = MAX_ENTRIES, since = null }) {
   const newest = agent === 'codex'
     ? await newestRollout(codexHome)
     : await newestIn(claudeDir, (n) => n.endsWith('.jsonl'));
@@ -347,11 +407,12 @@ export async function readSessionTranscript({ agent, claudeDir, codexHome, limit
   } else {
     ({ text, partial } = await tail(newest.file, newest.stat.size));
   }
-  const all = agent === 'codex' ? parseCodexRollout(text, { partial }) : parseClaudeTranscript(text, { partial });
+  const all = agent === 'codex' ? parseCodexRollout(text, { partial, root }) : parseClaudeTranscript(text, { partial, root });
   const max = Math.max(1, Math.min(MAX_ENTRIES, Math.trunc(Number(limit)) || MAX_ENTRIES));
   return {
     agent,
-    entries: all.slice(-max),
+    // The newest edits keep their hunks within the answer's bound; older ones their files and counts.
+    entries: capDiffs(all.slice(-max)),
     partial: partial || all.length > max,
     writtenAt: newest.stat.mtimeMs,
   };

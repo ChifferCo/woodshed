@@ -265,3 +265,88 @@ test("codex's interrupt is read from either record alone, and a turn a new messa
   const ran = parseCodexRollout([user, call, out('Exit code: 0'), aborted('interrupted')].join('\n'));
   assert.equal(ran.at(-1).denied, undefined, 'it ran, and the Esc came after');
 });
+
+test("claude's edits carry what they changed: the result's hunks once written, none when the edit failed", () => {
+  const use = (id, name, input) => line({ type: 'assistant', timestamp: at, message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  // The tool_result and toolUseResult as Claude Code 2.1 writes them.
+  const result = (id, text, toolUseResult, isError) => line({ type: 'user', timestamp: at, toolUseResult,
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: text, ...(isError && { is_error: true }) }] } });
+  const entries = parseClaudeTranscript([
+    use('e1', 'Edit', { file_path: '/work/repo/a.js', old_string: 'one', new_string: 'two', replace_all: false }),
+    result('e1', 'The file /work/repo/a.js has been updated successfully.', {
+      filePath: '/work/repo/a.js', oldString: 'one', newString: 'two', originalFile: 'one\n', replaceAll: false, userModified: false,
+      structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-one', '+two'] }],
+    }),
+    use('e2', 'MultiEdit', { file_path: '/work/repo/b.js', edits: [{ old_string: 'a', new_string: 'b' }] }),
+    use('e3', 'Write', { file_path: '/work/repo/c.md', content: 'hello\n' }),
+    result('e3', 'File created successfully at: /work/repo/c.md', { type: 'create', filePath: '/work/repo/c.md', content: 'hello\n', structuredPatch: [], originalFile: null }),
+    use('e4', 'Edit', { file_path: '/work/repo/a.js', old_string: 'missing', new_string: 'x' }),
+    result('e4', '<tool_use_error>String to replace not found in file.</tool_use_error>', 'Error: String to replace not found in file.', true),
+  ].join('\n'), { root: '/work/repo' });
+  assert.deepEqual(entries.map((e) => [e.tool, e.text, e.diffs?.map((d) => [d.path, d.op, d.add, d.del, d.hunks.map((h) => h.head)]) ?? null]), [
+    ['Edit', '/work/repo/a.js', [['a.js', 'edit', 1, 1, ['@@ -1,1 +1,1 @@']]]],
+    // No result yet: the input's own diff, as it lands.
+    ['MultiEdit', '/work/repo/b.js', [['b.js', 'edit', 1, 1, ['@@']]]],
+    ['Write', '/work/repo/c.md', [['c.md', 'add', 1, 0, ['@@ new file @@']]]],
+    ['Edit', '/work/repo/a.js', null],
+  ]);
+  assert.equal(entries[3].error, true);
+});
+
+test("codex's patches carry their hunks: apply_patch, a shell call of it, and a patch in codex 0.167's exec script", () => {
+  const item = (payload) => line({ type: 'response_item', timestamp: at, payload });
+  const patch = (file) => `*** Begin Patch\n*** Update File: ${file}\n@@ export function total(cart) {\n-  return 5;\n+  return 0;\n*** End Patch\n`;
+  const entries = parseCodexRollout([
+    item({ type: 'custom_tool_call', name: 'apply_patch', call_id: 'p1', status: 'completed', input: patch('src/a.js') }),
+    item({ type: 'custom_tool_call_output', call_id: 'p1', output: JSON.stringify({ output: 'Success. Updated the following files:\nM src/a.js\n', metadata: { exit_code: 0, duration_seconds: 0 } }) }),
+    item({ type: 'function_call', name: 'shell', call_id: 'p2', arguments: JSON.stringify({ command: ['apply_patch', patch('/work/repo/src/b.js')] }) }),
+    item({ type: 'function_call_output', call_id: 'p2', output: 'Exit code: 0' }),
+    item({ type: 'custom_tool_call', name: 'apply_patch', call_id: 'p3', input: patch('src/c.js') }),
+    item({ type: 'custom_tool_call_output', call_id: 'p3', output: 'Exit code: 1\nverification failed' }),
+  ].join('\n'), { root: '/work/repo' });
+  assert.deepEqual(entries.map((e) => [e.tool, e.text, e.diffs?.map((d) => [d.path, d.add, d.del, d.hunks[0].head]) ?? null, e.error ?? false]), [
+    ['apply_patch', 'src/a.js', [['src/a.js', 1, 1, '@@ export function total(cart) {']], false],
+    ['apply_patch', 'src/b.js', [['src/b.js', 1, 1, '@@ export function total(cart) {']], false],
+    ['apply_patch', 'src/c.js', null, true],
+  ]);
+
+  // An exec script, as codex 0.167 writes one (the cases above): a nested tool takes a string or an object, so a patch
+  // is a string literal in the script. Its output is the script's text parts, and each command's JSON with its exit
+  // code; one that threw says `Script error:`.
+  const call = (id, input) => line({ timestamp: at, type: 'response_item', payload: { type: 'custom_tool_call', call_id: id, name: 'exec', input } });
+  const out = (id, ...texts) => line({ timestamp: at, type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: id, output: texts.map((text) => ({ type: 'input_text', text })) } });
+  const script = [
+    `const r = await tools.apply_patch(${JSON.stringify(patch('src/d.js'))});`,
+    'text(r);',
+    'text(await tools.exec_command({cmd:"node --test"}));',
+  ].join('\n');
+  const thrown = `text(await tools.apply_patch(\`${patch('src/e.js')}\`));`;
+  const fromScripts = parseCodexRollout([
+    call('x1', script),
+    out('x1', 'Script completed\nWall time 0.4 seconds\nOutput:\n', 'Success. Updated the following files:\nM src/d.js\n', JSON.stringify({ chunk_id: 'a', exit_code: 1, output: '' })),
+    call('x2', thrown),
+    out('x2', 'Script error:\nError: apply_patch verification failed: Failed to find expected lines in src/e.js'),
+  ].join('\n'));
+  assert.deepEqual(fromScripts.map((e) => [e.tool, e.text, e.diffs?.map((d) => d.path) ?? null, e.error ?? false]), [
+    ['apply_patch', 'src/d.js', ['src/d.js'], false],
+    // The command's exit code is the command's, not the patch's before it.
+    ['exec_command', 'node --test', null, true],
+    ['apply_patch', 'src/e.js', null, true],
+  ]);
+});
+
+test("a /transcript answer's diffs stay bounded however many edits the record holds", async (t) => {
+  const dir = home(t);
+  const claudeDir = path.join(dir, 'claude');
+  fs.mkdirSync(claudeDir);
+  const big = Array.from({ length: 400 }, (_, i) => line({ type: 'assistant', timestamp: at, message: { content: [{
+    type: 'tool_use', id: `w${i}`, name: 'Write', input: { file_path: `/work/repo/f${i}.txt`, content: `${'y'.repeat(300)}\n`.repeat(300) },
+  }] } }));
+  fs.writeFileSync(path.join(claudeDir, 'big.jsonl'), big.join('\n'));
+  const read = await readSessionTranscript({ agent: 'claude', claudeDir, codexHome: dir, root: '/work/repo' });
+  const bytes = JSON.stringify(read.entries.map((e) => e.diffs)).length;
+  assert.ok(bytes < 260 * 1024, `diffs are ${bytes} bytes`);
+  assert.equal(read.entries.at(-1).diffs[0].hunks.length, 1, 'the newest keeps its lines');
+  assert.equal(read.entries.at(-1).diffs[0].cut, true, 'cut at its line cap');
+  assert.deepEqual([read.entries[0].diffs[0].hunks.length, read.entries[0].diffs[0].cut, read.entries[0].diffs[0].add], [0, true, 300]);
+});

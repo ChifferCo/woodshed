@@ -81,6 +81,11 @@ statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent wor
 right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
 and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
 (`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
+Under a turn's last work log that edited a file, **Changed N files** lists what the turn's edits changed, a row a file
+with its `+N −M`, each folding open to its hunks in the Diff tab's colours, built from the edits the record carries
+(statusd's `GET /transcript` gives each edit a small diff: session/README.md). It is open while the turn runs and folded
+once it is over. Files a command changed (`sed -i`, a generator) are in no record: a turn that ran one says so, with a
+link to the **Diff** tab, which has the whole branch.
 The composer under it sends with Enter (Shift+Enter is a new line; on a phone Return is a new line and the arrow
 sends), takes files from **📎**, a paste or a drop (to `/tmp/uploads`, their paths added to the message), dictation
 where the browser has it, and keeps its draft with the phone's message box. A message shows as sent until the record
@@ -438,7 +443,7 @@ TUI and Terminal tabs):
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
 - **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
   `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
-  line for each tool it ran (marked when it failed), newest last, from the agent's own record (statusd's `GET
+  line for each tool it ran (marked when it failed, and with what an edit changed, as `diffs`), newest last, from the agent's own record (statusd's `GET
   /transcript`), or `{unchanged: true}` while nothing was written since the last answer. Anyone who can open the
   session may read it, while it runs.
 

@@ -3,7 +3,9 @@
 // ($CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl) or claude's transcript (~/.claude/projects/<repo>/<id>.jsonl),
 // and draws what statusd reads a codex pane by (session/codexState.mjs): `esc to interrupt` while it works, `Would you
 // like to run` while it asks, and the `› ` composer once its turn is over.
-// A message is typed in and Enter ends it. It answers each with a turn of a few tool calls and a reply. A message that
+// A message is typed in and Enter ends it. It answers each with a turn of a few tool calls and a reply: a read, the
+// tests, an edit of one line (codex's apply_patch, claude's Edit with its result's hunk), and a new file (a patch in
+// codex 0.167's exec script, claude's Write), each turn's its own, for the Chat's per-turn diffs. A message that
 // says "fail" has a tool call fail, and one that says "ask" waits on an approval first: ↑/↓ and Enter in the TUI tab,
 // y or n, or the Chat tab's Approve and Deny (session/panePrompt.mjs reads it as it reads codex's). Esc stops the turn.
 // The approval is a stand-in: its words are codex 0.167's own (its title and options, from the strings in the codex
@@ -41,20 +43,57 @@ function said(role, text) {
     write({ type: role, timestamp: now(), uuid: crypto.randomUUID(), message: { role, content: role === 'user' ? text : [{ type: 'text', text }] } });
   }
 }
+// An edit: a file, the line it starts at, and the line it replaces with another, with a line of context each side.
+const FILE = 'console/webhookDispatch.mjs';
+const edit = (from, to) => ({ file: FILE, at: 12, before: '// How long each retry waits.', old: `const BACKOFF_MS = ${from};`, new: `const BACKOFF_MS = ${to};`, after: '' });
+const patchOf = (e) => `*** Begin Patch\n*** Update File: ${e.file}\n@@ ${e.before}\n-${e.old}\n+${e.new}\n*** End Patch\n`;
+const applied = (files) => JSON.stringify({ output: `Success. Updated the following files:\n${files.join('\n')}\n`, metadata: { exit_code: 0, duration_seconds: 0 } });
+
 function ran(tool, input, failed = false) {
   const callId = `call_${++call}`;
   if (format === 'codex') {
     // codex edits with apply_patch, a custom tool whose input is the patch, and reads with a shell command.
     if (tool === 'Edit') {
-      write({ timestamp: now(), type: 'response_item', payload: { type: 'custom_tool_call', name: 'apply_patch', call_id: callId, input: `*** Begin Patch\n*** Update File: ${input}\n@@\n-a\n+b\n*** End Patch` } });
-      write({ timestamp: now(), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: callId, output: failed ? 'Exit code: 1' : 'Exit code: 0' } });
+      write({ timestamp: now(), type: 'response_item', payload: { type: 'custom_tool_call', status: 'completed', name: 'apply_patch', call_id: callId, input: patchOf(input) } });
+      write({ timestamp: now(), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: callId, output: failed ? 'Exit code: 1' : applied([`M ${input.file}`]) } });
+      return;
+    }
+    // codex 0.167 runs tools from an `exec` script: here, one that adds a file with a patch, then runs a command.
+    if (tool === 'Script') {
+      const patch = `*** Begin Patch\n*** Add File: ${input.file}\n${input.lines.map((l) => `+${l}`).join('\n')}\n*** End Patch\n`;
+      const script = `const patched = await tools.apply_patch(${JSON.stringify(patch)});\ntext(patched);\ntext(await tools.exec_command({cmd:"node --test console/webhookDispatch.test.mjs"}));\n`;
+      write({ timestamp: now(), type: 'response_item', payload: { type: 'custom_tool_call', status: 'completed', name: 'exec', call_id: callId, input: script } });
+      write({ timestamp: now(), type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: callId, output: [
+        { type: 'input_text', text: 'Script completed\nWall time 0.6 seconds\nOutput:\n' },
+        { type: 'input_text', text: `Success. Updated the following files:\nA ${input.file}\n` },
+        { type: 'input_text', text: JSON.stringify({ chunk_id: 'a1', wall_time_seconds: 0.5, exit_code: 0, original_token_count: 3, output: 'ok\n' }) },
+      ] } });
       return;
     }
     const command = tool === 'Read' ? `sed -n '1,120p' ${input}` : input;
     write({ timestamp: now(), type: 'response_item', payload: { type: 'function_call', name: 'shell', call_id: callId, arguments: JSON.stringify({ command: ['bash', '-lc', command] }) } });
     write({ timestamp: now(), type: 'response_item', payload: { type: 'function_call_output', call_id: callId, output: JSON.stringify({ output: failed ? '1 failing' : 'ok', metadata: { exit_code: failed ? 1 : 0 } }) } });
   } else {
-    const args = tool === 'Edit' ? { file_path: input, old_string: 'a', new_string: 'b' } : tool === 'Read' ? { file_path: input } : { command: input };
+    if (tool === 'Edit') {
+      // claude's Edit, and its result as Claude Code writes it: toolUseResult's structuredPatch holds the real hunk.
+      const filePath = path.join(repo, input.file);
+      write({ type: 'assistant', timestamp: now(), message: { role: 'assistant', content: [{ type: 'tool_use', id: callId, name: 'Edit', input: { file_path: filePath, old_string: input.old, new_string: input.new, replace_all: false } }] } });
+      write({ type: 'user', timestamp: now(),
+        toolUseResult: { filePath, oldString: input.old, newString: input.new, originalFile: '', replaceAll: false, userModified: false,
+          structuredPatch: [{ oldStart: input.at - 1, oldLines: 3, newStart: input.at - 1, newLines: 3, lines: [` ${input.before}`, `-${input.old}`, `+${input.new}`, ` ${input.after}`] }] },
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: callId, is_error: failed, content: failed ? 'String to replace not found' : `The file ${filePath} has been updated successfully.` }] } });
+      return;
+    }
+    if (tool === 'Script') {
+      // claude writes a new file with Write: a create's result has no hunks, so the content is the file.
+      const filePath = path.join(repo, input.file);
+      const content = `${input.lines.join('\n')}\n`;
+      write({ type: 'assistant', timestamp: now(), message: { role: 'assistant', content: [{ type: 'tool_use', id: callId, name: 'Write', input: { file_path: filePath, content } }] } });
+      write({ type: 'user', timestamp: now(), toolUseResult: { type: 'create', filePath, content, structuredPatch: [], originalFile: null, userModified: false },
+        message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: callId, content: `File created successfully at: ${filePath}` }] } });
+      return;
+    }
+    const args = tool === 'Read' ? { file_path: input } : { command: input };
     write({ type: 'assistant', timestamp: now(), message: { role: 'assistant', content: [{ type: 'tool_use', id: callId, name: tool, input: args }] } });
     write({ type: 'user', timestamp: now(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: callId, is_error: failed, content: failed ? 'Exit code 1' : 'ok' }] } });
   }
@@ -92,7 +131,7 @@ said('assistant', [
   'See https://docs.github.com/en/webhooks for how GitHub retries on its side.',
 ].join('\n'));
 said('user', 'Make it back off for longer');
-ran('Edit', 'console/webhookDispatch.mjs');
+ran('Edit', edit('[2_000, 4_000, 8_000]', '[5_000, 15_000, 45_000]'));
 ran('Bash', 'node --test console/webhookDispatch.test.mjs');
 said('assistant', 'Changed the backoff to 5 s, 15 s and 45 s (`console/webhookDispatch.mjs:42`). The tests pass.');
 
@@ -108,6 +147,7 @@ let timers = [];
 let clock = null;
 // Messages typed while it works, taken in order once the turn ends, as claude queues them.
 const queue = [];
+let turns = 0;
 function draw() {
   out('\x1b[2J\x1b[H');
   out(`stand-in ${format} (dev console)\n\n`);
@@ -142,7 +182,10 @@ function work(text) {
   const fail = /fail/i.test(text);
   after(3000, () => ran('Read', 'console/webhookDispatch.mjs'));
   after(7000, () => ran('Bash', 'node --test console/webhookDispatch.test.mjs', fail));
-  after(11000, () => ran('Edit', 'console/webhookDispatch.mjs'));
+  // Each turn changes the backoff again and adds a note of its own, so a turn's diff is its own.
+  turns++;
+  after(9000, () => ran('Edit', edit(`[${turns + 4}_000, 15_000, 45_000]`, `[${turns + 5}_000, 15_000, 45_000]`)));
+  after(11000, () => ran('Script', { file: `docs/notes/turn-${turns}.md`, lines: [`# Turn ${turns}`, '', `You asked: ${text.split('\n')[0]}`] }));
   after(16000, () => {
     said('assistant', fail
       ? `One test failed on the first run (\`webhookDispatch.test.mjs\`), so I fixed the edit and ran it again: it passes now.\n\nYou asked: _${text.split('\n')[0]}_`

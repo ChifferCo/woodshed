@@ -7,7 +7,8 @@
 // TUI tab. claude's questions (AskUserQuestion) are answered here: one option picked for each, then Send answers
 // (POST …/answer), which the session types into the picker once its pane shows that same question. An approval the
 // pane shows (claude's permission dialog, codex's approval; GET …/prompt) is on the Needs you line with Approve and
-// Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the TUI tab.
+// Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the TUI tab. The code
+// each turn changed shows under its last work log that edited a file, from the edits' diffs the record carries.
 // session.js makes the Chat tab the one a running session opens on.
 (function () {
   'use strict';
@@ -95,7 +96,7 @@
     });
   }
 
-  function createChat({ openTerminal }) {
+  function createChat({ openTerminal, openDiff }) {
     let session = null;
     // The last answer for the shown session: { id, agent, entries, partial, writtenAt }.
     let record = null;
@@ -331,6 +332,56 @@
       return details;
     }
 
+    // What a turn changed (chatThread.cjs turnChanges), under its last work log that edited a file: a line with the
+    // files and counts, open while the turn runs and folded once it is over, then a row a file, each folding open to
+    // its edits' hunks, drawn in the Diff tab's own classes (rv-file, rv-diff). The record holds what the agent's edit
+    // tools changed, never what a command did: a turn that ran one says so, and the Diff tab has the whole branch.
+    const STATUS = { add: 'new', delete: 'deleted', rewrite: 'rewritten' };
+    function diffLines(hunks) {
+      return hunks.flatMap((hunk) => [
+        h('span', { class: 'rv-line hunk' }, hunk.head || '@@'),
+        ...hunk.lines.map((line) => h('span', { class: `rv-line ${line[0] === '+' ? 'add' : line[0] === '-' ? 'del' : ''}` }, line || ' ')),
+      ]);
+    }
+
+    function changedFile(f, changes) {
+      const key = `${session.id}:diff:${changes.turn}:${f.path}`;
+      const slash = f.path.lastIndexOf('/');
+      const hunks = f.edits.flatMap((e) => e.hunks);
+      const notes = [
+        f.edits.some((e) => e.all) && 'Replaced every occurrence in the file.',
+        f.edits.some((e) => e.rewrite) && 'Rewrote the whole file: its old lines are not in the record, the Diff tab has them.',
+        f.op === 'delete' && !hunks.length && 'Deleted the file.',
+        f.cut && 'Cut here to keep the chat light: the Diff tab has the whole change.',
+      ].filter(Boolean);
+      const details = h('details', { class: 'rv-file chat-diff-file', open: folds.get(key) || null },
+        h('summary', { onclick: () => folds.set(key, !details.open) },
+          h('span', { class: 'rv-path', title: f.to ? `${f.path} → ${f.to}` : f.path },
+            slash >= 0 && h('span', { class: 'rv-dir' }, f.path.slice(0, slash + 1)), h('b', null, f.path.slice(slash + 1)),
+            f.to && h('span', { class: 'rv-dir' }, ` → ${f.to}`)),
+          STATUS[f.op] && h('span', { class: `rv-status is-${f.op === 'add' ? 'added' : f.op === 'delete' ? 'removed' : 'modified'}` }, STATUS[f.op]),
+          h('span', { class: 'rv-counts' }, h('span', { class: 'rv-add' }, `+${f.add}`), ' ', h('span', { class: 'rv-del' }, `−${f.del}`))),
+        hunks.length > 0 && h('pre', { class: 'rv-diff' }, diffLines(hunks)),
+        notes.map((note) => h('p', { class: 'rv-note-line' }, note)));
+      return details;
+    }
+
+    function turnDiff(changes, live) {
+      const key = `${session.id}:diff:${changes.turn}`;
+      const n = changes.files.length;
+      const details = h('details', { class: `chat-diff${live ? ' is-live' : ''}`, open: (folds.has(key) ? folds.get(key) : live) || null },
+        h('summary', { onclick: () => folds.set(key, !details.open) },
+          h('span', { class: 'chat-caret', 'aria-hidden': 'true' }, '▸'),
+          live && h('span', { class: 'spin', 'aria-hidden': 'true' }),
+          h('span', { class: 'chat-diff-what' }, live ? `Changing ${n} file${n === 1 ? '' : 's'}` : `Changed ${n} file${n === 1 ? '' : 's'}`),
+          h('span', { class: 'rv-counts' }, h('span', { class: 'rv-add' }, `+${changes.add}`), ' ', h('span', { class: 'rv-del' }, `−${changes.del}`))),
+        h('div', { class: 'chat-diff-files' }, changes.files.map((f) => changedFile(f, changes))),
+        h('p', { class: 'chat-diff-foot' },
+          changes.commands ? 'Commands may have changed files too: see the ' : 'This turn\'s edits. The whole branch is on the ',
+          h('button', { type: 'button', class: 'chat-link', onclick: openDiff }, 'Diff tab'), '.'));
+      return details;
+    }
+
     // What the agent asked, with its options. The open one takes the person's picks, one a question, and Send answers
     // has the session type them into the agent's picker; a question that takes several options is the TUI tab's.
     function askCard(item, open) {
@@ -433,12 +484,18 @@
       }
       const live = working();
       const lastAsk = list.findLastIndex((item) => item.kind === 'ask');
+      const changes = T.turnChanges(list);
+      // The turn still running: everything after the person's last message.
+      const lastTurn = list.findLastIndex((item) => item.kind === 'user');
       list.forEach((item, i) => {
         if (item.kind === 'user') nodes.push(h('div', { class: 'chat-user' }, h('div', { class: 'chat-bubble' }, item.text)));
         else if (item.kind === 'assistant') nodes.push(h('div', { class: 'chat-said' }, markdownNodes(item.text)));
         else if (item.kind === 'note') nodes.push(h('p', { class: 'chat-note' }, item.text));
         else if (item.kind === 'ask') nodes.push(askCard(item, i === lastAsk && i === list.length - 1));
-        else nodes.push(workLog(item, live && i === list.length - 1));
+        else {
+          nodes.push(workLog(item, live && i === list.length - 1));
+          if (changes.has(item.key)) nodes.push(turnDiff(changes.get(item.key), live && i > lastTurn));
+        }
       });
       for (const p of waiting) {
         nodes.push(h('div', { class: 'chat-user is-pending' },

@@ -50,6 +50,43 @@ test("codex's turn cut short is a note, Denied with the command for a refused ap
   assert.equal(chat.endedByStop({ entries: entries.slice(0, 5), writtenAt: now }), false, 'a new message starts a turn again');
 });
 
+test("a turn's changes are its files, each once, under its last work log that edited one, and no other turn's", () => {
+  const diff = (path, op, add, del, lines) => ({ path, op, add, del, hunks: [{ head: '@@', lines }] });
+  const list = chat.items([
+    { role: 'user', text: 'Make two edits, then a new file', at },
+    { role: 'tool', tool: 'Read', text: 'a.js', at },
+    { role: 'tool', tool: 'Edit', text: 'a.js', at, diffs: [diff('a.js', 'edit', 1, 1, ['-one', '+two'])] },
+    { role: 'assistant', text: 'One done.', at },
+    { role: 'tool', tool: 'Edit', text: 'a.js', at, diffs: [diff('a.js', 'edit', 2, 0, ['+x', '+y'])] },
+    { role: 'tool', tool: 'Write', text: 'b.js', at, diffs: [{ ...diff('b.js', 'add', 1, 0, ['+b']), cut: true }] },
+    { role: 'tool', tool: 'Bash', text: 'npm test', at },
+    { role: 'tool', tool: 'Edit', text: 'c.js', at, error: true },
+    { role: 'assistant', text: 'Done.', at },
+    { role: 'user', text: 'Now the docs', at },
+    { role: 'tool', tool: 'apply_patch', text: 'README.md', at, diffs: [diff('README.md', 'edit', 1, 0, ['+docs']), diff('old.md', 'delete', 0, 0, [])] },
+    { role: 'user', text: 'Just run the tests', at },
+    { role: 'tool', tool: 'Bash', text: 'npm test', at },
+  ]);
+  const changes = chat.turnChanges(list);
+  assert.deepEqual([...changes.keys()], [4, 10]);
+  const first = changes.get(4);
+  assert.equal(first.turn, 1, 'kept by its first work log, which stays put as the turn goes on');
+  assert.deepEqual(first.files.map((f) => [f.path, f.op, f.add, f.del, f.edits.length, f.cut]), [['a.js', 'edit', 3, 1, 2, false], ['b.js', 'add', 1, 0, 1, true]]);
+  assert.deepEqual(first.files[0].edits.map((e) => e.hunks[0].lines), [['-one', '+two'], ['+x', '+y']]);
+  assert.deepEqual([first.add, first.del, first.commands, first.cut], [4, 1, true, true]);
+  const second = changes.get(10);
+  assert.deepEqual(second.files.map((f) => [f.path, f.op]), [['README.md', 'edit'], ['old.md', 'delete']]);
+  assert.equal(second.commands, false, 'only its own commands count');
+  // A file made and then edited stays new; one edited and then written whole was rewritten.
+  const again = chat.turnChanges(chat.items([
+    { role: 'tool', tool: 'Write', diffs: [diff('n.js', 'add', 1, 0, ['+a'])] },
+    { role: 'tool', tool: 'Edit', diffs: [diff('n.js', 'edit', 1, 1, ['-a', '+b'])] },
+    { role: 'tool', tool: 'Edit', diffs: [diff('m.js', 'edit', 1, 1, ['-a', '+b'])] },
+    { role: 'tool', tool: 'Write', diffs: [diff('m.js', 'add', 1, 0, ['+c'])] },
+  ]));
+  assert.deepEqual(again.get(0).files.map((f) => [f.path, f.op]), [['n.js', 'add'], ['m.js', 'rewrite']]);
+});
+
 test('a question the agent asked is its own item, out of the work log around it', () => {
   const q = [{ question: 'Tabs or spaces?', options: ['Tabs', 'Spaces'] }];
   const list = chat.items([
