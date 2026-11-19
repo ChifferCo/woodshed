@@ -141,6 +141,11 @@ function showSetup(error) {
 // The setup page's one call: check the address answers like a console, save it and open it.
 ipcMain.handle('console:connect', async (event, typed) => {
   if (!mainWindow || event.sender !== mainWindow.webContents || !event.senderFrame?.url.startsWith('file:')) return { error: 'Not from the setup page.' };
+  // The setup page that asked: a late answer saves nothing once it is gone (its window closed, or it moved on), and so
+  // never sends another window anywhere.
+  const win = mainWindow;
+  const from = win.webContents.getURL();
+  const stillAsked = () => mainWindow === win && !win.isDestroyed() && win.webContents.getURL() === from;
   let url;
   try {
     url = consoleUrlFrom(typed);
@@ -160,13 +165,20 @@ ipcMain.handle('console:connect', async (event, typed) => {
     if (/redirect/i.test(err.message)) return { error: `${url} sends its console page elsewhere: type the console's own address.` };
     return { error: `${url} did not answer: ${err.message}` };
   }
+  if (!stillAsked()) {
+    console.log('woodshed-desktop: the setup page was gone when the console answered, nothing saved');
+    return { error: 'The setup page closed before the console answered.' };
+  }
   writeSettings({ consoleUrl: url });
   consoleUrl = url;
   appDomain = null;
   // A sign-in started on the console before is not this one's.
   pending.take();
-  readDesktopReady();
-  mainWindow.loadURL(url);
+  // Known before the console's first page, which a hosted console redirects to its own sign-in: only its answer names
+  // that path, so the redirect can go to the browser.
+  await readyBeforeLoading();
+  if (!stillAsked()) return { ok: true };
+  win.loadURL(url);
   startWatching();
   return { ok: true };
 });
@@ -197,6 +209,9 @@ async function readDesktopReady() {
   return desktopReady;
 }
 const desktopSignInReady = readDesktopReady;
+// The ready answer before a console's first page, but never more than 5 s: a console that does not answer it signs in
+// inside the window, as one from before the desktop sign-in.
+const readyBeforeLoading = () => Promise.race([readDesktopReady(), new Promise((r) => setTimeout(() => r(false), 5000))]);
 // Where the window signs in, for a console that cannot hand the sign-in back or a person who asked to stay here.
 const signInHere = (next) => new URL(`${signInPaths[0].replace(/^\//, '')}?next=${encodeURIComponent(next)}`, consoleUrl).href;
 
@@ -444,13 +459,13 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   });
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     consoleUrl = consoleOverride() ?? (readSettings().consoleUrl || DEFAULT_CONSOLE);
     session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => callback(permitted(permission, details.requestingUrl, details)));
     session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) => permitted(permission, origin, details));
     if (process.platform === 'darwin' && icon) app.dock?.setIcon(icon);
     buildMenu();
-    readDesktopReady();
+    await readyBeforeLoading();
     createMainWindow();
     startWatching();
     app.on('activate', () => { if (!mainWindow) createMainWindow(); });
