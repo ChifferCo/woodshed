@@ -163,3 +163,27 @@ test('Back to an entry gives the tab it showed, over what the session was left o
   assert.equal(memory.asked('aaaa1111', null, null), 'diff', 'a new entry (the rail) has none: the memory');
   assert.equal(memory.asked(null, null, 'diff'), null, 'not a session page');
 });
+
+test('an entry left keeps the tab it showed, and none while a review-only session is still to land on Review', () => {
+  assert.equal(tabs.leftOn({ tab: 'diff', held: null, landOnReview: false }), 'diff');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: null, landOnReview: false }), 'agent', 'Agent picked, or the default');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', landOnReview: false }), 'diff', 'the held tab, not its stand-in');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: null, landOnReview: true }), null,
+    'a starting review-only session: Back lands it on Review once it runs, as Agent was not picked');
+  // Back to that entry asks for nothing, so the page lands it on Review again.
+  assert.equal(tabs.memory(storage(), 'octocat').asked('aaaa1111', null, null), null);
+});
+
+test('once sign-out starts, a page still answering writes nothing back', () => {
+  const store = storage();
+  let out = false;
+  const memory = tabs.memory(store, 'octocat', () => !out);
+  memory.remember('aaaa1111', 'review');
+  // Sign out: the form drops the key, and the page is told to write no more.
+  delete store.items[tabs.KEY];
+  out = true;
+  // A lookup lands before the sign-out answer and a fallback remembers Agent.
+  memory.remember('aaaa1111', 'agent');
+  memory.remember('bbbb2222', 'diff');
+  assert.equal(store.items[tabs.KEY], undefined, "the former person's sessions are not put back");
+});

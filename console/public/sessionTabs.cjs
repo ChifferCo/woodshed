@@ -61,6 +61,17 @@
   }
 
   /**
+   * The tab a history entry keeps as it is left, for Back: the one it showed, or a held one over the Agent standing in
+   * for it. A review-only session still to land on its Review keeps none, since Agent there was not picked: Back then
+   * lands it on its Review as the first arrival would.
+   * @param {{ tab: string, held: string|null, landOnReview: boolean }} at
+   * @returns {string|null}
+   */
+  function leftOn({ tab, held, landOnReview }) {
+    return held || (landOnReview ? null : tab);
+  }
+
+  /**
    * Orders the page's list lookups, which a move and the poll can have in flight at once: an answer to an older one
    * that lands after a newer one's is stale (a session starting that now runs), and must not confirm a tab's fallback.
    * Only an answer that came back applies: a failed lookup is dropped when stale, and never makes an older answer stale.
@@ -82,11 +93,12 @@
   }
 
   /**
-   * The tabs kept for `login` in `storage` (sessionStorage), which may be missing or throw.
+   * The tabs kept for `login` in `storage` (sessionStorage), which may be missing or throw. Nothing is written once
+   * `writable` says no: sign-out has dropped the memory, and a page still answering must not put it back.
    * @returns {{ asked(id: string|null, inAddress: string|null, inEntry?: string|null): string|null,
    *   remember(id: string, tab: string): void }}
    */
-  function memory(storage, login) {
+  function memory(storage, login, writable = () => true) {
     let kept = {};
     try {
       const saved = JSON.parse(storage.getItem(KEY) || 'null');
@@ -103,6 +115,7 @@
       remember(id, tab) {
         if (!id || kept[id] === tab) return;
         kept[id] = tab;
+        if (!writable()) return;
         try {
           storage.setItem(KEY, JSON.stringify({ login, tabs: kept }));
         } catch {
@@ -112,5 +125,5 @@
     };
   }
 
-  return { KEY, TABS, known, shown, settle, picks, lookups, memory };
+  return { KEY, TABS, known, shown, settle, picks, leftOn, lookups, memory };
 });

@@ -1644,8 +1644,13 @@
 
   // What a page kept in this browser tab for the person signed in: the rail's snapshot (session.js) and each session's
   // last tab (sessionTabs.cjs). Every Sign out drops it, the menu's and the visitor page's (login.js), so nobody signing
-  // in after sees it.
+  // in after sees it; from then on the page writes none of it back (signingOut), though a lookup still lands.
+  let signedOut = false;
+  function signingOut() {
+    return signedOut;
+  }
   function forgetSignedIn() {
+    signedOut = true;
     try {
       for (const key of ['woodshed-last', 'woodshed-session-tabs']) window.sessionStorage.removeItem(key);
     } catch {
@@ -1654,7 +1659,7 @@
   }
 
   window.Woodshed = {
-    invite, forgetSignedIn, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    invite, forgetSignedIn, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,

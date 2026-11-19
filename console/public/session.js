@@ -58,7 +58,7 @@
   const tabMemory = (() => {
     const login = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
     try {
-      return SessionTabs.memory(window.sessionStorage, login);
+      return SessionTabs.memory(window.sessionStorage, login, () => !W.signingOut());
     } catch {
       return SessionTabs.memory({ getItem: () => null, setItem() {} }, login);
     }
@@ -96,8 +96,9 @@
       return;
     }
     if (url.href !== window.location.href) {
-      // The entry left behind keeps the tab it showed (a held one over the Agent standing in for it), for Back.
-      if (id) window.history.replaceState({ ...window.history.state, tab: heldTab || tab }, '');
+      // The entry left behind keeps the tab it showed, for Back (sessionTabs.cjs, leftOn).
+      const left = SessionTabs.leftOn({ tab, held: heldTab, landOnReview });
+      if (id) window.history.replaceState({ ...window.history.state, tab: left }, '');
       window.history.pushState(null, '', url.pathname + url.search);
     }
     moved();
@@ -2011,6 +2012,7 @@
     }
   }
   function keepLast() {
+    if (W.signingOut()) return;
     try {
       window.sessionStorage.setItem(LAST_KEY, JSON.stringify({ login: signedInAs, data, me, pulls }));
     } catch {
