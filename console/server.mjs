@@ -1393,10 +1393,12 @@ export function createHandler({
   }
 
   // Every repo the person may start on, each on its own project's client; a console without projects asks its one.
+  // Each answer names whose pull requests they are, so a page drawn for someone else (the account changed in another
+  // browser tab) neither draws nor keeps them (session.js).
   async function pullsReply(res, login) {
-    if (!login || !github) return reply(res, 200, { pulls: [] });
+    if (!login || !github) return reply(res, 200, { pulls: [], login: login ?? null });
     const cached = pullsCache.get(login);
-    if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls });
+    if (cached && Date.now() - cached.at < PULLS_FRESH_MS) return reply(res, 200, { pulls: cached.pulls, login });
     const named = (await projectsView(login)).projects;
     // A name the installation no longer has (removed since the access check was kept) is left out.
     const projects = named.map((p) => projectNamed(config, p.name)).filter(Boolean);
@@ -1404,7 +1406,7 @@ export function createHandler({
     const { pulls, stale } = await readMyPulls({ login, projects, githubFor: clientFor, kept: cached?.pulls ?? [] });
     // Kept for the minute even when a repo failed, with that repo's last rows: every page asks on each refresh.
     pullsCache.set(login, { at: Date.now(), pulls });
-    return reply(res, 200, stale ? { pulls, stale: true } : { pulls });
+    return reply(res, 200, stale ? { pulls, stale: true, login } : { pulls, login });
   }
 
   async function fileReply(res, login, key) {

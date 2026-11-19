@@ -2251,6 +2251,10 @@ test('the rail\'s pull requests are read from each repo the person may start on,
   const answer = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
   assert.deepEqual(asked.sort(), ['acme/app mia', 'acme/shop mia'], 'a repo the person may not start on is not asked');
   assert.deepEqual(answer.pulls.map((p) => `${p.project} ${p.repo}#${p.number}`), ['app acme/app#1', 'shop acme/shop#1'], 'newest first, each with its repo');
+  // Whose they are, so a page drawn for someone else neither draws nor keeps them; the kept answer says so too.
+  assert.equal(answer.login, 'mia');
+  const again = await (await fetch(`http://127.0.0.1:${port}/api/my/pulls`, { headers: { cookie: 'woodshed_session=mia' } })).json();
+  assert.equal(again.login, 'mia', 'from the minute it is kept');
 });
 
 test('the setup card offers the reviewer App to an admin of a console with its App, never to a member who could not open the page', async (t) => {

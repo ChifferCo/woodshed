@@ -2034,6 +2034,15 @@
 
   // An answer older than one already applied is dropped: it would put back a session's earlier state.
   const sessionLookups = SessionTabs.lookups();
+  // Signed in as someone else in another browser tab since this page was drawn, as any of a refresh's answers says
+  // (the session list, /api/my, the pull requests): nothing of theirs is drawn or kept under this page's login. What
+  // was kept goes, nothing more is written, and the page loads again as them. @returns {boolean}  whether it did
+  function accountChanged(...logins) {
+    if (!logins.some((login) => SessionTabs.otherLogin(signedInAs, login))) return false;
+    W.forgetSignedIn();
+    window.location.reload();
+    return true;
+  }
   async function refresh() {
     const version = routeVersion;
     const lookup = sessionLookups.start();
@@ -2044,18 +2053,19 @@
       const answer = await Promise.all([W.fetchSessions(), askMe ? W.getJson('/api/my') : Promise.resolve(me)]);
       // A read started on the previous page must not confirm a session absent from its older list.
       if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
-      // Signed in as someone else in another browser tab since this page was drawn: nothing of theirs is drawn or kept
-      // under this page's login. What was kept goes, nothing more is written, and the page loads again as them.
-      if (SessionTabs.otherLogin(signedInAs, answer[0]?.login)) {
-        W.forgetSignedIn();
-        window.location.reload();
-        return;
-      }
+      if (accountChanged(answer[0]?.login, answer[1]?.login)) return;
       [data, me] = answer;
       routePending = false;
       routeConfirmed = true;
       // The rail's pull requests are best effort: GitHub being slow must not hold the page.
-      if (railMine()) W.getJson('/api/my/pulls').then((answer) => { pulls = answer.pulls; keepLast(); render(); }, () => {});
+      if (railMine()) {
+        W.getJson('/api/my/pulls').then((answer) => {
+          if (accountChanged(answer?.login)) return;
+          pulls = answer.pulls;
+          keepLast();
+          render();
+        }, () => {});
+      }
       loadError = null;
       fromLast = false;
       keepLast();
