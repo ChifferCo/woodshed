@@ -13,8 +13,9 @@ preview shows it in the console's nearest tokens. The pairs: `--ink` is `ink`, `
   `pre`), then its follow-ups as the next list, indented with a 2px `line-soft` rule on its left, three levels at most.
 - A question still being answered is disabled, with a spinner and "being answered" in `meta`; one left without an
   answer says "not answered".
-- Above the tree: the section head ("Questions from a newcomer", the section tick in `slate`), one sentence on how it
-  was made in `meta`, then **Open all**, **Close all** and **Ask again** as quiet buttons. Never orange: asking again
+- No section head and no intro sentence: the tab's name says what it is. The tree opens with its tools row, **Open
+  all**, **Close all** and **Ask again** as quiet buttons, set as far below the tab bar as the first section head on
+  the other tabs. Never orange: asking again
   is not the page's primary action. While a run is going, the line reads what it is doing ("Reading the code to answer
   6 questions…") beside a spinner, and Ask again is not offered.
 - An empty or replaced Q&A says so in a sentence ("There is no Q&A for this diff yet.") with **Ask the questions**, a

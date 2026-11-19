@@ -823,9 +823,9 @@ ${DARK_PALETTE}
     .decisions .why { color: var(--muted); }
     .decisions .qacts { margin-top: 0.4rem; }
     /* --- Q&A: a newcomer's questions, folded into a tree --- */
-    .s-qa { --sec: var(--c-act); }
-    .qa { max-width: var(--prose-measure); }
-    .qa-intro { font-size: 13.5px; line-height: 1.55; color: var(--muted); margin: 0 0 0.8rem; }
+    /* No section label above it: the tab bar names it, so the tree opens with
+       its tools, as far below the bar as the first label sits on other tabs. */
+    .qa { max-width: var(--prose-measure); margin-top: 1.5rem; }
     .qa-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0 0 0.9rem; font-size: 12.5px; color: var(--muted); }
     .qa-tools button { font-size: 12.5px; padding: 0.25rem 0.65rem; }
     .qa-tools .grow { flex: 1; }
@@ -3070,12 +3070,7 @@ ${DARK_PALETTE}
       // nothing and started nothing, so the first run starts here.
       if (qaView.session !== state.session
         || (!qaView.data && !qaView.started && !qaView.loading && !qaView.error && !qaView.otherDiff)) loadQa(true);
-      content.appendChild(el('div', 'secthead s-qa first', 'Questions from a newcomer'));
       var box = el('div', 'qa');
-      box.appendChild(el('p', 'qa-intro',
-        'A model playing a junior developer who is new to this codebase, and knows none of its jargon, '
-        + 'asked about this change. Another read the code to answer, and the newcomer asked again about '
-        + 'anything in an answer they did not follow. Open only the questions you have.'));
       var d = qaView.session === state.session ? qaView.data : null;
       if (qaView.otherDiff && !d) {
         box.appendChild(el('div', 'tabnote', 'This review was taken again since this page loaded. Reload the page to see the Q&A about the newer diff.'));
