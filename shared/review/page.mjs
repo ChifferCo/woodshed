@@ -2946,6 +2946,12 @@ ${DARK_PALETTE}
         if (view !== qaView) return;
         var had = !!view.data;
         view.data = got.qa || null;
+        // A Q&A made for another diff than the one this page shows: the review
+        // was taken again in another tab, and its answers are about code this
+        // page is not showing. Not drawn, and not asked again from here either,
+        // since that would ask about the newer diff too.
+        view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.createdAt || null));
+        if (view.otherDiff) view.data = null;
         // Gone while this page had one: emptied from elsewhere, a Discard or
         // Re-review in another tab. That is not a Q&A nobody has asked for, and
         // starting one here would spend a run its reader just threw away.
@@ -2954,7 +2960,7 @@ ${DARK_PALETTE}
         view.error = null;
         // Nothing asked yet: opening the tab is the ask, as opening the review
         // is for the analysis. Once per view, so a failure is not retried in a loop.
-        if (!view.data && start && !view.started) {
+        if (!view.data && start && !view.started && !view.otherDiff) {
           view.started = true;
           await api('POST', '/reviews/' + state.session + '/qa');
           if (view !== qaView) return;
@@ -3032,7 +3038,7 @@ ${DARK_PALETTE}
       // Opened after the tab's count was read from another tab, that read found
       // nothing and started nothing, so the first run starts here.
       if (qaView.session !== state.session
-        || (!qaView.data && !qaView.started && !qaView.loading && !qaView.error)) loadQa(true);
+        || (!qaView.data && !qaView.started && !qaView.loading && !qaView.error && !qaView.otherDiff)) loadQa(true);
       content.appendChild(el('div', 'secthead s-qa first', 'Questions from a newcomer'));
       var box = el('div', 'qa');
       box.appendChild(el('p', 'qa-intro',
@@ -3040,6 +3046,11 @@ ${DARK_PALETTE}
         + 'asked about this change. Another read the code to answer, and the newcomer asked again about '
         + 'anything in an answer they did not follow. Open only the questions you have.'));
       var d = qaView.session === state.session ? qaView.data : null;
+      if (qaView.otherDiff && !d) {
+        box.appendChild(el('div', 'tabnote', 'This review was taken again since this page loaded. Reload the page to see the Q&A about the newer diff.'));
+        content.appendChild(box);
+        return;
+      }
       if (qaView.error && !d) {
         box.appendChild(el('div', 'tabnote', 'The Q&A could not be loaded: ' + qaView.error));
         box.appendChild(qaAgainButton('Try again'));

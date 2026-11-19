@@ -531,6 +531,13 @@ history. Test the reducer, the extraction and the reconciliation against the
 recorded transcript instead, and verify the live path by driving the real thing
 in a browser.
 
+A stand-in is fine where nothing it says is under test. `jobs.test.mjs` and
+`qaRoutes.test.mjs` put a `claude` first on the PATH that sleeps, or that answers
+every id it is given with fixed text, because what they check is the lifecycle
+around the model: how many run at once, which rounds run in which order, what is
+saved when, and that a cancelled run writes nothing back. None of them asserts
+anything about a question or an answer being good, which only a real run shows.
+
 Two traps when running a test instance:
 `TMUX_TMPDIR` does not isolate anything when the session is itself inside tmux
 (`$TMUX` wins — use `env -u TMUX`), and UNIX socket paths cap at ~108
