@@ -2014,6 +2014,8 @@
   function readLast() {
     try {
       const last = JSON.parse(window.sessionStorage.getItem(LAST_KEY) || 'null');
+      // Another login's (signed out in another browser tab, which ran no cleanup here) goes, unread.
+      if (last && last.login !== signedInAs) window.sessionStorage.removeItem(LAST_KEY);
       if (!last?.data?.sessions || last.login !== signedInAs) return;
       ({ data, me, pulls } = { data: last.data, me: last.me ?? null, pulls: last.pulls ?? [] });
       fromLast = true;

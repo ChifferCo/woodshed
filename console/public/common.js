@@ -1644,7 +1644,8 @@
 
   // What a page kept in this browser tab for the person signed in: the rail's snapshot (session.js) and each session's
   // last tab (sessionTabs.cjs). Every Sign out drops it, the menu's and the visitor page's (login.js), so nobody signing
-  // in after sees it; from then on the page writes none of it back (signingOut), though a lookup still lands.
+  // in after sees it; from then on the page writes none of it back (signingOut), though a lookup still lands. The
+  // sign-in page drops it too, for a sign-in lost elsewhere (another browser tab's Sign out).
   let signedOut = false;
   function signingOut() {
     return signedOut;

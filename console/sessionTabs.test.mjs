@@ -6,7 +6,12 @@ import tabs from './public/sessionTabs.cjs';
 // sessionStorage, as a browser tab has it.
 function storage(initial = {}) {
   const items = { ...initial };
-  return { items, getItem: (k) => (k in items ? items[k] : null), setItem: (k, v) => { items[k] = String(v); } };
+  return {
+    items,
+    getItem: (k) => (k in items ? items[k] : null),
+    setItem: (k, v) => { items[k] = String(v); },
+    removeItem: (k) => { delete items[k]; },
+  };
 }
 
 test('a session reopens on the tab it was last left on, and the address wins over it', () => {
@@ -215,4 +220,16 @@ test('an entry left before its session was drawn keeps no tab, so Back lands a r
   assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', reviewPending: false, drawn: false }), null);
   // Back to it: no entry tab and nothing remembered, so nothing is asked and the page lands it on Review once it runs.
   assert.equal(tabs.memory(storage(), 'octocat').asked('aaaa1111', null, null), null);
+});
+
+test("another login's tabs, left by a Sign out in another browser tab, are deleted when read", () => {
+  const store = storage();
+  tabs.memory(store, 'alice').remember('aaaa1111', 'review');
+  // Alice signs out in another browser tab; Bob signs in in this one.
+  tabs.memory(store, 'bob');
+  assert.equal(store.items[tabs.KEY], undefined, "Alice's private session ids are gone, not just unread");
+  // The same login's tabs stay.
+  tabs.memory(store, 'bob').remember('bbbb2222', 'diff');
+  tabs.memory(store, 'bob');
+  assert.match(store.items[tabs.KEY], /bbbb2222/);
 });

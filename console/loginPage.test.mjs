@@ -71,6 +71,16 @@ test("a visitor's Sign out drops what the pages kept in the browser tab, as the 
   const { page } = await render({ me: { ...signInOn, visitor: 'octocat' }, forgetSignedIn: () => { forgot++; } });
   const forms = findAll(page, (n) => n.tag === 'form' && n.attrs.action === '/auth/sign-out');
   assert.equal(forms.length, 1, 'the visitor card has its Sign out');
+  forgot = 0;
   forms[0].attrs.onsubmit();
   assert.equal(forgot, 1, "the rail's snapshot and each session's last tab go (common.js, forgetSignedIn)");
+});
+
+test('the sign-in page drops what pages kept in the browser tab, for a sign-in lost elsewhere', async () => {
+  let forgot = 0;
+  await render({ me: signInOn, forgetSignedIn: () => { forgot++; } });
+  assert.equal(forgot, 1, "signed out in another browser tab: this one's kept sessions go");
+  forgot = 0;
+  await render({ me: { ...signInOn, visitor: 'octocat' }, forgetSignedIn: () => { forgot++; } });
+  assert.equal(forgot, 1, 'a visitor, no longer a member, keeps nothing either');
 });

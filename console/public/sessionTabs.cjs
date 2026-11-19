@@ -109,6 +109,8 @@
     try {
       const saved = JSON.parse(storage.getItem(KEY) || 'null');
       if (saved && saved.login === login && saved.tabs && typeof saved.tabs === 'object') kept = saved.tabs;
+      // Another login's (signed out in another browser tab, which ran no cleanup here) goes, unread.
+      else if (saved) storage.removeItem(KEY);
     } catch {
       kept = {};
     }

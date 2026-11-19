@@ -77,6 +77,9 @@
       window.location.replace(next);
       return;
     }
+    // Nobody is signed in to the console here: a sign-in lost to another browser tab's Sign out, or an ended one, ran no
+    // cleanup in this tab, so what its pages kept goes now.
+    W.forgetSignedIn();
     if (me.visitor) {
       visitorCard(me);
       return;
