@@ -485,6 +485,19 @@ test('copies a restart left behind are swept at the next copy, and a live one is
   assert.deepEqual(fs.readdirSync(tmp).sort(), ['someone-elses-folder', 'woodshed-qa-claude-12345678-new']);
 });
 
+// A tree that could not be recorded when the review was taken is said as that, with git's reason, not taken for a
+// review from before trees were recorded, whose advice (press Re-review) would meet the same failure again.
+test('a review whose tree could not be recorded says why, not to press Re-review', async () => {
+  const session = 'claude-f6f6f6f6';
+  makeReview(session, path.join(DIR, 'no-tree'), '2026-11-19T17:00:00.000Z');
+  const review = JSON.parse(fs.readFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'session.json'), 'utf8'));
+  writeSessionReview({ session, review: { ...review, snapshot: null, snapshotError: 'git write-tree failed: error: invalid object' } });
+  await call('POST', `/reviews/${session}/qa`);
+  const qa = await until(() => (readQa(session)?.status === 'failed' ? readQa(session) : null));
+  assert.match(qa.error, /was not recorded when this review was taken \(git write-tree failed: error: invalid object\)/);
+  assert.doesNotMatch(qa.error, /press Re-review/);
+});
+
 test('a worktree review with no snapshot fails before anything is asked', async () => {
   const session = 'claude-8c8c8c8c';
   makeReview(session, path.join(DIR, 'old'), '2026-11-19T15:00:00.000Z');

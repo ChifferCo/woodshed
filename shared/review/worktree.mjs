@@ -649,7 +649,7 @@ const INDEX_TIMEOUT_MS = 120_000;
  * default); `treeSha` is null when it could not be written, which costs only
  * the Q&A.
  *
- * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, treeSha: string|null, baseFetched: boolean}
+ * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, treeSha: string|null, treeError: string|null, baseFetched: boolean}
  *                 | {ok: false, status: number, error: string, stderr?: string}>}
  */
 export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile }) {
@@ -724,7 +724,11 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
     // 40 hex for SHA-1, 64 for a repository on SHA-256.
     const treeSha = written.status === 0 && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test((written.stdout || '').trim())
       ? written.stdout.trim() : null;
-    return { ok: true, patch: diffed.stdout || '', baseSha, headSha, treeSha, baseFetched };
+    // Why there is no tree, kept with the review: the Q&A says it, rather than
+    // taking the review for one recorded before trees were.
+    const treeError = treeSha ? null
+      : `git write-tree ${written.status === 0 ? 'gave no tree id' : `failed: ${(written.stderr || '').trim().slice(0, 200) || written.status}`}`;
+    return { ok: true, patch: diffed.stdout || '', baseSha, headSha, treeSha, treeError, baseFetched };
   } finally {
     // The scratch index is ours alone and is worthless the moment the diff is
     // taken. Leaving it would cost a few MB per review on a box that runs

@@ -434,6 +434,7 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     // The tree this diff was taken from, uncommitted files included: what the
     // Q&A answers from, so its answers match the diff on screen.
     snapshot: patch.treeSha,
+    snapshotError: patch.treeError ?? null,
     // Nothing here to take away. removeReviewSession keys off this.
     reviewBranch: null,
     ownsWorktree: false,
@@ -466,6 +467,7 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
     return { ok: false, status: 500, error: `could not write review state: ${err?.message}` };
   }
 
+  if (patch.treeError) log('review.snapshot_not_recorded', { reqId, session: sessionName, error: patch.treeError });
   log('review.worktree_prepared', {
     reqId,
     session: sessionName,
@@ -2181,6 +2183,9 @@ async function runQaRounds({ ctx, session, review, gen, pin }) {
   // The answers come from the code as this diff has it, not the live tree.
   // First, so a review that cannot be pinned fails before anything is paid for.
   const treeish = snapshotTreeish(review);
+  if (!treeish && review.snapshotError) {
+    return fail(`the reviewed code was not recorded when this review was taken (${review.snapshotError})`);
+  }
   if (!treeish) return fail('this review was taken before the Q&A could pin its code: press Re-review, then ask again');
   const snapshot = await makeSnapshot({ repoDir: review.worktree, treeish, session });
   // Handed to runQa's finally before anything else, cancelled or not: one place
