@@ -15,6 +15,8 @@ const icon = existsSync(iconFile) ? nativeImage.createFromPath(iconFile) : undef
 const POLL_MS = 20_000;
 const READY_MS = 5_000;
 const POLL_TIMEOUT_MS = 15_000;
+// How long setup's check and a sign-in's claim wait for the console before saying it did not answer.
+const ANSWER_MS = 15_000;
 // Settled once the start has made the main window: a second launch or a sign-in link that comes in while the start
 // still waits on the console's ready answer waits for it too, so there is never a second main window.
 let markStarted;
@@ -162,13 +164,14 @@ ipcMain.handle('console:connect', async (event, typed) => {
   // and the page of whatever is saved here gets the console's permissions (the microphone, notifications).
   try {
     // No redirects: the answer must come from the address typed, since that origin is what gets the permissions.
-    const res = await net.fetch(new URL('api/me', url).href, { redirect: 'manual', headers: { Accept: 'application/json' } });
+    const res = await net.fetch(new URL('api/me', url).href, { redirect: 'manual', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(ANSWER_MS) });
     const fromThere = !res.url || new URL(res.url).origin === new URL(url).origin;
     const me = res.ok && fromThere ? await res.json().catch(() => null) : null;
     if (!isConsoleMe(me)) return { error: `${url} answered, but not as a Woodshed console (status ${res.status}).` };
   } catch (err) {
     // `redirect: 'manual'` refuses a redirect with an error of its own.
     if (/redirect/i.test(err.message)) return { error: `${url} sends its console page elsewhere: type the console's own address.` };
+    if (err.name === 'TimeoutError') return { error: `${url} did not answer in ${ANSWER_MS / 1000} s. Check the address, or try again.` };
     return { error: `${url} did not answer: ${err.message}` };
   }
   if (!stillAsked()) {
@@ -277,7 +280,7 @@ async function finishSignIn(link) {
     // No redirects: the code and the verifier go to the console that made the code, and nowhere it might point. No
     // credentials either: the answer's cookie is stored below, and only while this is still the sign-in under way.
     const res = await session.defaultSession.fetch(claimUrl, {
-      method: 'POST', credentials: 'omit', redirect: 'manual',
+      method: 'POST', credentials: 'omit', redirect: 'manual', signal: AbortSignal.timeout(ANSWER_MS),
       headers: { 'content-type': 'application/json', 'x-woodshed': '1' },
       body: JSON.stringify({ code: signedIn.code, verifier: started.verifier }),
     });
@@ -285,7 +288,9 @@ async function finishSignIn(link) {
     else if (!res.ok) error = (await res.json().catch(() => null))?.error ?? `The console answered ${res.status}.`;
     else setCookies = res.headers.getSetCookie?.() ?? [];
   } catch (err) {
-    error = /redirect/i.test(err.message) ? 'The console sent the sign-in elsewhere, so it was not finished.' : `The console did not answer: ${err.message}`;
+    error = /redirect/i.test(err.message) ? 'The console sent the sign-in elsewhere, so it was not finished.'
+      : err.name === 'TimeoutError' ? `The console did not answer in ${ANSWER_MS / 1000} s, so the sign-in was not finished.`
+        : `The console did not answer: ${err.message}`;
   }
   // Change console… while the claim was on its way: the window is the new console's now, and stays so.
   if (base !== consoleUrl || !mainWindow) {
