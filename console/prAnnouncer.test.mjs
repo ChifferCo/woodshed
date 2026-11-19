@@ -822,9 +822,14 @@ test('an app\'s pull request waits for the App\'s login before it is watched or 
   const repo = { full_name: 'acme/app' };
   const { store, session, github } = setup({ pull: { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-s1', repo }, base: { repo } } });
   let app = null;
-  const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => app });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => clock, ownApp: () => app });
   const mine = { ...session, owner: 'joel', branch: 'woodshed/joel-s1', madeBranch: 'woodshed/joel-s1' };
   await assert.rejects(watcher.track(mine, null, { watch: true }), /App login is not read yet/);
+  const reads = github.reads;
+  await assert.rejects(watcher.track(mine, null, { watch: true }), /App login is not read yet/);
+  assert.equal(github.reads, reads, 'not read again within the minute');
+  clock += MINUTE;
   app = { slug: 'other', login: 'other-bot[bot]' };
   assert.equal(await watcher.track(mine, null, { watch: true }), false);
   app = { slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' };

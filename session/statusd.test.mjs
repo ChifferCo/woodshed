@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, createPrLookup, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -706,4 +706,50 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
   await until('claude', '/woodshed:remote-control');
   assert.equal(await typed('claude'), '/woodshed:remote-control\n');
   assert.equal(await typed('shell'), 'woodshed-login\n', 'nothing more at the Terminal tab');
+});
+
+test('the pull request lookup is kept per branch, and a checkout during it leaves nothing kept', async () => {
+  let clock = 0;
+  let branch = 'woodshed/joel-1';
+  const urls = { 'woodshed/joel-1': 'https://github.com/o/r/pull/9', other: null };
+  let lookups = 0;
+  let checkoutDuringLookup = null;
+  const prUrl = createPrLookup({
+    branch: async () => branch,
+    lookup: async () => {
+      lookups += 1;
+      const url = urls[branch];
+      if (checkoutDuringLookup) { branch = checkoutDuringLookup; checkoutDuringLookup = null; }
+      return url;
+    },
+    now: () => clock,
+    cacheMs: 60_000,
+  });
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/9');
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/9');
+  assert.equal(lookups, 1, 'kept');
+  branch = 'other';
+  assert.equal(await prUrl(), null, 'another branch is looked up at once');
+  assert.equal(lookups, 2);
+});
+
+test('a checkout during the pull request lookup says nothing and keeps nothing for either branch', async () => {
+  let branch = 'woodshed/joel-1';
+  const urls = { 'woodshed/joel-1': 'https://github.com/o/r/pull/9', 'feature/ana': 'https://github.com/o/r/pull/12' };
+  let lookups = 0;
+  let checkout = 'feature/ana';
+  const prUrl = createPrLookup({
+    branch: async () => branch,
+    lookup: async () => {
+      lookups += 1;
+      const url = urls[branch];
+      if (checkout) { branch = checkout; checkout = null; }
+      return url;
+    },
+    now: () => 0,
+    cacheMs: 60_000,
+  });
+  assert.equal(await prUrl(), null, 'the answer may be either branch\'s');
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/12', 'the new branch is looked up, not given the old one\'s');
+  assert.equal(lookups, 2);
 });

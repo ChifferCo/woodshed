@@ -252,22 +252,39 @@ async function git(...args) {
   return stdout.trim();
 }
 
-// Kept for the branch it was read on: after a checkout of another branch, the old one's pull request is not reported.
-let prCache = { at: 0, url: null, branch: null };
+/**
+ * The pull request of the branch checked out now, kept a minute for that branch only, so a checkout of another branch
+ * is reported at the next read. A checkout during the lookup leaves its answer unkept and unsaid: it may be either
+ * branch's.
+ * @param {{branch: () => Promise<string|null>, lookup: () => Promise<string|null>, now?: () => number, cacheMs?: number}} deps
+ * @returns {() => Promise<string|null>}
+ */
+export function createPrLookup({ branch, lookup, now = Date.now, cacheMs = PR_CACHE_MS }) {
+  let cache = { at: -Infinity, url: null, branch: null };
+  return async function prUrl() {
+    const before = await branch().catch(() => null);
+    if (now() - cache.at < cacheMs && before === cache.branch) return cache.url;
+    let url = null;
+    try {
+      url = (await lookup()) || null;
+    } catch {
+      // No PR for this branch yet, which is the normal state for most of a session.
+    }
+    const after = await branch().catch(() => null);
+    if (after !== before) return null;
+    cache = { at: now(), url, branch: before };
+    return url;
+  };
+}
+
+const lookupPrUrl = createPrLookup({
+  branch: () => git('branch', '--show-current'),
+  lookup: async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim(),
+});
 
 async function prUrl() {
   if (ASK || QA) return null;
-  const branch = await git('branch', '--show-current').catch(() => null);
-  if (Date.now() - prCache.at < PR_CACHE_MS && branch === prCache.branch) return prCache.url;
-  let url = null;
-  try {
-    const { stdout } = await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR });
-    url = stdout.trim() || null;
-  } catch {
-    // No PR for this branch yet, which is the normal state for most of a session.
-  }
-  prCache = { at: Date.now(), url, branch };
-  return url;
+  return lookupPrUrl();
 }
 
 // Claude names a project's transcript folder after its path, with every / and . as -.

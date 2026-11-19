@@ -80,6 +80,8 @@ export function createPrAnnouncer({
   const { state } = store;
   // When each waiting pull request was last read, by number. Not kept: after a restart each is read at once.
   const checkedAt = new Map();
+  // When each session's app pull request was last found waiting for the App's login, by session id.
+  const appWaits = new Map();
   const pending = () => (state.slackPending ??= []);
   // Watches that ran out, by item key: one is not started again for the same session until it is resumed (renew), so
   // a session back on an old pull request does not start its wait over. Kept to the latest few hundred.
@@ -145,8 +147,19 @@ export function createPrAnnouncer({
     const number = Number(/\/pull\/(\d+)$/.exec(session.prUrl ?? '')?.[1]);
     if (!number) return false;
     const other = project && !project.default ? project.name : null;
+    // An app's pull request waiting for the App's login is read again a minute later, not at every tick.
+    const waited = appWaits.get(session.id);
+    if (watch && waited !== undefined && now() - waited < CHECK_EVERY_MS) throw new Error('the console\'s App login is not read yet');
     const pull = await gh({ project: other }).pull(number);
-    if (watch && !ownersPull(pull, session, ownApp())) {
+    let owners;
+    try {
+      owners = !watch || ownersPull(pull, session, ownApp());
+    } catch (err) {
+      appWaits.set(session.id, now());
+      throw err;
+    }
+    appWaits.delete(session.id);
+    if (!owners) {
       console.log('slack: someone else\'s pull request, not watched', { id: session.id, number, author: pull.user?.login ?? null });
       return false;
     }

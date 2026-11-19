@@ -1073,6 +1073,8 @@ export function createFleet({
     const session = find(item.sessionId);
     if (!ownListening(session)) return 'ended';
     const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    // Its project left the console: its repo is no longer read, and the default one's pull request is another.
+    if (!project) return 'ended';
     const current = session.reportedPrUrl === undefined ? session.prUrl : session.reportedPrUrl;
     return pullNumber(current) === item.number && onProjectRepo(current, project) ? 'yes' : 'elsewhere';
   }

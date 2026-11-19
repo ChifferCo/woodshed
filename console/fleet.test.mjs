@@ -3432,3 +3432,26 @@ test('a private session keeps the branch the console made for it, and one starte
   const onBranch = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'feature/shared' });
   assert.equal(onBranch.madeBranch, undefined);
 });
+
+test('a private watch whose project left the console ends, reading nothing of the default repo', async () => {
+  const projects = [
+    { name: 'r', repo: 'o/r', default: true },
+    { name: 'web', repo: 'example-org/web', default: false },
+  ];
+  const web = {
+    async pull(number) { return { number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } }; },
+    async reviews() { return []; },
+    async checkRuns() { return e2eRuns(); },
+  };
+  const { fleet, github, statuses, store, advance } = setup({ projects, githubFor: (project) => (project.name === 'web' ? web : null) });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: projects[1] });
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/example-org/web/pull/9' };
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.project]), [[9, 'web']]);
+  const defaultReads = [];
+  github.pull = async (number) => { defaultReads.push(number); return { number, state: 'closed', head: { sha: 'zzz' } }; };
+  projects.splice(1, 1);
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending, defaultReads], [[], []]);
+});
