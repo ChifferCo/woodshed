@@ -51,6 +51,8 @@
 //                                saved in the session with its path typed at that pane's prompt (none: not typed)
 //   POST /api/sessions/<id>/send    {"text": "..."}   the phone's message box: typed into claude, then Enter
 //   GET  /api/sessions/<id>/image?path=<path>   a picture a terminal path names, from the session
+//   GET  /qa/<id>/video/<n>       a QA run's recording, for whoever may open the session (qaRecordings.mjs)
+//   GET  /qa-poster/<id>/<secret>.png   its still, with no sign-in: the QA comment shows it, through GitHub's image proxy
 //   POST /api/sessions/<id>/scroll  {"steps": -3, "pane": "agent"}   a swipe or wheel past the browser's own scrollback
 //   GET  /api/skills             the repo's skills and commands, for New session's / list
 //   GET  /api/pulls?project=<name>   the project's open pull requests, for New session's Work on list
@@ -150,6 +152,7 @@ import { isKnownHost, isSameOrigin } from '../shared/sameOrigin.mjs';
 import { safeNext, signInFailure } from './auth.mjs';
 import { DEFAULT_CONSOLE_NAME, loadConfig } from './config.mjs';
 import { MAX_ATTACHMENT_BYTES } from './attachments.mjs';
+import { QA_POSTER_RE, QA_VIDEO_RE } from './qaRecordings.mjs';
 import { CONNECTION_PATH } from './dbTunnel.mjs';
 import { checkGh } from './github.mjs';
 import { BUILT_IN as BUILT_IN_CODEX_MODELS } from './codexModels.mjs';
@@ -555,7 +558,7 @@ export function createAppUpgrade({ config, fleet, auth = null, members = null, a
 export function createHandler({
   config, fleet, settings = null, events = { list: () => [] }, webhookSwitch = null, auth = null, review = null, userSettings = null, github = null,
   githubUser = null, homes = null, databases = null, tunnel = null, slack = null, consoleSettings = null, heldData = null,
-  people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, prChips = null, members = null, asks = null,
+  people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
   openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null,
@@ -1920,6 +1923,9 @@ export function createHandler({
       return redirect(res, `${config.publicUrl}${url.pathname}${url.search}`);
     }
     if (servePublic(req, res, url, consoleName)) return;
+    // A QA comment's still: GitHub's image proxy fetches it with no sign-in, so its unguessable name is its only lock.
+    const poster = req.method === 'GET' && QA_POSTER_RE.exec(url.pathname);
+    if (poster) return qaRecordings ? qaRecordings.servePoster(req, res, { id: poster[1], secret: poster[2] }) : reply(res, 404, { error: 'this console keeps no QA recordings' });
     if (await authRoute(req, res, url)) return;
     const user = await signedIn(req, res, url);
     if (!user) return;
@@ -1986,6 +1992,14 @@ export function createHandler({
       const allowed = asked && projectAccess ? await projectAccess.forStart(user.login, asked) : null;
       if (asked && projectAccess && !allowed) console.log('console: open pull requests of a project not open to the person, the default\'s instead', { login: user.login, project: String(asked).slice(0, 40) });
       return openPullsReply(res, projectAccess ? allowed?.name ?? null : asked);
+    }
+    const qaVideo = QA_VIDEO_RE.exec(pathname);
+    if (qaVideo) {
+      // Whoever may open the QA session watches its recording; the session's id is no secret. One no longer listed
+      // (removed by hand) has none to watch, which the page says as for one past its days.
+      if (!qaRecordings) return reply(res, 404, { error: 'this console keeps no QA recordings' });
+      if (!findFor(qaVideo[1], user.login)) return qaRecordings.gone(res);
+      return qaRecordings.serveVideo(req, res, { id: qaVideo[1], n: Number(qaVideo[2]) });
     }
     const shareRead = APP_SHARE_RE.exec(pathname);
     if (shareRead && !shareRead[2]) return appShareAction(req, res, shareRead, user.login);

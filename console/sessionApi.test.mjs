@@ -5,6 +5,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 
+import { MAX_QA_POSTER_BYTES } from './qaRecordings.mjs';
+import { MAX_QA_VIDEOS, MAX_QA_VIDEO_BYTES } from './qaSessions.mjs';
 import { createSessionApi, sessionForAuthorization } from './sessionApi.mjs';
 import { createUserSettings } from './userSettings.mjs';
 import { readRepoSettings, writeEnvFiles } from '../shared/project.mjs';
@@ -368,6 +370,134 @@ test('a QA session gets a read-only token, and sends its report once through /qa
   assert.equal((await report('Bearer qa-token', { verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 })).status, 204);
   assert.equal((await report('Bearer qa-token', { verdict, report: 'again', sha })).status, 409);
   assert.deepEqual(finished, [{ id: 'aaaaaaaa', verdict, report: '## TC-1: a ❌', sha, costUsd: 2.25 }]);
+});
+
+test('a QA session sends its WebM videos through /qa-video before its report; nothing else, and no other session, can', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const sessions = [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }];
+  const saved = [];
+  let refuse = false;
+  const fleet = {
+    sessions: () => sessions,
+    async qaVideo(session, video) {
+      if (refuse) throw new Error('HTTP 403: Resource not accessible by integration');
+      saved.push(video);
+      session.qa.videos = [...(session.qa.videos ?? []), { url: `u${saved.length}`, bytes: video.length }];
+      return { url: `u${saved.length}` };
+    },
+  };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(1000, 7)]);
+  const send = (authorization, body, headers = {}) => request(port, { path: '/qa-video', authorization, body, headers });
+
+  assert.equal((await send('Bearer pr-token', webm)).status, 404, 'only a QA session has videos');
+  assert.equal((await send('Bearer qa-token', Buffer.from('<html>not a video</html>'))).status, 400);
+  // Said up front, refused before a byte is read: the client never has to send it all.
+  const tooBig = await new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/qa-video',
+      headers: { authorization: 'Bearer qa-token', 'content-length': String(MAX_QA_VIDEO_BYTES + 1) } }, (res) => {
+      resolve(res.statusCode);
+      req.destroy();
+    });
+    req.on('error', reject);
+    req.write(webm);
+  });
+  assert.equal(tooBig, 413);
+  assert.deepEqual(await send('Bearer qa-token', webm), { status: 200, body: { url: 'u1' } });
+  assert.ok(saved[0].equals(webm), 'the bytes as sent');
+  refuse = true;
+  assert.equal((await send('Bearer qa-token', webm)).status, 502, 'GitHub refusing it is the console\'s failure');
+  refuse = false;
+  qa.qa.videos = Array.from({ length: MAX_QA_VIDEOS }, () => ({ url: 'u', bytes: 1 }));
+  assert.equal((await send('Bearer qa-token', webm)).status, 409, 'at most MAX_QA_VIDEOS');
+  qa.qa.videos = [];
+  qa.qa.conclusion = 'success';
+  assert.equal((await send('Bearer qa-token', webm)).status, 409, 'not once the report is in');
+});
+
+test('a QA session sends one PNG still through /qa-poster; nothing else, and not twice', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const posters = [];
+  const fleet = {
+    sessions: () => [qa, { id: 'bbbbbbbb', status: 'running', token: 'pr-token', kind: 'pr', number: 7 }],
+    qaVideo: async () => ({ n: 1 }),
+    async qaPoster(session, png) { posters.push(png); session.qa.poster = '/qa-poster/aaaaaaaa/x.png'; return { saved: true }; },
+  };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100, 1)]);
+  const send = (authorization, body) => request(port, { path: '/qa-poster', authorization, body });
+
+  assert.equal((await send('Bearer pr-token', png)).status, 404, 'only a QA session');
+  assert.equal((await send('Bearer qa-token', Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 1, 2, 3, 4, 5]))).status, 400, 'a still is a PNG');
+  assert.equal((await send('Bearer qa-token', Buffer.alloc(MAX_QA_POSTER_BYTES + 1, 0x89))).status, 413);
+  assert.deepEqual(await send('Bearer qa-token', png), { status: 200, body: { saved: true } });
+  assert.ok(posters[0].equals(png));
+  assert.equal((await send('Bearer qa-token', png)).status, 409, 'one still for a run');
+  assert.equal(posters.length, 1);
+});
+
+// A slow upload, its head and first bytes sent, held open until `finish` sends the rest.
+function startUpload(port, token, body) {
+  let finish;
+  const done = new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/qa-video',
+      headers: { authorization: `Bearer ${token}`, 'content-length': String(body.length) } }, (res) => {
+      let text = '';
+      res.on('data', (c) => { text += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: text ? JSON.parse(text) : null }));
+    });
+    req.on('error', reject);
+    req.write(body.subarray(0, 10));
+    finish = () => req.end(body.subarray(10));
+  });
+  return { done, finish: () => finish() };
+}
+
+test('a QA session sends one video at a time, and one that lands after its report is refused', async (t) => {
+  const qa = { id: 'aaaaaaaa', status: 'running', token: 'qa-token', kind: 'pr', number: 7, qa: { base: 'main' } };
+  const saved = [];
+  const fleet = {
+    sessions: () => [qa],
+    async qaVideo(session, video) {
+      saved.push(video);
+      session.qa.videos = [...(session.qa.videos ?? []), { url: `u${saved.length}`, bytes: video.length }];
+      return { url: `u${saved.length}` };
+    },
+  };
+  const handle = createSessionApi({ fleet, tokens: { token: async () => ({ token: 'ghs', expiresAt: 0 }) } });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const { port } = server.address();
+  const webm = Buffer.concat([Buffer.from([0x1a, 0x45, 0xdf, 0xa3]), Buffer.alloc(1000, 7)]);
+  const send = (body) => request(port, { path: '/qa-video', authorization: 'Bearer qa-token', body });
+
+  // While one is on its way, the next is refused before its body is read: sent at once, they could pass MAX_QA_VIDEOS
+  // together and fill the console's memory.
+  const first = startUpload(port, 'qa-token', webm);
+  await new Promise((r) => setTimeout(r, 50));
+  const second = await send(webm);
+  assert.equal(second.status, 409);
+  assert.match(second.body.error, /one at a time/);
+  first.finish();
+  assert.deepEqual(await first.done, { status: 200, body: { url: 'u1' } });
+  assert.equal((await send(webm)).status, 200, 'the next one goes once the first is in');
+
+  // The report comes in while a video is on its way: its comment is written, so the video is not kept.
+  const late = startUpload(port, 'qa-token', webm);
+  await new Promise((r) => setTimeout(r, 50));
+  qa.qa.conclusion = 'success';
+  late.finish();
+  assert.equal((await late.done).status, 409);
+  assert.equal(saved.length, 2, 'never committed');
 });
 
 test('a review session gets a read-only token, and sends its verdict once through /review-report', async (t) => {

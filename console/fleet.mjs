@@ -12,6 +12,7 @@ import { privateSessionHomeName, sharedHomeName } from './homes.mjs';
 import { createIssueTracking } from './issueTracking.mjs';
 import { createPrAnnouncer } from './prAnnouncer.mjs';
 import { finishedComment, runningComment } from './qaSessions.mjs';
+import { QA_RECORDING_DAYS, qaVideoPath } from './qaRecordings.mjs';
 import { reviewDoneComment, reviewEndedComment, reviewRunningComment } from './reviewSessions.mjs';
 import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
@@ -244,7 +245,7 @@ export function failedComment({ session, publicUrl, linkQuery = null, consoleNam
  */
 export function createFleet({
   config, store, launcher, github, statusd = callStatusd, now = Date.now, databases = null, slack = null, homes = null,
-  userSettings = null, people = null, autoName = null, attachments = null, members = null, pings = null,
+  userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null,
 }) {
@@ -930,7 +931,9 @@ export function createFleet({
     if (session.homeDeletePending || (isAsk(session) && !session.noticedAt) || session.review?.held) return;
     const from = Date.parse(session.cleanedAt ?? session.stoppedAt ?? session.createdAt);
     const removeMs = retention().removeAfterDeleteMs ?? DEFAULT_RETENTION.removeAfterDeleteMs;
-    const ms = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
+    const listed = isReview(session) ? removeMs + (retention().withoutPrMs ?? DEFAULT_RETENTION.withoutPrMs) : removeMs;
+    // A QA run's recordings are watched as its session (qaRecordings.mjs): it stays listed as long as they are kept.
+    const ms = isQa(session) && session.qa?.videos?.length ? Math.max(listed, QA_RECORDING_DAYS * 86_400_000) : listed;
     if (!Number.isFinite(from) || now() < from + ms) return;
     dropRecord(session, `deleted ${spanText(ms)} ago`);
   }
@@ -1685,6 +1688,47 @@ export function createFleet({
   }
 
   /**
+   * One of a QA session's videos, sent before its report: kept where the provider keeps files (qaRecordings.mjs) for
+   * the QA comment to link, behind the console's sign-in. Throws when the store refuses it.
+   * @param {object} session
+   * @param {Buffer} video  WebM
+   * @returns {Promise<{n: number}>}  its number in the run
+   */
+  async function qaVideo(session, video) {
+    if (!qaRecordings) throw new Error('this console keeps no QA recordings');
+    const videos = session.qa.videos ?? [];
+    const n = videos.length + 1;
+    await qaRecordings.saveVideo(session.id, n, video);
+    update(session, { qa: { ...session.qa, videos: [...videos, { n, bytes: video.length }] } });
+    console.log('fleet: QA video saved', { id: session.id, number: session.number, n, bytes: video.length });
+    return { n };
+  }
+
+  /**
+   * The still the QA comment shows, from the run's first video: kept beside the videos at a name nobody can guess, the
+   * one part of a recording served without sign-in, since GitHub fetches a comment's images with none.
+   * @param {object} session
+   * @param {Buffer} png
+   */
+  async function qaPoster(session, png) {
+    if (!qaRecordings) throw new Error('this console keeps no QA recordings');
+    const { path: posterPath } = await qaRecordings.savePoster(session.id, png);
+    update(session, { qa: { ...session.qa, poster: posterPath } });
+    console.log('fleet: QA poster saved', { id: session.id, number: session.number, bytes: png.length });
+    return { saved: true };
+  }
+
+  // The links a QA comment gives its recordings, on the console's public address; none without one.
+  async function qaRecordingLinks(session, project) {
+    const base = await consoleUrlOf(project);
+    if (!base || !session.qa.videos?.length) return { videos: [], poster: null };
+    return {
+      videos: session.qa.videos.map((v) => ({ url: `${base}${qaVideoPath(session.id, v.n)}`, bytes: v.bytes })),
+      poster: session.qa.poster ? `${base}${session.qa.poster}` : null,
+    };
+  }
+
+  /**
    * A QA session's report (POST /qa-report): written into the pull request's QA comment, then the session stops.
    * @param {object} session
    * @param {{verdict: {conclusion: string, title: string, status: string, total: number}, report: string, sha: string,
@@ -1694,7 +1738,8 @@ export function createFleet({
     const project = projectFor(config, session);
     const gh = githubOf(project);
     const sessionUrl = await qaSessionUrl(session, project);
-    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl }));
+    const { videos, poster } = await qaRecordingLinks(session, project);
+    await postQaComment(session, gh, finishedComment({ heading: session.qa.heading, verdict, report, sessionUrl, videos, poster }));
     // The check carries the report too: sessions comment as the App, but cannot post a check, so the brief reads it here.
     // The session runs the pull request's code, which can send any commit: only this pull request's gets a check.
     const ours = sha === session.qa.sha || sha === (await safely('QA pull request', () => gh.pull(session.number)))?.head?.sha;
@@ -2248,7 +2293,7 @@ export function createFleet({
 
   return {
     createSession, assign, releaseAssignments, startManual, startPrivate, rename, resumePrivate, removePrivateSession, removePrivate, resumeShared, deleteShared, removeShared, forceStop, send, stop, startApp, stopApp, setupApp, startClaudeLogin, tick, checkStarting, checkWaiting, startStep, pollGitHub,
-    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
+    handleTrigger, handleWebhookTrigger, handleQaLabel, qaAfterReview, qaAutoLabel, qaFinished, qaVideo, qaPoster, reviewOnTag, reviewFinished, handleNeedsHuman, webhooksAlive, pullsChanged, find,
     sessions: () => state.sessions,
     slackWaiting: () => announcer.waitingSessions(),
   };

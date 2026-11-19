@@ -132,6 +132,37 @@ function getWith(port, path, headers = {}) {
   });
 }
 
+test('a QA recording plays only for someone signed in who may open its session, while its still needs no sign-in', async (t) => {
+  const session = { id: '0a1b2c3d', status: 'stopped', kind: 'pr', number: 7, title: 'QA', qa: { base: 'main' } };
+  const fleet = { sessions: () => [session], find: (id) => (id === session.id ? session : null) };
+  const config = {
+    host: '127.0.0.1', publicUrl: 'https://console.example', extraHosts: [], repo: 'o/r', label: 'woodshed',
+    maxRunning: 5, limits: { idleMs: 1, lifetimeMs: 1 },
+  };
+  const auth = { enabled: () => true, available: () => true, sessionFor: async (cookie) => (String(cookie).includes('woodshed_session=good') ? { login: 'octo' } : null) };
+  const served = [];
+  const qaRecordings = {
+    serveVideo: async (_req, res, which) => { served.push(['video', which]); res.writeHead(200, { 'content-type': 'video/webm' }).end('webm'); },
+    servePoster: async (_req, res, which) => { served.push(['poster', which]); res.writeHead(200, { 'content-type': 'image/png' }).end('png'); },
+    gone: (res) => { res.writeHead(410, { 'content-type': 'text/plain' }).end('no longer kept'); },
+  };
+  const handle = createHandler({ config, fleet, auth, qaRecordings });
+  const server = http.createServer((req, res) => { handle(req, res); });
+  const port = await listen(server);
+  t.after(() => server.close());
+  const good = { cookie: 'woodshed_session=good' };
+  const secret = 'f'.repeat(32);
+
+  // A link clicked in the QA comment goes to sign in, and back to the video after.
+  assert.deepEqual(await getWith(port, '/qa/0a1b2c3d/video/1', { accept: 'text/html' }), { status: 302, location: '/login?next=%2Fqa%2F0a1b2c3d%2Fvideo%2F1' });
+  assert.equal(served.length, 0);
+  assert.equal((await getWith(port, '/qa/0a1b2c3d/video/1', good)).status, 200);
+  assert.equal((await getWith(port, '/qa/99999999/video/1', good)).status, 410, 'no session listed, no recording, said as for one past its days');
+  assert.equal((await getWith(port, `/qa-poster/0a1b2c3d/${secret}.png`)).status, 200, 'GitHub\'s image proxy signs in nowhere');
+  assert.equal((await getWith(port, '/qa-poster/0a1b2c3d/short.png')).status, 401, 'anything else under it is behind sign-in');
+  assert.deepEqual(served, [['video', { id: '0a1b2c3d', n: 1 }], ['poster', { id: '0a1b2c3d', secret }]]);
+});
+
 test('the Diff tab\'s read goes to the running session\'s statusd, with its token, and a stopped session is refused', async (t) => {
   const asked = [];
   const statusd = http.createServer((req, res) => {

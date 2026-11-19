@@ -17,6 +17,12 @@ if [ ! -f .qa/plan/plan.md ]; then
   echo '{"type":"result","total_cost_usd":0.5}'
 else
   printf '## TC-1: signs in ✅\\n## TC-2: saves ❌\\n' > .qa/report.md
+  # The browser's recording, where the MCP config claude was given says to write it.
+  for a in "$@"; do [ "\${prev:-}" = --mcp-config ] && cp "$a" .qa/mcp-seen.json; prev=$a; done
+  # Playwright writes it only as the browser closes, which qaBrowser.mjs may still be doing after claude has gone: a
+  # stand-in that carries the run's config in its command line, as the proxy does, and writes the video a second later.
+  cfg=$(jq -r '.mcpServers.playwright.args[-1]' .qa/mcp-seen.json)
+  nohup bash -c 'sleep 1; printf "\\x1a\\x45\\xdf\\xa3webm" > .qa/video/page@1.webm' qaBrowser "$cfg" > /dev/null 2>&1 &
   echo '{"type":"result","total_cost_usd":1.25}'
 fi
 `;
@@ -35,6 +41,9 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   fs.mkdirSync(bin);
   fs.writeFileSync(path.join(sessionDir, 'bin', 'claude'), FAKE_CLAUDE, { mode: 0o755 });
   fs.writeFileSync(path.join(bin, 'gh'), '#!/bin/bash\necho "# Pull request: Add GTM"\n', { mode: 0o755 });
+  // A stand-in for Playwright's ffmpeg: it says what it was given, and writes a PNG where its last argument says.
+  const ffmpeg = path.join(bin, 'ffmpeg-linux');
+  fs.writeFileSync(ffmpeg, `#!/bin/bash\necho "$*" > "${path.join(dir, 'ffmpeg-args')}"\nprintf '\\x89PNG\\r\\n\\x1a\\nstill' > "\${@: -1}"\n`, { mode: 0o755 });
   // The base is a branch the clone has never fetched, as for a stacked pull request.
   execFileSync('bash', ['-c', `git init -q -b main "${repo}" && cd "${repo}" && mkdir .woodshed && echo 'Sign in as demo.' > .woodshed/qa.md &&
     git add -A && git -c user.email=t@t -c user.name=t commit -qm base && git init -q --bare "${dir}/origin.git" &&
@@ -46,10 +55,17 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
     res.end(JSON.stringify(req.url === '/status' ? { app, appServers: { frontendPort: 3999 } } : { started: true }));
   });
   const reports = [];
+  const videos = [];
   const consoleServer = await listen((req, res) => {
-    let body = '';
-    req.on('data', (c) => { body += c; });
+    const chunks = [];
+    req.on('data', (c) => { chunks.push(c); });
     req.on('end', () => {
+      const body = Buffer.concat(chunks);
+      if (req.url === '/qa-video' || req.url === '/qa-poster') {
+        videos.push({ path: req.url, authorization: req.headers.authorization, type: req.headers['content-type'], body, before: reports.length });
+        res.writeHead(200, { 'content-type': 'application/json' }).end('{}');
+        return;
+      }
       reports.push({ path: req.url, authorization: req.headers.authorization, body: JSON.parse(body) });
       res.writeHead(204).end();
     });
@@ -59,7 +75,7 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
   const env = {
     ...process.env, PATH: `${bin}:${process.env.PATH}`, SESSION_DIR: sessionDir, REPO_DIR: repo, PR: '7', QA_BASE: 'stacked-base',
     SESSION_TOKEN: 'tok', WOODSHED_CONSOLE_URL: `http://127.0.0.1:${consoleServer.address().port}`,
-    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}),
+    STATUSD_PORT: String(statusd.address().port), QA_SCRIPT: QA_MJS, QA_FFMPEG: ffmpeg, QA_APP_WAIT_SECONDS: '6', QA_RUNNING: path.join(dir, 'qa-running'), ...(skip ? { FAKE_SKIP: '1' } : {}),
   };
   const output = await new Promise((resolve, reject) => {
     const child = spawn('bash', [QA_SH], { env });
@@ -69,7 +85,8 @@ async function runQa(t, { skip = false, app = 'running' } = {}) {
     child.on('error', reject);
     child.on('exit', (code) => (code === 0 ? resolve(out) : reject(new Error(`qa.sh exited ${code}: ${out}`))));
   });
-  return { reports, statusdCalls, output, repo, running: path.join(dir, 'qa-running') };
+  const ffmpegArgs = () => fs.readFileSync(path.join(dir, 'ffmpeg-args'), 'utf8').trim();
+  return { reports, videos, statusdCalls, output, repo, ffmpegArgs, running: path.join(dir, 'qa-running') };
 }
 
 test('a QA run plans, starts the app, tests and sends the verdict, the report, the commit and the cost', async (t) => {
@@ -85,6 +102,21 @@ test('a QA run plans, starts the app, tests and sends the verdict, the report, t
   assert.ok(statusdCalls.includes('POST /app/start Bearer tok'));
   assert.match(fs.readFileSync(path.join(repo, '.qa', 'plan-prompt.md'), 'utf8'), /http:\/\/localhost:3999[\s\S]*Sign in as demo\./);
   assert.equal(fs.existsSync(running), false, 'the session reads as done');
+});
+
+test('the tests run on a browser that records, and its video goes to the console before the report', async (t) => {
+  const { reports, videos, repo, ffmpegArgs } = await runQa(t);
+  const mcp = JSON.parse(fs.readFileSync(path.join(repo, '.qa', 'mcp-seen.json'), 'utf8')).mcpServers.playwright;
+  assert.equal(mcp.command, 'node');
+  assert.match(mcp.args[0], /qaBrowser\.mjs$/, 'behind the proxy that closes the browser, so the video is whole');
+  assert.deepEqual(mcp.args.slice(1, 5), ['playwright-mcp', '--headless', '--browser', 'chromium']);
+  const config = JSON.parse(fs.readFileSync(mcp.args.at(-1), 'utf8'));
+  assert.equal(config.browser.contextOptions.recordVideo.dir, path.join(repo, '.qa', 'video'));
+  assert.deepEqual(videos.map((v) => v.path), ['/qa-video', '/qa-poster'], 'the video, then a still from it');
+  assert.deepEqual([videos[0].authorization, videos[0].type, videos[0].body.toString('latin1'), videos[0].before], ['Bearer tok', 'video/webm', '\x1a\x45\xdf\xa3webm', 0]);
+  assert.deepEqual([videos[1].authorization, videos[1].type, videos[1].body.toString('latin1'), videos[1].before], ['Bearer tok', 'image/png', '\x89PNG\r\n\x1a\nstill', 0]);
+  assert.match(ffmpegArgs(), /-sseof -1 -i \S+\/\.qa\/video\/page@1\.webm -frames:v 1/, 'the first video\'s last second');
+  assert.equal(reports.length, 1);
 });
 
 test('a plan with nothing to test sends a neutral verdict and never starts the app', async (t) => {

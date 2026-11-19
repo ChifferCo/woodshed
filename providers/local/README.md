@@ -10,6 +10,7 @@ off until its setting names it, so a console with none of them set runs sessions
 | Session containers | `dockerLauncher.mjs` | Always; `WOODSHED_LOCAL_DOCKER_NETWORK` puts them on the stack's network. `dockerHost` and `reachHost` point it, and `dbAdminRunner.mjs`, at another machine's daemon |
 | Secrets, each file sealed with a key | `secretStore.mjs`, `secretKey.mjs` | `WOODSHED_LOCAL_SECRETS_DIR`, `WOODSHED_LOCAL_SECRETS_KEY_FILE` |
 | Saved Claude homes | `homeStore.mjs` | `WOODSHED_LOCAL_HOMES_DIR` |
+| QA recordings | `recordingStore.mjs` | Always: `qa-recordings/` in the state folder, for 14 days |
 | Each session's own databases | `dbAdminRunner.mjs`, with `postgres.yml` and `mongo.yml` | Postgres: `WOODSHED_LOCAL_DB_POSTGRES_HOST` and `_DB_POSTGRES_ROOT_USER`. Mongo, which needs Postgres: `WOODSHED_LOCAL_DB_MONGO_HOST`. With the secrets folder |
 | GitHub and Slack webhooks | `webhookReceiver.mjs` | `WOODSHED_LOCAL_WEBHOOK_PORT`, with the secrets folder |
 | Hosted mode: GitHub access and sign-in from the service that hosts the console | `../../console/githubBroker.mjs`, `../../console/trustedIdentity.mjs` | `WOODSHED_GITHUB_BROKER_URL` and `_GITHUB_BROKER_TOKEN_FILE`, `WOODSHED_TRUSTED_IDENTITY_SECRET` (`console/README.md`, "Hosted mode"). With the broker, no webhooks |
