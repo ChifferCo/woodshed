@@ -900,7 +900,7 @@ process.stdin.on('data', (d) => {
 // claude at its prompt: its box between two rules, the box's hint dim, and its mode footer.
 const CLAUDE_IDLE = `\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
 
-async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false, env = {}, asClaude = false } = {}) {
+async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false, env = {}, asClaude = false, inShell = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
   const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
@@ -914,13 +914,15 @@ async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false,
   // asClaude: run as a program named claude, as the real agent's pane shows it to tmux (pane_current_command).
   const program = asClaude ? path.join(dir, 'claude') : process.execPath;
   if (asClaude) await fs.symlink(process.execPath, program);
-  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', `${program} ${script}`);
+  // inShell: claude as the child of the pane's shell, which stays when it stops, as in a session.
+  const command = inShell ? `bash --norc -c '${program} ${script}; exec bash --norc'` : `${program} ${script}`;
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', command);
   const stateFile = path.join(dir, 'state.json');
   const setState = (s) => fs.writeFile(stateFile, JSON.stringify({ state: s, event: s === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
   await setState(state);
   for (let i = 0; i < 50 && !/auto mode on|esc to interrupt/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
   const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile, ...env } });
-  return { call, setState, tmux, dir, program, script, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
+  return { call, setState, tmux, dir, program, script, stateFile, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
 }
 
 
@@ -1185,6 +1187,45 @@ test('tmux\'s test of the pane, which types only into claude or codex, is true f
   assert.equal(shown('#{pane_current_command}'), 'sleep');
   assert.equal(shown(AGENT_PANE_FORMAT), '0', 'sleep is not the agent');
   for (const name of ['claude', 'codex']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
+});
+
+test('a Chat message sent while the lockdown restarts claude is refused as busy, and goes in once, after claude is back', async (t) => {
+  const taintDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-taint-'));
+  t.after(() => fs.rm(taintDir, { recursive: true, force: true }));
+  // What the reopen types in place of session/bin/claude: the stand-in again, and its hooks as claude's fire on the
+  // lockdown's message: working a moment after it opens, then done.
+  const launcher = path.join(taintDir, 'claude-launch');
+  const flags = path.join(taintDir, 'flags');
+  const { call, tmux, got, program, script, stateFile, setState } = await promptPane(t, 'done', {
+    asClaude: true, inShell: true, env: { WOODSHED_TAINT_DIR: taintDir, WOODSHED_CLAUDE_BIN: launcher, WOODSHED_CLAUDE_FLAGS_FILE: flags },
+  });
+  const hook = (state) => `${process.execPath} -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({ state: process.argv[2], event: "x", at: Date.now(), shells: 0 }))' ${stateFile} ${state}`;
+  await fs.writeFile(launcher, `#!/bin/sh\n( sleep 1.5; ${hook('working')}; sleep 1.5; ${hook('done')} ) &\nexec ${program} ${script}\n`, { mode: 0o755 });
+  const send = () => call('POST', '/send', 'sess', JSON.stringify({ text: 'during the restart' }));
+  const paneCommand = async () => (await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim();
+  await setState('done');
+
+  assert.deepEqual((await call('POST', '/taint', 'sess', '{}')).body, { tainted: true, egress: false });
+  // The old claude is stopped: the pane is its shell, and the reopen holds the pane from before that.
+  for (let i = 0; i < 100 && (await paneCommand()) === 'claude'; i++) await new Promise((r) => setTimeout(r, 50));
+  const during = await send();
+  assert.deepEqual([during.status, during.body.why, during.body.busy], [409, 'typing', true], 'busy: the console holds it');
+  assert.doesNotMatch((await tmux('capture-pane', '-p', '-t', 'claude')).stdout, /during the restart/, 'nothing typed into the shell');
+
+  // The console tries again after each status read: busy until the new claude has taken the lockdown's message and
+  // finished its turn, then typed in, once.
+  let answer = during;
+  const tries = [];
+  for (let i = 0; i < 60 && answer.status !== 200; i++) {
+    await new Promise((r) => setTimeout(r, 250));
+    answer = await send();
+    tries.push(answer.body.why ?? answer.status);
+  }
+  assert.equal(answer.status, 200, `typed in at last (tries: ${tries.join(', ')})`);
+  assert.equal(await paneCommand(), 'claude', 'into the new claude');
+  for (let i = 0; i < 50 && !(await got()).includes('during the restart'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await got()).match(/during the restart/g)?.length, 1, 'once');
+  assert.match(await fs.readFile(path.join(taintDir, 'tainted'), 'utf8'), /"at"/, 'the taint\'s files in the test\'s folder');
 });
 
 test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {

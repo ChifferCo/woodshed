@@ -189,6 +189,8 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
     env: {
       ...tmuxEnv, SESSION_TOKEN: token, SESSION_ID: id, STATUSD_PORT: String(port), STATUSD_HOST: '127.0.0.1', REPO_DIR: repo, CODEX_HOME: codexHome,
       AGENT: agent === 'codex' ? 'codex' : '', APP_PORT: '', APP_API_PORT: '', WOODSHED_CONSOLE_URL: '',
+      // An ordinary session's, whatever kind of session the dev console itself runs in (a QA one's would never say done).
+      SESSION_MODE: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });

@@ -977,7 +977,7 @@ async function hasRemoteControlCommand() {
 // Terminal tab's prompt, where the code is pasted. Nothing else may be typed through this route.
 async function startClaudeLogin() {
   // The console refuses it too: Remote Control would carry what the session saw to claude.ai.
-  if (isTainted()) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { status: 409 });
+  if (tainted()) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { status: 409 });
   if (await hasRemoteControlCommand()) {
     // Typed as a message is: one thing at a time, and only between turns, when no prompt can open under its Enter.
     if (!paneLock.take('login')) throw new Error('a message is going in to claude: sign in once it has');
@@ -1292,7 +1292,7 @@ let settingsOver = false;
 
 function syncSettings(timeoutMs) {
   // A tainted session's settings stay its own: the console refuses them, so nothing is sent.
-  if (settingsOver || isTainted()) return Promise.resolve();
+  if (settingsOver || tainted()) return Promise.resolve();
   settingsRound ??= settingsRoundOnce(timeoutMs).finally(() => { settingsRound = null; });
   return settingsRound;
 }
@@ -1348,17 +1348,25 @@ async function checkpoint() {
 
 // The session's side of its taint (taint.mjs), then claude reopened on the console's proxy. Answers at once: the
 // reopening waits for claude's turn to end.
-const RULES_FILE = '/tmp/woodshed-rules.md';
-const TAINT_MESSAGE_FILE = '/tmp/woodshed-taint-message.md';
-const CLAUDE_BIN = path.join(import.meta.dirname, 'bin', 'claude');
+// A test's own folder for every file of the taint, and the claude its reopen starts (statusd.test.mjs): set by no
+// launcher, so a session's are the fixed paths below. A test that wrote those would taint the machine it runs on.
+const TAINT_DIR = process.env.WOODSHED_TAINT_DIR || null;
+const inTaintDir = (name) => path.join(TAINT_DIR, name);
+const TAINT_FILES = TAINT_DIR
+  ? { marker: inTaintDir('tainted'), setUp: inTaintDir('set-up'), envFile: inTaintDir('egress.env'), bundle: inTaintDir('egress-ca.pem'), claudeJson: inTaintDir('claude.json'), profiles: [], mcpConfig: inTaintDir('mcp.json') }
+  : {};
+const RULES_FILE = TAINT_DIR ? inTaintDir('rules.md') : '/tmp/woodshed-rules.md';
+const TAINT_MESSAGE_FILE = TAINT_DIR ? inTaintDir('message.md') : '/tmp/woodshed-taint-message.md';
+const CLAUDE_BIN = process.env.WOODSHED_CLAUDE_BIN || path.join(import.meta.dirname, 'bin', 'claude');
+const tainted = () => isTainted(TAINT_FILES.marker);
 // How long claude's turn may run before it is reopened anyway, and how long it has to stop.
 const TAINT_TURN_WAIT_MS = 5 * 60_000;
 let tainting = null;
 
 async function taint({ proxy = null, ca = null, message = '' }) {
   // Done only once every step below was: a setup that failed partway is finished by the console's next notice.
-  if (isTaintSetUp()) return { already: true };
-  const { egress, variables } = await applyTaint({ proxy, ca, token: TOKEN, env: process.env, repoDir: REPO_DIR });
+  if (isTaintSetUp(TAINT_FILES.setUp)) return { already: true };
+  const { egress, variables } = await applyTaint({ proxy, ca, token: TOKEN, env: process.env, repoDir: REPO_DIR, files: TAINT_FILES });
   // statusd's own git (the stop's checkpoint push) goes out the same way.
   Object.assign(process.env, variables);
   settingsOver = true;
@@ -1368,7 +1376,7 @@ async function taint({ proxy = null, ca = null, message = '' }) {
   // First: --disallowedTools takes several values, so the flag after it must be another flag, never the message.
   if (!flags.includes('--strict-mcp-config')) await fs.writeFile(CLAUDE_FLAGS_FILE, `${TAINTED_CLAUDE_FLAGS}${flags.trimEnd()}`);
   await fs.writeFile(TAINT_MESSAGE_FILE, String(message || 'This session has seen production data and is now locked down.'));
-  await markTaintSetUp();
+  await markTaintSetUp(TAINT_FILES.setUp);
   console.log('statusd: tainted', { egress, reopens: !CODEX });
   if (!CODEX) tainting ??= reopenClaude().catch((err) => console.warn('statusd: claude not reopened after the taint', { message: err?.message }));
   return { tainted: true, egress };
@@ -1654,6 +1662,10 @@ async function handle(req, res) {
       // Last, just before typing: the agent still runs in its pane, and its caller still waits.
       if (agentOnly) {
         if (!(await agentInPane())) return notRunning();
+        if (stopping) {
+          console.log('statusd: text not sent, the session is stopping');
+          return reply(res, 409, { error: 'the session is stopping' });
+        }
         if (tooLate()) {
           console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
           return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
