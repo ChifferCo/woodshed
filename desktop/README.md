@@ -23,10 +23,11 @@ npm install
 npm start
 ```
 
-The first start asks for the console's address: the one you open in your browser (`https://woodshed.example.com`, or
-`localhost:7690` for a console on this computer). Plain `http://` is accepted only for a console on this computer, since
-sign-in cookies need https anywhere else. The app checks that the address answers like a console (its
-`/manifest.webmanifest`), keeps it, and opens it on every start after. **File → Change console…** asks again.
+It opens the hosted console, `https://console.woodshed.run`, until you pick another. For a self-hosted installation,
+**File → Change console…** asks for the console's address: the one you open in your browser (`https://woodshed.example.com`,
+or `localhost:7690` for a console on this computer). Plain `http://` is accepted only for a console on this computer,
+since sign-in cookies need https anywhere else. The app checks that the address answers like a console (its
+`/manifest.webmanifest`), keeps it, and opens it on every start after.
 
 `npm start -- --console=localhost:7690` opens a console for that run without saving it, for trying a dev console
 (`node console/bin/devConsole.mjs`). It is a flag, not an environment variable, on purpose: `WOODSHED_CONSOLE_URL` is

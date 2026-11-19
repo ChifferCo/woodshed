@@ -30,8 +30,11 @@ function writeSettings(change) {
   return next;
 }
 
+// The hosted console, opened when nothing is saved. A self-hosted installation picks its own with File → Change console…
+const DEFAULT_CONSOLE = 'https://console.woodshed.run/';
+
 // `--console=<url>` opens that console for this run without saving it (for trying a dev console); otherwise the saved
-// one, or the setup page. Not an environment variable: WOODSHED_CONSOLE_URL is already a session's own (the console it
+// one, or the hosted one. Not an environment variable: WOODSHED_CONSOLE_URL is already a session's own (the console it
 // reports to), and the app run from a session's terminal would pick that up.
 function consoleOverride() {
   const flag = process.argv.find((a) => a.startsWith('--console='));
@@ -116,7 +119,7 @@ function createMainWindow() {
 }
 
 function showSetup(error) {
-  mainWindow.loadFile(path.join(here, 'setup.html'), { query: { current: readSettings().consoleUrl ?? '', ...(error ? { error } : {}) } });
+  mainWindow.loadFile(path.join(here, 'setup.html'), { query: { current: readSettings().consoleUrl || DEFAULT_CONSOLE, ...(error ? { error } : {}) } });
 }
 
 // The setup page's one call: check the address answers like a console, save it and open it.
@@ -251,7 +254,7 @@ if (!app.requestSingleInstanceLock()) {
     mainWindow.focus();
   });
   app.whenReady().then(() => {
-    consoleUrl = consoleOverride() ?? (readSettings().consoleUrl || null);
+    consoleUrl = consoleOverride() ?? (readSettings().consoleUrl || DEFAULT_CONSOLE);
     session.defaultSession.setPermissionRequestHandler((wc, permission, callback, details) => callback(permitted(permission, details.requestingUrl, details)));
     session.defaultSession.setPermissionCheckHandler((wc, permission, origin, details) => permitted(permission, origin, details));
     if (process.platform === 'darwin' && icon) app.dock?.setIcon(icon);
