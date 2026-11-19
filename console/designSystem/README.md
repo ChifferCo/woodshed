@@ -174,7 +174,11 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   `menu-sub`), the open one marked as any current entry; Settings is then `aria-current="true"`, its icon `amber-ink`,
   not its ground. The tab row under the title stays. On a phone the list is one row, so it keeps Settings as one entry,
   marked, and leaves the tabs to the row under the title.
-- People and Webhook events stay entries of their own: one is who is in, the other a log, not settings.
+- People stays an entry of its own: it is who is in, not settings. Webhook events is a log, not a setting, and not a
+  navigation entry either: Secrets & webhooks links to it (in the GitHub webhook card, or the page's note when there is
+  none), its page has a `‹ Secrets & webhooks` crumb above the title, and Settings is marked current in the list on it.
+- Keyboard shortcuts is in the settings list's This browser group, beside Theme and review files, not in the avatar
+  menu: the menu holds pages, and `?` and the command palette open the sheet anywhere.
 
 ## Repo settings
 

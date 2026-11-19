@@ -38,8 +38,10 @@ while it has none and GitHub has it). Whoever opens it signs in first (`/login?n
 New session with Work on filled in, to start their own private session on their own Claude. The link holds the PR or
 branch alone, so the session stays private. With nothing pushed the button says so and copies nothing.
 The settings pages (My settings, Settings with its General and Secrets &
-webhooks tabs and any a program embedding the console adds, People and Webhook events) keep the same frame: a list of them takes the rail's place,
-with **‹ Back to sessions** and the avatar menu above it.
+webhooks tabs and any a program embedding the console adds, and People) keep the same frame: a list of them takes the rail's place,
+with **‹ Back to sessions** and the avatar menu above it. Webhook events, a log rather than a setting, is in neither the
+list nor the menu: Secrets & webhooks links to it, it has a **‹ Secrets & webhooks** link above its title, and Settings
+is marked in the list while it is open. Keyboard shortcuts is under the list's This browser group, not the avatar menu.
 Each page opens with a **tag for whose sessions it changes** (`Only you`: your My Woodshed sessions; `Everyone`: shared
 sessions and the console), and the side list has a **search** at its top (`public/settingsSearch.js`, `settingsIndex.cjs`). The search
 lists every section of every page you can open, narrows as you type (`repo`, `token`, `timeout`, `slack`…) and takes
@@ -462,8 +464,8 @@ And what the shed shows about each session:
   nothing takes typing, and never inside a terminal or the Review, whose
   frame gets the ⌘ keys alone. Which key does what is
   `public/keys.cjs`, read by the sheet, the hints and the handler alike. A
-  control with a key (New session, the user menu's and settings list's
-  Keyboard shortcuts) shows a hint with it when the pointer rests on it.
+  control with a key (New session, the settings list's Keyboard shortcuts)
+  shows a hint with it when the pointer rests on it.
 - **Install as an app**: the console serves the shed's manifest and icons
   (`woodshed/shared/pwa.mjs`) under its own name, before sign-in, since a
   browser fetches the manifest without cookies. There is no service worker,
@@ -898,8 +900,9 @@ approval held: removing and adding the label runs QA again, which releases it.
 
 ## Webhook events, secrets and the GitHub App's webhook
 
-In AWS the console has two more pages, under Console in the menu under your
-avatar at the top right. Only an admin can open them (see "Sign-in"). The same menu signs
+In AWS the console has two more pages: Secrets & webhooks, a tab of Settings under Console in the menu under your
+avatar, and Webhook events, linked from it (from its GitHub webhook card, or its note when there is no webhook card).
+Only an admin can open them (see "Sign-in"). The same menu signs
 you out.
 
 - **Webhook events** (`/events`): each message it took off the webhooks queue,
@@ -1306,7 +1309,8 @@ asking.
 
 **Admins.** Each member on People has an *Admin* switch, off for a new member.
 Only an admin sees the Console group in the avatar menu (Settings, whose tabs
-are General and Secrets & webhooks, listed under it too, then People and Webhook events), and the console answers 403 to
+are General and Secrets & webhooks, listed under it too, then People; Webhook events is reached from Secrets &
+webhooks), and the console answers 403 to
 anyone else's call behind those pages (`ADMIN_API_RE` in `console/server.mjs`;
 it logs `console: admin call refused`). The pages themselves still load and say
 so. Only an admin turns the switch on or off, and the last admin cannot turn

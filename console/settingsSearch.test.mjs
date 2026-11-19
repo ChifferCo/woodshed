@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 const source = fs.readFileSync(new URL('./public/settingsSearch.js', import.meta.url), 'utf8');
 const Index = createRequire(import.meta.url)('./public/settingsIndex.cjs');
 
-function loadSearch() {
+function loadSearch({ consoleLinks = [{ href: '/console-settings' }, { href: '/secrets' }, { href: '/people' }, { href: '/events' }] } = {}) {
   const document = { activeElement: null };
   const element = (tag) => {
     const el = {
@@ -53,7 +53,7 @@ function loadSearch() {
   };
   // Where the search sent the page (common.js, goToSettings, which shows a settings page in place).
   const went = [];
-  const W = { h, isAdmin: () => true, consoleLinks: () => [{ href: '/console-settings' }, { href: '/secrets' }, { href: '/people' }, { href: '/events' }], goToSettings: (href) => went.push(href) };
+  const W = { h, isAdmin: () => true, consoleLinks: () => consoleLinks, goToSettings: (href) => went.push(href) };
   const heard = {};
   const location = { pathname: '/events', hash: '' };
   const window = { Woodshed: W, WoodshedSettingsIndex: Index, location, addEventListener(type, fn) { (heard[type] ??= []).push(fn); }, history: { replaceState() {} } };
@@ -135,4 +135,16 @@ test('a page shown with a section in its address has that section outlined and s
   const other = h('section', { id: 'members' });
   shown('/people', '', other);
   assert.equal(other.classList.names.has('is-found'), false, 'no section in the address: nothing outlined');
+});
+
+test('a page under Settings\'s entry, as Webhook events and Secrets & webhooks are, is still found by an admin', () => {
+  // What common.js's consoleLinks gives an admin: Webhook events is no entry of its own, it is in Settings' `also`.
+  const { W, h, went, shown } = loadSearch({ consoleLinks: [{ href: '/console-settings', also: ['/secrets', '/events'] }, { href: '/people' }] });
+  shown('/settings', '', h('nav'), W.settingsSearch());
+  const [input] = W.settingsSearch().children;
+  input.focus();
+  input.value = 'webhook events';
+  input.dispatch('input');
+  input.dispatch('keydown', { key: 'Enter' });
+  assert.deepEqual(went, ['/events#events']);
 });

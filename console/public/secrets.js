@@ -225,6 +225,12 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
     return h('span', { class: 'warn' }, `Not subscribed yet: ${missing.join(', ')}. Tick them under Permissions & events in the GitHub App’s settings.`);
   }
 
+  // Webhook events, the log of what came in, is reached from here rather than the menus: from the webhook card, or, on a
+  // console with no App webhook (Slack's events still land in it), from the page's note.
+  function eventsLink() {
+    return [h('a', { href: '/events' }, 'Webhook events'), ' lists what came in and what the console did with each.'];
+  }
+
   // The card says where the setup stands; the setup itself is the modal in webhookSetup.js.
   function webhookCard() {
     const c = W.webhookChecks(data);
@@ -237,7 +243,8 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
       h('span', { class: 'check-mark', 'aria-hidden': 'true' }, ok ? '✓' : '✗'), h('span', null, text));
     return h('section', { class: 'settings-card', 'aria-labelledby': 'hook-title' },
       h('h2', { id: 'hook-title', class: 'label' }, 'GitHub webhook'),
-      h('p', { class: 'sub' }, 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll.'),
+      h('p', { class: 'sub' }, 'Labels and /woodshed comments reach the console in a second or two. Without it, the console only finds them on its 5-minute poll. ',
+        eventsLink()),
       c.githubError
         ? h('p', { class: 'warn' }, `GitHub’s side cannot be read: ${c.githubError}`)
         : h('ul', { class: 'checks' },
@@ -349,7 +356,8 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
       h('div', null,
         h('h1', { class: 'title' }, 'Settings ', W.scopePill('/secrets')),
         W.settingsTabs('/secrets'),
-        h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`)));
+        h('p', { class: 'sub' }, `Values stay hidden until you press Show. Every change asks you to confirm it first${keepsPrevious() ? ', and the value before it stays restorable in AWS' : ''}.`,
+          data && !data.webhook && [' ', eventsLink()])));
     if (!data) {
       const waiting = loadError && manager?.canChoose ? `${manager.configured ? 'The other secrets are listed here once the GitHub App is set up.' : 'Choose where to keep secrets first.'}` : null;
       app.replaceChildren(h('div', { class: 'page' }, life.nav('/secrets'), head, managerCard(),

@@ -1152,11 +1152,11 @@
   // Under the avatar, as most apps keep them, and on the settings pages' list: your own settings, and the console's own,
   // which only an admin sees (the console refuses their calls to anyone else).
   const MY_LINKS = [{ href: '/settings', label: 'My settings' }];
-  // Settings comes first and holds the console's own tabs (settingsTabs), so it stays current on each of them.
+  // Settings comes first and holds the console's own tabs (settingsTabs), so it stays current on each of them. Webhook
+  // events is a log, reached from Secrets & webhooks, not an entry: Settings stays current on it too.
   const CONSOLE_LINKS = [
-    { href: '/console-settings', label: 'Settings', also: ['/secrets'] },
+    { href: '/console-settings', label: 'Settings', also: ['/secrets', '/events'] },
     { href: '/people', label: 'People' },
-    { href: '/events', label: 'Webhook events' },
   ];
   const isCurrent = (link, current) => link.href === current || Boolean(link.also?.includes(current));
   // The tabs under Settings' title: the page's own cards, and the secrets. Links, as the rail's Mine | Everyone are.
@@ -1247,11 +1247,8 @@
     const menu = h('div', { class: 'user-menu', role: 'menu', hidden: true },
       h('div', { class: 'menu-head' }, h('b', null, me.login ? personText(me.login) : CONSOLE_NAME), names[me.login] && h('span', { class: 'menu-handle' }, `@${me.login}`), note),
       menuGroups(me),
+      // Keyboard shortcuts is not here: `?`, the command palette and the settings list's This browser group open it.
       me.login && MY_LINKS.map(item),
-      h('button', {
-        type: 'button', class: 'menu-item', role: 'menuitem', 'data-keys': 'keys',
-        onclick: () => { setOpen(false); window.Woodshed.shell?.openKeys(); },
-      }, 'Keyboard shortcuts', h('kbd', { class: 'menu-kbd' }, '?')),
       consoleLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(consoleItem)],
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
