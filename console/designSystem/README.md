@@ -165,6 +165,9 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
   settings list. Its pages are tabs under the title, **General** (`/console-settings`) and **Secrets & webhooks**
   (`/secrets`): the rail's segmented control (`rail-seg`, `rail-seg-link`), links with `aria-current="page"` on the
   open one, never orange. The title says Settings on every tab; the tab's own note sits under the tabs.
+- A program embedding the console adds its own pages as tabs after those (`settingsTabs`, README.md "Embedding the
+  console"), in the same row, and draws each page's part under it. Someone who is not an admin sees only the program's
+  tabs. The row stays one line and scrolls sideways when it is wider than the page, on a phone above all.
 - People and Webhook events stay entries of their own: one is who is in, the other a log, not settings.
 
 ## Repo settings

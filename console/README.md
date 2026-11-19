@@ -38,7 +38,7 @@ while it has none and GitHub has it). Whoever opens it signs in first (`/login?n
 New session with Work on filled in, to start their own private session on their own Claude. The link holds the PR or
 branch alone, so the session stays private. With nothing pushed the button says so and copies nothing.
 The settings pages (My settings, Settings with its General and Secrets &
-webhooks tabs, People and Webhook events) keep the same frame: a list of them takes the rail's place,
+webhooks tabs and any a program embedding the console adds, People and Webhook events) keep the same frame: a list of them takes the rail's place,
 with **‹ Back to sessions** and the avatar menu above it.
 Each page opens with a **tag for whose sessions it changes** (`Only you`: your My Woodshed sessions; `Everyone`: shared
 sessions and the console), and the side list has a **search** at its top (`public/settingsSearch.js`, `settingsIndex.cjs`). The search
@@ -1517,6 +1517,15 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   broker's checks and cache.
 - `userMenu(headers)`: a line under the person's name and groups of links at the top of the user menu (`menuOf` in
   `server.mjs`, `designSystem/components/MenuGroups`).
+- `settingsTabs(headers)`: tabs of the program's own pages on Settings, `[{label, href}]`, after General and Secrets &
+  webhooks (`settingsTabsOf` in `server.mjs`: at most eight, each `href` a path on the console's name, the rest
+  dropped; a hook that throws adds none and logs `console: settings tabs not given`). The program serves each page
+  itself, rendered with `settingsFrame({title, body, current, login?, linkQuery?, styles?})` from `server.mjs`: its own
+  HTML (`body`, which it has escaped) under the title Settings and the tabs, with `current` (the tab's `href`) marked,
+  in the settings pages' frame, with the side list and avatar menu (`public/hostSettings.js`). `styles` are its
+  stylesheets (paths), loaded after the console's, so its rules use the design system's variables and follow the
+  theme; it scopes them to `.host-page`, which holds its part. Its forms and links stay the program's. Someone who is not an admin sees the program's tabs alone, and Settings in the Console group opens the
+  first of them; with no tabs, nothing changes for them.
 - `config.linkQuery`: query parameters every link the console hands out carries (GitHub comments, Slack posts,
   `SESSION_URL`, the copied New session link), for the program to route them.
 - `newId`: how session ids are made, when they must be unique beyond the installation.
