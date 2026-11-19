@@ -1703,6 +1703,14 @@ ${DARK_PALETTE}
       loadDraft().then(render).catch(function ignore() {});
     });
 
+    // The Q&A can be emptied from another tab (Discard, Re-review), and a
+    // finished one is not polled: read it again when this tab comes back and
+    // shows it, so its answers are not left standing for a diff that is gone.
+    document.addEventListener('visibilitychange', function onBackToQa() {
+      if (document.hidden || !state.session || state.tab !== 'qa' || qaView.session !== state.session) return;
+      loadQa(false);
+    });
+
     // One key out of every transient thing on this page. A composer or a
     // dialog handles its own Escape and stops it here; what reaches this is a
     // selection or an open question with nothing focused, which is exactly the
@@ -2099,6 +2107,8 @@ ${DARK_PALETTE}
     function showTab(name) {
       if (state.tab === name) return;
       state.tab = name;
+      // Opening the Q&A reads it again, for the reason the visibility handler does.
+      if (name === 'qa' && qaView.session === state.session && qaView.data) loadQa(false);
       // Pressed, so it earns a history entry: the two halves are two places,
       // and back out of the diff should land on the analysis rather than off
       // the page altogether.

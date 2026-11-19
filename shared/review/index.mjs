@@ -2024,8 +2024,13 @@ function qaIsLive(session, gen) {
 // is not going now, and saying 'running' would leave the page waiting forever.
 function handleQaRead(res, ctx, session) {
   const { json } = ctx;
-  if (!readSessionReview(session)) return json(res, 404, { ok: false, error: 'no review for this session' });
-  const qa = readQa(session);
+  const review = readSessionReview(session);
+  if (!review) return json(res, 404, { ok: false, error: 'no review for this session' });
+  // A Q&A answers about the diff it was asked of. removeArtifact deletes it with
+  // the artifact on a re-review, but a delete can fail and is only logged there;
+  // this is what keeps a left-behind one from being read against the new diff.
+  let qa = readQa(session);
+  if (qa && (qa.forDiff ?? null) !== (review.createdAt ?? null)) qa = null;
   if (qa && qa.status === 'running' && !qaRuns.has(session)) {
     return json(res, 200, { ok: true, qa: { ...qa, status: 'interrupted', phase: null }, showCosts: SHOW_COSTS });
   }
@@ -2097,6 +2102,8 @@ async function runQa({ ctx, session, review, gen }) {
   const qa = {
     status: 'running', phase: 'asking', depth: 1, items: [], error: null, stoppedEarly: null,
     startedAt: new Date().toISOString(), generatedAt: null, costUsd: 0, headSha: review.headSha || null,
+    // Which diff it is about: the review's createdAt, which every re-review sets anew.
+    forDiff: review.createdAt ?? null,
   };
   const save = () => { if (qaIsLive(session, gen)) writeQa({ session, qa }); };
   const fail = (error) => {

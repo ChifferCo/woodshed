@@ -36,11 +36,11 @@ process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 const { handleReviewRequest } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 
-function makeReview(session, worktree) {
+function makeReview(session, worktree, createdAt = '2026-11-19T10:00:00.000Z') {
   fs.mkdirSync(worktree, { recursive: true });
   writeSessionReview({
     session,
-    review: { kind: 'worktree', worktree, headSha: 'abc123', meta: { title: 'Retry webhooks', body: 'They give up.' } },
+    review: { kind: 'worktree', worktree, headSha: 'abc123', createdAt, meta: { title: 'Retry webhooks', body: 'They give up.' } },
   });
   writeDiff({ session, diff: { files: [{ path: 'src/a.mjs', additions: 3, deletions: 1, status: 'modified', hunks: [] }] } });
 }
@@ -87,6 +87,12 @@ test('POST /qa runs the rounds and saves the tree: questions, a follow-up, its f
   assert.equal(qa.stoppedEarly, null);
   assert.ok(qa.costUsd > 0);
   assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa.items.length, 4);
+
+  // A re-review takes a new diff. Its delete of qa.json can fail (it is only logged), so a Q&A left on disk is read
+  // as none against the diff that replaced the one it answered about.
+  makeReview(session, path.join(DIR, 'fast'), '2026-11-19T11:00:00.000Z');
+  assert.equal(readQa(session).items.length, 4, 'the file is still there');
+  assert.equal((await call('GET', `/reviews/${session}/qa`)).body.qa, null);
 });
 
 test('Discard during a run stops it, and nothing it was doing is written back', async () => {
