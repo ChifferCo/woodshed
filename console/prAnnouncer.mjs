@@ -43,8 +43,9 @@ function ownersPull(pull, session, app) {
   if (pull.user?.type === 'Bot' && !app?.login) throw new Error('the console\'s App login is not read yet, so whose pull request this is is not known');
   const fromTheApp = author === String(app?.login ?? '').toLowerCase();
   const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
-  const ownBranch = `woodshed/${login}-${String(session.id ?? '').toLowerCase()}`;
-  return fromTheApp && sameRepo && String(session.branch ?? '').toLowerCase() === ownBranch && pull.head?.ref?.toLowerCase() === ownBranch
+  // Git's refs are case-sensitive: the branch is the very one the console named (fleet.mjs, createSession).
+  const ownBranch = `woodshed/${session.owner}-${session.id}`;
+  return fromTheApp && sameRepo && session.branch === ownBranch && pull.head?.ref === ownBranch
     && Date.parse(pull.created_at) >= Date.parse(session.createdAt);
 }
 
@@ -209,15 +210,19 @@ export function createPrAnnouncer({
 
   async function watchOne(item) {
     if (watchOver(item)) return drop(item, watchOver(item));
-    // A resume while GitHub is read starts a new run of the watch: what was read for the old one is not told.
+    // A resume while GitHub is read starts a new run of the watch: nothing read for the old one is acted on, not even
+    // to drop it. Asked after each read.
     const run = item.run ?? 0;
+    const renewed = () => (item.run ?? 0) !== run || !pending().includes(item);
     const gates = await gatesOf(item.project ?? null, item.number);
+    if (renewed()) return;
     if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
     const pull = await gh(item).pull(item.number);
+    if (renewed()) return;
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
-    if ((item.run ?? 0) !== run || !pending().includes(item)) return;
+    if (renewed()) return;
     if (watchOver(item)) return drop(item, watchOver(item));
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');

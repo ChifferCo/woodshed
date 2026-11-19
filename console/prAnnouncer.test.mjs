@@ -780,6 +780,7 @@ for (const [what, pull, watched] of [
   ['a teammate\'s pull request whose body names the owner', { user: { login: 'ana-dev' }, body: 'Started by @joel via Woodshed.' }, false],
   ['a pull request the App opened from the session\'s branch after it started', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' } }, true],
   ['a pull request another app opened from the session\'s branch', { user: { login: 'other-bot[bot]', type: 'Bot' } }, false],
+  ['a pull request the App opened from a branch differing from the session\'s only in case', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/Joel-s1', repo: { full_name: 'acme/app' } } }, false],
   ['a pull request the App opened from an existing branch the session was started on', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'feature/shared', repo: { full_name: 'acme/app' } } }, false],
   ['a pull request the App opened from a fork\'s branch of the same name', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-s1', repo: { full_name: 'someone/app' } } }, false],
   ['a pull request the App opened from another branch', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/other' } }, false],
@@ -791,7 +792,7 @@ for (const [what, pull, watched] of [
     const watcher = createPrAnnouncer({
       store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => ({ slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' }),
     });
-    const branch = pull.head?.ref ?? 'woodshed/joel-s1';
+    const branch = pull.head?.ref === 'feature/shared' ? 'feature/shared' : 'woodshed/joel-s1';
     assert.equal(await watcher.track({ ...session, owner: 'joel', branch }, null, { watch: true }), watched);
     assert.equal((store.state.slackPending ?? []).length, watched ? 1 : 0);
   });
@@ -924,4 +925,23 @@ test('a check whose GitHub reads span a resume tells the new run nothing from th
   clock += MINUTE;
   await watcher.check();
   assert.equal(told.length, 1, 'the new run is told on its own check');
+});
+
+test('a closed pull request read before a resume does not drop the renewed watch', async () => {
+  const { store, session, github } = setup({ pull: { state: 'closed' } });
+  const mine = { ...session, owner: 'joel' };
+  const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z') });
+  await watcher.track(mine, null, { watch: true });
+  const { pull } = github;
+  let resumeDuringRead = true;
+  github.pull = async (number) => {
+    const read = await pull(number);
+    if (resumeDuringRead) {
+      resumeDuringRead = false;
+      await watcher.track(mine, null, { watch: true });
+    }
+    return read;
+  };
+  await watcher.check();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.run]), [[7, 1]]);
 });
