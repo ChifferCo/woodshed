@@ -72,6 +72,7 @@ function consentPage({ login, challenge, next, consoleName }) {
   <h1>Sign in to the Woodshed app?</h1>
   <p>The Woodshed app on this computer asks to sign in to ${escapeHtml(consoleName)} as <strong>@${escapeHtml(login)}</strong>. Sign in only if you just pressed Sign in with GitHub in the app.</p>
   <form method="post" action="/auth/desktop">
+    <input type="hidden" name="login" value="${escapeHtml(login)}">
     <input type="hidden" name="challenge" value="${escapeHtml(challenge)}">
     <input type="hidden" name="next" value="${escapeHtml(next)}">
     <button class="btn" type="submit">Sign in to the app</button><a class="quiet" href="/">Cancel</a>
@@ -166,7 +167,16 @@ export async function handleDesktopSignIn({
       json(res, 400, { error: 'open this from the Woodshed app' });
       return true;
     }
-    const code = await auth.desktopCode({ cookieHeader: req.headers.cookie, req, challenge });
+    // The account the page named is the one the app gets: a page left open while this browser signed in as someone else
+    // asks again, naming who it is now. Both reads take this request's cookie, so they cannot disagree.
+    const now = await auth.visitorFor(req.headers.cookie, req);
+    if (now && now.login !== form.get('login')) {
+      console.warn('desktopSignIn: the consent page named another account, asked again', { shown: String(form.get('login') ?? '').slice(0, 40), now: now.login });
+      res.writeHead(303, { location: `/auth/desktop?${new URLSearchParams({ challenge, next })}`, 'cache-control': 'no-store' });
+      res.end();
+      return true;
+    }
+    const code = now ? await auth.desktopCode({ cookieHeader: req.headers.cookie, req, challenge }) : null;
     if (!code) {
       res.writeHead(303, { location: `/auth/desktop?${new URLSearchParams({ challenge, next })}`, 'cache-control': 'no-store' });
       res.end();

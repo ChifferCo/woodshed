@@ -2325,7 +2325,12 @@ test('a browser signed in to the console signs the desktop app in, through the c
   assert.match(askPage, /Sign in to the Woodshed app\?/);
   assert.match(askPage, /as <strong>@octo<\/strong>/);
   assert.doesNotMatch(askPage, /woodshed:\/\//);
-  const form = new URLSearchParams({ challenge, next: '/s/0a1b2c3d' }).toString();
+  assert.match(askPage, /name="login" value="octo"/, 'the form carries the account it names');
+  const form = new URLSearchParams({ login: 'octo', challenge, next: '/s/0a1b2c3d' }).toString();
+  // A page left open from another account's sign-in asks again, naming the account this browser is now.
+  const stale = await fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: browser, origin: base }, body: new URLSearchParams({ login: 'someone-else', challenge, next: '/' }).toString() });
+  assert.equal(stale.status, 303);
+  assert.equal(stale.headers.get('location'), `/auth/desktop?${new URLSearchParams({ challenge, next: '/' })}`);
   const press = (headers) => fetch(`${base}/auth/desktop`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: browser, ...headers }, body: form });
   assert.equal((await press({})).status, 403, 'no Origin: not the console\'s form');
   assert.equal((await press({ origin: 'https://evil.example' })).status, 403, 'another site\'s form');

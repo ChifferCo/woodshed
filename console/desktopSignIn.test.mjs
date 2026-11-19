@@ -49,12 +49,13 @@ async function hostServer(t) {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
-  // The consent page's Sign in button, from the console's own page.
-  const press = async (challenge, next, cookie) => {
+  // The consent page's Sign in button, from the console's own page, which names the account the cookie is (`shown`
+  // tells another, as a page left open from before would).
+  const press = async (challenge, next, cookie, shown = /host=([a-z0-9-]+)/.exec(cookie ?? '')?.[1] ?? '') => {
     const res = await fetch(`${base}/auth/desktop`, {
       method: 'POST', redirect: 'manual',
       headers: { 'content-type': 'application/x-www-form-urlencoded', origin: base, ...(cookie ? { cookie } : {}) },
-      body: new URLSearchParams({ challenge, next }).toString(),
+      body: new URLSearchParams({ login: shown, challenge, next }).toString(),
     });
     const link = /url=(woodshed:\/\/signed-in\?[^"]+)"/.exec(await res.text())?.[1].replaceAll('&amp;', '&');
     return { status: res.status, location: res.headers.get('location'), link: link ? new URL(link) : null };
@@ -82,6 +83,9 @@ test('a host that signs people in itself answers the desktop app with its own si
   assert.match(ask, /as <strong>@octo<\/strong>/, 'the host\'s person, asked first');
   assert.equal((await press(challenge, '/s/0a1b2c3d')).status, 303, 'a signed-out press goes back to sign in');
 
+  const stale = await press(challenge, '/s/0a1b2c3d', 'host=octo', 'ana');
+  assert.equal(stale.status, 303, 'a page that named another account asks again');
+  assert.equal(stale.link, null);
   const { link } = await press(challenge, '/s/0a1b2c3d', 'host=octo');
   assert.equal(link.searchParams.get('next'), '/s/0a1b2c3d');
   const code = link.searchParams.get('code');
