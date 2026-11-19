@@ -600,16 +600,19 @@ test('the project file\'s githubAccess decides how far a private session\'s toke
   assert.equal(await tokenOf('ask-on-locked'), 'ghs_locked_read', 'a question: the read-only App token');
 });
 
-test('with scopeOwnerTokens every private session\'s owner token is scoped to its repo, never the full one', async (t) => {
+test('behind a host every private session\'s owner token is scoped, to the console\'s repos or its own, never the full one', async (t) => {
   // A host's App is installed on other consoles' repos too: the person's own token would reach them all.
   const sessions = [
     { id: 'aaaaaaaa', status: 'running', token: 'on-app', owner: 'mia', project: 'app', repo: 'acme/app' },
-    { id: 'bbbbbbbb', status: 'running', token: 'ana-on-app', owner: 'ana', project: 'app', repo: 'acme/app' },
-    { id: 'cccccccc', status: 'running', token: 'shared-on-app', project: 'app', repo: 'acme/app' },
+    { id: 'bbbbbbbb', status: 'running', token: 'on-locked', owner: 'mia', project: 'locked', repo: 'acme/locked' },
+    { id: 'cccccccc', status: 'running', token: 'on-unread', owner: 'mia', project: 'unread', repo: 'acme/unread' },
+    { id: 'dddddddd', status: 'running', token: 'ana-on-app', owner: 'ana', project: 'app', repo: 'acme/app' },
+    { id: 'eeeeeeee', status: 'running', token: 'shared-on-app', project: 'app', repo: 'acme/app' },
   ];
   const source = (token) => ({ token: async () => ({ token, expiresAt: Date.parse('2026-11-10T13:00:00Z') }) });
   const permissions = { contents: 'write', pull_requests: 'write' };
-  const own = { project: 'app', default: true, repo: 'acme/app', permissions, sessions: source('ghs_app'), asks: source('ghs_app_read') };
+  const ownOf = (session) => ({ project: session.project, default: session.project === 'app', repo: session.repo, permissions, sessions: source(`ghs_${session.project}`), asks: source('ghs_read') });
+  const files = { app: 'full', locked: 'repo' };
   const fullAsked = [];
   const scopedAsks = [];
   const githubUser = {
@@ -619,9 +622,10 @@ test('with scopeOwnerTokens every private session\'s owner token is scoped to it
       return login === 'ana' ? null : { token: `ghu_${login}_scoped_${scope.repo}`, expiresAt: Date.parse('2026-11-10T13:00:00Z') };
     },
   };
+  const consoleRepos = ['acme/app', 'acme/locked', 'acme/unread'];
   const handle = createSessionApi({
-    fleet: { sessions: () => sessions }, tokens: source('unused'), githubUser, tokensFor: () => own,
-    githubAccess: async () => 'full', scopeOwnerTokens: true,
+    fleet: { sessions: () => sessions }, tokens: source('unused'), githubUser, tokensFor: ownOf,
+    githubAccess: async (name) => files[name] ?? null, ownerTokenRepos: () => consoleRepos,
   });
   const server = http.createServer((req, res) => { handle(req, res); });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -629,8 +633,12 @@ test('with scopeOwnerTokens every private session\'s owner token is scoped to it
   const { port } = server.address();
   const tokenOf = async (bearer) => (await request(port, { authorization: `Bearer ${bearer}` })).body.token;
 
-  assert.equal(await tokenOf('on-app'), 'ghu_mia_scoped_acme/app', 'the default project, githubAccess full: scoped all the same');
-  assert.deepEqual(scopedAsks[0], ['mia', { repo: 'acme/app', permissions }]);
+  assert.equal(await tokenOf('on-app'), 'ghu_mia_scoped_acme/app', 'githubAccess full: scoped all the same');
+  assert.deepEqual(scopedAsks.at(-1), ['mia', { repo: 'acme/app', permissions, repos: consoleRepos }], 'to every repo of the console');
+  assert.equal(await tokenOf('on-locked'), 'ghu_mia_scoped_acme/locked');
+  assert.deepEqual(scopedAsks.at(-1), ['mia', { repo: 'acme/locked', permissions }], 'githubAccess repo: its own repo alone');
+  assert.equal(await tokenOf('on-unread'), 'ghu_mia_scoped_acme/unread');
+  assert.deepEqual(scopedAsks.at(-1), ['mia', { repo: 'acme/unread', permissions }], 'a file that cannot be read: its own repo alone');
   assert.equal(await tokenOf('ana-on-app'), 'ghs_app', 'no scoped token: the App\'s, never the full one');
   assert.equal(await tokenOf('shared-on-app'), 'ghs_app', 'a shared session: the App\'s');
   assert.deepEqual(fullAsked, [], 'the full token is never asked for');

@@ -365,7 +365,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
     ? createSettings({ config, secrets, appKey, appApi, webhookUrl: provider.webhookUrl ?? (async () => null), onReplace: (name, value) => auth?.secretReplaced(name, value) })
     : null;
   // Connect GitHub through the host's App, which a console behind a host has no sign-in of its own for. That App is
-  // installed beyond this console's repos, so a person's token is always scoped to the session's repo (sessionApi.mjs).
+  // installed beyond this console's repos, so a person's token is always scoped by GitHub, to this console's repos or
+  // the session's alone (sessionApi.mjs, `ownerTokenRepos`).
   const hostConnect = githubConnect && secrets
     ? createGitHubUser({ clientId: async () => githubConnect.clientId(), clientSecret: githubConnect.clientSecret, userSettings })
     : null;
@@ -420,7 +421,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
-    scopeOwnerTokens: Boolean(hostConnect),
+    ownerTokenRepos: hostConnect ? () => allProjects(config).map((p) => p.repo).filter(Boolean) : null,
   }) : null;
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();

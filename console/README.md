@@ -1477,8 +1477,9 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   here, and GitHub must say it is them. From there it is the Connect GitHub above (`githubUser.mjs`): kept in
   `provider.secrets` at `users/<login>/github`, refreshed and ended with `clientId()` and `clientSecret()`, and handed
   to that person's private sessions alone. The program's App is installed beyond this console's repos, so the token is
-  always scoped by GitHub to the session's repo, whatever the project file's `githubAccess` says (`sessionApi:
-  github access for a private session` logs `repo`); a session that gets no scoped token pushes as the App. The
+  always scoped by GitHub: to this console's repos of the session's repo's owner when the project file's `githubAccess`
+  is `full` (`sessionApi: github access for a private session` logs `repos`), and to the session's repo alone when it is
+  `repo` or the file cannot be read (logs `repo`); a session that gets no scoped token pushes as the App. The
   installation's `disconnectGitHub(login)` is Disconnect, for when the person leaves. Without a secret store it is off
   (`console: Connect GitHub off, the host gave no secret store to keep tokens in`).
 - A launcher's `progress(sessionId)`: the steps a start waiting for room is at, when the wait is the program's own,
