@@ -1021,3 +1021,20 @@ test('a watch that ran out is not started again by its session coming back, only
   watcher.renew(mine.id);
   assert.equal(await watcher.track(mine, null, { watch: true }), true, 'resumed: watched again');
 });
+
+test('a waiting watch still ends when its pull request closes', async () => {
+  const { store, session, github, dropped } = setup();
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock,
+    events: { feedback: () => true, dropped: (item, why) => { dropped.push(why); }, listening: () => 'elsewhere' },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  assert.equal(store.state.slackPending.length, 1);
+  const { pull } = github;
+  github.pull = async (number) => ({ ...(await pull(number)), state: 'closed' });
+  clock += MINUTE;
+  await watcher.check();
+  assert.deepEqual([dropped, store.state.slackPending], [['closed'], []]);
+});

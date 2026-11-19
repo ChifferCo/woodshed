@@ -245,13 +245,18 @@ export function createPrAnnouncer({
 
   async function watchOne(item) {
     if (watchOver(item)) return endWatch(item, watchOver(item));
-    // A session on another pull request, or a branch with none, for now (or statusd's lookup failed): the watch waits,
-    // keeping what it told, so nothing is told twice when the session is back on it.
-    if (listening(item) === 'elsewhere') return;
     // A resume while GitHub is read starts a new run of the watch: nothing read for the old one is acted on, not even
     // to drop it. Asked after each read.
     const run = item.run ?? 0;
     const renewed = () => (item.run ?? 0) !== run || !pending().includes(item);
+    // A session on another pull request, or a branch with none, for now (or statusd's lookup failed): the watch waits,
+    // keeping what it told, so nothing is told twice when the session is back on it. It still ends if the pull request
+    // closes meanwhile.
+    if (listening(item) === 'elsewhere') {
+      const pull = await gh(item).pull(item.number);
+      if (!renewed() && pull.state !== 'open') return drop(item, 'closed');
+      return;
+    }
     const gates = await gatesOf(item.project ?? null, item.number);
     if (renewed()) return;
     if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
