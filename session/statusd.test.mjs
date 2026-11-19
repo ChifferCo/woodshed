@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, createPrLookup, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { appState, createPrLookup, prLookupKey, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -767,4 +767,22 @@ test('a branch set to track another remote branch is looked up again', async () 
   upstream = 'fork/feature';
   assert.equal(await prUrl(), 'https://github.com/o/r/pull/12');
   assert.equal(lookups, 2);
+});
+
+test('the pull request lookup is kept for the branch, its upstream and its remote\'s URL', async () => {
+  const repo = { branch: 'woodshed/joel-1', upstream: 'origin/woodshed/joel-1', url: 'https://github.com/o/r.git' };
+  const gitRun = async (...args) => {
+    if (args[0] === 'branch') return repo.branch;
+    if (args[0] === 'rev-parse') { if (!repo.upstream) throw new Error('no upstream'); return repo.upstream; }
+    if (args[0] === 'ls-remote') { if (!repo.url) throw new Error('no remote'); return repo.url; }
+    throw new Error(`unexpected git ${args.join(' ')}`);
+  };
+  const first = await prLookupKey(gitRun);
+  repo.url = 'https://github.com/fork/r.git';
+  const repointed = await prLookupKey(gitRun);
+  repo.upstream = 'fork/feature';
+  const retracked = await prLookupKey(gitRun);
+  assert.equal(new Set([first, repointed, retracked]).size, 3, 'each change is another key');
+  Object.assign(repo, { upstream: null, url: null });
+  assert.equal(await prLookupKey(gitRun), 'woodshed/joel-1  ', 'no upstream or remote: the branch alone');
 });

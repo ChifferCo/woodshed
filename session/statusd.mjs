@@ -253,8 +253,9 @@ async function git(...args) {
 }
 
 /**
- * The pull request of the branch checked out now, kept a minute for that branch (and its upstream) only, so a checkout
- * of another branch, or the branch set to track another, is reported at the next read. A checkout during the lookup leaves its answer unkept and unsaid: it may be either
+ * The pull request of the branch checked out now, kept a minute for that branch (with its upstream and remote URL)
+ * only, so a checkout of another branch, the branch set to track another, or its remote pointed elsewhere, is reported
+ * at the next read. A checkout during the lookup leaves its answer unkept and unsaid: it may be either
  * branch's.
  * @param {{branch: () => Promise<string|null>, lookup: () => Promise<string|null>, now?: () => number, cacheMs?: number}} deps
  * @returns {() => Promise<string|null>}
@@ -277,9 +278,22 @@ export function createPrLookup({ branch, lookup, now = Date.now, cacheMs = PR_CA
   };
 }
 
+/**
+ * What a pull request lookup is kept for: the branch, its upstream and that remote's URL, since a branch set to track
+ * another remote branch, or a remote pointed at another repo, has another pull request.
+ * @param {(...args: string[]) => Promise<string>} gitRun
+ * @returns {Promise<string>}
+ */
+export async function prLookupKey(gitRun) {
+  return [
+    await gitRun('branch', '--show-current'),
+    await gitRun('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => ''),
+    await gitRun('ls-remote', '--get-url').catch(() => ''),
+  ].join(' ');
+}
+
 const lookupPrUrl = createPrLookup({
-  // The branch and its upstream: a branch set to track another remote branch has another pull request.
-  branch: async () => `${await git('branch', '--show-current')} ${await git('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => '')}`,
+  branch: () => prLookupKey(git),
   lookup: async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim(),
 });
 
