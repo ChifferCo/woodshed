@@ -501,5 +501,24 @@
     return null;
   }
 
-  return { typeable, lastUserAt, inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /**
+   * Held bubbles the console has since sent: it holds `holds` messages now, so the page's held ones past that count, the
+   * oldest first, went in. Each becomes a sent one from now on, let go after ten minutes if the record never shows it
+   * (a slash command the agent keeps no record of, say), instead of waiting for ever. Changed on the bubbles themselves.
+   * @param {{state: string, sentAt: number}[]} pending
+   * @param {number|undefined} holds  the session's pendingMessages count, as the console reports it
+   * @returns {boolean}  whether any changed
+   */
+  function deliveredHeld(pending, holds, now = Date.now()) {
+    if (!Number.isInteger(holds)) return false;
+    const held = pending.filter((p) => p.state === 'held');
+    const gone = held.length - holds;
+    for (const p of held.slice(0, Math.max(0, gone))) {
+      p.state = 'sent';
+      p.sentAt = now;
+    }
+    return gone > 0;
+  }
+
+  return { deliveredHeld, typeable, lastUserAt, inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

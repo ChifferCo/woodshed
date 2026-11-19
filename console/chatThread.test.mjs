@@ -319,3 +319,15 @@ test('a longer message that starts the same never settles a queued one, and stri
   assert.equal(chat.stillPending([withNul], [{ role: 'user', text: 'fix it now', at: '2026-11-19T12:00:06.000Z' }], sentAt + 1000).length, 0);
   assert.equal(chat.typeable('a\r\nb\u001bc'), 'a\nbc');
 });
+
+test('a held message the console has since sent is a sent one, let go in time if the record never shows it', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { text: '/compact', sentAt: now - 60_000, state: 'held' };
+  const b = { text: 'then go on', sentAt: now - 30_000, state: 'held' };
+  assert.equal(chat.deliveredHeld([a, b], 2, now), false, 'both still held');
+  assert.equal(chat.deliveredHeld([a, b], 1, now), true);
+  assert.deepEqual([a.state, b.state], ['sent', 'held'], 'the oldest went in first');
+  assert.equal(a.sentAt, now);
+  // The agent keeps no record of a command like it: let go ten minutes on, not held for ever.
+  assert.deepEqual(chat.stillPending([a, b], [], now + 11 * 60_000).map((p) => p.text), ['then go on']);
+});

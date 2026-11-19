@@ -146,8 +146,11 @@ export async function startDevChatSession({ id, token, agent, nextPath, real = f
   const recordDir = agent === 'codex' ? codexHome : path.join(home, '.claude', 'projects', repo.replace(/[/.]/g, '-'));
   if (realCodex) {
     fs.mkdirSync(codexHome, { recursive: true, mode: 0o700 });
-    fs.copyFileSync(ownCodexAuth, path.join(codexHome, 'auth.json'));
-    lentLogin = { at: fileHash(ownCodexAuth) };
+    // The bytes lent, read once: hashed as they were copied, so a refresh of the machine's login meanwhile is not taken
+    // for the one lent, and kept over the lent copy at close.
+    const lent = fs.readFileSync(ownCodexAuth);
+    fs.writeFileSync(path.join(codexHome, 'auth.json'), lent, { mode: 0o600 });
+    lentLogin = { at: crypto.createHash('sha256').update(lent).digest('hex') };
     fs.chmodSync(path.join(codexHome, 'auth.json'), 0o600);
     fs.writeFileSync(path.join(codexHome, 'config.toml'), `[projects."${repo}"]\ntrust_level = "trusted"\n`);
   }

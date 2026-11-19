@@ -11,7 +11,7 @@ const line = (o) => JSON.stringify(o);
 const at = '2026-11-12T10:00:00.000Z';
 
 // Lines as claude writes them (measured on Claude Code 2.x): a typed prompt as a string, a reply in blocks, a tool call
-// and its result, thinking, a slash command's wrapper, a subagent's sidechain, and records that are not turns.
+// and its result, thinking, a slash command in its wrapper, a subagent's sidechain, and records that are not turns.
 const CLAUDE = [
   line({ type: 'mode', mode: 'auto' }),
   line({ type: 'user', timestamp: at, message: { role: 'user', content: 'Fix the login bug' } }),
@@ -33,6 +33,8 @@ test('a claude transcript keeps what was asked, said and run, in order', () => {
     { role: 'assistant', text: 'Looking at it.', at },
     { role: 'tool', tool: 'Bash', text: 'Run the tests', at },
     { role: 'tool', tool: 'Read', text: '/work/app/login.js', at },
+    // The slash command as the person typed it: Chat shows it, and knows it arrived.
+    { role: 'user', text: '/clear', at },
     { role: 'user', text: 'Also the logout one', at },
     { role: 'assistant', text: 'Done: both fixed.', at },
   ]);
@@ -374,4 +376,14 @@ test("a codex script's exit codes go to its own commands, never to another tool,
   // More codes than commands: no guessing either.
   const extra = parseCodexRollout([call('x1', 'text(await tools.exec_command({cmd: "make"}))'), out('x1', 1, 0)].join('\n'));
   assert.deepEqual(extra.map((e) => [e.tool, e.error ?? false]), [['exec_command', false], ['exec', true]]);
+});
+
+test('a slash command claude keeps in tags is the person\'s message, as typed', () => {
+  const user = (content) => line({ type: 'user', timestamp: at, message: { role: 'user', content } });
+  const entries = parseClaudeTranscript([
+    user('<command-name>/mcp</command-name>\n            <command-message>mcp</command-message>\n            <command-args>notion</command-args>'),
+    user('<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>'),
+    user('<local-command-stdout>Compacted</local-command-stdout>'),
+  ].join('\n'));
+  assert.deepEqual(entries.map((e) => [e.role, e.text]), [['user', '/mcp notion'], ['user', '/compact']], 'its output is not the person\'s');
 });

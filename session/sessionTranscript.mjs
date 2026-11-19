@@ -106,6 +106,15 @@ const NOT_TYPED = /^\s*<(command-name|command-message|command-args|local-command
 const resultText = (block) => (typeof block.content === 'string' ? block.content
   : Array.isArray(block.content) ? block.content.map((c) => (typeof c?.text === 'string' ? c.text : '')).join('\n') : '');
 
+// claude's record of a slash command: `<command-name>/mcp</command-name> <command-message>mcp</command-message>
+// <command-args>notion</command-args>`. Its output (`<local-command-stdout>`) is not the person's.
+function typedCommand(text) {
+  const name = /<command-name>\s*(\/[^<\s]+)\s*<\/command-name>/.exec(text)?.[1];
+  if (!name) return null;
+  const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(text)?.[1]?.trim();
+  return args ? `${name} ${args}` : name;
+}
+
 /**
  * @param {string} text  the end of a claude transcript
  * @param {{partial?: boolean, root?: string}} [opts]  partial: the text starts mid-line. root: the repo, which an
@@ -123,6 +132,13 @@ export function parseClaudeTranscript(text, { partial = false, root } = {}) {
     if (!Array.isArray(content)) continue;
     for (const block of content) {
       if (block?.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
+        // A slash command the person typed, which claude keeps in tags: the command as typed, for Chat to show and to
+        // know it arrived.
+        const command = r.type === 'user' ? typedCommand(block.text) : null;
+        if (command) {
+          entries.push({ role: 'user', text: cut(command), at });
+          continue;
+        }
         if (r.type === 'user' && NOT_TYPED.test(block.text)) continue;
         entries.push({ role: r.type, text: cut(block.text.trim()), at });
       } else if (block?.type === 'tool_use' && r.type === 'assistant') {

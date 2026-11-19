@@ -125,12 +125,6 @@ function titleFrom(prompt) {
 }
 
 /**
- * @param {object} session
- * @param {'GET'|'POST'} method
- * @param {string} path
- * @param {{body?: object, timeoutMs?: number}} [opts]
- */
-/**
  * How long statusd may take to type a message and send it: it types claude's in runs of 50 characters 20 ms apart, a
  * line at a time, then reads the box (session/statusd.mjs, typingSteps), so a long one takes seconds. Each step is
  * allowed 60 ms (a tmux call and its pause), with the box check's wait and the reads around it on top.
@@ -140,6 +134,12 @@ export function sendTimeoutMs(text) {
   return 10_000 + steps * 60;
 }
 
+/**
+ * @param {object} session
+ * @param {'GET'|'POST'} method
+ * @param {string} path
+ * @param {{body?: object, timeoutMs?: number}} [opts]
+ */
 export async function callStatusd(session, method, path, { body, timeoutMs = STATUS_TIMEOUT_MS } = {}) {
   const { host, statusPort } = session.endpoint;
   const res = await fetch(`http://${host}:${statusPort}${path}`, {

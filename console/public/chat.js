@@ -698,9 +698,11 @@
       session = s;
       // A message of the page's left in the agent's box unsent, as the console says: its bubble says so, and goes once
       // the box is empty again.
+      // A held message the console has since sent is a sent one now: the record shows it, or it goes after ten minutes.
+      const sentOn = T.deliveredHeld(pendingOf(s.id), s.pendingMessages);
       const before = pendingOf(s.id);
       const after = T.inBox(before, s.leftInBox ?? null);
-      const boxMoved = after.length !== before.length || after.some((p, i) => p.state !== before[i].state);
+      const boxMoved = sentOn || after.length !== before.length || after.some((p, i) => p.state !== before[i].state);
       if (boxMoved) pending.set(s.id, after);
       if (moved) {
         prompt = null;
