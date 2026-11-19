@@ -36,7 +36,11 @@
     if (sendingToSignIn || location.pathname === '/login') return;
     sendingToSignIn = true;
     console.log('signIn: the console needs a sign-in again, going to the login page');
-    location.assign(`/login?next=${encodeURIComponent(location.pathname + backSearch())}`);
+    // The sign-in is gone, so what this login kept in the browser tab goes now, and nothing still answering writes it
+    // back; the way back is read first, from the history state the cleanup leaves alone.
+    const back = location.pathname + backSearch();
+    forgetSignedIn();
+    location.assign(`/login?next=${encodeURIComponent(back)}`);
   }
   // The address to come back to after signing in, perhaps as someone else: a session page's ?tab is the one its entry
   // arrived with (a link, its history state's linkedTab, session.js), not one the page wrote from what this login
