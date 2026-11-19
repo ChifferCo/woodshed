@@ -424,7 +424,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   if (githubConnect && !secrets) console.warn('console: Connect GitHub off, the host gave no secret store to keep tokens in');
   const githubUser = auth?.githubUser ?? hostConnect;
   // A tunnel token lasts 12 hours; who may use it is asked at each connection, as sign-in asks for each request.
-  const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => !auth?.enabled() || members.isMember(login) });
+  const tunnel = createTunnel({ store, targets: databaseTargets, databases, allowed: (login) => members?.hosted ? members.isMember(login) : !auth?.enabled() || members.isMember(login) });
+  // Behind a hosting proxy, whoever leaves the program's list loses their token and open tunnels at once, as People's Remove does.
+  members?.whenLeft?.((login) => tunnel.revoke(login), { also: () => Object.keys(store.state.tunnelTokens ?? {}) });
   const dbRestore = createDbRestore({
     store, dir: path.join(loaded.stateDir, 'restores'), databases, targets: databaseTargets,
     defaultBranchMigrations: tokens ? () => projectReader.migrationFiles('postgres') : null,
@@ -544,7 +546,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
-    stop: () => loops.stop(),
+    stop: () => { members?.stop?.(); loops.stop(); },
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */

@@ -1127,7 +1127,8 @@ terminals' websockets. Postgres keeps RDS's own TLS end to end, hence
 The script has no sign-in cookie, so the token is its sign-in, as
 `Authorization: Bearer wt_...`. It lasts 12 hours, and the console keeps only
 its SHA-256. **Make a new token**, **Revoke**, Remove My Woodshed and the 12
-hours each end it and close every tunnel it opened. It reaches only its owner's
+hours each end it and close every tunnel it opened, and so does leaving the program's member list behind a hosting proxy
+(at the next read of it, which a failed read retries every 5 s, backing off to a minute). It reaches only its owner's
 databases: the console hands out their password, and the database still asks
 for it.
 
