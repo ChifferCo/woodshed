@@ -38,9 +38,32 @@
     picked = W.pickedLogins(search);
     // Agent is claude's terminal and the default; ?tab=terminal is the plain shell, ?tab=review the review, ?tab=diff
     // the plain diff and ?tab=applog the app's logs.
-    const asked = params.get('tab');
+    // With no tab in the address (the rail's links), a session opens on the tab it was last left on in this browser
+    // tab; ?tab=agent asks for the Agent tab itself.
+    const asked = params.get('tab') || (id && lastTabs[id]) || null;
     tab = ['review', 'terminal', 'diff', 'applog'].includes(asked) ? asked : 'agent';
     landOnReview = !asked;
+    if (id && asked) rememberTab(id, tab);
+    if (id && !params.get('tab') && tab !== 'agent') {
+      params.set('tab', tab);
+      window.history.replaceState(null, '', `${pathname}?${params}`);
+    }
+  }
+  // The tab each session was last on, kept for this browser tab (sessionStorage) so a reload remembers it too.
+  const TABS_KEY = 'woodshed-session-tabs';
+  const lastTabs = (() => {
+    try {
+      return JSON.parse(window.sessionStorage.getItem(TABS_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  })();
+  function rememberTab(sessionId, which) {
+    if (lastTabs[sessionId] === which) return;
+    lastTabs[sessionId] = which;
+    try {
+      window.sessionStorage.setItem(TABS_KEY, JSON.stringify(lastTabs));
+    } catch {}
   }
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
@@ -378,7 +401,7 @@
     const removable = W.isPrivate(s) && s.status !== 'stopping';
     const deletable = !s.owner && s.status !== 'stopping' && (live || s.kept);
     const gone = !s.owner && !live && !s.kept && s.status !== 'stopping';
-    const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
+    const open = (tabName) => () => { navigate(`/s/${s.id}?tab=${tabName || 'agent'}`); };
     return [
       stoppedPrivate && { label: 'Resume', note: resumeNote(s), run: () => resumePrivate(s) },
       W.isResumable(s) && W.group(s) !== 'merged' && {
@@ -961,7 +984,7 @@
   function paletteActions(item) {
     const s = data.sessions.find((x) => x.id === item.id);
     if (!s) return [];
-    const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
+    const open = (tabName) => () => { navigate(`/s/${s.id}?tab=${tabName || 'agent'}`); };
     return [
       { group: 'Session', label: 'Open the agent', run: open('') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
@@ -1040,7 +1063,7 @@
       const res = await fetch(`/api/sessions/${s.id}/claude-login`, { method: 'POST', headers: { 'x-woodshed': '1' } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `sign in answered ${res.status}`);
-      navigate(body.where === 'agent' ? `/s/${s.id}` : `/s/${s.id}?tab=terminal`);
+      navigate(`/s/${s.id}?tab=${body.where === 'agent' ? 'agent' : 'terminal'}`);
     } catch (err) {
       window.alert(`Could not start the sign-in: ${err.message}`);
     }
@@ -1770,6 +1793,7 @@
     if (tab === next) return;
     tab = next;
     landOnReview = false;
+    if (id) rememberTab(id, tab);
     const url = new URL(window.location.href);
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
     if (tab === 'agent') url.searchParams.delete('tab');
@@ -1944,6 +1968,7 @@
     if (!s.reviewOnly || !landOnReview || s.status !== 'running') return;
     landOnReview = false;
     tab = 'review';
+    rememberTab(s.id, tab);
     window.history.replaceState(null, '', `/s/${s.id}?tab=review`);
   }
 

@@ -61,6 +61,8 @@ whose it is: **My repo settings** and **My session timeouts** are yours; Setting
   the shape of `console/review.mjs`'s `shapeReview`, so the page draws it with the stopped Review tab's code. Once the
   session stops, Review shows what it pushed.
 - `?tab=terminal` opens on Terminal, `?tab=review` on Review, `?tab=diff` on Diff and `?tab=applog` on App log.
+  With no `?tab`, as from the rail, a session opens on the tab it was last left on in that browser tab (kept in its
+  sessionStorage, so a reload keeps it too); `?tab=agent` asks for Agent itself.
 
 Both terminals stay connected while another tab shows. A session started from an
 image without the second ttyd has Terminal greyed out.
