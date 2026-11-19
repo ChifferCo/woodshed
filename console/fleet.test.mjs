@@ -3523,3 +3523,22 @@ test('a private session that moved off its pull request since the last status re
   assert.equal(sent().length, 1);
   assert.equal(sent()[0].body.agentOnly, true);
 });
+
+test('a private session that starts stopping while its status is read again is not typed into', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  github.checkRuns = async () => {
+    // The read just before typing in answers as the owner presses Stop.
+    Object.defineProperty(statuses, session.id, { configurable: true, get() { session.status = 'stopping'; return { state: 'done', prUrl }; } });
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});

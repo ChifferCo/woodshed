@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -793,4 +793,16 @@ test('a send marked agentOnly types only while claude or codex runs in the pane'
   assert.equal(sendAgentOnly('{"text":"hi","agentOnly":"yes"}'), false);
   for (const command of ['claude', 'codex', 'claude\n']) assert.equal(isAgentCommand(command), true, command);
   for (const command of ['bash', 'zsh', 'sh', 'node', '', null]) assert.equal(isAgentCommand(command), false, String(command));
+});
+
+test('tmux\'s test of the pane, which types only into claude or codex, is true for them alone', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, (t) => {
+  // A tmux server of its own, so no session's panes are touched.
+  const socket = `woodshed-test-${process.pid}`;
+  const tmux = (...args) => spawnSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' });
+  t.after(() => tmux('kill-server'));
+  assert.equal(tmux('new-session', '-d', '-s', 'probe', 'sleep 30').status, 0);
+  const shown = (format) => tmux('display', '-p', '-t', 'probe', format).stdout.trim();
+  assert.equal(shown('#{pane_current_command}'), 'sleep');
+  assert.equal(shown(AGENT_PANE_FORMAT), '0', 'sleep is not the agent');
+  for (const name of ['claude', 'codex']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
 });

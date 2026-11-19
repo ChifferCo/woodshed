@@ -57,7 +57,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
  *          ownApp?: () => {slug: string, login: string}|null,
  *          githubOf?: ((project: string) => object)|null, defaultProjectName?: () => string|null, gates?: (project: string|null) => Promise<object|null>, now?: () => number, giveUpMs?: () => number, qaWaitMs?: () => number,
  *          events?: {dropped?: (item: object, why: string) => Promise<void>|void,
- *                    feedback?: (item: object, text: string) => Promise<boolean|'later'>|boolean|'later',
+ *                    feedback?: (item: object, text: string, opts: {stillWanted: () => boolean}) => Promise<boolean|'later'>|boolean|'later',
                     listening?: (item: object) => 'yes'|'elsewhere'|'ended',
  *                    mention?: (item: object) => Promise<string|null>|string|null}}} deps
  *   `gates` is the project file's `pullRequests` from the default branch (projectFile.mjs) of the pull request's project
@@ -207,7 +207,7 @@ export function createPrAnnouncer({
     console.log('slack: pull request feedback for its session', {
       number: item.number, sessionId: item.sessionId, changesRequested: asks, suites: fedSuites ? broken.map((s) => `${s.name}: ${s.outcome}`) : null,
     });
-    const heard = await events.feedback?.(item, text);
+    const heard = await events.feedback?.(item, text, { stillWanted: stillWanted(item, before.run) });
     if (heard === 'later') untold(item, before);
     else if (heard === true) told(item);
     return heard;
@@ -215,6 +215,11 @@ export function createPrAnnouncer({
 
   // A watched session that could not be typed into just now (claude not open, or statusd not answering) is told again
   // at the next check: nothing is held for it, which a later Resume would type in long after.
+  // For the fleet to ask after its own reads, just before typing in: the watch is still this run's, and not over.
+  function stillWanted(item, run) {
+    return () => !watched(item) || ((item.run ?? 0) === run && pending().includes(item) && !watchOver(item));
+  }
+
   // Told at last: the watch goes back to being read when a webhook says so, and logs the next miss again.
   function told(item) {
     if (!item.untoldSaid) return;
@@ -241,7 +246,7 @@ export function createPrAnnouncer({
     item.passedSha = sha;
     store.save();
     console.log('slack: watched pull request passed its review and suites', { number: item.number, sessionId: item.sessionId, sha: sha.slice(0, 7) });
-    const heard = await events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, suites, gates }));
+    const heard = await events.feedback?.(item, passedNotesFor({ number: item.number, sha, review, suites, gates }), { stillWanted: stillWanted(item, before.run) });
     if (heard === 'later') untold(item, before);
     else if (heard === true) told(item);
     return heard;

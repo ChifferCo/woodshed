@@ -257,9 +257,26 @@ export function isAgentCommand(command) {
   return AGENT_COMMANDS.has(String(command ?? '').trim());
 }
 
-async function agentInPane() {
-  const { stdout } = await run('tmux', ['display', '-p', '-t', TMUX_TARGET, '#{pane_current_command}']).catch(() => ({ stdout: '' }));
-  return isAgentCommand(stdout);
+// tmux's own test of the pane's command, for if-shell: the same names as AGENT_COMMANDS.
+export const AGENT_PANE_FORMAT = `#{||:${[...AGENT_COMMANDS].map((c) => `#{==:#{pane_current_command},${c}}`).join(',')}}`;
+const AGENT_BUFFER = 'woodshed-agent-send';
+
+/**
+ * Types the text into the agent's pane only if the agent runs there, the check and the typing being one tmux command
+ * (if-shell), so nothing can exit between them. Text the agent leaves unread when it exits stays in the terminal for
+ * whatever reads it next, as anything typed does.
+ * @returns {Promise<boolean>}  whether it was typed in
+ */
+async function sendToAgent(text) {
+  await run('tmux', ['set-buffer', '-b', AGENT_BUFFER, '--', text]);
+  // -r keeps the text's line breaks as send-keys -l would; Codex gets a bracketed paste, as send() gives it.
+  const paste = `paste-buffer -r -d ${CODEX ? '-p ' : ''}-b ${AGENT_BUFFER} -t ${TMUX_TARGET} ; send-keys -t ${TMUX_TARGET} Enter`;
+  await run('tmux', ['if-shell', '-F', '-t', TMUX_TARGET, AGENT_PANE_FORMAT, paste]);
+  // The paste deletes the buffer: one still there was not typed.
+  const left = await run('tmux', ['show-buffer', '-b', AGENT_BUFFER]).then(() => true, () => false);
+  if (left) await run('tmux', ['delete-buffer', '-b', AGENT_BUFFER]).catch(() => {});
+  else console.log('statusd: text sent to claude', { chars: text.length, agentOnly: true });
+  return !left;
 }
 
 /**
@@ -1164,8 +1181,9 @@ async function handle(req, res) {
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
-    // Checked just before typing, so a message meant for the agent never reaches the shell of one that exited.
-    if (sendAgentOnly(raw) && !(await agentInPane())) {
+    // A message meant for the agent never reaches the shell of one that exited.
+    if (sendAgentOnly(raw)) {
+      if (await sendToAgent(text)) return reply(res, 200, { ok: true });
       console.log('statusd: text not sent, the agent is not running in its pane');
       return reply(res, 409, { error: 'the agent is not running in its pane' });
     }
