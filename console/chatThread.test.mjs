@@ -376,7 +376,7 @@ test('the phone box keeps its draft only for a refusal that typed nothing, and s
   }
 });
 
-test('a lost answer not held on two reads of the session goes as sent; one read, or the same read again, is not enough', () => {
+test('a lost answer not held on two reads of the session is said maybe sent; one read, or the same read again, is not enough', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now, state: 'unconfirmed' };
   const read1 = { heldIds: [] };
@@ -384,7 +384,8 @@ test('a lost answer not held on two reads of the session goes as sent; one read,
   chat.reconcile([a], read1, now + 1000);
   assert.equal(a.state, 'unconfirmed', 'one read, maybe asked for before the console took it');
   chat.reconcile([a], { heldIds: [] }, now + 5000);
-  assert.equal(a.state, 'sent');
+  assert.equal(a.state, 'maybe', 'never held: it went in, or never reached the console');
+  assert.match(chat.pendingLabel('maybe', 'claude'), /went in, or never reached it/);
   assert.equal(chat.stillPending([a], [], now + 5000 + 11 * 60_000).length, 0);
 });
 
@@ -414,6 +415,14 @@ test('a held message no longer listed on two reads went, though deliveredIds no 
   chat.reconcile([old], {}, now);
   chat.reconcile([old], {}, now + 1000);
   assert.equal(old.state, 'held', 'a console that sends no heldIds says nothing either way');
+});
+
+test('a refused bubble is never settled by the same words in the record, only by the clock', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'run the tests', sentAt: now, state: 'refused', deliveredAt: now, after: null };
+  const typedInTui = [{ role: 'user', text: 'run the tests', at: '2026-11-19T12:00:05.000Z' }];
+  assert.equal(chat.stillPending([a], typedInTui, now + 6000).length, 1, 'the same words typed in the TUI tab are not it');
+  assert.equal(chat.stillPending([a], typedInTui, now + 11 * 60_000).length, 0);
 });
 
 test('a held bubble the session could not take safely says it was not sent, and goes in time', () => {

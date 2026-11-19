@@ -320,6 +320,12 @@
         left.push(p);
         continue;
       }
+      // Never typed (the console said so): the same words in the record are someone else's, typed in the TUI tab. It goes
+      // by the clock alone.
+      if (p.state === 'refused') {
+        if (now - (p.deliveredAt ?? p.sentAt) <= PENDING_MS) left.push(p);
+        continue;
+      }
       if (!waiting(p) && p.state !== 'in-box' && now - (p.deliveredAt ?? p.sentAt) > PENDING_MS) continue;
       const want = squash(typeable(p.text));
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
@@ -471,7 +477,7 @@
 
   /**
    * What a message sent from the page says under it until the agent's record holds it.
-   * @param {'sending'|'sent'|'held'|'unconfirmed'|'unknown'|'refused'|'in-box'} state  unconfirmed: answered, but not
+   * @param {'sending'|'sent'|'held'|'unconfirmed'|'maybe'|'unknown'|'refused'|'in-box'} state  unconfirmed: answered, but not
    *   readably, so held or sent is not known  held: the console keeps it while the agent is busy, nothing has reached it
    */
   function pendingLabel(state, agent) {
@@ -479,6 +485,7 @@
     if (state === 'in-box') return `In ${agent}'s box, not sent: send or clear it in the TUI tab`;
     if (state === 'refused') return `Not sent: this session runs a Woodshed that cannot send safely. Type it in the TUI tab`;
     if (state === 'unknown') return `No answer in time: it may have gone in. Check ${agent}'s reply before sending it again`;
+    if (state === 'maybe') return `No word from the console: it went in, or never reached it. Check ${agent}'s reply before sending it again`;
     if (state === 'unconfirmed') return `Sent, with no word back on whether it went in or waits: watch for ${agent}'s reply`;
     if (state === 'held') return `Not sent yet: it goes in when ${agent} is back at its prompt`;
     return `Sent, waiting for ${agent}`;
@@ -535,7 +542,9 @@
         p.lastRead = session;
         p.unlistedReads = (p.unlistedReads ?? 0) + 1;
         if (p.unlistedReads >= 2 && ![deliveredIds, unknownIds, refusedIds].some((ids) => ids.includes(p.id)) && leftInBox?.id !== p.id) {
-          p.state = 'sent';
+          // A held one the console let go of went in. One whose answer was lost may never have reached the console: not
+          // known, said so, and settled by the record if it went in.
+          p.state = p.state === 'held' ? 'sent' : 'maybe';
           p.deliveredAt = now;
           changed = true;
         }

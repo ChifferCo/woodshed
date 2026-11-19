@@ -6,7 +6,8 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
   has a dashed border and a `meta` mono line under it: `Sending…`, then `Sent, waiting for claude`, or, while the console holds it because the agent is busy, `Not sent yet: it goes in when claude is back at its prompt`, which stays until the agent's record holds it. A held one the session could not take safely (it came back on a
   statusd that types blind) says `Not sent: this session runs a Woodshed that cannot send safely. Type it in the TUI
   tab`, and one sent with no answer in time `No answer in time: it may have gone in…`; each goes ten minutes on. One whose
-  answer could not be read says `Sent, with no word back…`, and waits, as a held one does, for the record.
+  answer could not be read says `Sent, with no word back…`, and waits, as a held one does, until the console says;
+  if the console never held it, `No word from the console: it went in, or never reached it…`, for ten minutes.
 - **The agent's reply**: plain text on the ground, no bubble, 14.5px at 1.65. Markdown is drawn: headings as 15.5px
   700, lists with `meta` markers, quotes with a 3px `line` rule in `sub`, inline code on `stopped` with a `line-soft`
   border, tables with `stopped` heads, and fenced code in a `line` box (`radius 8`) whose head is the language in
