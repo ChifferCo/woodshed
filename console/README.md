@@ -1694,7 +1694,9 @@ the session keeps going until its review and suites pass:
   other check in `gh pr checks` through, say what passed and stop. A suite whose path filters leave the change out is
   named as not run. Where a shared session would post a `Needs a human:` comment, it asks its owner at its terminal.
   Nothing is posted to Slack or written on GitHub.
-- **Which pull request.** Only its owner's: one they opened, or one the console's App opened (a session that pushes
+- **Which pull request.** Only on a session whose statusd types only into a running agent when asked
+  (`agentOnlySend` in its status; an older image's is not watched: `fleet: pull request not watched, the session's
+  image types into its pane unchecked`). Only its owner's: one they opened, or one the console's App opened (a session that pushes
   as the App) from the branch the console made for the session at its start (`madeBranch`: `woodshed/<owner>-<id>` or
   `woodshed/<issue>-<id>`, not an existing branch it was started on, nor whatever it has checked out since; while the App's login is not read yet, such a pull request is decided a minute
   later), in the repo itself and not a fork, after the session started (`slack:

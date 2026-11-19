@@ -41,7 +41,7 @@
 // also carry `Authorization: Bearer <SESSION_TOKEN>`. Without a token it does
 // not start: a session's terminal and its branch must never be open by default.
 
-import { timingSafeEqual } from 'node:crypto';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { appendFileSync, createReadStream, existsSync, openSync } from 'node:fs';
 import http from 'node:http';
@@ -259,7 +259,6 @@ export function isAgentCommand(command) {
 
 // tmux's own test of the pane's command, for if-shell: the same names as AGENT_COMMANDS.
 export const AGENT_PANE_FORMAT = `#{||:${[...AGENT_COMMANDS].map((c) => `#{==:#{pane_current_command},${c}}`).join(',')}}`;
-const AGENT_BUFFER = 'woodshed-agent-send';
 
 /**
  * Types the text into the agent's pane only if the agent runs there, the check and the typing being one tmux command
@@ -268,6 +267,8 @@ const AGENT_BUFFER = 'woodshed-agent-send';
  * @returns {Promise<boolean>}  whether it was typed in
  */
 async function sendToAgent(text) {
+  // A buffer of its own: two sends at once must not paste each other's text.
+  const AGENT_BUFFER = `woodshed-agent-send-${randomUUID()}`;
   await run('tmux', ['set-buffer', '-b', AGENT_BUFFER, '--', text]);
   // -r keeps the text's line breaks as send-keys -l would; Codex gets a bracketed paste, as send() gives it.
   const paste = `paste-buffer -r -d ${CODEX ? '-p ' : ''}-b ${AGENT_BUFFER} -t ${TMUX_TARGET} ; send-keys -t ${TMUX_TARGET} Enter`;
@@ -745,6 +746,8 @@ async function status() {
     branch: await git('branch', '--show-current'),
     head: await git('rev-parse', '--short', 'HEAD'),
     prUrl: await prUrl(),
+    // POST /send takes agentOnly: the console types a private session's review feedback only into a statusd that does.
+    agentOnlySend: true,
     usage: await usage(),
     planUsage: await (CODEX ? readCodexPlanUsage() : readPlanUsage()).catch(planUsageFailed),
     ...(await appStatus()),

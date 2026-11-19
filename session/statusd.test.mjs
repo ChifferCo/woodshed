@@ -802,6 +802,8 @@ test('tmux\'s test of the pane, which types only into claude or codex, is true f
   t.after(() => tmux('kill-server'));
   assert.equal(tmux('new-session', '-d', '-s', 'probe', 'sleep 30').status, 0);
   const shown = (format) => tmux('display', '-p', '-t', 'probe', format).stdout.trim();
+  // The pane shows tmux itself until sleep has started.
+  for (let i = 0; i < 100 && shown('#{pane_current_command}') !== 'sleep'; i += 1) spawnSync('sleep', ['0.05']);
   assert.equal(shown('#{pane_current_command}'), 'sleep');
   assert.equal(shown(AGENT_PANE_FORMAT), '0', 'sleep is not the agent');
   for (const name of ['claude', 'codex']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);

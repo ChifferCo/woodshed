@@ -715,6 +715,14 @@ export function createFleet({
     const watch = Boolean(session.owner);
     // A review-only session reads someone's pull request: it is never told to fix and push it.
     if (watch && session.reviewOnly) return;
+    // An older image's statusd would type into the shell of an agent that exited: nothing is typed into it unasked.
+    if (watch && !session.agentOnlySend) {
+      if (!session.watchSkippedSaid) {
+        console.log('fleet: pull request not watched, the session\'s image types into its pane unchecked', { id: session.id });
+        update(session, { watchSkippedSaid: true });
+      }
+      return;
+    }
     // Its pull request is read on its project's repo by number: one on another repo is not that one.
     if (watch && !onProjectRepo(session.prUrl, project)) {
       console.log('fleet: pull request on another repo than the session\'s project, not watched', { id: session.id, project: project.name });
@@ -1108,7 +1116,7 @@ export function createFleet({
         const fresh = await statusd(session, 'GET', '/status');
         // The session may have started stopping, or the watch ended or been renewed, while statusd answered.
         if (!ownListening(session) || !stillWanted()) return 'later';
-        if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting') return 'later';
+        if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting' || fresh.agentOnlySend !== true) return 'later';
         // And it must still be on this pull request.
         if ('prUrl' in fresh && !samePull(fresh.prUrl, item)) return 'later';
         // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).

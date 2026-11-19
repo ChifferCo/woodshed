@@ -432,6 +432,9 @@ export function statusUpdate(session, status, nowIso) {
     // prListening), though `prUrl` keeps the last on its own repo. A statusd that sends no `prUrl` leaves it as it was.
     reportedPrUrl: typeof status.prUrl === 'string' && status.prUrl ? status.prUrl.slice(0, 300)
       : 'prUrl' in status ? null : session.reportedPrUrl,
+    // Whether its statusd types only into a running agent when asked (`agentOnly`): an older image's would type into
+    // the shell an exited agent leaves, so its private session's pull request is not watched.
+    agentOnlySend: status.agentOnlySend === true,
     // Every pull request the session has reported, oldest first: a session can open another after one merged.
     prUrls: withPrUrl(session, prUrl),
     app: APP_STATES.has(status.app) ? status.app : null,
@@ -464,7 +467,7 @@ export function statusUpdate(session, status, nowIso) {
  * @param {object} session
  * @returns {object}  the session as the browser sees it: no token, no endpoint
  */
-export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, ...rest }) {
+export function publicSession({ token, terminalToken, endpoint, pendingMessages, reportedPrUrl, agentOnlySend, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
   return { ...rest, pendingMessages: pendingMessages?.length ?? 0, hasShell: Boolean(endpoint?.shellPort) };
 }

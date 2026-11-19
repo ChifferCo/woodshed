@@ -90,7 +90,10 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     calls.statusd.push({ id: session.id, method, path, body: opts?.body });
     if (path === '/status') {
       if (!statuses[session.id]) throw new Error('connection refused');
-      return statuses[session.id];
+      // Today's statusd types only into a running agent when asked; a test of an older image says false.
+      const status = statuses[session.id];
+      const today = (value) => ({ agentOnlySend: true, ...value });
+      return typeof status.then === 'function' ? status.then(today) : today(status);
     }
     return { ok: true, committed: false, head: 'abc' };
   }
@@ -3541,4 +3544,16 @@ test('a private session that starts stopping while its status is read again is n
   advance(60_000);
   await fleet.tick();
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});
+
+test('a private session on an older image, whose statusd types into its pane unchecked, is not watched', async () => {
+  const { fleet, github, statuses, calls, store } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9', agentOnlySend: false };
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending ?? [], calls.statusd.filter((c) => c.path === '/send' && c.id === session.id)], [[], []]);
 });
