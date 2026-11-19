@@ -353,7 +353,8 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
 
   try {
     writeSessionReview({ session: sessionName, review });
-    writeDiff({ session: sessionName, diff });
+    // Stamped with the take it belongs to: see handleDiff.
+    writeDiff({ session: sessionName, diff: { ...diff, createdAt: review.createdAt } });
   } catch (err) {
     await undo(`could not write review state: ${err?.message}`);
     return { ok: false, status: 500, error: `could not write review state: ${err?.message}` };
@@ -481,7 +482,8 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
 
   try {
     writeSessionReview({ session: sessionName, review });
-    writeDiff({ session: sessionName, diff });
+    // Stamped with the take it belongs to: see handleDiff.
+    writeDiff({ session: sessionName, diff: { ...diff, createdAt: review.createdAt } });
   } catch (err) {
     // No undo in the prepareReview sense: this created no worktree and no
     // branch, so there is nothing to hand back. Clearing the state keeps
@@ -688,7 +690,9 @@ async function refreshTargetReview({ ctx, sessionName }) {
     try {
       // The diff before the record, because the record is what says which
       // commit the analysis is about. See the header.
-      writeDiff({ session: sessionName, diff });
+      // Stamped with the take it belongs to, so a record that then fails to save
+      // cannot pair the old take's createdAt with this diff: see handleDiff.
+      writeDiff({ session: sessionName, diff: { ...diff, createdAt: next.createdAt } });
       writeSessionReview({ session: sessionName, review: next });
     } catch (err) {
       // Deliberately NOT removeReviewState: this record is the only thing that
@@ -1665,9 +1669,13 @@ function restoreState(session) {
 function handleDiff(res, ctx, session) {
   const diff = readDiff(session);
   if (!diff) return ctx.json(res, 404, { ok: false, error: 'no diff stored for this session' });
-  // Which review the diff belongs to, read with it: a page that took it from the
-  // status call made just before could pair this diff with the one it replaced.
-  return ctx.json(res, 200, { ok: true, session, ...diff, createdAt: readSessionReview(session)?.createdAt ?? null });
+  // Which take the diff belongs to: its own stamp, written with it, so neither a
+  // status read just before nor a record that failed to save after a refresh
+  // can pair it with another take's (and so with another take's Q&A). A diff
+  // from before the stamp falls back on the record.
+  return ctx.json(res, 200, {
+    ok: true, session, ...diff, createdAt: diff.createdAt ?? readSessionReview(session)?.createdAt ?? null,
+  });
 }
 
 async function handleAnalyze(res, ctx, session) {

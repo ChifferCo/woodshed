@@ -567,6 +567,16 @@ test('the worktree review records its tree and holds it with a ref, or records w
 
   const retaken = await post();
   assert.equal(retaken.status, 200, JSON.stringify(retaken.body));
+  // The diff carries its own take's createdAt, and GET /diff answers with that one: a record that failed to save
+  // after a refresh (the old take's, left in place) cannot pair the new diff with the old take's Q&A.
+  const diffFile = path.join(process.env.WOODSHED_REVIEWS, session, 'diff.json');
+  assert.equal(JSON.parse(fs.readFileSync(diffFile, 'utf8')).createdAt, record().createdAt);
+  const savedDiff = JSON.parse(fs.readFileSync(diffFile, 'utf8'));
+  fs.writeFileSync(diffFile, JSON.stringify({ ...savedDiff, createdAt: '2099-01-01T00:00:00.000Z' }));
+  const diffRead = {};
+  await handleReviewRequest({ method: 'GET', url: `/reviews/${session}/diff`, headers: {} }, diffRead, ctx);
+  assert.equal(diffRead.body.createdAt, '2099-01-01T00:00:00.000Z', 'the diff\'s own stamp, not the record\'s');
+  fs.writeFileSync(diffFile, JSON.stringify(savedDiff));
   assert.match(record().snapshot, /^[0-9a-f]{40}$/);
   assert.equal(record().snapshotError, null);
   assert.equal(held(), record().snapshot, 'the ref holds the recorded tree');
@@ -658,6 +668,10 @@ test('a pull request diff is of the recorded head commit, whatever the branch po
   assert.doesNotMatch(got.patch, /base\.txt/, 'against the merge base, as GitHub shows it');
   const noBase = await pullRequestDiff({ repoRoot: repo, baseRef: 'main', headSha: commitA, baseFetched: false });
   assert.deepEqual([noBase.ok, noBase.status, /could not fetch main/.test(noBase.error)], [false, 502, true]);
+  // Past the runner's cap, a diff cut off with a clean exit would parse as whole with its last files missing: refused.
+  const { branchDiff } = await import('./worktree.mjs');
+  const cut = await pullRequestDiff({ repoRoot: repo, baseRef: 'main', headSha: commitA, baseFetched: true, diff: (a) => branchDiff({ ...a, maxBytes: 40 }) });
+  assert.deepEqual([cut.ok, cut.status, /larger than a review reads/.test(cut.error)], [false, 413, true]);
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {

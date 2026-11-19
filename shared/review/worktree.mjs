@@ -43,6 +43,8 @@ function stagingRef(sessionId) {
 
 // `repoRoot` is really "whatever directory to run in" — the worktree review
 // passes a session's own worktree, which is a git directory in its own right.
+const TOO_LARGE = 'the diff is larger than a review reads (64 MiB): it would be shown with files missing';
+
 function git(repoRoot, args, timeoutMs = GIT_TIMEOUT_MS, env) {
   return run('git', ['-C', repoRoot, ...args], env ? { timeoutMs, env } : { timeoutMs });
 }
@@ -457,12 +459,9 @@ export async function defaultBranch(repoRoot, env = process.env) {
  * head, so commits landing on the base after the branch forked do not turn up
  * as reversed changes in someone's review.
  */
-export async function branchDiff({ repoRoot, baseRef, headSha }) {
-  const result = await git(
-    repoRoot,
-    ['diff', '--no-color', '--find-renames', `refs/remotes/origin/${baseRef}...${headSha}`],
-    GIT_TIMEOUT_MS,
-  );
+export async function branchDiff({ repoRoot, baseRef, headSha, maxBytes }) {
+  const args = ['-C', repoRoot, 'diff', '--no-color', '--find-renames', `refs/remotes/origin/${baseRef}...${headSha}`];
+  const result = await run('git', args, maxBytes ? { timeoutMs: GIT_TIMEOUT_MS, maxBytes } : { timeoutMs: GIT_TIMEOUT_MS });
   if (result.status !== 0) {
     return {
       ok: false,
@@ -471,6 +470,9 @@ export async function branchDiff({ repoRoot, baseRef, headSha }) {
       stderr: (result.stderr || '').trim().slice(0, 400),
     };
   }
+  // Cut off at the runner's cap with a clean exit, a diff would parse as whole
+  // and be reviewed with its last files missing.
+  if (result.truncated) return { ok: false, status: 413, error: TOO_LARGE };
   return { ok: true, patch: result.stdout || '' };
 }
 
@@ -720,6 +722,7 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
         stderr: (diffed.stderr || '').trim().slice(0, 400),
       };
     }
+    if (diffed.truncated) return { ok: false, status: 413, error: TOO_LARGE };
     const written = await git(worktreePath, ['write-tree'], INDEX_TIMEOUT_MS, env);
     // 40 hex for SHA-1, 64 for a repository on SHA-256.
     const treeSha = written.status === 0 && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test((written.stdout || '').trim())
