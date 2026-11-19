@@ -1,4 +1,4 @@
-// One session: the rail of every session on the left, and on the right the shed's pane: a bar with Chat, Agent,
+// One session: the rail of every session on the left, and on the right the shed's pane: a bar with Chat, TUI,
 // Terminal and Review tabs, what the work is on and the session's buttons, over the conversation as a chat (chat.js),
 // the agent's own terminal, a plain shell in the repo, or the review. A terminal iframe is created once and kept across refreshes and tab switches, so neither drops
 // what someone is typing, and the last few sessions' agent terminals stay loaded, hidden, so moving back to one is a
@@ -36,12 +36,18 @@
     onShared = pathname === '/all';
     onNew = onMy && params.get('new') === '1';
     picked = W.pickedLogins(search);
-    // Chat is the conversation, drawn from the agent's own record of it, and the default; ?tab=agent is the agent's
-    // terminal, ?tab=terminal the plain shell, ?tab=review the review, ?tab=diff the plain diff and ?tab=applog the
-    // app's logs. A session that is not running has no chat: its page shows the start, or how it ended, as before.
+    // Chat is the conversation, drawn from the agent's own record of it, and the default; ?tab=tui is the agent's
+    // TUI, its live terminal, ?tab=terminal the plain shell, ?tab=review the review, ?tab=diff the plain diff and
+    // ?tab=applog the app's logs. A session that is not running has no chat: its page shows the start, or how it
+    // ended, as before. ?tab=agent, TUI's old name, still opens it, and the address is put right.
     const asked = params.get('tab');
-    tab = ['agent', 'review', 'terminal', 'diff', 'applog'].includes(asked) ? asked : 'chat';
+    tab = W.sessionTab(asked);
     landOnReview = !asked;
+    if (asked && asked !== tab && tab !== 'chat') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('tab', tab);
+      window.history.replaceState(window.history.state, '', url);
+    }
   }
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
@@ -59,7 +65,7 @@
   let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
-  const chat = W.createChat({ openTerminal: () => setTab('agent') });
+  const chat = W.createChat({ openTerminal: () => setTab('tui') });
   // Made the first time /all shows, which may be after a move from another of these pages.
   let sharedHome = null;
 
@@ -967,7 +973,7 @@
     const open = (tabName) => () => { navigate(`/s/${s.id}${tabName ? `?tab=${tabName}` : ''}`); };
     return [
       { group: 'Session', label: 'Open the chat', run: open('') },
-      { group: 'Session', label: 'Open the agent\'s terminal', run: open('agent') },
+      { group: 'Session', label: 'Open the agent\'s TUI', run: open('tui') },
       s.status === 'running' && s.hasShell && { group: 'Session', label: 'Open the terminal', run: open('terminal') },
       s.status === 'running' && s.hasShell && W.isPrivate(s) && W.agentOf(s) === 'claude' && { group: 'Session', label: 'Sign in for Remote Control', run: () => claudeLogin(s) },
       s.status === 'running' && data.appDomain && !data.appPorts && W.isPrivate(s) && { group: 'App', label: 'Share the app…', run: () => W.shareApp(s) },
@@ -1044,7 +1050,7 @@
       const res = await fetch(`/api/sessions/${s.id}/claude-login`, { method: 'POST', headers: { 'x-woodshed': '1' } });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(body.error || `sign in answered ${res.status}`);
-      navigate(body.where === 'agent' ? `/s/${s.id}?tab=agent` : `/s/${s.id}?tab=terminal`);
+      navigate(body.where === 'agent' ? `/s/${s.id}?tab=tui` : `/s/${s.id}?tab=terminal`);
     } catch (err) {
       window.alert(`Could not start the sign-in: ${err.message}`);
     }
@@ -1184,18 +1190,18 @@
   // The tab that shows: a session that is not running shows its start or its end where the terminal goes, and the
   // chat comes back once it runs.
   function viewOf(s) {
-    return tab === 'chat' && s.status !== 'running' ? 'agent' : tab;
+    return tab === 'chat' && s.status !== 'running' ? 'tui' : tab;
   }
 
   function paneBar(s, view) {
     const pr = W.prNumber(s.prUrl);
-    const tabButton = (key, label, disabledWhy) => h('button', {
+    const tabButton = (key, label, disabledWhy, hint) => h('button', {
       type: 'button',
       class: 'ptab',
       role: 'tab',
       'aria-selected': String(view === key),
       disabled: Boolean(disabledWhy),
-      title: disabledWhy || null,
+      title: disabledWhy || hint || null,
       onclick: () => setTab(key),
     }, label);
     const typing = s.status === 'running' && !PAGE_TABS.has(view);
@@ -1222,7 +1228,7 @@
       }, '⌨'),
       h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'View' },
         s.status === 'running' && tabButton('chat', 'Chat'),
-        tabButton('agent', 'Agent'),
+        tabButton('tui', 'TUI', null, 'The agent\'s own screen, live: type to it as in its terminal'),
         tabButton('terminal', 'Terminal', s.status !== 'running' ? 'The shell is there while the session runs'
           : s.hasShell ? null : 'This session started from an image without the Terminal tab: a new session has it'),
         tabButton('review', 'Review', s.branch ? null : s.kind === 'ask' ? 'A question from Slack changes no code' : 'This session has no branch yet, so there is nothing to review'),
@@ -1287,7 +1293,7 @@
   }
 
   // ⌘F with focus on the page around the terminal (its pane bar, say) finds in the terminal, as it does inside it
-  // (terminal.js). Off the Agent and Terminal tabs it is the browser's own find.
+  // (terminal.js). Off the TUI and Terminal tabs it is the browser's own find.
   document.addEventListener('keydown', (e) => {
     if (!W.terminal.isFindKey(e) || PAGE_TABS.has(tab)) return;
     const frame = shownTerminal();
@@ -1342,7 +1348,7 @@
   }
 
   // The terminals kept loaded, by session and start, so a Resume (same id, new container) gets a fresh one. One pool
-  // for the Agent tab and one for the Terminal tab's shell: a session's first open pays the load, every later one is
+  // for the TUI tab and one for the Terminal tab's shell: a session's first open pays the load, every later one is
   // free. A frame is only ever mounted visible,
   // never hidden to warm it: with no box to measure, xterm makes ttyd attach tmux at 80x24 and tmux shrinks the
   // window for every other client of the session.
@@ -1912,17 +1918,17 @@
       return;
     }
     openReviewWhenRunning(s);
-    if (tab === 'review' && !s.branch) tab = 'agent';
-    if (tab === 'terminal' && !hasShell) tab = 'agent';
-    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'agent';
+    if (tab === 'review' && !s.branch) tab = 'tui';
+    if (tab === 'terminal' && !hasShell) tab = 'tui';
+    if ((tab === 'applog' || tab === 'diff') && (s.status !== 'running' || s.kind === 'ask')) tab = 'tui';
     const view = viewOf(s);
     slots.head.replaceChildren(paneBar(s, view));
     offerRenameOnce(s);
     renderKeyBar(s);
-    // A phone's message box, for claude on the Agent tab; the Terminal tab's shell takes the keyboard straight in.
-    messageBox.show(narrow.matches && s.status === 'running' && view === 'agent' ? s : null);
+    // A phone's message box, for claude on the TUI tab; the Terminal tab's shell takes the keyboard straight in.
+    messageBox.show(narrow.matches && s.status === 'running' && view === 'tui' ? s : null);
     chat.show(view === 'chat' ? s : null);
-    slots.body.hidden = view !== 'agent';
+    slots.body.hidden = view !== 'tui';
     slots.plain.hidden = tab !== 'terminal';
     slots.review.hidden = tab !== 'review';
     slots.applog.hidden = tab !== 'applog';

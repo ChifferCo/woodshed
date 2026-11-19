@@ -777,7 +777,7 @@ test('POST /answer picks each question\'s option and submits, in a real tmux pan
 
   assert.equal((await call('POST', '/answer', 'wrong', body([1, 2]))).status, 401);
   assert.equal((await call('GET', '/prompt', 'wrong')).status, 401);
-  // The person moved the highlight in the Agent tab first: the moves count from where it is.
+  // The person moved the highlight in the TUI tab first: the moves count from where it is.
   await tmux('send-keys', '-t', 'claude', 'Down', 'Down');
   const wrong = await call('POST', '/answer', 'sess', JSON.stringify({ kind: 'question', questions: [{ question: 'Which size do you want?', options: ['Small', 'Medium', 'Large'], pick: 0 }] }));
   assert.equal(wrong.status, 409);

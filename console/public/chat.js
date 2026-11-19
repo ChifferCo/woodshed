@@ -4,10 +4,10 @@
 // and each run of tool calls between them as one work log that folds open (chatThread.cjs). The composer under it
 // types a message into the live agent (POST …/send, as the phone's message box does), with files from the picker or
 // dropped or pasted, and Stop sends it Esc (POST …/interrupt). The agent still runs in its terminal, which stays on the
-// Agent tab. claude's questions (AskUserQuestion) are answered here: one option picked for each, then Send answers
+// TUI tab. claude's questions (AskUserQuestion) are answered here: one option picked for each, then Send answers
 // (POST …/answer), which the session types into the picker once its pane shows that same question. An approval the
 // pane shows (claude's permission dialog, codex's approval; GET …/prompt) is on the Needs you line with Approve and
-// Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the Agent tab.
+// Deny, under the same check. Anything else it asks there shows as Needs you, with a button to the TUI tab.
 // session.js makes the Chat tab the one a running session opens on.
 (function () {
   'use strict';
@@ -272,7 +272,7 @@
           fit();
         }
         W.shell.toast(err.name === 'TimeoutError'
-          ? `No answer in ${SEND_TIMEOUT_MS / 1000} s: check the Agent tab before sending again`
+          ? `No answer in ${SEND_TIMEOUT_MS / 1000} s: check the TUI tab before sending again`
           : `Not sent: ${err.message}`, { ms: 6000 });
       } finally {
         sending.delete(id);
@@ -328,7 +328,7 @@
     }
 
     // What the agent asked, with its options. The open one takes the person's picks, one a question, and Send answers
-    // has the session type them into the agent's picker; a question that takes several options is the Agent tab's.
+    // has the session type them into the agent's picker; a question that takes several options is the TUI tab's.
     function askCard(item, open) {
       const key = `${session.id}:${item.key}`;
       const sent = answers.get(key);
@@ -361,12 +361,12 @@
         foot = h('div', { class: 'chat-ask-foot' },
           h('button', { type: 'button', class: 'btn btn-sm btn-plain chat-ask-send', disabled: !body, onclick: () => sendAnswers(item, key) }, several ? 'Send answers' : 'Send answer'),
           h('span', { class: 'chat-ask-note' }, body ? `${agent()} gets ${several ? 'them' : 'it'} in its terminal` : several ? 'Pick one for each question' : 'Pick one',
-            ' · to type your own, use the ', agentTab('Agent tab')));
+            ' · to type your own, use the ', agentTab('TUI tab')));
       } else if (open && !item.answered && !item.declined && item.questions.some((q) => q.multiSelect)) {
-        foot = h('div', { class: 'chat-ask-foot' }, h('span', { class: 'chat-ask-note' }, 'This takes several options: pick them in the ', agentTab('Agent tab')));
+        foot = h('div', { class: 'chat-ask-foot' }, h('span', { class: 'chat-ask-note' }, 'This takes several options: pick them in the ', agentTab('TUI tab')));
       }
       const refused = sent?.state === 'refused' && !item.answered && !item.declined
-        && h('p', { class: 'chat-ask-error', role: 'alert' }, `Not answered: ${sent.error}. `, agentTab('Answer in the Agent tab'));
+        && h('p', { class: 'chat-ask-error', role: 'alert' }, `Not answered: ${sent.error}. `, agentTab('Answer in the TUI tab'));
       return h('div', { class: `chat-ask${live ? ' is-open' : ''}` },
         h('div', { class: 'chat-ask-head' }, h('b', null, `${agent()} asks`), h('span', { class: 'chat-ask-state' }, said)),
         ...item.questions.map((q, qi) => h('div', { class: 'chat-ask-q' }, h('p', null, q.question), optionList(q, qi))),
@@ -424,7 +424,7 @@
       if (!list.length && !waiting.length) {
         nodes.push(h('div', { class: 'chat-empty' },
           h('b', null, `No messages with ${agent()} yet`),
-          h('span', null, 'Write one below. What it does shows here as it works; its terminal is on the Agent tab.')));
+          h('span', null, 'Write one below. What it does shows here as it works; its terminal is on the TUI tab.')));
       }
       const live = working();
       const lastAsk = list.findLastIndex((item) => item.kind === 'ask');
@@ -467,9 +467,9 @@
           status.replaceChildren(...[
             h('span', { class: 'chat-needs-text' }, h('b', null, 'Needs you'), ` · ${agent()} asks: ${asks}`),
             lines.length > 0 && h('pre', { class: 'chat-approval' }, lines.join('\n')),
-            approval?.error && h('p', { class: 'chat-needs-error', role: 'alert' }, `Not answered: ${approval.error}. Answer in the Agent tab.`),
+            approval?.error && h('p', { class: 'chat-needs-error', role: 'alert' }, `Not answered: ${approval.error}. Answer in the TUI tab.`),
             h('span', { class: 'chat-needs-actions' },
-              h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'Agent tab'),
+              h('button', { type: 'button', class: 'btn btn-sm btn-plain', onclick: openTerminal }, 'TUI tab'),
               h('button', { type: 'button', class: 'btn btn-sm btn-plain', disabled: Boolean(busy), title: shown.deny, onclick: () => answerApproval('deny') }, busy === 'deny' ? 'Denying…' : 'Deny'),
               h('button', { type: 'button', class: 'btn btn-sm chat-answer', disabled: Boolean(busy), title: shown.approve, onclick: () => answerApproval('approve') }, busy === 'approve' ? 'Approving…' : 'Approve')),
           ].filter(Boolean));
@@ -479,7 +479,7 @@
         status.replaceChildren(
           h('span', null, h('b', null, 'Needs you'), open ? ` · ${agent()} asks above: pick your answers there`
             : asking() ? ` · ${agent()} asks above; it takes the answer in its terminal` : ` · ${agent()} is asking something it shows in its terminal`),
-          h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, open ? 'Agent tab' : 'Answer in the Agent tab'));
+          h('button', { type: 'button', class: 'btn btn-sm chat-answer', onclick: openTerminal }, open ? 'TUI tab' : 'Answer in the TUI tab'));
         return;
       }
       if (working()) {
@@ -491,7 +491,7 @@
       }
       if (state !== 'done' && state !== 'starting' && state) {
         status.className = 'chat-status';
-        status.replaceChildren(h('span', null, h('b', null, `${W.agentTitle(session)} exited`), ' · the Agent tab shows its terminal'));
+        status.replaceChildren(h('span', null, h('b', null, `${W.agentTitle(session)} exited`), ' · the TUI tab shows its terminal'));
         return;
       }
       status.className = 'chat-status';
@@ -520,7 +520,7 @@
           drawStatus();
         }
       } catch {
-        // A console or session from before /prompt: the line keeps its button to the Agent tab.
+        // A console or session from before /prompt: the line keeps its button to the TUI tab.
       }
     }
 

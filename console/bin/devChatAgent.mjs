@@ -4,7 +4,7 @@
 // and draws what statusd reads a codex pane by (session/codexState.mjs): `esc to interrupt` while it works, `Would you
 // like to run` while it asks, and the `› ` composer once its turn is over.
 // A message is typed in and Enter ends it. It answers each with a turn of a few tool calls and a reply. A message that
-// says "fail" has a tool call fail, and one that says "ask" waits on an approval first: ↑/↓ and Enter in the Agent tab,
+// says "fail" has a tool call fail, and one that says "ask" waits on an approval first: ↑/↓ and Enter in the TUI tab,
 // y or n, or the Chat tab's Approve and Deny (session/panePrompt.mjs reads it as it reads codex's). Esc stops the turn.
 // The approval is a stand-in: its words are codex 0.167's own (its title and options, from the strings in the codex
 // binary: `Would you like to run the following command?`, `Yes, just this once`, `Yes, and don't ask again for this

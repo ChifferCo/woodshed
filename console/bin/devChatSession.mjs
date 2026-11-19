@@ -10,7 +10,7 @@
 // With `real`, the pane runs the real `claude` instead, on whatever Claude credential this machine's claude has (in a
 // Woodshed session, its owner's own), in a clone of this checkout with no remote, so nothing it does reaches GitHub or
 // this branch. Its hooks write to a state file of its own (WOODSHED_CLAUDE_STATE_FILE, session/hookState.mjs), so its
-// state is claude's own and the console reads it as for a real session; and ttyd serves its pane, for the Agent tab.
+// state is claude's own and the console reads it as for a real session; and ttyd serves its pane, for the TUI tab.
 // It answers claude's folder-trust question itself, once.
 //
 // With `real` and the codex agent, the pane runs the real `codex` with the flags a session gives it in auto mode

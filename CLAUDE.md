@@ -745,7 +745,7 @@ URL on top of each env file's Repo settings values
   pane shows that same prompt (`session/panePrompt.mjs`): the console logs `console: answer typed in from the page`
   with the picks' numbers or the decision, and statusd `statusd: answer typed` with the arrow keys it took, or `statusd:
   answer refused` with `why` (`no-picker`: answered or cancelled already; `other-question`: the picker was moved on in
-  the Agent tab; `other-options`, `other-approval`: the screen changed; `not-moved`: the highlight did not follow) and
+  the TUI tab; `other-options`, `other-approval`: the screen changed; `not-moved`: the highlight did not follow) and
   `typed`, how many questions it had answered before it stopped. `TMUX= tmux capture-pane -p -t claude` in the session
   shows what it read. A Claude Code or codex that draws its picker otherwise reads as `no-picker` for every answer:
   capture its pane into `shared/__fixtures__/` and fix the reader.
@@ -916,7 +916,7 @@ cards. Pull request chips show without their state or checks, since polling GitH
 pull requests, from a stand-in `gh` that answers that one read (`console/bin/devGh.mjs`). `/s/dddd4444` is running,
 for the pane bar's buttons, but has no container: it cannot show a live terminal, and the app and database links go
 nowhere. `/s/5a5a5a5a` is starting, for the start checklist in the local provider's words, until the start timeout
-fails it. `/s/c0ffee11` is running with a live Agent terminal where ttyd and tmux are on the PATH (as in a Woodshed
+fails it. `/s/c0ffee11` is running with a live TUI where ttyd and tmux are on the PATH (as in a Woodshed
 session): `devTerminalSession.mjs` runs them on `session/tmux.conf` over a made-up conversation, for find, copy, links
 and scrolling back. `/s/beadfeed?tab=review` is running with a Review tab that works: `devReviewSession.mjs` answers it with
 the shed's real review page over a made-up change it commits to a scratch repo, with an analysis already written. Its
@@ -924,7 +924,7 @@ chat and Re-review run `claude` when one is on the PATH. Its terminal, Diff and 
 `devConsole.mjs` to cover another state.
 `/s/c0de5e55` (codex) and `/s/c1a0de00` (claude) open on a Chat tab that works: the real statusd over a private tmux,
 whose pane runs a stand-in agent (`devChatAgent.mjs`) writing the agents' real record formats. `/s/c1a0dea1` runs the
-real `claude` instead, in a clone of this checkout with no remote and with its Agent tab live, on this machine's Claude
+real `claude` instead, in a clone of this checkout with no remote and with its TUI tab live, on this machine's Claude
 credential: `devConsoleApp.sh` turns it on in a private session (`WOODSHED_CLAUDE_AUTH=own`), and
 `DEV_CONSOLE_REAL_CLAUDE=1` (or `0`) anywhere else. It spends that credential's usage. `/s/c0dea1ed` is the real
 `codex` the same way, once `codex login` has signed this machine in (`DEV_CONSOLE_REAL_CODEX`); with

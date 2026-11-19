@@ -1561,8 +1561,18 @@
     return { el, update };
   }
 
+  // A session page's tabs, by their ?tab= name. Chat, the default, has none. `agent` is TUI's name from before it was
+  // renamed: an old link, a bookmark or a Needs you button made then still opens it.
+  const SESSION_TABS = ['tui', 'terminal', 'review', 'diff', 'applog'];
+  const TAB_ALIASES = { agent: 'tui' };
+  /** @returns {string}  the tab a ?tab= value opens: one of SESSION_TABS, or 'chat' for none or one it does not know */
+  function sessionTab(asked) {
+    const name = TAB_ALIASES[asked] ?? asked;
+    return SESSION_TABS.includes(name) ? name : 'chat';
+  }
+
   window.Woodshed = {
-    invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    invite, sessionTab, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,

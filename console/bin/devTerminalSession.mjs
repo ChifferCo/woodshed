@@ -1,4 +1,4 @@
-// A made-up session for the dev console with a live Agent terminal: ttyd in front of a tmux of its own, on the
+// A made-up session for the dev console with a live TUI: ttyd in front of a tmux of its own, on the
 // session's tmux.conf, as the entrypoint starts them (session/entrypoint.sh), with a few screens of a made-up
 // conversation printed in it and a shell after. For what the page does on a real terminal: find, copy, links, scroll.
 // Only where ttyd and tmux are on the PATH (a Woodshed session has both); elsewhere it returns null and the session is

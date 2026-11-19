@@ -27,7 +27,7 @@ someone who can be assigned commenting on an unassigned session takes it. Assign
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
 the issue, a hand over or Unassign takes off the person the console put there, and someone GitHub already had assigned
 stays (`console/issueTracking.mjs`). The console's colors, type and rail rules are written down in `console/designSystem/` (tokens, usage rules and component cards); `console/designSystem.test.mjs` fails when its colors differ from `style.css`. `/s/<id>` opens on the tab the session belongs to, with the shed's session pane: a bar
-with **Agent**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
+with **Chat**, **TUI**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
 branch and PR, and the session's buttons. On a phone the rail is the page,
 after the standalone shed's: sessions are rows with a star and ⋯ big enough for
 a thumb, Shared's status filter is chips above the list, ⋯ opens as a sheet
@@ -46,11 +46,11 @@ lists every section of every page you can open, narrows as you type (`repo`, `to
 you to the section, on its page. A new card on a settings page needs an entry in `settingsIndex.cjs`
 (`settingsIndex.test.mjs` fails when its id is not on the page). Where a name appears on both sides, the card says
 whose it is: **My repo settings** and **My session timeouts** are yours; Settings' Sessions card and each repo's Settings are everyone's.
-- **Agent** is claude's tmux, through ttyd on 7681.
+- **TUI** is the agent's own screen, live: claude's (or codex's) tmux, through ttyd on 7681.
 - **Terminal** is a plain shell in the repo, beside claude, with the same
   environment. It runs in its own tmux session, `shell`, through a second ttyd
   on 7684 at `/shell/<id>/`, behind the same sign-in and owner checks as the
-  Agent's.
+  TUI's.
 - **Diff**, while the session runs, is what its checkout changes against its merge base with the default branch, uncommitted
   and untracked work included, as plain git diff: no analysis and no GitHub. It is read when the tab opens and on
   **Read again**, never on a timer. A file past the review parser's line caps, or past 2 MB of hunks in all, shows
@@ -93,13 +93,13 @@ into claude's picker only once its pane shows that same question with those opti
 checks the pane again after each step (`session/panePrompt.mjs`, session/README.md). An approval the pane shows,
 claude's permission dialog or codex's approval, is read from the screen (`GET /api/sessions/<id>/prompt`) onto the
 **Needs you** line with **Approve** and **Deny**, under the same check. A pane that is not what was answered is a 409
-the page shows as `Not answered: <why>` with a way to the Agent tab; the console logs `console: answer typed in from
+the page shows as `Not answered: <why>` with a way to the TUI tab; the console logs `console: answer typed in from
 the page` with the picks' numbers or the decision, never their text. A free-text answer, a question that takes
-several options, and anything else the agent asks only in its terminal stay **Answer in the Agent tab**. The agent still runs in its terminal, on
-the **Agent** tab (`?tab=agent`): hooks, Remote Control and Resume work as before. A session that is not running has
+several options, and anything else the agent asks only in its terminal stay **Answer in the TUI tab**. The agent still runs in its terminal, on
+the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
 no Chat tab and shows its start or its end there.
 
-Under claude's terminal on the Agent tab, a phone has a message box
+Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech
 recognition (hidden where the browser has none). Files go to `/tmp/uploads` with
@@ -144,7 +144,7 @@ What the page does, from the shed's own review code:
 - **Ask about a line** (its number), **or a file**: claude reads the code to
   answer, in a few paragraphs.
 - **Chat** beside it: one message at a time, with the conversation so far, the
-  analysis and the files. It can only read; changes are made in the Agent tab.
+  analysis and the files. It can only read; changes are made in the TUI tab.
 
 With GitHub connected in a My Woodshed session, the page also writes to GitHub
 as you:
@@ -407,7 +407,7 @@ The rest of the shed's rail and shell is here too, on every session's page
   every page shows, for everyone who can see the session.
 
 The terminals are the shed's too (`console/public/terminal.js`, on both the
-Agent and Terminal tabs):
+TUI and Terminal tabs):
 - **Copy out**: a drag in claude copies, as tmux sends it by OSC 52, with a
   "Copied" toast. Safari refuses a copy that comes from the socket, and says so.
 - **Links**: on a phone a tap opens a URL, a wrapped one rejoined first.

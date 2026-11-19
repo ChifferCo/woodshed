@@ -1,5 +1,5 @@
 // What the agent asks in its pane, read from the screen, and the keys that answer it: the Chat tab answers claude's
-// AskUserQuestion and an approval prompt (claude's permission dialog, codex's approval) without the Agent tab. statusd
+// AskUserQuestion and an approval prompt (claude's permission dialog, codex's approval) without the TUI tab. statusd
 // types the keys (POST /answer); this file never types blind. It reads the pane (`tmux capture-pane -p`), checks the
 // picker on screen is the one being answered (the question's text and its options' labels, or the approval's title
 // and what it asks to run), works out the moves from the row the picker has highlighted, and reads the pane again
@@ -266,7 +266,7 @@ export function planMoves(screen, index) {
 const REFUSALS = {
   'no-picker': 'the agent\'s terminal shows no question now',
   'other-question': 'the agent\'s terminal shows another question',
-  'multi-select': 'this question takes several options, which only the Agent tab can pick',
+  'multi-select': 'this question takes several options, which only the TUI tab can pick',
   'other-options': 'the options on screen are not the ones shown here',
   'no-review': 'the agent\'s terminal did not show its review of the answers',
   'other-answers': 'the agent\'s terminal shows other answers than the ones sent',
@@ -325,7 +325,7 @@ async function pickRow(io, read, screen, index, still, typed) {
  */
 export async function answerQuestions(io, wants) {
   let screen = readQuestionPicker(await io.capture());
-  // The picker must be on the first question: one the person moved on in the Agent tab is theirs to finish there.
+  // The picker must be on the first question: one the person moved on in the TUI tab is theirs to finish there.
   const first = matchQuestion(screen, wants[0]);
   if (!first.ok) throw new Refusal(first.why);
   if (screen.tabs.questions.length !== wants.length) throw new Refusal('other-question');
