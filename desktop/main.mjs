@@ -158,7 +158,10 @@ function zoomBy(step) {
   // window cannot grow, and the console would take its phone layout under the lights.
   if (chromeRules && win === mainWindow && step > 0) {
     const most = screen.getDisplayMatching(win.getBounds()).workAreaSize.width / MAC_MIN_WIDTH;
-    while (level > 0 && 1.2 ** level > most) level -= 0.5;
+    const now = contents.getZoomLevel();
+    while (level > now && 1.2 ** level > most) level -= 0.5;
+    // Never out: a page already past the cap (a zoom Chromium kept, a smaller screen) stays where it is.
+    level = Math.max(level, now);
   }
   contents.setZoomLevel(level);
   applyChrome(contents);
@@ -323,10 +326,11 @@ async function signInInBrowser(next, inWindow, { again = false } = {}) {
   mainWindow.loadFile(path.join(here, 'signin.html'));
 }
 
-// An overtaken sign-in's session, ended on the console with its own cookie sent by hand: the cookie jar is not touched,
-// so a newer sign-in's cookie stored under the same name meanwhile stays, whatever the order. Left in the jar, the
-// ended session's cookie signs nobody in. A console whose sign-out does not take it (a hosting layer's own) has the
-// cookie removed instead, while it still holds this sign-in's value.
+// An overtaken sign-in's session, ended on the console with its own cookie sent by hand. The cookie jar is never
+// touched, so a newer sign-in's cookie stored under the same name meanwhile stays, whatever the order: left in the jar,
+// the ended session's cookie signs nobody in. When the console does not end it (down, or a hosting layer's sign-out),
+// it is left as it is: the newer sign-in overwrites it when it finishes, and until then the app is signed in as the
+// account the person approved in their browser a moment ago. Removing it instead could remove the newer one.
 async function endOvertakenSession(base, cookies) {
   const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
   let ended = false;
@@ -339,13 +343,8 @@ async function endOvertakenSession(base, cookies) {
     // `redirect: 'manual'` reports the console's 303 as an error of its own: the sign-out was answered.
     ended = /redirect/i.test(err.message);
   }
-  if (!ended) {
-    for (const cookie of cookies) {
-      const now = await session.defaultSession.cookies.get({ url: cookie.url, name: cookie.name }).catch(() => []);
-      if (now.some((c) => c.value === cookie.value)) await session.defaultSession.cookies.remove(cookie.url, cookie.name).catch(() => {});
-    }
-  }
-  console.log('woodshed-desktop: a sign-in stored after a newer one began, ended', { how: ended ? 'console' : 'cookie removed' });
+  if (ended) console.log('woodshed-desktop: a sign-in stored after a newer one began, ended on the console');
+  else console.warn('woodshed-desktop: a sign-in stored after a newer one began, not ended: the console did not take its sign-out, left for the newer one to replace');
 }
 
 async function finishSignIn(link) {
