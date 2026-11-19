@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
 import { APP_PAGE_CHROME_CSS, consoleChromeCss, TRAFFIC_LIGHTS } from './windowChrome.mjs';
+import { overlayFor } from './overlay.mjs';
 import { CONSOLE_SIGN_IN_PATHS, PROTOCOL, browserUrl, createPending, linkInArgs, parseSetCookie, parseSignedInLink, signInPathsFrom, signInStep } from './signIn.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -541,7 +542,20 @@ function forget() {
   seen = null;
   firstRead = true;
   app.setBadgeCount(0);
-  if (process.platform === 'win32') mainWindow?.setOverlayIcon(null, '');
+  showOverlay(0);
+}
+
+// Windows has no badge count (app.setBadgeCount does nothing there): the count is drawn over the taskbar button
+// instead, from badges/ (overlay.mjs), with its words for screen readers. `--win-overlay` takes this path elsewhere, to
+// check it on another system, where the call is a stand-in's.
+const overlayImages = new Map();
+function showOverlay(count) {
+  if ((process.platform !== 'win32' && !process.argv.includes('--win-overlay')) || !mainWindow || mainWindow.isDestroyed()) return;
+  if (typeof mainWindow.setOverlayIcon !== 'function') return;
+  const shown = overlayFor(count);
+  if (!shown) return mainWindow.setOverlayIcon(null, '');
+  if (!overlayImages.has(shown.image)) overlayImages.set(shown.image, nativeImage.createFromPath(path.join(here, 'badges', shown.image)));
+  mainWindow.setOverlayIcon(overlayImages.get(shown.image), shown.description);
 }
 
 function startWatching() {
@@ -610,7 +624,7 @@ async function poll() {
   seen = now;
   firstRead = false;
   app.setBadgeCount(badge);
-  if (process.platform === 'win32' && mainWindow) mainWindow.setOverlayIcon(badge ? icon : null, badge ? `${badge} need you` : '');
+  showOverlay(badge);
   if (!Notification.isSupported()) return;
   for (const n of notify) {
     // The person is looking at it already.

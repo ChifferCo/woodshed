@@ -4,8 +4,9 @@ Woodshed's console in a window of its own, for macOS, Windows and Linux, built o
 a browser shows it, with three things a browser tab does not give:
 
 - **A notification when one of your sessions needs you**, or finished its turn. Clicking it opens that session.
-- **A badge** on the Dock (macOS), the launcher (Linux) or the taskbar (Windows) counting your sessions that are asking
-  for you.
+- **A badge** counting your sessions that are asking for you: the Dock's (macOS) or the launcher's (Linux) own count, and
+  on Windows, which has none, the count drawn over the taskbar button (`overlay.mjs`, from the images in `badges/`,
+  which `renderBadges.mjs` draws in the design system's `wait` yellow), with the same in words for screen readers.
 - **A window in cmd+tab / alt+tab** with Woodshed's mark, which keeps its size and place between starts.
 
 It holds no token and talks to nothing but the console you typed: you sign in on the console's own page, as in a

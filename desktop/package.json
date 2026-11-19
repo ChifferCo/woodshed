@@ -30,8 +30,10 @@
       "signin.html",
       "signin.js",
       "icon.png",
+      "badges/*.png",
       "!*.test.mjs",
-      "!renderIcon.mjs"
+      "!renderIcon.mjs",
+      "!renderBadges.mjs"
     ],
     "icon": "icon.png",
     "mac": {
