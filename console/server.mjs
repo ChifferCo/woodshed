@@ -355,15 +355,19 @@ export function settingsTabsOf(settingsTabs, headers) {
 }
 
 /**
- * What a program embedding the console adds to the user menu (createInstallation's `userMenu`), as /api/me sends it:
- * text cut short, each link a path or an http(s) address, and the rest dropped. common.js draws it
- * (designSystem/components/MenuGroups).
- * @param {(headers: object) => {subtitle?: string, groups?: {label?: string, items: {label: string, href?: string,
- *          current?: boolean, note?: string}[]}[]}|null} userMenu
- *   `subtitle` goes under the person's name on the user button; each group is a `label` and its items at the top of
- *   the menu. An item with `current` is one of a set of choices, `current: true` the one in use (it needs no `href`)
+ * What a program embedding the console adds to the user menu and the settings list (createInstallation's `userMenu`),
+ * as /api/me sends it: text cut short, each link a path or an http(s) address, and the rest dropped, fifty links in all.
+ * common.js draws it (designSystem/components/MenuGroups).
+ * @param {(headers: object) => {subtitle?: string, you?: {label: string, href: string}[],
+ *          groups?: {label?: string, items: {label: string, href?: string, current?: boolean, note?: string}[]}[],
+ *          sections?: {label: string, items: {label: string, href: string, items?: {label: string, href: string}[]}[]}[]}|null} userMenu
+ *   `subtitle` goes under the person's name on the user button. `you` are the person's own pages, after My settings
+ *   under their name and in the settings list's You group. `groups` are the switcher, after those: a `label` and its
+ *   items, each with `current`, `current: true` the one in use (it needs no `href`). `sections` follow the Console
+ *   group, each a heading and its pages, a page with its own pages under it (`items`) as Settings has its tabs. A group
+ *   with no label and no choices in it is read as `you` links, which it was drawn as before there were any
  * @param {object} headers  the request's
- * @returns {{menuSubtitle?: string, menuGroups?: object[]}}
+ * @returns {{menuSubtitle?: string, menuYou?: object[], menuGroups?: object[], menuSections?: object[]}}
  */
 export function menuOf(userMenu, headers) {
   let given;
@@ -374,18 +378,43 @@ export function menuOf(userMenu, headers) {
     return {};
   }
   let room = MENU_ITEMS;
-  const groups = (Array.isArray(given.groups) ? given.groups : []).map((group) => {
-    const items = (Array.isArray(group?.items) ? group.items : []).map((item) => ({
+  const listOf = (value) => (Array.isArray(value) ? value : []);
+  const take = (items) => {
+    const kept = items.slice(0, Math.max(room, 0));
+    room -= kept.length;
+    return kept;
+  };
+  const link = (item) => ({ label: menuText(item?.label), href: menuHref(item?.href) });
+  const links = (items) => take(listOf(items).map(link).filter((item) => item.label && item.href));
+  const you = links(given.you);
+  const groups = listOf(given.groups).map((group) => {
+    const items = take(listOf(group?.items).map((item) => ({
       label: menuText(item?.label),
       href: item?.current === true ? null : menuHref(item?.href),
       ...(typeof item?.current === 'boolean' ? { current: item.current } : {}),
       note: menuText(item?.note) || null,
-    })).filter((item) => item.label && (item.href || item.current === true)).slice(0, Math.max(room, 0));
-    room -= items.length;
+    })).filter((item) => item.label && (item.href || item.current === true)));
     return { label: menuText(group?.label) || null, items };
-  }).filter((group) => group.items.length);
+  }).filter((group) => {
+    if (!group.items.length) return false;
+    // The old way to put links under the name: a group of plain links with no label of its own.
+    if (group.label || group.items.some((item) => typeof item.current === 'boolean')) return true;
+    you.push(...group.items.map(({ label, href }) => ({ label, href })));
+    return false;
+  });
+  // A section with no heading takes no room from those after it.
+  const sections = listOf(given.sections).filter((section) => menuText(section?.label)).map((section) => ({
+    label: menuText(section.label),
+    items: listOf(section.items).map((item) => {
+      const [entry] = links([item]);
+      return entry && { ...entry, items: links(item?.items) };
+    }).filter(Boolean),
+  })).filter((section) => section.items.length);
   const subtitle = menuText(given.subtitle);
-  return { ...(subtitle ? { menuSubtitle: subtitle } : {}), ...(groups.length ? { menuGroups: groups } : {}) };
+  return {
+    ...(subtitle ? { menuSubtitle: subtitle } : {}), ...(you.length ? { menuYou: you } : {}),
+    ...(groups.length ? { menuGroups: groups } : {}), ...(sections.length ? { menuSections: sections } : {}),
+  };
 }
 
 // A static file's URL carries a hash of its contents, so the browser keeps it until a deploy changes it rather than
@@ -471,17 +500,27 @@ ${[script].flat().map((s) => `<script src="${staticUrl(s)}"></script>`).join('\n
  * Settings over its tabs, with `current` marked (a tab `settingsTabs` gave). The program renders `body` itself, as HTML
  * it has escaped; it is shown as it is, under the tabs (public/hostSettings.js). Its forms and links are the program's,
  * so a click on another tab loads that page.
- * @param {{title: string, body: string, current: string, login?: string|null, linkQuery?: object|null, styles?: string[]}} page
+ * A page that is one of the program's own entries in the menu (`userMenu`'s `you` or `sections`) rather than a tab of
+ * Settings gives its own `heading`, and `tabs`, the row under it (its entry's own pages), or none: `current` then marks
+ * its entry, and the tab of that row it is.
+ * @param {{title: string, body: string, current: string, heading?: string|null, tabs?: {label: string, href: string}[]|null,
+ *          login?: string|null, linkQuery?: object|null, styles?: string[]}} page
  *   `title` is the browser tab's (the console's name, as on its own pages); `styles` are the program's stylesheets for
  *   its part, each a path on the console's name (anything else is dropped), loaded after the console's, so its rules
- *   can use the design system's colours (`var(--ink)` and the rest) and follow the theme
+ *   can use the design system's colours (`var(--ink)` and the rest) and follow the theme; `tabs` are paths on the
+ *   console's name too, as Settings' are
  * @returns {string}  the whole page
  */
-export function settingsFrame({ title, body, current, login = null, linkQuery = null, styles = [] }) {
+export function settingsFrame({ title, body, current, heading = null, tabs = null, login = null, linkQuery = null, styles = [] }) {
   // A template is never drawn by the browser, and its contents are not run: hostSettings.js moves them into the frame.
   // "</template" in the body would end it early, so the body cannot hold one.
   const html = String(body ?? '').replace(/<\/template/gi, '&lt;/template');
-  const hostPage = `\n<template id="woodshed-host-page" data-current="${escapeHtml(String(current ?? ''))}">${html}</template>`;
+  const own = menuText(heading);
+  const row = (Array.isArray(tabs) ? tabs : []).map((tab) => ({ label: menuText(tab?.label), href: menuHref(tab?.href) }))
+    .filter((tab) => tab.label && tab.href?.startsWith('/')).slice(0, SETTINGS_TABS);
+  const attrs = [`data-current="${escapeHtml(String(current ?? ''))}"`,
+    ...(own ? [`data-heading="${escapeHtml(own)}"`, `data-tabs="${escapeHtml(JSON.stringify(row))}"`] : [])].join(' ');
+  const hostPage = `\n<template id="woodshed-host-page" ${attrs}>${html}</template>`;
   const sheets = styles.filter((href) => typeof href === 'string' && href.startsWith('/') && !href.startsWith('//'));
   return pageShell({ title, script: 'hostSettings.js', login, linkQuery, hostPage, styles: sheets });
 }

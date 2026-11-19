@@ -221,9 +221,10 @@ async function loadAppKey(config, secrets) {
  *                           automatic?: boolean}|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
- *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu for that person
- *   (`{subtitle, groups}`, server.mjs's menuOf), and `settingsTabs(headers)` adds tabs of its own pages to Settings
- *   (`[{label, href}]`, server.mjs's settingsTabsOf; each page is drawn with settingsFrame). Behind `trusted`,
+ *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu and the settings
+ *   list for that person (`{subtitle, you, groups, sections}`, server.mjs's menuOf), and `settingsTabs(headers)` adds
+ *   tabs of its own pages to Settings (`[{label, href}]`, server.mjs's settingsTabsOf; each page is drawn with
+ *   settingsFrame, as are the menu's own pages). Behind `trusted`,
  *   `signOut(req)` ends the person's sign-in for the user menu's Sign out, answering where to go and the cookies to
  *   set (`{location?, setCookie?}`); without it a hosted console has no Sign out; `newId` makes a session
  *   id, for ids unique beyond this installation.
