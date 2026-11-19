@@ -337,9 +337,14 @@ export async function makeSnapshot({
 }) {
   sweepStaleSnapshots();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-qa-${session}-`));
+  // A copy that failed and then would not be deleted keeps its room reserved
+  // until the stale sweep: the error says so, and runQa logs the error.
   const failed = (why) => {
-    removeSnapshot(dir);
-    return { ok: false, error: `could not copy the reviewed code (${why})` };
+    const gone = removeSnapshot(dir);
+    return {
+      ok: false,
+      error: `could not copy the reviewed code (${why})${gone ? '' : `, and its partial copy could not be removed: ${dir}`}`,
+    };
   };
   let listing;
   try {

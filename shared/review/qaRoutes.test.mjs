@@ -415,6 +415,28 @@ test('a submodule folder that cannot be made fails the copy and leaves nothing b
   assert.deepEqual([failed.ok, /EACCES: injected/.test(failed.error)], [false, true]);
   assert.deepEqual(copies(), [], 'the failed copy was removed at once');
   assert.equal(reservedSnapshotBytes(), 0);
+
+  // And when the partial copy will not go either, the error says so (runQa logs it), and its room stays reserved.
+  const realRmSync = fs.rmSync;
+  fs.mkdirSync = (p, ...rest) => {
+    if (String(p).endsWith('vendor/lib')) throw new Error('EACCES: injected');
+    return realMkdirSync(p, ...rest);
+  };
+  fs.rmSync = (p, ...rest) => {
+    if (String(p).includes('woodshed-qa-claude-c3c3c3c3-')) throw new Error('EBUSY: injected');
+    return realRmSync(p, ...rest);
+  };
+  let stuck;
+  try {
+    stuck = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-c3c3c3c3', free: () => Infinity });
+  } finally {
+    fs.mkdirSync = realMkdirSync;
+    fs.rmSync = realRmSync;
+  }
+  assert.match(stuck.error, /its partial copy could not be removed: .*woodshed-qa-claude-c3c3c3c3-/);
+  assert.ok(reservedSnapshotBytes() > 0, 'still reserved while it is on disk');
+  removeSnapshot(stuck.error.split('could not be removed: ')[1]);
+  assert.equal(reservedSnapshotBytes(), 0);
 });
 
 // Room is counted as the disk takes it, a block per file at the least: 300 files of 10 bytes are 3 KB of content and
