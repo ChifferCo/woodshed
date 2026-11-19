@@ -15,14 +15,15 @@ const SIGN_INS = {
 /**
  * @param {{team?: {claude: boolean, codex: boolean}, claudeOwn?: string[], codexOwn?: string[], choices?: Record<string, string>}} opts
  */
-function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], choices = {} } = {}) {
+function setup({ team = { claude: true, codex: true }, claudeOwn = [], codexOwn = [], choices = {}, keysFail = false } = {}) {
   const userSettings = {
     reviewAgents: (login) => choices[login] ?? null,
     usesOwnTokenForShared: (login) => claudeOwn.includes(login),
     usesOwnCodexForReviews: (login) => codexOwn.includes(login),
     codexAuth: async (login) => SIGN_INS[login] ?? null,
   };
-  return createReviewAgents({ userSettings, connected: async () => ({ ...team }), now: () => NOW });
+  const connected = async () => { if (keysFail) throw new Error('Secrets Manager timed out'); return { ...team }; };
+  return createReviewAgents({ userSettings, connected, now: () => NOW });
 }
 
 test('the default is the most there is: both, else the one there is, else none', () => {
@@ -34,7 +35,7 @@ test('the default is the most there is: both, else the one there is, else none',
 
 test('with no choice saved, a review runs both when the team keys can, on the team keys', async () => {
   const agents = setup();
-  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null });
+  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null, keysUnread: false });
 });
 
 test('each choice runs what it says: none, Claude Code, Codex or both', async () => {
@@ -59,7 +60,7 @@ test('what is offered follows the tokens: the team keys, or the person\'s own si
 
 test('with nothing to run a review on, the default is no review', async () => {
   const agents = setup({ team: { claude: false, codex: false } });
-  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: [], choice: null, codexLogin: null, codexVia: null, why: null });
+  assert.deepEqual(await agents.forReview({ login: 'bo' }), { agents: [], choice: null, codexLogin: null, codexVia: null, why: null, keysUnread: false });
 });
 
 test('a choice that cannot run now keeps what of it can, else falls back to the most there is, and says why', async () => {
@@ -74,9 +75,9 @@ test('a choice that cannot run now keeps what of it can, else falls back to the 
 
 test('Codex runs on the author\'s own sign-in when they use it for reviews, as it is, and on the team key otherwise', async () => {
   const agents = setup({ team: { claude: true, codex: true }, codexOwn: ['ana', 'cy'] });
-  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null });
-  assert.deepEqual(await agents.forReview({ login: 'cy' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'cy', codexVia: 'key', why: null });
-  assert.deepEqual(await agents.forReview({ login: null }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null }, 'nobody\'s own');
+  assert.deepEqual(await agents.forReview({ login: 'ana' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'ana', codexVia: 'chatgpt', codexAccount: 'acct-ana', why: null, keysUnread: false });
+  assert.deepEqual(await agents.forReview({ login: 'cy' }), { agents: ['claude', 'codex'], choice: null, codexLogin: 'cy', codexVia: 'key', why: null, keysUnread: false });
+  assert.deepEqual(await agents.forReview({ login: null }), { agents: ['claude', 'codex'], choice: null, codexLogin: null, codexVia: 'key', why: null, keysUnread: false }, 'nobody\'s own');
 });
 
 test('an author whose ChatGPT login has expired gets Codex on the team key, and is told why', async () => {
@@ -89,4 +90,12 @@ test('an author whose ChatGPT login has expired gets Codex on the team key, and 
 test('nobody\'s own choice or sign-in counts for a review with no login: the team keys decide', async () => {
   const agents = setup({ team: { claude: false, codex: true }, choices: { ana: 'none' } });
   assert.deepEqual((await agents.forReview({ login: null })).agents, ['codex']);
+});
+
+test('team keys that could not be read are said so, and are not taken for no keys', async () => {
+  const unread = await setup({ keysFail: true }).forReview({ login: 'bo' });
+  assert.deepEqual([unread.agents, unread.keysUnread], [[], true]);
+  assert.match(unread.why, /the team keys could not be read: Secrets Manager timed out/);
+  const own = await setup({ keysFail: true, claudeOwn: ['ana'] }).forReview({ login: 'ana' });
+  assert.deepEqual([own.agents, own.keysUnread], [['claude'], true], 'the author\'s own sign-in still runs');
 });

@@ -2589,6 +2589,19 @@ test('a review runs whom its author chose, and says so on the pull request', asy
   assert.match(codex.calls.comments[0].body, /Reviewing\*\* with Codex in/);
 });
 
+test('team keys that could not be read start no review and skip nothing: QA and the Slack post keep waiting', async () => {
+  const unread = { forReview: async () => ({ agents: [], choice: null, why: 'the team keys could not be read: timed out', keysUnread: true }) };
+  const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };
+  const { fleet, github, store } = setup({ gates, reviewAgents: unread });
+  github.pull = async () => ({ ...REVIEW_PULL, labels: [{ name: 'qa' }] });
+  github.reviews = async () => [];
+  github.labeledBy = async () => 'joel';
+  assert.deepEqual(await fleet.reviewOnTag({ number: 7 }), { outcome: 'ignored', reason: 'the team keys could not be read, so whom to review with is not known' });
+  assert.equal(fleet.sessions().length, 0);
+  assert.equal(store.state.reviewSkips, undefined, 'no skip recorded');
+  assert.equal((await fleet.handleQaLabel({ number: 7, label: 'qa', login: 'joel' })).outcome, 'waiting', 'QA still waits for a review');
+});
+
 test('an author who chose no code review gets none, and QA and the Slack post go on without waiting for one', async () => {
   const none = { forReview: async () => ({ agents: [], choice: 'none', why: null }) };
   const gates = { ...QA_GATES, review: { ...PULL_GATES.review, rerun: '[woodshed-review]', runner: 'woodshed' } };

@@ -65,10 +65,11 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
    * The agents a review of `login`'s pull request runs, starting now. `codexLogin` when Codex runs on that person's own
    * sign-in, `codexVia` how the session's codex reaches its credential (`chatgpt` for a ChatGPT login, `key` for an API
    * key, the author's or the team's) with `codexAccount` for a ChatGPT login, `choice` what they chose (null for none
-   * saved), and `why` when what runs is not what they chose, or not on their own sign-in.
+   * saved), `why` when what runs is not what they chose, or not on their own sign-in, and `keysUnread` when the team
+   * keys could not be read: then what runs is a guess, and no review is not a choice anyone made.
    * @param {{login?: string|null}} [args]  the pull request's author, or null when nobody's own sign-in may be used
    * @returns {Promise<{agents: string[], choice: string|null, codexLogin: string|null, codexVia: 'chatgpt'|'key'|null,
-   *   codexAccount?: string, why: string|null}>}
+   *   codexAccount?: string, why: string|null, keysUnread: boolean}>}
    */
   async function forReview({ login = null } = {}) {
     const team = await teamKeys();
@@ -95,7 +96,7 @@ export function createReviewAgents({ connected, userSettings = null, now = Date.
         if (codexOwn.why) why.push(codexOwn.why);
       }
     }
-    return { agents, choice, ...codex, why: why.length ? why.join('; ') : null };
+    return { agents, choice, ...codex, why: why.length ? why.join('; ') : null, keysUnread: Boolean(team.why) };
   }
 
   return { forReview, options };

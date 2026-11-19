@@ -1793,9 +1793,14 @@ export function createFleet({
     // The author's choice and own sign-ins only for someone who passed the same checks as their Claude plan; never a
     // bot's. Anyone else's review runs the most the team keys can.
     const ownLogin = teamKeyWhy || login.endsWith('[bot]') ? null : login;
-    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy } = reviewAgents
+    const { agents, choice = null, codexLogin = null, codexVia = null, codexAccount = null, why: agentsWhy, keysUnread = false } = reviewAgents
       ? await reviewAgents.forReview({ login: ownLogin }) : { agents: ['claude'], why: null };
     if (agentsWhy) console.warn('fleet: review runs other than the author chose', { number, login, choice, agents, why: agentsWhy, ...projectField(project) });
+    if (!agents.length && choice !== 'none' && keysUnread) {
+      // Nothing to run only because the team keys could not be read: no review was chosen, so nothing is skipped, and
+      // what waits for a review keeps waiting. The next commit with the review tag tries again.
+      return ignored('the team keys could not be read, so whom to review with is not known');
+    }
     if (!agents.length) {
       // No review: what waits for one (the Slack post, QA) goes on without it for this pull request (reviewSkipped).
       state.reviewSkips = { ...state.reviewSkips, [skipKey(project, number)]: { login, sha: pull.head.sha, at: nowIso(), why: choice === 'none' ? 'the author chose no review' : 'nothing can run a review' } };
