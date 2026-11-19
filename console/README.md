@@ -1707,7 +1707,8 @@ the session keeps going until its review and suites pass:
 - **How long.** While the session runs, so a fix pushed after the approval is followed to its own verdict. It ends when
   the pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), its project leaves
   the console or its repo is another now (a default project replaced; each watch keeps its `repo`), the week runs out
-  (passed or not; checked again after GitHub's reads, before the session is told), or the project file has no review or
+  (passed or not; checked again after GitHub's reads, before the session is told, as is the head commit: a push
+  during the reads makes them the old commit's, and nothing is said of it), or the project file has no review or
   suite (`slack: pull request no longer waiting` with why). A watch that ran out is not started again by the session
   coming back to its pull request (`watchesExpired` in `state.json`).
 - **While the session is elsewhere.** While it reports another pull request or none (a branch with none, or statusd's

@@ -1062,3 +1062,20 @@ test('a project removed while a watch reads its gates ends the watch, reading no
   await watcher.check();
   assert.deepEqual([dropped, defaultReads, told], [['its session ended'], [], []]);
 });
+
+test('a push while a watch reads the gates tells nothing of the old commit', async () => {
+  const { store, session, github } = setup();
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'),
+    events: { feedback: (item, text) => { told.push(text); return true; } },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  const { pull } = github;
+  let pushed = false;
+  github.pull = async (number) => ({ ...(await pull(number)), head: { sha: pushed ? 'def' : 'abc' } });
+  const { checkRuns } = github;
+  github.checkRuns = async (sha) => { pushed = true; return checkRuns(sha); };
+  await watcher.check();
+  assert.deepEqual([told, store.state.slackPending[0].passedSha], [[], undefined]);
+});

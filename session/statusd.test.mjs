@@ -808,3 +808,46 @@ test('tmux\'s test of the pane, which types only into claude or codex, is true f
   assert.equal(shown(AGENT_PANE_FORMAT), '0', 'sleep is not the agent');
   for (const name of ['claude', 'codex']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
 });
+
+test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
+  // A tmux server of the test's own, never the session's.
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-send-'));
+  const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
+  const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
+  t.after(async () => {
+    await tmux('kill-server').catch(() => {});
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  // Each pane writes down what it reads. tmux names a pane's command after its program: bash for the shell, and
+  // claude for a copy of bash named claude, as the real agent's pane shows.
+  const reader = (name) => `--norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`;
+  const agent = path.join(dir, 'claude');
+  await fs.copyFile('/bin/bash', agent);
+  await fs.chmod(agent, 0o755);
+  const pane = async (program, name) => {
+    await tmux('kill-session', '-t', 'claude').catch(() => {});
+    await tmux('new-session', '-d', '-s', 'claude', `${program} ${reader(name)}`);
+    for (let i = 0; i < 50; i++) {
+      if ((await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim() === path.basename(program)) return;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+  };
+  const typed = (name) => fs.readFile(path.join(dir, `${name}.typed`), 'utf8').catch(() => '');
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  const send = (body, token) => call('POST', '/send', token, JSON.stringify(body));
+
+  await pane('bash', 'shell');
+  assert.equal((await send({ text: 'git push', agentOnly: true }, 'wrong')).status, 401);
+  const refused = await send({ text: 'git push', agentOnly: true });
+  assert.deepEqual([refused.status, refused.body.error], [409, 'the agent is not running in its pane']);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(await typed('shell'), '', 'the shell got nothing');
+  assert.equal((await tmux('list-buffers')).stdout.trim(), '', 'no buffer left behind');
+
+  await pane(agent, 'agent');
+  const sent = await send({ text: 'The review asks for changes', agentOnly: true });
+  assert.deepEqual([sent.status, sent.body], [200, { ok: true }]);
+  for (let i = 0; i < 50 && !(await typed('agent')); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await typed('agent'), 'The review asks for changes\n');
+  assert.equal((await call('GET', '/status')).body.agentOnlySend, true);
+});

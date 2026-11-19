@@ -298,9 +298,12 @@ export function createPrAnnouncer({
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
+    // A push during these reads makes them the old commit's: nothing is said of it, and the next check reads the new one.
+    const head = (await gh(item).pull(item.number)).head?.sha;
     if (renewed()) return;
     if (watchOver(item)) return endWatch(item, watchOver(item));
     if (listening(item) === 'elsewhere') return;
+    if (head !== pull.head.sha) return;
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
   }
