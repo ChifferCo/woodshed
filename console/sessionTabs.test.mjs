@@ -140,3 +140,16 @@ test('out of order answers never confirm a fallback on the older state', () => {
   // The opening one (starting) lands after: dropped, so the page renders nothing new from it and Diff stands.
   assert.equal(order.fresh(opening), false);
 });
+
+test('a newer lookup that failed does not make an older answer stale', () => {
+  const order = tabs.lookups();
+  const opening = order.start(); // the move's lookup, still in flight
+  const poll = order.start(); // the poll's, which fails first
+  assert.equal(order.stale(poll), false, 'the failure is not stale, so the page shows its error state as before');
+  assert.equal(order.fresh(opening), true, 'the opening answer that comes back after it still applies');
+  // A failure older than an applied answer is dropped.
+  const late = order.start();
+  const newer = order.start();
+  assert.equal(order.fresh(newer), true);
+  assert.equal(order.stale(late), true);
+});

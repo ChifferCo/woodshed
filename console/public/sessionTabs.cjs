@@ -63,7 +63,9 @@
   /**
    * Orders the page's list lookups, which a move and the poll can have in flight at once: an answer to an older one
    * that lands after a newer one's is stale (a session starting that now runs), and must not confirm a tab's fallback.
-   * @returns {{ start(): number, fresh(n: number): boolean }}  `fresh` also records `n` as the newest applied
+   * Only an answer that came back applies: a failed lookup is dropped when stale, and never makes an older answer stale.
+   * @returns {{ start(): number, fresh(n: number): boolean, stale(n: number): boolean }}  `fresh` (for an answer) also
+   *   records `n` as the newest applied; `stale` (for a failure) records nothing
    */
   function lookups() {
     let started = 0;
@@ -75,6 +77,7 @@
         applied = n;
         return true;
       },
+      stale: (n) => n < applied,
     };
   }
 

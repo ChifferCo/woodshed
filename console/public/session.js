@@ -2031,7 +2031,7 @@
       fromLast = false;
       keepLast();
     } catch (err) {
-      if (version !== routeVersion || !sessionLookups.fresh(lookup)) return;
+      if (version !== routeVersion || sessionLookups.stale(lookup)) return;
       routePending = false;
       loadError = err.message;
       if (fromLast) {
