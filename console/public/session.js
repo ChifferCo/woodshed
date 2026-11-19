@@ -65,7 +65,7 @@
   let routeVersion = 0;
   const launcher = W.createLauncher();
   const messageBox = W.createMessageBox();
-  const chat = W.createChat({ openTerminal: () => setTab('tui') });
+  const chat = W.createChat({ openTerminal: () => setTab('tui'), openDiff: () => setTab('diff') });
   // Made the first time /all shows, which may be after a move from another of these pages.
   let sharedHome = null;
 

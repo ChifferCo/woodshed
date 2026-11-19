@@ -13,6 +13,17 @@ its terminal. One column, at most 800px wide and centred in the pane, on `ground
   at the right. Open, each call is a mono row: the tool's name in `slate`, what it was asked in `sub` (cut to a line),
   and `failed` in `bad`. The log of the turn still running is open, with the `slate` ring; once the turn is over it
   folds, unless the person opened or closed it.
+- **What a turn changed**: under the turn's last work log that edited a file, one box on `ground` with a `line` border
+  (`radius 8`). Its line is a ▸, `Changed N files` in `ink` 600 (`Changing N files` with the `slate` ring while the
+  turn runs), and the turn's `+N −M` at the right, mono, `add` and `del` 600. Open, a row a file in the Diff tab's own
+  file row (`rv-file`: a `line` border, `radius 6`, mono 12px, the folder in `meta`, the name in `ink` bold, a `new`,
+  `deleted` or `rewritten` tag, its counts), each folding open to its edits' hunks in the Diff tab's lines: `add-tint`
+  and `del-tint` rows, `hunk-tint` heads in `slate`. Long lines scroll inside the hunk box, never the page; a cut edit
+  or a rewrite says so in a `sub` line. Under the files a `sub` line with a `slate` link to the **Diff tab**: `Commands
+  may have changed files too: see the Diff tab.` when the turn ran a command, since the record holds only what the
+  edit tools changed. Open while the turn runs, folded once it is over, unless the person opened or closed it; each
+  file starts folded. A file the turn edited several times is one row, its edits' hunks in order and their counts
+  summed.
 - **A question the agent asked** (claude's AskUserQuestion): its own box, out of the work log, on `ground` with a
   `line` border (`radius 8`). Its head is `claude asks` in `ink` 600 and, at the right, where it stands in `meta` mono
   (`Waiting for your answer`, `Sending your answers…`, `Sent, waiting for claude`, `Answered`, `Not answered`); then

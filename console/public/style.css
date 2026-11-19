@@ -1232,7 +1232,7 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-work summary:hover .chat-work-what { color: var(--slate); }
 .chat-caret { flex: none; font-size: 10px; color: var(--meta); }
 .chat-work[open] .chat-caret { transform: rotate(90deg); }
-.chat-work .spin, .chat-status .spin { flex: none; border-color: var(--slate); border-right-color: transparent; }
+.chat-work .spin, .chat-diff .spin, .chat-status .spin { flex: none; border-color: var(--slate); border-right-color: transparent; }
 .chat-work-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }
 .chat-work-failed { flex: none; font-family: var(--mono); font-size: 11px; color: var(--bad); }
 .chat-work ul { display: flex; flex-direction: column; gap: 3px; margin: 0; padding: 7px 12px 9px; list-style: none; border-top: 1px solid var(--line-soft); }
@@ -1240,6 +1240,18 @@ h1.title .pill { vertical-align: middle; font-family: "Red Hat Display", system-
 .chat-tool-name { flex: none; min-width: 5.5em; color: var(--slate); }
 .chat-tool-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--sub); }
 .chat-tool-failed { flex: none; color: var(--bad); }
+/* What a turn changed, under its last work log that edited a file: its files in the Diff tab's own rows (.rv-file),
+   each folding open to its hunks, whose long lines scroll inside their own box. */
+.chat-diff { min-width: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); font-size: 13px; }
+.chat-diff > summary { display: flex; align-items: center; gap: 8px; padding: 7px 12px; list-style: none; cursor: pointer; }
+.chat-diff > summary::-webkit-details-marker { display: none; }
+.chat-diff > summary:hover .chat-diff-what { color: var(--slate); }
+.chat-diff[open] > summary .chat-caret { transform: rotate(90deg); }
+.chat-diff-what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }
+.chat-diff-files { display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 0; border-top: 1px solid var(--line-soft); }
+.chat-diff-file > summary { padding: 6px 10px; }
+.chat-diff-file .rv-diff { max-height: 420px; overflow: auto; }
+.chat-diff-foot { margin: 0; padding: 8px 12px 9px; font-size: 12.5px; color: var(--sub); }
 /* What the agent asked: its own card, out of the work log, answered in the terminal. */
 .chat-ask { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); font-size: 14px; }
 .chat-ask-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 12.5px; color: var(--sub); }
