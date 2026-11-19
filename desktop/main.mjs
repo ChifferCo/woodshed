@@ -406,21 +406,26 @@ async function finishSignIn(link) {
   const base = consoleUrl;
   const attempt = signInAttempt;
   let from;
+  // The window the sign-in may open its page in: the one it made, or the one open now, and never another made later.
+  let ownWindow;
   if (!mainWindow) {
     const loaded = createMainWindow({ waiting: true });
     from = pathToFileURL(path.join(here, 'signin.html')).href;
-    const made = mainWindow;
+    ownWindow = mainWindow;
     await loaded;
-    if (mainWindow !== made) console.log('woodshed-desktop: the window made for a sign-in closed or was replaced while it opened; the sign-in is kept, no window is moved');
+    if (mainWindow !== ownWindow) console.log('woodshed-desktop: the window made for a sign-in closed or was replaced while it opened; the sign-in is kept, no window is moved');
   } else {
+    ownWindow = mainWindow;
     from = mainWindow.webContents.getURL();
   }
+  // Setup's form open (Change console…): the person is choosing a console, and the sign-in leaves the form as it is.
+  const onSetup = from.startsWith('file:') && from.split('?')[0].endsWith('/setup.html');
   if (base !== consoleUrl || attempt !== signInAttempt) {
     console.log('woodshed-desktop: the console changed or a newer sign-in began while a window was made for the link, dropped');
     return;
   }
-  const win = mainWindow;
-  if (win && !win.isDestroyed()) {
+  const win = ownWindow;
+  if (win && !win.isDestroyed() && mainWindow === win) {
     if (win.isMinimized()) win.restore();
     win.show();
     win.focus();
@@ -484,7 +489,7 @@ async function finishSignIn(link) {
     if (!error) startWatching();
     return;
   }
-  if (!win || mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from || setupShown !== shownAt) {
+  if (onSetup || !win || mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from || setupShown !== shownAt) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
     if (!error) startWatching();
     return;
