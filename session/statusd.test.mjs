@@ -833,7 +833,13 @@ test('POST /send with agentOnly types into a running agent and never into a shel
     }
   };
   const typed = (name) => fs.readFile(path.join(dir, `${name}.typed`), 'utf8').catch(() => '');
-  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir } });
+  // A stand-in gh answering `gh pr view` with the pull request in the file it names, for the check just before typing.
+  const bin = path.join(dir, 'bin');
+  await fs.mkdir(bin);
+  const current = path.join(dir, 'current-pr');
+  await fs.writeFile(current, 'https://github.com/o/r/pull/9');
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, PATH: `${bin}:${process.env.PATH}` } });
   const send = (body, token) => call('POST', '/send', token, JSON.stringify(body));
 
   await pane('bash', 'shell');
@@ -850,6 +856,15 @@ test('POST /send with agentOnly types into a running agent and never into a shel
   for (let i = 0; i < 50 && !(await typed('agent')); i++) await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(await typed('agent'), 'The review asks for changes\n');
   assert.equal((await call('GET', '/status')).body.agentOnlySend, true);
+
+  // About a pull request: typed only while the branch checked out is on it, read afresh.
+  await fs.writeFile(current, 'https://github.com/o/r/pull/12');
+  const elsewhere = await send({ text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9' });
+  assert.deepEqual([elsewhere.status, elsewhere.body.error], [409, 'the branch checked out is not on that pull request now']);
+  await fs.writeFile(current, 'https://github.com/O/R/pull/9');
+  assert.equal((await send({ text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9' })).status, 200);
+  for (let i = 0; i < 50 && !(await typed('agent')).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await typed('agent'), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request');
 });
 
 test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {

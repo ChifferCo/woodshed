@@ -303,9 +303,11 @@ export function createPrAnnouncer({
     // Its session ended, or its project left or changed, during a read: nothing read is acted on.
     const over = () => watchOver(item);
     if (listening(item) === 'elsewhere') {
+      const gates = await gatesOf(item.project ?? null, item.number);
       const pull = await gh(item).pull(item.number);
       if (renewed()) return;
       if (over()) return endWatch(item, over());
+      if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
       if (pull.state !== 'open') return drop(item, 'closed');
       return;
     }

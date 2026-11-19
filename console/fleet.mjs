@@ -1120,7 +1120,9 @@ export function createFleet({
         // And it must still be on this pull request.
         if ('prUrl' in fresh && !samePull(fresh.prUrl, item)) return 'later';
         // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).
-        await statusd(session, 'POST', '/send', { body: { text, agentOnly: true } });
+        // With the pull request it is about, which statusd checks afresh on the branch checked out, just before typing.
+        const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+        await statusd(session, 'POST', '/send', { body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}` } });
       } catch (err) {
         console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
         return 'later';

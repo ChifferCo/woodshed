@@ -249,6 +249,25 @@ export function sendAgentOnly(raw) {
   }
 }
 
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {string|null}  the pull request an agentOnly text is about (`prUrl`): it is typed only while the branch
+ *   checked out has that one, read afresh just before
+ */
+export function sendForPr(raw) {
+  try {
+    const url = JSON.parse(raw)?.prUrl;
+    return typeof url === 'string' && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(url) ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/** @returns {boolean}  whether two pull request URLs are the same pull request (GitHub's owner and name ignore case) */
+export function samePrUrl(a, b) {
+  return Boolean(a && b) && String(a).toLowerCase() === String(b).toLowerCase();
+}
+
 // What tmux names the pane's command while claude or codex runs in it; the shell left after either exits is not one.
 const AGENT_COMMANDS = new Set(['claude', 'codex']);
 
@@ -270,8 +289,10 @@ async function sendToAgent(text) {
   // A buffer of its own: two sends at once must not paste each other's text.
   const AGENT_BUFFER = `woodshed-agent-send-${randomUUID()}`;
   await run('tmux', ['set-buffer', '-b', AGENT_BUFFER, '--', text]);
-  // -r keeps the text's line breaks as send-keys -l would; Codex gets a bracketed paste, as send() gives it.
-  const paste = `paste-buffer -r -d ${CODEX ? '-p ' : ''}-b ${AGENT_BUFFER} -t ${TMUX_TARGET} ; send-keys -t ${TMUX_TARGET} Enter`;
+  // A bracketed paste (-p), its line breaks kept (-r): Claude Code and Codex then take the Enter right after it as
+  // submitting it. Without the brackets, Claude Code read that Enter as part of the text and left it unsent (measured on
+  // Claude Code 2.1.328).
+  const paste = `paste-buffer -p -r -d -b ${AGENT_BUFFER} -t ${TMUX_TARGET} ; send-keys -t ${TMUX_TARGET} Enter`;
   await run('tmux', ['if-shell', '-F', '-t', TMUX_TARGET, AGENT_PANE_FORMAT, paste]);
   // The paste deletes the buffer: one still there was not typed.
   const left = await run('tmux', ['show-buffer', '-b', AGENT_BUFFER]).then(() => true, () => false);
@@ -346,10 +367,8 @@ export async function prLookupKey(gitRun) {
   ].join(' ');
 }
 
-const lookupPrUrl = createPrLookup({
-  branch: () => prLookupKey(git),
-  lookup: async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim(),
-});
+const ghPrUrl = async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim();
+const lookupPrUrl = createPrLookup({ branch: () => prLookupKey(git), lookup: ghPrUrl });
 
 async function prUrl() {
   if (ASK || QA) return null;
@@ -1193,8 +1212,13 @@ async function handle(req, res) {
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
-    // A message meant for the agent never reaches the shell of one that exited.
+    // A message meant for the agent never reaches the shell of one that exited, nor an agent on another pull request.
     if (sendAgentOnly(raw)) {
+      const forPr = sendForPr(raw);
+      if (forPr && !samePrUrl(await ghPrUrl().catch(() => null), forPr)) {
+        console.log('statusd: text not sent, the branch is not on its pull request now');
+        return reply(res, 409, { error: 'the branch checked out is not on that pull request now' });
+      }
       if (await sendToAgent(text)) return reply(res, 200, { ok: true });
       console.log('statusd: text not sent, the agent is not running in its pane');
       return reply(res, 409, { error: 'the agent is not running in its pane' });

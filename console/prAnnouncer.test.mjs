@@ -1119,3 +1119,19 @@ test('a session\'s ran-out watch is remembered however many others run out, and 
   await watcher.check();
   assert.equal(store.state.watchesExpired.s1, undefined);
 });
+
+test('a waiting watch ends when its project file drops every gate', async () => {
+  const { store, session, github, dropped } = setup();
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const holder = { gates: GATES };
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => holder.gates, now: () => clock,
+    events: { feedback: () => true, dropped: (item, why) => { dropped.push(why); }, listening: () => 'elsewhere' },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.check();
+  holder.gates = null;
+  clock += MINUTE;
+  await watcher.check();
+  assert.deepEqual([dropped, store.state.slackPending], [['no review or suite to watch'], []]);
+});
