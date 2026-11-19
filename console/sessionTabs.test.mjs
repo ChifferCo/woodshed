@@ -295,7 +295,9 @@ test('the memory takes the tab a session is left on, not one an address arrived 
   // Left before it was drawn, or a review-only session still to land on Review: nothing to remember.
   assert.equal(tabs.leaving({ tab: 'agent', held: null, reviewPending: false, drawn: false }), null);
   assert.equal(tabs.leaving({ tab: 'agent', held: null, reviewPending: true, drawn: true }), null);
-  assert.equal(tabs.leaving({ tab: 'agent', held: 'diff', reviewPending: false, drawn: true }), 'diff', 'a held tab');
+  // Left while a link's Diff waits for the lookup (Agent standing in): Diff never showed, so the memory keeps its own.
+  assert.equal(tabs.leaving({ tab: 'agent', held: 'diff', reviewPending: false, drawn: true }), null, 'a held tab never showed');
+  assert.equal(tabs.leftOn({ tab: 'agent', held: 'diff', reviewPending: false, drawn: true }), 'diff', 'its entry keeps it for Back');
 });
 
 test('a fallback corrects the memory only when the memory holds the tab that cannot show', () => {
