@@ -311,7 +311,7 @@ async function prepareReview({ ctx, sessionName, sessionId, target, worktreePath
   }
 
   const patch = target.kind === 'pr'
-    ? await fetchPrDiff({ pr: target.pr, slug })
+    ? await prDiffAt({ pr: target.pr, slug, headSha: created.headSha })
     : await branchDiff({ repoRoot, baseRef, headSha: created.headSha });
   if (!patch.ok) {
     await undo(patch.error);
@@ -641,7 +641,7 @@ async function refreshTargetReview({ ctx, sessionName }) {
     }
 
     const patch = target.kind === 'pr'
-      ? await fetchPrDiff({ pr: target.pr, slug })
+      ? await prDiffAt({ pr: target.pr, slug, headSha: head.headSha })
       : await branchDiff({ repoRoot, baseRef, headSha: head.headSha });
     if (!patch.ok) return { ok: false, status: patch.status, error: patch.error };
 
@@ -821,6 +821,26 @@ async function removeReviewSessionNow({ ctx, sessionName }) {
 }
 
 // --- HTTP -------------------------------------------------------------------
+
+/**
+ * A pull request's diff, known to be of `headSha`: the commit the review checked
+ * out, and so the one the analysis and the Q&A read. `gh pr diff` names no
+ * commit, and a push between reading the head and fetching the diff would pair
+ * a newer diff with the older commit; the head is read again once the diff is
+ * in, and a head that moved refuses the take rather than mixing the two.
+ *
+ * @returns {Promise<{ok: true, patch: string} | {ok: false, status: number, error: string}>}
+ */
+export async function prDiffAt({ pr, slug, headSha, fetchDiff = fetchPrDiff, fetchMeta = fetchPrMeta }) {
+  const patch = await fetchDiff({ pr, slug });
+  if (!patch.ok) return patch;
+  const after = await fetchMeta({ pr, slug });
+  if (!after.ok) return { ok: false, status: after.status, error: after.error };
+  if (after.meta.headRefOid !== headSha) {
+    return { ok: false, status: 409, error: 'the pull request was pushed to while it was being read: take it again' };
+  }
+  return patch;
+}
 
 /**
  * Handle anything under /review or /reviews. Returns false when the URL is not
@@ -2133,6 +2153,7 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
   if (going) {
     // Joined only when it is this diff's.
     if ((going.forDiff ?? null) === (review.createdAt ?? null)) return json(res, 200, { ok: true, status: 'running' });
+    log('review.qa_refused_old_run', { reqId, session });
     return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
   }
   if (first) {

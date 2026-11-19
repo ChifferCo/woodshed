@@ -50,7 +50,7 @@ exec ${REAL_GIT} "$@"
 process.env.PATH = `${BIN}:${process.env.PATH}`;
 process.env.WOODSHED_REVIEWS = path.join(DIR, 'reviews');
 
-const { handleReviewRequest, failedQaRecord, removeReviewSession } = await import('./index.mjs');
+const { handleReviewRequest, failedQaRecord, removeReviewSession, prDiffAt } = await import('./index.mjs');
 const { writeSessionReview, writeDiff, readQa } = await import('./store.mjs');
 const { makeSnapshot, removeSnapshot, sweepStaleSnapshots, reservedSnapshotBytes } = await import('./qa.mjs');
 
@@ -617,6 +617,18 @@ test('trees are held one ref each, and pruning keeps only the one named', async 
   assert.deepEqual(refs(), [b]);
   assert.deepEqual(await pruneHeldTrees({ worktreePath: repo, sessionName: 'claude-b8b8b8b8' }), { ok: true, released: 1 });
   assert.deepEqual(refs(), []);
+});
+
+// A pull request's diff from GitHub names no commit. Read again after it, the head must still be the commit the review
+// checked out, or a newer diff is refused rather than paired with the older commit the analysis and Q&A read.
+test('a pull request diff fetched across a push is refused, not paired with the older commit', async () => {
+  const fetchDiff = async () => ({ ok: true, patch: 'diff --git a/x b/x' });
+  const at = (head) => async () => ({ ok: true, meta: { headRefOid: head } });
+  assert.deepEqual(await prDiffAt({ pr: 1, slug: 'o/r', headSha: 'aaa1111', fetchDiff, fetchMeta: at('aaa1111') }), { ok: true, patch: 'diff --git a/x b/x' });
+  const moved = await prDiffAt({ pr: 1, slug: 'o/r', headSha: 'aaa1111', fetchDiff, fetchMeta: at('bbb2222') });
+  assert.deepEqual([moved.ok, moved.status, /pushed to while it was being read/.test(moved.error)], [false, 409, true]);
+  const unread = await prDiffAt({ pr: 1, slug: 'o/r', headSha: 'aaa1111', fetchDiff, fetchMeta: async () => ({ ok: false, status: 502, error: 'gh down' }) });
+  assert.deepEqual([unread.ok, unread.error], [false, 'gh down']);
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {
