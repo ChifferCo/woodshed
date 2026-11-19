@@ -6,7 +6,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { fixtureProject, fixtureProjectFiles } from '../../shared/projectFixture.mjs';
-import { DOCKER_SOCKET, OLD_SESSION_LABEL, OWN_DOCKER_START, SESSION_LABEL, createDockerLauncher, parseDockerPort } from './dockerLauncher.mjs';
+import http from 'node:http';
+
+import { DOCKER_SOCKET, OLD_SESSION_LABEL, OWN_DOCKER_START, SESSION_LABEL, createDockerLauncher, gatewayName, lockedNetworkName, parseDockerPort } from './dockerLauncher.mjs';
 import { PROJECT_FILES_MOUNT, projectFileMounts } from './projectFileMounts.mjs';
 
 test('parseDockerPort reads the host port docker published', () => {
@@ -90,7 +92,7 @@ test('on another machine\'s daemon every docker call goes there, the ports are p
     },
   });
   const started = await launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4' });
-  assert.deepEqual(started, { ref: 'woodshed-a1b2c3d4', host: '10.8.0.12', termPort: 49153, statusPort: 49153, shellPort: 49153 });
+  assert.deepEqual(started, { ref: 'woodshed-a1b2c3d4', host: '10.8.0.12', termPort: 49153, statusPort: 49153, shellPort: 49153, docker: null });
   const runArgs = calls.find((c) => c.verb === 'run').args;
   assert.deepEqual(runArgs.filter((a, i) => runArgs[i - 1] === '-p'), ['10.8.0.12::7681', '10.8.0.12::7682', '10.8.0.12::7684']);
   await launcher.isAlive('woodshed-a1b2c3d4');
@@ -343,4 +345,155 @@ test('a machine with no Sysbox is asked again ten minutes later, so Sysbox insta
   t.mock.timers.tick(60 * 60_000);
   await launcher.start('a1b2c3d4', {});
   assert.deepEqual(checks().map((c) => c.args[0]), ['info', 'info', 'run'], 'a yes is kept');
+});
+
+// A docker that keeps which networks each container is on, for the lockdown's tests.
+function fakeDocker({ statusPort, networkGateway = '', fail = () => false }) {
+  const state = {
+    networks: { 'woodshed-a1b2c3d4': ['woodshed'] }, made: new Set(), removed: [], calls: [],
+    hosts: '127.0.0.1\tlocalhost\n172.17.0.1\thost.docker.internal\n172.18.0.4\tpostgres-old\n',
+  };
+  const run = async (args) => {
+    state.calls.push(args);
+    if (fail(args, state)) throw Object.assign(new Error('docker said no'), { stderr: 'docker said no' });
+    const [verb, sub] = args;
+    const last = args.at(-1);
+    if (verb === 'network' && sub === 'inspect') {
+      const name = args.at(-1);
+      if (!state.made.has(name)) throw new Error(`No such network: ${name}`);
+      return JSON.stringify({ Name: name, Internal: true, IPAM: { Config: [{ Subnet: '172.30.0.0/16', ...(networkGateway ? { Gateway: networkGateway } : {}) }] } });
+    }
+    if (verb === 'network' && sub === 'create') { state.made.add(last); return ''; }
+    if (verb === 'network' && sub === 'rm') { state.made.delete(last); state.removed.push(last); return ''; }
+    if (verb === 'network' && sub === 'connect') { const [net, c] = args.slice(-2); (state.networks[c] ??= []).push(net); return ''; }
+    if (verb === 'network' && sub === 'disconnect') { const [net, c] = args.slice(-2); state.networks[c] = (state.networks[c] ?? []).filter((n) => n !== net); return ''; }
+    if (verb === 'inspect') {
+      return JSON.stringify(Object.fromEntries((state.networks[last] ?? []).map((n) => [n, { IPAddress: last.endsWith('-gw') && n.startsWith('woodshed-locked-') ? '172.30.0.2' : '172.17.0.9' }])));
+    }
+    if (verb === 'run') {
+      const name = args[args.indexOf('--name') + 1];
+      state.networks[name] = [args[args.indexOf('--network') + 1]];
+      return 'id';
+    }
+    if (verb === 'port') return `127.0.0.1:${statusPort}`;
+    if (verb === 'exec' && args.includes('cat')) return state.hosts.trim();
+    if (verb === 'exec') { state.hosts = args.find((a) => a.startsWith('WOODSHED_HOSTS=')).slice('WOODSHED_HOSTS='.length); return ''; }
+    if (verb === 'rm') { delete state.networks[last]; state.removed.push(last); return ''; }
+    return '';
+  };
+  return { state, run };
+}
+
+// statusd behind the gateway: any HTTP answer says the way in works.
+async function statusdStandIn(t) {
+  const server = http.createServer((req, res) => res.writeHead(401).end());
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  return server.address().port;
+}
+
+const SESSION_ENV = {
+  SESSION_ID: 'a1b2c3d4', WOODSHED_CONSOLE_URL: 'http://host.docker.internal:7691', PGHOST: 'postgres', PGPORT: '5432',
+  WOODSHED_SERVICES: 'S3_ENDPOINT', S3_ENDPOINT: 'http://s3:4566',
+};
+
+test('lockDown moves a running session onto an isolated network whose one other member is its gateway, and the console then reaches it through the gateway', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const statusPort = await statusdStandIn(t);
+  const { state, run } = fakeDocker({ statusPort });
+  const launcher = createDockerLauncher({ image: 'woodshed-session', memory: '6g', cpus: '2', network: 'woodshed', run });
+  const endpoint = await launcher.lockDown('woodshed-a1b2c3d4', { sessionId: 'a1b2c3d4', env: SESSION_ENV, egressUrl: 'http://host.docker.internal:7693' });
+  assert.deepEqual(endpoint, { host: '127.0.0.1', termPort: statusPort, statusPort, shellPort: statusPort, locked: true });
+
+  const create = state.calls.find((c) => c[0] === 'network' && c[1] === 'create');
+  assert.ok(create.includes('--internal'), 'no route out');
+  assert.ok(create.includes('com.docker.network.bridge.gateway_mode_ipv4=isolated'), 'and no address of the machine\'s on it');
+  assert.deepEqual(state.networks['woodshed-a1b2c3d4'], [lockedNetworkName('a1b2c3d4')], 'on the isolated network alone');
+  assert.deepEqual(state.networks[gatewayName('a1b2c3d4')], ['woodshed', lockedNetworkName('a1b2c3d4')], 'the gateway on both');
+
+  const gw = state.calls.find((c) => c[0] === 'run');
+  const env = Object.fromEntries(gw.flatMap((a, i) => (gw[i - 1] === '-e' ? [a.split(/=(.*)/s).slice(0, 2)] : [])));
+  assert.equal(env.WOODSHED_GATEWAY_SESSION, 'woodshed-a1b2c3d4');
+  assert.equal(env.WOODSHED_GATEWAY_INBOUND, '7681,7682,7684');
+  assert.equal(env.WOODSHED_GATEWAY_OUTBOUND, '7691=host.docker.internal:7691,7693=host.docker.internal:7693,5432=postgres:5432,4566=s3:4566',
+    'the console, its egress proxy, the database and the shared service, and nothing else');
+  assert.deepEqual(gw.filter((a, i) => gw[i - 1] === '-p'), ['127.0.0.1::7681', '127.0.0.1::7682', '127.0.0.1::7684']);
+  assert.ok(!gw.some((a) => a.includes('docker.sock')), 'the gateway holds no Docker socket');
+
+  assert.match(state.hosts, /^172\.30\.0\.2\thost\.docker\.internal postgres s3\t/m, 'the destinations\' names point at the gateway');
+  assert.doesNotMatch(state.hosts, /172\.17\.0\.1/, 'and no longer at the machine');
+  const order = state.calls.map((c) => (c[0] === 'exec' ? (c.includes('cat') ? 'read hosts' : 'write hosts') : c.slice(0, 2).join(' ')));
+  assert.ok(order.lastIndexOf('network disconnect') < order.lastIndexOf('write hosts'), 'the names are pointed after the session left its network');
+});
+
+test('lockDown on a Docker that gives the isolated network an address of the machine\'s refuses, and leaves the session as it was', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const statusPort = await statusdStandIn(t);
+  const { state, run } = fakeDocker({ statusPort, networkGateway: '172.30.0.1' });
+  const launcher = createDockerLauncher({ image: 'woodshed-session', memory: '6g', cpus: '2', network: 'woodshed', run });
+  await assert.rejects(launcher.lockDown('woodshed-a1b2c3d4', { sessionId: 'a1b2c3d4', env: SESSION_ENV }), /Docker 28 or newer/);
+  assert.deepEqual(state.networks['woodshed-a1b2c3d4'], ['woodshed']);
+  assert.ok(!state.made.has(lockedNetworkName('a1b2c3d4')), 'the network is removed again');
+});
+
+test('a lockdown that fails halfway puts the session back on its networks and its names back, and removes the gateway', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const statusPort = await statusdStandIn(t);
+  const { state, run } = fakeDocker({ statusPort, fail: (args) => args[0] === 'exec' && !args.includes('cat') && !args.join(' ').includes('host.docker.internal\n172.18') && args.join(' ').includes('172.30.0.2') });
+  const hostsBefore = state.hosts;
+  const launcher = createDockerLauncher({ image: 'woodshed-session', memory: '6g', cpus: '2', network: 'woodshed', run });
+  await assert.rejects(launcher.lockDown('woodshed-a1b2c3d4', { sessionId: 'a1b2c3d4', env: SESSION_ENV }), /docker said no/);
+  assert.deepEqual(state.networks['woodshed-a1b2c3d4'], ['woodshed'], 'back on its own network, off the isolated one');
+  assert.equal(state.hosts.trim(), hostsBefore.trim());
+  assert.ok(state.removed.includes(gatewayName('a1b2c3d4')));
+  assert.ok(state.removed.includes(lockedNetworkName('a1b2c3d4')));
+});
+
+test('lockDown refuses a destination given by its address, before it changes anything', async (t) => {
+  const { state, run } = fakeDocker({ statusPort: 1 });
+  const launcher = createDockerLauncher({ image: 'i', memory: '6g', cpus: '2', run });
+  await assert.rejects(launcher.lockDown('woodshed-a1b2c3d4', { sessionId: 'a1b2c3d4', env: { ...SESSION_ENV, PGHOST: '10.0.0.5' } }), /given by its address/);
+  assert.ok(!state.calls.some((c) => c[0] === 'network' && c[1] !== 'inspect'));
+});
+
+test('a tainted session is started locked down: on its isolated network alone, its names the gateway\'s, its ports the gateway\'s, and no Docker of the machine\'s', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const statusPort = await statusdStandIn(t);
+  const { state, run } = fakeDocker({ statusPort });
+  const launcher = createDockerLauncher({ image: 'woodshed-session', memory: '6g', cpus: '2', network: 'woodshed', hostDocker: true, run });
+  const started = await launcher.start('a1b2c3d4', { ...SESSION_ENV, WOODSHED_TAINTED: '1', WOODSHED_EGRESS_PROXY: 'http://host.docker.internal:7693' });
+  assert.deepEqual(started, { ref: 'woodshed-a1b2c3d4', host: '127.0.0.1', termPort: statusPort, statusPort, shellPort: statusPort, docker: null, locked: true });
+  const session = state.calls.find((c) => c[0] === 'run' && c.includes('woodshed-a1b2c3d4'));
+  assert.equal(session[session.indexOf('--network') + 1], lockedNetworkName('a1b2c3d4'));
+  assert.ok(!session.includes('-p'), 'nothing published: the gateway publishes for it');
+  assert.deepEqual(session.filter((a) => a.startsWith('--add-host')), ['--add-host=host.docker.internal:172.30.0.2', '--add-host=postgres:172.30.0.2', '--add-host=s3:172.30.0.2']);
+  assert.ok(!session.some((a) => a.includes('docker.sock')));
+});
+
+test('a session that may use production never gets the machine\'s Docker, and says which Docker it got', async (t) => {
+  t.mock.method(console, 'log', () => {});
+  const runs = [];
+  const launcher = createDockerLauncher({
+    image: 'i', memory: '6g', cpus: '2', hostDocker: true,
+    run: async (args) => {
+      runs.push(args);
+      if (args[0] === 'run' && args.includes('stat')) return '999';
+      return args[0] === 'port' ? '127.0.0.1:49153' : '';
+    },
+  });
+  const plain = await launcher.start('a1b2c3d4', { SESSION_ID: 'a1b2c3d4' });
+  assert.equal(plain.docker, 'host');
+  const production = await launcher.start('b1b2c3d4', { SESSION_ID: 'b1b2c3d4', WOODSHED_PROD_MCP: '1' });
+  assert.equal(production.docker, null);
+  const run = runs.filter((a) => a[0] === 'run' && a.includes('woodshed-b1b2c3d4'))[0];
+  assert.ok(!run.some((a) => a.includes('docker.sock')));
+});
+
+test('stop takes a locked-down session\'s gateway and isolated network with it', async () => {
+  const { state, run } = fakeDocker({ statusPort: 1 });
+  const launcher = createDockerLauncher({ image: 'i', memory: '6g', cpus: '2', run });
+  await launcher.stop('woodshed-a1b2c3d4');
+  assert.deepEqual(state.removed, ['woodshed-a1b2c3d4', gatewayName('a1b2c3d4'), lockedNetworkName('a1b2c3d4')]);
 });

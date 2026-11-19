@@ -268,6 +268,37 @@ never replaces the box by surprise. `terraform apply -replace=aws_instance.base_
 does: the new box mounts the same data volume, so Mongo and the console's
 sessions survive, and the association sets up its stack.
 
+### Production access
+
+With `prod_mcp` set (`variables.tf`), admins can add production MCP servers on Console settings, and a My Woodshed
+session of a person and repo one lists can use it through the console (`../../docs/reference.md`, "Production
+access"). `prod_mcp.url`, with `people` and `repos`, also names one server from here (`woodshed-prod`, such as
+woodshed-prod-mcp); `prod_mcp = {}` makes the network alone. Ordinary MCP servers need none of this: the console's role
+keeps their headers under `mcp-servers/*`, and its signing key is made whatever `prod_mcp` says. A Fargate task keeps the
+security groups it started with, and none can be swapped on its network interface, so a session that may use production
+starts on a guarded network of its own (`terraform/prodMcp.tf`), before it is ever tainted, rather than being moved or
+started again when it is:
+
+- two subnets with no route out (no internet gateway), and assigned no public address;
+- a security group whose only ways out are the base box (the session API, the egress proxy on 7693, Mongo and the
+  services), RDS, and interface endpoints for ECR, CloudWatch Logs and Secrets Manager plus a gateway endpoint for S3,
+  which Fargate needs to pull the image, write the log and read the task's secrets;
+- its traffic to the internet goes through the console's egress proxy, from the start (`WOODSHED_EGRESS_PROXY`): an
+  untainted session goes anywhere over HTTP(S) that way, a tainted one only to its organization's private GitHub repos.
+  The taint is the console's to hold, so it takes effect the moment the console starts locking the session down.
+
+A proxy for every session was the other way, and would have changed every session's network for a feature most do not
+use. What it costs: the four interface endpoints, about $0.01 an hour each per zone (two zones), around $60 a month,
+and their traffic. Only the console reaches an MCP server: the customer allows the base box's Elastic IP
+(`terraform output base_box_public_ip`) and nothing else.
+
+Not enforced here: the VPC's DNS resolver, which no security group filters, answers a guarded session as any other, so
+a tainted one could still spell data out in the names it looks up. Closing it takes the guarded subnets in a VPC of
+their own, peered to this one, with a Route 53 Resolver DNS Firewall allowing only AWS's and the base box's names;
+the local provider has no such gap (its isolated network has no DNS for the internet).
+
+An apply with `prod_mcp` adds all of the above and changes nothing that runs: read its plan first, as for any apply.
+
 ## Costs
 
 - **Idle:** about $26 a month with no databases, up to $56 with both. The base

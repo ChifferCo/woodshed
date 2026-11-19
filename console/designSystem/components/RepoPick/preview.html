@@ -1,0 +1,24 @@
+<!-- @dsCard group="Settings" height=240 subtitle="Some of the console's repos or all, as checkboxes under a fold" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;600&family=JetBrains+Mono:wght@400&display=swap">
+<style>
+ body{margin:0;padding:24px;background:var(--ground);color:var(--ink);font-family:"Red Hat Display",system-ui,sans-serif}
+ details{width:280px;max-width:100%}
+ summary{display:flex;gap:8px;align-items:center;list-style:none;cursor:pointer;font:12.5px "JetBrains Mono",monospace;padding:8px 10px;border:1px solid #b9b9b9;border-radius:4px}
+ summary::-webkit-details-marker{display:none}
+ summary span{flex:1 1 0;width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ summary::after{content:"▴";color:var(--meta)}
+ .list{display:flex;flex-direction:column;margin-top:4px;padding:4px 0;border:1px solid var(--line);border-radius:6px}
+ label{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:center;padding:6px 10px;font:12.5px "JetBrains Mono",monospace}
+ label:first-child{border-bottom:1px solid var(--line-soft);font:600 13px "Red Hat Display",sans-serif}
+ input{margin:0;accent-color:var(--slate)}
+ small{flex-basis:100%;padding-left:21px;font:11.5px "Red Hat Display",sans-serif;color:var(--meta)}
+</style>
+<details open>
+ <summary><span>example-org/api, example-org/gone</span></summary>
+ <div class="list">
+  <label><input type="checkbox">All repos</label>
+  <label><input type="checkbox">example-org/web</label>
+  <label><input type="checkbox" checked>example-org/api</label>
+  <label><input type="checkbox" checked>example-org/gone<small>not a repo of this console</small></label>
+ </div>
+</details>
