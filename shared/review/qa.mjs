@@ -312,6 +312,12 @@ const MAX_TOTAL_BYTES = 1024 * 1024 * 1024;
 // covers what other processes write there.
 const MIN_FREE_AFTER_BYTES = 512 * 1024 * 1024;
 let reservedBytes = 0;
+// What a file takes on disk, not its length: a whole block at the least, so a
+// tree of many small files is counted for the room it really takes.
+const BLOCK_BYTES = 4096;
+function onDisk(bytes) {
+  return Math.max(1, Math.ceil(bytes / BLOCK_BYTES)) * BLOCK_BYTES;
+}
 /** copy folder -> the bytes it reserved, until removeSnapshot deletes it */
 const reservations = new Map();
 
@@ -364,11 +370,14 @@ export async function makeSnapshot({
     const target = Buffer.concat([root, rel]);
     if (type === 'commit') {
       folders.push(target);
+      total += onDisk(0);
     } else if (type === 'blob') {
       const bytes = Number(size);
-      if (bytes > maxFileBytes) notes.push({ target, bytes });
-      else {
-        total += bytes;
+      if (bytes > maxFileBytes) {
+        notes.push({ target, bytes });
+        total += onDisk(0);
+      } else {
+        total += onDisk(bytes);
         blobs.push({ sha, target, mode });
       }
     }

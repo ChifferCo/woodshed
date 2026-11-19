@@ -411,6 +411,21 @@ test('a submodule folder that cannot be made fails the copy and leaves nothing b
   assert.equal(reservedSnapshotBytes(), 0);
 });
 
+// Room is counted as the disk takes it, a block per file at the least: 300 files of 10 bytes are 3 KB of content and
+// over 1 MB of disk, and a 1 MB total refuses them.
+test('a tree of many small files is counted for the room it takes on disk', async () => {
+  const repo = path.join(DIR, 'small-files');
+  fs.mkdirSync(path.join(repo, 'f'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  for (let i = 0; i < 300; i += 1) fs.writeFileSync(path.join(repo, 'f', `${i}.txt`), `ten bytes${i % 10}`);
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const got = await makeSnapshot({ repoDir: repo, treeish: git('rev-parse', 'HEAD^{tree}'), session: 'claude-d4d4d4d4', maxTotalBytes: 1024 * 1024, free: () => Infinity });
+  assert.deepEqual([got.ok, /past the 1 MB a copy may take/.test(got.error)], [false, true]);
+  assert.equal(reservedSnapshotBytes(), 0);
+});
+
 test('copies a restart left behind are swept at the next copy, and a live one is not', () => {
   const tmp = fs.mkdtempSync(path.join(DIR, 'tmp-'));
   const stale = path.join(tmp, 'woodshed-qa-claude-12345678-old');
