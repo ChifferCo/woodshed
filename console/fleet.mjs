@@ -28,6 +28,8 @@ const { findLogin, sameLogin } = logins;
 
 const CHECKPOINT_TIMEOUT_MS = 90_000;
 const STATUS_TIMEOUT_MS = 5_000;
+// How long statusd may take to type a private session's review feedback after getting it (it reads GitHub first).
+const GUARDED_SEND_WITHIN_MS = 20_000;
 // The quick look at a starting session: statusd answers at once on the same network, or is not up yet.
 const STARTING_STATUS_TIMEOUT_MS = 1_500;
 // After the agent opened, a start the console has not reached in this long is logged (noteUnreached): it takes a second
@@ -259,12 +261,14 @@ export function createFleet({
   const retention = () => config.retention ?? DEFAULT_RETENTION;
   const announcer = createPrAnnouncer({
     store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: (name, number) => gatesFor(name, number), now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
-    events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention },
-    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
+    events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention, listening: prListening },
+    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp, sessionKnown: (id) => Boolean(find(id)),
   });
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
   const prCheckedAt = new Map();
+  // Private sessions whose statusd last refused or missed review feedback, so it is warned of once.
+  const untypedSaid = new Set();
   const homeDeleteTriedAt = new Map();
   let ticking = false;
   // The quick check has its own guard: sharing the tick's would skip ticks while starting sessions time out.
@@ -626,6 +630,8 @@ export function createFleet({
     const session = {
       id, project: project.name, repo: project.repo, kind, number, title, startedBy, trigger, prompt, owner, options, resumeClaude, slack: thread,
       branch: branch || defaultBranch,
+      // The branch the console made for it, when it made one: `branch` follows what statusd says is checked out.
+      ...(!branch && defaultBranch ? { madeBranch: defaultBranch } : {}),
       status: 'queued', state: null, createdAt: nowIso(), startedAt: null, stoppedAt: null,
       lastActiveAt: null, checkedAt: null, stopReason: null, error: null,
       head: null, prUrl: null, lastMessage: null, commentId: null,
@@ -849,17 +855,32 @@ export function createFleet({
     }
   }
 
-  // Shared sessions only: a My Woodshed session's work is its owner's own. A GitHub that cannot be read is tried
-  // again on the next tick. Each pull request a session reports is tracked once, so a session that closes its
-  // pull request and opens another from a new branch gets the new one posted too.
+  // A shared session's pull request is posted to Slack once it passes; a My Woodshed session's is only watched, its
+  // owner's work being their own, so its session hears each verdict and broken suite until it passes, with or without
+  // Slack. A GitHub that cannot be read is tried again on the next tick. Each pull request a session reports is tracked
+  // once, so a session that closes its pull request and opens another from a new branch gets the new one too.
   async function announcePull(session) {
-    if (!announcer.available || session.owner || !session.prUrl || session.announcedPrUrl === session.prUrl) return;
+    if (!session.prUrl || session.announcedPrUrl === session.prUrl) return;
     const project = projectFor(config, session);
-    if (!announcer.postsFor(project)) return;
-    const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session, project);
-      return true;
-    });
+    const watch = Boolean(session.owner);
+    // A review-only session reads someone's pull request: it is never told to fix and push it.
+    if (watch && session.reviewOnly) return;
+    // An older image's statusd would type into the shell of an agent that exited: nothing is typed into it unasked.
+    if (watch && !session.agentOnlySend) {
+      if (!session.watchSkippedSaid) {
+        console.log('fleet: pull request not watched, the session\'s image types into its pane unchecked', { id: session.id });
+        update(session, { watchSkippedSaid: true });
+      }
+      return;
+    }
+    // Its pull request is read on its project's repo by number: one on another repo is not that one.
+    if (watch && !onProjectRepo(session.prUrl, project)) {
+      console.log('fleet: pull request on another repo than the session\'s project, not watched', { id: session.id, project: project.name });
+      update(session, { announcedPrUrl: session.prUrl });
+      return;
+    }
+    if (!watch && (!announcer.available || !announcer.postsFor(project))) return;
+    const tracked = await safely('pull request read for Slack', async () => (await announcer.track(session, project, { watch })) !== 'later');
     if (tracked) update(session, { announcedPrUrl: session.prUrl });
   }
 
@@ -1201,11 +1222,79 @@ export function createFleet({
     return session && pings ? pings.mentionFor(session) : null;
   }
 
-  // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
-  // or resumed with it. True when the session was told.
-  async function prFeedback(item, text) {
+  // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
+  // nothing but its owner resumes it. A stopping one cannot: a message held for it would be typed in at a later Resume.
+  const ownListening = (session) => Boolean(session && ACTIVE_STATUSES.has(session.status) && session.status !== 'stopping');
+  // It listens only for the pull request it reports now, on the item's repo: while it reports another or none (or
+  // statusd's lookup failed), the watch waits for it to be back.
+  function prListening(item) {
     const session = find(item.sessionId);
-    if (!session || session.owner) return false;
+    if (!ownListening(session)) return 'ended';
+    const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    // Its project left the console, or its repo is another now (a default project replaced): its pull request is no
+    // longer that project's.
+    if (!project || (item.repo && item.repo.toLowerCase() !== String(project.repo ?? '').toLowerCase())) return 'ended';
+    const current = session.reportedPrUrl === undefined ? session.prUrl : session.reportedPrUrl;
+    return pullNumber(current) === item.number && onProjectRepo(current, project) ? 'yes' : 'elsewhere';
+  }
+
+  // Whether a pull request URL is the item's pull request, on its project's repo.
+  function samePull(prUrl, item) {
+    const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+    return pullNumber(prUrl) === item.number && onProjectRepo(prUrl, project);
+  }
+
+  // Whether a pull request URL is on a project's repo.
+  function onProjectRepo(prUrl, project) {
+    const repo = /github\.com\/([^/]+\/[^/]+)\/pull\/\d+$/i.exec(prUrl ?? '')?.[1];
+    return Boolean(repo && project?.repo && repo.toLowerCase() === project.repo.toLowerCase());
+  }
+
+  // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
+  // or resumed with it (a shared one: a stopped My Woodshed session is not). True when the session was told.
+  async function prFeedback(item, text, { stillWanted = async () => true, sha = null, untilMs = () => Infinity } = {}) {
+    const session = find(item.sessionId);
+    if (!session) return false;
+    // A My Woodshed session is typed into now or told again at the next check, never held: a held message would be
+    // typed in at a later Resume, after its watch ended.
+    if (session.owner) {
+      if (!ownListening(session)) {
+        console.log('fleet: review feedback dropped, the My Woodshed session is not running', { id: session.id, number: item.number });
+        return false;
+      }
+      if (!canType(session)) return 'later';
+      try {
+        // claude may have closed since the last status read, and the pane would then be a shell that runs the text:
+        // its state is read again just before.
+        const fresh = await statusd(session, 'GET', '/status');
+        // The session may have started stopping, or the watch ended or been renewed, while statusd answered.
+        if (!ownListening(session) || !(await stillWanted()) || !ownListening(session)) return 'later';
+        if (!fresh?.state || fresh.state === 'not-running' || fresh.state === 'starting' || fresh.agentOnlySend !== true) return 'later';
+        // And it must still be on this pull request.
+        if ('prUrl' in fresh && !samePull(fresh.prUrl, item)) return 'later';
+        // statusd checks the pane once more as it types (`agentOnly`, a 409 otherwise; an older statusd ignores it).
+        // With the pull request it is about, which statusd checks afresh on the branch checked out, just before typing.
+        const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
+        // statusd reads GitHub before typing: it may take a while, and types only within withinMs of getting it, while
+        // the console still waits, so a reply the console gave up on never types a text it then sends again.
+        // Never past the watch's own end: what is left of its wait, if that is shorter.
+        const withinMs = Math.floor(Math.min(GUARDED_SEND_WITHIN_MS, untilMs()));
+        if (withinMs < 1000) return 'later';
+        await statusd(session, 'POST', '/send', {
+          // notAfter as well: withinMs counts from statusd getting it, and time in transit must count too.
+          body: { text, agentOnly: true, prUrl: `https://github.com/${project.repo}/pull/${item.number}`, ...(sha ? { headSha: sha } : {}), withinMs, notAfter: now() + withinMs },
+          timeoutMs: withinMs + 10_000,
+        });
+      } catch (err) {
+        // Once until it is typed in: it is tried every minute while the session refuses it.
+        if (!untypedSaid.has(session.id)) console.warn('fleet: review feedback not typed in yet', { id: session.id, number: item.number, message: firstLine(err) });
+        untypedSaid.add(session.id);
+        return 'later';
+      }
+      untypedSaid.delete(session.id);
+      console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome: 'sent', owner: true });
+      return true;
+    }
     if (ACTIVE_STATUSES.has(session.status)) {
       const outcome = await send(session, text);
       console.log('fleet: review feedback typed in', { id: session.id, number: item.number, outcome });
@@ -1481,9 +1570,13 @@ export function createFleet({
       status: 'queued', state: null, startedAt: null, stoppedAt: null, stopReason: null, stoppedBy: null, error: null, ref: null,
       endpoint: null, startSteps: null, token: newSessionToken(), terminalToken: newSessionToken(), resumeClaude: session.claudeSession ?? null,
       lastActiveAt: null, checkedAt: null, app: null, appServers: null, appName: null, apps: null, resumedAt: nowIso(), resumedBy: owner, queuedAt: nowIso(),
+      // Its pull request's watch ended when it stopped: it is watched again once statusd reports it.
+      announcedPrUrl: null,
       // A tainted session starts locked down, its entrypoint told so (WOODSHED_TAINTED): its statusd needs no notice.
       ...(session.taintedAt ? { taintNoticedAt: nowIso() } : {}),
     });
+    // Or, when its stop was not read yet, the watch starts a new run for this one.
+    announcer.renew(session.id);
     console.log('fleet: resuming a private session', { id, owner, claudeSession: Boolean(session.resumeClaude), background, tainted: Boolean(session.taintedAt) });
     await runStartQueued({ background });
     return session;

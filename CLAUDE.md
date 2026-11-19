@@ -591,7 +591,10 @@ URL on top of each env file's Repo settings values
 - **A review asked for changes and the session did nothing.** The console logs
   `slack: pull request feedback for its session`, then `fleet: review feedback
   typed in` for a running session or `fleet: resuming a shared session` with
-  `why: 'review feedback'` for a paused one. Each verdict, and each commit's
+  `why: 'review feedback'` for a paused one. A My Woodshed session's pull request is watched (`slack: pull request
+  watched for its session`): `fleet: review feedback typed in` has `owner: true`, the pass logs `slack: watched pull
+  request passed its review and suites`, and a stopped one is never resumed (`fleet: review feedback dropped, the My
+  Woodshed session is not running`, then `no longer waiting` with `its session ended`). Each verdict, and each commit's
   failed or skipped suite, is handed over once. A verdict on an older commit
   than the pull request's head is not. An APPROVE is handed over too, once per pull request
   (`slack: approved, holding the post for the session to read the notes`), and the Slack post waits 5 minutes
