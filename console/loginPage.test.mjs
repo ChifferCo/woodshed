@@ -17,11 +17,11 @@ function textOf(node) {
   return node.children.map(textOf).join('');
 }
 
-async function render({ me, search = '' }) {
+async function render({ me, search = '', forgetSignedIn = () => {} }) {
   const shown = [];
   const window = {
     location: { search, origin: 'https://console.example', replace() {}, reload() {} },
-    Woodshed: { h, getJson: async () => me, postJson: async () => ({}), ago: () => 'just now' },
+    Woodshed: { h, getJson: async () => me, postJson: async () => ({}), ago: () => 'just now', forgetSignedIn },
   };
   const document = { getElementById: () => ({ replaceChildren: (...nodes) => shown.push(nodes) }) };
   vm.runInNewContext(source, { window, document, URL, URLSearchParams, setTimeout() {} });
@@ -33,7 +33,14 @@ async function render({ me, search = '' }) {
     if (/form-error/.test(node.attrs.class ?? '')) errors.push(textOf(node));
     node.children.forEach(find);
   })(page);
-  return { text: textOf(page), errors };
+  return { text: textOf(page), errors, page };
+}
+
+function findAll(node, match, out = []) {
+  if (typeof node === 'string') return out;
+  if (match(node)) out.push(node);
+  node.children.forEach((c) => findAll(c, match, out));
+  return out;
 }
 
 const signInOn = { available: true, signIn: true, login: null, visitor: null, repo: null };
@@ -57,4 +64,13 @@ test('a console that requires sign-in with no client secret says so without nami
   assert.match(text, /Nobody can sign in/);
   assert.match(text, /secret store as github-app-client-secret/);
   assert.doesNotMatch(text, /AWS/);
+});
+
+test("a visitor's Sign out drops what the pages kept in the browser tab, as the menu's does", async () => {
+  let forgot = 0;
+  const { page } = await render({ me: { ...signInOn, visitor: 'octocat' }, forgetSignedIn: () => { forgot++; } });
+  const forms = findAll(page, (n) => n.tag === 'form' && n.attrs.action === '/auth/sign-out');
+  assert.equal(forms.length, 1, 'the visitor card has its Sign out');
+  forms[0].attrs.onsubmit();
+  assert.equal(forgot, 1, "the rail's snapshot and each session's last tab go (common.js, forgetSignedIn)");
 });

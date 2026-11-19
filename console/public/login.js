@@ -34,7 +34,7 @@
 
   // Signed in with write access, but not on the console's list: ask to join, then wait here to be let in.
   function visitorCard(me) {
-    const signOut = h('form', { method: 'post', action: '/auth/sign-out', class: 'inline-form' },
+    const signOut = h('form', { method: 'post', action: '/auth/sign-out', class: 'inline-form', onsubmit: W.forgetSignedIn },
       h('button', { type: 'submit', class: 'btn-link' }, 'Sign out'));
     async function send(path, button) {
       button.disabled = true;

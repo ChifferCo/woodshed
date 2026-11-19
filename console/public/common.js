@@ -1275,11 +1275,11 @@
       (me.menuSections ?? []).map((section) => [h('div', { class: 'menu-label' }, section.label), section.items.map(hostEntry)]),
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
-      // Signing out drops what the rail page kept in this tab (session.js, and sessionTabs.cjs's last tab of each session), so nobody signing in after sees it. Behind a
-      // hosting proxy, only when the program signs people out (server.mjs, signOut).
+      // Signing out drops what the pages kept in this tab (forgetSignedIn). Behind a hosting proxy, only when the program
+      // signs people out (server.mjs, signOut).
       me.login && (!me.hosted || me.signOut) && h('form', {
         method: 'post', action: '/auth/sign-out', class: 'menu-form',
-        onsubmit: () => { try { for (const key of ['woodshed-last', 'woodshed-session-tabs']) window.sessionStorage.removeItem(key); } catch { /* nothing kept */ } },
+        onsubmit: forgetSignedIn,
       },
         h('button', { type: 'submit', class: 'menu-item', role: 'menuitem' }, 'Sign out')));
     function setOpen(open) {
@@ -1642,8 +1642,19 @@
     return { el, update };
   }
 
+  // What a page kept in this browser tab for the person signed in: the rail's snapshot (session.js) and each session's
+  // last tab (sessionTabs.cjs). Every Sign out drops it, the menu's and the visitor page's (login.js), so nobody signing
+  // in after sees it.
+  function forgetSignedIn() {
+    try {
+      for (const key of ['woodshed-last', 'woodshed-session-tabs']) window.sessionStorage.removeItem(key);
+    } catch {
+      // Nothing kept.
+    }
+  }
+
   window.Woodshed = {
-    invite, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    invite, forgetSignedIn, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,
