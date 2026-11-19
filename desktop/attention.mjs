@@ -196,8 +196,10 @@ export function attention(body, before, { first = false, enabled = enabledKinds(
     if (!s.owner && login && sameLogin(s.assignee, login) && !sameLogin(was?.assignee, login) && s.assignedBy && !sameLogin(s.assignedBy, login)) {
       add(s, 'assigned', `Assigned to you by ${nameOf(s.assignedBy)}.`);
     }
-    if (s.trigger === 'review' && mark.reviewed && was && !was.reviewed) add(s, 'review', reviewBody(s.review));
-    if (s.trigger === 'qa' && mark.qaDone && was && !was.qaDone) add(s, 'qa', qaBody(s.qa));
+    // A run that started and finished between two reads (the computer asleep, the console unreachable) rings too, as a
+    // failure does: it is new since the last read, which is what `add` holds to, never the first.
+    if (s.trigger === 'review' && mark.reviewed && !was?.reviewed) add(s, 'review', reviewBody(s.review));
+    if (s.trigger === 'qa' && mark.qaDone && !was?.qaDone) add(s, 'qa', qaBody(s.qa));
 
     // A review or QA session's pull request is the author's coding session's too: it is followed there.
     if (pullCheck) continue;

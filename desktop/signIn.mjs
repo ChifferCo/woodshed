@@ -94,6 +94,10 @@ export function createPending({ now = Date.now } = {}) {
       current = null;
       return taken;
     },
+    /** @returns {object|null}  the sign-in still waiting on `consoleUrl`, kept: Open the browser again reuses it */
+    current(consoleUrl) {
+      return current && now() - current.startedAt < PENDING_MS && current.consoleUrl === consoleUrl ? current : null;
+    },
     waiting() {
       return Boolean(current && now() - current.startedAt < PENDING_MS);
     },

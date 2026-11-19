@@ -62,6 +62,12 @@ test('a sign-in is claimed once, and only within ten minutes', () => {
   assert.ok(pending.waiting());
   assert.deepEqual(pending.take(), started);
   assert.equal(pending.take(), null);
+  // Open the browser again: the same sign-in, so a code from the first tab or the second is claimed with its verifier.
+  const first = pending.begin('/s/b', 'https://woodshed.example.com/');
+  assert.equal(pending.current('https://woodshed.example.com/'), first);
+  assert.equal(pending.current('https://other.example.com/'), null, 'not another console\'s');
+  assert.equal(pending.take(), first);
+  assert.equal(pending.current('https://woodshed.example.com/'), null);
   pending.begin('/');
   clock.now += 10 * 60_000;
   assert.equal(pending.waiting(), false);

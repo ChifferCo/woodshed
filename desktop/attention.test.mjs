@@ -157,6 +157,12 @@ test('a review or QA run on your pull request finishing, with its verdict', () =
   const qa = (more = {}) => shared('q', { startedBy: 'octocat', trigger: 'qa', kind: 'pr', number: 12, title: 'QA: Fix CSV upload', qa: { check: 'QA', ...more } });
   checkKind('qa', { before: [qa()], after: [qa({ conclusion: 'failure', title: '2 of 6 checks failed' })], text: 'QA failed: 2 of 6 checks failed.' });
   checkKind('qa', { before: [qa()], after: [qa({ conclusion: 'success', title: 'All 6 passed' })], text: 'QA passed: All 6 passed.' });
+  // A run that started and finished between two reads (asleep, offline) still rings, but never on the first read.
+  checkKind('review', { before: [], after: [review({ reported: true, conclusion: 'APPROVE' })], text: 'Review finished: approved.' });
+  checkKind('qa', { before: [], after: [qa({ conclusion: 'success', title: 'All 6 passed' })], text: 'QA passed: All 6 passed.' });
+  const finished = { login: 'octocat', sessions: [review({ reported: true, conclusion: 'APPROVE' })] };
+  assert.deepEqual(attention(finished, null, { first: true }).notify, []);
+  assert.deepEqual(attention(finished, attention(finished, null, { first: true }).now).notify, [], 'and once');
   // Someone else's pull request's run is not yours.
   const theirs = { login: 'octocat', sessions: [{ ...qa({ conclusion: 'success' }), startedBy: 'ana-dev' }] };
   assert.deepEqual(attention(theirs, attention({ ...theirs, sessions: [{ ...qa(), startedBy: 'ana-dev' }] }, null, { first: true }).now).notify, []);

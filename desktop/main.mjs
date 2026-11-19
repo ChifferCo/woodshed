@@ -203,17 +203,23 @@ const signInHere = (next) => new URL(`${signInPaths[0].replace(/^\//, '')}?next=
 // `inWindow`: the address the page was going to, for a console that cannot hand the sign-in back.
 async function signInInBrowser(next, inWindow) {
   const base = consoleUrl;
+  // Where the window was when the person pressed: a slow answer must not take it from wherever they went since (Change
+  // console…, another page).
+  const from = mainWindow?.webContents.getURL();
   const ready = await desktopSignInReady();
-  // Change console… while the console was asked: this sign-in was for the other one.
-  if (base !== consoleUrl) return;
-  if (!ready) {
-    console.log('woodshed-desktop: the console signs in inside the window');
-    mainWindow?.loadURL(inWindow);
+  if (base !== consoleUrl || !mainWindow || mainWindow.webContents.getURL() !== from) {
+    console.log('woodshed-desktop: the window moved on while the console was asked, sign-in not started');
     return;
   }
-  const { challenge } = pending.begin(next, consoleUrl);
-  shell.openExternal(browserUrl(consoleUrl, { challenge, next }));
-  mainWindow?.loadFile(path.join(here, 'signin.html'));
+  if (!ready) {
+    console.log('woodshed-desktop: the console signs in inside the window');
+    mainWindow.loadURL(inWindow);
+    return;
+  }
+  // Open the browser again reuses the sign-in already started, so a code from either tab is claimed with its verifier.
+  const started = pending.current(base) ?? pending.begin(next, base);
+  shell.openExternal(browserUrl(base, { challenge: started.challenge, next: started.next }));
+  mainWindow.loadFile(path.join(here, 'signin.html'));
 }
 
 async function finishSignIn(link) {
@@ -260,7 +266,7 @@ function fromSignInPage(event) {
 // The waiting page's two buttons: the browser again, or the window after all.
 ipcMain.handle('signin:browser', (event) => {
   if (!fromSignInPage(event) || !consoleUrl) return;
-  const { next } = pending.waiting() ? pending.take() : { next: '/' };
+  const next = pending.current(consoleUrl)?.next ?? '/';
   signInInBrowser(next, signInHere(next));
 });
 ipcMain.handle('signin:here', (event) => {
