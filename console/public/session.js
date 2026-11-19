@@ -146,6 +146,9 @@
     refresh();
   }
   window.addEventListener('popstate', moved);
+  // Leaving the shell altogether (My settings, another page of the console, a reload, closing the browser tab) leaves the
+  // session on its tab too. After a sign-out or an account change nothing is written (W.signingOut).
+  window.addEventListener('pagehide', () => rememberLeaving());
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
   // click or a link to anywhere else is the browser's.
   document.addEventListener('click', (e) => {
