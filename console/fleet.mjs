@@ -638,7 +638,10 @@ export function createFleet({
         // One statusd will never take (too long, not text) would hold every message behind it: it goes, said so.
         if (err?.status === 400) {
           console.warn('fleet: held message dropped, the session refuses it', { id: session.id, chars: text.length, message: firstLine(err) });
-          update(session, { pendingMessages: withoutFirst(session.pendingMessages, held) });
+          update(session, {
+            pendingMessages: withoutFirst(session.pendingMessages, held),
+            ...(messageId && { refusedIds: [...(session.refusedIds ?? []), messageId].slice(-20) }),
+          });
           continue;
         }
         // A send with no answer in time may have gone in: not sent again, and the page told so, by its id, rather than

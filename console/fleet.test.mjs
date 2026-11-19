@@ -3332,7 +3332,7 @@ test('a message held while another goes in stays, and one the session refuses fo
   statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
   await fleet.tick();
   fail.sendBusy = true;
-  await fleet.send(session, 'too long');
+  await fleet.send(session, 'too long', { id: 'page-id-0400' });
   await fleet.send(session, 'first');
   fail.sendBusy = false;
   // statusd refuses the first for good (over its length), and takes 'first' slowly: 'late' comes in meanwhile.
@@ -3347,6 +3347,7 @@ test('a message held while another goes in stays, and one the session refuses fo
   for (let i = 0; i < 50 && !release; i++) await new Promise((r) => setImmediate(r));
   assert.ok(release, 'first is on its way');
   assert.deepEqual(session.pendingMessages, ['first'], 'the one the session refuses for good is dropped, not held for ever');
+  assert.deepEqual(session.refusedIds, ['page-id-0400'], 'and the page told, by its id');
   assert.equal(await fleet.send(session, 'late'), 'queued', 'behind the one going in');
   release();
   await ticking;

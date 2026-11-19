@@ -398,6 +398,24 @@ test('a held message is never settled by the same words in the record: the conso
   assert.equal(chat.stillPending([a], sentToo, now + 61_000).length, 0, 'once sent, the record settles it');
 });
 
+test('a held message no longer listed on two reads went, though deliveredIds no longer names it; listed again, it is held', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now, state: 'held' };
+  chat.reconcile([a], { heldIds: ['aaaaaaaa-1'] }, now);
+  const read = { heldIds: [], deliveredIds: [] };
+  chat.reconcile([a], read, now + 1000);
+  chat.reconcile([a], read, now + 2000);
+  assert.equal(a.state, 'held', 'one read, seen twice');
+  chat.reconcile([a], { heldIds: [], deliveredIds: [] }, now + 3000);
+  assert.equal(a.state, 'sent', 'gone from the console\'s list on two reads: it went');
+  chat.reconcile([a], { heldIds: ['aaaaaaaa-1'] }, now + 4000);
+  assert.equal(a.state, 'held', 'a late read that lists it brings it back');
+  const old = { id: 'bbbbbbbb-2', text: 'x', sentAt: now, state: 'held' };
+  chat.reconcile([old], {}, now);
+  chat.reconcile([old], {}, now + 1000);
+  assert.equal(old.state, 'held', 'a console that sends no heldIds says nothing either way');
+});
+
 test('a held bubble the session could not take safely says it was not sent, and goes in time', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'yes do it', sentAt: now - 60_000, state: 'held' };

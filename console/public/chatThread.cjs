@@ -519,17 +519,22 @@
     let changed = false;
     const left = [];
     for (const p of pending) {
-      // An answer lost on the way, for a message the console holds: held, then, and waiting for its turn.
-      if (p.state === 'unconfirmed' && p.id && heldIds.includes(p.id)) {
+      const listed = Boolean(p.id) && heldIds.includes(p.id);
+      // An answer lost on the way, or a read that came late, for a message the console holds: held, then, and waiting
+      // for its turn.
+      if (listed && (p.state === 'unconfirmed' || p.state === 'sent')) {
         p.state = 'held';
+        delete p.deliveredAt;
         changed = true;
-      } else if (p.state === 'unconfirmed' && p.id && p.lastRead !== session) {
+      }
+      if (listed) p.unlistedReads = 0;
+      else if (waiting(p) && p.id && session.heldIds && p.lastRead !== session) {
         // Not held, on a read of the session (each a new object): the first may have been asked for before the console
         // took the send, the second was asked for after the first arrived, so after it. Not held then: sent, or never
-        // arrived; the record settles it, or ten minutes do.
+        // arrived, whether or not `deliveredIds` (the last 20) still names it; the record settles it, or ten minutes do.
         p.lastRead = session;
         p.unlistedReads = (p.unlistedReads ?? 0) + 1;
-        if (p.unlistedReads >= 2 && ![deliveredIds, unknownIds, refusedIds].some((ids) => ids.includes(p.id))) {
+        if (p.unlistedReads >= 2 && ![deliveredIds, unknownIds, refusedIds].some((ids) => ids.includes(p.id)) && leftInBox?.id !== p.id) {
           p.state = 'sent';
           p.deliveredAt = now;
           changed = true;

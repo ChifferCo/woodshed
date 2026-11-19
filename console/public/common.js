@@ -770,7 +770,10 @@
 
   function setupAppToast(sent, s) {
     const agent = agentOf(s);
-    return sent === 'queued' ? `${agent} will be asked to set up the app when its turn ends` : `Asked ${agent} to set up the app`;
+    if (sent === 'queued') return `${agent} will be asked to set up the app when its turn ends`;
+    if (sent === 'in-box') return `The ask went into ${agent}'s box but was not sent: a prompt came up. Answer it, then send it from the TUI tab`;
+    if (sent === 'unknown') return `No answer from the session: ${agent} may have been asked. Check its screen before asking again`;
+    return `Asked ${agent} to set up the app`;
   }
 
   // Set up app says what it does before it asks the agent: the button's name alone did not, and a phone shows no title.
