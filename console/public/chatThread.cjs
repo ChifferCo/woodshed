@@ -288,8 +288,12 @@
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
       if (p.state !== 'held' && p.state !== 'in-box' && now - p.sentAt > PENDING_MS) return false;
       const want = squash(p.text);
-      const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user'
-        && (!e.at || Date.parse(e.at) >= p.sentAt - 30_000) && squash(e.text).startsWith(want.slice(0, 200)));
+      // After the last message of the person's the record held when this one was sent (`after`, the session's own
+      // clock): an earlier prompt that starts the same is never taken for it. A message from before `after` was kept
+      // falls back on the page's clock, with room for the two clocks to differ.
+      const later = (e) => (p.after !== undefined ? !!e.at && (p.after === null || Date.parse(e.at) > Date.parse(p.after))
+        : !e.at || Date.parse(e.at) >= p.sentAt - 30_000);
+      const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user' && later(e) && squash(e.text).startsWith(want.slice(0, 200)));
       if (found === -1) return true;
       used.add(found);
       return false;
@@ -463,5 +467,13 @@
     });
   }
 
-  return { inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  /** @returns {string|null}  when the last message of the person's in the record was written, by the session's clock */
+  function lastUserAt(entries) {
+    for (let i = (entries?.length ?? 0) - 1; i >= 0; i--) {
+      if (entries[i].role === 'user' && entries[i].at) return entries[i].at;
+    }
+    return null;
+  }
+
+  return { lastUserAt, inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

@@ -268,3 +268,16 @@ test('a message of the page left in the agent\'s box says so, and is let go once
   assert.deepEqual(chat.stillPending(marked, [], t0 + 60 * 60_000).map((p) => p.text), ['held one'], 'not let go after ten minutes');
   assert.deepEqual(chat.inBox(marked, null).map((p) => p.text), ['first'], 'the box empty again: let go');
 });
+
+test('a queued message is not taken as arrived by an earlier prompt that starts the same', () => {
+  // The review's case: "Run the tests" was sent a moment ago, and "Run the tests again" is queued behind a busy turn.
+  const entries = [{ role: 'user', text: 'Run the tests', at: '2026-11-19T12:00:00.000Z' }, { role: 'assistant', text: 'ok', at: '2026-11-19T12:00:03.000Z' }];
+  const sentAt = Date.parse('2026-11-19T12:00:05.000Z');
+  const queued = { text: 'Run the tests', sentAt, state: 'held', after: chat.lastUserAt(entries) };
+  assert.deepEqual(chat.stillPending([queued], entries, sentAt + 1000).length, 1, 'the earlier one is not it');
+  const arrived = [...entries, { role: 'user', text: 'Run the tests', at: '2026-11-19T12:01:00.000Z' }];
+  assert.equal(chat.stillPending([queued], arrived, sentAt + 60_000).length, 0, 'the one after it is');
+  // A first message, with nothing of the person's in the record yet.
+  const first = { text: 'hello', sentAt, state: 'sent', after: null };
+  assert.equal(chat.stillPending([first], [{ role: 'user', text: 'hello', at: '2026-11-19T11:59:59.000Z' }], sentAt).length, 0, 'no earlier one: any is it, whatever the clocks say');
+});

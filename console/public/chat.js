@@ -257,7 +257,9 @@
       const text = [field.value.trim(), ...paths].filter(Boolean).join('\n');
       if (!text) return;
       sending.add(id);
-      const sent = { text, sentAt: Date.now(), state: 'sending' };
+      // `after`: the last message of the person's in the record now, by the session's clock; only a later one can be
+      // this one arriving. Unknown while the record was never read.
+      const sent = { text, sentAt: Date.now(), state: 'sending', ...(record?.id === id && { after: T.lastUserAt(record.entries) }) };
       pending.set(id, [...pendingOf(id), sent]);
       field.value = '';
       keepDraft(id, '');
