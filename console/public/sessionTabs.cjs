@@ -78,6 +78,19 @@
   }
 
   /**
+   * The tab to remember as a session is left (a move to another page, Back or Forward), or null for none: the one it
+   * shows, or a held one. A session never drawn, or a review-only one still to land on its Review, was left on no
+   * tab anyone picked. The memory keeps only these and clicks, never a ?tab an address arrived with, so a tab carried
+   * in from elsewhere (the way back through sign-in, perhaps someone else's) is this login's only once they leave on it.
+   * @param {{ tab: string, held: string|null, reviewPending: boolean, drawn: boolean }} at
+   * @returns {string|null}
+   */
+  function leaving(at) {
+    const left = leftOn(at);
+    return left === LANDS_ON_REVIEW ? null : left;
+  }
+
+  /**
    * A history entry's tab is kept with the login that drew it (its state survives a reload and an account change in
    * the same browser tab), and read back only by that login: another account's Back reaches an entry that asks for
    * nothing, so it gets that account's own memory.
@@ -185,5 +198,5 @@
   }
 
   return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
-    otherLogin, lookups, memory };
+    leaving, otherLogin, lookups, memory };
 });

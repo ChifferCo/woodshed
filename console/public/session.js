@@ -53,7 +53,6 @@
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
-    if (id && asked) tabMemory.remember(id, tab);
     if (id && !params.get('tab') && tab !== 'agent') params.set('tab', tab);
     const query = params.toString();
     const address = `${pathname}${query ? `?${query}` : ''}`;
@@ -76,6 +75,15 @@
     if (SessionTabs.entryTab(window.history.state, pageLogin) !== left) {
       window.history.replaceState(SessionTabs.withEntryTab(window.history.state, left, pageLogin), '');
     }
+  }
+  // The memory keeps the tab a session is left on (a click on a tab, a move to another page, Back or Forward), not the
+  // one an address asked for on arrival: a ?tab carried in from elsewhere (a link, the way back through sign-in, perhaps
+  // someone else's) shows, and becomes this login's only if they leave the session on it.
+  function rememberLeaving() {
+    const drawn = Boolean(id) && currentSession?.id === id;
+    const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
+    const left = SessionTabs.leaving({ tab, held: heldTab, reviewPending, drawn });
+    if (left) tabMemory.remember(id, left);
   }
   // The tab each session was last on, for this browser tab and the login signed in.
   const SessionTabs = window.WoodshedSessionTabs;
@@ -127,6 +135,7 @@
     moved();
   }
   function moved() {
+    rememberLeaving();
     readRoute();
     routeVersion++;
     routePending = true;

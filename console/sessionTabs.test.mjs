@@ -279,3 +279,21 @@ test("on another login's entry, only the ?tab it arrived with still asks", () =>
   assert.equal(tabs.linkedTab({ linkedTab: 'review', tab: 'diff' }, 'diff'), 'review');
   assert.equal(tabs.linkedTab({ tab: 'diff' }, 'diff'), null);
 });
+
+test('the memory takes the tab a session is left on, not one an address arrived with', () => {
+  const bobs = tabs.memory(storage(), 'bob');
+  bobs.remember('aaaa1111', 'diff');
+  // Bob comes back through sign-in to /s/aaaa1111?tab=review (Alice's tab, carried through the server's redirect).
+  // The page shows Review; arriving remembers nothing.
+  assert.equal(bobs.asked('aaaa1111', 'review', null), 'review');
+  assert.equal(bobs.asked('aaaa1111', null, null), 'diff', 'his own Diff still stands');
+  // He leaves the session while it shows Review: now it is his.
+  const left = tabs.leaving({ tab: 'review', held: null, reviewPending: false, drawn: true });
+  assert.equal(left, 'review');
+  bobs.remember('aaaa1111', left);
+  assert.equal(bobs.asked('aaaa1111', null, null), 'review');
+  // Left before it was drawn, or a review-only session still to land on Review: nothing to remember.
+  assert.equal(tabs.leaving({ tab: 'agent', held: null, reviewPending: false, drawn: false }), null);
+  assert.equal(tabs.leaving({ tab: 'agent', held: null, reviewPending: true, drawn: true }), null);
+  assert.equal(tabs.leaving({ tab: 'agent', held: 'diff', reviewPending: false, drawn: true }), 'diff', 'a held tab');
+});
