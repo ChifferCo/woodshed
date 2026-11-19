@@ -1,10 +1,10 @@
-# What is always High merge risk in Woodshed
+# Merge risk areas in Woodshed
 
-Read by `.github/workflows/review.yml` from the branch a pull request merges into, on top of the review's own list.
+Read from the branch the pull request merges into. Inspect these areas for the consequences in the shared rubric.
 
-- What a session can reach: the variables and tokens a session gets, `PER_SESSION_ENV`, the session image's network and
-  mounts.
-- The console's sign-in, and which person or project can see or start what.
-- The installer and anything that runs on an installation that is already up: upgrades, migrations of its stored
-  settings, cleanup that deletes sessions or their work.
-- Anything that pushes, merges or posts on a repository on someone's behalf.
+- Session variables, tokens, `PER_SESSION_ENV`, network and mounts: can a session reach secrets, another session or
+  the host beyond its intended access?
+- Console sign-in and authorization: can someone see or start sessions in another person's account or project?
+- Installers, upgrades and stored settings: could an existing installation stop working or lose settings, sessions
+  or session work? Check mixed versions and rollback.
+- GitHub writes: can a change push, merge or post on the wrong repository or person's behalf, or bypass a required check?

@@ -53,7 +53,7 @@ const GITHUB_TRIGGERS = new Set(['label', 'comment', 'qa', 'review']);
 // The merge risk labels' colours, the Actions review's.
 const MERGE_RISK_COLORS = { Low: '0e8a16', Medium: 'fbca04', High: 'd93f0b' };
 // How the tiers are decided, under every rating, so a reader can see which rule a change hit.
-const MERGE_RISK_TIERS = '**High** when it touches any of: the repo\'s own risk areas, who can see or do what, stored data, billing or secrets, systems outside the repo, or what agents and CI follow. **Low** only when it touches none of those, changes under 5 files and 200 lines of code (tests and docs not counted), touches no API route, stored field, prompt or CI workflow, and is only text, styles, tests that add or strengthen checks, docs or a small tested fix. **Medium** is everything between.';
+const MERGE_RISK_TIERS = '**High** when the change creates a plausible path to serious harm. **Low** for small, contained changes or verified infrastructure drift corrections. **Medium** for everything between, including bounded operational changes.';
 
 // GraphQL spells a bot's login without the `[bot]` the REST API and the project file carry.
 function sameAccount(a, b) {

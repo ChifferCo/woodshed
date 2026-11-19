@@ -36,24 +36,28 @@ careful, and fair.
      behaviour.
    - COMMENT: only when you could not review it (for example the diff or the context did not load).
 7. Rate the merge risk: how likely the change is to hurt someone if it merges with nobody else reading it.
-   When two tiers both seem to fit, pick the higher. The tier never changes the verdict: a High change
-   that is correct is still APPROVE.
-   - HIGH, any one of: something `{{DIR}}/risk-areas.md` lists, when it exists; a change to who can see or do
-     what (sign-in, permissions, sharing, which user's or organization's data a query reads); a database
-     migration, or stored data rewritten or deleted; billing, secrets or environment variables; messages
-     sent or writes to a system outside this repository; instructions coding agents or CI follow
-     (anything under `.github/` or `.claude/`, any `CLAUDE.md`, the rule files from step 2).
-   - LOW, all of: nothing on the HIGH list; fewer than 5 files and under 200 changed lines, not counting
-     tests and docs for people; only text, styles or layout, only tests that add or strengthen checks, only
-     docs for people, or a small fix with a test inside code that one feature uses; no API route, stored
-     field, prompt or CI workflow touched.
-   - MEDIUM: everything else. A change that deletes, skips or loosens a test, or raises a timeout or retry
-     count, is at least MEDIUM.
-   Then say which rule decided it, in words someone who has not read the diff understands: for HIGH, the
-   item on the HIGH list it hits; for MEDIUM, the LOW condition it misses, naming what in the change misses
-   it ("it changes an API reply", "it removes a confirm step from admin settings"); for LOW, why it is small
-   and contained. When a change misses LOW for more than one reason, lead with what it does over how big
-   it is: size is the reason only when nothing else is.
+   Assess what the merge can do in production, including during rollout. Read `{{DIR}}/risk-areas.md` when it exists
+   for repository-specific failure modes and areas to inspect. A path match, change type or large diff alone does
+   not make a change High. When two tiers both seem to fit, pick the higher. The tier never changes the verdict:
+   a High change that is correct is still APPROVE.
+   - HIGH: the diff creates a plausible path to serious harm, such as unauthorized access or disclosure, loss or
+     corruption of durable user data, incorrect charges, a bypass of a required safeguard, consequential writes to
+     the wrong destination, or widespread or hard-to-recover disruption. For a migration, check existing data,
+     blocking locks and mixed-version rollout. For deletion, check what can be lost, who owns it and whether active
+     or resumable resources can be included. Apply the same consequence test to infrastructure, external writes,
+     environment variables, and agent or CI instructions.
+   - LOW: no High trigger, fewer than 5 files and under 200 changed lines (excluding tests and docs for people), and
+     either a contained change that touches no API route, stored field, prompt or CI workflow and is limited to text,
+     styles or layout, stronger tests, docs for people, or a small tested fix within one feature, or an infrastructure
+     drift correction with a plan for the affected environment showing no action on the affected resources and no
+     runtime behavior change from the correction.
+   - MEDIUM: everything else, including bounded operational changes, rollout-compatible migrations that preserve
+     existing data, and cleanup of disposable resources that rechecks eligibility at execution time, unless a High
+     consequence applies. Deleting, skipping or loosening a test, or raising a timeout or retry count, is at least
+     Medium.
+   Give a plain-language reason. For High, say what can go wrong, who is affected and what in the diff makes it
+   plausible. For Medium, say what changed that makes the risk more than Low, leading with behavior over size.
+   For Low, say why the effect is contained or what verifies the drift correction.
 8. Write the full review to `{{DIR}}/review-comment.md` with the Write tool, before you finish, in this
    form. The console puts it on the pull request, in place of the last review; your final message is
    not posted, so a review you only write as a reply is lost.
