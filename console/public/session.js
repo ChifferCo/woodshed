@@ -49,10 +49,7 @@
     const dropped = Boolean(params.get('tab')) && !inAddress;
     if (inAddress) params.set('tab', inAddress);
     else params.delete('tab');
-    const fromEntry = SessionTabs.entryTab(state, pageLogin);
-    const asked = tabMemory.asked(id, inAddress, fromEntry);
-    // Only the memory's own tab is the memory's to correct when the session cannot show it (render's fallback).
-    askedFromMemory = Boolean(asked) && !inAddress && !fromEntry;
+    const asked = tabMemory.asked(id, inAddress, SessionTabs.entryTab(state, pageLogin));
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
@@ -100,7 +97,6 @@
   // A tab asked for that the session, as the list before this route's lookup has it, cannot show: tried again once the
   // lookup answers (render).
   let heldTab = null;
-  let askedFromMemory = false;
   // Set on each arrival at a page without a tab in its address: a review-only session then opens on its Review.
   let landOnReview = false;
   // The tabs that show a page of their own rather than a terminal: no key bar and no message box.
@@ -1835,7 +1831,8 @@
 
   function setTab(next) {
     // Agent picked while it already shows is a choice too when it stands in for another tab (sessionTabs.cjs, picks).
-    const picked = SessionTabs.picks({ tab, next, held: heldTab, landOnReview });
+    // So is the tab showing when the memory says another (a link opened it): the click makes it the one kept.
+    const picked = SessionTabs.picks({ tab, next, held: heldTab, landOnReview }) || tabMemory.asked(id, null, null) !== next;
     heldTab = null;
     if (!picked) return;
     tab = next;
@@ -1975,14 +1972,16 @@
     // snapshot's (starting, where it now runs), so the tab asked for is held and tried again; once the answer is in,
     // the fallback stands and the address and the remembered tab say Agent too.
     // A failed lookup leaves the list as it was, so only a successful one confirms it (routeConfirmed).
+    const wanted = heldTab && routeConfirmed ? heldTab : tab;
     const settled = SessionTabs.settle({ tab, held: heldTab, pending: !routeConfirmed, s, hasShell });
     ({ tab, held: heldTab } = settled);
     if (settled.fellBack) {
       const url = new URL(window.location.href);
       url.searchParams.delete('tab');
       markEntry(url);
-      // A link's tab the session cannot show leaves the memory as it was: nothing was picked.
-      if (askedFromMemory) tabMemory.remember(s.id, tab);
+      // The memory is corrected only when it is what the session cannot show: a link's tab leaves it as it was,
+      // and a remembered one is corrected however it was asked (the memory, or an entry stamped from it before a reload).
+      if (SessionTabs.correctsMemory(tabMemory.asked(s.id, null, null), wanted)) tabMemory.remember(s.id, tab);
     }
     stampEntry();
     if (hasShell && tab === 'terminal') shellPool.show(s);

@@ -297,3 +297,11 @@ test('the memory takes the tab a session is left on, not one an address arrived 
   assert.equal(tabs.leaving({ tab: 'agent', held: null, reviewPending: true, drawn: true }), null);
   assert.equal(tabs.leaving({ tab: 'agent', held: 'diff', reviewPending: false, drawn: true }), 'diff', 'a held tab');
 });
+
+test('a fallback corrects the memory only when the memory holds the tab that cannot show', () => {
+  // Diff remembered; reloaded before the lookup, so the entry asked Diff; the session turns out stopped.
+  assert.equal(tabs.correctsMemory('diff', 'diff'), true, 'Agent replaces the remembered Diff, so a fresh visit does not try it again');
+  // Review remembered; a link asked Diff on the stopped session: the memory keeps Review.
+  assert.equal(tabs.correctsMemory('review', 'diff'), false);
+  assert.equal(tabs.correctsMemory(null, 'diff'), false, 'nothing remembered, nothing to correct');
+});

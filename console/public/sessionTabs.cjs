@@ -91,6 +91,17 @@
   }
 
   /**
+   * Whether a fallback to Agent corrects the memory: only when the memory holds the very tab the session cannot show.
+   * A link's tab that falls back leaves another remembered tab alone; a remembered one falls back however it was asked
+   * (from the memory, or an entry stamped from it before a reload).
+   * @param {string|null} remembered  the memory's tab for the session
+   * @param {string} unavailable  the tab asked for that the session cannot show
+   */
+  function correctsMemory(remembered, unavailable) {
+    return Boolean(remembered) && remembered === unavailable;
+  }
+
+  /**
    * A history entry's tab is kept with the login that drew it (its state survives a reload and an account change in
    * the same browser tab), and read back only by that login: another account's Back reaches an entry that asks for
    * nothing, so it gets that account's own memory.
@@ -198,5 +209,5 @@
   }
 
   return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
-    leaving, otherLogin, lookups, memory };
+    leaving, correctsMemory, otherLogin, lookups, memory };
 });
