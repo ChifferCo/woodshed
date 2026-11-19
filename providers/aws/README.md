@@ -270,8 +270,11 @@ sessions survive, and the association sets up its stack.
 
 ### Production access
 
-With `prod_mcp` set (`variables.tf`), a My Woodshed session of a listed person and repo can use the installation's
-woodshed-prod-mcp through the console (`../../docs/reference.md`, "Production access"). A Fargate task keeps the
+With `prod_mcp` set (`variables.tf`), admins can add production MCP servers on Console settings, and a My Woodshed
+session of a person and repo one lists can use it through the console (`../../docs/reference.md`, "Production
+access"). `prod_mcp.url`, with `people` and `repos`, also names one server from here (`woodshed-prod`, such as
+woodshed-prod-mcp); `prod_mcp = {}` makes the network alone. Ordinary MCP servers need none of this: the console's role
+keeps their headers under `mcp-servers/*`, and its signing key is made whatever `prod_mcp` says. A Fargate task keeps the
 security groups it started with, and none can be swapped on its network interface, so a session that may use production
 starts on a guarded network of its own (`terraform/prodMcp.tf`), before it is ever tainted, rather than being moved or
 started again when it is:
@@ -286,7 +289,7 @@ started again when it is:
 
 A proxy for every session was the other way, and would have changed every session's network for a feature most do not
 use. What it costs: the four interface endpoints, about $0.01 an hour each per zone (two zones), around $60 a month,
-and their traffic. Only the console reaches woodshed-prod-mcp: the customer allows the base box's Elastic IP
+and their traffic. Only the console reaches an MCP server: the customer allows the base box's Elastic IP
 (`terraform output base_box_public_ip`) and nothing else.
 
 Not enforced here: the VPC's DNS resolver, which no security group filters, answers a guarded session as any other, so

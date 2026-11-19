@@ -19,8 +19,8 @@ const PER_SESSION_ENV = [
   'SESSION_ID', 'SESSION_TOKEN', 'TERMINAL_TOKEN', 'STARTED_BY', 'SESSION_URL', 'ISSUE', 'PR', 'BRANCH', 'PROMPT',
   'SESSION_KIND', 'AGENT', 'MODEL', 'EFFORT', 'PERMISSION_MODE', 'RESUME_SESSION', 'ATTACHMENTS', 'REVIEW_ONLY', 'SESSION_MODE', 'ASKED_BY', 'QA_BASE', 'REVIEW_BASE', 'REVIEW_AUTHOR', 'REVIEW_AGENTS', 'REVIEW_CODEX_AUTH', 'REVIEW_CODEX_ACCOUNT', 'PROJECT_REPO',
   'SESSION_APP_DOMAIN',
-  // Production access (console/prodMcp.mjs): whether the session has the MCP server, is tainted, and its egress proxy.
-  'WOODSHED_PROD_MCP', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY',
+  // MCP servers and production access (console/mcpServers.mjs): the servers it has, whether it may be tainted, is, and its egress proxy.
+  'WOODSHED_PROD_MCP', 'WOODSHED_MCP_SERVERS', 'WOODSHED_TAINTED', 'WOODSHED_EGRESS_PROXY',
 ];
 const CONTAINER = 'session';
 const IP_WAIT_MS = 90_000;

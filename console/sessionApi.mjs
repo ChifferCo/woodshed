@@ -40,9 +40,10 @@
 //                        refused it
 //   POST /qa-poster      a PNG body  ->  {"saved": true}: a still from the first video, which the comment shows
 //                        (fleet.qaPoster). The same refusals, past MAX_QA_POSTER_BYTES and for anything but PNG
-//   *    /prod-mcp[/...] a private session's calls to the installation's woodshed-prod-mcp, relayed with a token the
-//                        console signs (prodMcp.mjs). The first one taints the session: it is locked down before the
-//                        call goes on, or refused (503) and left untainted when the lockdown fails
+//   *    /mcp/<name>[/...] a session's calls to one of the console's MCP servers (mcpServers.mjs), relayed with what
+//                        the server takes, which the session never holds (mcpRelay.mjs); /prod-mcp is the environment's
+//                        woodshed-prod. A production server's first call taints the session: it is locked down before
+//                        the call goes on, or refused (503) and left untainted when the lockdown fails
 //   POST /egress         ->  {"proxy", "ca"}: a tainted session's way out, the console's egress proxy (egressProxy.mjs),
 //                        and the certificate authority it shows for GitHub. 404 for a session that is not tainted
 //
@@ -68,7 +69,7 @@
 import { timingSafeEqual } from 'node:crypto';
 
 import { isAnthropicPath, proxyCredential } from './anthropicProxy.mjs';
-import { isProdMcpPath } from './prodMcp.mjs';
+import { isMcpPath } from './mcpRelay.mjs';
 import { bearerOf, isOpenAiPath } from './openaiProxy.mjs';
 import { MAX_ANSWER_CHARS } from './asks.mjs';
 import { MAX_SETTINGS_BYTES, parseSyncBody } from './claudeSettings.mjs';
@@ -113,7 +114,7 @@ export function sessionTokenOf(req) {
   const pathname = new URL(req.url || '/', 'http://console').pathname;
   if (isAnthropicPath(pathname)) return proxyCredential(req.headers)?.token ?? null;
   // The MCP relay takes the session token as a bearer, as every other route does.
-  if (isProdMcpPath(pathname)) return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
+  if (isMcpPath(pathname)) return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
   if (isOpenAiPath(pathname)) return bearerOf(req.headers);
   return /^Bearer (\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1] ?? null;
 }
@@ -145,9 +146,9 @@ export function sessionForToken(given, sessions) {
  *          githubAccess?: ((project: string) => Promise<'full'|'repo'|null>)|null,
  *          repoSettings?: {forSession: (session: object) => Promise<object|null>,
  *                          filesForSession: (session: object) => Promise<Record<string, string>>}|null,
- *          prodMcp?: ReturnType<typeof import('./prodMcp.mjs').createProdMcpRelay>|null,
+ *          mcpRelay?: ReturnType<typeof import('./mcpRelay.mjs').createMcpRelay>|null,
  *          egress?: {sessionUrl: string|null, caPem: () => Promise<string>}|null}} opts
- *   `prodMcp` relays production MCP calls, and `egress` is the proxy a tainted session leaves through
+ *   `mcpRelay` relays sessions' calls to the console's MCP servers, and `egress` is the proxy a tainted session leaves through
   *   `githubAccess` reads a project's `githubAccess` (null when its file could not be read)
  *   `askTokens` mints an ask session's read-only token; `asks` posts its answers
  *   `tokensFor` gives the token sources of the project a session runs on, in place of `tokens` and `askTokens`
@@ -155,7 +156,7 @@ export function sessionForToken(given, sessions) {
  */
 export function createSessionApi({
   fleet, tokens, userSettings = null, githubUser = null, homes = null, databases = null, claudeSettings = null, anthropic = null, openai = null,
-  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, prodMcp = null, egress = null,
+  attachments = null, askTokens = null, asks = null, tokensFor = null, githubAccess = null, repoSettings = null, mcpRelay = null, egress = null,
 }) {
   // The access last logged for each session: a session asks for a token on every git and gh call, so the decision is
   // logged when it is first made and when it changes, not each time. Ended sessions are dropped once it grows.
@@ -191,12 +192,12 @@ export function createSessionApi({
       return anthropic.handle(req, res, sessionForToken(credential?.token, fleet.sessions()), credential?.via ?? null);
     }
     if (openai?.isProxyPath(pathname)) return openai.handle(req, res, sessionForToken(bearerOf(req.headers), fleet.sessions()));
-    if (isProdMcpPath(pathname)) {
-      if (!prodMcp) {
+    if (isMcpPath(pathname)) {
+      if (!mcpRelay) {
         req.resume();
-        return reply(res, 404, { error: 'this console gives no production access' });
+        return reply(res, 404, { error: 'this console relays no MCP servers' });
       }
-      return prodMcp.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
+      return mcpRelay.handle(req, res, sessionForAuthorization(req.headers.authorization, fleet.sessions()));
     }
     const routes = ['/codex-auth', '/github-token', '/settings', '/repo-settings', '/home', '/home/restore', '/progress', '/claude-settings', '/attachments', '/answer', '/qa-report', '/qa-video', '/qa-poster', '/review-report', '/egress'];
     if (req.method !== 'POST' || !routes.includes(pathname)) return reply(res, 404, { error: 'not found' });

@@ -2,11 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { createFleet } from './fleet.mjs';
+import { createMcpServers, mcpSettings } from './mcpServers.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
 
-const PROD = { url: 'https://prod-mcp.test/mcp', people: new Set(['joel']), repos: new Set(['o/r']), issuer: 'https://console.test', removeAfterMs: 24 * 3_600_000 };
+const PROD = mcpSettings({ WOODSHED_PROD_MCP_URL: 'https://prod-mcp.test/mcp', WOODSHED_PROD_MCP_PEOPLE: 'joel', WOODSHED_PROD_MCP_REPOS: 'o/r' }, 'https://console.test');
 
-function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, statusPort: 12, shellPort: 13, locked: true }), docker = null, homes = null, prodMcp = PROD } = {}) {
+function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, statusPort: 12, shellPort: 13, locked: true }), docker = null, homes = null, settings = PROD, servers = [] } = {}) {
   let clock = Date.parse('2026-11-19T10:00:00.000Z');
   const calls = { lockDowns: [], statusd: [], started: [], cleared: [], homesRemoved: [] };
   const launcher = {
@@ -29,8 +30,10 @@ function setup({ lockDown = async () => ({ host: '127.0.0.1', termPort: 11, stat
   const store = { state: { sessions: [], github: null }, saves: 0, save() { this.saves += 1; } };
   const appShares = { clearSession: (id) => calls.cleared.push(id) };
   const egress = { sessionUrl: 'http://host.docker.internal:7693', caPem: async () => '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----' };
+  if (servers.length) store.state.mcpServers = servers;
+  const mcpServers = createMcpServers({ store, settings, lockdown: () => ({ available: true }) });
   const fleet = createFleet({
-    config, store, launcher, github: {}, now: () => clock, homes, prodMcp, appShares, egress,
+    config, store, launcher, github: {}, now: () => clock, homes, mcpServers, appShares, egress,
     statusd: async (session, method, path, opts) => {
       calls.statusd.push({ id: session.id, method, path, body: opts?.body ?? null });
       return path === '/status' ? { state: 'done' } : { tainted: true };
@@ -62,6 +65,31 @@ test('an eligible private session is handed the MCP server and nothing else of p
   assert.equal(joel.WOODSHED_TAINTED, undefined);
   assert.equal(joel.WOODSHED_EGRESS_PROXY, undefined, 'a launcher that can lock a running session down needs no proxy before the taint');
   for (const env of [ana, shared, codex]) assert.equal(env.WOODSHED_PROD_MCP, undefined);
+  assert.deepEqual(JSON.parse(joel.WOODSHED_MCP_SERVERS), [{ name: 'woodshed-prod', production: true }]);
+  for (const env of [ana, shared, codex]) assert.equal(env.WOODSHED_MCP_SERVERS, undefined);
+});
+
+test('ordinary servers go to the sessions they name, a shared session only when they say so, and never to a tainted one', async (t) => {
+  quietly(t);
+  const servers = [
+    { name: 'docs', url: 'https://docs.test/mcp', production: false, shared: true, people: '*', repos: '*', auth: 'none' },
+    { name: 'tracker', url: 'https://tracker.test/mcp', production: false, shared: false, people: ['ana'], repos: ['o/r'], auth: 'oidc', audience: 'tracker' },
+  ];
+  const { fleet, calls } = setup({ servers });
+  await runningPrivate(fleet);
+  await runningPrivate(fleet, { startedBy: 'ana', owner: 'ana' });
+  await fleet.createSession({ kind: 'issue', number: 7, title: 'i', startedBy: 'joel', trigger: 'label', prompt: 'p' });
+  await fleet.createSession({ kind: 'pr', number: 9, title: 'QA', startedBy: 'joel', trigger: 'qa', branch: 'a/c', qa: { base: 'main', sha: 'a'.repeat(40), heading: '## QA', commentId: null } });
+  const [joel, ana, shared, qa] = calls.started.map((c) => JSON.parse(c.env.WOODSHED_MCP_SERVERS ?? '[]').map((s) => s.name));
+  assert.deepEqual(joel, ['woodshed-prod', 'docs']);
+  assert.deepEqual(ana, ['docs', 'tracker'], 'ana is not allowed production, and is the tracker\'s');
+  assert.deepEqual(shared, ['docs']);
+  assert.deepEqual(qa, [], 'a QA run executes the pull request\'s code: it gets none');
+  const session = fleet.sessions().find((s) => s.owner === 'joel');
+  await fleet.taint(session);
+  Object.assign(session, { status: 'stopped', stoppedAt: '2026-11-19T11:00:00.000Z' });
+  await fleet.resumePrivate({ owner: 'joel', id: session.id });
+  assert.deepEqual(JSON.parse(calls.started.at(-1).env.WOODSHED_MCP_SERVERS), [{ name: 'woodshed-prod', production: true }]);
 });
 
 test('taint locks the session down before it marks it, ends its shares, tells its statusd, and is one-way', async (t) => {

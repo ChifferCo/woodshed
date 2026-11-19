@@ -148,8 +148,8 @@ data "aws_iam_policy_document" "base_box" {
         aws_secretsmanager_secret.github_app_client_secret.arn, aws_secretsmanager_secret.github_reviewer_app_key.arn,
         aws_secretsmanager_secret.slack_bot_token.arn,
         aws_secretsmanager_secret.slack_signing.arn,
+        aws_secretsmanager_secret.oidc_signing_key.arn,
       ],
-      aws_secretsmanager_secret.oidc_signing_key[*].arn,
     )
   }
 
@@ -157,7 +157,8 @@ data "aws_iam_policy_document" "base_box" {
   # (console/userSettings.mjs). Only a private session of the same person is ever handed one. And each shared
   # session's database password (console/databases.mjs), handed to that session alone and deleted with its databases.
   # And each repo's settings, the installation's env file values and instructions (console/repoSettings.mjs), handed to
-  # the sessions on that repo and deleted with it; a person's own for a repo are under users/.
+  # the sessions on that repo and deleted with it; a person's own for a repo are under users/. And the header each MCP
+  # server on Console settings may have the relay add (console/mcpServers.mjs), never handed to a session.
   statement {
     sid = "PeoplesAndSessionsOwnSecrets"
     actions = [
@@ -168,6 +169,7 @@ data "aws_iam_policy_document" "base_box" {
       "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/users/*",
       "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/sessions/*",
       "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/repos/*",
+      "arn:aws:secretsmanager:${var.region}:${local.account_id}:secret:${local.p}/mcp-servers/*",
     ]
   }
 

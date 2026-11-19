@@ -138,10 +138,12 @@ services:
     environment:
       - AWS_REGION=${region}
 %{ if prod_mcp != null ~}
-      # Production debugging (the prod_mcp variable, console/prodMcp.mjs): new settings, under their new names alone.
+      # Production debugging (the prod_mcp variable, console/mcpServers.mjs): new settings, under their new names alone.
+%{ if prod_mcp.url != null ~}
       - ${jsonencode("WOODSHED_PROD_MCP_URL=${replace(prod_mcp.url, "$", "$$")}")}
       - ${jsonencode("WOODSHED_PROD_MCP_PEOPLE=${join(",", prod_mcp.people)}")}
       - ${jsonencode("WOODSHED_PROD_MCP_REPOS=${join(",", prod_mcp.repos)}")}
+%{ endif ~}
       - WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS=${prod_mcp.remove_after_hours}
       - WOODSHED_EGRESS_PROXY_URL=http://${private_ip}:7693
       - WOODSHED_ECS_GUARDED_SUBNETS=${guarded_subnets}

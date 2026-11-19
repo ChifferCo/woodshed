@@ -12,7 +12,7 @@
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
 //                     (~/.claude and ~/.claude.json) to the console, for the session's next run
-//   POST /taint       {"proxy", "ca", "message"}: the console locked this session down (console/prodMcp.mjs). Every tool
+//   POST /taint       {"proxy", "ca", "message"}: the console locked this session down (console/mcpRelay.mjs). Every tool
 //                     is pointed at the console's egress proxy, the settings sync stops, the rules gain tainted.md, and
 //                     claude reopens its conversation on the console's Anthropic proxy once its turn ends, with
 //                     `message` as what it reads first (taint.mjs)

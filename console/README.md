@@ -687,27 +687,63 @@ that it fetches no managed settings or organization policy with a custom base
 URL (`/status` says so). The docker launcher's sessions, which get the team key
 in their env file, use it directly.
 
+### MCP servers
+
+Admins give sessions' claude MCP servers on Console settings' **MCP servers** card, or through its API
+(`/api/console-settings/mcp-servers`, `server.mjs`'s list), which a hosting program calls as an owner behind its proxy's
+identity header. Every one is reached through the console's relay (`mcpRelay.mjs`), `/mcp/<name>` on the session API
+with the session's own token as its bearer, so a session never holds what a server takes to let it in. The list is
+`mcpServers` in `state.json`, or an embedding program's (`mcpServers` below, "Embedding the console"), beside the one
+the environment names (`woodshed-prod`, from `WOODSHED_PROD_MCP_URL`), which is changed only where it is set. Each
+server (`mcpServers.mjs`, `checkServer`):
+
+- `name` (what claude calls it), `url` (its Streamable HTTP endpoint, which the console calls), `people` and `repos`
+  (GitHub logins and `owner/name`, or `*`).
+- `production`: one that reads production data. Only My Woodshed sessions running claude get it, turned off until
+  their person turns it on in `/mcp`, and its first call taints the session (below). It can be added only where the
+  console can lock a session down: the docker launcher, or AWS with `prod_mcp`'s guarded network, and a session API and
+  egress proxy address. Otherwise the page and the API say why.
+- `shared` (ordinary ones only): shared sessions and questions from Slack get it too. A QA run or a review never gets
+  any, since it runs a pull request's code, nor does a Codex session yet.
+- `auth`, what the relay adds to each call: `oidc`, a five-minute token the console signs for `audience` (below);
+  `header`, a header (`header`, such as `authorization` or `x-api-key`) whose value is kept in the secret store as
+  `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
+
+A server added, changed or removed reaches sessions started after it; a removed one's calls are refused at once
+(`mcpRelay: refused, no such server`). The fleet hands each session its servers' names in `WOODSHED_MCP_SERVERS`, and
+the session writes claude's `--mcp-config` from them (`session/taint.mjs mcp-config`). The console logs `mcpServers:
+server added`, `server changed` (with `productionWas` when its kind changed), `server removed`, `header saved` or
+`header cleared` with who, `mcpRelay: first call relayed` once for each session and server, `mcpRelay: refused` with
+`why`, `mcpRelay: auth not added` (a header with no value yet), `mcpRelay: the MCP server refused what the console
+added` (a 401 or 403 from it) and `mcpRelay: MCP server not reached`.
+
+A signed token is RS256 from the console as an OpenID Connect issuer (`oidcIssuer.mjs`: the key in the
+`oidc-signing-key` secret or `oidc-signing-key.pem` in the state folder, made the first time one is signed), with
+`iss` the console's address (`WOODSHED_OIDC_ISSUER`), `aud` the server's audience, `sub` `private:<login>` for a My
+Woodshed session or `session:<id>` for a shared one, and `login`, `session_id`, `session_kind` and `repo`. The
+discovery document and the keys are at `/.well-known/openid-configuration` and `/.well-known/jwks.json`, before
+sign-in; the card shows both for the server's own configuration.
+
 ### Production access
 
-A My Woodshed session can debug a real production bug through the installation's woodshed-prod-mcp, which masks and
-audits what it returns, and the console makes sure what the session saw stays in it (`../docs/reference.md`,
-"Production access", says what it covers; `../CLAUDE.md`'s Rules, why it is the one exception). Off until
-`WOODSHED_PROD_MCP_URL` is set, and then only for the people and repos `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS` list.
+A My Woodshed session can debug a real production bug through a production MCP server such as woodshed-prod-mcp, which
+masks and audits what it returns, and the console makes sure what the session saw stays in it (`../docs/reference.md`,
+"Production access", says what it covers; `../CLAUDE.md`'s Rules, why it is the one exception). Off until an admin adds
+a production server on Console settings (above, "MCP servers"), or the environment names one (`WOODSHED_PROD_MCP_URL`,
+with `WOODSHED_PROD_MCP_PEOPLE` and `_REPOS`).
 
-- **The relay** (`prodMcp.mjs`): `/prod-mcp` on the session API, Streamable HTTP, the session's own token as its
-  bearer. Each call goes on to the MCP server with a five-minute token the console signs (`oidcIssuer.mjs`: RS256, the
-  key in the `oidc-signing-key` secret or `oidc-signing-key.pem` in the state folder), `aud` `woodshed-prod-mcp`, `sub`
-  `private:<login>`, with `login`, `session_id`, `session_kind` and `repo`. The discovery document and the keys are at
-  `/.well-known/openid-configuration` and `/.well-known/jwks.json`, before sign-in.
-- **The session.** An eligible session's claude gets `woodshed-prod` from `--mcp-config` (`/tmp/woodshed-prod-mcp.json`),
+- **The relay** (`mcpRelay.mjs`): `/mcp/<name>` (and `/prod-mcp` for the environment's `woodshed-prod`) on the session
+  API. Each call goes on with the server's auth, for woodshed-prod-mcp a signed token with `aud` `woodshed-prod-mcp`.
+- **The session.** An eligible session's claude gets the production server from `--mcp-config` (`/tmp/woodshed-mcp.json`),
   in its `disabledMcpServers` for the checkout: claude makes no call to it until its person turns it on in `/mcp`. It is
   never started without the machine's Docker socket, which would let it undo a lockdown (its own, under Sysbox, stays).
-- **The taint** (`fleet.taint`): the first relayed call of any kind locks the session down through the launcher
+- **The taint** (`fleet.taint`): the first relayed call of any kind to a production server locks the session down through the launcher
   (`lockDown`), and only then sets `taintedAt` and forwards the call; the egress proxy holds the session to the
   lockdown's rules from the moment it starts. A lockdown that fails answers the call 503 and leaves the session as it
   was. The fleet ends the app's shares, then tells the session's statusd (`POST /taint`), which points every tool at
   the egress proxy, adds `session/tainted.md` to the rules, stops the settings sync and reopens claude's conversation on
-  the Anthropic proxy with web search and fetch off, typing in what changed (`taint.mjs`'s message). A resumed tainted
+  the Anthropic proxy with web search and fetch off and its production servers alone (the relay refuses it every
+  other server), typing in what changed (`taint.mjs`'s message). A resumed tainted
   session starts so (`WOODSHED_TAINTED`). Its card says **Production**, its pane bar **Production data**; it has no Share
   the app, Editor or Remote Control.
 - **The egress proxy** (`egressProxy.mjs`, `githubEgress.mjs`, `egressCerts.mjs`): on `WOODSHED_EGRESS_PORT`, taking the
@@ -718,7 +754,8 @@ audits what it returns, and the console makes sure what the session saw stays in
   host and why, never the path.
 - **What it kept** (`sessionApi.mjs`, `fleet.mjs`): its Claude home is saved for its Resume but never copied to the
   owner's, `/claude-settings` refuses it, and its container's log is never read into the console's. It is removed
-  `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` after it stops, home and attachments with it; a home that would not delete is
+  Console settings' **Remove a stopped session that saw production data after** (24 hours, or
+  `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS`) after it stops, home and attachments with it; a home that would not delete is
   tried again (`taintedHomesPending` in `state.json`). Its record goes with it, statusd's readings and all.
 - **The Anthropic proxy** reads a tainted session's calls and refuses one that would have Anthropic reach the internet
   for it (`web_search`, `web_fetch`, `mcp_servers`): `anthropicProxy: refused, a tainted session asked Anthropic to reach
@@ -1585,6 +1622,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   comments})}`, as `reviewerApp.mjs`'s, through which review sessions' verdicts are submitted and trusted. Without it
   no verdict counts (above, "The reviewer App"), and the console offers no reviewer App setup of its own. Logged as
   `console: GitHub App from the host`.
+- `mcpServers: {list(), save({server, by}), remove({name, by})}`: where the program keeps the MCP servers sessions get
+  (above, "MCP servers"), so Console settings' card and its API change them there and nothing goes to `state.json`.
+  `list` answers the servers in the API's shape (each is checked, and one that does not check is left out with
+  `mcpServers: a server from the program left out`); it is read at start and after each change. `save` is handed the
+  server as core keeps it, with `headerSavedAt`, `updatedBy` and `updatedAt`, to keep as it is; a header's value stays
+  in the console's secret store, never the program's list. A program that only adds servers for its people can call
+  the API instead, as an owner.
 - `woodshedUpdate: false`: no Woodshed card on Console settings, no dot on the avatar for it (`updates` is left out of
   `/api/me`), and no update check, for a program that deploys Woodshed itself. Its update routes
   (`/api/console-settings/updates`, `/check`, `/update`) answer 404, as on a console that runs from no git clone (below,
@@ -1934,12 +1978,18 @@ card's:
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
+| Retention | Remove a stopped session that saw production data after | 1 to 168 hours | `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS`, 24 |
 | Slack | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
 | Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on its repo's Settings posts there instead | none |
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The
 environment values are what a setting is until someone changes it.
+
+The **MCP servers** card, after Repos, lists the servers sessions get and adds, edits and removes them ("MCP servers"
+above, under the Anthropic proxy): each change applies at once, with no typed confirm, and is logged with who made it.
+A header's value is a password field, sent once and never shown again. Where the console cannot lock a session down
+the card says why and offers no Production kind.
 
 The **Woodshed** card, first on the page, follows the git clone the console runs from (`console/woodshedUpdate.mjs`;
 `WOODSHED_CHECKOUT` names another): at start and every hour, and on **Check now** (`POST
@@ -2174,10 +2224,10 @@ Remove My Woodshed.
 | `WOODSHED_LOCAL_WEBHOOK_PORT`, `_WEBHOOK_HOST`, `_WEBHOOK_URL` | none, `127.0.0.1`, none | On the local provider: where its webhook receiver listens (`providers/local/webhookReceiver.mjs`), at the Lambda's paths, `POST /github` and `POST /slack`, checked against `github-webhook-secret` and `slack-signing-secret` in `WOODSHED_LOCAL_SECRETS_DIR`, which it needs. `_WEBHOOK_URL` is the public address a proxy in front of it answers at, and the Secrets & webhooks page sets `<url>/github` on the GitHub App. A message the console fails on is tried three times; one still waiting when the console restarts is lost, and the poll finds it |
 | `WOODSHED_TUNNEL_POSTGRES`, `_TUNNEL_MONGO` | none | Where `woodshed-db.mjs`'s connections go, as `host:port`, each used only for a database the installation runs. Each one is a tunnel of its own, and the script listens for those alone; without either, or without own databases, My settings has no From your computer. Without the Postgres one there is no Restore a dump for Postgres either, and without the Mongo one none for Mongo. Set on the base box, for the databases it runs: RDS and the box's private address |
 | `WOODSHED_SESSION_API_HOST`, `_SESSION_API_PORT` | none, `7691` | With the App: the address the session API listens on (`sessionApi.mjs`). In AWS, the base box's private IP, which only session tasks can reach |
-| `WOODSHED_PROD_MCP_URL` | none | Production debugging (`prodMcp.mjs`, "Production access" above): the installation's woodshed-prod-mcp, which the console's relay at `/prod-mcp` on the session API reaches. None keeps it, the OIDC issuer and every lockdown off. Set on the base box from Terraform's `prod_mcp` |
+| `WOODSHED_PROD_MCP_URL` | none | Production debugging ("Production access" above): one production MCP server from the environment, `woodshed-prod`, such as woodshed-prod-mcp, which the console's relay at `/prod-mcp` on the session API reaches, beside those Console settings adds. Set on the base box from Terraform's `prod_mcp.url` |
 | `WOODSHED_PROD_MCP_PEOPLE`, `_PROD_MCP_REPOS` | none | Whose My Woodshed sessions, on which repos, may use it: GitHub logins and `owner/name`, comma-separated, or `*` for all. Empty is nobody |
-| `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` | `24` | How long a tainted session is kept, stopped, for its Resume, before it is removed with all it kept |
-| `WOODSHED_OIDC_ISSUER` | `WOODSHED_PUBLIC_URL` | The issuer the relay's tokens name, whose `/.well-known/jwks.json` woodshed-prod-mcp fetches: the console's public address, unless its documents are served from another name |
+| `WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS` | `24` | How long a tainted session is kept, stopped, for its Resume, before it is removed with all it kept, until Console settings' Retention card says otherwise |
+| `WOODSHED_OIDC_ISSUER` | `WOODSHED_PUBLIC_URL` | The issuer the relay's signed tokens name, whose `/.well-known/jwks.json` an MCP server fetches: the console's public address, unless its documents are served from another name |
 | `WOODSHED_EGRESS_PORT`, `WOODSHED_EGRESS_PROXY_URL` | `7693`, the session env's `WOODSHED_CONSOLE_URL` on that port | The egress proxy a tainted session leaves through (`egressProxy.mjs`), on the session API's address, and the URL sessions reach it at (on AWS, the base box's private address, from Terraform) |
 | `WOODSHED_ECS_GUARDED_SUBNETS`, `_ECS_GUARDED_SECURITY_GROUP` | none | For `ecs` with `prod_mcp`: the network a session that may use production starts on (`../providers/aws/README.md`, "Production access"). Both or neither |
 | `GH_TOKEN` | `gh auth token` | Without the App: polls, comments and reacts. Sessions push with it too unless the env file sets its own `GH_TOKEN`, and the console warns at startup when it does not: your own token reaches far more than this repo, which undoes the narrow token "Why permissions are off" in `../session/README.md` relies on |

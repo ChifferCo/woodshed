@@ -31,7 +31,8 @@ import { createEgressCerts } from './egressCerts.mjs';
 import { createEgressProxy } from './egressProxy.mjs';
 import { GITHUB_HOSTS } from './githubEgress.mjs';
 import { createOidcIssuer } from './oidcIssuer.mjs';
-import { createProdMcpRelay } from './prodMcp.mjs';
+import { createMcpRelay } from './mcpRelay.mjs';
+import { createMcpServers } from './mcpServers.mjs';
 import { createOpenAiProxy } from './openaiProxy.mjs';
 import { createCodexModels } from './codexModels.mjs';
 import { createSessionApi, sessionForToken } from './sessionApi.mjs';
@@ -210,25 +211,34 @@ async function loadAppKey(config, secrets) {
   };
 }
 
-// Production debugging (prodMcp.mjs), when WOODSHED_PROD_MCP_URL is set: the console as the OIDC issuer whose tokens
-// woodshed-prod-mcp trusts, its key a secret where there is a store and otherwise a file in the state folder, and the
-// certificate authority the egress proxy shows tainted sessions for GitHub.
-function productionAccess({ loaded, secrets }) {
-  const settings = loaded.prodMcp;
-  if (!settings) return null;
-  const issuer = createOidcIssuer({ issuer: settings.issuer, secrets, keyFile: secrets ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
-  const certs = createEgressCerts({ dir: path.join(loaded.stateDir, 'egress'), hosts: GITHUB_HOSTS });
-  const people = settings.people === '*' ? 'everyone' : settings.people.size;
-  const repos = settings.repos === '*' ? 'every repo' : [...settings.repos];
-  console.log('prodMcp: on', { server: new URL(settings.url).host, people, repos, issuer: settings.issuer, egress: loaded.egress.sessionUrl, removeAfterHours: settings.removeAfterMs / 3_600_000 });
-  if (!people || (Array.isArray(repos) && !repos.length)) console.warn('prodMcp: WOODSHED_PROD_MCP_PEOPLE or WOODSHED_PROD_MCP_REPOS lists nobody, so no session gets production access');
-  if (!loaded.egress.sessionUrl) console.warn('prodMcp: no address for the egress proxy (WOODSHED_EGRESS_PROXY_URL, or WOODSHED_CONSOLE_URL in the session env), so a tainted session reaches no GitHub');
+// The MCP servers' side of the console (mcpServers.mjs, mcpRelay.mjs): the console as the OIDC issuer whose tokens the
+// relay adds, its key a secret where there is a store and otherwise a file in the state folder, made the first time a
+// token is signed; and, where a session can be locked down, the certificate authority the egress proxy shows tainted
+// sessions for GitHub.
+function mcpAccess({ loaded, secrets, launcher }) {
+  const issuer = createOidcIssuer({ issuer: loaded.mcp.issuer, secrets, keyFile: secrets ? null : path.join(loaded.stateDir, 'oidc-signing-key.pem') });
+  const lockdown = () => {
+    if (typeof launcher?.lockDown !== 'function') return { available: false, why: 'its launcher cannot move a running session onto a locked network' };
+    if ('guardsEgress' in launcher && !launcher.guardsEgress) return { available: false, why: 'on AWS, sessions that may use production start on the guarded network Terraform makes with prod_mcp, and this installation has none' };
+    if (!loaded.sessionApi?.host) return { available: false, why: 'it has no session API (WOODSHED_SESSION_API_HOST)' };
+    if (!loaded.egress.sessionUrl) return { available: false, why: 'it has no address for its egress proxy (WOODSHED_EGRESS_PROXY_URL, or WOODSHED_CONSOLE_URL in the session env)' };
+    return { available: true, why: null };
+  };
+  const can = lockdown();
+  const certs = can.available ? createEgressCerts({ dir: path.join(loaded.stateDir, 'egress'), hosts: GITHUB_HOSTS }) : null;
+  const environment = loaded.mcp.environment;
+  if (environment) {
+    const people = environment.people === '*' ? 'everyone' : environment.people.length;
+    console.log('mcpServers: production server from the environment', { server: new URL(environment.url).host, people, repos: environment.repos, issuer: loaded.mcp.issuer, egress: loaded.egress.sessionUrl, lockdown: can.available });
+    if (!people || (Array.isArray(environment.repos) && !environment.repos.length)) console.warn('mcpServers: WOODSHED_PROD_MCP_PEOPLE or WOODSHED_PROD_MCP_REPOS lists nobody, so no session gets production access');
+    if (!can.available) console.warn('mcpServers: production access is off, this console cannot lock a session down', { why: can.why });
+    // Made or read now rather than at the first call, so a key that cannot be made shows at start.
+    issuer.load().catch(() => {});
+  }
   // Every relying party fetches the keys over https from the issuer's own name.
-  if (!settings.issuer.startsWith('https://')) console.warn('oidcIssuer: the issuer is not https, which woodshed-prod-mcp may refuse', { issuer: settings.issuer });
-  // Made or read now rather than at the first call, so a key or authority that cannot be made shows at start.
-  issuer.load().catch(() => {});
-  certs.caPem().catch((err) => console.error('egress: certificate authority not ready', { message: err.message }));
-  return { issuer, certs, egress: { sessionUrl: loaded.egress.sessionUrl, caPem: () => certs.caPem() } };
+  if (!loaded.mcp.issuer.startsWith('https://') && environment) console.warn('oidcIssuer: the issuer is not https, which an MCP server may refuse', { issuer: loaded.mcp.issuer });
+  if (certs) certs.caPem().catch((err) => console.error('egress: certificate authority not ready', { message: err.message }));
+  return { issuer, certs, lockdown, egress: certs ? { sessionUrl: loaded.egress.sessionUrl, caPem: () => certs.caPem() } : null };
 }
 
 /**
@@ -253,7 +263,8 @@ function productionAccess({ loaded, secrets }) {
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, mcpServers: mcpServersHook = null }) {
+  if (mcpServersHook && ['list', 'save', 'remove'].some((f) => typeof mcpServersHook[f] !== 'function')) throw new Error('mcpServers needs list, save and remove');
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (hostApp && (typeof hostApp.login !== 'function' || (hostApp.reviewer != null && ['login', 'configured', 'submitReview'].some((f) => typeof hostApp.reviewer[f] !== 'function')))) {
     throw new Error('hostApp needs login, and a reviewer with login, configured and submitReview when it has one');
@@ -334,7 +345,9 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const codexModels = createCodexModels({ userSettings, teamCredential: openai.teamCredential });
   const anthropic = createAnthropicProxy({ userSettings, secrets, teamKey: config.sessionEnv.ANTHROPIC_API_KEY ?? null });
   const attachments = createAttachments({ dir: path.join(loaded.stateDir, 'attachments') });
-  const production = productionAccess({ loaded, secrets });
+  const access = mcpAccess({ loaded, secrets, launcher: provider.launcher });
+  const mcpServers = createMcpServers({ store, settings: loaded.mcp, secrets, host: mcpServersHook, lockdown: access.lockdown });
+  await mcpServers.load().catch((err) => console.warn('mcpServers: starting with none from the program', { message: err.message }));
   // Who reviews a pull request in a review session, as its author chose on My settings, from what the team keys and their
   // own sign-ins can run.
   const reviewAgents = createReviewAgents({
@@ -366,14 +379,14 @@ export async function createInstallation({ config: loaded, store, provider, trus
     reviewerApp,
     repoTriggers,
     reviewAgents,
-    prodMcp: loaded.prodMcp,
+    mcpServers,
     appShares,
-    egress: production?.egress ?? null,
+    egress: access.egress,
   });
   // The relay and the egress proxy need the fleet, which locks a session down and says whether it is.
-  const prodMcp = production ? createProdMcpRelay({ settings: loaded.prodMcp, issuer: production.issuer, fleet, repoOf: (session) => projectFor(config, session).repo ?? null }) : null;
-  const egressProxy = production ? createEgressProxy({
-    sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: production.certs,
+  const mcpRelay = createMcpRelay({ servers: mcpServers, issuer: access.issuer, fleet, repoOf: (session) => projectFor(config, session).repo ?? null });
+  const egressProxy = access.certs ? createEgressProxy({
+    sessions: () => fleet.sessions(), isLocked: fleet.isLocked, certs: access.certs,
     orgOf: (session) => projectFor(config, session).repo?.split('/')[0] ?? null,
   }) : null;
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
@@ -440,7 +453,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const handle = createHandler({
     config, fleet, settings, events, webhookSwitch, reviewAgents, auth, review: projectReview, userSettings, github, githubUser, homes, databases, tunnel, slack,
     consoleSettings, heldData: createHeldData({ store, fleet, databases, homes }), people, slackPeople, claudeSettings, viewPrefs, attachments, qaRecordings,
-    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: production?.issuer ?? null, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
+    prChips, members, asks, dbRestore, githubSetup, reviewerApp: ownReviewer, secrets, appShares, codexModels, openaiTeamKey: openai.teamCredential, oidc: access.issuer, mcpServers, provider: { name: provider.name ?? null, words: provider.words ?? null }, appIdentity,
     databaseGate, addedProjects, projectColors, repoSettings, repoTriggers,
     workflowLinks: () => projectReader.workflowLinks(),
     // Behind a hosting proxy nobody's write access is asked: the host says who is in.
@@ -456,9 +469,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const sessionApi = config.sessionApi.host ? createSessionApi({
     fleet, tokens: tokens?.sessions ?? null, tokensFor: tokens?.forSession ?? null, userSettings, repoSettings, githubUser, homes, databases, claudeSettings, anthropic, openai, attachments, askTokens: tokens?.asks ?? null, asks,
     githubAccess: (name) => readerOf(name).githubAccess(),
-    prodMcp, egress: production?.egress ?? null,
+    mcpRelay, egress: access.egress,
   }) : null;
-  if (production && !sessionApi) console.warn('prodMcp: no session API (WOODSHED_SESSION_API_HOST), so no session can reach production');
   const webhookDispatch = createWebhookDispatch({ label: config.label, labelOf: (name) => repoTriggers.of(name ?? defaultProject(config).name).label, config, fleet, asks, pulls: pullWebhooks, events, appIdentity, webhookSwitch });
   const loops = createLoops();
 
@@ -537,7 +549,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
       launcher: config.launcher.kind, maxRunning: config.maxRunning, pollGitHub: config.pollGitHub,
       githubApp: Boolean(config.githubApp), githubBroker: Boolean(config.githubBroker), ownDatabases: databases.available, tunnel: tunnel.available,
       appPorts: appPorts ? appPorts.ports.length : 0,
-      prodMcp: Boolean(production),
+      mcpServers: mcpServers.list().length, lockdown: access.lockdown().available,
     }),
   };
 }

@@ -71,9 +71,10 @@
 #                        local provider's WOODSHED_INSTALL_SECRET_PAIRS): an ask session unsets each
 #   SESSION_MODE=ask     a question from Slack (console/asks.mjs): the default branch, read only, no databases, Redis or app.
 #                        PROMPT is the question and ASKED_BY who asked; claude posts its answer with answer.sh
-#   WOODSHED_PROD_MCP=1  a private session that may use production (console/prodMcp.mjs): claude is given the
-#                        woodshed-prod MCP server, the console's relay, turned off until its person turns it on in /mcp.
-#                        The first call taints the session
+#   WOODSHED_MCP_SERVERS  the MCP servers the console hands the session, JSON [{"name", "production"}]
+#                        (console/mcpServers.mjs): claude gets each at the console's relay. A production one is off until
+#                        its person turns it on in /mcp, and its first call taints the session
+#   WOODSHED_PROD_MCP=1  a private session that may use a production server: the launcher keeps it lockable
 #   WOODSHED_TAINTED=1   a tainted session, resumed: the launcher started it locked down, and it starts as one (taint.mjs):
 #                        its egress through the console's proxy, claude on the console's Anthropic proxy with web search
 #                        and fetch off, woodshed-prod on, no plugin or dependency installs, tainted.md in its rules
@@ -344,23 +345,18 @@ configureEgress() {
   log "Egress through the console's proxy" "(tainted: $(tainted && echo yes || echo no))"
 }
 
-# The installation's production MCP server (console/prodMcp.mjs), for claude: the console's relay, with the session's
-# own token, which the server never sees. Off in /mcp until the person turns it on, since its first call of any kind
-# locks the session down for good; on in a session that is tainted already. Only for claude: Codex gets none yet.
-PROD_MCP_CONFIG=/tmp/woodshed-prod-mcp.json
+# The MCP servers the console hands this session (console/mcpServers.mjs), for claude: each at the console's relay,
+# with the session's own token, which no server ever sees (taint.mjs mcp-config). A production server is off in /mcp
+# until the person turns it on, since its first call of any kind locks the session down for good; a tainted session
+# gets its production servers alone, on. Only for claude: Codex gets none yet.
+MCP_CONFIG=/tmp/woodshed-mcp.json
 # taint.mjs's TAINTED_CLAUDE_FLAGS, which statusd adds when the session is tainted while it runs.
 TAINTED_CLAUDE_FLAGS=' --strict-mcp-config --disallowedTools WebSearch,WebFetch'
-configureProdMcp() {
-  [ "${WOODSHED_PROD_MCP:-}" = 1 ] && [ "${AGENT:-claude}" != codex ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
-  (umask 077 && jq -n --arg url "$WOODSHED_CONSOLE_URL/prod-mcp" \
-    '{mcpServers: {"woodshed-prod": {type: "http", url: $url, headers: {Authorization: ("Bearer " + env.SESSION_TOKEN)}}}}' > "$PROD_MCP_CONFIG")
-  if tainted; then
-    node "$SESSION_DIR/taint.mjs" prod-server on
-    log "Production MCP server offered" "(on: the session is tainted)"
-  else
-    node "$SESSION_DIR/taint.mjs" prod-server off
-    log "Production MCP server offered" "(off until turned on in /mcp, which locks the session down)"
-  fi
+configureMcp() {
+  [ -n "${WOODSHED_MCP_SERVERS:-}" ] && [ "${AGENT:-claude}" != codex ] && [ -n "${WOODSHED_CONSOLE_URL:-}" ] || return 0
+  local made
+  made=$(cd "$REPO_DIR" 2>/dev/null; REPO_DIR=$REPO_DIR node "$SESSION_DIR/taint.mjs" mcp-config) || { log "WARNING: MCP servers not configured"; return 0; }
+  log "MCP servers offered" "$made$(tainted && echo ' (tainted: production only, on)' || true)"
 }
 
 # Answers the first-run dialogs ahead of time, so claude opens straight into the task.
@@ -837,7 +833,7 @@ claudeFlags() {
   if tainted; then printf '%s' "$TAINTED_CLAUDE_FLAGS"; fi
   printf ' --settings %s' "$SESSION_DIR/claudeHooks.json"
   # Variadic too, so before the next flag.
-  [ ! -f "$PROD_MCP_CONFIG" ] || printf ' --mcp-config %s' "$PROD_MCP_CONFIG"
+  [ ! -f "$MCP_CONFIG" ] || printf ' --mcp-config %s' "$MCP_CONFIG"
   printf ' --append-system-prompt-file %s' /tmp/woodshed-rules.md
   # Files attached to New session and pasted or dropped on a terminal land here, outside the repo: without this claude
   # asks before reading each one.
@@ -1095,7 +1091,7 @@ runSession() {
   chooseClaudeAuth
   writeEnvFiles
   writeOwnFiles
-  configureProdMcp
+  configureMcp
   configureClaude
   fetchAttachments
   # Resume reopens claude's own conversation, which already holds the task. A Codex session always writes its prompt.

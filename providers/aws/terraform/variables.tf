@@ -254,17 +254,17 @@ variable "base_box_instance_type" {
 }
 
 variable "prod_mcp" {
-  description = "Production debugging through woodshed-prod-mcp (README.md, \"Production access\"): its URL, and the people (GitHub logins) and repos (owner/name) whose My Woodshed sessions may use it, [\"*\"] for all. Makes the guarded network those sessions start on, the egress proxy's port on the base box and the console's OIDC signing key. A tainted session is removed remove_after_hours after it stops. null, the default, for none."
+  description = "Production debugging (README.md, \"Production access\"): turns on the guarded network sessions that may use a production MCP server start on, the egress proxy's port on the base box and the console's OIDC signing key, so admins can add production servers on Console settings. `url` (with `people` and `repos`, GitHub logins and owner/name, [\"*\"] for all) also names one server from here, woodshed-prod, such as woodshed-prod-mcp; leave it out to add every server on the page. A tainted session is removed remove_after_hours after it stops, unless Console settings says otherwise. null, the default, for none: no production server can be added."
   type = object({
-    url                = string
-    people             = list(string)
-    repos              = list(string)
+    url                = optional(string)
+    people             = optional(list(string), [])
+    repos              = optional(list(string), [])
     remove_after_hours = optional(number, 24)
   })
   default = null
 
   validation {
-    condition     = var.prod_mcp == null || (can(regex("^https://", var.prod_mcp.url)) && length(var.prod_mcp.people) > 0 && length(var.prod_mcp.repos) > 0 && var.prod_mcp.remove_after_hours > 0)
-    error_message = "prod_mcp needs an https:// url, at least one person and one repo (or [\"*\"]), and remove_after_hours above 0."
+    condition     = var.prod_mcp == null || (var.prod_mcp.remove_after_hours > 0 && (var.prod_mcp.url == null || (can(regex("^https://", var.prod_mcp.url)) && length(var.prod_mcp.people) > 0 && length(var.prod_mcp.repos) > 0)))
+    error_message = "prod_mcp's url must be https://, with at least one person and one repo (or [\"*\"]), and remove_after_hours above 0."
   }
 }

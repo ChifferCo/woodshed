@@ -1,4 +1,4 @@
-# Production debugging through woodshed-prod-mcp (console/prodMcp.mjs, README.md "Production access"), only with
+# Production debugging through production MCP servers (console/mcpServers.mjs, README.md "Production access"), only with
 # var.prod_mcp. A Fargate task keeps the security groups it started with, so a session that may use production starts
 # on a network of its own, before it is ever tainted: subnets with no route out, and a security group that reaches the
 # base box (the console's session API and egress proxy, Mongo, the shared services), RDS and the AWS endpoints Fargate
@@ -189,12 +189,12 @@ resource "aws_vpc_security_group_ingress_rule" "postgres_from_guarded" {
   to_port                      = 5432
 }
 
-# The console's OpenID Connect signing key (console/oidcIssuer.mjs), made by the console the first time it is needed.
-# Only the console reads it; woodshed-prod-mcp reads the public half from the console's /.well-known/jwks.json.
+# The console's OpenID Connect signing key (console/oidcIssuer.mjs), made by the console the first time it signs a token
+# for an MCP server (any server on Console settings whose auth is a signed token, not only production ones), so it is
+# here whether or not prod_mcp is. Only the console reads it; a server reads the public half from the console's
+# /.well-known/jwks.json.
 resource "aws_secretsmanager_secret" "oidc_signing_key" {
-  count = local.prod_mcp ? 1 : 0
-
   name                    = "${local.p}/oidc-signing-key"
-  description             = "The console's OpenID Connect signing key, for the tokens its production MCP relay adds. Only the console reads it"
+  description             = "The console's OpenID Connect signing key, for the tokens its MCP relay adds. Only the console reads it"
   recovery_window_in_days = 0
 }

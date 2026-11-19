@@ -8,7 +8,7 @@ import { currentName, envValue } from '../shared/envNames.mjs';
 import { RUNS_ON_NAME } from '../shared/project.mjs';
 import { isSessionVariable } from '../shared/reservedNames.mjs';
 import { parseAppPorts } from './appPorts.mjs';
-import { prodMcpSettings } from './prodMcp.mjs';
+import { mcpSettings } from './mcpServers.mjs';
 import { defaultProject, loadProjects } from './projects.mjs';
 import { secretSpecs } from './secrets.mjs';
 
@@ -339,9 +339,9 @@ export function loadConfig(env = process.env, { readGhToken = true } = {}) {
     host: envValue(env, 'HOST') || '127.0.0.1',
     port,
     publicUrl,
-    // Production debugging through woodshed-prod-mcp (prodMcp.mjs), with the console as the OIDC issuer its tokens
-    // name; null keeps it, the issuer and every lockdown off.
-    prodMcp: prodMcpSettings(env, publicUrl),
+    // MCP servers (mcpServers.mjs): the production one the environment names (WOODSHED_PROD_MCP_URL), if any, the
+    // issuer whose tokens the relay adds, and how long a stopped tainted session is kept, before the page's setting.
+    mcp: mcpSettings(env, publicUrl),
     // Where a tainted session's egress goes (egressProxy.mjs).
     egress: egressSettings(env, sessionEnv),
     extraHosts: (envValue(env, 'HOSTS') || '').split(',').map((h) => h.trim()).filter(Boolean),

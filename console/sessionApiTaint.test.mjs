@@ -70,15 +70,16 @@ test('/egress hands a tainted session its proxy and the proxy\'s authority, and 
   assert.equal((await ask('tok-b')).status, 404);
 });
 
-test('/prod-mcp goes to the relay with the session its bearer names, and is a 404 where production access is off', async (t) => {
+test('/mcp/<name> and /prod-mcp go to the relay with the session its bearer names, and are a 404 with no relay', async (t) => {
   quietly(t);
   const sessions = [{ id: 'aaaa1111', token: 'tok-a', status: 'running', owner: 'joel' }];
   const relayed = [];
-  const prodMcp = { isProxyPath: () => true, handle: async (req, res, session) => { relayed.push([req.method, session?.id ?? null]); res.writeHead(204).end(); } };
-  const on = await serve(t, createSessionApi({ fleet: { sessions: () => sessions }, tokens: null, prodMcp }));
+  const mcpRelay = { isProxyPath: () => true, handle: async (req, res, session) => { relayed.push([req.method, req.url, session?.id ?? null]); res.writeHead(204).end(); } };
+  const on = await serve(t, createSessionApi({ fleet: { sessions: () => sessions }, tokens: null, mcpRelay }));
   await fetch(`${on}/prod-mcp`, { method: 'POST', headers: { authorization: 'Bearer tok-a' }, body: '{}' });
-  await fetch(`${on}/prod-mcp`, { headers: { authorization: 'Bearer nope' } });
-  assert.deepEqual(relayed, [['POST', 'aaaa1111'], ['GET', null]]);
+  await fetch(`${on}/mcp/docs`, { headers: { authorization: 'Bearer nope' } });
+  assert.deepEqual(relayed, [['POST', '/prod-mcp', 'aaaa1111'], ['GET', '/mcp/docs', null]]);
+  assert.equal(sessionTokenOf({ url: '/mcp/docs', headers: { authorization: 'Bearer tok-a' } }), 'tok-a');
   const off = await serve(t, createSessionApi({ fleet: { sessions: () => sessions }, tokens: null }));
   assert.equal((await fetch(`${off}/prod-mcp`, { method: 'POST', headers: { authorization: 'Bearer tok-a' } })).status, 404);
   assert.equal(sessionTokenOf({ url: '/prod-mcp', headers: { authorization: 'Bearer tok-a' } }), 'tok-a');

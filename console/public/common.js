@@ -261,7 +261,7 @@
   }
 
   /**
-   * The mark of a session that has seen production data (console/prodMcp.mjs): on its card, in place of Private, and on
+   * The mark of a session that has seen production data (console/mcpRelay.mjs): on its card, in place of Private, and on
    * its pane bar with the longer word.
    * @param {object} s
    * @param {{long?: boolean}} [o]

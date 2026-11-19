@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { TAINTED_CLAUDE_FLAGS, applyTaint, egressEnvText, noProxyFor, proxyWithToken, withProdServer } from './taint.mjs';
+import { TAINTED_CLAUDE_FLAGS, applyTaint, egressEnvText, mcpConfig, noProxyFor, proxyWithToken, serversOf, withProdServers, writeMcpConfig } from './taint.mjs';
 
 const ENV = {
   WOODSHED_CONSOLE_URL: 'http://host.docker.internal:7691', PGHOST: 'postgres', WOODSHED_MONGO_HOST: 'mongo:27017',
@@ -23,21 +23,35 @@ test('everything goes through the egress proxy but the console, the databases, t
   assert.ok(!egressEnvText({ proxy: 'http://10.42.1.10:7693', token: 'abc', env: ENV }).includes('CAINFO'), 'a guarded session trusts nothing new');
 });
 
-test('woodshed-prod is off for the checkout until it is turned on, the other servers as they were', () => {
-  const off = JSON.parse(withProdServer(JSON.stringify({ projects: { '/work/r': { disabledMcpServers: ['slack'] } }, x: 1 }), '/work/r', false));
+test('production servers are off for the checkout until one is turned on, the other servers as they were', () => {
+  const off = JSON.parse(withProdServers(JSON.stringify({ projects: { '/work/r': { disabledMcpServers: ['slack'] } }, x: 1 }), '/work/r', ['woodshed-prod'], false));
   assert.deepEqual(off.projects['/work/r'].disabledMcpServers, ['slack', 'woodshed-prod']);
   assert.equal(off.x, 1);
-  const on = JSON.parse(withProdServer(JSON.stringify(off), '/work/r', true));
+  const on = JSON.parse(withProdServers(JSON.stringify(off), '/work/r', ['woodshed-prod'], true));
   assert.deepEqual(on.projects['/work/r'].disabledMcpServers, ['slack']);
-  assert.deepEqual(JSON.parse(withProdServer(null, '/w', false)).projects['/w'].disabledMcpServers, ['woodshed-prod']);
+  assert.deepEqual(JSON.parse(withProdServers(null, '/w', ['a', 'b'], false)).projects['/w'].disabledMcpServers, ['a', 'b']);
+});
+
+test('claude\'s MCP config points each server at the console\'s relay with the session\'s token, a tainted one\'s at production alone', () => {
+  const servers = serversOf({ WOODSHED_MCP_SERVERS: JSON.stringify([{ name: 'woodshed-prod', production: true }, { name: 'docs', production: false }, { name: 'Bad name' }]) });
+  assert.deepEqual(servers, [{ name: 'woodshed-prod', production: true }, { name: 'docs', production: false }]);
+  assert.deepEqual(serversOf({ WOODSHED_MCP_SERVERS: 'not json' }), []);
+  const open = mcpConfig({ servers, consoleUrl: 'http://host.docker.internal:7691/', token: 'tok', tainted: false });
+  assert.deepEqual(open.mcpServers.docs, { type: 'http', url: 'http://host.docker.internal:7691/mcp/docs', headers: { Authorization: 'Bearer tok' } });
+  assert.deepEqual(Object.keys(mcpConfig({ servers, consoleUrl: 'http://c', token: 'tok', tainted: true }).mcpServers), ['woodshed-prod']);
 });
 
 test('applyTaint writes the marker, the egress variables readable by the session alone, a bundle of both authorities, and turns woodshed-prod on', async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'taint-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  const files = { marker: path.join(dir, 'tainted'), envFile: path.join(dir, 'egress.env'), bundle: path.join(dir, 'ca.pem'), claudeJson: path.join(dir, 'claude.json'), profiles: [path.join(dir, '.profile')] };
-  fs.writeFileSync(files.claudeJson, withProdServer(null, '/work/r', false));
-  const result = await applyTaint({ proxy: 'http://gw:7693', ca: '-----BEGIN CERTIFICATE-----\nWOODSHED\n-----END CERTIFICATE-----', token: 'tok', env: ENV, repoDir: '/work/r', files });
+  const files = { marker: path.join(dir, 'tainted'), envFile: path.join(dir, 'egress.env'), bundle: path.join(dir, 'ca.pem'), claudeJson: path.join(dir, 'claude.json'), mcpConfig: path.join(dir, 'mcp.json'), profiles: [path.join(dir, '.profile')] };
+  const env = { ...ENV, SESSION_TOKEN: 'tok', WOODSHED_MCP_SERVERS: JSON.stringify([{ name: 'woodshed-prod', production: true }, { name: 'docs', production: false }]) };
+  await writeMcpConfig({ env, repoDir: '/work/r', tainted: false, file: files.mcpConfig, claudeJson: files.claudeJson });
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(files.mcpConfig, 'utf8')).mcpServers), ['woodshed-prod', 'docs']);
+  assert.equal((fs.statSync(files.mcpConfig).mode & 0o777).toString(8), '600', 'it holds the session token');
+  assert.deepEqual(JSON.parse(fs.readFileSync(files.claudeJson, 'utf8')).projects['/work/r'].disabledMcpServers, ['woodshed-prod']);
+  const result = await applyTaint({ proxy: 'http://gw:7693', ca: '-----BEGIN CERTIFICATE-----\nWOODSHED\n-----END CERTIFICATE-----', token: 'tok', env, repoDir: '/work/r', files });
+  assert.deepEqual(Object.keys(JSON.parse(fs.readFileSync(files.mcpConfig, 'utf8')).mcpServers), ['woodshed-prod'], 'its other servers are gone from claude\'s config');
   assert.equal(result.egress, true);
   assert.equal(result.variables.GIT_SSL_CAINFO, files.bundle);
   assert.equal(result.variables.HTTPS_PROXY, 'http://woodshed:tok@gw:7693');
@@ -46,7 +60,7 @@ test('applyTaint writes the marker, the egress variables readable by the session
   assert.equal((fs.statSync(files.envFile).mode & 0o777).toString(8), '600', 'it holds the session token');
   assert.match(fs.readFileSync(files.bundle, 'utf8'), /WOODSHED\n-----END CERTIFICATE-----\n$/);
   assert.deepEqual(JSON.parse(fs.readFileSync(files.claudeJson, 'utf8')).projects['/work/r'].disabledMcpServers, []);
-  await applyTaint({ proxy: 'http://gw:7693', ca: 'x', token: 'tok', env: ENV, repoDir: '/work/r', files });
+  await applyTaint({ proxy: 'http://gw:7693', ca: 'x', token: 'tok', env, repoDir: '/work/r', files });
   assert.equal(fs.readFileSync(files.profiles[0], 'utf8').split('\n').filter((l) => l.includes('woodshed-egress')).length, 1, 'once');
 });
 

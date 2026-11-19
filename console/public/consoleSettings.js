@@ -366,6 +366,145 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('span', { class: 'sub', role: 'status' }, repoForm.notice || 'It applies at once; Remove takes it off again. Each change is logged with who made it.')));
   }
 
+  // The MCP servers card (mcpServers.mjs): what sessions' claude gets through the console's relay, each added, changed
+  // and removed at once. A server's header value is sent once and never shown again. Read on its own: a console that
+  // hands out none answers 404, and the card is left out.
+  let mcp = null;
+  const EMPTY_MCP_FORM = { editing: null, name: '', url: '', production: false, shared: false, people: '*', repos: '*', auth: 'none', audience: '', header: 'authorization', value: '', busy: false, error: null, notice: null };
+  let mcpForm = { ...EMPTY_MCP_FORM };
+  const AUTH_WORDS = { none: 'Nothing', oidc: 'Signed token', header: 'Header' };
+
+  async function loadMcp() {
+    try {
+      const answer = await W.getJson('/api/console-settings/mcp-servers');
+      mcp = Array.isArray(answer?.servers) && answer.production ? answer : null;
+    } catch {
+      mcp = null;
+    }
+  }
+
+  const listText = (list, every) => (list === '*' ? every : list.join(', ') || 'nobody');
+
+  function whoText(s) {
+    if (s.production) return `My Woodshed sessions of ${listText(s.people, 'everyone')}`;
+    const mine = `My Woodshed sessions of ${listText(s.people, 'everyone')}`;
+    return s.shared ? `${mine}, and shared sessions` : mine;
+  }
+
+  function mcpRow(s) {
+    const fixed = s.source === 'environment';
+    return h('div', { class: 'data-row' },
+      h('div', { style: 'min-width: 0' },
+        h('div', { class: 'data-title' }, h('b', null, s.name),
+          s.production ? h('span', { class: 'otag is-production', title: 'Its first call locks the session down for good' }, 'Production') : h('span', { class: 'pill' }, 'Ordinary')),
+        h('div', { class: 'data-meta' },
+          h('span', null, (() => { try { return new URL(s.url).host; } catch { return s.url; } })()),
+          h('span', null, whoText(s)),
+          h('span', null, `repos: ${listText(s.repos, 'all')}`),
+          h('span', null, s.auth === 'header' ? `${s.header} header${s.headerSet ? '' : ', no value yet'}` : s.auth === 'oidc' ? `signed token for ${s.audience}` : 'nothing added'),
+          h('span', null, fixed ? 'set in the installation\'s configuration' : s.source === 'host' ? 'kept by the program that runs this console' : `by @${s.updatedBy || 'unknown'}`))),
+      !fixed && h('div', { class: 'data-actions' },
+        h('button', { type: 'button', class: 'btn btn-quiet btn-sm', onclick: () => editMcp(s) }, 'Edit'),
+        h('button', {
+          type: 'button', class: 'btn btn-quiet btn-sm',
+          onclick: () => mcpSave(async () => {
+            mcp = await W.postJson('/api/console-settings/mcp-servers/remove', { name: s.name });
+            return `${s.name} removed: sessions started from now on do not get it, and running ones' calls to it are refused.`;
+          }),
+        }, 'Remove')));
+  }
+
+  function editMcp(s) {
+    mcpForm = {
+      ...EMPTY_MCP_FORM, editing: s.name, name: s.name, url: s.url, production: s.production, shared: s.shared,
+      people: listText(s.people, '*'), repos: listText(s.repos, '*'), auth: s.auth, audience: s.audience ?? '', header: s.header ?? 'authorization',
+    };
+    render();
+    document.getElementById('mcp-name')?.scrollIntoView({ block: 'center' });
+  }
+
+  async function mcpSave(run) {
+    if (mcpForm.busy) return;
+    mcpForm.busy = true;
+    mcpForm.error = null;
+    mcpForm.notice = null;
+    render();
+    try {
+      // `run` may start the form again, so the notice goes on the form there is after it.
+      const said = await run();
+      mcpForm.notice = said;
+    } catch (err) {
+      mcpForm.error = err;
+    }
+    mcpForm.busy = false;
+    render();
+  }
+
+  function saveMcp() {
+    const f = mcpForm;
+    const server = {
+      name: f.name.trim(), url: f.url.trim(), production: f.production, shared: !f.production && f.shared,
+      people: f.people.trim() === '*' ? '*' : f.people.split(',').map((x) => x.trim().replace(/^@/, '')).filter(Boolean),
+      repos: f.repos.trim() === '*' ? '*' : f.repos.split(',').map((x) => x.trim()).filter(Boolean),
+      auth: f.auth, ...(f.auth === 'oidc' && f.audience.trim() && { audience: f.audience.trim() }), ...(f.auth === 'header' && { header: f.header.trim() || 'authorization' }),
+    };
+    return mcpSave(async () => {
+      mcp = await W.postJson('/api/console-settings/mcp-servers', { server });
+      const name = server.name.toLowerCase();
+      if (f.auth === 'header' && f.value) mcp = await W.postJson('/api/console-settings/mcp-servers/header', { name, value: f.value });
+      const said = `${name} ${f.editing ? 'saved' : 'added'}: sessions started from now on get it.${server.production ? ' Its first call locks a session down for good.' : ''}`;
+      mcpForm = { ...EMPTY_MCP_FORM };
+      return said;
+    });
+  }
+
+  function mcpField(id, label, help, key, attrs = {}) {
+    return h('div', { class: 'set-row' },
+      h('div', null, h('label', { class: 'set-name', for: id }, label), help && h('div', { class: 'set-help' }, help)),
+      h('div', { class: 'set-value' }, h('input', {
+        id, class: 'field is-text', type: 'text', autocomplete: 'off', spellcheck: 'false', value: mcpForm[key], ...attrs,
+        oninput: (e) => { mcpForm[key] = e.target.value; },
+      })));
+  }
+
+  function mcpSelect(id, label, help, key, options, onchange) {
+    return h('div', { class: 'set-row' },
+      h('div', null, h('label', { class: 'set-name', for: id }, label), help && h('div', { class: 'set-help' }, help)),
+      h('div', { class: 'set-value' }, h('select', { id, class: 'field is-text', onchange: (e) => { onchange(e.target.value); render(); } },
+        options.map(([value, text]) => h('option', { value, selected: value === String(mcpForm[key]) ? true : null }, text)))));
+  }
+
+  function mcpCard() {
+    if (!mcp) return null;
+    const f = mcpForm;
+    const productionOff = !mcp.production.available;
+    return h('section', { class: 'settings-card', id: 'mcp-servers', 'aria-labelledby': 'card-mcp' },
+      h('h2', { id: 'card-mcp', class: 'label' }, 'MCP servers'),
+      h('p', { class: 'sub' }, 'Tools claude gets in sessions, each reached through the console, so no session ever holds what a server takes to let it in: the console adds a token it signs, or a header it keeps, to each call. A change reaches sessions started after it. A production server is for My Woodshed sessions only and is off until its person turns it on in /mcp: its first call locks that session down for good, with no internet but its own private repos on GitHub, and it is removed some time after it stops (Retention, below).'),
+      productionOff && h('p', { class: 'cap-note' }, `No production server here: this console cannot lock a session down, since ${mcp.production.why}.`),
+      mcp.servers.length ? h('div', { class: 'data-list' }, mcp.servers.map(mcpRow)) : h('p', { class: 'cap-note' }, 'None yet.'),
+      h('h3', { class: 'label', style: 'margin-top: 16px' }, f.editing ? `Edit ${f.editing}` : 'Add a server'),
+      mcpField('mcp-name', 'Name', 'What claude calls it, such as sentry: lowercase letters, digits and dashes.', 'name', { disabled: f.editing ? true : null }),
+      mcpField('mcp-url', 'URL', 'Its Streamable HTTP endpoint, such as https://mcp.example.com/mcp. The console calls it, so it must answer from the console.', 'url', { placeholder: 'https://' }),
+      mcpSelect('mcp-kind', 'Kind', 'Production for a server that reads production data: its first call locks the session down.', 'production',
+        [['false', 'Ordinary'], ...(productionOff && !f.production ? [] : [['true', 'Production']])],
+        (v) => { mcpForm.production = v === 'true'; if (mcpForm.production && mcpForm.auth === 'none') mcpForm.auth = 'oidc'; }),
+      !f.production && mcpSelect('mcp-shared', 'Shared sessions', 'Whether sessions everyone can type into get it too: issues, pull requests and questions from Slack. Never a QA run or a review.', 'shared',
+        [['false', 'No'], ['true', 'Yes']], (v) => { mcpForm.shared = v === 'true'; }),
+      mcpField('mcp-people', 'People', 'GitHub logins whose My Woodshed sessions get it, comma-separated, or * for everyone.', 'people'),
+      mcpField('mcp-repos', 'Repos', 'owner/name, comma-separated, or * for every repo.', 'repos'),
+      mcpSelect('mcp-auth', 'What the console adds', 'Signed token: one the console signs as its OpenID Connect issuer, for the server to check. Header: a value the console keeps, such as an API key.', 'auth', Object.entries(AUTH_WORDS), (v) => { mcpForm.auth = v; }),
+      f.auth === 'oidc' && mcpField('mcp-audience', 'Audience', `The token's aud. The server trusts issuer ${mcp.issuer}, keys at ${mcp.jwks}. Empty: ${f.production ? 'woodshed-prod-mcp' : 'the server\'s name'}.`, 'audience'),
+      f.auth === 'header' && mcp.headers && mcpField('mcp-header', 'Header', 'Its name, such as authorization or x-api-key.', 'header'),
+      f.auth === 'header' && mcp.headers && mcpField('mcp-value', 'Value', f.editing ? 'Leave empty to keep the saved one. Never shown again.' : 'Such as Bearer <key>. Kept in the console\'s secret store and never shown again.', 'value', { type: 'password', autocomplete: 'new-password' }),
+      f.auth === 'header' && !mcp.headers && h('p', { class: 'cap-note' }, 'This console has no secret store, so it cannot keep a header.'),
+      f.error && h('p', { class: 'form-error', role: 'alert' }, W.errorParts(f.error)),
+      h('div', { class: 'card-foot' },
+        h('button', { type: 'button', class: 'btn btn-open', disabled: f.busy, onclick: saveMcp }, f.busy ? 'Saving…' : f.editing ? 'Save' : 'Add server'),
+        f.editing && h('button', { type: 'button', class: 'btn btn-quiet', onclick: () => { mcpForm = { ...EMPTY_MCP_FORM }; render(); } }, 'Cancel'),
+        h('span', { class: 'sub', role: 'status' }, f.notice || 'Each change is logged with who made it.')));
+  }
+
   // The Woodshed card: the commit this console runs from its git clone, the newer ones on the branch the clone follows,
   // and Update, which pulls them, builds the session image if it changed and restarts the console (woodshedUpdate.mjs).
   // Read on its own, since it asks git.
@@ -746,7 +885,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
         h('p', { class: 'empty' }, loadError ? `Could not load the settings: ${loadError}` : 'Loading settings…')));
       return;
     }
-    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
+    app.replaceChildren(h('div', { class: 'page' }, life.nav('/console-settings'), head, updatesCard(), projectsCard(), mcpCard(), CARDS.map(settingsCard), webhooksCard(), dataCard()));
   }
 
   async function load() {
@@ -756,6 +895,7 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
     } catch (err) {
       loadError = err.message;
     }
+    await loadMcp();
     render();
     if (data?.projects) await loadRepoChoices();
     await loadUpdates();

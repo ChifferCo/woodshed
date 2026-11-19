@@ -1,4 +1,4 @@
-// A session's side of its taint (console/prodMcp.mjs). The lockdown itself is outside the container: its network
+// A session's side of its taint (console/mcpRelay.mjs). The lockdown itself is outside the container: its network
 // reaches only the console, which this cannot change. What this does is make the session work within it: every tool
 // goes through the console's egress proxy (git, gh, curl, Node), trusting the proxy's own authority for GitHub, claude
 // reopens on the console's Anthropic proxy with web search and fetch off, and the woodshed-prod MCP server is on.
@@ -6,6 +6,9 @@
 //   node taint.mjs apply <egress.json>   a tainted session's start (session/entrypoint.sh): writes the marker, the
 //                                        egress variables and the CA bundle from the session API's /egress answer
 //   node taint.mjs proxy <proxy URL>     a guarded session's start (AWS): its egress variables, no CA, no marker
+//   node taint.mjs mcp-config            claude's --mcp-config from WOODSHED_MCP_SERVERS (console/mcpServers.mjs): each
+//                                        server at the console's relay, the production ones off in /mcp until the
+//                                        person turns one on, and only those in a tainted session
 //
 // statusd calls applyTaint when the console tells it the session was tainted (POST /taint).
 
@@ -19,7 +22,7 @@ import { isMain } from '../shared/isMain.mjs';
 export const TAINT_MARKER = '/tmp/woodshed-tainted';
 export const EGRESS_ENV_FILE = '/tmp/woodshed-egress.env';
 export const EGRESS_CA_BUNDLE = '/tmp/woodshed-egress-ca.pem';
-export const PROD_MCP_SERVER = 'woodshed-prod';
+export const MCP_CONFIG_FILE = '/tmp/woodshed-mcp.json';
 // claude's own flags in a tainted session: only the --mcp-config servers (woodshed-prod), and no tool that has
 // Anthropic reach the internet for it (the console's proxy refuses those calls anyway).
 export const TAINTED_CLAUDE_FLAGS = ' --strict-mcp-config --disallowedTools WebSearch,WebFetch';
@@ -121,25 +124,67 @@ async function writeBundle(ca, file) {
 }
 
 /**
- * ~/.claude.json with woodshed-prod on (`on`) or off for the checkout, the other servers as they were.
- * @param {string|null} text
- * @param {string} repoDir
- * @param {boolean} on
- * @returns {string}
+ * The servers the console hands this session, from WOODSHED_MCP_SERVERS (console/fleet.mjs).
+ * @param {Record<string, string|undefined>} env
+ * @returns {{name: string, production: boolean}[]}
  */
-export function withProdServer(text, repoDir, on) {
-  const config = text ? JSON.parse(text) : {};
-  config.projects ??= {};
-  const project = config.projects[repoDir] ??= {};
-  const disabled = (Array.isArray(project.disabledMcpServers) ? project.disabledMcpServers : []).filter((n) => n !== PROD_MCP_SERVER);
-  project.disabledMcpServers = on ? disabled : [...disabled, PROD_MCP_SERVER];
-  return JSON.stringify(config, null, 2);
+export function serversOf(env) {
+  try {
+    const list = JSON.parse(env.WOODSHED_MCP_SERVERS || '[]');
+    return (Array.isArray(list) ? list : []).filter((s) => /^[a-z0-9][a-z0-9-]*$/.test(String(s?.name ?? ''))).map((s) => ({ name: s.name, production: s.production === true }));
+  } catch {
+    return [];
+  }
 }
 
 /**
- * The session's side of the taint: the marker, the egress variables, the CA bundle, and woodshed-prod on.
+ * claude's --mcp-config: each server at the console's relay, with the session's own token, which no server ever sees.
+ * @param {{servers: {name: string, production: boolean}[], consoleUrl: string, token: string, tainted: boolean}} args
+ * @returns {object}  a tainted session's has its production servers alone
+ */
+export function mcpConfig({ servers, consoleUrl, token, tainted }) {
+  const mcpServers = {};
+  for (const { name, production } of servers) {
+    if (tainted && !production) continue;
+    mcpServers[name] = { type: 'http', url: `${consoleUrl.replace(/\/+$/, '')}/mcp/${name}`, headers: { Authorization: `Bearer ${token}` } };
+  }
+  return { mcpServers };
+}
+
+/**
+ * ~/.claude.json with the production servers on (`on`) or off for the checkout, the other servers as they were.
+ * @param {string|null} text
+ * @param {string} repoDir
+ * @param {string[]} names  the production servers
+ * @param {boolean} on
+ * @returns {string}
+ */
+export function withProdServers(text, repoDir, names, on) {
+  const config = text ? JSON.parse(text) : {};
+  config.projects ??= {};
+  const project = config.projects[repoDir] ??= {};
+  const disabled = (Array.isArray(project.disabledMcpServers) ? project.disabledMcpServers : []).filter((n) => !names.includes(n));
+  project.disabledMcpServers = on ? disabled : [...disabled, ...names];
+  return JSON.stringify(config, null, 2);
+}
+
+/** Writes claude's --mcp-config and turns the production servers on or off: off until the person turns one on. */
+export async function writeMcpConfig({ env, repoDir, tainted, file = MCP_CONFIG_FILE, claudeJson = path.join(os.homedir(), '.claude.json') }) {
+  const servers = serversOf(env);
+  if (!servers.length || !env.WOODSHED_CONSOLE_URL) return { servers: [], production: [] };
+  await fs.writeFile(file, `${JSON.stringify(mcpConfig({ servers, consoleUrl: env.WOODSHED_CONSOLE_URL, token: env.SESSION_TOKEN ?? '', tainted }), null, 2)}\n`, { mode: 0o600 });
+  const production = servers.filter((s) => s.production).map((s) => s.name);
+  if (production.length) {
+    const before = await fs.readFile(claudeJson, 'utf8').catch(() => null);
+    await fs.writeFile(claudeJson, withProdServers(before, repoDir, production, tainted));
+  }
+  return { servers: servers.filter((s) => !tainted || s.production).map((s) => s.name), production };
+}
+
+/**
+ * The session's side of the taint: the marker, the egress variables, the CA bundle, and its production servers on.
  * @param {{proxy: string|null, ca: string|null, token: string, env: Record<string, string|undefined>, repoDir: string,
- *          files?: {marker?: string, envFile?: string, bundle?: string, claudeJson?: string, profiles?: string[]}}} args
+ *          files?: {marker?: string, envFile?: string, bundle?: string, claudeJson?: string, mcpConfig?: string, profiles?: string[]}}} args
  * @returns {Promise<{egress: boolean, variables: Record<string, string>}>}  whether the egress variables were written
  *   (there was a proxy and a CA), and them, for the caller's own process
  */
@@ -157,8 +202,8 @@ export async function applyTaint({ proxy, ca, token, env, repoDir, files = {} })
     await fs.writeFile(envFile, egressEnvText({ proxy, token, env, caBundle: bundle }), { mode: 0o600 });
     await addProfileLine(profiles);
   }
-  const before = await fs.readFile(claudeJson, 'utf8').catch(() => null);
-  await fs.writeFile(claudeJson, withProdServer(before, repoDir, true));
+  // Its production servers on, and the others out of claude's config: the relay refuses them now anyway.
+  await writeMcpConfig({ env, repoDir, tainted: true, file: files.mcpConfig ?? MCP_CONFIG_FILE, claudeJson });
   return { egress: Boolean(proxy && ca), variables };
 }
 
@@ -173,12 +218,11 @@ if (isMain(import.meta.url)) {
   } else if (what === 'proxy') {
     await fs.writeFile(EGRESS_ENV_FILE, egressEnvText({ proxy: arg, token, env: process.env }), { mode: 0o600 });
     console.log('egress: through the console');
-  } else if (what === 'prod-server') {
-    const file = path.join(os.homedir(), '.claude.json');
-    const before = await fs.readFile(file, 'utf8').catch(() => null);
-    await fs.writeFile(file, withProdServer(before, repoDir, arg === 'on'));
+  } else if (what === 'mcp-config') {
+    const { servers, production } = await writeMcpConfig({ env: process.env, repoDir, tainted: isTainted() || process.env.WOODSHED_TAINTED === '1' });
+    console.log(JSON.stringify({ servers, production }));
   } else {
-    console.error('usage: taint.mjs apply <egress.json> | proxy <url> | prod-server on|off');
+    console.error('usage: taint.mjs apply <egress.json> | proxy <url> | mcp-config');
     process.exit(2);
   }
 }

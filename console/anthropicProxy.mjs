@@ -14,7 +14,7 @@
 // the plan's own behaviour, since only the bearer changes. Its connectivity check, HEAD /api/hello, carries no
 // credential and is answered here.
 //
-// A tainted session (prodMcp.mjs) reaches Anthropic only through here, and its calls are read before they go: one that
+// A tainted session (mcpRelay.mjs) reaches Anthropic only through here, and its calls are read before they go: one that
 // asks Anthropic to reach anywhere on its behalf (web search, web fetch, or an MCP server of the API's own connector)
 // is refused, since those would take what the session saw past its network's lockdown (serverSideReach).
 

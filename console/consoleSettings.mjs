@@ -82,6 +82,11 @@ export const SETTINGS = [
     read: (config) => retention(config).removeAfterDeleteMs / DAY_MS,
   },
   {
+    key: 'taintedRemoveHours', group: 'retention', label: 'Remove a stopped session that saw production data after', unit: 'hours', min: 1, max: 168, step: 1,
+    help: 'A My Woodshed session that used a production MCP server, counted from when it stopped. It goes with its conversation, attachments and record, and cannot be resumed after.',
+    read: (config) => (config.mcp?.taintedRemoveAfterMs ?? 24 * HOUR_MS) / HOUR_MS,
+  },
+  {
     key: 'slackGiveUpDays', group: 'slack', label: 'Stop waiting for the review and the suite after', unit: 'days', min: 1, max: 30, step: 1,
     help: 'A pull request still not approved and green by then is never posted.',
     read: (config) => retention(config).slackGiveUpMs / DAY_MS,
@@ -163,6 +168,7 @@ export function liveConfig(config, store, { hostProjects = null } = {}) {
       get slackGiveUpMs() { return value('slackGiveUpDays') * DAY_MS; },
       get qaWaitMs() { return value('qaWaitMinutes') * MINUTE_MS; },
       get removeAfterDeleteMs() { return value('removeDeletedDays') * DAY_MS; },
+      get taintedRemoveAfterMs() { return value('taintedRemoveHours') * HOUR_MS; },
     },
   };
 }

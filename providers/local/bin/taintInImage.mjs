@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// Proves a tainted session's lockdown in the real session image, on this machine's Docker (console/prodMcp.mjs). The
+// Proves a tainted session's lockdown in the real session image, on this machine's Docker (console/mcpRelay.mjs). The
 // console's own pieces run here: the fleet with the docker launcher, the session API with its Anthropic proxy and MCP
 // relay, the OIDC issuer and the egress proxy. woodshed-prod-mcp is a stand-in on 127.0.0.1 that checks each token
-// against the issuer's keys. A private session starts as usual, a call to the relay from inside it taints it, and then
+// against the issuer's keys, and stands in for an ordinary server (docs) too. A private session starts as usual with
+// both, a call to docs goes on with no taint, a call to woodshed-prod from inside it taints it, and then
 // every check runs inside the session, from a shell as its agent would run one. It prints each command and what came
 // back, then stops the session, resumes it to show it starts locked down, stops it again and checks nothing is left.
 //
@@ -27,7 +28,8 @@ import { anonymousVisibility, createEgressProxy } from '../../../console/egressP
 import { createFleet } from '../../../console/fleet.mjs';
 import { GITHUB_HOSTS } from '../../../console/githubEgress.mjs';
 import { createOidcIssuer, verifyJwt } from '../../../console/oidcIssuer.mjs';
-import { createProdMcpRelay, prodMcpSettings } from '../../../console/prodMcp.mjs';
+import { createMcpRelay } from '../../../console/mcpRelay.mjs';
+import { checkServer, createMcpServers, mcpSettings } from '../../../console/mcpServers.mjs';
 import { createSessionApi } from '../../../console/sessionApi.mjs';
 import { createDockerLauncher, gatewayName, lockedNetworkName } from '../dockerLauncher.mjs';
 
@@ -59,6 +61,8 @@ const ghToken = execFileSync('gh', ['auth', 'token'], { encoding: 'utf8' }).trim
 const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'taint-proof-'));
 
 // woodshed-prod-mcp, as far as the relay sees it: it checks each token against the issuer's keys, as auth.oidc does.
+// It answers as the ordinary docs server too, for a token whose audience is docs.
+const AUDIENCES = new Set(['woodshed-prod-mcp', 'docs']);
 const mcpCalls = [];
 function startMcp(issuer) {
   const server = http.createServer((req, res) => {
@@ -69,7 +73,7 @@ function startMcp(issuer) {
       const checked = verifyJwt(token, await issuer.jwks());
       const msg = body ? JSON.parse(body) : {};
       mcpCalls.push({ method: msg.method ?? req.method, claims: checked?.payload ?? null });
-      if (!checked || checked.payload.aud !== 'woodshed-prod-mcp') return res.writeHead(401).end();
+      if (!checked || !AUDIENCES.has(checked.payload.aud)) return res.writeHead(401).end();
       if (req.method !== 'POST') return res.writeHead(405).end();
       if (msg.id === undefined) return res.writeHead(202).end();
       const result = msg.method === 'initialize'
@@ -115,7 +119,7 @@ const networksOf = (name) => {
 };
 
 async function main() {
-  const settings = prodMcpSettings({ WOODSHED_PROD_MCP_URL: `http://127.0.0.1:${MCP_PORT}/mcp`, WOODSHED_PROD_MCP_PEOPLE: OWNER, WOODSHED_PROD_MCP_REPOS: REPO }, `http://${CONSOLE_NAME}:7690`);
+  const settings = mcpSettings({ WOODSHED_PROD_MCP_URL: `http://127.0.0.1:${MCP_PORT}/mcp`, WOODSHED_PROD_MCP_PEOPLE: OWNER, WOODSHED_PROD_MCP_REPOS: REPO }, `http://${CONSOLE_NAME}:7690`);
   const issuer = createOidcIssuer({ issuer: settings.issuer, keyFile: path.join(stateDir, 'oidc.pem') });
   const certs = createEgressCerts({ dir: path.join(stateDir, 'egress'), hosts: GITHUB_HOSTS });
   const mcp = await startMcp(issuer);
@@ -136,15 +140,17 @@ async function main() {
     sessionEnv: { WOODSHED_CONSOLE_URL: `http://${CONSOLE_NAME}:${API_PORT}` }, ghToken: null, pollMs: 30_000, fallbackPollMs: 300_000,
   };
   const egress = { sessionUrl: `http://${CONSOLE_NAME}:${EGRESS_PORT}`, caPem: () => certs.caPem() };
-  const store = { state: { sessions: [], github: null }, save() {} };
-  const fleet = createFleet({ config, store, launcher, github: {}, prodMcp: settings, egress, appShares: { clearSession() {} } });
+  // An ordinary server beside the environment's production one, as an admin adds it on Console settings.
+  const store = { state: { sessions: [], github: null, mcpServers: [checkServer({ name: 'docs', url: `http://127.0.0.1:${MCP_PORT}/mcp`, auth: 'oidc' })] }, save() {} };
+  const mcpServers = createMcpServers({ store, settings, lockdown: () => ({ available: true }) });
+  const fleet = createFleet({ config, store, launcher, github: {}, mcpServers, egress, appShares: { clearSession() {} } });
   const userSettings = {
     view: () => ({ setUp: true, claudeToken: { savedAt: 'proof' } }), claudeToken: async () => claudeToken, ownFiles: async () => ({}),
     gitIdentity: () => ({ name: 'Woodshed taint proof', email: 'taint-proof@woodshed.invalid' }), noteHome() {}, limitsFor: () => null,
   };
-  const relay = createProdMcpRelay({ settings, issuer, fleet, repoOf: () => REPO });
+  const relay = createMcpRelay({ servers: mcpServers, issuer, fleet, repoOf: () => REPO });
   const api = createSessionApi({
-    fleet, userSettings, anthropic: createAnthropicProxy({ userSettings }), prodMcp: relay, egress,
+    fleet, userSettings, anthropic: createAnthropicProxy({ userSettings }), mcpRelay: relay, egress,
     tokens: { token: async () => ({ token: ghToken, expiresAt: Date.now() + 3_600_000 }) },
   });
   const apiServer = http.createServer((req, res) => api(req, res).catch((err) => { console.error('proof: api failed', err.message); res.writeHead(502).end(); }));
@@ -166,6 +172,10 @@ async function main() {
   await waitFor('claude to open', async () => { await fleet.tick(); return session.status === 'running' && session.claudeSession; });
   console.log({ status: session.status, claudeState: session.state });
   await check(session, 'before', 'curl -sS -o /dev/null -w "%{http_code}\\n" --max-time 10 https://example.com');
+  await check(session, 'servers', `jq -c '.mcpServers | keys' /tmp/woodshed-mcp.json; jq -c '.projects["/work/woodshed"].disabledMcpServers' ~/.claude.json`);
+  say('An ordinary server\'s call goes on, and taints nothing');
+  await check(session, 'docs', `curl -sS --max-time 20 -o /dev/null -w "%{http_code}\\n" -H "Authorization: Bearer $SESSION_TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' "$WOODSHED_CONSOLE_URL/mcp/docs" -d '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'`);
+  console.log({ taintedAt: session.taintedAt ?? null, docsCalls: mcpCalls.filter((c) => c.claims?.aud === 'docs').map((c) => c.method) });
 
   say('From inside the session: a call to the MCP relay, which taints it before it is forwarded (the call\'s own connection goes with the network it was on)');
   await check(session, 'taint', `curl -sS --max-time 20 -H "Authorization: Bearer $SESSION_TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' "$WOODSHED_CONSOLE_URL/prod-mcp" -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'`);
@@ -176,8 +186,10 @@ async function main() {
   await waitFor('the session to be told', async () => { await fleet.tick(); return Boolean(session.taintNoticedAt); }, 120_000);
   await waitFor('claude to call woodshed-prod after it reopened', async () => mcpCalls.some((c) => c.method === 'tools/list'), 180_000);
   console.log('MCP server saw:', mcpCalls.map((c) => c.method));
+  await check(session, 'servers', `jq -c '.mcpServers | keys' /tmp/woodshed-mcp.json; jq -c '.projects["/work/woodshed"].disabledMcpServers' ~/.claude.json`);
 
   say('Refused, from inside the tainted session');
+  await check(session, 'docs', `curl -sS --max-time 20 -o /dev/null -w "%{http_code}\\n" -H "Authorization: Bearer $SESSION_TOKEN" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' "$WOODSHED_CONSOLE_URL/mcp/docs" -d '{"jsonrpc":"2.0","id":9,"method":"tools/list"}'`);
   const refused = [
     'curl -sS --max-time 15 https://example.com',
     'curl -sS --max-time 15 --noproxy "*" https://example.com',

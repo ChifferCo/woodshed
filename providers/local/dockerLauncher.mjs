@@ -139,7 +139,7 @@ export function createDockerLauncher({
     // A question from Slack reads and answers, and anyone in the workspace can ask one: it never gets a Docker.
     if (env.SESSION_MODE === 'ask') return none;
     // The machine's Docker is root on the machine, from which a session could join any network again and undo its
-    // lockdown: a session that may use production (prodMcp.mjs) never has it. Its own, under Sysbox, runs inside the
+    // lockdown: a session that may use production (mcpRelay.mjs) never has it. Its own, under Sysbox, runs inside the
     // session's network, so what it starts is locked down with it.
     const production = env.WOODSHED_PROD_MCP === '1' || env.WOODSHED_TAINTED === '1';
     if (ownDocker) {

@@ -1,6 +1,6 @@
 // The console as an OpenID Connect issuer: it signs short-lived tokens that a service outside Woodshed trusts, so a
 // session can be given access through the console without ever holding a credential that service takes. Today the one
-// such service is woodshed-prod-mcp (prodMcp.mjs): the console's MCP relay adds a token from here to each call it
+// such service is woodshed-prod-mcp (mcpRelay.mjs): the console's MCP relay adds a token from here to each call it
 // forwards. The service is told once to trust this issuer: it fetches the two public documents below, and trusts a
 // token whose signature their key checks and whose `aud` is its own.
 //

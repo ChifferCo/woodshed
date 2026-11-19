@@ -67,8 +67,8 @@
 //                                carried to the session that answers them (reviewProxy.mjs)
 //   GET  /manifest.webmanifest, the icons   install as an app (the shed's pwa.mjs), before sign-in
 //   GET  /.well-known/openid-configuration, /.well-known/jwks.json   the console as an OpenID Connect issuer, whose
-//                                tokens woodshed-prod-mcp trusts (oidcIssuer.mjs, prodMcp.mjs); before sign-in, 404
-//                                with production access off
+//                                tokens its MCP relay adds for a server whose auth is oidc (oidcIssuer.mjs, mcpRelay.mjs),
+//                                such as woodshed-prod-mcp; before sign-in
 //   POST /api/sessions/<id>/resume  {"message": "..."}  a stopped shared session again, its conversation and all
 //   POST /api/sessions/<id>/delete  a shared session's conversation and databases, deleted now (a running one is stopped first)
 //   POST /api/sessions/<id>/remove  a shared session already deleted, off the list for everyone
@@ -102,6 +102,14 @@
 //   POST /api/console-settings/projects/color   {"name": "<project>", "color": "teal"}   a project's colour on the rail, from the palette (projectColors.mjs)
 //   POST /api/console-settings/projects/slack-channel  {"name": "<project>", "channel": "C..."|""}   a repo's own Slack channel, from its settings page
 //   POST /api/console-settings/clean  {"kind": "stuck"|"databases"|"home", "id": "<session id>"}  a stalled row's fix
+//   GET  /api/console-settings/mcp-servers   the MCP servers sessions get through the relay (mcpServers.mjs), never a
+//                                header's value, whether this console can lock a session down for a production one, and
+//                                the issuer and JWKS a server whose auth is oidc trusts
+//   POST /api/console-settings/mcp-servers   {"server": {"name", "url", "production", "shared", "people", "repos", "auth",
+//                                "audience", "header"}}   adds one, or replaces the one of that name; answers the list
+//   POST /api/console-settings/mcp-servers/remove  {"name": "<server>"}
+//   POST /api/console-settings/mcp-servers/header  {"name": "<server>", "value": "..."|""}   the header the console adds
+//                                to a server whose auth is header, kept in the secret store and never shown again
 //   GET  /api/console-settings/updates         the Woodshed commit this console runs, the newer ones on the branch its
 //                                git clone follows, and an update's steps (woodshedUpdate.mjs)
 //   POST /api/console-settings/updates/check   fetch that branch again, now
@@ -244,6 +252,8 @@ const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
 const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
+const MCP_SERVERS_PATH = '/api/console-settings/mcp-servers';
+const MCP_SERVERS_WRITES = new Set([MCP_SERVERS_PATH, `${MCP_SERVERS_PATH}/remove`, `${MCP_SERVERS_PATH}/header`]);
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
 const PULLS_FRESH_MS = 60_000;
@@ -568,7 +578,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, oidc = null,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, oidc = null, mcpServers = null,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -1793,6 +1803,29 @@ export function createHandler({
     return consoleSettingsReply(res);
   }
 
+  // The MCP servers sessions get (mcpServers.mjs): the Console settings page's card, and a hosting program's calls.
+  async function mcpServersWrite(req, res, pathname, login) {
+    if (!mcpServers) return reply(res, 404, { error: 'this console hands its sessions no MCP servers' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
+    const by = login ?? 'console';
+    try {
+      if (pathname === MCP_SERVERS_PATH) await mcpServers.save({ server: body.server, by });
+      else if (pathname === `${MCP_SERVERS_PATH}/remove`) await mcpServers.remove({ name: body.name, by });
+      else await mcpServers.setHeader({ name: body.name, value: body.value, by });
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      console.error('console: MCP server change failed', { pathname, message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'The change failed; the console log says why' });
+    }
+    return reply(res, 200, mcpServers.view());
+  }
+
   async function woodshedUpdateReply(res, status = 200) {
     const view = woodshedUpdate ? await woodshedUpdate.view() : null;
     if (!view) return reply(res, 404, { error: 'this console does not run from a git clone, so it follows no Woodshed updates' });
@@ -1868,6 +1901,7 @@ export function createHandler({
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    if (MCP_SERVERS_WRITES.has(pathname)) return mcpServersWrite(req, res, pathname, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
@@ -2019,6 +2053,7 @@ export function createHandler({
     if (pathname === REVIEWER_SETUP_PATH) return reviewerApp ? reply(res, 200, await reviewerApp.view()) : reply(res, 404, { error: 'this console cannot make a reviewer App' });
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
+    if (pathname === MCP_SERVERS_PATH) return mcpServers ? reply(res, 200, mcpServers.view()) : reply(res, 404, { error: 'this console hands its sessions no MCP servers' });
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/api/people') return peopleReply(res);

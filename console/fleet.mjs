@@ -18,7 +18,6 @@ import { reviewVerdict } from './pullGates.mjs';
 import { blockerText } from './databaseGate.mjs';
 import { GAVE_UP_TEXT } from './prMessages.mjs';
 import { allProjects, defaultProject, projectFor, projectNamed } from './projects.mjs';
-import { prodMcpEligibility } from './prodMcp.mjs';
 import { TAINT_MESSAGE } from './taint.mjs';
 import {
   ACTIVE_STATUSES, APP_STATES, activePrivateCount, isAsk, isQa, isReview, keptIds, newSessionId, newSessionToken, sessionLink,
@@ -250,7 +249,7 @@ export function createFleet({
   userSettings = null, people = null, autoName = null, attachments = null, qaRecordings = null, members = null, pings = null,
   pullWebhooksFlowing = () => false, pullRequests = async () => null, projectBlocker = async () => null, githubFor = null,
   consoleLinks = async () => true, newId = newSessionId, ownApp = () => null, reviewerApp = null, repoTriggers = null, reviewAgents = null,
-  prodMcp = null, appShares = null, egress = null,
+  mcpServers = null, appShares = null, egress = null,
 }) {
   const { state } = store;
   // Each repo's label and whether its label and /woodshed comments start anything (repoTriggers.mjs).
@@ -366,10 +365,14 @@ export function createFleet({
     if (session.prompt) env.PROMPT = session.prompt;
     // Claude opens with nothing to do: the person came to read the review, which the session starts itself.
     if (session.reviewOnly) env.REVIEW_ONLY = '1';
-    // Production access (prodMcp.mjs): the session is handed the MCP server, turned off until its person turns it on.
-    // A launcher whose sessions cannot be moved onto a locked network later (AWS) starts it on a guarded one at once,
-    // whose only way out is the console's egress proxy. A tainted session starts locked down, whatever it is resumed as.
-    const production = Boolean(session.taintedAt) || prodMcpEligibility(session, prodMcp, project.repo).ok;
+    // The MCP servers the console hands this session (mcpServers.mjs), each reached through its relay: names only, the
+    // session never holds what a server takes. A production one is turned off until its person turns it on. A launcher
+    // whose sessions cannot be moved onto a locked network later (AWS) starts a session that may use one on a guarded
+    // network at once, whose only way out is the console's egress proxy. A tainted session starts locked down, whatever
+    // it is resumed as, with its production servers alone.
+    const servers = mcpServers?.forSession(session, project.repo ?? null) ?? [];
+    if (servers.length) env.WOODSHED_MCP_SERVERS = JSON.stringify(servers);
+    const production = Boolean(session.taintedAt) || servers.some((s) => s.production);
     if (production) env.WOODSHED_PROD_MCP = '1';
     if (session.taintedAt) env.WOODSHED_TAINTED = '1';
     if (production && egress?.sessionUrl && (session.taintedAt || launcher.guardsEgress)) env.WOODSHED_EGRESS_PROXY = egress.sessionUrl;
@@ -384,7 +387,7 @@ export function createFleet({
   /**
    * Taints a session: its network is locked down by the launcher, outside the container, and only once that is in
    * place is it marked, which nothing ever undoes. A lockdown that fails leaves the session untainted and throws, so
-   * the call that asked for it is refused (prodMcp.mjs). Called again while one is under way, it waits for that one.
+   * the call that asked for it is refused (mcpRelay.mjs). Called again while one is under way, it waits for that one.
    * @param {object} session
    * @param {{why?: string}} [opts]
    * @returns {Promise<object>}  the session, tainted
@@ -436,11 +439,11 @@ export function createFleet({
     console.log('fleet: tainted session told', { id: session.id });
   }
 
-  // A tainted session goes once it has been stopped for the installation's time (WOODSHED_PROD_MCP_REMOVE_AFTER_HOURS),
+  // A tainted session goes once it has been stopped for the Console settings page's time (24 hours by default),
   // with everything it kept: its Claude home, its attachments, its record.
   async function removeTainted(session) {
     if (!session.taintedAt || !session.owner || ACTIVE_STATUSES.has(session.status) || session.status === 'stopping') return;
-    const after = prodMcp?.removeAfterMs ?? 24 * 3_600_000;
+    const after = retention().taintedRemoveAfterMs ?? 24 * 3_600_000;
     const from = Date.parse(session.stoppedAt ?? session.taintedAt);
     if (!Number.isFinite(from) || now() < from + after) return;
     console.log('fleet: tainted session removed', { id: session.id, owner: session.owner, why: `stopped ${spanText(after)} ago` });
