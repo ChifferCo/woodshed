@@ -785,6 +785,16 @@ async function pickerPane(t, spec) {
   };
 }
 
+test('GET /prompt says a pane it could not read is unread, not one that asks nothing', async (t) => {
+  const { call, tmux } = await pickerPane(t, { questions: [{ question: 'Which colour?', header: 'Colour', options: ['Red', 'Green'] }] });
+  assert.equal((await call('GET', '/prompt')).body.prompt?.kind, 'question');
+  await tmux('kill-server');
+  const unread = await call('GET', '/prompt');
+  assert.equal(unread.status, 503);
+  assert.equal(unread.body.why, 'pane-unread');
+  assert.equal(unread.body.prompt, undefined);
+});
+
 test('POST /answer picks each question\'s option and submits, in a real tmux pane, with the token only', async (t) => {
   const spec = { questions: [
     { question: 'Which colour do you prefer?', header: 'Colour', options: ['Red', 'Green', 'Blue'] },

@@ -1261,6 +1261,10 @@ async function reopenClaude() {
   typing = true;
   try {
     await restartClaude();
+    // Held until the new claude has taken the lockdown's message (its hooks say it works), or 30 s: a message typed
+    // while it draws its box would land before that message is in.
+    const since = Date.now();
+    while (Date.now() - since < 30_000 && (await hookState())?.state !== 'working') await new Promise((r) => setTimeout(r, 500));
   } finally {
     typing = false;
   }
@@ -1521,7 +1525,17 @@ async function handle(req, res) {
     await interrupt();
     return reply(res, 200, { ok: true });
   }
-  if (route === 'GET /prompt') return reply(res, 200, promptReply(readPrompt(await capturePane().catch(() => ''))));
+  if (route === 'GET /prompt') {
+    // A pane that could not be read is not one that asks nothing: said so, for the page to send the person to the TUI tab.
+    let pane;
+    try {
+      pane = await capturePane();
+    } catch (err) {
+      console.warn('statusd: prompt not read, the pane could not be read', { message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 503, { why: 'pane-unread', error: `${CODEX ? 'codex' : 'claude'}'s terminal could not be read` });
+    }
+    return reply(res, 200, promptReply(readPrompt(pane)));
+  }
   if (route === 'POST /answer') {
     let body;
     try {

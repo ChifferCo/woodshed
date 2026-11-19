@@ -385,7 +385,7 @@ test('a lost answer not held on two reads of the session is said maybe sent; one
   assert.equal(a.state, 'unconfirmed', 'one read, maybe asked for before the console took it');
   chat.reconcile([a], { heldIds: [] }, now + 5000);
   assert.equal(a.state, 'maybe', 'never held: it went in, or never reached the console');
-  assert.match(chat.pendingLabel('maybe', 'claude'), /went in, or never reached it/);
+  assert.match(chat.pendingLabel('maybe', 'claude'), /^Not known whether it went in: check claude's reply/);
   assert.equal(chat.stillPending([a], [], now + 5000 + 11 * 60_000).length, 0);
 });
 
@@ -399,7 +399,7 @@ test('a held message is never settled by the same words in the record: the conso
   assert.equal(chat.stillPending([a], sentToo, now + 61_000).length, 0, 'once sent, the record settles it');
 });
 
-test('a held message no longer listed on two reads went, though deliveredIds no longer names it; listed again, it is held', () => {
+test('a held message no longer listed on two reads, and named by no list, is not known to have gone; listed again, it is held', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now, state: 'held' };
   chat.reconcile([a], { heldIds: ['aaaaaaaa-1'] }, now);
@@ -408,7 +408,7 @@ test('a held message no longer listed on two reads went, though deliveredIds no 
   chat.reconcile([a], read, now + 2000);
   assert.equal(a.state, 'held', 'one read, seen twice');
   chat.reconcile([a], { heldIds: [], deliveredIds: [] }, now + 3000);
-  assert.equal(a.state, 'sent', 'gone from the console\'s list on two reads: it went');
+  assert.equal(a.state, 'maybe', 'gone from the console\'s list on two reads, and no list names it: not known');
   chat.reconcile([a], { heldIds: ['aaaaaaaa-1'] }, now + 4000);
   assert.equal(a.state, 'held', 'a late read that lists it brings it back');
   const old = { id: 'bbbbbbbb-2', text: 'x', sentAt: now, state: 'held' };

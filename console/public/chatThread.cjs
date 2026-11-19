@@ -485,7 +485,7 @@
     if (state === 'in-box') return `In ${agent}'s box, not sent: send or clear it in the TUI tab`;
     if (state === 'refused') return `Not sent: this session runs a Woodshed that cannot send safely. Type it in the TUI tab`;
     if (state === 'unknown') return `No answer in time: it may have gone in. Check ${agent}'s reply before sending it again`;
-    if (state === 'maybe') return `No word from the console: it went in, or never reached it. Check ${agent}'s reply before sending it again`;
+    if (state === 'maybe') return `Not known whether it went in: check ${agent}'s reply before sending it again`;
     if (state === 'unconfirmed') return `Sent, with no word back on whether it went in or waits: watch for ${agent}'s reply`;
     if (state === 'held') return `Not sent yet: it goes in when ${agent} is back at its prompt`;
     return `Sent, waiting for ${agent}`;
@@ -529,7 +529,7 @@
       const listed = Boolean(p.id) && heldIds.includes(p.id);
       // An answer lost on the way, or a read that came late, for a message the console holds: held, then, and waiting
       // for its turn.
-      if (listed && (p.state === 'unconfirmed' || p.state === 'sent')) {
+      if (listed && (p.state === 'unconfirmed' || p.state === 'sent' || p.state === 'maybe')) {
         p.state = 'held';
         delete p.deliveredAt;
         changed = true;
@@ -542,9 +542,9 @@
         p.lastRead = session;
         p.unlistedReads = (p.unlistedReads ?? 0) + 1;
         if (p.unlistedReads >= 2 && ![deliveredIds, unknownIds, refusedIds].some((ids) => ids.includes(p.id)) && leftInBox?.id !== p.id) {
-          // A held one the console let go of went in. One whose answer was lost may never have reached the console: not
-          // known, said so, and settled by the record if it went in.
-          p.state = p.state === 'held' ? 'sent' : 'maybe';
+          // The console let go of it, and none of its lists (the last 20 of each) names it: it went in, or was refused or
+          // never arrived, which is not known. Said so, and settled by the record if it went in.
+          p.state = 'maybe';
           p.deliveredAt = now;
           changed = true;
         }
