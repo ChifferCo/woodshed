@@ -671,7 +671,8 @@ window.Woodshed.settingsPage('/console-settings', (app, life) => {
       const next = await W.postJson('/api/console-settings/slack/recheck', {});
       const text = next.bot && !next.bot.ok ? `Checked: Slack still refuses the saved token (${next.bot.error}).`
         : next.missingScopes?.length ? `Checked: the app still lacks ${next.missingScopes.join(', ')}. Reinstall it after adding ${next.missingScopes.length === 1 ? 'it' : 'them'}.`
-          : 'Checked: the app has every scope the console uses.';
+          : Array.isArray(next.missingScopes) ? 'Checked: the app has every scope the console uses.'
+            : 'Checked, but Slack did not say which scopes the app has.';
       slackSaved(next, text);
     } catch (err) {
       slackNote.text = err.message;

@@ -292,6 +292,15 @@ test('an app missing scopes offers Check again, which asks Slack about the saved
   assert.doesNotMatch(textOf(cardOf(app, 'slack')), /The app lacks/);
 });
 
+test('Check again says it could not tell when Slack named no scopes, never that every one is there', async () => {
+  const { app, posted } = await loadPage(WITH_SLACK, { slack: { ...SLACK_ON, missingScopes: ['groups:read'] } });
+  posted.reply = () => ({ ...SLACK_ON, missingScopes: null });
+  buttonIn(cardOf(app, 'slack'), 'Check again').listeners.click();
+  await tick();
+  assert.match(textOf(cardOf(app, 'slack')), /Checked, but Slack did not say which scopes the app has\./);
+  assert.doesNotMatch(textOf(cardOf(app, 'slack')), /every scope/);
+});
+
 test('a saved token Slack refuses says so on the card', async () => {
   const { app } = await loadPage(WITH_SLACK, { slack: { ...SLACK_ON, bot: { ok: false, error: 'invalid_auth' } } });
   assert.match(textOf(cardOf(app, 'slack')), /Token refused.*Slack refuses the saved token \(invalid_auth\): nothing is posted\./);

@@ -278,6 +278,9 @@ export function createSlackSetup({ store, secrets, slack, consoleName = 'Woodshe
   async function recheck({ by }) {
     slack.forgetChannels();
     const next = await view({ recheck: true });
+    // Slack not reached (a timeout, the network, a rate limit): view() draws the card without the bot, which must not
+    // read as a check that found nothing missing.
+    if (next.connected && !next.bot) throw Object.assign(new Error('Slack did not answer, so nothing was checked: try again in a moment.'), { shown: true, status: 502 });
     console.log('slack: saved token checked again', { by, ok: next.bot?.ok ?? null, missingScopes: next.missingScopes ?? null });
     return next;
   }
