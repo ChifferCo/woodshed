@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  MANIFEST, ICON_SIZES, HEAD_TAGS, WOODSHED_MARK_SVG, maskableMark, handlePwaRequest,
+  MANIFEST, ICON_SIZES, HEAD_TAGS, WOODSHED_MARK_SVG, maskableMark, handlePwaRequest, iconPng,
 } from './pwa.mjs';
 
 // A fake ServerResponse that records what was written, so the routes can be
@@ -151,4 +151,12 @@ test('it ignores methods other than GET', () => {
   // claiming it would take it out of reach of the origin check in server.mjs.
   const res = fakeRes();
   assert.equal(handlePwaRequest({ method: 'POST', url: '/icon-192.png' }, res), false);
+});
+
+test('iconPng hands out the same bytes the icon route serves', () => {
+  const res = fakeRes();
+  handlePwaRequest({ method: 'GET', url: '/icon-512.png' }, res);
+  assert.ok(iconPng('icon-512.png').equals(res.body));
+  assert.equal(iconPng('icon-512.png').subarray(1, 4).toString(), 'PNG');
+  assert.throws(() => iconPng('nope.png'), /no icon named nope\.png/);
 });

@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# Written from shared/pwa.mjs by icon.mjs before each start and build.
+icon.png
