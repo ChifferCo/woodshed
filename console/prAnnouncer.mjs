@@ -81,6 +81,10 @@ export function createPrAnnouncer({
   // When each waiting pull request was last read, by number. Not kept: after a restart each is read at once.
   const checkedAt = new Map();
   const pending = () => (state.slackPending ??= []);
+  // Watches that ran out, by item key: one is not started again for the same session until it is resumed (renew), so
+  // a session back on an old pull request does not start its wait over. Kept to the latest few hundred.
+  const expired = () => (state.watchesExpired ??= []);
+  const EXPIRED_KEPT = 500;
   // A pull request is its repo's: another project's #12 is not the default project's #12. Items of the default
   // project carry no `project`, as they did before projects.
   const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
@@ -116,13 +120,15 @@ export function createPrAnnouncer({
    * @param {string} sessionId
    */
   function renew(sessionId) {
+    const ran = expired().filter((key) => String(key).endsWith(`@${sessionId}`));
+    if (ran.length) state.watchesExpired = expired().filter((key) => !ran.includes(key));
     const items = pending().filter((p) => watched(p) && p.sessionId === sessionId);
     for (const item of items) {
       Object.assign(item, { since: new Date(now()).toISOString(), run: (item.run ?? 0) + 1 });
       for (const key of ['fedReview', 'fedSuite', 'passedSha', 'untoldSaid']) delete item[key];
       checkedAt.delete(itemKey(item));
     }
-    if (items.length) store.save();
+    if (items.length || ran.length) store.save();
   }
 
   /**
@@ -150,6 +156,11 @@ export function createPrAnnouncer({
     }
     const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
     const known = pending().find(same);
+    const key = itemKey({ number, project: other, sessionId: session.id, watch });
+    if (watch && !known && expired().includes(key)) {
+      console.log('slack: pull request watched as long as it may wait already, not watched again until the session is resumed', { id: session.id, number });
+      return false;
+    }
     if (!known) {
       pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}), ...(watch ? { watch: true } : {}) });
       store.save();
@@ -226,8 +237,14 @@ export function createPrAnnouncer({
 
   const listening = (item) => events.listening?.(item) ?? 'yes';
 
+  // A watch dropped for its wait running out is remembered, so it is not started again by the session coming back.
+  async function endWatch(item, why) {
+    if (why === 'watched as long as a pull request may wait') state.watchesExpired = [...expired().filter((k) => k !== itemKey(item)), itemKey(item)].slice(-EXPIRED_KEPT);
+    return drop(item, why);
+  }
+
   async function watchOne(item) {
-    if (watchOver(item)) return drop(item, watchOver(item));
+    if (watchOver(item)) return endWatch(item, watchOver(item));
     // A session on another pull request, or a branch with none, for now (or statusd's lookup failed): the watch waits,
     // keeping what it told, so nothing is told twice when the session is back on it.
     if (listening(item) === 'elsewhere') return;
@@ -244,7 +261,7 @@ export function createPrAnnouncer({
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
     if (renewed()) return;
-    if (watchOver(item)) return drop(item, watchOver(item));
+    if (watchOver(item)) return endWatch(item, watchOver(item));
     if (listening(item) === 'elsewhere') return;
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');

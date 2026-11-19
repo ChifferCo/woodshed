@@ -1691,7 +1691,8 @@ existing branch it was started on) in the repo itself, not a fork, after the ses
 so no session is told to push to a teammate's, nor about a pull request on another repo than its project's (`fleet: pull request on another
 repo than the session's project, not watched`, as for a session whose project left the list). The note on a pass also has the session run `gh pr checks` and see any
 other check through before it stops. While the session reports another pull request or none (a branch with none, or statusd's lookup failing), the
-watch waits, keeping what it told, and goes on once the session is back on it. A resumed session's watch starts again,
+watch waits, keeping what it told, and goes on once the session is back on it. A watch that ran out is not started again by the
+session coming back to its pull request (`state.json`'s `watchesExpired`). A resumed session's watch starts again,
 its week over, and its new run is told where the pull request stands; a stopping session hears nothing, and one claude is not open
 in yet is told at the next check, each minute even while webhooks flow, rather than held, so nothing is typed in at a later Resume. A suite whose path filters
 leave the change out is named as not run in the pass's note. Until then the

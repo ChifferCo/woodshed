@@ -735,7 +735,7 @@ test('a watched pull request runs out of time with nothing written on GitHub, an
   await watcher.check();
   assert.deepEqual([dropped, gaveUp, github.comments, told.length], [['watched as long as a pull request may wait'], [], [], 1]);
   holder.gates = null;
-  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  await watcher.track({ ...session, id: 's2', owner: 'joel' }, null, { watch: true });
   await watcher.check();
   assert.deepEqual(dropped.at(-1), 'no review or suite to watch');
 });
@@ -1001,4 +1001,23 @@ test('a watch whose session is on another pull request for now waits, keeping wh
   assert.equal(told.length, 2);
   assert.match(told[1], /e2e suite failed/);
   assert.doesNotMatch(told[1], /asks for changes/, 'the verdict it heard before is not told again');
+});
+
+test('a watch that ran out is not started again by its session coming back, only by a resume', async () => {
+  const { store, session, github, dropped } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock, giveUpMs: () => 60 * MINUTE,
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); }, listening: () => 'elsewhere' },
+  });
+  const mine = { ...session, owner: 'joel' };
+  await watcher.track(mine, null, { watch: true });
+  clock += 61 * MINUTE;
+  await watcher.check();
+  assert.deepEqual([dropped, store.state.slackPending], [['watched as long as a pull request may wait'], []]);
+  assert.equal(await watcher.track(mine, null, { watch: true }), false, 'back on it: not watched again');
+  assert.deepEqual(store.state.slackPending, []);
+  watcher.renew(mine.id);
+  assert.equal(await watcher.track(mine, null, { watch: true }), true, 'resumed: watched again');
 });
