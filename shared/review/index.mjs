@@ -2044,9 +2044,16 @@ function handleQaStart(res, ctx, session) {
   runQa({ ctx, session, review, gen })
     .catch(function unexpected(err) {
       log('review.qa_crashed', { session, error: err?.message });
-      if (qaIsLive(session, gen)) {
-        const qa = readQa(session);
-        writeQa({ session, qa: { ...(qa || { items: [] }), status: 'failed', phase: null, error: err?.message || 'the Q&A failed' } });
+      // The crash is often the disk refusing qa.json, and this write can fail the
+      // same way. Thrown from here it would reject a promise nothing awaits, and
+      // an unhandled rejection ends the process hosting every review.
+      try {
+        if (qaIsLive(session, gen)) {
+          const qa = readQa(session);
+          writeQa({ session, qa: { ...(qa || { items: [] }), status: 'failed', phase: null, error: err?.message || 'the Q&A failed' } });
+        }
+      } catch (again) {
+        log('review.qa_failure_not_saved', { session, error: again?.message });
       }
     })
     .finally(function release() {

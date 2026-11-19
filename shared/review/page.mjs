@@ -2937,6 +2937,14 @@ ${DARK_PALETTE}
       if (state.tab === 'qa' || before !== (qaView.data ? qaView.data.status : null)) render();
     }
 
+    // Discard and Re-review empty the Q&A on the server (it describes the diff
+    // they replace), so the page forgets its copy too. Not asked again on its
+    // own: a reader who just discarded did not ask for a new paid run.
+    function resetQa() {
+      clearTimeout(qaView.timer);
+      qaView = { session: state.session, data: null, loading: false, error: null, started: true, timer: null, open: {} };
+    }
+
     async function askQaAgain() {
       if (!state.session) return;
       qaView.open = {};
@@ -2965,7 +2973,9 @@ ${DARK_PALETTE}
     }
 
     function renderQa(content) {
-      if (qaView.session !== state.session || (!qaView.data && !qaView.loading && !qaView.error)) loadQa(true);
+      // Once per session: the read comes back through render(), so a condition on
+      // what it found would ask again on every render it causes.
+      if (qaView.session !== state.session && !qaView.loading) loadQa(true);
       content.appendChild(el('div', 'secthead s-qa first', 'Questions from a newcomer'));
       var box = el('div', 'qa');
       box.appendChild(el('p', 'qa-intro',
@@ -2976,6 +2986,12 @@ ${DARK_PALETTE}
       if (qaView.error && !d) {
         box.appendChild(el('div', 'tabnote', 'The Q&A could not be loaded: ' + qaView.error));
         box.appendChild(qaAgainButton('Try again'));
+        content.appendChild(box);
+        return;
+      }
+      if (!d && qaView.started && !qaView.loading) {
+        box.appendChild(el('div', 'tabnote', 'There is no Q&A for this diff yet.'));
+        box.appendChild(qaAgainButton('Ask the questions'));
         content.appendChild(box);
         return;
       }
@@ -3533,6 +3549,7 @@ ${DARK_PALETTE}
             // reloading would redraw the same page and read as a button that
             // did nothing. Say so, and offer the other thing instead.
             if (data && data.unchanged) return offerReanalysis();
+            resetQa();
             // Re-read in place rather than reloading the document. A reload
             // throws away the conversation, the scroll and which files were
             // open, to arrive at the same page with a newer diff in it.
@@ -3588,6 +3605,7 @@ ${DARK_PALETTE}
           // A fresh state object rather than a reset method: every answer this
           // page memoised describes a review that no longer exists.
           ask = createAskState();
+          resetQa();
           renderChat();
           return loadReview(state.session);
         })

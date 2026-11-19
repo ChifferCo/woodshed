@@ -82,3 +82,21 @@ test('a run that failed or answered in no structure is a failure with its reason
   const ok = extractStructured({ phase: 'done', stdout: '{"structured_output":{"questions":["a"]},"total_cost_usd":0.01}' });
   assert.deepEqual(ok, { ok: true, value: { questions: ['a'] }, costUsd: 0.01 });
 });
+
+// A Q&A answers questions about one diff. Left on disk after a re-review or Discard, the page would show answers about
+// code that is gone, with nothing to say so.
+test('dropping the artifact drops the Q&A with it', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qa-store-'));
+  process.env.WOODSHED_REVIEWS = dir;
+  const { writeQa, readQa, writeArtifact, removeArtifact } = await import(`./store.mjs?qa=${Date.now()}`);
+  const session = 'claude-0a0a0a0a';
+  writeArtifact({ session, artifact: { overview: 'x', groups: [] } });
+  writeQa({ session, qa: { status: 'ready', items: [{ id: 'q1', parent: null, depth: 1, question: 'a', answer: 'b' }] } });
+  assert.equal(readQa(session).items.length, 1);
+  removeArtifact(session);
+  assert.equal(readQa(session), null);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
