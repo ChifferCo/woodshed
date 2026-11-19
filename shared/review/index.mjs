@@ -422,10 +422,11 @@ async function createWorktreeReview({ ctx, sessionName, worktreePath, pull = fal
       from: pulled.from?.slice(0, 8), to: pulled.to?.slice(0, 8), refused: pulled.refused ?? null,
     });
   }
-  // Unique per call, not per session. Two overlapping reviews of the same
-  // session are reachable — nothing serialises them, and a double-click is
-  // enough — and a shared scratch index means one `add -A` lands in the other's
-  // diff. That failure is silent and produces a plausible wrong answer, which
+  // Unique per call, not per session. Its callers now take a session's review
+  // one at a time (oneTakeAtATime), but this was written when two overlapping
+  // reviews of the same session were reachable — a double-click was enough —
+  // and a shared scratch index meant one `add -A` landed in the other's diff.
+  // Kept unique, so a caller outside the lock cannot bring that back. That failure is silent and produces a plausible wrong answer, which
   // is the worst kind to leave in.
   const indexFile = path.join(
     os.tmpdir(),
@@ -744,8 +745,14 @@ export function startReviewAnalysisIfNone({ ctx, sessionName }) {
  * the BRANCH has to go with it and only this module knows the branch's name.
  * server.mjs still removes the worktree itself for a non-review session.
  */
-export async function removeReviewSession({ ctx, sessionName }) {
-  if (!isSessionName(sessionName)) return { removed: false };
+export function removeReviewSession({ ctx, sessionName }) {
+  if (!isSessionName(sessionName)) return Promise.resolve({ removed: false });
+  // Under the same lock as a take, so a Re-review in progress cannot hold a tree
+  // or write a record after the removal let them go.
+  return oneTakeAtATime(sessionName, () => removeReviewSessionNow({ ctx, sessionName }));
+}
+
+async function removeReviewSessionNow({ ctx, sessionName }) {
   const review = readSessionReview(sessionName);
   if (!review) return { removed: false };
 
@@ -2116,10 +2123,17 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
       error: 'this review was taken again since the page loaded: reload it to ask about the newer diff',
     });
   }
-  if (qaRuns.has(session)) return json(res, 200, { ok: true, status: 'running' });
+  // Before joining a run: during a take, the run going is the old diff's, which
+  // the take is about to cancel, and a request for the new diff would be lost with it.
   if (takes.has(session)) {
     log('review.qa_refused_retaking', { reqId, session });
     return json(res, 409, { ok: false, code: 'retaking', error: 'this review is being taken again: ask once that has finished' });
+  }
+  const going = qaRuns.get(session);
+  if (going) {
+    // Joined only when it is this diff's.
+    if ((going.forDiff ?? null) === (review.createdAt ?? null)) return json(res, 200, { ok: true, status: 'running' });
+    return json(res, 409, { ok: false, code: 'retaking', error: 'a Q&A of the previous diff is still stopping: ask again in a moment' });
   }
   if (first) {
     const had = readQa(session);
@@ -2133,7 +2147,7 @@ function handleQaStart(res, ctx, session, forDiff, first = false) {
   }
   qaGen += 1;
   const gen = qaGen;
-  qaRuns.set(session, { gen });
+  qaRuns.set(session, { gen, forDiff: review.createdAt ?? null });
   log('review.qa_started', { reqId, session, gen });
   runQa({ ctx, session, review, gen })
     .catch(function unexpected(err) {

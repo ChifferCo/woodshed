@@ -746,12 +746,12 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
  * the review stands: written by no commit and named by nothing else, the tree
  * would otherwise go after gc's grace period, and the Q&A with it.
  *
- * One ref per tree, `refs/woodshed-qa/<session>/<tree>`, made BEFORE the review
+ * One ref per tree, `refs/woodshed-qa/<session>/<tree>`, made before the review
  * record names the tree, and pruned after it (pruneHeldTrees) down to the one
- * the record names then. Two Re-reviews overlapping can then never leave the
- * tree the record names unheld, whichever order their steps land in: it was
- * held before it was written, and only other trees are pruned. Outside
- * refs/heads and refs/tags, so no push carries them.
+ * the record names then. That is sound only because index.mjs takes a session's
+ * review one at a time (oneTakeAtATime): two takes interleaving could prune the
+ * tree the other was about to record. Outside refs/heads and refs/tags, so no
+ * push carries them.
  *
  * @returns {Promise<{ok: boolean, error?: string}>}
  */

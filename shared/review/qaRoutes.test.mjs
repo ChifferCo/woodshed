@@ -139,6 +139,23 @@ test('Discard during a run stops it, and nothing it was doing is written back', 
   await call('POST', `/reviews/${session}/discard`);
 });
 
+// A run going is joined only by a request for its own diff. Once a take has written a new record, a request for the
+// new diff must not join the old diff's run, which the take is about to cancel: it would be lost with it.
+test('a request for a new diff never joins the old diff\'s run', async () => {
+  const session = 'claude-c9c9c9c9';
+  const worktree = path.join(DIR, 'join', 'slow');
+  makeReview(session, worktree, '2026-11-19T18:00:00.000Z');
+  assert.equal((await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T18:00:00.000Z')}`)).body.status, 'running');
+  const review = JSON.parse(fs.readFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'session.json'), 'utf8'));
+  writeSessionReview({ session, review: { ...review, createdAt: '2026-11-19T19:00:00.000Z' } });
+  const newer = await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T19:00:00.000Z')}`);
+  assert.notEqual(newer.body.status, 'running', 'not joined to the old diff\'s run');
+  assert.deepEqual([newer.status, newer.body.code], [409, 'retaking']);
+  writeSessionReview({ session, review });
+  assert.equal((await call('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent('2026-11-19T18:00:00.000Z')}`)).body.status, 'running', 'its own diff still joins');
+  await call('POST', `/reviews/${session}/discard`);
+});
+
 test('a page asking about a diff that was replaced is refused, and nothing is started', async () => {
   const session = 'claude-4e4e4e4e';
   makeReview(session, path.join(DIR, 'fast'), '2026-11-19T12:00:00.000Z');
