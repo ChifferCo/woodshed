@@ -3332,3 +3332,23 @@ test('a My Woodshed session that cannot be typed into is told at a later check, 
   assert.match(sent()[0].body.text, /e2e suite failed on PR #9/);
   assert.deepEqual(session.pendingMessages, []);
 });
+
+test('a My Woodshed session that reports another pull request stops hearing about the first', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/10' };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  await fleet.tick();
+  const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).map((c) => c.body.text);
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [10]);
+  assert.ok(sent.every((t) => !/PR #9\b/.test(t) || /passed/.test(t)), 'nothing about #9 after it left it');
+  assert.ok(sent.some((t) => /e2e suite failed on PR #10/.test(t)));
+});

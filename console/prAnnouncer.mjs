@@ -190,15 +190,23 @@ export function createPrAnnouncer({
 
   // A My Woodshed session's pull request: its session hears each verdict and broken suite, and the pass, and nothing
   // is posted or written on GitHub.
+  // Whether a watch is over: its session no longer listens for this pull request, or its wait ran out. Asked before
+  // GitHub is read and again before the session is told, since the reads take a while.
+  function watchOver(item) {
+    if (events.listening && !events.listening(item)) return 'its session ended or reports another pull request';
+    if (now() - Date.parse(item.since) > giveUpMs()) return 'watched as long as a pull request may wait';
+    return null;
+  }
+
   async function watchOne(item) {
-    if (events.listening && !events.listening(item)) return drop(item, 'its session ended');
-    if (now() - Date.parse(item.since) > giveUpMs()) return drop(item, 'watched as long as a pull request may wait');
+    if (watchOver(item)) return drop(item, watchOver(item));
     const gates = await gatesOf(item.project ?? null, item.number);
     if (hasNoGates(gates)) return drop(item, 'no review or suite to watch');
     const pull = await gh(item).pull(item.number);
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
+    if (watchOver(item)) return drop(item, watchOver(item));
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
   }

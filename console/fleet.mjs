@@ -1059,8 +1059,10 @@ export function createFleet({
   // Whether a watched pull request's session (a My Woodshed one) can still hear about it: only while it runs, since
   // nothing but its owner resumes it. A stopping one cannot: a message held for it would be typed in at a later Resume.
   const ownListening = (session) => Boolean(session && ACTIVE_STATUSES.has(session.status) && session.status !== 'stopping');
+  // It listens only for the pull request it reports now: one it closed or left for another is not its work any more.
   function prListening(item) {
-    return ownListening(find(item.sessionId));
+    const session = find(item.sessionId);
+    return ownListening(session) && pullNumber(session.prUrl) === item.number;
   }
 
   // A review asking for changes, an approval's notes, or a suite that failed or was skipped: typed into the session,
