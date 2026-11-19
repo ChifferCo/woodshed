@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import net from 'node:net';
@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
-import { appState, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
+import { AGENT_PANE_FORMAT, sendNotAfter, sendWithinMs, stillThePull, appState, createPrLookup, isAgentCommand, prLookupKey, sendAgentOnly, claudeState, handleUpgrade, isAuthorized, memoryPeakMb, paneState, parseAnswerBody, parseSendBody, pickApp, homeArchiveArgs, homeChangedSince, lastInterruptAt, openToolCalls, typingError, typingSteps, typeableText } from './statusd.mjs';
 import { fixtureApp, fixtureProject } from '../shared/projectFixture.mjs';
 
 const RULE = '─'.repeat(40);
@@ -900,7 +900,7 @@ process.stdin.on('data', (d) => {
 // claude at its prompt: its box between two rules, the box's hint dim, and its mode footer.
 const CLAUDE_IDLE = `\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
 
-async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false } = {}) {
+async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false, env = {}, asClaude = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
   const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
@@ -911,13 +911,16 @@ async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false 
   const lines = path.join(dir, 'lines.txt');
   const script = path.join(dir, 'claude.cjs');
   await fs.writeFile(script, standInClaude(lines, { screen: screen === CLAUDE_IDLE ? null : screen, menuOnInput }));
-  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', `${process.execPath} ${script}`);
+  // asClaude: run as a program named claude, as the real agent's pane shows it to tmux (pane_current_command).
+  const program = asClaude ? path.join(dir, 'claude') : process.execPath;
+  if (asClaude) await fs.symlink(process.execPath, program);
+  await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', `${program} ${script}`);
   const stateFile = path.join(dir, 'state.json');
   const setState = (s) => fs.writeFile(stateFile, JSON.stringify({ state: s, event: s === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
   await setState(state);
   for (let i = 0; i < 50 && !/auto mode on|esc to interrupt/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
-  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile } });
-  return { call, setState, tmux, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile, ...env } });
+  return { call, setState, tmux, dir, program, script, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
 }
 
 
@@ -1081,4 +1084,221 @@ test('the status says nothing of the box it cannot see: mid-turn, under a dialog
   // A screen with a dialog and no box on it: nothing known of the box under it.
   const dialog = await promptPane(t, 'done', { screen: '\n  Pick one\n  ❯ 1. Yes\n    2. No\n  Enter to confirm · Esc to cancel\n  ⏵⏵ auto mode on (shift+tab to cycle)\n' });
   assert.equal((await dialog.call('GET', '/status')).body.boxText, null);
+});
+
+test('the pull request lookup is kept per branch, and a checkout during it leaves nothing kept', async () => {
+  let clock = 0;
+  let branch = 'woodshed/joel-1';
+  const urls = { 'woodshed/joel-1': 'https://github.com/o/r/pull/9', other: null };
+  let lookups = 0;
+  let checkoutDuringLookup = null;
+  const prUrl = createPrLookup({
+    branch: async () => branch,
+    lookup: async () => {
+      lookups += 1;
+      const url = urls[branch];
+      if (checkoutDuringLookup) { branch = checkoutDuringLookup; checkoutDuringLookup = null; }
+      return url;
+    },
+    now: () => clock,
+    cacheMs: 60_000,
+  });
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/9');
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/9');
+  assert.equal(lookups, 1, 'kept');
+  branch = 'other';
+  assert.equal(await prUrl(), null, 'another branch is looked up at once');
+  assert.equal(lookups, 2);
+});
+
+test('a checkout during the pull request lookup says nothing and keeps nothing for either branch', async () => {
+  let branch = 'woodshed/joel-1';
+  const urls = { 'woodshed/joel-1': 'https://github.com/o/r/pull/9', 'feature/ana': 'https://github.com/o/r/pull/12' };
+  let lookups = 0;
+  let checkout = 'feature/ana';
+  const prUrl = createPrLookup({
+    branch: async () => branch,
+    lookup: async () => {
+      lookups += 1;
+      const url = urls[branch];
+      if (checkout) { branch = checkout; checkout = null; }
+      return url;
+    },
+    now: () => 0,
+    cacheMs: 60_000,
+  });
+  assert.equal(await prUrl(), null, 'the answer may be either branch\'s');
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/12', 'the new branch is looked up, not given the old one\'s');
+  assert.equal(lookups, 2);
+});
+
+test('a branch set to track another remote branch is looked up again', async () => {
+  let upstream = 'origin/woodshed/joel-1';
+  let lookups = 0;
+  const prUrl = createPrLookup({
+    branch: async () => `woodshed/joel-1 ${upstream}`,
+    lookup: async () => { lookups += 1; return upstream === 'origin/woodshed/joel-1' ? 'https://github.com/o/r/pull/9' : 'https://github.com/o/r/pull/12'; },
+    now: () => 0,
+    cacheMs: 60_000,
+  });
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/9');
+  upstream = 'fork/feature';
+  assert.equal(await prUrl(), 'https://github.com/o/r/pull/12');
+  assert.equal(lookups, 2);
+});
+
+test('the pull request lookup is kept for the branch, its upstream and its remote\'s URL', async () => {
+  const repo = { branch: 'woodshed/joel-1', upstream: 'origin/woodshed/joel-1', url: 'https://github.com/o/r.git' };
+  const gitRun = async (...args) => {
+    if (args[0] === 'branch') return repo.branch;
+    if (args[0] === 'rev-parse') { if (!repo.upstream) throw new Error('no upstream'); return repo.upstream; }
+    if (args[0] === 'ls-remote') { if (!repo.url) throw new Error('no remote'); return repo.url; }
+    throw new Error(`unexpected git ${args.join(' ')}`);
+  };
+  const first = await prLookupKey(gitRun);
+  repo.url = 'https://github.com/fork/r.git';
+  const repointed = await prLookupKey(gitRun);
+  repo.upstream = 'fork/feature';
+  const retracked = await prLookupKey(gitRun);
+  assert.equal(new Set([first, repointed, retracked]).size, 3, 'each change is another key');
+  Object.assign(repo, { upstream: null, url: null });
+  assert.equal((await prLookupKey(gitRun)).trim(), 'woodshed/joel-1', 'no upstream or remote: the branch alone');
+});
+
+test('a send marked agentOnly types only while claude or codex runs in the pane', () => {
+  assert.equal(sendAgentOnly('{"text":"hi","agentOnly":true}'), true);
+  assert.equal(sendAgentOnly('{"text":"hi"}'), false);
+  assert.equal(sendAgentOnly('{"text":"hi","agentOnly":"yes"}'), false);
+  for (const command of ['claude', 'codex', 'claude\n']) assert.equal(isAgentCommand(command), true, command);
+  for (const command of ['bash', 'zsh', 'sh', 'node', '', null]) assert.equal(isAgentCommand(command), false, String(command));
+});
+
+test('tmux\'s test of the pane, which types only into claude or codex, is true for them alone', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, (t) => {
+  // A tmux server of its own, so no session's panes are touched.
+  const socket = `woodshed-test-${process.pid}`;
+  const tmux = (...args) => spawnSync('tmux', ['-L', socket, ...args], { encoding: 'utf8' });
+  t.after(() => tmux('kill-server'));
+  assert.equal(tmux('new-session', '-d', '-s', 'probe', 'sleep 30').status, 0);
+  const shown = (format) => tmux('display', '-p', '-t', 'probe', format).stdout.trim();
+  // The pane shows tmux itself until sleep has started.
+  for (let i = 0; i < 100 && shown('#{pane_current_command}') !== 'sleep'; i += 1) spawnSync('sleep', ['0.05']);
+  assert.equal(shown('#{pane_current_command}'), 'sleep');
+  assert.equal(shown(AGENT_PANE_FORMAT), '0', 'sleep is not the agent');
+  for (const name of ['claude', 'codex']) assert.ok(AGENT_PANE_FORMAT.includes(`#{==:#{pane_current_command},${name}}`), name);
+});
+
+test('POST /send with agentOnly types into a running agent and never into a shell, with the token only', { skip: spawnSync('tmux', ['-V']).status !== 0 && 'no tmux here' }, async (t) => {
+  // A stand-in gh answering `gh pr view` with the pull request in the file it names, for the check just before typing.
+  const ghDir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-gh-'));
+  t.after(() => fs.rm(ghDir, { recursive: true, force: true }));
+  const bin = path.join(ghDir, 'bin');
+  await fs.mkdir(bin);
+  const current = path.join(ghDir, 'current-pr');
+  const onPull = (url, { state = 'OPEN', head = 'abc1234def' } = {}) => fs.writeFile(current, JSON.stringify({ url, state, headRefOid: head }));
+  await onPull('https://github.com/o/r/pull/9');
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
+  // The stand-in claude at its prompt, named claude as the real one's pane shows it; its hooks say it is done.
+  const { call, tmux, setState, got, program, script } = await promptPane(t, 'done', { asClaude: true, env: { PATH: `${bin}:${process.env.PATH}` } });
+  const send = (body, token) => call('POST', '/send', token, JSON.stringify(body));
+  // Taken: a hook since its Enter, as claude's own would fire, so the next one may go in.
+  const taken = async () => { await new Promise((r) => setTimeout(r, 20)); await setState('done'); };
+
+  // The agent exited: its pane is a shell, which would run the text.
+  await tmux('respawn-pane', '-k', '-t', 'claude', 'bash --norc');
+  for (let i = 0; i < 50 && (await tmux('display', '-p', '-t', 'claude', '#{pane_current_command}')).stdout.trim() !== 'bash'; i++) await new Promise((r) => setTimeout(r, 50));
+  assert.equal((await send({ text: 'git push', agentOnly: true }, 'wrong')).status, 401);
+  const refused = await send({ text: 'git push', agentOnly: true });
+  assert.deepEqual([refused.status, refused.body.error], [409, 'the agent is not running in its pane']);
+  assert.doesNotMatch((await tmux('capture-pane', '-p', '-t', 'claude')).stdout, /git push/, 'the shell got nothing');
+
+  // claude again, at its prompt: typed in, as any message, between turns.
+  await tmux('respawn-pane', '-k', '-t', 'claude', `${program} ${script}`);
+  for (let i = 0; i < 50 && !/auto mode on/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
+  await setState('done');
+  const sent = await send({ text: 'The review asks for changes', agentOnly: true });
+  assert.deepEqual([sent.status, sent.body], [200, { ok: true }]);
+  for (let i = 0; i < 50 && !(await got()).includes('The review asks'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await got(), 'The review asks for changes\n');
+  assert.equal((await call('GET', '/status')).body.agentOnlySend, true);
+  await taken();
+
+  // About a pull request: typed only while the branch checked out is on it, open and on the same commit, read afresh.
+  const forNine = { text: 'Fix PR 9', agentOnly: true, prUrl: 'https://github.com/o/r/pull/9', headSha: 'abc1234def' };
+  for (const [why, url, opts] of [
+    ['another pull request', 'https://github.com/o/r/pull/12', {}],
+    ['a newer commit', 'https://github.com/o/r/pull/9', { head: 'fff9999' }],
+    ['closed', 'https://github.com/o/r/pull/9', { state: 'CLOSED' }],
+  ]) {
+    await onPull(url, opts);
+    const refusedPr = await send(forNine);
+    assert.deepEqual([refusedPr.status, refusedPr.body.error], [409, 'the branch checked out is not on that pull request now'], why);
+  }
+  // GitHub slower than the caller waits: nothing typed, so its try again cannot type it twice.
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\nsleep 1\ncat ${current}\n`, { mode: 0o755 });
+  await onPull('https://github.com/o/r/pull/9');
+  const late = await send({ ...forNine, withinMs: 200 });
+  assert.deepEqual([late.status, late.body.error], [409, 'too late: the caller has stopped waiting']);
+  // A request that spent its time in transit: its caller's deadline passed before statusd even got it.
+  const delayed = await send({ ...forNine, withinMs: 20_000, notAfter: Date.now() - 1 });
+  assert.deepEqual([delayed.status, delayed.body.error], [409, 'too late: the caller has stopped waiting']);
+  // A checkout while gh answers: its answer may be the old branch's, so nothing is typed.
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ngit -C "$REPO_DIR" checkout -q -b "other-$$"\ncat ${current}\n`, { mode: 0o755 });
+  const raced = await send(forNine);
+  assert.deepEqual([raced.status, raced.body.error], [409, 'the branch checked out is not on that pull request now']);
+  await fs.writeFile(path.join(bin, 'gh'), `#!/bin/sh\ncat ${current}\n`, { mode: 0o755 });
+  await onPull('https://github.com/O/R/pull/9');
+  // Mid-turn it waits, as any message: busy, for the console to try again at its next check.
+  await setState('working');
+  const busy = await send(forNine);
+  assert.deepEqual([busy.status, busy.body.why], [409, 'working']);
+  await setState('done');
+  assert.equal((await send(forNine)).status, 200);
+  for (let i = 0; i < 50 && !(await got()).includes('Fix PR 9'); i++) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n', 'only the one on its pull request, once');
+  await taken();
+
+  // Once the stop's checkpoint has started, nothing guarded is typed.
+  await call('POST', '/checkpoint');
+  const stopping = await send(forNine);
+  assert.deepEqual([stopping.status, stopping.body.error], [409, 'the session is stopping']);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(await got(), 'The review asks for changes\nFix PR 9\n');
+});
+test('a branch pointed at another pull request\'s ref, which @{u} cannot name, is another lookup key', async (t) => {
+  // A real repository, configured as gh pr checkout leaves a pull request's branch.
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-prkey-'));
+  t.after(() => fs.rm(repo, { recursive: true, force: true }));
+  const git = async (...args) => (await promisify(execFile)('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args])).stdout.trim();
+  await git('init', '-q', '-b', 'feat');
+  await git('commit', '-q', '--allow-empty', '-m', 'x');
+  await git('remote', 'add', 'origin', 'https://github.com/o/r.git');
+  await git('config', 'branch.feat.remote', 'origin');
+  await git('config', 'branch.feat.merge', 'refs/pull/9/head');
+  const nine = await prLookupKey(git);
+  await git('config', 'branch.feat.merge', 'refs/pull/12/head');
+  const twelve = await prLookupKey(git);
+  assert.notEqual(nine, twelve);
+  assert.match(twelve, /refs\/pull\/12\/head/);
+});
+
+test('a guarded send\'s pull request must be the same one, open, on the same commit', () => {
+  const wanted = { url: 'https://github.com/o/r/pull/9', headSha: 'abc1234' };
+  const pull = { url: 'https://github.com/O/r/pull/9', state: 'OPEN', headRefOid: 'abc1234def567' };
+  assert.equal(stillThePull(pull, wanted), true);
+  assert.equal(stillThePull({ ...pull, headRefOid: 'fff' }, wanted), false);
+  assert.equal(stillThePull({ ...pull, state: 'MERGED' }, wanted), false);
+  assert.equal(stillThePull({ ...pull, url: 'https://github.com/o/r/pull/10' }, wanted), false);
+  assert.equal(stillThePull(null, wanted), false);
+  assert.equal(stillThePull({ ...pull, headRefOid: 'fff' }, { ...wanted, headSha: null }), true, 'no commit named: the pull request alone');
+});
+
+test('a guarded send names how long it may still be typed, a minute at most', () => {
+  assert.equal(sendWithinMs('{"text":"x","withinMs":20000}'), 20000);
+  assert.equal(sendWithinMs('{"text":"x","withinMs":999999}'), 60000);
+  for (const raw of ['{"text":"x"}', '{"text":"x","withinMs":0}', '{"text":"x","withinMs":"20"}', 'nope']) assert.equal(sendWithinMs(raw), null, raw);
+});
+
+test('a guarded send carries its caller\'s own deadline', () => {
+  assert.equal(sendNotAfter('{"text":"x","notAfter":1700000000000}'), 1700000000000);
+  for (const raw of ['{"text":"x"}', '{"text":"x","notAfter":"soon"}', '{"text":"x","notAfter":-1}', 'nope']) assert.equal(sendNotAfter(raw), null, raw);
 });

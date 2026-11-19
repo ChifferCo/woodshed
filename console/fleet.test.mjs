@@ -90,9 +90,9 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     calls.statusd.push({ id: session.id, method, path, body: opts?.body });
     if (path === '/status') {
       if (!statuses[session.id]) throw new Error('connection refused');
-      // A statusd with the guarded send, as every session's now is; a test of an older one says safeSend: false. A test may
-      // hold the answer back (a promise): it is awaited first.
-      return Promise.resolve(statuses[session.id]).then((status) => ({ safeSend: true, ...status }));
+      // Today's statusd: the guarded send, and typing only into a running agent when asked. A test of an older one
+      // says safeSend or agentOnlySend false. A test may hold the answer back (a promise): it is awaited first.
+      return Promise.resolve(statuses[session.id]).then((status) => ({ safeSend: true, agentOnlySend: true, ...status }));
     }
     return { ok: true, committed: false, head: 'abc' };
   }
@@ -1368,12 +1368,92 @@ test('the assignee is tagged in the thread of the ready pull request\'s post, an
   assert.equal(slack.posts[0].mention, 'U0JOEL0001', 'the assignee is tagged in the thread');
 });
 
-test('a My Woodshed session\'s pull request is never tracked for Slack', async () => {
-  const { fleet, statuses, session, store } = await sessionWithPull({ createdAt: '2026-10-21T10:05:00Z' });
+test('a My Woodshed session\'s pull request is watched until it passes, and never posted to Slack', async () => {
+  const { fleet, github, slack, statuses, session, store, calls, advance } = await sessionWithPull({ createdAt: '2026-10-20T09:00:00Z' });
   session.owner = 'joel';
-  statuses[session.id] = { state: 'working', prUrl: 'https://github.com/o/r/pull/7' };
+  github.pull = async (number) => ({ number, title: 'Add GTM', created_at: '2026-10-20T09:00:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'Joel' } });
+  github.reviews = async () => [{
+    id: 1, user: { login: 'review-bot[bot]' }, state: 'CHANGES_REQUESTED', body: '## Code review', commit_id: 'abc', html_url: 'https://github.com/o/r/pull/7#r1',
+  }];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/7' };
   await fleet.tick();
-  assert.deepEqual(store.state.slackPending ?? [], []);
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.watch]), [[7, true]], 'watched, though older than the session: its owner opened it');
+  assert.deepEqual([...fleet.slackWaiting()], [], 'not waiting for Slack');
+  const sent = () => calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text);
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0], /asks for changes/);
+
+  github.pull = async (number) => ({ number, title: 'Add GTM', created_at: '2026-10-20T09:00:00Z', state: 'open', head: { sha: 'def' } });
+  github.reviews = async () => approvedReview();
+  github.checkRuns = async () => e2eRuns();
+  advance(60_000);
+  await fleet.tick();
+  assert.match(sent()[1], /^PR #7 at def passed its review and suites: the review verdict is APPROVE/);
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 2, 'the pass is told once for its commit');
+  assert.deepEqual(slack.posts, []);
+  assert.equal(session.status, 'running', 'a pass does not stop it');
+  assert.equal(store.state.slackPending.length, 1, 'still watched, for a fix pushed after the approval');
+
+  await fleet.stop(session, 'idle for 1 h');
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending, [], 'its session ended');
+  assert.equal(session.status, 'stopped', 'never resumed by the console');
+});
+
+for (const [what, fields, author] of [
+  ['a review-only session, which only reads it', { reviewOnly: true }, 'joel'],
+  ['a teammate\'s pull request older than the session', {}, 'ana-dev'],
+]) {
+  test(`a My Woodshed session is never told to fix ${what}`, async () => {
+    const { fleet, github, statuses, session, store, calls } = await sessionWithPull({ createdAt: '2026-10-20T09:00:00Z' });
+    Object.assign(session, { owner: 'joel', ...fields });
+    github.pull = async (number) => ({ number, created_at: '2026-10-20T09:00:00Z', state: 'open', head: { sha: 'abc' }, user: { login: author } });
+    github.reviews = async () => [{ id: 1, user: { login: 'review-bot[bot]' }, state: 'CHANGES_REQUESTED', body: '## Code review', commit_id: 'abc', html_url: 'u' }];
+    github.checkRuns = async () => e2eRuns();
+    statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/7' };
+    await fleet.tick();
+    await fleet.tick();
+    assert.deepEqual(store.state.slackPending ?? [], []);
+    assert.deepEqual(calls.statusd.filter((c) => c.path === '/send'), []);
+  });
+}
+
+test('a My Woodshed session\'s pull request is watched on a console with no Slack, and again once resumed', async () => {
+  const { fleet, github, statuses, calls, store, advance, launcher } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0].body.text, /e2e suite failed on PR #9/);
+
+  // A stop in flight (its checkpoint and task stop take a while) while the pull request is read.
+  let release;
+  const { stop } = launcher;
+  launcher.stop = (ref) => new Promise((resolve) => { release = () => resolve(stop.call(launcher, ref)); });
+  const stopping = fleet.stop(session, 'idle for 1 h');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(session.status, 'stopping');
+  github.checkRuns = async () => e2eRuns((n) => (n === 4 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending, session.pendingMessages], [[], []], 'a stopping session hears nothing, and nothing is held for a Resume');
+  release();
+  await stopping;
+  await fleet.resumePrivate({ owner: 'joel', id: session.id });
+  github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.sessionId]), [[9, session.id]], 'watched again once resumed');
+  assert.match(sent().at(-1).body.text, /e2e run \(3\/4\)/);
 });
 
 test('a stopped shared session is kept; posting its pull request to Slack stops it and it is finished', async () => {
@@ -3501,4 +3581,286 @@ test('a direct send with no answer in time is said to be unknown, not sent, and 
   fail.sendFor = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
   assert.equal(await fleet.send(session, 'go on', { id: 'page-id-0004' }), 'unknown');
   assert.deepEqual(session.pendingMessages, []);
+});
+
+test('a My Woodshed session that cannot be typed into is told at a later check, with nothing held for a Resume', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'not-running', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.deepEqual([sent().length, session.pendingMessages], [0, []], 'claude is not open: nothing typed in, nothing held');
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 1);
+  assert.match(sent()[0].body.text, /e2e suite failed on PR #9/);
+  assert.deepEqual(session.pendingMessages, []);
+});
+
+test('a My Woodshed session that reports another pull request hears nothing more of the first while it is on the other', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/10' };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  await fleet.tick();
+  const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).map((c) => c.body.text);
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9, 10], '#9 waits for the session to be back on it');
+  assert.ok(sent.every((t) => !/PR #9\b/.test(t) || /passed/.test(t)), 'nothing about #9 after it left it');
+  assert.ok(sent.some((t) => /e2e suite failed on PR #10/.test(t)));
+});
+
+test('a My Woodshed session\'s pull request on another repo than its project is not watched', async () => {
+  const { fleet, github, statuses, calls, store } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  // Its project is no longer on the console's list, so the console falls back to the default project, whose repo
+  // has a #9 of its own.
+  Object.assign(session, { project: 'gone', repo: 'someone/else' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/someone/else/pull/9' };
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending ?? [], []);
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});
+
+test('a My Woodshed session that reports a pull request on another repo hears nothing of its own until it is back', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/someone/else/pull/9' };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(session.prUrl, 'https://github.com/o/r/pull/9', 'its own repo\'s pull request is kept');
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9], 'its watch waits');
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => p.number), [9]);
+  assert.match(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id).at(-1)?.body.text ?? '', /e2e suite failed on PR #9/);
+});
+
+test('a My Woodshed session on a branch with no pull request (or a failed lookup) hears nothing until it is back, then nothing twice', async () => {
+  const { fleet, github, statuses, calls, store, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent().length, 1, 'told of the failure while on it');
+  statuses[session.id] = { state: 'done', prUrl: null };
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'def' }, user: { login: 'joel' } });
+  github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending.map((p) => p.number), sent().length], [[9], 1], 'waits, told nothing');
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 2);
+  assert.match(sent()[1].body.text, /e2e run \(3\/4\)/, 'back: told what changed, and not the failure it heard before');
+  github.checkRuns = async () => e2eRuns((n) => (n === 3 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 2, 'nothing twice');
+});
+
+test('a private session keeps the branch the console made for it, and one started on a branch has none', async () => {
+  const { fleet, statuses } = setup();
+  const own = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(own.madeBranch, `woodshed/joel-${own.id}`);
+  statuses[own.id] = { state: 'working', branch: 'woodshed/ana-dev-x' };
+  await fleet.tick();
+  assert.deepEqual([own.branch, own.madeBranch], ['woodshed/ana-dev-x', `woodshed/joel-${own.id}`], 'a checkout does not move it');
+  const onBranch = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'feature/shared' });
+  assert.equal(onBranch.madeBranch, undefined);
+});
+
+test('a private watch whose project left the console ends, reading nothing of the default repo', async () => {
+  const projects = [
+    { name: 'r', repo: 'o/r', default: true },
+    { name: 'web', repo: 'example-org/web', default: false },
+  ];
+  const web = {
+    async pull(number) { return { number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } }; },
+    async reviews() { return []; },
+    async checkRuns() { return e2eRuns(); },
+  };
+  const { fleet, github, statuses, store, advance } = setup({ projects, githubFor: (project) => (project.name === 'web' ? web : null) });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', project: projects[1] });
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/example-org/web/pull/9' };
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.project]), [[9, 'web']]);
+  const defaultReads = [];
+  github.pull = async (number) => { defaultReads.push(number); return { number, state: 'closed', head: { sha: 'zzz' } }; };
+  projects.splice(1, 1);
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending, defaultReads], [[], []]);
+});
+
+test('a private watch on the default project ends when the default project is replaced by another repo', async () => {
+  const projects = [{ name: 'r', repo: 'o/r', default: true }];
+  const { fleet, github, statuses, store, advance } = setup({ projects });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.repo]), [[9, 'o/r']]);
+  const reads = [];
+  github.pull = async (number) => { reads.push(number); return { number, state: 'closed', head: { sha: 'zzz' } }; };
+  projects.splice(0, 1, { name: 'other', repo: 'o/other', default: true });
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending, reads], [[], []]);
+});
+
+test('a private session whose claude closed since its last status read is not typed into', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  // claude closes while the console reads GitHub, after this tick's status read.
+  github.checkRuns = async () => {
+    statuses[session.id] = { state: 'not-running', prUrl };
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.deepEqual(sent(), []);
+  statuses[session.id] = { state: 'done', prUrl };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 1, 'told once claude is open again');
+});
+
+test('a private session that moved off its pull request since the last status read is not typed into, and agentOnly is asked', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  github.checkRuns = async () => {
+    statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/10' };
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  const sent = () => calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.deepEqual(sent(), []);
+  statuses[session.id] = { state: 'done', prUrl };
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(60_000);
+  await fleet.tick();
+  assert.equal(sent().length, 1);
+  assert.deepEqual([sent()[0].body.agentOnly, sent()[0].body.prUrl, sent()[0].body.headSha], [true, prUrl, 'abc'], 'statusd checks the pull request and its commit too');
+  assert.equal(sent()[0].body.withinMs, 20_000, 'and types it only while the console still waits');
+});
+
+test('a private session that starts stopping while its status is read again is not typed into', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  github.checkRuns = async () => {
+    // The read just before typing in answers as the owner presses Stop.
+    Object.defineProperty(statuses, session.id, { configurable: true, get() { session.status = 'stopping'; return { state: 'done', prUrl }; } });
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});
+
+test('a private session on an older image, whose statusd types into its pane unchecked, is not watched', async () => {
+  const { fleet, github, statuses, calls, store } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9', agentOnlySend: false };
+  await fleet.tick();
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending ?? [], calls.statusd.filter((c) => c.path === '/send' && c.id === session.id)], [[], []]);
+});
+
+test('a push while a private session\'s status is read again leaves the old commit\'s feedback untold', async () => {
+  const { fleet, github, statuses, calls, advance } = setup();
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  let head = 'abc';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: head }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  let reads = 0;
+  github.checkRuns = async () => {
+    // The status read just before typing in is the second of this tick: the session pushes while it answers.
+    Object.defineProperty(statuses, session.id, { configurable: true, get() { reads += 1; if (reads === 2) head = 'def'; return { state: 'done', prUrl }; } });
+    return e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  };
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && c.id === session.id), []);
+});
+
+test('a guarded send never lets statusd type past the end of the watch\'s wait', async () => {
+  const retention = { afterCloseMs: 3 * 24 * HOUR, withoutPrMs: 7 * 24 * HOUR, openPrMs: 14 * 24 * HOUR, slackGiveUpMs: 10 * 60_000 };
+  const { fleet, github, statuses, calls, advance } = setup({ retention });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  const prUrl = 'https://github.com/o/r/pull/9';
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl };
+  await fleet.tick();
+  github.checkRuns = async () => e2eRuns((n) => (n === 2 ? 'failure' : 'success'));
+  advance(10 * 60_000 - 5_000);
+  await fleet.tick();
+  const sent = calls.statusd.filter((c) => c.path === '/send' && c.id === session.id);
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].body.withinMs <= 5_000, `withinMs ${sent[0].body.withinMs} is no more than what is left of the wait`);
+  assert.equal(sent[0].body.notAfter, Date.parse('2026-10-21T10:00:00.000Z') + 10 * 60_000 - 5_000 + sent[0].body.withinMs, 'and the same deadline in absolute time');
 });

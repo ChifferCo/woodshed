@@ -7,8 +7,9 @@
 //                     plain unified diff (sessionDiff.mjs)
 //   /shed-review/...   the Review tab: the shed's own review page and server (reviewShed/), reached through the console's
 //                     /review and /reviews/claude-<id>/...
-//   POST /send        {"text": "..."} typed into claude's pane, then Enter; 409 (why: prompt-open) while the pane shows
-//                     a question or an approval, which the Enter would answer
+//   POST /send        {"text": "...", "agentOnly"?: true} typed into the agent's pane, then Enter, only at its prompt
+//                     between turns; 409 while the pane shows a question or an approval, which the Enter would answer;
+//                     with agentOnly, also a 409 unless claude or codex is what runs in the pane
 //   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
@@ -325,6 +326,91 @@ export function promptReply(prompt) {
 }
 
 /**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {boolean}  whether the text may only be typed while the agent runs in its pane (`agentOnly`), never into
+ *   the shell it leaves behind
+ */
+export function sendAgentOnly(raw) {
+  try {
+    return JSON.parse(raw)?.agentOnly === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {{url: string, headSha: string|null}|null}  the pull request an agentOnly text is about (`prUrl`, and the
+ *   commit `headSha`): it is typed only while the branch checked out has that one, open and on that commit, read
+ *   afresh just before
+ */
+export function sendForPr(raw) {
+  try {
+    const body = JSON.parse(raw);
+    const url = body?.prUrl;
+    if (typeof url !== 'string' || !/^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(url)) return null;
+    const headSha = typeof body.headSha === 'string' && /^[0-9a-f]{7,40}$/i.test(body.headSha) ? body.headSha : null;
+    return { url, headSha };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {{url?: string, state?: string, headRefOid?: string}|null} pull  `gh pr view`'s answer for the branch checked out
+ * @param {{url: string, headSha: string|null}} wanted
+ * @returns {boolean}  whether it is still the pull request the text is about: the same one, open, on the same commit
+ */
+export function stillThePull(pull, wanted) {
+  if (!pull || !samePrUrl(pull.url, wanted.url) || pull.state !== 'OPEN') return false;
+  return !wanted.headSha || String(pull.headRefOid ?? '').toLowerCase().startsWith(wanted.headSha.toLowerCase());
+}
+
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {number|null}  how long after statusd got it a guarded text may still be typed (`withinMs`, at most a
+ *   minute): its caller gives up and tries again after that, so typing it later would type it twice
+ */
+export function sendWithinMs(raw) {
+  try {
+    const ms = JSON.parse(raw)?.withinMs;
+    return Number.isInteger(ms) && ms > 0 ? Math.min(ms, 60_000) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * @param {string} raw  request body, already accepted by parseSendBody
+ * @returns {number|null}  the time, in ms since the epoch, after which a guarded text is no longer typed (`notAfter`):
+ *   its caller's own deadline, which time in transit counts toward
+ */
+export function sendNotAfter(raw) {
+  try {
+    const at = JSON.parse(raw)?.notAfter;
+    return Number.isFinite(at) && at > 0 ? at : null;
+  } catch {
+    return null;
+  }
+}
+
+/** @returns {boolean}  whether two pull request URLs are the same pull request (GitHub's owner and name ignore case) */
+export function samePrUrl(a, b) {
+  return Boolean(a && b) && String(a).toLowerCase() === String(b).toLowerCase();
+}
+
+// What tmux names the pane's command while claude or codex runs in it; the shell left after either exits is not one.
+const AGENT_COMMANDS = new Set(['claude', 'codex']);
+
+/** @returns {boolean}  whether tmux's `pane_current_command` is the agent's */
+export function isAgentCommand(command) {
+  return AGENT_COMMANDS.has(String(command ?? '').trim());
+}
+
+// tmux's own test of the pane's command, read just before an agentOnly send types: the same names as AGENT_COMMANDS.
+export const AGENT_PANE_FORMAT = `#{||:${[...AGENT_COMMANDS].map((c) => `#{==:#{pane_current_command},${c}}`).join(',')}}`;
+
+/**
  * @param {string[]} files  cgroup files holding the peak in bytes; the first readable one wins
  * @returns {Promise<number|null>}  the container's peak memory in MB, or null when no cgroup reports it
  */
@@ -341,20 +427,63 @@ async function git(...args) {
   return stdout.trim();
 }
 
-let prCache = { at: 0, url: null };
+/**
+ * The pull request of the branch checked out now, kept a minute for that branch (with its upstream and remote URL)
+ * only, so a checkout of another branch, the branch set to track another, or its remote pointed elsewhere, is reported
+ * at the next read. A checkout during the lookup leaves its answer unkept and unsaid: it may be either
+ * branch's.
+ * @param {{branch: () => Promise<string|null>, lookup: () => Promise<string|null>, now?: () => number, cacheMs?: number}} deps
+ * @returns {() => Promise<string|null>}
+ */
+export function createPrLookup({ branch, lookup, now = Date.now, cacheMs = PR_CACHE_MS }) {
+  let cache = { at: -Infinity, url: null, branch: null };
+  return async function prUrl() {
+    const before = await branch().catch(() => null);
+    if (now() - cache.at < cacheMs && before === cache.branch) return cache.url;
+    let url = null;
+    try {
+      url = (await lookup()) || null;
+    } catch {
+      // No PR for this branch yet, which is the normal state for most of a session.
+    }
+    const after = await branch().catch(() => null);
+    if (after !== before) return null;
+    cache = { at: now(), url, branch: before };
+    return url;
+  };
+}
+
+/**
+ * What a pull request lookup is kept for: the branch, its upstream, that remote's URL and the branch's own remote and
+ * merge settings, since a branch set to track another remote branch or pull request's ref, or a remote pointed at
+ * another repo, has another pull request.
+ * @param {(...args: string[]) => Promise<string>} gitRun
+ * @returns {Promise<string>}
+ */
+export async function prLookupKey(gitRun) {
+  const branch = await gitRun('branch', '--show-current');
+  return [
+    branch,
+    await gitRun('rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}').catch(() => ''),
+    await gitRun('ls-remote', '--get-url').catch(() => ''),
+    // What the branch merges from and where, as `gh pr checkout` sets them: a pull request's ref
+    // (`refs/pull/<n>/head`) is no remote-tracking branch, so @{u} names none of them.
+    ...(branch ? [
+      await gitRun('config', '--get', `branch.${branch}.remote`).catch(() => ''),
+      await gitRun('config', '--get', `branch.${branch}.merge`).catch(() => ''),
+      await gitRun('config', '--get', `branch.${branch}.pushRemote`).catch(() => ''),
+    ] : []),
+  ].join(' ');
+}
+
+const ghPrUrl = async () => (await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR })).stdout.trim();
+const lookupPrUrl = createPrLookup({ branch: () => prLookupKey(git), lookup: ghPrUrl });
+// The pull request of the branch checked out, read afresh for a guarded send.
+const ghPullNow = async () => JSON.parse((await run('gh', ['pr', 'view', '--json', 'url,state,headRefOid'], { cwd: REPO_DIR })).stdout);
 
 async function prUrl() {
   if (ASK || QA) return null;
-  if (Date.now() - prCache.at < PR_CACHE_MS) return prCache.url;
-  let url = null;
-  try {
-    const { stdout } = await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR });
-    url = stdout.trim() || null;
-  } catch {
-    // No PR for this branch yet, which is the normal state for most of a session.
-  }
-  prCache = { at: Date.now(), url };
-  return url;
+  return lookupPrUrl();
 }
 
 // Claude names a project's transcript folder after its path, with every / and . as -.
@@ -783,6 +912,8 @@ async function status() {
     branch: await git('branch', '--show-current'),
     head: await git('rev-parse', '--short', 'HEAD'),
     prUrl: await prUrl(),
+    // POST /send takes agentOnly: the console types a private session's review feedback only into a statusd that does.
+    agentOnlySend: true,
     usage: await usage(),
     planUsage: await (CODEX ? readCodexPlanUsage() : readPlanUsage()).catch(planUsageFailed),
     ...(await appStatus()),
@@ -1123,6 +1254,8 @@ let periodicSave = null;
 let homeSavedFrom = STARTED_AT;
 // Set by the checkpoint: a periodic save after it could write back a home Remove My Woodshed has just deleted.
 let homeSavesOver = false;
+// Set once the stop's checkpoint starts: guarded sends (agentOnly) type nothing from then on.
+let stopping = false;
 
 function saveHomeInTurn(why) {
   if (why === 'stop') periodicSave?.abort();
@@ -1195,6 +1328,8 @@ async function lastSettingsRound() {
 
 async function checkpoint() {
   homeSavesOver = true;
+  // The session is stopping: a guarded send still checking GitHub types nothing now.
+  stopping = true;
   await keepCodexAuth();
   await lastSettingsRound();
   // Before the push, which can fail: the home is worth keeping either way.
@@ -1449,11 +1584,40 @@ async function handle(req, res) {
   const route = `${req.method} ${pathname}`;
   if (route === 'GET /status') return reply(res, 200, await status());
   if (route === 'POST /send') {
+    const receivedAt = Date.now();
     let text;
+    let raw;
     try {
-      text = parseSendBody(await readBody(req));
+      raw = await readBody(req);
+      text = parseSendBody(raw);
     } catch (err) {
       return reply(res, 400, { error: err.message });
+    }
+    // A message meant for the agent (the console's review feedback for a My Woodshed session) never reaches the shell
+    // of one that exited, nor an agent on another pull request, nor goes in after its caller stopped waiting.
+    const agentOnly = sendAgentOnly(raw);
+    const within = agentOnly ? sendWithinMs(raw) : null;
+    const notAfter = agentOnly ? sendNotAfter(raw) : null;
+    const tooLate = () => Boolean((within && Date.now() - receivedAt > within) || (notAfter && Date.now() > notAfter));
+    if (agentOnly) {
+      const forPr = sendForPr(raw);
+      // The branch is read on both sides of the lookup: a checkout during it makes its answer another branch's.
+      const keyBefore = forPr ? await prLookupKey(git).catch(() => null) : null;
+      const pullNow = forPr ? await ghPullNow().catch(() => null) : null;
+      const keyAfter = forPr ? await prLookupKey(git).catch(() => null) : null;
+      if (forPr && (keyBefore === null || keyBefore !== keyAfter || !stillThePull(pullNow, forPr))) {
+        console.log('statusd: text not sent, the branch is not on its pull request now');
+        return reply(res, 409, { error: 'the branch checked out is not on that pull request now' });
+      }
+      // GitHub was slow: its caller has given up on this request by now, and will send it again.
+      if (stopping) {
+        console.log('statusd: text not sent, the session is stopping');
+        return reply(res, 409, { error: 'the session is stopping' });
+      }
+      if (tooLate()) {
+        console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
+        return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
+      }
     }
     // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. No Enter is
     // sent then (typeMessage), nor mid-turn, when a prompt can open at any moment, nor while a pane that could not be
@@ -1465,8 +1629,15 @@ async function handle(req, res) {
       return reply(res, 409, { why, busy: true, error });
     };
     if (!paneLock.take('send')) return busy('typing', `something else is going in to ${agentName}: this goes after it`);
+    // An agent that exited leaves a shell: said so first, whatever else the pane shows.
+    const agentInPane = async () => (await run('tmux', ['display', '-p', '-t', TMUX_TARGET, AGENT_PANE_FORMAT])).stdout.trim() === '1';
+    const notRunning = () => {
+      console.log('statusd: text not sent, the agent is not running in its pane');
+      return reply(res, 409, { error: 'the agent is not running in its pane' });
+    };
     let done;
     try {
+      if (agentOnly && !(await agentInPane())) return notRunning();
       const now = await agentState({ strict: true });
       const { state } = now;
       if (!(await boxEmpty())) {
@@ -1479,6 +1650,14 @@ async function handle(req, res) {
       }
       if (state !== 'done' && state !== 'needs-you') {
         return reply(res, 409, { why: 'not-at-prompt', error: `${agentName} is not at its prompt (${state}), so nothing was typed` });
+      }
+      // Last, just before typing: the agent still runs in its pane, and its caller still waits.
+      if (agentOnly) {
+        if (!(await agentInPane())) return notRunning();
+        if (tooLate()) {
+          console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
+          return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
+        }
       }
       done = await send(text);
     } catch (err) {

@@ -1830,7 +1830,7 @@ filters from the workflow file on the default branch, and waits for the suite wh
 cannot. With no `pullRequests` (or no project file, or neither a review nor a suite), it
 is posted once it is out of draft and none of its checks is running or failed (with no checks at all, 2 minutes after it was first seen, so they have time to show). A project
 file that cannot be read holds every pull request until it can. A My Woodshed session's
-pull request is never posted. Until then the
+pull request is never posted: it is watched instead (below). Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
 past the session's end; one closed, or still waiting after a week (a number on
 the Console settings page), is dropped unposted. Once it is posted, its session stops (`posted to Slack`) and is
@@ -1839,6 +1839,41 @@ its head commit, or a suite that failed or was skipped there, is typed
 into the session, once each, with the `rerun` tags to put on the next commit, and a paused session is resumed with it.
 A pull request older than the session is never posted: a resumed
 branch's, or the one a PR's own session works on.
+
+**A My Woodshed session's pull request is watched**, with or without Slack (`watch` on its `slackPending` item), so
+the session keeps going until its review and suites pass:
+
+- **What it hears.** Each verdict asking for changes and each failed or skipped suite, as a shared session does, and
+  once the gates pass on a head commit, a note (once per commit) to read the review's notes, fix what is real, see any
+  other check in `gh pr checks` through, say what passed and stop. A suite whose path filters leave the change out is
+  named as not run. Where a shared session would post a `Needs a human:` comment, it asks its owner at its terminal.
+  Nothing is posted to Slack or written on GitHub.
+- **Which pull request.** Only on a session whose statusd types only into a running agent when asked
+  (`agentOnlySend` in its status; an older image's is not watched: `fleet: pull request not watched, the session's
+  image types into its pane unchecked`). Only its owner's: one they opened, or one the console's App opened (a session that pushes
+  as the App) from the branch the console made for the session at its start (`madeBranch`: `woodshed/<owner>-<id>` or
+  `woodshed/<issue>-<id>`, not an existing branch it was started on, nor whatever it has checked out since; while the App's login is not read yet, such a pull request is decided a minute
+  later), in the repo itself and not a fork, after the session started (`slack:
+  someone else's pull request, not watched`). Never a review-only session's, nor one on another repo than its
+  project's (`fleet: pull request on another repo than the session's project, not watched`, as for a session whose
+  project left the list). Each watch is its session's own: two sessions on one pull request are each told, and a shared
+  session's post on it still goes out.
+- **How long.** While the session runs, so a fix pushed after the approval is followed to its own verdict. It ends when
+  the pull request closes, the session stops (nothing resumes a My Woodshed session but its owner), its project leaves
+  the console or its repo is another now (a default project replaced; each watch keeps its `repo`), the week runs out
+  (passed or not; checked again after GitHub's reads, before the session is told, as is the head commit: a push
+  during the reads makes them the old commit's, and nothing is said of it), or the project file has no review or
+  suite (`slack: pull request no longer waiting` with why). A watch that ran out is not started again by the session
+  coming back to its pull request (`watchesExpired` in `state.json`, by session, kept until the session leaves the
+  list). A close during the reads ends the watch too.
+- **While the session is elsewhere.** While it reports another pull request or none (a branch with none, or statusd's
+  lookup failing), the watch waits, keeping what it told, and goes on once the session is back; it still ends if the
+  pull request closes meanwhile.
+- **Resume and delivery.** A resumed session's watch starts again, its week over, and its new run is told where the
+  pull request stands. A stopping session hears nothing, and one claude is not open in (read again from statusd just before typing in, with
+  the pull request it reports, and the pull request read again from GitHub to be still open on the same commit, and statusd checks the pane once more as it types, `agentOnly`, so a closed claude's
+  shell never gets the text) is told at the next check
+  (each minute, even while webhooks flow) rather than held, so nothing is typed in at a later Resume.
 
 The console learns of the pull request from the session's status (`prUrl`),
 reads it and its checks from GitHub with the App's token
