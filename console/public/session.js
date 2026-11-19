@@ -80,12 +80,15 @@
   // The memory keeps the tab a session is left on (a click on a tab, a move to another page, Back or Forward), not the
   // one an address asked for on arrival: a ?tab carried in from elsewhere (a link, the way back through sign-in, perhaps
   // someone else's) shows, and becomes this login's only if they leave the session on it.
-  function rememberLeaving() {
+  function leftTab() {
     // A tab the page fell back to (a link's tab the session cannot show) was not picked: leaving keeps the memory as is.
-    if (fellBack) return;
+    if (fellBack) return null;
     const drawn = Boolean(id) && currentSession?.id === id;
     const reviewPending = landOnReview && Boolean(currentSession?.reviewOnly);
-    const left = SessionTabs.leaving({ tab, held: heldTab, reviewPending, drawn });
+    return SessionTabs.leaving({ tab, held: heldTab, reviewPending, drawn });
+  }
+  function rememberLeaving() {
+    const left = leftTab();
     if (left) tabMemory.remember(id, left);
   }
   // The tab each session was last on, for this browser tab and the login signed in.
@@ -93,7 +96,12 @@
   const pageLogin = document.querySelector('meta[name="woodshed-login"]')?.content ?? null;
   const tabMemory = (() => {
     try {
-      return SessionTabs.memory(window.sessionStorage, pageLogin, () => !W.signingOut());
+      const memory = SessionTabs.memory(window.sessionStorage, pageLogin, () => !W.signingOut());
+      // The tab the last page went away on: the session was left on it, unless this load is a reload of that visit.
+      const reloaded = window.performance?.getEntriesByType?.('navigation')?.[0]?.type === 'reload';
+      const left = SessionTabs.takeLeaving(window.sessionStorage, pageLogin, reloaded);
+      if (left) memory.remember(left.id, left.tab);
+      return memory;
     } catch {
       return SessionTabs.memory({ getItem: () => null, setItem() {} }, pageLogin);
     }
@@ -152,9 +160,13 @@
     refresh();
   }
   window.addEventListener('popstate', moved);
-  // Leaving the shell altogether (My settings, another page of the console, a reload, closing the browser tab) leaves the
-  // session on its tab too. After a sign-out or an account change nothing is written (W.signingOut).
-  window.addEventListener('pagehide', () => rememberLeaving());
+  // Going away altogether (My settings, another page of the console, a reload, closing the browser tab) puts the tab
+  // aside for the next shell page, which keeps it unless that was a reload (sessionTabs.cjs, takeLeaving). After a
+  // sign-out or an account change nothing is put aside (W.signingOut).
+  window.addEventListener('pagehide', () => {
+    const left = leftTab();
+    if (left && !W.signingOut()) SessionTabs.stashLeaving(window.sessionStorage, pageLogin, id, left);
+  });
   // Every link to one of these pages, the rail's, the bar's ‹ and New session's among them. A new tab, a modifier
   // click or a link to anywhere else is the browser's.
   document.addEventListener('click', (e) => {

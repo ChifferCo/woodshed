@@ -1667,7 +1667,7 @@
   function signingOut() {
     return signedOut;
   }
-  const KEPT_KEYS = ['woodshed-last', 'woodshed-session-tabs'];
+  const KEPT_KEYS = ['woodshed-last', 'woodshed-session-tabs', 'woodshed-session-leaving'];
   function forgetSignedIn() {
     signedOut = true;
     try {

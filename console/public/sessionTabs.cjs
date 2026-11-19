@@ -11,6 +11,9 @@
   'use strict';
 
   const KEY = 'woodshed-session-tabs';
+  // The tab a page was on as it went away, kept until the next shell page says whether the visit was left (KEPT_KEYS
+  // in common.js drop it at sign-out with the rest).
+  const LEAVING_KEY = 'woodshed-session-leaving';
   // Agent is claude's terminal and the default; the others are the plain shell, the review, the diff and the app's logs.
   const TABS = ['agent', 'terminal', 'review', 'diff', 'applog'];
   // What a history entry keeps for a review-only session still to land on its Review: no tab was picked there, and
@@ -100,6 +103,31 @@
    */
   function correctsMemory(remembered, unavailable) {
     return Boolean(remembered) && remembered === unavailable;
+  }
+
+  /**
+   * A page going away (pagehide) cannot tell a reload of the same visit from leaving it, so it only puts its tab aside;
+   * the next shell page takes it: kept when the visit was left (My settings and back, another address, Back), dropped
+   * on a reload, where the entry's own state still knows the tab and the memory must stay as the visit found it.
+   */
+  function stashLeaving(storage, login, id, tab) {
+    try {
+      storage.setItem(LEAVING_KEY, JSON.stringify({ login, id, tab }));
+    } catch {
+      // Not kept: the memory stays as it was.
+    }
+  }
+  /** @returns {{ id: string, tab: string }|null}  what to remember, once; null on a reload or another login's */
+  function takeLeaving(storage, login, reloaded) {
+    let left = null;
+    try {
+      left = JSON.parse(storage.getItem(LEAVING_KEY) || 'null');
+      storage.removeItem(LEAVING_KEY);
+    } catch {
+      return null;
+    }
+    if (reloaded || !left || left.login !== login || !left.id || !TABS.includes(left.tab)) return null;
+    return { id: left.id, tab: left.tab };
   }
 
   /**
@@ -209,6 +237,6 @@
     };
   }
 
-  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
+  return { KEY, LEAVING_KEY, stashLeaving, takeLeaving, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
     leaving, correctsMemory, otherLogin, lookups, memory };
 });

@@ -307,3 +307,24 @@ test('a fallback corrects the memory only when the memory holds the tab that can
   assert.equal(tabs.correctsMemory('review', 'diff'), false);
   assert.equal(tabs.correctsMemory(null, 'diff'), false, 'nothing remembered, nothing to correct');
 });
+
+test("a page going away puts its tab aside; the next page keeps it unless it is a reload of that visit", () => {
+  // Review remembered; a Diff link opened; the page goes away on Diff.
+  let store = storage();
+  tabs.memory(store, 'local').remember('aaaa1111', 'review');
+  tabs.stashLeaving(store, 'local', 'aaaa1111', 'diff');
+  // A reload of the visit: nothing is kept, the memory stays Review.
+  assert.equal(tabs.takeLeaving(store, 'local', true), null);
+  assert.equal(tabs.memory(store, 'local').asked('aaaa1111', null, null), 'review');
+  assert.equal(store.items[tabs.LEAVING_KEY], undefined, 'taken once');
+  // Left for My settings and back: kept.
+  tabs.stashLeaving(store, 'local', 'aaaa1111', 'diff');
+  assert.deepEqual(tabs.takeLeaving(store, 'local', false), { id: 'aaaa1111', tab: 'diff' });
+  assert.equal(tabs.takeLeaving(store, 'local', false), null, 'only once');
+  // Another login's, or something that is not a tab, is dropped.
+  store = storage();
+  tabs.stashLeaving(store, 'alice', 'aaaa1111', 'diff');
+  assert.equal(tabs.takeLeaving(store, 'bob', false), null);
+  store = storage({ [tabs.LEAVING_KEY]: '{"login":"bob","id":"aaaa1111","tab":"__proto__"}' });
+  assert.equal(tabs.takeLeaving(store, 'bob', false), null);
+});
