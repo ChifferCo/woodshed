@@ -787,7 +787,7 @@ dialog.confirm .share-link { display: flex; align-items: center; justify-content
 .prod-callout-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 6px; font-weight: 600; font-size: 13px; }
 .prod-callout ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 /* Some of the console's repos, or all: checkboxes under a fold, the pick written on its summary. */
-.repo-pick { flex: 0 1 280px; width: 280px; max-width: 100%; min-width: 0; }
+.repo-pick { flex: 0 0 280px; width: 280px; max-width: 100%; min-width: 0; }
 .set-row.is-top { align-items: start; }
 .set-value .repo-pick > summary.field { width: auto; text-align: left; }
 .repo-pick > summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; font-family: var(--mono); font-size: 12.5px; }
