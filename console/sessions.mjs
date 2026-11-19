@@ -440,6 +440,9 @@ export function statusUpdate(session, status, nowIso) {
     editor: status.editor === true,
     // Text waits in the agent's box at its prompt, unsent: Chat says so, and points at the TUI tab.
     boxText: status.boxText === true,
+    // statusd sends with the guards: between turns, into an empty box, never into a prompt. One from before them types
+    // blind, so the console sends through it only while its agent is plainly idle (fleet.mjs, canType).
+    safeSend: status.safeSend === true,
     // The project uses Redis, so the session started one: Data ▾ offers it. An image from before statusd said so
     // still ran it.
     redis: status.redis !== false,

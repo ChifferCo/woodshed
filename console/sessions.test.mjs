@@ -374,3 +374,9 @@ test('statusUpdate keeps whether text waits in the agent\'s box, for Chat to say
   assert.equal(statusUpdate(session(), { state: 'done', boxText: 'yes' }, nowIso).boxText, false);
   assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).boxText, false);
 });
+
+test('statusUpdate keeps whether the session\'s statusd sends with the guards', () => {
+  const nowIso = '2026-10-21T12:00:00.000Z';
+  assert.equal(statusUpdate(session(), { state: 'done', safeSend: true }, nowIso).safeSend, true);
+  assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).safeSend, false, 'an older statusd says nothing of it');
+});

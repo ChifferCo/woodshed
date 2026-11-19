@@ -1869,6 +1869,9 @@ test('the message box types its text into the owner\'s session, and its files ar
   assert.deepEqual(sent, [{ id: mine.id, text }], 'the whole text, newlines kept, as one message, through the fleet');
   outcome = 'queued';
   assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'later' }), 'application/json')).json(), { ok: true, held: true }, 'held while the agent is busy');
+  // No answer in time: it may have gone in, said as not known.
+  outcome = 'unknown';
+  assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'maybe' }), 'application/json')).json(), { ok: true, held: false, unknown: true });
   // Typed with no Enter, a prompt having come up: not sent, said so, for the page not to put it back in its own box.
   outcome = 'in-box';
   const inBox = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'boxed' }), 'application/json');
@@ -1882,7 +1885,7 @@ test('the message box types its text into the owner\'s session, and its files ar
   const long = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'x'.repeat(8001) }), 'application/json');
   assert.equal(long.status, 400);
   assert.match((await long.json()).error, /at most 8000 characters/);
-  assert.equal(sent.length, 3, 'nothing to send, or too much, reaches nothing');
+  assert.equal(sent.length, 4, 'nothing to send, or too much, reaches nothing');
   assert.equal(seen.length, 0, 'the page never types into statusd itself');
 
   const up = await post(`/api/sessions/${mine.id}/upload?name=shot.png&pane=none`, 'png', 'application/octet-stream');

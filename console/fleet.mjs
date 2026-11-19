@@ -522,7 +522,10 @@ export function createFleet({
 
   function canType(session) {
     // While claude opens the pane holds a shell, which would run the text as a command.
-    return session.status === 'running' && session.state && session.state !== 'not-running' && session.state !== 'starting';
+    if (!(session.status === 'running' && session.state && session.state !== 'not-running' && session.state !== 'starting')) return false;
+    // A statusd from before the guarded send (a session started before an upgrade) types blind, Enter and all: through
+    // it, only while the agent is plainly idle, never at a prompt it could answer.
+    return session.safeSend === true || session.state === 'done';
   }
 
   // A send that got no answer in time may have gone in: statusd may still be typing it, and press its Enter after. Sent
@@ -568,7 +571,7 @@ export function createFleet({
 
   /**
    * @param {string} text  typed as statusd types it: CRLF made newlines, other control characters left out
-   * @returns {Promise<'sent'|'queued'|'in-box'>}  in-box: typed with no Enter (a prompt came up as it went in), so it sits
+   * @returns {Promise<'sent'|'queued'|'in-box'|'unknown'>}  unknown: no answer in time, so it may have gone in  in-box: typed with no Enter (a prompt came up as it went in), so it sits
    *   in the agent's box unsent, for the person to send or clear in the TUI tab; never typed again
    */
   async function send(session, raw, { id = null } = {}) {
@@ -588,7 +591,8 @@ export function createFleet({
       await statusd(session, 'POST', '/send', { body: { text }, timeoutMs: sendTimeoutMs(text) });
     } catch (err) {
       if (inTheBox(session, err, id)) return 'in-box';
-      if (unknownOutcome(session, err)) return 'sent';
+      // It may have gone in: not held to send again, and said to the page as not known, not as sent.
+      if (unknownOutcome(session, err)) return 'unknown';
       // Busy is not a failure: hold() says it is held.
       if (!busyWhy(err)) console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
       hold(session, text, id);

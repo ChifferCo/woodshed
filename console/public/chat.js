@@ -273,7 +273,8 @@
         const answer = await W.postJson(`/api/sessions/${id}/send`, { text, id: sent.id }, { signal: AbortSignal.timeout(T.sendTimeoutMs(text)) });
         // Held by the console while the agent is busy: nothing has reached it yet, and the bubble says so until the
         // agent's record holds it.
-        sent.state = answer?.held ? 'held' : 'sent';
+        sent.state = answer?.held ? 'held' : answer?.unknown ? 'unknown' : 'sent';
+        if (answer?.unknown) sent.deliveredAt = Date.now();
       } catch (err) {
         // No answer in time: it may have gone in, so it stays as sent, for the agent's record to say, and is not put back
         // to send again, which could type it twice.

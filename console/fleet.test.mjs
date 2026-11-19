@@ -90,7 +90,9 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     calls.statusd.push({ id: session.id, method, path, body: opts?.body });
     if (path === '/status') {
       if (!statuses[session.id]) throw new Error('connection refused');
-      return statuses[session.id];
+      // A statusd with the guarded send, as every session's now is; a test of an older one says safeSend: false. A test may
+      // hold the answer back (a promise): it is awaited first.
+      return Promise.resolve(statuses[session.id]).then((status) => ({ safeSend: true, ...status }));
     }
     return { ok: true, committed: false, head: 'abc' };
   }
@@ -3325,7 +3327,7 @@ test('a send that outlives its deadline may have gone in: it is not held, and ne
   const timedOut = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
   const asked = [];
   fail.sendFor = (text) => { asked.push(text); return timedOut(); };
-  assert.equal(await fleet.send(session, many), 'sent', 'it may have gone in: not held to send again');
+  assert.equal(await fleet.send(session, many), 'unknown', 'it may have gone in: not held to send again, and not said to be sent');
   assert.equal(fail.lastSendOpts.timeoutMs, sendTimeoutMs(many), 'the deadline sized to the message, not the 5 s default');
   assert.deepEqual(session.pendingMessages, []);
   // A held one whose send times out is let go too, not typed again on the next status read.
@@ -3414,4 +3416,29 @@ test('a held message whose send gets no answer in time is named for the page by 
   fail.sendFor = null;
   await fleet.tick();
   assert.deepEqual(tried, ['go on'], 'tried once');
+});
+
+test('through a statusd from before the guarded send, a message goes in only while the agent is plainly idle', async () => {
+  // A session started before the upgrade: its statusd types blind, Enter and all, so a prompt on screen would take it.
+  const { fleet, calls, statuses } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'needs-you', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  assert.equal(await fleet.send(session, 'approve it please'), 'queued', 'held, not typed into the approval');
+  assert.equal(calls.statusd.filter((c) => c.path === '/send').length, 0);
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc', safeSend: false };
+  await fleet.tick();
+  assert.deepEqual(calls.statusd.filter((c) => c.path === '/send').map((c) => c.body.text), ['approve it please'], 'sent once it is idle');
+});
+
+test('a direct send with no answer in time is said to be unknown, not sent, and not held', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendFor = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+  assert.equal(await fleet.send(session, 'go on', { id: 'page-id-0004' }), 'unknown');
+  assert.deepEqual(session.pendingMessages, []);
 });

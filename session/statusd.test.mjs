@@ -1062,3 +1062,13 @@ test('parseAnswerBody keeps the options\' descriptions, which tell a wrapped lab
   const mismatched = { ...q, descriptions: ['only one'] };
   assert.equal(parseAnswerBody(JSON.stringify({ kind: 'question', questions: [mismatched] })).questions[0].descriptions, undefined, 'not one each: left out');
 });
+
+test('the status says nothing of the box it cannot see: mid-turn, under a dialog, never taken as emptied', async (t) => {
+  const working = await promptPane(t, 'working');
+  const busy = (await working.call('GET', '/status')).body;
+  assert.equal(busy.boxText, null, 'mid-turn: not looked at');
+  assert.equal(busy.safeSend, true, 'it says it sends with the guards');
+  // A screen with a dialog and no box on it: nothing known of the box under it.
+  const dialog = await promptPane(t, 'done', { screen: '\n  Pick one\n  ❯ 1. Yes\n    2. No\n  Enter to confirm · Esc to cancel\n  ⏵⏵ auto mode on (shift+tab to cycle)\n' });
+  assert.equal((await dialog.call('GET', '/status')).body.boxText, null);
+});

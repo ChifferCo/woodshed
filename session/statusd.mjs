@@ -750,15 +750,21 @@ async function agentState({ strict = false } = {}) {
 async function status() {
   const { state, tail, hook } = await agentState();
   // Text waiting in the agent's box at its prompt: a draft in the TUI tab, or a message left there unsent. Chat says so.
-  let boxText = false;
+  // true or false only when the box was found on the screen; null when nothing can be said of it (mid-turn, a dialog over
+  // it, a pane that could not be read), for the console never to take an unseen box as emptied.
+  let boxText = null;
   if (state === 'done' && !QA) {
     try {
-      boxText = !!(composerText(await captureBox(), CODEX ? 'codex' : 'claude'));
+      const text = composerText(await captureBox(), CODEX ? 'codex' : 'claude');
+      if (text !== null) boxText = text !== '';
     } catch {
       // No pane to read: nothing to say about its box.
     }
   }
   return {
+    // This statusd sends only between turns, into an empty box, never into a prompt (POST /send): the console sends
+    // through an older one only when its agent is plainly idle.
+    safeSend: true,
     boxText,
     sessionId: process.env.SESSION_ID || null,
     state,
