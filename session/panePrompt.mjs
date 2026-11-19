@@ -428,6 +428,11 @@ export async function typeMessage(io, text) {
   }
   const after = readPrompt(pane);
   if (after) return { sent: false, kind: after.kind, typed: true };
-  await io.enter();
+  // An Enter that failed leaves the text in, unsent, as above.
+  try {
+    await io.enter();
+  } catch {
+    return { sent: false, kind: null, typed: true };
+  }
   return { sent: true };
 }

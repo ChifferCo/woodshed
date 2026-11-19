@@ -308,6 +308,10 @@ test('a message gets no Enter when a prompt is on screen, before its text or as 
   const lost = { done: [], capture: async () => { if (reads++) throw new Error('tmux busy'); return clear; }, type: async () => { lost.done.push('type'); }, enter: async () => { lost.done.push('Enter'); } };
   assert.deepEqual(await typeMessage(lost, 'hi'), { sent: false, kind: null, typed: true });
   assert.deepEqual(lost.done, ['type']);
+  // The Enter itself failed: the text is in, unsent, and says so, so nothing types it again.
+  const noEnter = { done: [], capture: async () => clear, type: async () => { noEnter.done.push('type'); }, enter: async () => { throw new Error('tmux gone'); } };
+  assert.deepEqual(await typeMessage(noEnter, 'hi'), { sent: false, kind: null, typed: true });
+  assert.deepEqual(noEnter.done, ['type']);
 });
 
 test('the page shows every line of an approval it lets the person answer', async () => {

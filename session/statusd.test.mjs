@@ -864,7 +864,7 @@ test('POST /send types nothing when the pane cannot be read, which may be showin
 });
 
 // A stand-in claude at its prompt: its mode footer, and each line it is sent written to a file.
-async function promptPane(t, state) {
+async function promptPane(t, state, { screen = '\n> \n  ⏵⏵ auto mode on (shift+tab to cycle)\n' } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));
   const tmuxEnv = { ...process.env, TMUX: '', TMUX_TMPDIR: dir };
   const tmux = (...args) => promisify(execFile)('tmux', args, { env: tmuxEnv });
@@ -875,14 +875,14 @@ async function promptPane(t, state) {
   const lines = path.join(dir, 'lines.txt');
   const script = path.join(dir, 'claude.cjs');
   await fs.writeFile(script, `const fs = require('fs');
-process.stdout.write('\\n> \\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n');
+process.stdout.write(${JSON.stringify(screen)});
 require('readline').createInterface({ input: process.stdin }).on('line', (l) => fs.appendFileSync(${JSON.stringify(lines)}, l + '\\n'));
 `);
   await tmux('new-session', '-d', '-s', 'claude', '-x', '120', '-y', '20', `${process.execPath} ${script}`);
   const stateFile = path.join(dir, 'state.json');
   const setState = (s) => fs.writeFile(stateFile, JSON.stringify({ state: s, event: s === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
   await setState(state);
-  for (let i = 0; i < 50 && !/auto mode on/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
+  for (let i = 0; i < 50 && !/auto mode on|esc to interrupt/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
   const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile } });
   return { call, setState, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
 }
@@ -964,4 +964,15 @@ test('a second message sent before the agent took the first waits for that turn,
   await setState('done');
   for (let i = 0; i < 60 && (await got()) !== 'one\ntwo\n'; i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(await got(), 'one\ntwo\n');
+});
+
+test('a stale hook that says done is not enough when claude\'s screen shows its turn running: the message waits', async (t) => {
+  const rule = '─'.repeat(60);
+  const running = `\n${rule}\n❯ \n${rule}\n  ✻ Working… (12s · esc to interrupt)\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
+  const { call, got } = await promptPane(t, 'done', { screen: running });
+  const sent = await call('POST', '/send', 'sess', JSON.stringify({ text: 'not into this turn' }));
+  assert.equal(sent.status, 202);
+  assert.deepEqual(sent.body, { ok: true, held: true });
+  await new Promise((r) => setTimeout(r, 2000));
+  assert.equal(await got(), '', 'no text, no Enter, while the screen shows the turn');
 });
