@@ -7,8 +7,9 @@
 //                     plain unified diff (sessionDiff.mjs)
 //   /shed-review/...   the Review tab: the shed's own review page and server (reviewShed/), reached through the console's
 //                     /review and /reviews/claude-<id>/...
-//   POST /send        {"text": "...", "agentOnly"?: true} typed into claude's pane, then Enter; with agentOnly, a 409
-//                     unless claude or codex is what runs in the pane
+//   POST /send        {"text": "...", "agentOnly"?: true} typed into the agent's pane, then Enter, only at its prompt
+//                     between turns; 409 while the pane shows a question or an approval, which the Enter would answer;
+//                     with agentOnly, also a 409 unless claude or codex is what runs in the pane
 //   POST /claude-login  types /woodshed:remote-control into claude, or woodshed-login at the Terminal tab's prompt where
 //                       claude has no such command: {"where": "agent"|"terminal"}
 //   POST /checkpoint  commit whatever is uncommitted and push the branch, after saving the Claude home
@@ -35,8 +36,16 @@
 //                     pane's prompt with no Enter (terminalFiles.mjs)
 //   GET  /image?path=<path>   a picture a terminal path names, inside the repo, the uploads or claude's scratchpad
 //   POST /scroll      {"steps": -3, "pane": "agent"}   a swipe or wheel the browser's own scrollback did not take
-//   GET  /transcript?limit=<n>   the conversation so far from the agent's own record of it, for a phone to scroll
-//                     through by itself: what was asked, said and run (sessionTranscript.mjs)
+//   GET  /transcript?limit=<n>&since=<writtenAt>   the conversation so far from the agent's own record of it, for the
+//                     console's Chat tab: what was asked, said and run (sessionTranscript.mjs). With `since`, only
+//                     {unchanged: true} while nothing was written after it
+//   POST /interrupt   Esc typed into the agent's pane: claude and codex both stop their turn on it
+//   GET  /prompt      what the agent's pane asks now, read from the screen (panePrompt.mjs): claude's AskUserQuestion
+//                     picker, or an approval (claude's permission dialog, codex's approval), or {prompt: null}
+//   POST /answer      the Chat tab's answer to it, typed as keys only once the pane shows that same prompt, and checked
+//                     again after each key (panePrompt.mjs); 409 with the reason when the pane is not what was answered:
+//                     {"kind": "question", "questions": [{"question", "options": [...], "descriptions": [...], "pick": <index>}]}
+//                     or {"kind": "approval", "decision": "approve"|"deny", "key"}, the key GET /prompt gave
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
 //        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own
@@ -45,7 +54,8 @@
 // also carry `Authorization: Bearer <SESSION_TOKEN>`. Without a token it does
 // not start: a session's terminal and its branch must never be open by default.
 
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createPaneLock, reopenUnderLock } from './paneLock.mjs';
+import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs/promises';
 import { appendFileSync, createReadStream, existsSync, openSync } from 'node:fs';
 import http from 'node:http';
@@ -64,6 +74,7 @@ import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { TAINTED_CLAUDE_FLAGS, applyTaint, isTaintSetUp, isTainted, markTaintSetUp } from './taint.mjs';
 import { classifyCodexPane } from './codexState.mjs';
+import { Refusal, answerApproval, answerQuestions, composerEmpty, composerText, readPrompt, typeMessage } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -75,6 +86,10 @@ import { isMain } from '../shared/isMain.mjs';
 const run = promisify(execFile);
 
 const PORT = Number(process.env.STATUSD_PORT || 7682);
+// Every interface in a session, where the console reaches it from another host. STATUSD_HOST is the dev console's
+// alone (console/bin/devChatSession.mjs), to keep a made-up session's statusd on loopback: the fleet never sets it, so
+// it is in no PER_SESSION_ENV.
+const HOST = process.env.STATUSD_HOST || undefined;
 // Each viewer serves under its own prefix, so a path passes through unchanged.
 // Redis's, then each database engine's (shared/databases/), such as pgweb on /pg/<id>/. A test moves one with
 // <ROUTE>_VIEWER_PORT (PG_VIEWER_PORT, MONGO_COPY_VIEWER_PORT).
@@ -192,9 +207,9 @@ const HOME_SAVE_TIMEOUT_MS = 30_000;
 // A task that ends without a checkpoint (a crash, Fargate taking it back) loses at most this much of the home.
 // Keep it above HOME_SAVE_TIMEOUT_MS: periodicSave tracks one periodic save, so two must never overlap.
 const HOME_SAVE_EVERY_MS = 5 * 60_000;
-// Sessions start in auto mode, so a mode footer is on screen while claude is open, whichever mode
-// someone has cycled to since.
-const MODE_FOOTER = /(auto mode|bypass permissions|accept edits|plan mode) on/;
+// A mode footer is on screen while claude is open, whichever mode the session started in or someone has cycled to
+// since: default mode's reads `⏸ manual mode on` (Claude Code 2.1.328).
+const MODE_FOOTER = /(auto mode|bypass permissions|accept edits|plan mode|manual mode) on/;
 // cgroup v2 names it memory.peak; v1, which Fargate uses, memory.max_usage_in_bytes. Both count file
 // cache the kernel can reclaim, so this is an upper bound on what the session needs.
 const MEMORY_PEAK_FILES = ['/sys/fs/cgroup/memory.peak', '/sys/fs/cgroup/memory/memory.max_usage_in_bytes'];
@@ -228,6 +243,11 @@ export function paneState(paneText) {
  * @param {string} raw  request body
  * @returns {string}  the text to type
  */
+/** Text as it can be typed: CRLF and CR made newlines, every other control character but the tab left out. */
+export function typeableText(text) {
+  return text.replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+}
+
 export function parseSendBody(raw) {
   let body;
   try {
@@ -235,10 +255,74 @@ export function parseSendBody(raw) {
   } catch {
     throw new Error('body must be JSON');
   }
-  const text = body?.text;
+  // Control characters are not text to type: an ESC would reach the agent as the Escape key, and tmux cannot pass a NUL.
+  // A CRLF is a newline; the rest are left out.
+  const text = typeof body?.text === 'string' ? typeableText(body.text) : body?.text;
   if (typeof text !== 'string' || !text.trim()) throw new Error('text must be a non-empty string');
   if (text.length > MAX_SEND_CHARS) throw new Error(`text must be at most ${MAX_SEND_CHARS} characters`);
   return text;
+}
+
+const MAX_QUESTIONS = 4;
+const MAX_OPTIONS = 8;
+const MAX_ANSWER_TEXT = 1000;
+
+const filled = (value, max) => typeof value === 'string' && value.trim() && value.length <= max;
+
+/**
+ * POST /answer's body, checked to its shape: what the page answers and the prompt it saw.
+ * @param {string} raw
+ * @returns {{kind: 'question', questions: {question: string, options: string[], pick: number}[]}
+ *   |{kind: 'approval', decision: 'approve'|'deny', title: string, detail: string[]}}
+ */
+export function parseAnswerBody(raw) {
+  let body;
+  try {
+    body = JSON.parse(raw);
+  } catch {
+    throw new Error('body must be JSON');
+  }
+  if (body?.kind === 'question') {
+    const list = body.questions;
+    if (!Array.isArray(list) || !list.length || list.length > MAX_QUESTIONS) throw new Error(`questions must be 1 to ${MAX_QUESTIONS} questions`);
+    const questions = list.map((q) => {
+      const options = q?.options;
+      if (!filled(q?.question, MAX_ANSWER_TEXT) || !Array.isArray(options) || !options.length || options.length > MAX_OPTIONS
+        || !options.every((o) => filled(o, MAX_ANSWER_TEXT)) || !Number.isInteger(q.pick) || q.pick < 0 || q.pick >= options.length) {
+        throw new Error('each question needs its text, its options and the index of the one picked');
+      }
+      const descriptions = Array.isArray(q.descriptions) && q.descriptions.length === options.length
+        && q.descriptions.every((d) => typeof d === 'string' && d.length <= MAX_ANSWER_TEXT) ? { descriptions: [...q.descriptions] } : {};
+      return { question: q.question, options: [...options], ...descriptions, pick: q.pick };
+    });
+    return { kind: 'question', questions };
+  }
+  if (body?.kind === 'approval') {
+    if (body.decision !== 'approve' && body.decision !== 'deny') throw new Error('decision must be approve or deny');
+    // The approval's key from GET /prompt: the hash of exactly what it asks (panePrompt.mjs, approvalKey).
+    if (typeof body.key !== 'string' || !/^[0-9a-f]{64}$/.test(body.key)) throw new Error('an approval needs the key GET /prompt gave');
+    return { kind: 'approval', decision: body.decision, key: body.key };
+  }
+  throw new Error('kind must be question or approval');
+}
+
+/**
+ * What GET /prompt tells the page: enough to show the prompt and answer it, nothing of the rest of the screen.
+ * @param {ReturnType<typeof readPrompt>} prompt
+ */
+export function promptReply(prompt) {
+  if (!prompt) return { prompt: null };
+  if (prompt.kind === 'approval') {
+    const { agent, key, complete, what, title, detail, options, approve, deny } = prompt;
+    return { prompt: { kind: 'approval', agent, key, complete, what, title, detail, approve: options[approve].label, deny: options[deny].label } };
+  }
+  if (prompt.step === 'review') return { prompt: { kind: 'question', step: 'review' } };
+  return {
+    prompt: {
+      kind: 'question', step: 'question', question: prompt.question, multiSelect: prompt.multiSelect,
+      options: prompt.options.map((o) => o.label), questions: prompt.tabs.questions.length,
+    },
+  };
 }
 
 /**
@@ -323,30 +407,8 @@ export function isAgentCommand(command) {
   return AGENT_COMMANDS.has(String(command ?? '').trim());
 }
 
-// tmux's own test of the pane's command, for if-shell: the same names as AGENT_COMMANDS.
+// tmux's own test of the pane's command, read just before an agentOnly send types: the same names as AGENT_COMMANDS.
 export const AGENT_PANE_FORMAT = `#{||:${[...AGENT_COMMANDS].map((c) => `#{==:#{pane_current_command},${c}}`).join(',')}}`;
-
-/**
- * Types the text into the agent's pane only if the agent runs there, the check and the typing being one tmux command
- * (if-shell), so nothing can exit between them. Text the agent leaves unread when it exits stays in the terminal for
- * whatever reads it next, as anything typed does.
- * @returns {Promise<boolean>}  whether it was typed in
- */
-async function sendToAgent(text) {
-  // A buffer of its own: two sends at once must not paste each other's text.
-  const AGENT_BUFFER = `woodshed-agent-send-${randomUUID()}`;
-  await run('tmux', ['set-buffer', '-b', AGENT_BUFFER, '--', text]);
-  // A bracketed paste (-p), its line breaks kept (-r): Claude Code and Codex then take the Enter right after it as
-  // submitting it. Without the brackets, Claude Code read that Enter as part of the text and left it unsent (measured on
-  // Claude Code 2.1.328).
-  const paste = `paste-buffer -p -r -d -b ${AGENT_BUFFER} -t ${TMUX_TARGET} ; send-keys -t ${TMUX_TARGET} Enter`;
-  await run('tmux', ['if-shell', '-F', '-t', TMUX_TARGET, AGENT_PANE_FORMAT, paste]);
-  // The paste deletes the buffer: one still there was not typed.
-  const left = await run('tmux', ['show-buffer', '-b', AGENT_BUFFER]).then(() => true, () => false);
-  if (left) await run('tmux', ['delete-buffer', '-b', AGENT_BUFFER]).catch(() => {});
-  else console.log('statusd: text sent to claude', { chars: text.length, agentOnly: true });
-  return !left;
-}
 
 /**
  * @param {string[]} files  cgroup files holding the peak in bytes; the first readable one wins
@@ -787,11 +849,17 @@ async function keepCodexAuth() {
   }
 }
 
-async function status() {
+/**
+ * The agent's state, from its hooks, its record and its pane, as the console's status read has it.
+ * @param {{strict?: boolean}} [opts]  strict: a pane that cannot be read throws, rather than reading as empty
+ * @returns {Promise<{state: string, source: string, pane: string, tail: object|null, hook: object|null}>}
+ */
+async function agentState({ strict = false } = {}) {
   let pane = '';
   try {
     pane = (await run('tmux', ['capture-pane', '-p', '-t', TMUX_TARGET])).stdout;
   } catch (err) {
+    if (strict) throw err;
     console.warn('statusd: capture-pane failed', { message: err?.message });
   }
   const tail = CODEX ? null : await transcriptTail().catch((err) => {
@@ -811,7 +879,28 @@ async function status() {
   });
   if (state !== lastState) console.log('statusd: claude state changed', { from: lastState, to: state, source });
   lastState = state;
+  return { state, source, pane, tail, hook };
+}
+
+async function status() {
+  const { state, tail, hook } = await agentState();
+  // Text waiting in the agent's box at its prompt: a draft in the TUI tab, or a message left there unsent. Chat says so.
+  // true or false only when the box was found on the screen; null when nothing can be said of it (mid-turn, a dialog over
+  // it, a pane that could not be read), for the console never to take an unseen box as emptied.
+  let boxText = null;
+  if (state === 'done' && !QA) {
+    try {
+      const text = composerText(await captureBox(), CODEX ? 'codex' : 'claude');
+      if (text !== null) boxText = text !== '';
+    } catch {
+      // No pane to read: nothing to say about its box.
+    }
+  }
   return {
+    // This statusd sends only between turns, into an empty box, never into a prompt (POST /send): the console sends
+    // through an older one only when its agent is plainly idle.
+    safeSend: true,
+    boxText,
     sessionId: process.env.SESSION_ID || null,
     state,
     editor: hasEditor(),
@@ -888,9 +977,22 @@ async function hasRemoteControlCommand() {
 // Terminal tab's prompt, where the code is pasted. Nothing else may be typed through this route.
 async function startClaudeLogin() {
   // The console refuses it too: Remote Control would carry what the session saw to claude.ai.
-  if (isTainted()) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { status: 409 });
+  if (tainted()) throw Object.assign(new Error('this session has seen production data, so Remote Control is off'), { status: 409 });
   if (await hasRemoteControlCommand()) {
-    await send('/woodshed:remote-control');
+    // Typed as a message is: one thing at a time, and only between turns, when no prompt can open under its Enter.
+    if (!paneLock.take('login')) throw new Error('a message is going in to claude: sign in once it has');
+    try {
+      const now = await agentState({ strict: true });
+      const { state } = now;
+      const working = state === 'working' || (state === 'done' && !atPrompt(now));
+      if (working || (state !== 'done' && state !== 'needs-you')) throw new Error(`claude is ${working ? 'working' : `not at its prompt (${state})`}: sign in once its turn ends`);
+      if (!lastTaken(state, now.hook, now.pane)) throw new Error('claude has not started on the last message yet: sign in once its turn ends');
+      if (!(await boxEmpty())) throw new Error('claude\'s box holds text, unsent: send or clear it in the TUI tab first');
+      const done = await send('/woodshed:remote-control');
+      if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
+    } finally {
+      paneLock.release('login');
+    }
     console.log('statusd: Claude login started in claude');
     return { where: 'agent' };
   }
@@ -903,16 +1005,172 @@ async function startClaudeLogin() {
   return { where: 'terminal' };
 }
 
-async function send(text) {
-  // Codex reads a fast run of keys as a paste and swallows an Enter that lands inside it, so a message of about 100
-  // characters or more sat unsent (measured on codex 0.167.0). A bracketed paste ends before the Enter arrives.
-  if (CODEX) {
-    await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', text]);
-    await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
-  } else await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', text]);
-  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']);
-  console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
+async function interrupt() {
+  await run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Escape']);
+  console.log('statusd: agent interrupted');
 }
+
+async function capturePane() {
+  return (await run('tmux', ['capture-pane', '-p', '-t', TMUX_TARGET])).stdout;
+}
+
+// One answer at a time: two typed into one picker would each check a screen the other is changing.
+let answering = false;
+
+/**
+ * Types the Chat tab's answer into the agent's pane, once the pane shows the prompt it answers (panePrompt.mjs).
+ * The log says which picks, never their text.
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function answer(body) {
+  if (answering) return { status: 409, body: { error: 'another answer is being typed: wait a moment' } };
+  answering = true;
+  const io = { capture: capturePane, keys: async (...keys) => { await run('tmux', ['send-keys', '-t', TMUX_TARGET, ...keys]); } };
+  try {
+    if (body.kind === 'question') {
+      const { moves } = await answerQuestions(io, body.questions);
+      console.log('statusd: answer typed', { kind: 'question', questions: body.questions.length, picks: body.questions.map((q) => q.pick + 1), moves });
+    } else {
+      const { moves, agent } = await answerApproval(io, body);
+      console.log('statusd: answer typed', { kind: 'approval', decision: body.decision, agent, moves });
+    }
+    return { status: 200, body: { ok: true } };
+  } catch (err) {
+    if (!(err instanceof Refusal)) throw err;
+    console.log('statusd: answer refused', { kind: body.kind, why: err.why, typed: err.typed });
+    return { status: 409, body: { error: err.message, why: err.why, typed: err.typed } };
+  } finally {
+    answering = false;
+  }
+}
+
+// How a message is typed so the agent shows it in its box as it is, never folded into a `[Pasted …]` placeholder
+// (measured on claude 2.1.328 and codex 0.167): claude folds a fast burst (1200 characters at once, or several lines),
+// and shows the same text typed 50 characters at a time, 20 ms apart, with Ctrl-J for each new line (a newline, not
+// an Enter). codex swallows an Enter landing in a fast run of plain keys, so it gets bracketed pastes, which it folds
+// over about 1000 characters: 400 at a time.
+const CLAUDE_CHUNK = 50;
+const CODEX_PASTE = 400;
+
+/**
+ * @returns {({keys: string}|{paste: string}|{key: string}) & {pauseMs: number}}[]
+ */
+export function typingSteps(text, agent) {
+  const steps = [];
+  if (agent === 'codex') {
+    const chars = [...text];
+    for (let i = 0; i < chars.length; i += CODEX_PASTE) steps.push({ paste: chars.slice(i, i + CODEX_PASTE).join(''), pauseMs: 50 });
+    return steps;
+  }
+  text.split('\n').forEach((line, n) => {
+    if (n > 0) steps.push({ key: 'C-j', pauseMs: 20 });
+    const chars = [...line];
+    for (let i = 0; i < chars.length; i += CLAUDE_CHUNK) steps.push({ keys: chars.slice(i, i + CLAUDE_CHUNK).join(''), pauseMs: 20 });
+  });
+  return steps;
+}
+
+/**
+ * A failed tmux call that typed a message, said again without the message: execFile's own error quotes the command
+ * line, and what someone typed never goes in a log or a reply.
+ * @returns {Error & {typing: true}}
+ */
+export function typingError(err, partial = false) {
+  return Object.assign(new Error(`tmux could not type the message (exit ${Number.isInteger(err?.code) ? err.code : 'unknown'})`), { typing: true, partial });
+}
+
+// The agent's pane, for typeMessage (panePrompt.mjs): read it, type into it, press Enter.
+const paneIo = {
+  capture: () => capturePane(),
+  async type(text) {
+    // A failed call's error quotes its command line, the message's text with it: it is said again without it, since
+    // what someone typed never goes in a log.
+    let done = 0;
+    try {
+      for (const step of typingSteps(text, CODEX ? 'codex' : 'claude')) {
+        if (step.paste !== undefined) {
+          await run('tmux', ['set-buffer', '-b', 'woodshed-send', '--', step.paste]);
+          await run('tmux', ['paste-buffer', '-p', '-d', '-b', 'woodshed-send', '-t', TMUX_TARGET]);
+        } else if (step.keys !== undefined) await run('tmux', ['send-keys', '-t', TMUX_TARGET, '-l', step.keys]);
+        else await run('tmux', ['send-keys', '-t', TMUX_TARGET, step.key]);
+        done++;
+        await new Promise((resolve) => setTimeout(resolve, step.pauseMs));
+      }
+    } catch (err) {
+      // Part of it may be in the box already: said so, for nothing to send the whole of it again.
+      throw typingError(err, done > 0);
+    }
+  },
+  enter: () => run('tmux', ['send-keys', '-t', TMUX_TARGET, 'Enter']),
+  // What the box holds, read with its colours: only the text typed, before the Enter.
+  // A long draft runs off the top of the screen, so the box is read with scrollback enough to hold all of it.
+  box: async (text = '') => composerText(await captureBox(text.split('\n').length + 100), CODEX ? 'codex' : 'claude'),
+};
+
+/**
+ * A message typed in and sent, never into a prompt (typeMessage). Throws when the pane could not be read.
+ * @returns {Promise<{sent: true}|{sent: false, kind: string, typed: boolean}>}
+ */
+async function send(text) {
+  const done = await typeMessage(paneIo, text);
+  if (done.sent) lastSent = { at: Date.now(), seenWorking: false };
+  if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
+  else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
+  return done;
+}
+
+// A message goes in only between turns. A prompt (an approval, a question) only ever opens mid-turn, so one could open
+// between any last look at the pane and the Enter that sends a message, and take that Enter as its answer; at its
+// prompt between turns the agent asks nothing of itself. Mid-turn, /send says busy and types nothing: the console
+// holds the message in its saved pendingMessages (console/fleet.mjs) and sends it again once the agent is back at its
+// prompt, so a session that stops mid-turn keeps it for its resume.
+// When nothing says the agent took a message (no hook fired, a turn too short to be seen), the next goes this long after.
+const TAKEN_MS = 20_000;
+// One thing typed into the pane at a time: a message, Sign in's command. Set before any await, so a check and the
+// claim cannot be split.
+// Whatever types into the agent's pane, one at a time (paneLock.mjs).
+const paneLock = createPaneLock();
+// The last message sent, until the agent is seen taking it: a hook since its Enter, a pane seen working, or TAKEN_MS.
+let lastSent = null;
+// Nothing is typed into an input box that holds text: a draft someone is writing in the TUI tab, or one left with no
+// Enter (a prompt came up, the Enter failed). Its own text would be sent with the message, or the message typed onto
+// its end. The box is read from the screen with its colours (composerEmpty, panePrompt.mjs), so an edited draft still
+// counts and the box's own suggestion, drawn dim, does not.
+// The pane with its colours: the screen alone, or with `back` lines of scrollback over it. Only the read after typing
+// needs scrollback, to see a draft taller than the screen whole; everywhere else the screen alone is read, since the
+// agent's old frames and dialogs above it are not what it shows now.
+async function captureBox(back = 0) {
+  const scroll = back > 0 ? ['-S', String(-Math.min(back, 10_000))] : [];
+  return (await run('tmux', ['capture-pane', '-e', '-p', ...scroll, '-t', TMUX_TARGET])).stdout;
+}
+
+async function boxEmpty() {
+  const colored = await captureBox();
+  // A prompt on screen is typeMessage's to refuse, as the prompt it is. No box found at all is no place to type.
+  if (readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) return true;
+  return composerEmpty(colored, CODEX ? 'codex' : 'claude') === true;
+}
+
+// At its prompt between turns: its state says done, and, for claude, whose state is its hooks', its screen agrees. A
+// stale hook can say done while the pane shows a turn running ("esc to interrupt") or a dialog: neither is the time
+// for an Enter. codex's state is its pane's already.
+function atPrompt({ state, pane }) {
+  if (state !== 'done') return false;
+  if (CODEX) return true;
+  const shown = paneState(pane);
+  return shown !== 'working' && shown !== 'needs-you';
+}
+
+function lastTaken(state, hook, pane) {
+  if (!lastSent) return true;
+  if (state !== 'done' || (!CODEX && paneState(pane) === 'working')) lastSent.seenWorking = true;
+  if (lastSent.seenWorking || (hook?.at ?? 0) > lastSent.at || Date.now() - lastSent.at > TAKEN_MS) {
+    lastSent = null;
+    return state === 'done' || state === 'needs-you';
+  }
+  return false;
+}
+
 
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
 // a shared session's for its own next run.
@@ -1034,7 +1292,7 @@ let settingsOver = false;
 
 function syncSettings(timeoutMs) {
   // A tainted session's settings stay its own: the console refuses them, so nothing is sent.
-  if (settingsOver || isTainted()) return Promise.resolve();
+  if (settingsOver || tainted()) return Promise.resolve();
   settingsRound ??= settingsRoundOnce(timeoutMs).finally(() => { settingsRound = null; });
   return settingsRound;
 }
@@ -1090,17 +1348,25 @@ async function checkpoint() {
 
 // The session's side of its taint (taint.mjs), then claude reopened on the console's proxy. Answers at once: the
 // reopening waits for claude's turn to end.
-const RULES_FILE = '/tmp/woodshed-rules.md';
-const TAINT_MESSAGE_FILE = '/tmp/woodshed-taint-message.md';
-const CLAUDE_BIN = path.join(import.meta.dirname, 'bin', 'claude');
+// A test's own folder for every file of the taint, and the claude its reopen starts (statusd.test.mjs): set by no
+// launcher, so a session's are the fixed paths below. A test that wrote those would taint the machine it runs on.
+const TAINT_DIR = process.env.WOODSHED_TAINT_DIR || null;
+const inTaintDir = (name) => path.join(TAINT_DIR, name);
+const TAINT_FILES = TAINT_DIR
+  ? { marker: inTaintDir('tainted'), setUp: inTaintDir('set-up'), envFile: inTaintDir('egress.env'), bundle: inTaintDir('egress-ca.pem'), claudeJson: inTaintDir('claude.json'), profiles: [], mcpConfig: inTaintDir('mcp.json') }
+  : {};
+const RULES_FILE = TAINT_DIR ? inTaintDir('rules.md') : '/tmp/woodshed-rules.md';
+const TAINT_MESSAGE_FILE = TAINT_DIR ? inTaintDir('message.md') : '/tmp/woodshed-taint-message.md';
+const CLAUDE_BIN = process.env.WOODSHED_CLAUDE_BIN || path.join(import.meta.dirname, 'bin', 'claude');
+const tainted = () => isTainted(TAINT_FILES.marker);
 // How long claude's turn may run before it is reopened anyway, and how long it has to stop.
 const TAINT_TURN_WAIT_MS = 5 * 60_000;
 let tainting = null;
 
 async function taint({ proxy = null, ca = null, message = '' }) {
   // Done only once every step below was: a setup that failed partway is finished by the console's next notice.
-  if (isTaintSetUp()) return { already: true };
-  const { egress, variables } = await applyTaint({ proxy, ca, token: TOKEN, env: process.env, repoDir: REPO_DIR });
+  if (isTaintSetUp(TAINT_FILES.setUp)) return { already: true };
+  const { egress, variables } = await applyTaint({ proxy, ca, token: TOKEN, env: process.env, repoDir: REPO_DIR, files: TAINT_FILES });
   // statusd's own git (the stop's checkpoint push) goes out the same way.
   Object.assign(process.env, variables);
   settingsOver = true;
@@ -1110,7 +1376,7 @@ async function taint({ proxy = null, ca = null, message = '' }) {
   // First: --disallowedTools takes several values, so the flag after it must be another flag, never the message.
   if (!flags.includes('--strict-mcp-config')) await fs.writeFile(CLAUDE_FLAGS_FILE, `${TAINTED_CLAUDE_FLAGS}${flags.trimEnd()}`);
   await fs.writeFile(TAINT_MESSAGE_FILE, String(message || 'This session has seen production data and is now locked down.'));
-  await markTaintSetUp();
+  await markTaintSetUp(TAINT_FILES.setUp);
   console.log('statusd: tainted', { egress, reopens: !CODEX });
   if (!CODEX) tainting ??= reopenClaude().catch((err) => console.warn('statusd: claude not reopened after the taint', { message: err?.message }));
   return { tainted: true, egress };
@@ -1133,6 +1399,14 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 async function reopenClaude() {
   const since = Date.now();
   while (Date.now() - since < TAINT_TURN_WAIT_MS && (await hookState())?.state === 'working') await new Promise((r) => setTimeout(r, 1_000));
+  // One at a time with whatever else types into the pane (a Chat message, the login command): one already going in
+  // finishes first, and one sent while claude is down and coming back is refused as busy, for the console to hold,
+  // until the new claude has taken the lockdown's message (paneLock.mjs).
+  const ready = await reopenUnderLock({ lock: paneLock, restart: restartClaude, hookState, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) });
+  if (!ready) console.warn('statusd: the reopened claude was not seen working, the pane let go of anyway');
+}
+
+async function restartClaude() {
   const conversation = (await newestTranscript())?.name.replace(/\.jsonl$/, '') ?? null;
   const panePid = (await run('tmux', ['display', '-p', '-t', TMUX_TARGET, '#{pane_pid}'])).stdout.trim();
   const claude = await childrenOf(panePid);
@@ -1327,8 +1601,13 @@ async function handle(req, res) {
     } catch (err) {
       return reply(res, 400, { error: err.message });
     }
-    // A message meant for the agent never reaches the shell of one that exited, nor an agent on another pull request.
-    if (sendAgentOnly(raw)) {
+    // A message meant for the agent (the console's review feedback for a My Woodshed session) never reaches the shell
+    // of one that exited, nor an agent on another pull request, nor goes in after its caller stopped waiting.
+    const agentOnly = sendAgentOnly(raw);
+    const within = agentOnly ? sendWithinMs(raw) : null;
+    const notAfter = agentOnly ? sendNotAfter(raw) : null;
+    const tooLate = () => Boolean((within && Date.now() - receivedAt > within) || (notAfter && Date.now() > notAfter));
+    if (agentOnly) {
       const forPr = sendForPr(raw);
       // The branch is read on both sides of the lookup: a checkout during it makes its answer another branch's.
       const keyBefore = forPr ? await prLookupKey(git).catch(() => null) : null;
@@ -1343,25 +1622,120 @@ async function handle(req, res) {
         console.log('statusd: text not sent, the session is stopping');
         return reply(res, 409, { error: 'the session is stopping' });
       }
-      const within = sendWithinMs(raw);
-      const notAfter = sendNotAfter(raw);
-      if ((within && Date.now() - receivedAt > within) || (notAfter && Date.now() > notAfter)) {
+      if (tooLate()) {
         console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
         return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
       }
-      if (await sendToAgent(text)) return reply(res, 200, { ok: true });
+    }
+    // A prompt on screen takes the Enter after the text as its answer: the highlighted option, often Yes. No Enter is
+    // sent then (typeMessage), nor mid-turn, when a prompt can open at any moment, nor while a pane that could not be
+    // read may be showing one. The console holds what it sends (fleet.mjs) and sends it again later.
+    const agentName = CODEX ? 'codex' : 'claude';
+    // Busy: nothing typed, and the console sends it again once the agent is back at its prompt (fleet.mjs).
+    const busy = (why, error) => {
+      console.log('statusd: text not sent, the agent is busy', { why, chars: text.length });
+      return reply(res, 409, { why, busy: true, error });
+    };
+    if (!paneLock.take('send')) return busy('typing', `something else is going in to ${agentName}: this goes after it`);
+    // An agent that exited leaves a shell: said so first, whatever else the pane shows.
+    const agentInPane = async () => (await run('tmux', ['display', '-p', '-t', TMUX_TARGET, AGENT_PANE_FORMAT])).stdout.trim() === '1';
+    const notRunning = () => {
       console.log('statusd: text not sent, the agent is not running in its pane');
       return reply(res, 409, { error: 'the agent is not running in its pane' });
+    };
+    let done;
+    try {
+      if (agentOnly && !(await agentInPane())) return notRunning();
+      const now = await agentState({ strict: true });
+      const { state } = now;
+      if (!(await boxEmpty())) {
+        return busy('box-in-use', `${agentName}'s box holds text, unsent: send or clear it in the TUI tab, and this goes after it`);
+      }
+      // Mid-turn (its state, or its screen behind a stale hook), or the last message not yet taken (its turn may be
+      // starting): it waits, to go in between turns.
+      if (state === 'working' || (state === 'done' && !atPrompt(now)) || !lastTaken(state, now.hook, now.pane)) {
+        return busy('working', `${agentName} is working: this goes in when its turn ends`);
+      }
+      if (state !== 'done' && state !== 'needs-you') {
+        return reply(res, 409, { why: 'not-at-prompt', error: `${agentName} is not at its prompt (${state}), so nothing was typed` });
+      }
+      // Last, just before typing: the agent still runs in its pane, and its caller still waits.
+      if (agentOnly) {
+        if (!(await agentInPane())) return notRunning();
+        if (stopping) {
+          console.log('statusd: text not sent, the session is stopping');
+          return reply(res, 409, { error: 'the session is stopping' });
+        }
+        if (tooLate()) {
+          console.log('statusd: text not sent, too late for its caller', { ms: Date.now() - receivedAt });
+          return reply(res, 409, { error: 'too late: the caller has stopped waiting' });
+        }
+      }
+      done = await send(text);
+    } catch (err) {
+      const message = String(err?.message ?? err).split('\n')[0];
+      if (err?.typing) {
+        console.warn('statusd: text not sent, tmux could not type it', { chars: text.length, partial: err.partial, message });
+        // Part of it went in: it is in the box, unsent, like a message a prompt cut off, and is not to be sent again.
+        if (err.partial) {
+          return reply(res, 409, { why: 'partly-typed', typed: true, error: 'part of the message went into the agent\'s box before typing failed: it is not sent. Send or clear it in the TUI tab' });
+        }
+        return reply(res, 500, { why: 'not-typed', error: 'the message could not be typed into the agent\'s terminal' });
+      }
+      console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message });
+      return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so it was not sent: try again' });
+    } finally {
+      paneLock.release('send');
     }
-    await send(text);
+    if (!done.sent) {
+      const agent = CODEX ? 'codex' : 'claude';
+      const ask = done.kind === 'question' ? `${agent} is asking a question` : done.kind === 'menu' ? `${agent} shows a menu to pick from` : `${agent} is waiting for an approval`;
+      if (done.kind === 'box') {
+        return reply(res, 409, { why: 'prompt-open', typed: true, error: `someone typed into ${agent}'s box as this went in: both are there, not sent. Send or clear them in the TUI tab` });
+      }
+      return reply(res, 409, {
+        why: 'prompt-open', typed: done.typed,
+        error: done.typed && !done.kind
+          ? `${agent}'s terminal could not be read again once this was typed: it is in ${agent}'s box, not sent. Send it from the TUI tab`
+          : done.typed
+          ? `${ask}, which came up as this was typed: it is in ${agent}'s box, not sent. Answer it, then send it from the TUI tab`
+          : `${ask}: ${done.kind === 'question' ? 'answer it' : done.kind === 'menu' ? 'pick in the TUI tab' : 'approve or deny it'} first, then send this`,
+      });
+    }
     return reply(res, 200, { ok: true });
+  }
+  if (route === 'POST /interrupt') {
+    await interrupt();
+    return reply(res, 200, { ok: true });
+  }
+  if (route === 'GET /prompt') {
+    // A pane that could not be read is not one that asks nothing: said so, for the page to send the person to the TUI tab.
+    let pane;
+    try {
+      pane = await capturePane();
+    } catch (err) {
+      console.warn('statusd: prompt not read, the pane could not be read', { message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 503, { why: 'pane-unread', error: `${CODEX ? 'codex' : 'claude'}'s terminal could not be read` });
+    }
+    return reply(res, 200, promptReply(readPrompt(pane)));
+  }
+  if (route === 'POST /answer') {
+    let body;
+    try {
+      body = parseAnswerBody(await readBody(req));
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    const done = await answer(body);
+    return reply(res, done.status, done.body);
   }
   if (route === 'POST /claude-login') {
     try {
       return reply(res, 200, { ok: true, ...(await startClaudeLogin()) });
     } catch (err) {
-      if (err.status) return reply(res, err.status, { error: err.message });
-      throw err;
+      // An open prompt would take the command's Enter; a pane that could not be read might be showing one. A refusal
+      // with a status of its own (a session that has seen production data) keeps it.
+      return reply(res, err.status ?? 409, { error: err.message });
     }
   }
   if (route === 'POST /taint') {
@@ -1381,12 +1755,16 @@ async function handle(req, res) {
     return diff.ok ? reply(res, 200, diff) : reply(res, diff.status, { error: diff.error });
   }
   if (route === 'GET /transcript') {
-    const limit = new URL(req.url, 'http://statusd').searchParams.get('limit');
+    const params = new URL(req.url, 'http://statusd').searchParams;
+    const limit = params.get('limit');
+    const since = Number(params.get('since'));
     const read = await readSessionTranscript({
       agent: CODEX ? 'codex' : 'claude',
       claudeDir: transcriptDir(),
+      root: REPO_DIR,
       codexHome: process.env.CODEX_HOME || path.join(os.homedir(), '.codex'),
       ...(limit ? { limit: Number(limit) } : {}),
+      ...(params.get('since') && Number.isFinite(since) ? { since } : {}),
     }).catch((err) => {
       console.warn('statusd: transcript not read', { message: err?.message });
       return null;
@@ -1435,7 +1813,7 @@ function main() {
     });
   });
   server.on('upgrade', (req, socket, head) => handleUpgrade(req, socket, head));
-  server.listen(PORT, () => console.log('statusd: listening', { port: PORT }));
+  server.listen(PORT, HOST, () => console.log('statusd: listening', { port: PORT }));
   if (CONSOLE_URL) {
     setInterval(() => saveHomeIfChanged().catch((err) => {
       console.warn('statusd: Claude home check failed', { message: err?.message });

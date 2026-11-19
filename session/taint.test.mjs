@@ -91,7 +91,7 @@ test('a setup that failed after the marker is not taken for done: the next notic
 test('statusd takes a notice as done only once the whole setup was, never from the marker alone', () => {
   const statusd = fs.readFileSync(path.join(import.meta.dirname, 'statusd.mjs'), 'utf8');
   const body = statusd.slice(statusd.indexOf('async function taint('), statusd.indexOf('// The processes a pid started'));
-  assert.match(body, /if \(isTaintSetUp\(\)\) return \{ already: true \}/);
-  assert.ok(body.indexOf('await markTaintSetUp()') > body.indexOf('await applyTaint('), 'marked after the setup');
-  assert.ok(!/isTainted\(\)/.test(body));
+  assert.match(body, /if \(isTaintSetUp\(TAINT_FILES\.setUp\)\) return \{ already: true \}/);
+  assert.ok(body.indexOf('await markTaintSetUp(TAINT_FILES.setUp)') > body.indexOf('await applyTaint('), 'marked after the setup');
+  assert.ok(!/isTainted\(|tainted\(\)/.test(body));
 });

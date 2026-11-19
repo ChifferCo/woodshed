@@ -27,7 +27,7 @@ someone who can be assigned commenting on an unassigned session takes it. Assign
 to everyone with Sessions from GitHub, and a private one cannot be assigned. On an issue's session the GitHub issue follows: the assignee is put on
 the issue, a hand over or Unassign takes off the person the console put there, and someone GitHub already had assigned
 stays (`console/issueTracking.mjs`). The console's colors, type and rail rules are written down in `console/designSystem/` (tokens, usage rules and component cards); `console/designSystem.test.mjs` fails when its colors differ from `style.css`. `/s/<id>` opens on the tab the session belongs to, with the shed's session pane: a bar
-with **Agent**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
+with **Chat**, **TUI**, **Terminal**, **Review**, **Diff** and **App log** tabs, the title, status, issue,
 branch and PR, and the session's buttons. On a phone the rail is the page,
 after the standalone shed's: sessions are rows with a star and ⋯ big enough for
 a thumb, Shared's status filter is chips above the list, ⋯ opens as a sheet
@@ -48,11 +48,11 @@ lists every section of every page you can open, narrows as you type (`repo`, `to
 you to the section, on its page. A new card on a settings page needs an entry in `settingsIndex.cjs`
 (`settingsIndex.test.mjs` fails when its id is not on the page). Where a name appears on both sides, the card says
 whose it is: **My repo settings** and **My session timeouts** are yours; Settings' Sessions card and each repo's Settings are everyone's.
-- **Agent** is claude's tmux, through ttyd on 7681.
+- **TUI** is the agent's own screen, live: claude's (or codex's) tmux, through ttyd on 7681.
 - **Terminal** is a plain shell in the repo, beside claude, with the same
   environment. It runs in its own tmux session, `shell`, through a second ttyd
   on 7684 at `/shell/<id>/`, behind the same sign-in and owner checks as the
-  Agent's.
+  TUI's.
 - **Diff**, while the session runs, is what its checkout changes against its merge base with the default branch, uncommitted
   and untracked work included, as plain git diff: no analysis and no GitHub. It is read when the tab opens and on
   **Read again**, never on a timer. A file past the review parser's line caps, or past 2 MB of hunks in all, shows
@@ -76,7 +76,37 @@ for the session's details, the app, its databases, the key bar's switch and the
 card's own actions; then the tabs.
 The size and the key bar's choice are remembered in the browser.
 
-Under claude's terminal on the Agent tab, a phone has a message box
+A running session opens on its **Chat** tab (`public/chat.js`): the conversation as a chat instead of the agent's
+terminal. The thread is read from the agent's own record of it, claude's transcript or codex's rollout, through
+statusd's `GET /transcript` (session/README.md), every 1.5 s while the agent works or a message waits to show and every
+5 s otherwise, with `since` so a record that did not move costs the session a stat. The person's messages are on the
+right; the agent's replies are Markdown, read into a tree and built as DOM nodes, never as HTML, with only http(s)
+and mailto links (`public/chatThread.cjs`); each run of tool calls between them is one work log, summed up in a line
+(`Ran 3 commands, edited 2 files`, `1 failed`) that folds open to the calls, open while it is the turn still running.
+Under a turn's last work log that edited a file, **Changed N files** lists what the turn's edits changed, a row a file
+with its `+N −M`, each folding open to its hunks in the Diff tab's colours, built from the edits the record carries
+(statusd's `GET /transcript` gives each edit a small diff: session/README.md). It is open while the turn runs and folded
+once it is over. Files a command changed (`sed -i`, a generator) are in no record: a turn that ran one says so, with a
+link to the **Diff** tab, which has the whole branch.
+The composer under it sends with Enter (Shift+Enter is a new line; on a phone Return is a new line and the arrow
+sends), takes files from **📎**, a paste or a drop (to `/tmp/uploads`, their paths added to the message), dictation
+where the browser has it, and keeps its draft with the phone's message box. A message shows as sent until the record
+holds it. While the agent works the line over the composer says **Working** with its clock, from the console's state
+or sooner from the record (a turn that ends on the person or a tool, written in the last 90 s and after the console
+last said it settled), and **■** stops the turn: `POST /api/sessions/<id>/interrupt`, which types Esc into the agent's
+pane (`console: agent interrupted from the page`). claude's questions (AskUserQuestion) are answered in their card:
+one option picked for each question, then **Send answers**, `POST /api/sessions/<id>/answer`, which statusd types
+into claude's picker only once its pane shows that same question with those options, from the highlighted row, and
+checks the pane again after each step (`session/panePrompt.mjs`, session/README.md). An approval the pane shows,
+claude's permission dialog or codex's approval, is read from the screen (`GET /api/sessions/<id>/prompt`) onto the
+**Needs you** line with **Approve** and **Deny**, under the same check. A pane that is not what was answered is a 409
+the page shows as `Not answered: <why>` with a way to the TUI tab; the console logs `console: answer typed in from
+the page` with the picks' numbers or the decision, never their text. A free-text answer, a question that takes
+several options, and anything else the agent asks only in its terminal stay **Answer in the TUI tab**. The agent still runs in its terminal, on
+the **TUI** tab (`?tab=tui`; `?tab=agent`, its old name, still opens it): hooks, Remote Control and Resume work as before. A session that is not running has
+no Chat tab and shows its start or its end there.
+
+Under claude's terminal on the TUI tab, a phone has a message box
 (`public/messageBox.js`): the phone's own keyboard, so autocorrect, dictation
 and paste work, **📎** for photos and files, and **🎤** for the browser's speech
 recognition (hidden where the browser has none). Files go to `/tmp/uploads` with
@@ -121,7 +151,7 @@ What the page does, from the shed's own review code:
 - **Ask about a line** (its number), **or a file**: claude reads the code to
   answer, in a few paragraphs.
 - **Chat** beside it: one message at a time, with the conversation so far, the
-  analysis and the files. It can only read; changes are made in the Agent tab.
+  analysis and the files. It can only read; changes are made in the TUI tab.
 
 With GitHub connected in a My Woodshed session, the page also writes to GitHub
 as you:
@@ -155,7 +185,7 @@ Every 30 seconds it reads the repo's issue events and new comments:
 | --- | --- |
 | `woodshed` label on an issue | A new session, unless one is already active for it, on `woodshed/<issue>-<id>` or the branch of the issue's last session |
 | `woodshed` label on a PR | Nothing: the task would be the PR's own description, and the session would push to its branch. Comment `/woodshed <what to do>` instead |
-| `/woodshed <text>` on an issue or PR with an active session | The text is typed into claude, or held until claude is open |
+| `/woodshed <text>` on an issue or PR with an active session | The text is typed into claude, or held until claude is at its prompt between turns (open, and not working), in the session's saved `pendingMessages` |
 | `/woodshed <text>` with no active session | A new session with the text as its request. On a PR it checks out the PR |
 
 Only people with write access can start or message a session; others are
@@ -384,7 +414,7 @@ The rest of the shed's rail and shell is here too, on every session's page
   every page shows, for everyone who can see the session.
 
 The terminals are the shed's too (`console/public/terminal.js`, on both the
-Agent and Terminal tabs):
+TUI and Terminal tabs):
 - **Copy out**: a drag in claude copies, as tmux sends it by OSC 52, with a
   "Copied" toast. Safari refuses a copy that comes from the socket, and says so.
 - **Links**: on a phone a tap opens a URL, a wrapped one rejoined first.
@@ -413,9 +443,10 @@ Agent and Terminal tabs):
   one shown in bright amber and scrolled to; Enter goes to an older one, Shift+Enter a newer one, Esc closes it. The
   marks are xterm decorations, not its selection, since ttyd copies every selection to the clipboard. What scrolled
   off before this browser attached is in tmux's history alone: scroll past the top into copy mode, then `?` searches it.
-- **The conversation so far**, for an app to show and scroll by itself, apart from the terminal:
-  `GET /api/sessions/<id>/transcript?limit=<n>` answers what was asked, what the agent said, and a line for each
-  tool it ran, newest last, from the agent's own record (statusd's `GET /transcript`). Anyone who can open the
+- **The conversation so far**, the Chat tab's thread, for an app to show and scroll by itself, apart from the terminal:
+  `GET /api/sessions/<id>/transcript?limit=<n>&since=<writtenAt>` answers what was asked, what the agent said, and a
+  line for each tool it ran (marked when it failed, and with what an edit changed, as `diffs`), newest last, from the agent's own record (statusd's `GET
+  /transcript`), or `{unchanged: true}` while nothing was written since the last answer. Anyone who can open the
   session may read it, while it runs.
 
 And what the shed shows about each session:

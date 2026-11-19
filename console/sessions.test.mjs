@@ -211,6 +211,10 @@ test('publicSession drops the token and the endpoint', () => {
   assert.equal(view.endpoint, undefined);
   assert.equal(view.terminalToken, undefined);
   assert.equal(view.pendingMessages, 2);
+  assert.deepEqual(view.heldIds, []);
+  const held = publicSession(session({ pendingMessages: ['console own', { id: 'page-id-0001', text: 'secret words' }] }));
+  assert.deepEqual(held.heldIds, ['page-id-0001'], 'the page\'s ids of held messages');
+  assert.ok(!JSON.stringify(held).includes('secret words'), 'never their text');
 });
 
 test('statusUpdate keeps the app\'s state only when statusd says one the console knows', () => {
@@ -366,4 +370,17 @@ test('planUsageFrom preserves Codex attribution through status updates', () => {
   const usage = { agent: 'codex', asOf: '2026-11-12T12:00:00.000Z', fiveHour: { usedPercent: 12, resetsAt: null }, sevenDay: { usedPercent: 28, resetsAt: null } };
   assert.deepEqual(planUsageFrom(usage), usage);
   assert.deepEqual(statusUpdate({ ...session({}), owner: 'octocat', options: { agent: 'codex' } }, { state: 'done', planUsage: usage }, 'now').planUsage, usage);
+});
+
+test('statusUpdate keeps whether text waits in the agent\'s box, for Chat to say so, and nothing else as true', () => {
+  const nowIso = '2026-10-21T12:00:00.000Z';
+  assert.equal(statusUpdate(session(), { state: 'done', boxText: true }, nowIso).boxText, true);
+  assert.equal(statusUpdate(session(), { state: 'done', boxText: 'yes' }, nowIso).boxText, false);
+  assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).boxText, false);
+});
+
+test('statusUpdate keeps whether the session\'s statusd sends with the guards', () => {
+  const nowIso = '2026-10-21T12:00:00.000Z';
+  assert.equal(statusUpdate(session(), { state: 'done', safeSend: true }, nowIso).safeSend, true);
+  assert.equal(statusUpdate(session(), { state: 'done' }, nowIso).safeSend, false, 'an older statusd says nothing of it');
 });

@@ -1,0 +1,23 @@
+  └ bwrap: No permissions to create a new namespace, likely because the kernel
+    does not allow non-privileged user namespaces. On e.g. debian this can be
+    enabled with 'sysctl kernel.unprivileged_userns_clone=1'.
+
+• Running echo hi > hello-from-chat.txt
+
+
+  Would you like to run the following command?
+
+  Environment: local
+
+  Reason: May I run the requested command outside the sandbox to create
+  hello-from-chat.txt?
+
+  $ echo hi > hello-from-chat.txt
+
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `echo hi > hello-
+     from-chat.txt` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel
