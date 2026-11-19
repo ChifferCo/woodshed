@@ -13,6 +13,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const iconFile = path.join(here, 'icon.png');
 const icon = existsSync(iconFile) ? nativeImage.createFromPath(iconFile) : undefined;
 const POLL_MS = 20_000;
+const READY_MS = 5_000;
+// Settled once the start has made the main window: a second launch or a sign-in link that comes in while the start
+// still waits on the console's ready answer waits for it too, so there is never a second main window.
+let markStarted;
+const started = new Promise((resolve) => { markStarted = resolve; });
 
 // --- Settings: the console's address and the window's place, in the app's own folder. ---
 
@@ -197,7 +202,8 @@ async function readDesktopReady() {
   const base = consoleUrl;
   let ready = null;
   try {
-    const res = await net.fetch(new URL('auth/desktop/ready', base).href, { headers: { Accept: 'application/json' } });
+    // 5 s at most: a console that never answers signs in inside the window, rather than leave Sign in doing nothing.
+    const res = await net.fetch(new URL('auth/desktop/ready', base).href, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(READY_MS) });
     ready = res.ok ? await res.json().catch(() => null) : null;
   } catch {
     ready = null;
@@ -211,7 +217,7 @@ async function readDesktopReady() {
 const desktopSignInReady = readDesktopReady;
 // The ready answer before a console's first page, but never more than 5 s: a console that does not answer it signs in
 // inside the window, as one from before the desktop sign-in.
-const readyBeforeLoading = () => Promise.race([readDesktopReady(), new Promise((r) => setTimeout(() => r(false), 5000))]);
+const readyBeforeLoading = () => readDesktopReady();
 // Where the window signs in, for a console that cannot hand the sign-in back or a person who asked to stay here.
 const signInHere = (next) => new URL(`${signInPaths[0].replace(/^\//, '')}?next=${encodeURIComponent(next)}`, consoleUrl).href;
 
@@ -239,6 +245,7 @@ async function signInInBrowser(next, inWindow, { again = false } = {}) {
 }
 
 async function finishSignIn(link) {
+  await started;
   const signedIn = parseSignedInLink(link);
   if (!signedIn || !consoleUrl) return;
   // Only the link of the sign-in waiting on the console open now, by its challenge: its code and verifier go to no
@@ -452,9 +459,10 @@ if (!app.requestSingleInstanceLock()) {
     event.preventDefault();
     app.whenReady().then(() => finishSignIn(link));
   });
-  app.on('second-instance', (event, argv) => {
+  app.on('second-instance', async (event, argv) => {
     const link = linkInArgs(argv);
     if (link) return finishSignIn(link);
+    await started;
     if (!mainWindow) return createMainWindow();
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
@@ -467,6 +475,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     await readyBeforeLoading();
     createMainWindow();
+    markStarted();
     startWatching();
     app.on('activate', () => { if (!mainWindow) createMainWindow(); });
   });
