@@ -532,6 +532,11 @@ export function createFleet({
   // Why each session's held messages last did not go, so it is logged once per reason.
   const heldWhy = new Map();
 
+  function withoutFirst(list, text) {
+    const at = list.indexOf(text);
+    return at === -1 ? list : [...list.slice(0, at), ...list.slice(at + 1)];
+  }
+
   /** @returns {Promise<'sent'|'queued'>} */
   async function send(session, text) {
     // Behind the ones already waiting, in the order they were sent.
@@ -554,10 +559,16 @@ export function createFleet({
 
   async function deliverHeld(session) {
     while (session.pendingMessages.length && canType(session)) {
-      const [text, ...rest] = session.pendingMessages;
+      const [text] = session.pendingMessages;
       try {
         await statusd(session, 'POST', '/send', { body: { text } });
       } catch (err) {
+        // One statusd will never take (too long, not text) would hold every message behind it: it goes, said so.
+        if (err?.status === 400) {
+          console.warn('fleet: held message dropped, the session refuses it', { id: session.id, chars: text.length, message: firstLine(err) });
+          update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
+          continue;
+        }
         if (!inTheBox(session, err)) {
           // Busy is the usual answer mid-turn: said once per reason, not on every status read.
           const why = busyWhy(err) ?? firstLine(err);
@@ -567,8 +578,9 @@ export function createFleet({
         }
       }
       heldWhy.delete(session.id);
-      update(session, { pendingMessages: rest });
-      console.log('fleet: held message sent', { id: session.id, chars: text.length, left: rest.length });
+      // The list as it is now: a message held while this one went in stays.
+      update(session, { pendingMessages: withoutFirst(session.pendingMessages, text) });
+      console.log('fleet: held message sent', { id: session.id, chars: text.length, left: session.pendingMessages.length });
     }
   }
 

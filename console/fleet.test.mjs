@@ -116,6 +116,12 @@ function setup({ userSettings = null, maxRunning = 5, maxPrivatePerPerson = 10, 
     statusd: (session, method, path, opts) => {
       if (path === '/send' && fail.send) return Promise.reject(new Error('statusd /send timed out'));
       if (path === '/send' && fail.sendTyped) return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'prompt-open', typed: true } }));
+      // A test's own answer for one send: an error to refuse it with, or a promise to wait on before it goes.
+      if (path === '/send' && fail.sendFor) {
+        const answer = fail.sendFor(opts?.body?.text);
+        if (answer instanceof Error) return Promise.reject(answer);
+        if (answer) return answer.then(() => statusd(session, method, path, opts));
+      }
       if (path === '/send' && fail.sendBusy) {
         calls.statusd.push({ path, body: opts?.body, refused: 'busy' });
         return Promise.reject(Object.assign(new Error('statusd /send answered 409'), { status: 409, body: { why: 'working', busy: true } }));
@@ -3273,4 +3279,34 @@ test('a message statusd says busy for is kept in the session\'s saved pendingMes
   await fleet.tick();
   assert.deepEqual(calls.statusd.filter((c) => c.path === '/send' && !c.refused).map((c) => c.body.text), ['first', 'second']);
   assert.deepEqual(session.pendingMessages, []);
+});
+
+test('a message held while another goes in stays, and one the session refuses for good does not hold the rest', async () => {
+  const { fleet, calls, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  await fleet.send(session, 'too long');
+  await fleet.send(session, 'first');
+  fail.sendBusy = false;
+  // statusd refuses the first for good (over its length), and takes 'first' slowly: 'late' comes in meanwhile.
+  let release;
+  fail.sendFor = (text) => {
+    if (text === 'too long') return Object.assign(new Error('statusd /send answered 400'), { status: 400, body: { error: 'text must be at most 8000 characters' } });
+    if (text === 'first') return new Promise((resolve) => { release = resolve; });
+    return null;
+  };
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  const ticking = fleet.tick();
+  for (let i = 0; i < 50 && !release; i++) await new Promise((r) => setImmediate(r));
+  assert.ok(release, 'first is on its way');
+  assert.deepEqual(session.pendingMessages, ['first'], 'the one the session refuses for good is dropped, not held for ever');
+  assert.equal(await fleet.send(session, 'late'), 'queued', 'behind the one going in');
+  release();
+  await ticking;
+  assert.ok(session.pendingMessages.includes('late') || calls.statusd.some((c) => c.path === '/send' && c.body?.text === 'late' && !c.refused),
+    'late is kept, or sent after first: never erased by first\'s acknowledgement');
+  assert.ok(!session.pendingMessages.includes('first'));
 });

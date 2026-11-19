@@ -415,13 +415,24 @@ export async function answerApproval(io, want) {
  *   the agent's box, unsent; kind null: the pane could not be read after it went in
  */
 // A menu on screen that readPrompt does not know (claude's folder-trust prompt, codex's, a picker of a new version):
-// a highlighted numbered row near the bottom. An Enter there picks the highlighted row, so no message goes in.
+// a highlighted numbered row near the bottom with a key hint under it ("Enter to confirm · Esc to exit", "Press enter
+// to continue"). An Enter there picks the highlighted row, so no message goes in. The agent's own input box and the
+// messages it echoes start with the same marks (`❯ 1. …`), with no such hint under them, and the line that holds the
+// text just typed is never one.
 const HIGHLIGHTED_ROW = /^\s*[❯›]\s*\d{1,2}\.\s+\S/;
+const MENU_HINT = /\b(enter|esc)\b.*\b(confirm|continue|select|cancel|exit|navigate|choose)\b/i;
 
-function asking(pane) {
+function menuOn(pane, text) {
+  const lines = linesOf(pane).slice(-25);
+  const typed = text ? squash(text).slice(0, 20) : '';
+  return lines.some((line, i) => HIGHLIGHTED_ROW.test(line) && !(typed && squash(line).includes(typed))
+    && lines.slice(i + 1, i + 10).some((l) => MENU_HINT.test(l)));
+}
+
+function asking(pane, text) {
   const known = readPrompt(pane);
   if (known) return known.kind;
-  return linesOf(pane).slice(-25).some((l) => HIGHLIGHTED_ROW.test(l)) ? 'menu' : null;
+  return menuOn(pane, text) ? 'menu' : null;
 }
 
 export async function typeMessage(io, text) {
@@ -436,7 +447,7 @@ export async function typeMessage(io, text) {
   } catch {
     return { sent: false, kind: null, typed: true };
   }
-  const after = asking(pane);
+  const after = asking(pane, text);
   if (after) return { sent: false, kind: after, typed: true };
   // An Enter that failed leaves the text in, unsent, as above.
   try {

@@ -824,7 +824,7 @@ async function startClaudeLogin() {
       const working = state === 'working' || (state === 'done' && !atPrompt(now));
       if (working || (state !== 'done' && state !== 'needs-you')) throw new Error(`claude is ${working ? 'working' : `not at its prompt (${state})`}: sign in once its turn ends`);
       if (!lastTaken(state, now.hook, now.pane)) throw new Error('claude has not started on the last message yet: sign in once its turn ends');
-      if (!draftCleared(state, now.hook)) throw new Error('a message is in claude\'s box, unsent: send or clear it in the TUI tab first');
+      if (!draftCleared(state, now.hook, now.pane)) throw new Error('a message is in claude\'s box, unsent: send or clear it in the TUI tab first');
       const done = await send('/woodshed:remote-control');
       if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
     } finally {
@@ -917,7 +917,7 @@ const paneIo = {
 async function send(text) {
   const done = await typeMessage(paneIo, text);
   if (done.sent) lastSent = { at: Date.now(), seenWorking: false };
-  if (done.typed) unsentDraft = { at: Date.now() };
+  if (done.typed) unsentDraft = { at: Date.now(), text };
   if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
   else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
   return done;
@@ -960,9 +960,16 @@ function lastTaken(state, hook, pane) {
   return false;
 }
 
-function draftCleared(state, hook) {
+// The box was emptied in the TUI tab when the draft's start is no longer on screen. Its first words, which a wrapped
+// line does not split; kept in memory only, never logged.
+function draftGone(pane) {
+  const start = unsentDraft.text.replace(/\s+/g, ' ').trim().slice(0, 20);
+  return typeof pane === 'string' && !!start && !pane.replace(/\s+/g, ' ').includes(start);
+}
+
+function draftCleared(state, hook, pane) {
   if (!unsentDraft) return true;
-  if (state === 'working' || (hook?.at ?? 0) > unsentDraft.at) {
+  if (state === 'working' || (hook?.at ?? 0) > unsentDraft.at || draftGone(pane)) {
     unsentDraft = null;
     return true;
   }
@@ -1331,7 +1338,7 @@ async function handle(req, res) {
     try {
       const now = await agentState({ strict: true });
       const { state } = now;
-      if (!draftCleared(state, now.hook)) {
+      if (!draftCleared(state, now.hook, now.pane)) {
         return busy('draft-in-box', `a message is in ${agentName}'s box, unsent: send or clear it in the TUI tab, and this goes after it`);
       }
       // Mid-turn (its state, or its screen behind a stale hook), or the last message not yet taken (its turn may be

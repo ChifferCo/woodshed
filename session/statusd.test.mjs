@@ -880,11 +880,14 @@ process.stdout.write(${JSON.stringify(screen)});
 process.stdin.setRawMode(true);
 let shown = false;
 let line = '';
+const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + ${JSON.stringify(screen)} + '❯ ' + line + (shown ? '\\n\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : '\\n'));
 process.stdin.on('data', (d) => {
   for (const ch of d.toString()) {
-    if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(lines)}, line + '\\n'); line = ''; } else line += ch;
+    if (ch === '\\r') { fs.appendFileSync(${JSON.stringify(lines)}, line + '\\n'); line = ''; }
+    else if (ch === '\\x15') { line = ''; shown = false; }
+    else { line += ch; shown = true; }
   }
-  if (!shown) { shown = true; process.stdout.write('\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n'); }
+  draw();
 });
 ` : `const fs = require('fs');
 process.stdout.write(${JSON.stringify(screen)});
@@ -896,7 +899,7 @@ require('readline').createInterface({ input: process.stdin }).on('line', (l) => 
   await setState(state);
   for (let i = 0; i < 50 && !/auto mode on|esc to interrupt/.test((await tmux('capture-pane', '-p', '-t', 'claude')).stdout); i++) await new Promise((r) => setTimeout(r, 100));
   const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_STATE_FILE: stateFile } });
-  return { call, setState, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
+  return { call, setState, tmux, got: async () => (await fs.readFile(lines, 'utf8').catch(() => '')) };
 }
 
 
@@ -978,4 +981,17 @@ test('text left in the box with no Enter blocks the next message until the agent
   await setState('working');
   const third = await call('POST', '/send', 'sess', JSON.stringify({ text: 'third' }));
   assert.equal(third.body.why, 'working', 'past the draft, busy only with the turn');
+});
+
+test('a draft emptied in the TUI tab no longer blocks the next message', async (t) => {
+  // No hook fires and no turn starts when someone clears the box: its text gone from the screen is the sign.
+  const { call, tmux, got } = await promptPane(t, 'done', { menuOnInput: true });
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'first' }))).body.typed, true);
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }))).body.why, 'draft-in-box');
+  await tmux('send-keys', '-t', 'claude', 'C-u');
+  await pause(300);
+  const after = await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }));
+  assert.equal(after.status, 409, 'its menu came up again as this went in: no Enter');
+  assert.equal(after.body.typed, true, 'past the draft: typed this time');
+  assert.equal(await got(), '', 'and no Enter for any of them');
 });

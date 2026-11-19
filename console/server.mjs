@@ -200,6 +200,8 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
+// The most one message to an agent may be: statusd's own limit (session/statusd.mjs, MAX_SEND_CHARS).
+export const MAX_MESSAGE_CHARS = 8000;
 const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'chatThread.cjs', 'chat.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
@@ -1753,6 +1755,8 @@ export function createHandler({
     }
     if (action === 'send') {
       if (typeof body?.text !== 'string' || !body.text.trim()) return reply(res, 400, { error: 'nothing to send' });
+      // statusd takes no more (session/statusd.mjs, MAX_SEND_CHARS): said now, not queued to fail behind the others.
+      if (body.text.length > MAX_MESSAGE_CHARS) return reply(res, 400, { error: `too long: at most ${MAX_MESSAGE_CHARS} characters in one message` });
       console.log('console: message typed in from the page', { id: session.id, chars: body.text.length });
       // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
       // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.

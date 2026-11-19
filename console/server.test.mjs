@@ -1871,7 +1871,11 @@ test('the message box types its text into the owner\'s session, and its files ar
   assert.deepEqual(await (await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'later' }), 'application/json')).json(), { ok: true, held: true }, 'held while the agent is busy');
 
   assert.equal((await post(`/api/sessions/${mine.id}/send`, '{"text":"  "}', 'application/json')).status, 400);
-  assert.equal(sent.length, 2, 'nothing to send reaches nothing');
+  // Over statusd's own limit: said now, never queued to fail and hold every message behind it.
+  const long = await post(`/api/sessions/${mine.id}/send`, JSON.stringify({ text: 'x'.repeat(8001) }), 'application/json');
+  assert.equal(long.status, 400);
+  assert.match((await long.json()).error, /at most 8000 characters/);
+  assert.equal(sent.length, 2, 'nothing to send, or too much, reaches nothing');
   assert.equal(seen.length, 0, 'the page never types into statusd itself');
 
   const up = await post(`/api/sessions/${mine.id}/upload?name=shot.png&pane=none`, 'png', 'application/octet-stream');
@@ -2405,4 +2409,10 @@ test('the setup card offers the reviewer App to an admin of a console with its A
     const view = await (await fetch(`http://127.0.0.1:${otherPort}/api/my`, { headers: { cookie: 'woodshed_session=mia-dev' } })).json();
     assert.equal(view.reviewerSetupNeeded, false, `a console with ${what}`);
   }
+});
+
+test('the console\'s limit on one message is statusd\'s own, so nothing it accepts is refused for good later', async () => {
+  const { MAX_MESSAGE_CHARS } = await import('./server.mjs');
+  const statusdSource = await (await import('node:fs/promises')).readFile(new URL('../session/statusd.mjs', import.meta.url), 'utf8');
+  assert.match(statusdSource, new RegExp(`const MAX_SEND_CHARS = ${MAX_MESSAGE_CHARS};`));
 });

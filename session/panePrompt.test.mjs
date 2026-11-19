@@ -344,3 +344,15 @@ test('a menu typeMessage does not know, such as claude\'s folder trust, gets no 
     assert.deepEqual(done, []);
   }
 });
+
+test('a message that starts with a number is not taken for a menu, in the input box or echoed', async () => {
+  // claude's input box and its echo of a sent message both start with ❯, as a highlighted menu row does.
+  const rule = '─'.repeat(60);
+  const before = [' ❯ 1. Fix the retry', '   2. Add a test', '', ' ● Done both.', rule, '❯ ', rule, '  ⏵⏵ auto mode on (shift+tab to cycle)'].join('\n');
+  const typedIn = before.replace(/^❯ $/m, '❯ 1. Ship it');
+  const screens = [before, typedIn];
+  const done = [];
+  const io = { capture: async () => screens.shift() ?? typedIn, type: async () => done.push('type'), enter: async () => done.push('Enter') };
+  assert.deepEqual(await typeMessage(io, '1. Ship it'), { sent: true });
+  assert.deepEqual(done, ['type', 'Enter']);
+});
