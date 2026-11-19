@@ -4,7 +4,7 @@
 import { app, BrowserWindow, Menu, Notification, ipcMain, nativeImage, net, screen, session, shell } from 'electron';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { attention, enabledKinds, NOTIFICATION_KINDS } from './attention.mjs';
 import { consoleUrlFrom, destination, isConsoleMe, consolePath } from './links.mjs';
 import { APP_PAGE_CHROME_CSS, consoleChromeCss, TRAFFIC_LIGHTS } from './windowChrome.mjs';
@@ -397,19 +397,28 @@ async function finishSignIn(link) {
     console.warn('woodshed-desktop: a sign-in link that is not the waiting sign-in\'s, ignored');
     return;
   }
-  // With no window open, one is made on the waiting page, and the claim starts once it shows: it is then checked as any
-  // window is, so a Change console… opened in it meanwhile stays.
-  if (!mainWindow) await createMainWindow({ waiting: true });
-  if (!mainWindow) return;
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.show();
-  mainWindow.focus();
+  // The window and the page the sign-in may move on from, fixed before anything waits: with none open, one is made on
+  // the waiting page, and its address is the page's own, not whatever it shows by the time it has loaded (a setup
+  // form, a page opened meanwhile). Setup shown since, even at the same address, is the person moving on too.
+  const shownAt = setupShown;
+  let from;
+  if (!mainWindow) {
+    const loaded = createMainWindow({ waiting: true });
+    from = pathToFileURL(path.join(here, 'signin.html')).href;
+    const made = mainWindow;
+    await loaded;
+    if (mainWindow !== made) console.log('woodshed-desktop: the window made for a sign-in closed or was replaced while it opened; the sign-in is kept, no window is moved');
+  } else {
+    from = mainWindow.webContents.getURL();
+  }
+  const win = mainWindow;
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
   const base = consoleUrl;
   const attempt = signInAttempt;
-  // Where the window is while the claim is on its way: a person who moved on (Change console…, another page) keeps it,
-  // and so does a window opened in place of this one, though it may be at the same address.
-  const win = mainWindow;
-  const from = win.webContents.getURL();
   const claimUrl = new URL('auth/desktop/claim', base).href;
   let error = null;
   let setCookies = [];
@@ -464,7 +473,7 @@ async function finishSignIn(link) {
     if (!error) startWatching();
     return;
   }
-  if (mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from) {
+  if (!win || mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from || setupShown !== shownAt) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
     if (!error) startWatching();
     return;
