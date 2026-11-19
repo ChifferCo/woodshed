@@ -303,6 +303,11 @@ test('a message gets no Enter when a prompt is on screen, before its text or as 
   assert.deepEqual(race.done, ['type hi'], 'no Enter, which would have approved it');
   const unread = { capture: async () => { throw new Error('no server running'); }, type: async () => assert.fail('typed'), enter: async () => assert.fail('entered') };
   await assert.rejects(typeMessage(unread, 'hi'), /no server running/);
+  // Read before, not after: the text is in, so it says so, and no Enter goes after it.
+  let reads = 0;
+  const lost = { done: [], capture: async () => { if (reads++) throw new Error('tmux busy'); return clear; }, type: async () => { lost.done.push('type'); }, enter: async () => { lost.done.push('Enter'); } };
+  assert.deepEqual(await typeMessage(lost, 'hi'), { sent: false, kind: null, typed: true });
+  assert.deepEqual(lost.done, ['type']);
 });
 
 test('the page shows every line of an approval it lets the person answer', async () => {

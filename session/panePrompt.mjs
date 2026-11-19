@@ -411,14 +411,22 @@ export async function answerApproval(io, want) {
  * Enter, so a prompt that came up while the text went in gets no Enter either. A read that fails stops it the same way.
  * @param {{capture: () => Promise<string>, type: (text: string) => Promise<void>, enter: () => Promise<void>}} io
  * @param {string} text
- * @returns {Promise<{sent: true}|{sent: false, kind: 'question'|'approval', typed: boolean}>}  typed: the text is in the
- *   agent's box, unsent
+ * @returns {Promise<{sent: true}|{sent: false, kind: 'question'|'approval'|null, typed: boolean}>}  typed: the text is in
+ *   the agent's box, unsent; kind null: the pane could not be read after it went in
  */
 export async function typeMessage(io, text) {
   const before = readPrompt(await io.capture());
   if (before) return { sent: false, kind: before.kind, typed: false };
   await io.type(text);
-  const after = readPrompt(await io.capture());
+  // The text is in now: a pane that cannot be read again gets no Enter, and says so, since sending it again would
+  // type it twice.
+  let pane;
+  try {
+    pane = await io.capture();
+  } catch {
+    return { sent: false, kind: null, typed: true };
+  }
+  const after = readPrompt(pane);
   if (after) return { sent: false, kind: after.kind, typed: true };
   await io.enter();
   return { sent: true };

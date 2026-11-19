@@ -815,8 +815,17 @@ async function hasRemoteControlCommand() {
 // Terminal tab's prompt, where the code is pasted. Nothing else may be typed through this route.
 async function startClaudeLogin() {
   if (await hasRemoteControlCommand()) {
-    const done = await send('/woodshed:remote-control');
-    if (!done.sent) throw new Error('claude is asking something: answer it first, then sign in again');
+    // Typed as a message is: one thing at a time, and only between turns, when no prompt can open under its Enter.
+    if (typing || held.length) throw new Error('a message is going in to claude: sign in once it has');
+    typing = true;
+    try {
+      const { state } = await agentState({ strict: true });
+      if (state !== 'done' && state !== 'needs-you') throw new Error(`claude is ${state === 'working' ? 'working' : `not at its prompt (${state})`}: sign in once its turn ends`);
+      const done = await send('/woodshed:remote-control');
+      if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
+    } finally {
+      typing = false;
+    }
     console.log('statusd: Claude login started in claude');
     return { where: 'agent' };
   }
@@ -912,35 +921,46 @@ async function send(text) {
 // mid-turn, so one could open between any last look at the pane and the Enter that sends a message, and take that
 // Enter as its answer. At its prompt between turns the agent asks nothing of itself: there the look and the Enter
 // cannot be overtaken. So the Enter waits for the turn's end; the agent then reads it as its next message.
+// They wait as long as the turn runs, never dropped: the console and the page took the 202 as sent. One goes in per
+// turn, once the agent has taken the last (a hook since its Enter, or, for codex, a pane seen working), so two never
+// land in one box or the second into the turn the first started.
 const HELD_MAX = 10;
-const HELD_MS = 10 * 60_000;
+// When nothing says the agent took a message (no hook fired, a turn too short to be seen), the next goes this long after.
+const TAKEN_MS = 20_000;
 const held = [];
-let delivering = false;
+// One thing typed into the pane at a time: a message, a held one, Sign in's command. Set before any await, so a check
+// and the claim cannot be split.
+let typing = false;
+let lastDelivered = null;
 
 async function deliverHeld() {
-  if (delivering || !held.length) return;
-  delivering = true;
+  if (typing || !held.length) return;
+  typing = true;
   try {
-    while (held.length) {
-      if (Date.now() - held[0].at > HELD_MS) {
-        const [old] = held.splice(0, 1);
-        console.warn('statusd: held message dropped, the turn never ended', { chars: old.text.length, minutes: HELD_MS / 60_000 });
-        continue;
-      }
-      const { state } = await agentState({ strict: true });
-      if (state !== 'done') return;
-      const done = await send(held[0].text);
-      // A prompt at its prompt is not the agent's own doing, but it is no place for the Enter either: try again later,
-      // unless the text went in, where a second try would type it twice.
-      if (!done.sent && !done.typed) return;
-      held.shift();
-      console.log('statusd: held message delivered', { sent: done.sent, left: held.length });
+    const { state, hook } = await agentState({ strict: true });
+    if (lastDelivered) {
+      if (state !== 'done') lastDelivered.seenWorking = true;
+      const taken = lastDelivered.seenWorking || (hook?.at ?? 0) > lastDelivered.at || Date.now() - lastDelivered.at > TAKEN_MS;
+      if (!taken) return;
     }
+    if (state !== 'done') return;
+    const done = await send(held[0].text);
+    // A prompt at its prompt is not the agent's own doing, but it is no place for the Enter either: try again later,
+    // unless the text went in, where a second try would type it twice.
+    if (!done.sent && !done.typed) return;
+    held.shift();
+    lastDelivered = held.length ? { at: Date.now(), seenWorking: false } : null;
+    console.log('statusd: held message delivered', { sent: done.sent, left: held.length });
   } catch (err) {
     console.warn('statusd: held messages not delivered yet', { message: String(err?.message ?? err).split('\n')[0] });
   } finally {
-    delivering = false;
+    typing = false;
   }
+}
+
+function holdMessage(text) {
+  held.push({ text, at: Date.now() });
+  console.log('statusd: message held until the turn ends', { chars: text.length, held: held.length });
 }
 
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
@@ -1295,13 +1315,19 @@ async function handle(req, res) {
     // A pane that could not be read may be showing one: no Enter then either. Mid-turn, the message is held until the
     // turn ends (deliverHeld), since a prompt can open at any moment of a turn.
     const agentName = CODEX ? 'codex' : 'claude';
+    const full = () => reply(res, 429, { why: 'held-full', error: `${HELD_MAX} messages already wait for ${agentName}'s turn to end` });
+    // Behind the ones that wait, in order, and never typed alongside another.
+    if (typing || held.length) {
+      if (held.length >= HELD_MAX) return full();
+      holdMessage(text);
+      return reply(res, 202, { ok: true, held: true });
+    }
+    typing = true;
     let done;
     try {
       const { state } = await agentState({ strict: true });
       if (state === 'working') {
-        if (held.length >= HELD_MAX) return reply(res, 429, { why: 'held-full', error: `${HELD_MAX} messages already wait for ${agentName}'s turn to end` });
-        held.push({ text, at: Date.now() });
-        console.log('statusd: message held until the turn ends', { chars: text.length, held: held.length });
+        holdMessage(text);
         return reply(res, 202, { ok: true, held: true });
       }
       if (state !== 'done' && state !== 'needs-you') {
@@ -1316,13 +1342,17 @@ async function handle(req, res) {
       }
       console.warn('statusd: text not sent, the pane could not be read', { chars: text.length, message });
       return reply(res, 503, { why: 'pane-unread', error: 'the agent\'s terminal could not be read, so it was not sent: try again' });
+    } finally {
+      typing = false;
     }
     if (!done.sent) {
       const agent = CODEX ? 'codex' : 'claude';
       const ask = done.kind === 'question' ? `${agent} is asking a question` : `${agent} is waiting for an approval`;
       return reply(res, 409, {
         why: 'prompt-open', typed: done.typed,
-        error: done.typed
+        error: done.typed && !done.kind
+          ? `${agent}'s terminal could not be read again once this was typed: it is in ${agent}'s box, not sent. Send it from the TUI tab`
+          : done.typed
           ? `${ask}, which came up as this was typed: it is in ${agent}'s box, not sent. Answer it, then send it from the TUI tab`
           : `${ask}: ${done.kind === 'question' ? 'answer it' : 'approve or deny it'} first, then send this`,
       });

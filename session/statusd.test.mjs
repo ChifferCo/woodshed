@@ -691,10 +691,15 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
     await fs.rm(dir, { recursive: true, force: true });
   });
   for (const name of ['claude', 'shell']) {
-    await tmux('new-session', '-d', '-s', name, `bash --norc -c 'while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`);
+    // claude's pane shows its mode footer, as claude at its prompt does.
+    const footer = name === 'claude' ? 'printf "\\n> \\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n"; ' : '';
+    await tmux('new-session', '-d', '-s', name, `bash --norc -c '${footer}while IFS= read -r l; do echo "$l" >> ${dir}/${name}.typed; done'`);
   }
   const flags = path.join(dir, 'flags');
-  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_FLAGS_FILE: flags } });
+  const stateFile = path.join(dir, 'state.json');
+  const setState = (state) => fs.writeFile(stateFile, JSON.stringify({ state, event: state === 'done' ? 'Stop' : 'PreToolUse', at: Date.now(), shells: 0 }));
+  await setState('done');
+  const { call } = await statusdWithApp(t, { env: { TMUX: '', TMUX_TMPDIR: dir, WOODSHED_CLAUDE_FLAGS_FILE: flags, WOODSHED_CLAUDE_STATE_FILE: stateFile } });
   const typed = (name) => fs.readFile(path.join(dir, `${name}.typed`), 'utf8').catch(() => '');
   const until = async (name, text) => {
     for (let i = 0; i < 50 && !(await typed(name)).includes(text); i++) await new Promise((resolve) => setTimeout(resolve, 100));
@@ -706,6 +711,14 @@ test('Sign in for Remote Control types /woodshed:remote-control into claude, or 
   assert.equal(await typed('shell'), 'woodshed-login\n');
 
   await fs.writeFile(flags, ' --settings /x/claudeHooks.json --plugin-dir /x/claudePlugin');
+  // Mid-turn, a prompt could open under the command's Enter: it waits for the turn's end, typing nothing.
+  await setState('working');
+  const busy = await call('POST', '/claude-login');
+  assert.equal(busy.status, 409);
+  assert.match(busy.body.error, /claude is working: sign in once its turn ends/);
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.equal(await typed('claude'), '', 'nothing typed mid-turn');
+  await setState('done');
   assert.deepEqual((await call('POST', '/claude-login')).body, { ok: true, where: 'agent' });
   await until('claude', '/woodshed:remote-control');
   assert.equal(await typed('claude'), '/woodshed:remote-control\n');
@@ -904,4 +917,31 @@ test('a failed typing call is said again without the message it typed', async ()
   assert.doesNotMatch(said.message, /secret|draft|send-keys/);
   assert.match(said.message, /^tmux could not type the message \(exit \d+\)$/);
   assert.doesNotMatch(JSON.stringify({ ...said, message: said.message }), /secret/);
+});
+
+test('held messages go in one per turn, in order, and a send while some wait joins them', async (t) => {
+  const { call, setState, got } = await promptPane(t, 'working');
+  const send = (text) => call('POST', '/send', 'sess', JSON.stringify({ text }));
+  assert.equal((await send('first')).status, 202);
+  assert.equal((await send('second')).status, 202);
+  const wait = async (want) => {
+    for (let i = 0; i < 60 && (await got()) !== want; i++) await new Promise((r) => setTimeout(r, 100));
+    return got();
+  };
+  await setState('done');
+  assert.equal(await wait('first\n'), 'first\n');
+  // Back at its prompt but not yet seen taking it: the second waits, rather than landing in the same box.
+  const queued = await send('third');
+  assert.equal(queued.status, 202, 'behind the ones that wait, even with the agent at its prompt');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(await got(), 'first\n');
+  // The agent took it (its hooks fire), and its turn ends.
+  await setState('working');
+  await new Promise((r) => setTimeout(r, 1200));
+  await setState('done');
+  assert.equal(await wait('first\nsecond\n'), 'first\nsecond\n');
+  await setState('working');
+  await new Promise((r) => setTimeout(r, 1200));
+  await setState('done');
+  assert.equal(await wait('first\nsecond\nthird\n'), 'first\nsecond\nthird\n', 'in the order sent');
 });
