@@ -2109,7 +2109,7 @@ ${DARK_PALETTE}
       if (state.tab === name) return;
       state.tab = name;
       // Opening the Q&A reads it again, for the reason the visibility handler does.
-      if (name === 'qa' && qaView.session === state.session && qaView.data) loadQa(false);
+      if (name === 'qa' && qaView.session === state.session) loadQa(false);
       // Pressed, so it earns a history entry: the two halves are two places,
       // and back out of the diff should land on the analysis rather than off
       // the page altogether.
@@ -2153,7 +2153,7 @@ ${DARK_PALETTE}
         render();
         // Arriving on the Q&A reads it again, as pressing its tab does: what
         // this page drew before may have been discarded since, elsewhere.
-        if (wanted === 'qa' && qaView.session === state.session && qaView.data) loadQa(false);
+        if (wanted === 'qa' && qaView.session === state.session) loadQa(false);
       }
       var wantChat = params.get('chat') === '1';
       if (wantChat !== chat.open) setChatOpen(wantChat);
@@ -3013,6 +3013,20 @@ ${DARK_PALETTE}
     async function askQaAgain() {
       if (!state.session) return;
       var was = qaView;
+      // Nothing on screen: another tab may have asked since. Show that rather
+      // than paying for a run that would replace it.
+      if (!was.data) {
+        try {
+          var there = await api('GET', '/reviews/' + state.session + '/qa');
+          if (was !== qaView) return;
+          if (there.qa && (there.qa.forDiff || null) === (state.diffAt || null)) {
+            loadQa(false);
+            return;
+          }
+        } catch (e) {
+          // Not read: ask anyway, as the reader pressed.
+        }
+      }
       try {
         await api('POST', qaStartUrl());
       } catch (e) {
