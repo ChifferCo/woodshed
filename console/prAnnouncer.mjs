@@ -43,9 +43,9 @@ function ownersPull(pull, session, app) {
   if (pull.user?.type === 'Bot' && !app?.login) throw new Error('the console\'s App login is not read yet, so whose pull request this is is not known');
   const fromTheApp = author === String(app?.login ?? '').toLowerCase();
   const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
-  // Git's refs are case-sensitive: the branch is the very one the console named (fleet.mjs, createSession).
-  const madeForIt = new RegExp(`^woodshed/[^/]+-${String(session.id ?? '').replace(/[^A-Za-z0-9]/g, '')}$`).test(session.branch ?? '');
-  return fromTheApp && sameRepo && Boolean(session.id) && madeForIt && pull.head?.ref === session.branch
+  // The very branch the console made for it at its start (fleet.mjs, createSession: `madeBranch`, which nothing the
+  // session reports changes), matched exactly, as Git's refs are case-sensitive.
+  return fromTheApp && sameRepo && Boolean(session.madeBranch) && pull.head?.ref === session.madeBranch
     && Date.parse(pull.created_at) >= Date.parse(session.createdAt);
 }
 

@@ -3421,3 +3421,14 @@ test('a My Woodshed session on a branch with no pull request (or a failed lookup
   await fleet.tick();
   assert.equal(sent().length, 2, 'nothing twice');
 });
+
+test('a private session keeps the branch the console made for it, and one started on a branch has none', async () => {
+  const { fleet, statuses } = setup();
+  const own = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  assert.equal(own.madeBranch, `woodshed/joel-${own.id}`);
+  statuses[own.id] = { state: 'working', branch: 'woodshed/ana-dev-x' };
+  await fleet.tick();
+  assert.deepEqual([own.branch, own.madeBranch], ['woodshed/ana-dev-x', `woodshed/joel-${own.id}`], 'a checkout does not move it');
+  const onBranch = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it', workOn: 'feature/shared' });
+  assert.equal(onBranch.madeBranch, undefined);
+});

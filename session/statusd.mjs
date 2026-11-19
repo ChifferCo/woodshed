@@ -252,11 +252,13 @@ async function git(...args) {
   return stdout.trim();
 }
 
-let prCache = { at: 0, url: null };
+// Kept for the branch it was read on: after a checkout of another branch, the old one's pull request is not reported.
+let prCache = { at: 0, url: null, branch: null };
 
 async function prUrl() {
   if (ASK || QA) return null;
-  if (Date.now() - prCache.at < PR_CACHE_MS) return prCache.url;
+  const branch = await git('branch', '--show-current').catch(() => null);
+  if (Date.now() - prCache.at < PR_CACHE_MS && branch === prCache.branch) return prCache.url;
   let url = null;
   try {
     const { stdout } = await run('gh', ['pr', 'view', '--json', 'url', '--jq', '.url'], { cwd: REPO_DIR });
@@ -264,7 +266,7 @@ async function prUrl() {
   } catch {
     // No PR for this branch yet, which is the normal state for most of a session.
   }
-  prCache = { at: Date.now(), url };
+  prCache = { at: Date.now(), url, branch };
   return url;
 }
 

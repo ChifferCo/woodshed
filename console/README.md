@@ -1695,8 +1695,8 @@ the session keeps going until its review and suites pass:
   named as not run. Where a shared session would post a `Needs a human:` comment, it asks its owner at its terminal.
   Nothing is posted to Slack or written on GitHub.
 - **Which pull request.** Only its owner's: one they opened, or one the console's App opened (a session that pushes
-  as the App) from the branch the console made for the session (`woodshed/<owner>-<id>` or `woodshed/<issue>-<id>`,
-  not an existing branch it was started on), in the repo itself and not a fork, after the session started (`slack:
+  as the App) from the branch the console made for the session at its start (`madeBranch`: `woodshed/<owner>-<id>` or
+  `woodshed/<issue>-<id>`, not an existing branch it was started on, nor whatever it has checked out since), in the repo itself and not a fork, after the session started (`slack:
   someone else's pull request, not watched`). Never a review-only session's, nor one on another repo than its
   project's (`fleet: pull request on another repo than the session's project, not watched`, as for a session whose
   project left the list). Each watch is its session's own: two sessions on one pull request are each told, and a shared

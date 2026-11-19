@@ -481,6 +481,8 @@ export function createFleet({
     const session = {
       id, project: project.name, repo: project.repo, kind, number, title, startedBy, trigger, prompt, owner, options, resumeClaude, slack: thread,
       branch: branch || defaultBranch,
+      // The branch the console made for it, when it made one: `branch` follows what statusd says is checked out.
+      ...(!branch && defaultBranch ? { madeBranch: defaultBranch } : {}),
       status: 'queued', state: null, createdAt: nowIso(), startedAt: null, stoppedAt: null,
       lastActiveAt: null, checkedAt: null, stopReason: null, error: null,
       head: null, prUrl: null, lastMessage: null, commentId: null,

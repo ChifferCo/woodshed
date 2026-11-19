@@ -782,6 +782,7 @@ for (const [what, pull, watched] of [
   ['a pull request another app opened from the session\'s branch', { user: { login: 'other-bot[bot]', type: 'Bot' } }, false],
   ['a pull request the App opened from a branch differing from the session\'s only in case', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/Joel-s1', repo: { full_name: 'acme/app' } } }, false],
   ['a pull request the App opened from the branch the console made for an issue\'s session', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/42-s1', repo: { full_name: 'acme/app' } } }, true],
+  ['a pull request the App opened from a teammate\'s branch the session checked out', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/ana-dev-s1', repo: { full_name: 'acme/app' } } }, false],
   ['a pull request the App opened from an existing branch the session was started on', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'feature/shared', repo: { full_name: 'acme/app' } } }, false],
   ['a pull request the App opened from a fork\'s branch of the same name', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-s1', repo: { full_name: 'someone/app' } } }, false],
   ['a pull request the App opened from another branch', { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/other' } }, false],
@@ -793,9 +794,11 @@ for (const [what, pull, watched] of [
     const watcher = createPrAnnouncer({
       store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => ({ slug: 'woodshed-cloud', login: 'woodshed-cloud[bot]' }),
     });
-    // The session is on the pull request's branch, except where a case is about a branch that is not the session's.
-    const branch = ['feature/shared', 'woodshed/42-s1'].includes(pull.head?.ref) ? pull.head.ref : 'woodshed/joel-s1';
-    assert.equal(await watcher.track({ ...session, owner: 'joel', branch }, null, { watch: true }), watched);
+    // The console made the session `woodshed/joel-s1` (or `woodshed/42-s1` for an issue), except a session started on
+    // an existing branch, which has no branch of its own; each is checked out on the pull request's branch.
+    const ref = pull.head?.ref ?? 'woodshed/joel-s1';
+    const madeBranch = ref === 'feature/shared' ? undefined : ref === 'woodshed/42-s1' ? ref : 'woodshed/joel-s1';
+    assert.equal(await watcher.track({ ...session, owner: 'joel', branch: ref, ...(madeBranch ? { madeBranch } : {}) }, null, { watch: true }), watched);
     assert.equal((store.state.slackPending ?? []).length, watched ? 1 : 0);
   });
 }
@@ -820,7 +823,7 @@ test('an app\'s pull request waits for the App\'s login before it is watched or 
   const { store, session, github } = setup({ pull: { user: { login: 'woodshed-cloud[bot]', type: 'Bot' }, head: { sha: 'abc', ref: 'woodshed/joel-s1', repo }, base: { repo } } });
   let app = null;
   const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'), ownApp: () => app });
-  const mine = { ...session, owner: 'joel', branch: 'woodshed/joel-s1' };
+  const mine = { ...session, owner: 'joel', branch: 'woodshed/joel-s1', madeBranch: 'woodshed/joel-s1' };
   await assert.rejects(watcher.track(mine, null, { watch: true }), /App login is not read yet/);
   app = { slug: 'other', login: 'other-bot[bot]' };
   assert.equal(await watcher.track(mine, null, { watch: true }), false);
