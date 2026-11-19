@@ -211,6 +211,10 @@ test('publicSession drops the token and the endpoint', () => {
   assert.equal(view.endpoint, undefined);
   assert.equal(view.terminalToken, undefined);
   assert.equal(view.pendingMessages, 2);
+  assert.deepEqual(view.heldIds, []);
+  const held = publicSession(session({ pendingMessages: ['console own', { id: 'page-id-0001', text: 'secret words' }] }));
+  assert.deepEqual(held.heldIds, ['page-id-0001'], 'the page\'s ids of held messages');
+  assert.ok(!JSON.stringify(held).includes('secret words'), 'never their text');
 });
 
 test('statusUpdate keeps the app\'s state only when statusd says one the console knows', () => {

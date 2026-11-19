@@ -348,11 +348,15 @@ test('a failed send is put back to send again only when the console refused it w
   assert.equal(chat.consoleRefused(Object.assign(new Error('t'), { name: 'TimeoutError' })), false);
 });
 
-test('a send answered unreadably waits like a held one, and is settled by the record or the console\'s ids', () => {
+test('a send whose answer was lost waits as held once the console lists it held, else goes as a sent one does', () => {
   const now = Date.parse('2026-11-19T12:00:00.000Z');
   const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now, state: 'unconfirmed' };
   assert.match(chat.pendingLabel('unconfirmed', 'claude'), /no word back/);
-  assert.equal(chat.stillPending([a], [], now + 60 * 60_000).length, 1, 'not let go after ten minutes, as a sent one is');
+  assert.equal(chat.reconcile([a], { heldIds: [] }, now).changed, false);
+  assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0, 'never held: it went in or never arrived');
+  assert.equal(chat.reconcile([a], { heldIds: ['aaaaaaaa-1'] }, now + 60_000).changed, true);
+  assert.equal(a.state, 'held');
+  assert.equal(chat.stillPending([a], [], now + 60 * 60_000).length, 1, 'held: it waits for the turn, however long');
   assert.equal(chat.reconcile([a], { deliveredIds: ['aaaaaaaa-1'] }, now).changed, true);
   assert.equal(a.state, 'sent');
   const b = { id: 'bbbbbbbb-2', text: 'and then', sentAt: now, state: 'unconfirmed' };

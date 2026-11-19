@@ -466,5 +466,7 @@ export function statusUpdate(session, status, nowIso) {
  */
 export function publicSession({ token, terminalToken, endpoint, pendingMessages, ...rest }) {
   // A session whose image predates the Terminal tab has no shell ttyd to open.
-  return { ...rest, pendingMessages: pendingMessages?.length ?? 0, hasShell: Boolean(endpoint?.shellPort) };
+  // The page's ids of the messages held, never their text: a send whose answer it lost can tell it is still held.
+  const heldIds = (pendingMessages ?? []).filter((m) => m && typeof m === 'object' && m.id).map((m) => m.id);
+  return { ...rest, pendingMessages: pendingMessages?.length ?? 0, heldIds, hasShell: Boolean(endpoint?.shellPort) };
 }

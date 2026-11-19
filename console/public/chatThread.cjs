@@ -296,10 +296,11 @@
     return got.endsWith('…') && got.length > 8000 && want.startsWith(got.slice(0, -1));
   }
 
-  // Held by the console, or sent with an answer that could not be read (held or not): either waits for the record to
-  // hold it, or for the console to say by its id what became of it.
+  // Held by the console: waits for the record to hold it, or for the console to say by its id what became of it, however
+  // long the agent's turn runs. One whose answer was lost (`unconfirmed`) waits so once a read of the session lists it
+  // as held (reconcile); else it went in or never arrived, and goes ten minutes on, as a sent one does.
   function waiting(p) {
-    return p.state === 'held' || p.state === 'unconfirmed';
+    return p.state === 'held';
   }
 
   function stillPending(pending, entries, now = Date.now()) {
@@ -503,14 +504,19 @@
    * cleared). Only a positive word on a bubble's own id moves it, which an older read of the session never holds.
    * Changed on the bubbles themselves.
    * @param {{id?: string, state: string}[]} pending
-   * @param {{deliveredIds?: string[], leftInBox?: {id: string|null}|null, unknownIds?: string[]}} session  refusedIds: held ones the session could not take safely, never typed  unknownIds: held ones
+   * @param {{deliveredIds?: string[], leftInBox?: {id: string|null}|null, unknownIds?: string[], heldIds?: string[]}} session  heldIds: the messages the console holds now  refusedIds: held ones the session could not take safely, never typed  unknownIds: held ones
    *   whose send got no answer in time, which may have gone in
    * @returns {{pending: object[], changed: boolean}}
    */
-  function reconcile(pending, { deliveredIds = [], leftInBox = null, unknownIds = [], refusedIds = [] } = {}, now = Date.now()) {
+  function reconcile(pending, { deliveredIds = [], leftInBox = null, unknownIds = [], refusedIds = [], heldIds = [] } = {}, now = Date.now()) {
     let changed = false;
     const left = [];
     for (const p of pending) {
+      // An answer lost on the way, for a message the console holds: held, then, and waiting for its turn.
+      if (p.state === 'unconfirmed' && p.id && heldIds.includes(p.id)) {
+        p.state = 'held';
+        changed = true;
+      }
       if (p.id && leftInBox?.id === p.id) {
         if (p.state !== 'in-box') {
           p.state = 'in-box';
@@ -519,17 +525,17 @@
       } else if (p.state === 'in-box') {
         changed = true;
         continue;
-      } else if (waiting(p) && p.id && deliveredIds.includes(p.id)) {
+      } else if ((waiting(p) || p.state === 'unconfirmed') && p.id && deliveredIds.includes(p.id)) {
         p.state = 'sent';
         p.deliveredAt = now;
         changed = true;
-      } else if (waiting(p) && p.id && unknownIds.includes(p.id)) {
+      } else if ((waiting(p) || p.state === 'unconfirmed') && p.id && unknownIds.includes(p.id)) {
         // The console's send got no answer in time: it may have gone in, and is not sent again. The bubble says so, and
         // goes when the record shows it, or ten minutes on.
         p.state = 'unknown';
         p.deliveredAt = now;
         changed = true;
-      } else if (waiting(p) && p.id && refusedIds.includes(p.id)) {
+      } else if ((waiting(p) || p.state === 'unconfirmed') && p.id && refusedIds.includes(p.id)) {
         // The session came back on a statusd that types blind: never typed. The bubble says so, for ten minutes.
         p.state = 'refused';
         p.deliveredAt = now;
