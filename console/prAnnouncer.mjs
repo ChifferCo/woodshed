@@ -40,7 +40,7 @@ function ownersPull(pull, session, app) {
   if (!login) return false;
   const author = String(pull.user?.login ?? '').toLowerCase();
   if (author === login) return true;
-  if (pull.user?.type === 'Bot' && !app?.login) throw new Error('the console\'s App login is not read yet, so whose pull request this is is not known');
+  if (pull.user?.type === 'Bot' && !app?.login) throw new Error('the App login is not read yet');
   const fromTheApp = author === String(app?.login ?? '').toLowerCase();
   const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
   // The very branch the console made for it at its start (fleet.mjs, createSession: `madeBranch`, which nothing the
@@ -141,6 +141,7 @@ export function createPrAnnouncer({
    * @param {object} session
    * @param {{name: string, default?: boolean}|null} [project]  the session's project: its pull request is on that repo
    * @param {{watch?: boolean}} [opts]
+   * @returns {Promise<boolean|'later'>}  `later` for an app's pull request while the App's login is not read yet
    * @throws {Error}  when GitHub could not be read, which is worth trying again
    */
   async function track(session, project = null, { watch = false } = {}) {
@@ -149,14 +150,15 @@ export function createPrAnnouncer({
     const other = project && !project.default ? project.name : null;
     // An app's pull request waiting for the App's login is read again a minute later, not at every tick.
     const waited = appWaits.get(session.id);
-    if (watch && waited !== undefined && now() - waited < CHECK_EVERY_MS) throw new Error('the console\'s App login is not read yet');
+    if (watch && waited !== undefined && now() - waited < CHECK_EVERY_MS) return 'later';
     const pull = await gh({ project: other }).pull(number);
     let owners;
     try {
       owners = !watch || ownersPull(pull, session, ownApp());
     } catch (err) {
+      if (waited === undefined) console.log('slack: an app\'s pull request waits for the App\'s login before it is watched', { id: session.id, number });
       appWaits.set(session.id, now());
-      throw err;
+      return 'later';
     }
     appWaits.delete(session.id);
     if (!owners) {
@@ -175,7 +177,11 @@ export function createPrAnnouncer({
       return false;
     }
     if (!known) {
-      pending().push({ number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}), ...(watch ? { watch: true } : {}) });
+      pending().push({
+        number, sessionId: session.id, since: new Date(now()).toISOString(), ...(other ? { project: other } : {}),
+        // A watch keeps its repo: a default project replaced since is another repo, whose pull request it is not.
+        ...(watch ? { watch: true, ...(project?.repo ? { repo: project.repo } : {}) } : {}),
+      });
       store.save();
       console.log(watch ? 'slack: pull request watched for its session, until its review and suites pass' : 'slack: pull request waiting for its review and suites', { id: session.id, number });
     }

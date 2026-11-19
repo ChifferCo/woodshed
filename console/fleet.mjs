@@ -722,10 +722,7 @@ export function createFleet({
       return;
     }
     if (!watch && (!announcer.available || !announcer.postsFor(project))) return;
-    const tracked = await safely('pull request read for Slack', async () => {
-      await announcer.track(session, project, { watch });
-      return true;
-    });
+    const tracked = await safely('pull request read for Slack', async () => (await announcer.track(session, project, { watch })) !== 'later');
     if (tracked) update(session, { announcedPrUrl: session.prUrl });
   }
 
@@ -1073,8 +1070,9 @@ export function createFleet({
     const session = find(item.sessionId);
     if (!ownListening(session)) return 'ended';
     const project = item.project ? projectNamed(config, item.project) : defaultProject(config);
-    // Its project left the console: its repo is no longer read, and the default one's pull request is another.
-    if (!project) return 'ended';
+    // Its project left the console, or its repo is another now (a default project replaced): its pull request is no
+    // longer that project's.
+    if (!project || (item.repo && item.repo.toLowerCase() !== String(project.repo ?? '').toLowerCase())) return 'ended';
     const current = session.reportedPrUrl === undefined ? session.prUrl : session.reportedPrUrl;
     return pullNumber(current) === item.number && onProjectRepo(current, project) ? 'yes' : 'elsewhere';
   }

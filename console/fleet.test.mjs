@@ -3455,3 +3455,21 @@ test('a private watch whose project left the console ends, reading nothing of th
   await fleet.tick();
   assert.deepEqual([store.state.slackPending, defaultReads], [[], []]);
 });
+
+test('a private watch on the default project ends when the default project is replaced by another repo', async () => {
+  const projects = [{ name: 'r', repo: 'o/r', default: true }];
+  const { fleet, github, statuses, store, advance } = setup({ projects });
+  const session = await fleet.startPrivate({ owner: 'joel', prompt: 'Fix it' });
+  github.pull = async (number) => ({ number, created_at: '2026-10-21T10:05:00Z', state: 'open', head: { sha: 'abc' }, user: { login: 'joel' } });
+  github.reviews = async () => [];
+  github.checkRuns = async () => e2eRuns();
+  statuses[session.id] = { state: 'done', prUrl: 'https://github.com/o/r/pull/9' };
+  await fleet.tick();
+  assert.deepEqual(store.state.slackPending.map((p) => [p.number, p.repo]), [[9, 'o/r']]);
+  const reads = [];
+  github.pull = async (number) => { reads.push(number); return { number, state: 'closed', head: { sha: 'zzz' } }; };
+  projects.splice(0, 1, { name: 'other', repo: 'o/other', default: true });
+  advance(60_000);
+  await fleet.tick();
+  assert.deepEqual([store.state.slackPending, reads], [[], []]);
+});

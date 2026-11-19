@@ -825,9 +825,9 @@ test('an app\'s pull request waits for the App\'s login before it is watched or 
   let clock = Date.parse('2026-10-26T12:00:00.000Z');
   const watcher = createPrAnnouncer({ store, github, slack: null, gates: async () => GATES, now: () => clock, ownApp: () => app });
   const mine = { ...session, owner: 'joel', branch: 'woodshed/joel-s1', madeBranch: 'woodshed/joel-s1' };
-  await assert.rejects(watcher.track(mine, null, { watch: true }), /App login is not read yet/);
+  assert.equal(await watcher.track(mine, null, { watch: true }), 'later');
   const reads = github.reads;
-  await assert.rejects(watcher.track(mine, null, { watch: true }), /App login is not read yet/);
+  assert.equal(await watcher.track(mine, null, { watch: true }), 'later');
   assert.equal(github.reads, reads, 'not read again within the minute');
   clock += MINUTE;
   app = { slug: 'other', login: 'other-bot[bot]' };
