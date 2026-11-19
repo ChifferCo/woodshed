@@ -74,6 +74,8 @@
 
   W.getJson('/api/me').then((me) => {
     if (me.login) {
+      // Signed in meanwhile, perhaps as someone else in another browser tab: what the last login kept here goes first.
+      W.forgetOtherLogins(me.login);
       window.location.replace(next);
       return;
     }

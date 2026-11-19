@@ -1650,17 +1650,38 @@
   function signingOut() {
     return signedOut;
   }
+  const KEPT_KEYS = ['woodshed-last', 'woodshed-session-tabs'];
   function forgetSignedIn() {
     signedOut = true;
     try {
-      for (const key of ['woodshed-last', 'woodshed-session-tabs']) window.sessionStorage.removeItem(key);
+      for (const key of KEPT_KEYS) window.sessionStorage.removeItem(key);
     } catch {
       // Nothing kept.
     }
   }
+  // What another login kept in this browser tab goes, unread: a sign-in lost to another browser tab's Sign out and
+  // replaced by someone else's runs no Sign out here. Every page that knows who is signed in (its woodshed-login meta)
+  // does it as it loads, and the sign-in page before it sends someone back (login.js).
+  function forgetOtherLogins(login) {
+    if (!login) return;
+    try {
+      for (const key of KEPT_KEYS) {
+        let kept = null;
+        try {
+          kept = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+        } catch {
+          kept = { login: undefined };
+        }
+        if (kept && kept.login !== login) window.sessionStorage.removeItem(key);
+      }
+    } catch {
+      // Nothing kept.
+    }
+  }
+  forgetOtherLogins(document.querySelector?.('meta[name="woodshed-login"]')?.content ?? null);
 
   window.Woodshed = {
-    invite, forgetSignedIn, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
+    invite, forgetSignedIn, forgetOtherLogins, signingOut, providerWords: PROVIDER_WORDS, consoleName: CONSOLE_NAME, capitalised,
     h, person, personText, displayStatus, isLive, holdsTask, linePlace, lineText, waitsForRetry, agentOf, agentTitle, isPrivate, canResumePrivate, statusBadge, planChip, duration, ref, issueUrl, prNumber, lastLine, fetchSessions, stopButton,
     appUrl, appAction, appButton, runAppAction, notify, menuItem, appChoices, appChoiceItems, runningAppLabel, setupAppToast, setupAppDialog, serversTitle, nav, settingsTabs, settingsPage, goToSettings, isAdmin, consoleLinks: () => consoleLinks(meNow), userMenuSlot, sharedEmptyText, getJson, postJson, when, errorParts, confirmChange, pickedLogins, byQuery, peoplePicker,
     GROUPS, group, setupSteps, setupDone, stepsAfterSetup, setupCard, blockerCard, sameLogin, uniqueLogins, startedLine, assignedTo, inMine, needsYou, isPullCheck, isUnassigned, ownerTag, isResumable, isPaused, PAUSE_REASON_RE, privateStopLine, pausesIn, deletedIn, ago, keptLine, resumeSharedButton, deleteSharedButton, sharedAction, stopSession, confirmStop, confirmDeleteShared,

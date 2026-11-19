@@ -2228,7 +2228,7 @@ export function createHandler({
     if (repoRead) return repoSettingsApi(req, res, { route: repoRead, login: user.login });
     // One page for the three: session.js moves between them in place, so each loads what any of them needs.
     if (pathname === '/' || pathname === '/all' || SESSION_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SHELL_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
-    if (pathname === '/settings' || SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SETTINGS_SCRIPTS, provider, linkQuery: config.linkQuery }));
+    if (pathname === '/settings' || SETTINGS_PAGE_RE.test(pathname)) return html(res, pageShell({ title: consoleName, script: SETTINGS_SCRIPTS, login: user.login, provider, linkQuery: config.linkQuery }));
     if (pathname === '/setup/github') return html(res, pageShell({ title: consoleName, script: 'githubSetup.js' }));
     if (pathname === '/setup/github/created') return githubSetupCreated(res, url);
     if (pathname === '/setup/github/reviewer-created') return reviewerSetupCreated(res, url);

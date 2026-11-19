@@ -750,6 +750,8 @@ test('pins are the signed-in person\'s, a rename is the session\'s, and the app\
   for (const page of ['/settings', '/console-settings', '/console-settings/repos/app', '/secrets', '/people', '/events']) {
     const settingsScripts = [...(await getBody(port, page, as('octocat'))).matchAll(/<script src="\/static\/([\w.]+)\?v=[0-9a-f]{12}"/g)].map((m) => m[1]);
     assert.deepEqual(settingsScripts.slice(-SETTINGS.length), SETTINGS, `${page} is the settings page`);
+    // Whose page it is too, so common.js drops what another login kept in the browser tab.
+    assert.match(await getBody(port, page, as('octocat')), /<meta name="woodshed-login" content="octocat">/, `${page} names who it is for`);
   }
   // Each script a page names is served: one missing from the static list would load as a 404.
   for (const script of SETTINGS) assert.equal((await fetch(`http://127.0.0.1:${port}/static/${script}`, { headers: { host: `localhost:${port}`, ...as('octocat') } })).status, 200, script);

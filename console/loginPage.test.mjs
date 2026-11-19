@@ -17,16 +17,16 @@ function textOf(node) {
   return node.children.map(textOf).join('');
 }
 
-async function render({ me, search = '', forgetSignedIn = () => {} }) {
+async function render({ me, search = '', forgetSignedIn = () => {}, forgetOtherLogins = () => {}, replaced = [] }) {
   const shown = [];
   const window = {
-    location: { search, origin: 'https://console.example', replace() {}, reload() {} },
-    Woodshed: { h, getJson: async () => me, postJson: async () => ({}), ago: () => 'just now', forgetSignedIn },
+    location: { search, origin: 'https://console.example', replace(to) { replaced.push(to); }, reload() {} },
+    Woodshed: { h, getJson: async () => me, postJson: async () => ({}), ago: () => 'just now', forgetSignedIn, forgetOtherLogins },
   };
   const document = { getElementById: () => ({ replaceChildren: (...nodes) => shown.push(nodes) }) };
   vm.runInNewContext(source, { window, document, URL, URLSearchParams, setTimeout() {} });
   await new Promise((resolve) => setImmediate(resolve));
-  const page = shown.at(-1)[0];
+  const page = shown.at(-1)?.[0] ?? { tag: 'none', attrs: {}, children: [] };
   const errors = [];
   (function find(node) {
     if (typeof node === 'string') return;
@@ -83,4 +83,15 @@ test('the sign-in page drops what pages kept in the browser tab, for a sign-in l
   forgot = 0;
   await render({ me: { ...signInOn, visitor: 'octocat' }, forgetSignedIn: () => { forgot++; } });
   assert.equal(forgot, 1, 'a visitor, no longer a member, keeps nothing either');
+});
+
+test('signed in meanwhile, perhaps as someone else, the sign-in page drops the last login\'s first, then sends back', async () => {
+  const steps = [];
+  const replaced = [];
+  await render({
+    me: { ...signInOn, login: 'bob' }, search: '?next=%2Fsettings', replaced,
+    forgetOtherLogins: (login) => steps.push(`forget all but ${login}`),
+  });
+  replaced.forEach((to) => steps.push(`to ${to}`));
+  assert.deepEqual(steps, ['forget all but bob', 'to /settings']);
 });
