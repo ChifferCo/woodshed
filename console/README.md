@@ -1710,7 +1710,8 @@ the session keeps going until its review and suites pass:
   (passed or not; checked again after GitHub's reads, before the session is told, as is the head commit: a push
   during the reads makes them the old commit's, and nothing is said of it), or the project file has no review or
   suite (`slack: pull request no longer waiting` with why). A watch that ran out is not started again by the session
-  coming back to its pull request (`watchesExpired` in `state.json`).
+  coming back to its pull request (`watchesExpired` in `state.json`, by session, kept until the session leaves the
+  list). A close during the reads ends the watch too.
 - **While the session is elsewhere.** While it reports another pull request or none (a branch with none, or statusd's
   lookup failing), the watch waits, keeping what it told, and goes on once the session is back; it still ends if the
   pull request closes meanwhile.

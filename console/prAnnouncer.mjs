@@ -76,6 +76,7 @@ const hasNoGates = (gates) => !gates || (!gates.review && !gates.suites.length);
 export function createPrAnnouncer({
   store, github, githubOf = null, defaultProjectName = () => null, slack, gates: gatesOf = async () => null, now = Date.now, giveUpMs = () => DEFAULT_RETENTION.slackGiveUpMs,
   qaWaitMs = () => DEFAULT_RETENTION.qaWaitMs, events = {}, webhooksFlowing = () => false, fallbackMs = CHECK_EVERY_MS, ownApp = () => null,
+  sessionKnown = () => true,
 }) {
   const { state } = store;
   // When each waiting pull request was last read, by number. Not kept: after a restart each is read at once.
@@ -83,10 +84,14 @@ export function createPrAnnouncer({
   // When each session's app pull request was last found waiting for the App's login, by session id.
   const appWaits = new Map();
   const pending = () => (state.slackPending ??= []);
-  // Watches that ran out, by item key: one is not started again for the same session until it is resumed (renew), so
-  // a session back on an old pull request does not start its wait over. Kept to the latest few hundred.
-  const expired = () => (state.watchesExpired ??= []);
-  const EXPIRED_KEPT = 500;
+  // Watches that ran out, by session id, each the item keys of its own: one is not started again for the same session
+  // until it is resumed (renew), so a session back on an old pull request does not start its wait over. A session's
+  // entries go when it leaves the list (`sessionKnown`), never because of another's.
+  const expired = () => {
+    if (!state.watchesExpired || Array.isArray(state.watchesExpired)) state.watchesExpired = {};
+    return state.watchesExpired;
+  };
+  const hasExpired = (sessionId, key) => (expired()[sessionId] ?? []).includes(key);
   // A pull request is its repo's: another project's #12 is not the default project's #12. Items of the default
   // project carry no `project`, as they did before projects.
   const keyOf = (number, project = null) => (project ? `${project}#${number}` : number);
@@ -125,15 +130,15 @@ export function createPrAnnouncer({
    * @param {string} sessionId
    */
   function renew(sessionId) {
-    const ran = expired().filter((key) => String(key).endsWith(`@${sessionId}`));
-    if (ran.length) state.watchesExpired = expired().filter((key) => !ran.includes(key));
+    const ran = Boolean(expired()[sessionId]);
+    delete expired()[sessionId];
     const items = pending().filter((p) => watched(p) && p.sessionId === sessionId);
     for (const item of items) {
       Object.assign(item, { since: new Date(now()).toISOString(), run: (item.run ?? 0) + 1 });
       for (const key of ['fedReview', 'fedSuite', 'passedSha', 'untoldSaid']) delete item[key];
       checkedAt.delete(itemKey(item));
     }
-    if (items.length || ran.length) store.save();
+    if (items.length || ran) store.save();
   }
 
   /**
@@ -175,7 +180,7 @@ export function createPrAnnouncer({
     const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
     const known = pending().find(same);
     const key = itemKey({ number, project: other, sessionId: session.id, watch });
-    if (watch && !known && expired().includes(key)) {
+    if (watch && !known && hasExpired(session.id, key)) {
       console.log('slack: pull request watched as long as it may wait already, not watched again until the session is resumed', { id: session.id, number });
       return false;
     }
@@ -218,6 +223,13 @@ export function createPrAnnouncer({
   // For the fleet to ask after its own reads, just before typing in: the watch is still this run's, and not over.
   function stillWanted(item, run) {
     return () => !watched(item) || ((item.run ?? 0) === run && pending().includes(item) && !watchOver(item));
+  }
+
+  // A session off the list keeps nothing here.
+  function forgetGoneSessions() {
+    const gone = Object.keys(expired()).filter((id) => !sessionKnown(id));
+    for (const id of gone) delete expired()[id];
+    if (gone.length) store.save();
   }
 
   // Told at last: the watch goes back to being read when a webhook says so, and logs the next miss again.
@@ -266,7 +278,10 @@ export function createPrAnnouncer({
 
   // A watch dropped for its wait running out is remembered, so it is not started again by the session coming back.
   async function endWatch(item, why) {
-    if (why === 'watched as long as a pull request may wait') state.watchesExpired = [...expired().filter((k) => k !== itemKey(item)), itemKey(item)].slice(-EXPIRED_KEPT);
+    if (why === 'watched as long as a pull request may wait') {
+      const keys = expired()[item.sessionId] ?? [];
+      if (!keys.includes(itemKey(item))) expired()[item.sessionId] = [...keys, itemKey(item)];
+    }
     return drop(item, why);
   }
 
@@ -298,12 +313,14 @@ export function createPrAnnouncer({
     if (pull.state !== 'open') return drop(item, 'closed');
     const runs = await gh(item).checkRuns(pull.head.sha);
     const { passed, review, suites } = await gatesPassed(item, pull, runs, gates);
-    // A push during these reads makes them the old commit's: nothing is said of it, and the next check reads the new one.
-    const head = (await gh(item).pull(item.number)).head?.sha;
+    // A push during these reads makes them the old commit's: nothing is said of it, and the next check reads the new
+    // one. A close during them ends the watch.
+    const latest = await gh(item).pull(item.number);
     if (renewed()) return;
     if (watchOver(item)) return endWatch(item, watchOver(item));
+    if (latest.state !== 'open') return drop(item, 'closed');
     if (listening(item) === 'elsewhere') return;
-    if (head !== pull.head.sha) return;
+    if (latest.head?.sha !== pull.head.sha) return;
     const heard = passed ? await tellPassed(item, pull, review, suites, gates) : await feedBack(item, pull, review, suites, runs, gates);
     if (heard === false) return drop(item, 'its session ended');
   }
@@ -530,6 +547,7 @@ export function createPrAnnouncer({
   /** Each waiting pull request that is due. GitHub or Slack failing leaves it for its next check. Without Slack, only
    * the watched ones are read. */
   async function check() {
+    forgetGoneSessions();
     for (const item of pending().filter((p) => (watched(p) || slack?.available) && due(p))) {
       checkedAt.set(itemKey(item), now());
       try {

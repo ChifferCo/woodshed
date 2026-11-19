@@ -1079,3 +1079,43 @@ test('a push while a watch reads the gates tells nothing of the old commit', asy
   await watcher.check();
   assert.deepEqual([told, store.state.slackPending[0].passedSha], [[], undefined]);
 });
+
+test('a pull request closed while a watch reads its gates ends the watch, telling nothing', async () => {
+  const { store, session, github, dropped } = setup({ reviews: [verdict('CHANGES_REQUESTED')] });
+  const told = [];
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => Date.parse('2026-10-26T12:00:00.000Z'),
+    events: { feedback: (item, text) => { told.push(text); return true; }, dropped: (item, why) => { dropped.push(why); } },
+  });
+  await watcher.track({ ...session, owner: 'joel' }, null, { watch: true });
+  const { pull } = github;
+  let closed = false;
+  github.pull = async (number) => ({ ...(await pull(number)), state: closed ? 'closed' : 'open' });
+  const { checkRuns } = github;
+  github.checkRuns = async (sha) => { closed = true; return checkRuns(sha); };
+  await watcher.check();
+  assert.deepEqual([told, dropped, store.state.slackPending], [[], ['closed'], []]);
+});
+
+test('a session\'s ran-out watch is remembered however many others run out, and forgotten once the session is gone', async () => {
+  const { store, session, github } = setup();
+  let clock = Date.parse('2026-10-26T12:00:00.000Z');
+  const known = new Set(['s1']);
+  const watcher = createPrAnnouncer({
+    store, github, slack: null, gates: async () => GATES, now: () => clock, giveUpMs: () => 60 * MINUTE,
+    events: { feedback: () => true, listening: () => 'elsewhere' }, sessionKnown: (id) => known.has(id),
+  });
+  const mine = { ...session, owner: 'joel' };
+  await watcher.track(mine, null, { watch: true });
+  for (let n = 0; n < 600; n++) {
+    known.add(`o${n}`);
+    await watcher.track({ ...session, id: `o${n}`, owner: 'joel' }, null, { watch: true });
+  }
+  clock += 61 * MINUTE;
+  await watcher.check();
+  assert.equal(Object.keys(store.state.watchesExpired).length, 601);
+  assert.equal(await watcher.track(mine, null, { watch: true }), false, 'still remembered');
+  known.delete('s1');
+  await watcher.check();
+  assert.equal(store.state.watchesExpired.s1, undefined);
+});

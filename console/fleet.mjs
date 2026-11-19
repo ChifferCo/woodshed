@@ -258,7 +258,7 @@ export function createFleet({
   const announcer = createPrAnnouncer({
     store, github, githubOf: (name) => githubOf(projectNamed(config, name) ?? defaultProject(config)), defaultProjectName: () => defaultProject(config).name, slack, gates: (name, number) => gatesFor(name, number), now, giveUpMs: () => retention().slackGiveUpMs, qaWaitMs: () => retention().qaWaitMs ?? DEFAULT_RETENTION.qaWaitMs,
     events: { dropped: prDropped, feedback: prFeedback, gaveUp: prGaveUp, mention: prMention, listening: prListening },
-    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp,
+    webhooksFlowing: pullWebhooksFlowing, fallbackMs: config.fallbackPollMs, ownApp, sessionKnown: (id) => Boolean(find(id)),
   });
   const issueTracking = createIssueTracking({ github });
   const issueTrackings = new Map();
