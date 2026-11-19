@@ -340,3 +340,13 @@ test('a held bubble the console left in the agent\'s box says so by its id, and 
   const r = chat.reconcile([a, b], { leftInBox: null }, now);
   assert.deepEqual(r.pending.map((p) => p.id), ['aaaaaaaa-1'], 'the box empty again: let go');
 });
+
+test('a held bubble whose send got no answer in time stops promising delivery, says so, and goes in time', () => {
+  const now = Date.parse('2026-11-19T12:00:00.000Z');
+  const a = { id: 'aaaaaaaa-1', text: 'go on', sentAt: now - 60 * 60_000, state: 'held' };
+  assert.equal(chat.reconcile([a], { unknownIds: ['aaaaaaaa-1'] }, now).changed, true);
+  assert.equal(a.state, 'unknown');
+  assert.match(chat.pendingLabel('unknown', 'codex'), /it may have gone in/);
+  assert.equal(chat.stillPending([a], [], now + 9 * 60_000).length, 1, 'shown a while, ten minutes from the word, though sent an hour ago');
+  assert.equal(chat.stillPending([a], [], now + 11 * 60_000).length, 0);
+});

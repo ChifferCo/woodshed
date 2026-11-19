@@ -39,8 +39,8 @@
 //                     picker, or an approval (claude's permission dialog, codex's approval), or {prompt: null}
 //   POST /answer      the Chat tab's answer to it, typed as keys only once the pane shows that same prompt, and checked
 //                     again after each key (panePrompt.mjs); 409 with the reason when the pane is not what was answered:
-//                     {"kind": "question", "questions": [{"question", "options": [...], "pick": <index>}]} or
-//                     {"kind": "approval", "decision": "approve"|"deny", "title", "detail": [...]}
+//                     {"kind": "question", "questions": [{"question", "options": [...], "descriptions": [...], "pick": <index>}]}
+//                     or {"kind": "approval", "decision": "approve"|"deny", "key"}, the key GET /prompt gave
 //   ANY  with `x-woodshed-app: Bearer <SESSION_TOKEN>`, any path, websockets too: forwarded to the
 //        app's frontend on 127.0.0.1, at the project file's app.frontendPort (the running app's, of several). The console sends these for `<id>.<app domain>`. The token
 //        has its own header because the app's requests carry an Authorization header of their own

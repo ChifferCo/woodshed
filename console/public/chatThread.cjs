@@ -463,6 +463,7 @@
   function pendingLabel(state, agent) {
     if (state === 'sending') return 'Sending…';
     if (state === 'in-box') return `In ${agent}'s box, not sent: send or clear it in the TUI tab`;
+    if (state === 'unknown') return `No answer in time: it may have gone in. Check ${agent}'s reply before sending it again`;
     if (state === 'held') return `Not sent yet: it goes in when ${agent} is back at its prompt`;
     return `Sent, waiting for ${agent}`;
   }
@@ -493,10 +494,11 @@
    * cleared). Only a positive word on a bubble's own id moves it, which an older read of the session never holds.
    * Changed on the bubbles themselves.
    * @param {{id?: string, state: string}[]} pending
-   * @param {{deliveredIds?: string[], leftInBox?: {id: string|null}|null}} session
+   * @param {{deliveredIds?: string[], leftInBox?: {id: string|null}|null, unknownIds?: string[]}} session  unknownIds: held ones
+   *   whose send got no answer in time, which may have gone in
    * @returns {{pending: object[], changed: boolean}}
    */
-  function reconcile(pending, { deliveredIds = [], leftInBox = null } = {}, now = Date.now()) {
+  function reconcile(pending, { deliveredIds = [], leftInBox = null, unknownIds = [] } = {}, now = Date.now()) {
     let changed = false;
     const left = [];
     for (const p of pending) {
@@ -510,6 +512,12 @@
         continue;
       } else if (p.state === 'held' && p.id && deliveredIds.includes(p.id)) {
         p.state = 'sent';
+        p.deliveredAt = now;
+        changed = true;
+      } else if (p.state === 'held' && p.id && unknownIds.includes(p.id)) {
+        // The console's send got no answer in time: it may have gone in, and is not sent again. The bubble says so, and
+        // goes when the record shows it, or ten minutes on.
+        p.state = 'unknown';
         p.deliveredAt = now;
         changed = true;
       }

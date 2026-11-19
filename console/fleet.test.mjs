@@ -3394,3 +3394,24 @@ test('a held message the console sends is named by the page\'s id, so its bubble
   assert.deepEqual(session.pendingMessages, []);
   assert.deepEqual(session.deliveredIds, ['page-id-0002']);
 });
+
+test('a held message whose send gets no answer in time is named for the page by its id, and never sent again', async () => {
+  const { fleet, statuses, fail } = setup();
+  await fleet.handleTrigger({ number: 42, login: 'joel', trigger: 'label', title: 'x', kind: 'issue' });
+  const [session] = fleet.sessions();
+  statuses[session.id] = { state: 'working', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  fail.sendBusy = true;
+  await fleet.send(session, 'go on', { id: 'page-id-0003' });
+  fail.sendBusy = false;
+  const tried = [];
+  fail.sendFor = (text) => { tried.push(text); return Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' }); };
+  statuses[session.id] = { state: 'done', branch: session.branch, head: 'abc' };
+  await fleet.tick();
+  assert.deepEqual(session.pendingMessages, [], 'out of the queue');
+  assert.deepEqual(session.unknownIds, ['page-id-0003'], 'the page is told, by its id');
+  assert.equal(session.deliveredIds, undefined, 'not said to be sent');
+  fail.sendFor = null;
+  await fleet.tick();
+  assert.deepEqual(tried, ['go on'], 'tried once');
+});

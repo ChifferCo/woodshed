@@ -613,7 +613,12 @@ export function createFleet({
           update(session, { pendingMessages: withoutFirst(session.pendingMessages, held) });
           continue;
         }
-        boxed = inTheBox(session, err, messageId) || unknownOutcome(session, err);
+        // A send with no answer in time may have gone in: not sent again, and the page told so, by its id, rather than
+        // left promising it.
+        const inBox = inTheBox(session, err, messageId);
+        const unknown = !inBox && unknownOutcome(session, err);
+        if (unknown && messageId) update(session, { unknownIds: [...(session.unknownIds ?? []), messageId].slice(-20) });
+        boxed = inBox || unknown;
         if (!boxed) {
           // Busy is the usual answer mid-turn: said once per reason, not on every status read.
           const why = busyWhy(err) ?? firstLine(err);
