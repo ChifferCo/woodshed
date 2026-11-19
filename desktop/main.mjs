@@ -166,12 +166,22 @@ ipcMain.handle('console:connect', async (event, typed) => {
     // No redirects: the answer must come from the address typed, since that origin is what gets the permissions.
     const res = await net.fetch(new URL('api/me', url).href, { redirect: 'manual', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(ANSWER_MS) });
     const fromThere = !res.url || new URL(res.url).origin === new URL(url).origin;
-    const me = res.ok && fromThere ? await res.json().catch(() => null) : null;
+    // The body under the same 15 s: one that stops partway is a console that did not answer, not one that is wrong.
+    let me = null;
+    if (res.ok && fromThere) {
+      try {
+        me = await res.json();
+      } catch (err) {
+        if (err.name === 'TimeoutError' || err.name === 'AbortError') throw err;
+        me = null;
+      }
+    }
     if (!isConsoleMe(me)) return { error: `${url} answered, but not as a Woodshed console (status ${res.status}).` };
   } catch (err) {
     // `redirect: 'manual'` refuses a redirect with an error of its own.
     if (/redirect/i.test(err.message)) return { error: `${url} sends its console page elsewhere: type the console's own address.` };
-    if (err.name === 'TimeoutError') return { error: `${url} did not answer in ${ANSWER_MS / 1000} s. Check the address, or try again.` };
+    // A timeout before the answer is a TimeoutError; one partway through its body reaches the read as an AbortError.
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') return { error: `${url} did not answer in ${ANSWER_MS / 1000} s. Check the address, or try again.` };
     return { error: `${url} did not answer: ${err.message}` };
   }
   if (!stillAsked()) {
@@ -289,7 +299,7 @@ async function finishSignIn(link) {
     else setCookies = res.headers.getSetCookie?.() ?? [];
   } catch (err) {
     error = /redirect/i.test(err.message) ? 'The console sent the sign-in elsewhere, so it was not finished.'
-      : err.name === 'TimeoutError' ? `The console did not answer in ${ANSWER_MS / 1000} s, so the sign-in was not finished.`
+      : err.name === 'TimeoutError' || err.name === 'AbortError' ? `The console did not answer in ${ANSWER_MS / 1000} s, so the sign-in was not finished.`
         : `The console did not answer: ${err.message}`;
   }
   // Change console… while the claim was on its way: the window is the new console's now, and stays so.
@@ -310,6 +320,12 @@ async function finishSignIn(link) {
     } catch (err) {
       error = `The sign-in could not be kept: ${err.message}`;
     }
+  }
+  // The window closed while the session was stored: signed in all the same, with nothing to show it in.
+  if (!mainWindow) {
+    console.log('woodshed-desktop: a sign-in finished with no window open', { signedIn: !error });
+    if (!error) startWatching();
+    return;
   }
   if (mainWindow.webContents.getURL() !== from) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
