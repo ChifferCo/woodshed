@@ -864,7 +864,8 @@ export function createHandler({
     return reply(res, 200, { member: false, asked: members.requestOf(visitor.login)?.askedAt ?? null });
   }
 
-  async function peopleReply(res) {
+  // `extra` is what a change has to say beside the list: an add's `told`.
+  async function peopleReply(res, extra = {}) {
     if (!members) return reply(res, 404, { error: 'this console has no list of people' });
     // A program's list is read fresh for the page, so it shows who the program has now.
     if (members.hosted) {
@@ -878,7 +879,7 @@ export function createHandler({
     const view = members.view();
     const logins = [...view.members, ...view.requests].flatMap((p) => [p.login, p.addedBy]).filter(Boolean);
     return reply(res, 200, {
-      ...view, hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null,
+      ...view, hosted: Boolean(members.hosted), names: namesFor(logins), slack: slackPeople ? slackPeople.links(view.members.map((m) => m.login)) : null, ...extra,
     });
   }
 
@@ -940,8 +941,9 @@ export function createHandler({
       role: () => members.setRole({ login: handle, role: body?.role, by }),
     }[action];
     if (!call) return reply(res, 404, { error: 'the program embedding this console keeps who is in: People adds, removes and sets each role here' });
+    let done;
     try {
-      await call();
+      done = await call();
     } catch (err) {
       if (err.shown) return reply(res, 409, { error: err.message });
       return reply(res, 500, { error: 'not done: try again' });
@@ -950,7 +952,8 @@ export function createHandler({
       fleet.releaseAssignments?.({ login: handle, by });
       tunnel?.revoke(handle);
     }
-    return peopleReply(res);
+    // What the program did about the add (an email sent, say), for People to say in place of its own hint.
+    return peopleReply(res, action === 'add' ? { told: done?.told ?? null } : {});
   }
 
   // An admin invites, accepts, declines and removes: handle() lets nobody else this far.

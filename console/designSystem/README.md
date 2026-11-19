@@ -169,6 +169,8 @@ The look of the Woodshed console (`woodshed/console/public/style.css`) and its r
 - Behind a hosting proxy whose program keeps who is in, People is a tab of Settings (below), titled Settings. The
   Admin column is **Role**, a select of Owner and Member in its cell; adding is **Add someone**, the handle and a role
   select (as wide as its words) beside it. There is no Asking to join card, no accept or decline, and no asking dot.
+  The program's note about a person sits in their `meta` line under the name, where a console of its own says who
+  added them; what it says it did on an add ends the hint under the field, in place of "Nothing is sent to them".
 
 ## Settings
 

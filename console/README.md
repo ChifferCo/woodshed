@@ -1558,9 +1558,13 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   first of them; with no tabs, nothing changes for them.
 - `members: {list(), add({login, role, by}), remove({login, by}), setRole({login, role, by})}`, with `trusted` only
   (given without it, `createInstallation` throws): the program's own list of who is in, for the People page (above,
-  "Sign-in", behind a hosting proxy). `list()` answers `[{login, role}]`, `role` `owner` or `member` (an
-  entry with another role, or that is no GitHub handle, is left out and logged); the others change it, `by` being the
-  owner who did, and resolve once done. Owners are the admins, as the proxy's header says. Core keeps no copy of the
+  "Sign-in", behind a hosting proxy). `list()` answers `[{login, role, note?}]`, `role` `owner` or `member` (an
+  entry with another role, or that is no GitHub handle, is left out and logged); `note`, a few words People shows
+  under the person (`hasn't signed in yet`), is plain text on one line, cut to 80 characters, and left out (the person
+  kept) when it is not text. The others change it, `by` being the owner who did, and resolve once done. `add` may
+  resolve to `{told}`, one sentence of what the program did about it (`We emailed them a link.`), which People shows
+  after the add in place of its own `Nothing is sent to them: tell them the link.`; plain text, cut to 200 characters,
+  and `told` in `/api/people/add`'s answer (`null` when the program said nothing). Owners are the admins, as the proxy's header says. Core keeps no copy of the
   list: it reads it at start, and keeps the answer 5 seconds. The fleet asks who may start a session from a label or be
   assigned one as it goes, without waiting, so it is answered from the list as last read, which is read again in the
   background once it is older; People's own reads, and each change made there, wait for a fresh one. Until a first
