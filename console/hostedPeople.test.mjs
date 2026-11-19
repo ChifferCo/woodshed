@@ -325,3 +325,36 @@ test('behind a proxy, a person the program drops loses their database tunnel tok
   assert.equal(await asks(SAM_TOKEN), 401);
   assert.deepEqual(closed, ['sam-member'], 'revoke, which closes open tunnels, ran for the one who left');
 });
+
+test('a list that cannot be read is tried again by itself, backing off, until the program answers; stop ends it', async (t) => {
+  t.mock.method(console, 'warn', () => {});
+  t.mock.method(console, 'log', () => {});
+  const timers = [];
+  const setTimer = (fn, ms) => { const timer = { fn, ms, unref() {}, cleared: false }; timers.push(timer); return timer; };
+  const realClear = globalThis.clearTimeout;
+  t.mock.method(globalThis, 'clearTimeout', (timer) => { if (timer && 'cleared' in timer) timer.cleared = true; else realClear(timer); });
+  const program = fakeProgram();
+  let down = 3;
+  const list = program.list;
+  program.list = async () => { if (down-- > 0) throw new Error('program down'); return list(); };
+  const members = createHostedMembers({ hook: program, store: { state: {}, save() {} }, setTimer });
+  await assert.rejects(members.refresh(), /program down/);
+  assert.equal(members.isMember('ana-owner'), false);
+  assert.deepEqual(timers.map((x) => x.ms), [5_000], 'a retry is set after the failed read at start');
+  for (const ms of [10_000, 20_000]) {
+    timers.at(-1).fn();
+    await new Promise((r) => setImmediate(r));
+    assert.equal(timers.at(-1).ms, ms, 'each failure doubles the wait');
+  }
+  timers.at(-1).fn();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(members.isMember('ana-owner'), true, 'filled with no request made');
+  assert.equal(timers.length, 3, 'no retry once a read succeeds');
+  // Stopping ends a pending retry.
+  down = 1;
+  program.people = [];
+  await assert.rejects(members.refresh(), /program down/);
+  const pending = timers.at(-1);
+  members.stop();
+  assert.equal(pending.cleared, true);
+});

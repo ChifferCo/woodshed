@@ -546,7 +546,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     appPorts,
     start,
     /** Stops the loops; requests already in flight finish. */
-    stop: () => loops.stop(),
+    stop: () => { members?.stop?.(); loops.stop(); },
     /** @returns {boolean}  whether an active session of this installation holds `token` (the session API's bearer) */
     ownsSessionToken: (token) => Boolean(sessionForToken(token, fleet.sessions())),
     /** One GitHub or Slack message, as the provider's webhook source hands it (webhookDispatch.mjs). */

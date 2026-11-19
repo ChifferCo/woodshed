@@ -39,13 +39,16 @@ const ROLES = new Set(['owner', 'member']);
  *          onGone?: ((login: string) => void)|null}} deps
  *   `onGone` gives back the shared sessions of someone the program's list does not have (or set it later, whenGone)
  */
-export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now, onGone = null }) {
+export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now, onGone = null, retryMs = 5_000, maxRetryMs = 60_000, setTimer = setTimeout }) {
   let release = onGone;
   const nowIso = () => new Date(now()).toISOString();
   // The program's list as last read, in its order: [{login, role}], and by lowercased login.
   let roster = null;
   let byLogin = new Map();
   let previous = null;
+  let timer = null;
+  let failures = 0;
+  let stopped = false;
   let readAt = -Infinity;
   let reading = null;
   // Watchers of anyone leaving the list: each gets every login that was listed before a read, or that its own `also`
@@ -128,11 +131,35 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
     sweep();
   }
 
+  // After a failed read, ask again by itself (retryMs, doubling up to maxRetryMs) until one succeeds, so a program that
+  // recovers is heard without anyone's request. `stop` ends it.
+  function retryLater() {
+    if (stopped || timer) return;
+    const wait = Math.min(retryMs * 2 ** failures, maxRetryMs);
+    failures += 1;
+    timer = setTimer(() => {
+      timer = null;
+      refresh().catch((err) => console.warn('members: the program\'s list not read again', { message: String(err?.message ?? err).split('\n')[0], nextInMs: Math.min(retryMs * 2 ** failures, maxRetryMs) }));
+    }, wait);
+    timer?.unref?.();
+  }
+
+  /** Ends the retries; the list is still read on demand. */
+  function stop() {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    timer = null;
+  }
+
   // One read at a time; a failed one keeps the list before it, and is tried again once that is older than ttlMs.
   function refresh() {
     reading ??= (async () => {
       try {
         take(await hook.list());
+        failures = 0;
+      } catch (err) {
+        retryLater();
+        throw err;
       } finally {
         readAt = now();
         reading = null;
@@ -296,7 +323,7 @@ export function createHostedMembers({ hook, store, ttlMs = 5_000, now = Date.now
   }
 
   return {
-    hosted: true, refresh, load, whenGone, whenLeft, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
+    hosted: true, stop, refresh, load, whenGone, whenLeft, isMember, isAdmin, hasAdmin, hasGithubSessions, setGithubSessions, isAssignable, assignables,
     setAssignable, add, remove, setRole, view, requestOf: () => null,
   };
 }
