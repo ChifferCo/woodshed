@@ -31,8 +31,9 @@ function firstLine(err) {
 }
 
 // A My Woodshed session's pull request is its owner's when they opened it, or, since a session that pushes as the App
-// opens it as the App, when the console's App opened it from the session's own branch, in the repo itself and not a
-// fork, after the session started. Nothing a teammate writes in a body counts. An app's pull request while the App's
+// opens it as the App, when the console's App opened it from the branch the console made for this session
+// (`woodshed/<owner>-<id>`, never an existing branch it was started on, which another session may share), in the repo
+// itself and not a fork, after the session started. Nothing a teammate writes in a body counts. An app's pull request while the App's
 // login is not read yet throws, so it is decided on a later tick.
 function ownersPull(pull, session, app) {
   const login = String(session.owner ?? '').toLowerCase();
@@ -42,7 +43,8 @@ function ownersPull(pull, session, app) {
   if (pull.user?.type === 'Bot' && !app?.login) throw new Error('the console\'s App login is not read yet, so whose pull request this is is not known');
   const fromTheApp = author === String(app?.login ?? '').toLowerCase();
   const sameRepo = Boolean(pull.base?.repo?.full_name) && pull.head?.repo?.full_name === pull.base.repo.full_name;
-  return fromTheApp && sameRepo && Boolean(session.branch) && pull.head?.ref === session.branch
+  const ownBranch = `woodshed/${login}-${String(session.id ?? '').toLowerCase()}`;
+  return fromTheApp && sameRepo && String(session.branch ?? '').toLowerCase() === ownBranch && pull.head?.ref?.toLowerCase() === ownBranch
     && Date.parse(pull.created_at) >= Date.parse(session.createdAt);
 }
 
@@ -132,9 +134,10 @@ export function createPrAnnouncer({
     const same = (p) => p.number === number && (p.project ?? null) === other && (watch ? p.watch && p.sessionId === session.id : !p.watch);
     const known = pending().find(same);
     // A resumed session tracks its pull request again before its last run's watch was dropped: that watch starts its
-    // wait over, rather than running out on the old run's clock.
+    // wait over, rather than running out on the old run's clock, and the new run hears where the pull request stands,
+    // whatever the old run was told.
     if (known && watch) {
-      known.since = new Date(now()).toISOString();
+      Object.assign(known, { since: new Date(now()).toISOString(), fedReview: undefined, fedSuite: undefined, passedSha: undefined, untoldSaid: undefined });
       store.save();
     }
     if (!known) {
@@ -169,9 +172,11 @@ export function createPrAnnouncer({
   // A watched session that could not be typed into just now (claude not open, or statusd not answering) is told again
   // at the next check: nothing is held for it, which a later Resume would type in long after.
   function untold(item, before) {
-    Object.assign(item, before);
+    const said = item.untoldSaid;
+    Object.assign(item, before, { untoldSaid: true });
     store.save();
-    console.log('slack: watched pull request\'s session not told yet, tried again at the next check', { number: item.number, sessionId: item.sessionId });
+    // Once for each watch: claude may stay closed for a while, and it is tried every minute.
+    if (!said) console.log('slack: watched pull request\'s session not told yet, tried again at each check', { number: item.number, sessionId: item.sessionId });
   }
 
   // A watched pull request passed its gates on its head commit: the session hears it once for that commit, with the

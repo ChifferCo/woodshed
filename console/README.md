@@ -1686,10 +1686,11 @@ request, the week runs out (checked again after GitHub's reads, before the sessi
 nothing written on GitHub. Each watch is its session's own: two sessions on one pull request are each told, and a
 shared session's post on it still goes out. A review-only session (no prompt) is never watched, and a pull request
 only when it is the session's owner's, whenever it was opened: they opened it, or the console's App did (a session that pushes as
-the App) from the session's own branch in the repo itself, not a fork, after the session started (`slack: someone else's pull request, not watched`),
+the App) from the branch the console made for the session (`woodshed/<owner>-<id>`, not an existing branch it was
+started on) in the repo itself, not a fork, after the session started (`slack: someone else's pull request, not watched`),
 so no session is told to push to a teammate's, nor about a pull request on another repo than its project's (`fleet: pull request on another
 repo than the session's project, not watched`, as for a session whose project left the list). The note on a pass also has the session run `gh pr checks` and see any
-other check through before it stops. A resumed session's watch starts again, its week over; a stopping session hears nothing, and one claude is not open
+other check through before it stops. A resumed session's watch starts again, its week over, and its new run is told where the pull request stands; a stopping session hears nothing, and one claude is not open
 in yet is told at the next check rather than held, so nothing is typed in at a later Resume. A suite whose path filters
 leave the change out is named as not run in the pass's note. Until then the
 pull request waits in `state.json` (`slackPending`), checked once a minute and
