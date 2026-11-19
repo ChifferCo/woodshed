@@ -2151,6 +2151,9 @@ ${DARK_PALETTE}
       if (wanted !== state.tab) {
         state.tab = wanted;
         render();
+        // Arriving on the Q&A reads it again, as pressing its tab does: what
+        // this page drew before may have been discarded since, elsewhere.
+        if (wanted === 'qa' && qaView.session === state.session && qaView.data) loadQa(false);
       }
       var wantChat = params.get('chat') === '1';
       if (wantChat !== chat.open) setChatOpen(wantChat);
