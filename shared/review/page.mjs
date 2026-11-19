@@ -2930,7 +2930,7 @@ ${DARK_PALETTE}
     // Names the diff this page shows, so the server refuses to start a Q&A for
     // one that replaced it in another tab.
     function qaStartUrl() {
-      return '/reviews/' + state.session + '/qa?forDiff=' + encodeURIComponent(state.createdAt || '');
+      return '/reviews/' + state.session + '/qa?forDiff=' + encodeURIComponent(state.diffAt || '');
     }
 
     function freshQaView(started) {
@@ -2956,7 +2956,7 @@ ${DARK_PALETTE}
         // was taken again in another tab, and its answers are about code this
         // page is not showing. Not drawn, and not asked again from here either,
         // since that would ask about the newer diff too.
-        view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.createdAt || null));
+        view.otherDiff = !!(view.data && (view.data.forDiff || null) !== (state.diffAt || null));
         if (view.otherDiff) view.data = null;
         // Gone while this page had one: emptied from elsewhere, a Discard or
         // Re-review in another tab. That is not a Q&A nobody has asked for, and
@@ -5470,6 +5470,9 @@ ${DARK_PALETTE}
 
       var diff = await api('GET', '/reviews/' + session + '/diff');
       state.diff = diff;
+      // Which diff is on screen, for the Q&A. Not state.createdAt, which the
+      // status poll moves to a newer review while this one is still drawn.
+      state.diffAt = got.createdAt || null;
       render();
       // After the first paint, not before it: the ticks are one more round
       // trip, and a diff that waits on GitHub to draw is a diff that is slower

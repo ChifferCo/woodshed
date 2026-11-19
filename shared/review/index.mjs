@@ -2066,7 +2066,15 @@ function handleQaStart(res, ctx, session, forDiff) {
       try {
         if (qaIsLive(session, gen)) {
           const qa = readQa(session);
-          writeQa({ session, qa: { ...(qa || { items: [] }), status: 'failed', phase: null, error: err?.message || 'the Q&A failed' } });
+          // forDiff too: a failure before the first save left no file to spread,
+          // and one without it is read as another diff's, hiding the failure.
+          writeQa({
+            session,
+            qa: {
+              ...(qa || { items: [] }), forDiff: review.createdAt ?? null,
+              status: 'failed', phase: null, error: err?.message || 'the Q&A failed',
+            },
+          });
         }
       } catch (again) {
         log('review.qa_failure_not_saved', { session, error: again?.message });
