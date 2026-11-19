@@ -236,8 +236,10 @@ masks what it returns and audits each call (its own docs), and Woodshed locks do
   Resume starts it locked down. Its other MCP servers are gone from claude's config, and the relay refuses them. Its card says **Production**, its pane bar **Production data**.
 - **The lockdown.** Enforced outside the session's container, by its network. A tainted session reaches only the
   console (its session API, the Anthropic proxy, the MCP relay and the egress proxy), its own databases and the shared
-  services. The console's egress proxy lets it reach GitHub's git and API on its own organization's private repos and
-  nothing else: no public repo, gist, other organization, new or forked repo, or change of a repo's settings. No package
+  services. The console's egress proxy lets it reach GitHub's git and API on its own organization's private repos, and
+  read its own project's repo even when that is public (so a resumed session gets its branch), and nothing else: no
+  other public repo, no push to a public one, no gist, other organization, new or forked repo, or change of a repo's
+  settings. A session on a public repo can push its work nowhere once tainted. No package
   registry, no other website, no DNS for the internet, no Docker of the machine's, no other MCP server, no web search
   or fetch (the Anthropic proxy refuses calls that would have Anthropic reach the internet), no Remote Control, no
   editor and no shared app. claude reopens on the console's Anthropic proxy, and is told what changed.

@@ -152,9 +152,16 @@ test('oidc auth: a token for the server\'s audience, subject console:test, the t
   quietly(t);
   const mcp = await fakeMcp(t);
   const issuer = createOidcIssuer({ issuer: 'https://c.test', keyFile: keyFile(t) });
-  const answer = await createMcpTester({ servers: servers(), issuer }).run({ server: { name: 'orders', url: mcp.url, production: true, people: ['joel'] }, by: 'ana' });
+  const kept = servers();
+  // Not saved yet: tested with no token, so none can be caught at an address an admin typed.
+  const unsaved = await createMcpTester({ servers: kept, issuer }).run({ server: { name: 'orders', url: mcp.url, production: true, people: ['joel'] }, by: 'ana' });
+  assert.equal(unsaved.ok, true);
+  assert.equal(mcp.calls[0].headers.authorization, undefined);
+  await kept.save({ server: { name: 'orders', url: mcp.url, production: true, people: ['joel'] }, by: 'ana' });
+  const before = mcp.calls.length;
+  const answer = await createMcpTester({ servers: kept, issuer }).run({ name: 'orders', by: 'ana' });
   assert.equal(answer.ok, true, 'a production server is tested though no session could be locked down here');
-  const token = mcp.calls[0].headers.authorization.replace(/^Bearer /, '');
+  const token = mcp.calls[before].headers.authorization.replace(/^Bearer /, '');
   const checked = verifyJwt(token, await issuer.jwks());
   assert.ok(checked);
   assert.equal(checked.payload.aud, 'woodshed-prod-mcp');
@@ -164,6 +171,17 @@ test('oidc auth: a token for the server\'s audience, subject console:test, the t
   assert.equal(checked.payload.by, 'ana');
   assert.equal(checked.payload.session_id, undefined);
   assert.ok(!JSON.stringify(answer).includes(token));
+
+  // The saved name at another address, or with another audience, is not the saved server: no token.
+  const elsewhere = await fakeMcp(t);
+  await createMcpTester({ servers: kept, issuer }).run({ server: { name: 'orders', url: elsewhere.url, production: true, people: ['joel'] }, by: 'ana' });
+  await createMcpTester({ servers: kept, issuer }).run({ server: { name: 'orders', url: mcp.url, production: true, people: ['joel'], audience: 'other' }, by: 'ana' });
+  assert.equal(elsewhere.calls[0].headers.authorization, undefined);
+  assert.equal(mcp.calls.at(-1).headers.authorization, undefined);
+  // The edited form of the saved server, unchanged, is: the page sends it so.
+  const from = mcp.calls.length;
+  await createMcpTester({ servers: kept, issuer }).run({ server: { name: 'orders', url: mcp.url, production: true, people: ['joel'] }, by: 'ana' });
+  assert.match(mcp.calls[from].headers.authorization, /^Bearer /);
 
   // The environment's server, by its name, as stored.
   const env = mcpSettings({ WOODSHED_PROD_MCP_URL: mcp.url, WOODSHED_PROD_MCP_PEOPLE: 'joel' }, 'https://c.test');
@@ -176,8 +194,13 @@ test('a refusal, an unreachable host and an unknown name each come back as what 
   const logged = quietly(t);
   const refusing = await fakeMcp(t, { mode: 'refuse' });
   const issuer = createOidcIssuer({ issuer: 'https://c.test', keyFile: keyFile(t) });
-  const tester = createMcpTester({ servers: servers(), issuer });
-  const refused = await tester.run({ server: { name: 'orders', url: refusing.url, auth: 'oidc', audience: 'orders-api' }, by: 'ana' });
+  const kept = servers();
+  const tester = createMcpTester({ servers: kept, issuer });
+  const unsigned = await tester.run({ server: { name: 'orders', url: refusing.url, auth: 'oidc', audience: 'orders-api' }, by: 'ana' });
+  assert.equal(unsigned.status, 401);
+  assert.match(unsigned.error, /no token: the console signs one only for a saved server/);
+  await kept.save({ server: { name: 'orders', url: refusing.url, auth: 'oidc', audience: 'orders-api' }, by: 'ana' });
+  const refused = await tester.run({ name: 'orders', by: 'ana' });
   assert.equal(refused.ok, false);
   assert.equal(refused.status, 401);
   assert.match(refused.error, /did not accept what the console added/);
@@ -299,4 +322,36 @@ test('the console never calls a link-local address, the instance metadata\'s amo
   assert.deepEqual(called, []);
   for (const a of ['169.254.169.254', 'fe80::1', 'fd00:ec2::254', '::ffff:169.254.1.1']) assert.equal(isLinkLocal(a), true, a);
   for (const a of ['127.0.0.1', '10.0.0.5', '93.184.216.34', 'fd00::1']) assert.equal(isLinkLocal(a), false, a);
+});
+
+test('the handshake must end well: a server that refuses notifications/initialized is no green test', async (t) => {
+  quietly(t);
+  const server = http.createServer((req, res) => {
+    let raw = '';
+    req.on('data', (c) => { raw += c; });
+    req.on('end', () => {
+      const body = raw ? JSON.parse(raw) : {};
+      if (body.method === 'initialize') return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18', capabilities: {}, serverInfo: { name: 'x', version: '1' } } }));
+      res.writeHead(401).end();
+    });
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => server.close());
+  const answer = await createMcpTester({ servers: servers() }).run({ server: { name: 'nt', url: `http://127.0.0.1:${server.address().port}/mcp` }, by: 'ana' });
+  assert.equal(answer.ok, false);
+  assert.equal(answer.status, 401);
+});
+
+test('a saved header value goes only to its saved address\'s origin', async (t) => {
+  quietly(t);
+  const home = await fakeMcp(t);
+  const other = await fakeMcp(t);
+  const secrets = { configured: () => true, async save() {}, async read() { return 'Bearer saved-value'; }, async remove() {} };
+  const store = { state: { mcpServers: [{ name: 'h', url: home.url, production: false, shared: false, people: '*', repos: '*', auth: 'header', audience: null, header: 'authorization', headerSavedAt: 'x' }] }, save() {} };
+  const kept = createMcpServers({ store, settings: NONE, secrets, lockdown: () => ({ available: true }) });
+  const away = await createMcpTester({ servers: kept }).run({ server: { name: 'h', url: other.url, auth: 'header' }, by: 'ana' });
+  assert.match(away.error, /no value yet/);
+  assert.equal(other.calls.length, 0);
+  assert.equal((await createMcpTester({ servers: kept }).run({ server: { name: 'h', url: home.url, auth: 'header' }, by: 'ana' })).ok, true);
+  assert.equal(home.calls[0].headers.authorization, 'Bearer saved-value');
 });

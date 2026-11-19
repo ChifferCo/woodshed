@@ -243,6 +243,12 @@ export function createMcpServers({ store, settings, secrets = null, host = null,
       const can = lockdown();
       if (!can.available) throw shown(`A production server needs this console to lock a session down, and it cannot: ${can.why}`, 409);
     }
+    // A signed token's audience is one server's alone, the environment's included: a token the relay makes for one server
+    // is never one another server takes.
+    if (checked.auth === 'oidc') {
+      const other = list().find((s) => s.name !== checked.name && s.auth === 'oidc' && s.audience === checked.audience);
+      if (other) throw shown(`the audience ${checked.audience} is ${other.name}'s: give this server an audience of its own`, 409);
+    }
     if (checked.auth === 'header' && !keepsSecrets()) throw shown('this console has no secret store yet (Secrets & webhooks), so a server cannot have a header the console adds', 409);
     const record = {
       ...checked,

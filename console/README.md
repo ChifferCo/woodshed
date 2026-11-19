@@ -712,9 +712,14 @@ server (`mcpServers.mjs`, `checkServer`):
   `mcp-servers/<name>/header`, written once on the card or with `/header` and never read back; or `none`.
 
 **Testing a server** (`mcpTest.mjs`, `POST /api/console-settings/mcp-servers/test`): the card's Add server and Save test
-first, and each row has Test. The console itself calls the server as the relay would, with the same auth (a signed token
-with `sub` `console:test` and `test: true`, or the header, the typed value before the saved one), sends `initialize`,
-`notifications/initialized` and `tools/list`, and answers whether it was reached, the server's name and version and how
+first, and each row has Test. The console itself calls the server as the relay would, with the same auth, and sends
+`initialize`, `notifications/initialized` (which must be accepted) and `tools/list`. A signed token (`sub`
+`console:test`, `test: true`) is made only for a saved server, to its saved address and audience: a server not saved
+yet, or one typed with another address or audience, is tested with no token, so no admin can catch a token at an
+address of their own and replay it to a server that trusts this console (a production server should refuse any `sub`
+but `private:<login>` anyway). A saved header value goes only to its saved address's origin; a typed one wherever the
+form says. The console connects to the address its link-local check passed, never resolving the name again. No two
+servers share an audience: a token the relay makes for one is never one another takes. It answers whether it was reached, the server's name and version and how
 many tools it has, or one sentence saying what failed (not reached, refused what the console added, no MCP endpoint at
 that path, not an MCP server). No session takes part, nothing is tainted, and neither the answer nor the log
 (`mcpServers: server tested` with `ok` and `status`) carries the server's body or any secret. A failed test saves

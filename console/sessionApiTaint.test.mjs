@@ -145,3 +145,25 @@ test('a session that may use production is handed its own databases, never its o
   own.database = null;
   assert.equal((await fetch(`${base}/settings`, { method: 'POST', headers: { authorization: 'Bearer tok-c' } })).status, 503);
 });
+
+test('a settings sync or a home whose body came in while the session was being locked down never reaches the owner\'s', async (t) => {
+  quietly(t);
+  const session = { id: 'dddd4444', token: 'tok-d', status: 'running', owner: 'joel' };
+  let locking = false;
+  const synced = [];
+  const copies = [];
+  const claudeSettings = { async sync(args) { synced.push(args); return { version: 2 }; } };
+  const homes = { async put(name, req) { for await (const _ of req) { locking = true; } return 10; }, async copy(from, to) { copies.push([from, to]); } };
+  const userSettings = { view: () => ({ setUp: true }), noteHome() {} };
+  const fleet = { sessions: () => [session], isLocked: () => locking };
+  const base = await serve(t, createSessionApi({ fleet, tokens: null, claudeSettings, homes, userSettings }));
+  // The lockdown starts while the settings body is on its way.
+  const body = new ReadableStream({ start(c) { c.enqueue(new TextEncoder().encode('{"version":1,')); setTimeout(() => { locking = true; c.enqueue(new TextEncoder().encode('"changed":{},"removed":[]}')); c.close(); }, 30); } });
+  const sync = await fetch(`${base}/claude-settings`, { method: 'POST', headers: { authorization: 'Bearer tok-d' }, body, duplex: 'half' });
+  assert.equal(sync.status, 409);
+  assert.deepEqual(synced, []);
+  locking = false;
+  const home = await fetch(`${base}/home`, { method: 'POST', headers: { authorization: 'Bearer tok-d' }, body: 'tarball' });
+  assert.equal(home.status, 200);
+  assert.deepEqual(copies, [], 'its own home is kept, never copied to the owner\'s');
+});

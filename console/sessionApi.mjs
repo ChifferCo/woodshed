@@ -230,10 +230,10 @@ export function createSessionApi({
       }
       return attachments.send(session.id, res);
     }
-    if (pathname === '/claude-settings') return claudeSettingsReply(req, res, session, { claudeSettings, userSettings });
+    if (pathname === '/claude-settings') return claudeSettingsReply(req, res, session, { claudeSettings, userSettings, fleet });
     if (pathname.startsWith('/home')) {
       const periodic = new URL(req.url, 'http://console').searchParams.get('why') === 'periodic';
-      return homeReply(req, res, session, { homes, userSettings, restore: pathname === '/home/restore', periodic });
+      return homeReply(req, res, session, { homes, userSettings, restore: pathname === '/home/restore', periodic, fleet });
     }
     const own = tokensFor?.(session);
     // A private session acts as its owner. Their own token reaches every repo the App is on that they can write to; the
@@ -578,7 +578,7 @@ async function egressReply(req, res, session, egress) {
 }
 
 // A private session's turn at its owner's shared Claude settings.
-async function claudeSettingsReply(req, res, session, { claudeSettings, userSettings }) {
+async function claudeSettingsReply(req, res, session, { claudeSettings, userSettings, fleet = null }) {
   if (!claudeSettings || !session.owner) {
     req.resume();
     return reply(res, 404, { error: 'no shared Claude settings for this session' });
@@ -604,6 +604,12 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
     body = null;
   }
   if (!body) return reply(res, 400, { error: 'expected {"version", "changed", "removed"}' });
+  // Its lockdown may have started while the body came in: what came after it may hold what it saw. Production data
+  // reaches a session only once its lockdown has started, so a body read whole before then cannot carry any.
+  if (session.taintedAt || fleet?.isLocked?.(session)) {
+    console.log('sessionApi: shared Claude settings refused, the session was being locked down', { sessionId: session.id });
+    return reply(res, 409, { error: 'this session has seen production data, so its settings stay its own' });
+  }
   try {
     return reply(res, 200, await claudeSettings.sync({ login: session.owner, sessionId: session.id, ...body }));
   } catch (err) {
@@ -616,7 +622,7 @@ async function claudeSettingsReply(req, res, session, { claudeSettings, userSett
 // A Claude home, in and out: a session's own, and for a private session its owner's too. A private session starts
 // from its owner's latest home, and a resumed one from its own, so its conversation is the one it left; one saved
 // before sessions kept their own falls back to the owner's.
-async function homeReply(req, res, session, { homes, userSettings, restore, periodic = false }) {
+async function homeReply(req, res, session, { homes, userSettings, restore, periodic = false, fleet = null }) {
   if (!homes) {
     req.resume();
     return reply(res, 404, { error: 'this console keeps no Claude homes' });
@@ -642,13 +648,15 @@ async function homeReply(req, res, session, { homes, userSettings, restore, peri
     // Resume after a crash; copying it would swap the owner's between their running sessions every few minutes, or put
     // a session's empty home over theirs when its restore failed.
     // Never a tainted session's: what it saw stays in its own home, which goes when it is removed.
-    if (session.owner && !periodic && !session.taintedAt) {
+    // Checked once the home is all in: a lockdown that started while it came in counts, as what came after may hold it.
+    const locked = Boolean(session.taintedAt) || Boolean(fleet?.isLocked?.(session));
+    if (session.owner && !periodic && !locked) {
       await homes.copy(own, session.owner).catch((err) => console.warn('sessionApi: owner\'s Claude home not updated', {
         sessionId: session.id, owner: session.owner, message: String(err?.message ?? err).split('\n')[0],
       }));
       userSettings?.noteHome(session.owner, bytes);
     }
-    console.log('sessionApi: Claude home saved', { sessionId: session.id, owner: session.owner ?? null, bytes, periodic, ...(session.taintedAt ? { tainted: true, toOwner: false } : {}) });
+    console.log('sessionApi: Claude home saved', { sessionId: session.id, owner: session.owner ?? null, bytes, periodic, ...(locked ? { tainted: true, toOwner: false } : {}) });
     return reply(res, 200, { bytes });
   } catch (err) {
     if (!err.shown) throw err;
