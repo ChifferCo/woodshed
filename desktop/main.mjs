@@ -203,7 +203,10 @@ function createMainWindow() {
   else showSetup();
 }
 
+// Each time setup's form is shown: an answer to a form shown before saves nothing, though the new one has its address.
+let setupShown = 0;
 function showSetup(error) {
+  setupShown += 1;
   // A console page waiting for its ready answer (File → Sessions a moment ago) does not replace the form opened now.
   loadSeq += 1;
   mainWindow.loadFile(path.join(here, 'setup.html'), { query: { current: readSettings().consoleUrl || DEFAULT_CONSOLE, ...(error ? { error } : {}) } });
@@ -216,7 +219,8 @@ ipcMain.handle('console:connect', async (event, typed) => {
   // never sends another window anywhere.
   const win = mainWindow;
   const from = win.webContents.getURL();
-  const stillAsked = () => mainWindow === win && !win.isDestroyed() && win.webContents.getURL() === from;
+  const shown = setupShown;
+  const stillAsked = () => mainWindow === win && !win.isDestroyed() && win.webContents.getURL() === from && setupShown === shown;
   let url;
   try {
     url = consoleUrlFrom(typed);
@@ -389,7 +393,10 @@ async function finishSignIn(link) {
     console.warn('woodshed-desktop: a sign-in link that is not the waiting sign-in\'s, ignored');
     return;
   }
-  if (!mainWindow) createMainWindow();
+  // A window made for this link (none was open) is still loading its first page while the claim is out: that is not the
+  // person moving on, so it opens where the sign-in was for.
+  const made = !mainWindow;
+  if (made) createMainWindow();
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
@@ -453,7 +460,7 @@ async function finishSignIn(link) {
     if (!error) startWatching();
     return;
   }
-  if (mainWindow !== win || win.isDestroyed() || win.webContents.getURL() !== from) {
+  if (mainWindow !== win || win.isDestroyed() || (!made && win.webContents.getURL() !== from)) {
     console.log('woodshed-desktop: a sign-in finished after the window moved on, left where it is', { signedIn: !error });
     if (!error) startWatching();
     return;
