@@ -819,8 +819,9 @@ async function startClaudeLogin() {
     if (typing || held.length) throw new Error('a message is going in to claude: sign in once it has');
     typing = true;
     try {
-      const { state } = await agentState({ strict: true });
+      const { state, hook } = await agentState({ strict: true });
       if (state !== 'done' && state !== 'needs-you') throw new Error(`claude is ${state === 'working' ? 'working' : `not at its prompt (${state})`}: sign in once its turn ends`);
+      if (!lastTaken(state, hook)) throw new Error('claude has not started on the last message yet: sign in once its turn ends');
       const done = await send('/woodshed:remote-control');
       if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
     } finally {
@@ -912,6 +913,7 @@ const paneIo = {
  */
 async function send(text) {
   const done = await typeMessage(paneIo, text);
+  if (done.sent) lastSent = { at: Date.now(), seenWorking: false };
   if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
   else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
   return done;
@@ -931,25 +933,30 @@ const held = [];
 // One thing typed into the pane at a time: a message, a held one, Sign in's command. Set before any await, so a check
 // and the claim cannot be split.
 let typing = false;
-let lastDelivered = null;
+// The last message sent, until the agent is seen taking it: a hook since its Enter, a pane seen working, or TAKEN_MS.
+let lastSent = null;
+
+function lastTaken(state, hook) {
+  if (!lastSent) return true;
+  if (state !== 'done') lastSent.seenWorking = true;
+  if (lastSent.seenWorking || (hook?.at ?? 0) > lastSent.at || Date.now() - lastSent.at > TAKEN_MS) {
+    lastSent = null;
+    return state === 'done' || state === 'needs-you';
+  }
+  return false;
+}
 
 async function deliverHeld() {
   if (typing || !held.length) return;
   typing = true;
   try {
     const { state, hook } = await agentState({ strict: true });
-    if (lastDelivered) {
-      if (state !== 'done') lastDelivered.seenWorking = true;
-      const taken = lastDelivered.seenWorking || (hook?.at ?? 0) > lastDelivered.at || Date.now() - lastDelivered.at > TAKEN_MS;
-      if (!taken) return;
-    }
-    if (state !== 'done') return;
+    if (!lastTaken(state, hook) || state !== 'done') return;
     const done = await send(held[0].text);
     // A prompt at its prompt is not the agent's own doing, but it is no place for the Enter either: try again later,
     // unless the text went in, where a second try would type it twice.
     if (!done.sent && !done.typed) return;
     held.shift();
-    lastDelivered = held.length ? { at: Date.now(), seenWorking: false } : null;
     console.log('statusd: held message delivered', { sent: done.sent, left: held.length });
   } catch (err) {
     console.warn('statusd: held messages not delivered yet', { message: String(err?.message ?? err).split('\n')[0] });
@@ -1325,8 +1332,9 @@ async function handle(req, res) {
     typing = true;
     let done;
     try {
-      const { state } = await agentState({ strict: true });
-      if (state === 'working') {
+      const { state, hook } = await agentState({ strict: true });
+      // Mid-turn, or the last message not yet taken (its turn may be starting): it waits, to go in between turns.
+      if (state === 'working' || !lastTaken(state, hook)) {
         holdMessage(text);
         return reply(res, 202, { ok: true, held: true });
       }

@@ -902,7 +902,10 @@ test('POST /send holds a message while the agent works, and sends it once the tu
     lines = await got();
   }
   assert.equal(lines, 'hello held\n', 'sent once, at the turn\'s end');
-  // At its prompt, a message goes in at once.
+  // claude takes it, a turn that ends: back at its prompt, a message goes in at once.
+  await setState('working');
+  await new Promise((r) => setTimeout(r, 1200));
+  await setState('done');
   assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'and now' }))).status, 200);
   for (let i = 0; i < 30 && !(await got()).includes('and now'); i++) await new Promise((r) => setTimeout(r, 100));
   assert.equal(await got(), 'hello held\nand now\n');
@@ -944,4 +947,21 @@ test('held messages go in one per turn, in order, and a send while some wait joi
   await new Promise((r) => setTimeout(r, 1200));
   await setState('done');
   assert.equal(await wait('first\nsecond\nthird\n'), 'first\nsecond\nthird\n', 'in the order sent');
+});
+
+test('a second message sent before the agent took the first waits for that turn, rather than landing in it', async (t) => {
+  // Two quick sends at its prompt: the first's Enter starts a turn the hooks have not said yet.
+  const { call, setState, got } = await promptPane(t, 'done');
+  const send = (text) => call('POST', '/send', 'sess', JSON.stringify({ text }));
+  assert.equal((await send('one')).status, 200);
+  const second = await send('two');
+  assert.equal(second.status, 202, 'held, not typed into the turn the first began');
+  await new Promise((r) => setTimeout(r, 1500));
+  for (let i = 0; i < 30 && (await got()) !== 'one\n'; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await got(), 'one\n');
+  await setState('working');
+  await new Promise((r) => setTimeout(r, 1200));
+  await setState('done');
+  for (let i = 0; i < 60 && (await got()) !== 'one\ntwo\n'; i++) await new Promise((r) => setTimeout(r, 100));
+  assert.equal(await got(), 'one\ntwo\n');
 });
