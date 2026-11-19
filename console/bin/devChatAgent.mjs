@@ -153,7 +153,7 @@ function draw() {
   out(`stand-in ${format} (dev console)\n\n`);
   if (screen === 'working' && format === 'claude') {
     // claude's own working screen: its box between rules, the turn's line under them, as statusd reads claude's pane.
-    const rule = '─'.repeat(60);
+    const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
     out(`\n${rule}\n❯\u00a0\n${rule}\n  ✻ Working… (${Math.round((Date.now() - started) / 1000)}s · esc to interrupt)\n`);
   } else if (screen === 'working') out(`• Working (${Math.round((Date.now() - started) / 1000)}s • esc to interrupt)\n`);
   if (screen === 'asking') {
@@ -165,7 +165,8 @@ function draw() {
   // (SGR 2), as statusd reads it (composerEmpty, session/panePrompt.mjs).
   const hint = (text) => `\x1b[2m${text}\x1b[0m`;
   if (screen === 'idle' && format === 'claude') {
-    const rule = '─'.repeat(60);
+    // Its rules in claude's grey, as statusd tells a rule from a row of dashes in a draft.
+    const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
     out(`\n${rule}\n❯\u00a0${typed || hint('Try "fix lint errors"')}\n${rule}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`);
   } else if (screen === 'idle') out(`\n\x1b[1m›\x1b[0m ${typed || hint('Ask anything')}\n\n  stand-in codex · /tmp/fx/repo\n`);
 }

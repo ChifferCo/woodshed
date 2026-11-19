@@ -445,12 +445,35 @@ function asking(pane, text) {
   return menuOn(pane, text) ? 'menu' : null;
 }
 
-const PASTE_PLACEHOLDER = /^\[Pasted[^\]]*\]$/i;
+// What the agents put in their box for a paste they fold (claude 2.1.328, codex 0.167, measured): claude's
+// `[Pasted text #2]`, or `[Pasted text #1 +6 lines]` for 7 lines; codex's `[Pasted Content 1200 chars]`.
+const PASTE_PLACEHOLDER = /^\[Pasted (?:text #\d+(?: \+(\d+) lines)?|Content (\d+) chars)\]$/;
+// Text no agent folds: one short line goes in as typed.
+const FOLDS_FROM = 100;
 
-function holdsOnly(box, text) {
+/**
+ * Whether the box holds the text just typed and nothing else. A folded paste counts only when it can be this one: the
+ * box was empty before it, holds that one placeholder alone (a paste of someone else's would leave two), the text is
+ * one an agent folds (several lines, or long), and the count the placeholder gives matches the text's.
+ */
+// The box shows nothing yet, or the start of the text: the agent has not drawn all of it.
+function stillDrawing(box, text) {
   if (typeof box !== 'string') return false;
   const bare = (s) => s.replace(/[\s\u00a0]+/g, '');
-  return bare(box) === bare(text) || PASTE_PLACEHOLDER.test(box.trim());
+  return bare(text).startsWith(bare(box));
+}
+
+export function holdsOnly(box, text) {
+  if (typeof box !== 'string') return false;
+  const bare = (s) => s.replace(/[\s\u00a0]+/g, '');
+  if (bare(box) === bare(text)) return true;
+  const folded = PASTE_PLACEHOLDER.exec(box.trim());
+  if (!folded) return false;
+  const lines = text.split('\n').length;
+  if (lines === 1 && text.length < FOLDS_FROM) return false;
+  if (folded[1] !== undefined) return Number(folded[1]) === lines - 1;
+  if (folded[2] !== undefined) return Number(folded[2]) === text.length || Number(folded[2]) === [...text].length;
+  return lines === 1;
 }
 
 export async function typeMessage(io, text) {
@@ -469,14 +492,22 @@ export async function typeMessage(io, text) {
   if (after) return { sent: false, kind: after, typed: true };
   // The box holds what was typed, and nothing else: someone typing in the TUI tab between the look before and the
   // text would have their draft sent with it. A paste the agent folds into a placeholder counts as itself.
+  // The agent draws what was typed a moment after the keys (claude, measured): read again while the box shows nothing
+  // yet or the start of the text, and stop at once when it shows anything else.
   if (io.box) {
-    let box;
-    try {
-      box = await io.box();
-    } catch {
-      return { sent: false, kind: null, typed: true };
+    const sleep = io.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    const until = Date.now() + (io.settleMs ?? 2000);
+    for (;;) {
+      let box;
+      try {
+        box = await io.box();
+      } catch {
+        return { sent: false, kind: null, typed: true };
+      }
+      if (holdsOnly(box, text)) break;
+      if (!stillDrawing(box, text) || Date.now() >= until) return { sent: false, kind: 'box', typed: true };
+      await sleep(io.everyMs ?? 100);
     }
-    if (!holdsOnly(box, text)) return { sent: false, kind: 'box', typed: true };
   }
   // An Enter that failed leaves the text in, unsent, as above.
   try {
@@ -492,6 +523,7 @@ export async function typeMessage(io, text) {
 // the plain colours a typed draft has (claude 2.1.328 and codex 0.167, captured): so the box is empty when nothing but
 // dim text follows its mark.
 const SGR = /\x1b\[([0-9;]*)m/g;
+const SGR_ANY = /\x1b\[[0-9;]*m/;
 
 /** The text of a line as drawn, leaving out what it draws dim. */
 export function undimmed(line) {
@@ -526,11 +558,33 @@ function markInBold(line) {
   return line.slice(at).trim() ? bold : false;
 }
 
+// A rule over or under claude's box: a run of `─` from the line's start, with the session's title in it or not
+// (`─────── Fix the retry ─`). In a capture with colours it must be drawn in a set foreground, as claude draws its rules
+// (38;5;244): a row of dashes typed into a draft has the plain one. A capture with no colours at all (a text fixture)
+// is read by its text.
+function ruleLine(line, styled) {
+  if (!/^\s*─{10,}/.test(PLAIN(line))) return false;
+  if (!styled) return true;
+  let fg = false;
+  let at = 0;
+  for (const m of line.matchAll(SGR)) {
+    if (line.slice(at, m.index).trim()) return fg;
+    const codes = m[1] === '' ? [0] : m[1].split(';').map(Number);
+    for (let k = 0; k < codes.length; k++) {
+      const c = codes[k];
+      if (c === 38) { fg = true; k += codes[k + 1] === 5 ? 2 : 4; }
+      else if ((c >= 30 && c <= 37) || (c >= 90 && c <= 97)) fg = true;
+      else if (c === 39 || c === 0) fg = false;
+    }
+    at = m.index + m[0].length;
+  }
+  return line.slice(at).trim() ? fg : false;
+}
+
 const PLAIN = (line) => line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
 // Each agent's own mark: claude's `❯` sits right under a rule; codex's `›`. A line of another's (the session's status
 // line starts `›` under claude's box) is not the box.
 const BOX_MARKS = { claude: /^\s*❯\s?/, codex: /^\s*›\s?/ };
-const BOX_RULE = /^\s*─{10,}\s*$/;
 
 /**
  * Whether the agent's input box is empty, from a capture with colours.
@@ -551,6 +605,7 @@ export function composerText(colored, agent) {
   const mark = BOX_MARKS[agent];
   const lines = linesOf(colored);
   const plain = lines.map(PLAIN);
+  const styled = SGR_ANY.test(colored);
   // codex's box runs down to its footer, the last line on screen with anything on it.
   let footer = plain.length - 1;
   while (footer > 0 && !plain[footer].trim()) footer--;
@@ -560,7 +615,7 @@ export function composerText(colored, agent) {
   const starts = [];
   for (let i = 0; i < lines.length; i++) {
     if (!mark.test(plain[i])) continue;
-    if (agent === 'claude' ? !(i > 0 && BOX_RULE.test(plain[i - 1])) : !markInBold(lines[i])) continue;
+    if (agent === 'claude' ? !(i > 0 && ruleLine(lines[i - 1], styled)) : !markInBold(lines[i])) continue;
     // A menu's highlighted row, with its key hint under it, is not the box. A draft that starts `1. ` is.
     if (HIGHLIGHTED_ROW.test(plain[i]) && plain.slice(i + 1, i + 10).some((l) => MENU_HINT.test(l))) continue;
     starts.push(i);
@@ -570,7 +625,7 @@ export function composerText(colored, agent) {
   // The whole draft, blank lines in it too: to the rule under it (claude), or to the footer (codex).
   let text = undimmed(lines[i]).replace(mark, '');
   for (let j = i + 1; j < lines.length; j++) {
-    if (agent === 'claude' ? BOX_RULE.test(plain[j]) : j >= footer) break;
+    if (agent === 'claude' ? ruleLine(lines[j], styled) : j >= footer) break;
     text += undimmed(lines[j]);
   }
   return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();

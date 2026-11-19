@@ -872,7 +872,7 @@ function standInClaude(file, { screen = null, menuOnInput = false } = {}) {
 const custom = ${JSON.stringify(screen)};
 let line = '';
 let shown = false;
-const rule = '${'─'.repeat(40)}';
+const rule = '\\x1b[38;5;244m${'─'.repeat(40)}\\x1b[39m';
 const draw = () => process.stdout.write('\\x1b[2J\\x1b[H' + (custom ?? ('stand-in claude\\n' + rule + '\\n❯\\u00a0' + (line || '\\x1b[2mTry "fix lint"\\x1b[0m') + '\\n' + rule + '\\n  ⏵⏵ auto mode on (shift+tab to cycle)\\n' + (shown ? '\\n  Pick one\\n  ❯ 1. Yes\\n    2. No\\n  Enter to confirm · Esc to cancel\\n' : ''))));
 process.stdin.setRawMode(true);
 draw();
@@ -888,7 +888,7 @@ process.stdin.on('data', (d) => {
 }
 
 // claude at its prompt: its box between two rules, the box's hint dim, and its mode footer.
-const CLAUDE_IDLE = `\n${'─'.repeat(60)}\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n${'─'.repeat(60)}\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
+const CLAUDE_IDLE = `\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n❯\u00a0\x1b[2mTry "fix lint errors"\x1b[0m\n\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m\n  ⏵⏵ auto mode on (shift+tab to cycle)\n`;
 
 async function promptPane(t, state, { screen = CLAUDE_IDLE, menuOnInput = false } = {}) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'statusd-held-'));

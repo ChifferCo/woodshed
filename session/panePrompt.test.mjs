@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   Refusal, answerApproval, answerQuestions, matchApproval, matchQuestion, matchReview, planMoves, readApproval, readPrompt,
-  readQuestionPicker, readTabs, typeMessage, composerEmpty,
+  readQuestionPicker, readTabs, typeMessage, composerEmpty, composerText,
 } from './panePrompt.mjs';
 import { createPicker } from '../shared/__fixtures__/claudePicker.mjs';
 
@@ -407,7 +407,8 @@ test('a message gets its Enter only if the box holds just its text: someone typi
     return { result: await typeMessage(io, 'ship   it now'), done };
   };
   assert.deepEqual(await run('ship it now'), { result: { sent: true }, done: ['type', 'Enter'] }, 'whitespace as the box wraps it');
-  assert.deepEqual(await run('[Pasted text #1 +3 lines]'), { result: { sent: true }, done: ['type', 'Enter'] }, 'a paste the agent folds');
+  // The review's case: a placeholder from another paste, with a short line typed: not this send's, no Enter.
+  assert.deepEqual(await run('[Pasted text #1 +2 lines]'), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
   // Their half-typed note, then the message: both in the box, so no Enter, which would send their note.
   assert.deepEqual(await run('my note ship it now'), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
   assert.deepEqual(await run(null), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] }, 'no box found: no Enter');
@@ -436,4 +437,67 @@ test('Chat shows a command as drawn: two that differ only in their indentation l
   assert.notEqual(shown(inLoop), shown(after), 'the person sees which one they approve');
   assert.match(shown(inLoop), /for n in range\(3\):\n {4}print\(n\)\n {4}run\(n\)/);
   assert.match(shown(after), /for n in range\(3\):\n {4}print\(n\)\nrun\(n\)/);
+});
+
+test('a folded paste counts as the text just sent only when it can be: alone, for foldable text, its count matching', async () => {
+  const { holdsOnly } = await import('./panePrompt.mjs');
+  const sevenLines = Array.from({ length: 7 }, (_, i) => `line ${i + 1} of a long message`).join('\n');
+  const long = 'x'.repeat(1200);
+  // As claude 2.1.328 and codex 0.167 fold them (measured).
+  assert.equal(holdsOnly('[Pasted text #1 +6 lines]', sevenLines), true, 'claude: lines after the first');
+  assert.equal(holdsOnly('[Pasted text #1 +2 lines]', sevenLines), false, 'another paste, of 3 lines');
+  assert.equal(holdsOnly('[Pasted text #2]', long), true, 'claude: one long line, no count');
+  assert.equal(holdsOnly('[Pasted text #2]', sevenLines), false, 'claude counts the lines of a paste of several');
+  assert.equal(holdsOnly('[Pasted Content 1200 chars]', long), true, 'codex: its characters');
+  assert.equal(holdsOnly('[Pasted Content 900 chars]', long), false, 'another paste, of 900');
+  assert.equal(holdsOnly('[Pasted text #2]', 'short'), false, 'a short line is never folded: not this one');
+  assert.equal(holdsOnly('[Pasted text #1 +6 lines] [Pasted text #2]', sevenLines), false, 'two pastes: one is someone else\'s');
+  assert.equal(holdsOnly('ship it now', 'ship   it now'), true, 'typed text, as the box wraps it');
+});
+
+test('a claude box under a titled rule is found, and a row of dashes typed into a draft is not its closing rule', () => {
+  // The repo's real capture: claude's rule over its box carries the session's title.
+  const done = fs.readFileSync(new URL('../shared/__fixtures__/pane-done.txt', import.meta.url), 'utf8');
+  assert.equal(composerEmpty(done, 'claude'), true);
+  // With colours, claude's rules are grey (38;5;244); dashes typed into a draft are not.
+  const grey = (t) => `\x1b[38;5;244m${t}\x1b[39m`;
+  const titled = grey(`${'─'.repeat(40)} Fix the retry ─`);
+  const rule = grey('─'.repeat(60));
+  const footer = '  ⏵⏵ auto mode on (shift+tab to cycle)';
+  assert.equal(composerEmpty([titled, '❯ \x1b[2mTry "x"\x1b[0m', rule, footer].join('\n'), 'claude'), true, 'under a titled rule');
+  // The review's case: an empty first row, a draft row of 20 dashes, draft text under it, then the real closing rule.
+  const hidden = [titled, '❯ ', '─'.repeat(20), 'the hidden rest of a draft', rule, footer].join('\n');
+  assert.equal(composerEmpty(hidden, 'claude'), false, 'the draft\'s dashes do not close the box');
+  assert.match(composerText(hidden, 'claude'), /the hidden rest of a draft/);
+});
+
+test('a message typed onto a box hiding a draft under a row of dashes gets no Enter', async () => {
+  const grey = (t) => `\x1b[38;5;244m${t}\x1b[39m`;
+  const rule = grey('─'.repeat(60));
+  const screen = (first) => [rule, `❯ ${first}`, '─'.repeat(20), 'the hidden rest of a draft', rule, '  ⏵⏵ auto mode on (shift+tab to cycle)'].join('\n');
+  const done = [];
+  const io = {
+    capture: async () => screen('hi there').replace(/\x1b\[[0-9;]*m/g, ''),
+    type: async () => done.push('type'),
+    enter: async () => done.push('Enter'),
+    box: async () => composerText(screen('hi there'), 'claude'),
+  };
+  assert.deepEqual(await typeMessage(io, 'hi there'), { sent: false, kind: 'box', typed: true });
+  assert.deepEqual(done, ['type'], 'no Enter: it would send the hidden draft too');
+});
+
+test('the box is read again while the agent is still drawing the text, and not when it holds anything else', async () => {
+  const clear = '╭───╮\n│ > │\n╰───╯\n  ? for shortcuts';
+  const run = async (boxes) => {
+    const done = [];
+    const io = { capture: async () => clear, type: async () => done.push('type'), enter: async () => done.push('Enter'),
+      box: async () => (boxes.length > 1 ? boxes.shift() : boxes[0]), sleep: async () => {}, settleMs: 50 };
+    return { result: await typeMessage(io, 'ship it now'), done };
+  };
+  // claude draws the keys a moment after them (measured): empty, then part, then all of it.
+  assert.deepEqual(await run(['', 'ship', 'ship it now']), { result: { sent: true }, done: ['type', 'Enter'] });
+  // Someone else's text: refused at once, not waited on.
+  assert.deepEqual(await run(['my note ship it now']), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
+  // Never drawn in time: no Enter.
+  assert.deepEqual(await run(['']), { result: { sent: false, kind: 'box', typed: true }, done: ['type'] });
 });
