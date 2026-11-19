@@ -19,6 +19,8 @@ Woodshed is open-source, dependency-free Node ESM with no build step, and this r
   behavior that lacks coverage and a wrong result the existing tests would accept. A second test through another
   layer, another permutation of a covered case, or a regression test for an optional concern is optional. A
   separate path that implements its own guard and could silently lose data deserves its own check.
+- Before requesting changes, group related findings and state what would resolve each blocker, including any
+  evidence you already know you need. On the next round, check the fix against those stated conditions.
 - On a follow-up, read the author's fix and the tests together. Once they address the reported failure, close that
   finding. Apply the same likelihood and impact threshold to anything newly discovered in the fix. For example,
   restoring an older tab preference is a convenience issue. Restoring data belonging to another login is a
