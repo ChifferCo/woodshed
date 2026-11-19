@@ -49,6 +49,7 @@ import { createGitHubPeople } from './githubPeople.mjs';
 import { createSlackPeople } from './slackPeople.mjs';
 import { createAssigneePings } from './assigneePings.mjs';
 import { createMembers } from './members.mjs';
+import { checkMembersHook, createHostedMembers } from './hostedMembers.mjs';
 import { createAppShares } from './appShares.mjs';
 import { createWebhookDispatch } from './webhookDispatch.mjs';
 import { createWebhookEvents, SWEEP_MS as EVENTS_SWEEP_MS } from './webhookEvents.mjs';
@@ -218,7 +219,11 @@ async function loadAppKey(config, secrets) {
  *          slackInstall?: {label: string, description?: string, available?: boolean|(() => boolean|Promise<boolean>),
  *            href?: string, installed?: () => boolean|Promise<boolean>}|null,
  *          githubConnect?: {clientId: () => string|Promise<string>, clientSecret: () => string|null, href: string,
- *                           automatic?: boolean}|null}} args
+ *                           automatic?: boolean}|null,
+ *          members?: {list: () => Promise<{login: string, role: 'owner'|'member'}[]>,
+ *            add: (args: {login: string, role: 'owner'|'member', by: string}) => Promise<void>,
+ *            remove: (args: {login: string, by: string}) => Promise<void>,
+ *            setRole: (args: {login: string, role: 'owner'|'member', by: string}) => Promise<void>}|null}} args
  *   `config` is in loadConfig()'s shape, before the Console settings page's values go over it; `config.linkQuery`, when
  *   set, is query parameters every link the console hands out carries. `trusted` says who a request is from where
  *   something in front of the console signs people in; `userMenu(headers)` adds to the user menu and the settings
@@ -240,13 +245,16 @@ async function loadAppKey(config, secrets) {
  *   keeps it in `provider.secrets` and refreshes it with the App's `clientId` and `clientSecret` (githubUser.mjs).
  *   `automatic: true` says the host connects people on its own, so My settings shows it as a status with a way to
  *   connect again, not as a step to take.
+ *   `members`, behind `trusted` only, is the program's own list of who is in and their role, which the People page shows
+ *   and changes there (hostedMembers.mjs, README.md "Embedding the console"); core keeps only each person's switches.
  *   `slackEventsUrl` is the Slack events Request URL the Set up Slack dialog and its manifest show, over the
  *   provider's; `slackInstall` is the program's own way to put a Slack app in a workspace, offered beside "Use your
  *   own Slack app" (slackSetup.mjs, README.md "Embedding the console").
  * @returns {Promise<object>}  the installation: `handle` and `upgrade` for the console's server, `sessionApi` for the
  *   session API's, `start` and `stop` for its loops
  */
-export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null }) {
+export async function createInstallation({ config: loaded, store, provider, trusted = null, githubSetup = null, userMenu = null, settingsTabs = null, signOut = null, newId = undefined, repos = null, projectReadiness = null, hostApp = null, woodshedUpdate: followUpdates = true, githubConnect = null, slackEventsUrl = null, slackInstall = null, members: memberList = null }) {
+  checkMembersHook(memberList, trusted);
   if (projectReadiness != null && typeof projectReadiness !== 'function') throw new Error('projectReadiness must be a function');
   if (slackEventsUrl != null && typeof slackEventsUrl !== 'function') throw new Error('slackEventsUrl must be a function');
   checkSlackInstall(slackInstall);
@@ -315,8 +323,8 @@ export async function createInstallation({ config: loaded, store, provider, trus
   const databasesFix = (project) => (provider.name === 'local' && project.clonedAtStart
     ? [{ text: `Run WOODSHED_REPO=${project.repo} bash install.sh again on this machine, which builds ${project.repo}'s session image and starts its databases.` }]
     : null);
-  // Whom someone who cannot fix a project asks: the People list's admins. Behind a hosting proxy there is no list, and
-  // the program's own hook names them.
+  // Whom someone who cannot fix a project asks: the People list's admins (the program's owners, when it hands over its
+  // list). Behind a hosting proxy with no list, the program's own hook names them.
   const admins = () => (members ? members.view().members.filter((m) => m.admin).map((m) => m.login) : null);
   const databaseGate = createDatabaseGate({
     projectDatabases: (project) => readerOf(project.name).databases(), hosted, provider: provider.name ?? null, fix: databasesFix, admins,
@@ -327,8 +335,17 @@ export async function createInstallation({ config: loaded, store, provider, trus
   // A repo's label may not be its QA label, which its project file names.
   const repoTriggers = createRepoTriggers({ store, config, qaLabelOf: async (name) => (await readerOf(name).pullRequests())?.qa?.label ?? null });
   const people = createGitHubPeople({ store, github });
-  // Behind a hosting proxy the host says who is in: no People list, and no write access asked of those it signs in.
-  const members = trusted ? null : createMembers({ store });
+  // Behind a hosting proxy the host says who is in: no write access asked of those it signs in, and no People list
+  // unless the program hands over its own (hostedMembers.mjs). Someone it takes off in its own pages gives their
+  // sessions back to Unassigned at the next read of its list; the fleet is made below, so it is asked then.
+  let fleetRef = null;
+  const members = !trusted ? createMembers({ store })
+    : memberList ? createHostedMembers({ hook: memberList, store, onGone: (login) => fleetRef?.releaseAssignments({ login, by: 'the program' }) })
+      : null;
+  if (members?.hosted) {
+    // The first read, so a label or a page right after start is answered from the list; a failure lets nobody in yet.
+    await members.refresh().catch((err) => console.warn('members: the program\'s list not read at start', { message: String(err?.message ?? err).split('\n')[0] }));
+  }
   const appShares = createAppShares({ store, secure: loaded.publicUrl.startsWith('https:') });
   const slackPeople = createSlackPeople({ store, slack });
   // In AWS the team key is the console's alone; the docker launcher's sessions keep the one in its env file.
@@ -368,6 +385,7 @@ export async function createInstallation({ config: loaded, store, provider, trus
     repoTriggers,
     reviewAgents,
   });
+  fleetRef = fleet;
   pullWebhooks.watch({ name: 'chip', stale: prChips.stale });
   pullWebhooks.watch({ name: 'Slack post or retention', stale: fleet.pullsChanged });
   // Questions need the bot token to answer, and the session API to hear the answer.
