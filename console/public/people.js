@@ -52,6 +52,11 @@ window.Woodshed.settingsPage('/people', (app, life) => {
       if (action === 'invite' || action === 'add') {
         inviteError.textContent = err.message;
         inviteError.hidden = false;
+        // The last add's sentence is not this one's: the hint goes back to core's own beside the error.
+        if (action === 'add' && told) {
+          told = null;
+          render();
+        }
       } else {
         window.alert(`Not done: ${err.message}`);
       }

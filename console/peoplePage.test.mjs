@@ -96,3 +96,22 @@ test('after an add, what the program says it did stands in for core\'s hint; wit
   await add('cy-dev');
   assert.equal(hint(), CORE_HINT, 'an add the program said nothing about');
 });
+
+test('after a failed add, the previous add\'s sentence is gone: core\'s hint shows with the error', async () => {
+  const members = [person('ana-owner', 'owner')];
+  let refuse = false;
+  const { add, hint, app } = await loadPage({
+    members,
+    addReply: (body) => {
+      if (refuse) throw new Error('Your plan has room for 2 people.');
+      return { members: [...members, person(body.login, body.role)], requests: [], hosted: true, names: {}, slack: null, told: 'We emailed them a link.' };
+    },
+  });
+  await add('lee-dev');
+  assert.match(hint(), /We emailed them a link\.$/);
+  refuse = true;
+  await add('bo-dev');
+  assert.equal(hint(), CORE_HINT, 'not the sentence about the add before');
+  const error = walk(app).find((e) => e.className === 'form-error');
+  assert.deepEqual([error.textContent, error.hidden], ['Your plan has room for 2 people.', false], 'the error shows beside it');
+});
