@@ -83,13 +83,15 @@ function dbAdmin(config, secrets) {
 }
 
 function webhooks(config, secrets) {
-  if (!config.localWebhooks) return { webhooks: null, webhookUrl: null };
+  if (!config.localWebhooks) return { webhooks: null, webhookUrl: null, slackEventsUrl: null };
   // Every delivery is checked against a signing secret, and those are kept in the store.
   if (!secrets) throw new Error('WOODSHED_LOCAL_WEBHOOK_PORT needs WOODSHED_LOCAL_SECRETS_DIR, where the webhook signing secrets are kept');
   const { host, port, url } = config.localWebhooks;
   return {
     webhooks: createWebhookReceiver({ host, port, secrets }),
     webhookUrl: url ? async () => `${url}/github` : null,
+    // Slack's Event Subscriptions post here; the receiver checks them with slack-signing-secret.
+    slackEventsUrl: url ? async () => `${url}/slack` : null,
   };
 }
 

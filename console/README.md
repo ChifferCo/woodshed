@@ -912,10 +912,10 @@ you out.
   delivery the Lambda refused never reaches the queue: GitHub's Recent
   Deliveries page shows those. When a source is switched off on Console
   settings (below), the page says so above the list.
-- **Webhooks** card on Console settings (`/console-settings#webhooks`): two
-  switches, shown where webhooks reach the console (a queue, the local
-  receiver, or the program it is embedded in), that turn each source off on
-  its own. **GitHub webhooks** off, the console drops
+- **Webhooks** card on Console settings (`/console-settings#webhooks`): a
+  switch for GitHub, and on the Slack card's Questions row one for Slack, shown
+  where webhooks reach the console (a queue, the local receiver, or the program
+  it is embedded in), that turn each source off on its own. **GitHub webhooks** off, the console drops
   each GitHub delivery as it arrives, so the queue forgets it, and polls GitHub
   at full speed (`WOODSHED_POLL_SECONDS`) as a console with no webhooks does.
   The poll finds only the session label and `/woodshed` comments, so what only
@@ -924,7 +924,7 @@ you out.
   assignee's message for a session's `Needs a human:` comment. The console logs
   `webhooks: off, dropped a delivery the poll does not cover` with its `kind`
   at the first of each.
-  **Slack questions** (only on a console that answers them) off, it drops each
+  The Slack card's **Questions** switch (only on a console that answers them) off, it drops each
   mention of its bot, which nothing else brings, and lists it as ignored. Each
   is kept in `state.json` under `webhooks.<source>`, with who turned it and
   when; the console logs `webhooks: switched` with `source`, `off` and `by`,
@@ -936,7 +936,8 @@ you out.
   changed. Replace saves a new version, so the one before stays restorable as
   `AWSPREVIOUS`. Show reveals a session secret, since anyone who reaches the
   console can already read it in a session's terminal; the GitHub App's key is
-  write-only. A new App key is used at once, after a test token minted with it
+  write-only. Slack's two keys are not listed: they are set on the Slack card
+  (below, "Slack"), and a line says so. A new App key is used at once, after a test token minted with it
   succeeds. The webhook card checks four things (the App's webhook switched
   on, the five events subscribed, the App connected to the Lambda with the
   stored secret, GitHub's last delivery accepted) and **Set up webhook** walks
@@ -1576,6 +1577,21 @@ and home stores in the providers' shapes) and serve it from its own servers. It 
   (`providers/README.md`, "A secret store that makes a secret when it is first written"): the Secrets page then
   offers Set on a secret nobody has written. Without it, such a secret shows no Set.
 
+- `slackEventsUrl: () => Promise<string|null>`: the Request URL Slack's Event Subscriptions should post to, which the
+  Set up Slack dialog shows and puts in the app manifest it gives (below, "Slack"), for a program that receives Slack's
+  events itself. Without it the console asks its provider's `slackEventsUrl` (`providers/README.md`); with neither, or
+  when it throws (`slack: events URL not read`), the dialog says the address is unknown and how to find it, and the
+  manifest has no events.
+- `slackInstall: {label, description?, available?, href?, installed?}`: the program's own way to put a Slack app in a
+  workspace, offered in the dialog as a second option beside "Use your own Slack app". Every word of it is the
+  program's: `label` is the option's title, `description` the line under it. `available` (true when left out, or a
+  function answering it) false shows the option disabled, with nothing added: the program says why in its own
+  `description`, such as when it will be ready; `href` (https, or a path on the
+  console) is where Continue goes when it is picked. `installed()` (async allowed) answers whether this console was
+  connected that way: the card's Bot row then says installed with the option's label, and offers **Reinstall**
+  (`href`) in place of Replace keys. Core has no install flow of its own: whatever `href` leads to writes the same
+  `slack-bot-token` the dialog does. Without the hook the dialog opens on the own app's steps.
+
 A Claude token or Codex sign-in written straight into the secret store, as `users/<login>/claude-token` or
 `codex-auth`, counts as saved, as one saved on My settings does (`userSettings: sign-ins follow the secret store`).
 
@@ -1609,6 +1625,64 @@ reads it and its checks from GitHub with the App's token
 (`console/prAnnouncer.mjs`, the gates in `console/pullGates.mjs`), and posts with
 `chat.postMessage` as the bot whose token is `slack-bot-token`. The token is
 console only, like the App key: a session never sees it.
+
+### Setting it up: the Slack card
+
+Console settings has one **Slack** card for all of it (`public/consoleSettings.js`, its server side
+`console/slackSetup.mjs`). Not set up, it says what Slack does and has **Set up Slack**, which opens a dialog
+(`public/slackSetup.js`). Where the program embedding the console offers an install of its own (`slackInstall`,
+"Embedding the console"), the dialog first asks which way to connect; otherwise it opens on the own app's steps:
+
+1. **Create the app from this manifest**: the console makes a Slack app manifest (`slackManifest`) with the bot's
+   scopes (`app_mentions:read`, `channels:read`, `chat:write`, `groups:read`, `reactions:write`, `users:read`,
+   `users:read.email`), the Messages tab the assignee's direct messages need, and this console's events Request URL
+   with the `app_mention` bot event. The URL is the embedding program's (`slackEventsUrl`), else the provider's: the
+   webhooks Lambda's function URL at `/slack` on AWS, the local receiver's `WOODSHED_LOCAL_WEBHOOK_URL` at `/slack`.
+   With neither the manifest has no events, and the dialog says where the address comes from. Paste it at
+   api.slack.com/apps, Create New App, From a manifest.
+2. **The Bot User OAuth Token** (`xoxb-…`, OAuth & Permissions, after Install to Workspace). The dialog checks it with
+   Slack's `auth.test` as soon as it is pasted, and shows its workspace and bot, and any scope the app lacks (from
+   Slack's `x-oauth-scopes`); the save checks it again before anything is kept.
+3. **The Signing Secret** (Basic Information, App Credentials), for questions only: pull requests are posted without
+   it.
+4. **The channel for pull requests**, from the channel picker (below).
+
+**Save and connect** (`POST /api/console-settings/slack`, `{"botToken", "signingSecret", "channel"}`, each optional)
+writes the same `slack-bot-token` and `slack-signing-secret` the Secrets page used to, so what reads them (this file,
+the webhooks Lambda, the local receiver) is unchanged, and the Secrets page no longer lists them: a line there points
+to the card. A token Slack refuses, or a value of the wrong shape, keeps nothing. Neither value is ever sent back:
+`GET /api/console-settings/slack` answers who the bot is (kept in `state.json` under `slackBot` until the secret
+changes), whether the signing secret is set, the channel, the events URL, the manifest and the install option. The
+console logs `slack: keys saved` with the workspace, the bot and which fields changed (never a value), and `slack:
+call refused` for `auth.test` with Slack's error.
+
+Connected, the card has a row each:
+
+- **Bot**: the bot, its workspace, how it was connected (your own app, or installed with the program's option) and who
+  set it when, and a scope the app lacks. **Replace keys** opens the dialog at the own app's steps with the manifest
+  folded away and both fields empty: a field left empty keeps its value. A console connected through the program's
+  install has **Reinstall** instead. A saved token Slack refuses shows as **Token refused**, with Slack's error.
+- **Pull requests**: the channel, and **Change channel**, the picker again. **Limits** unfolds the two waits before a
+  post (the review and suites, and the QA check; the table below).
+- **Questions**, only where the console answers them at all (a Slack bot and a session API): the switch that was on
+  the Webhooks card (`POST /api/console-settings/webhooks` with `source: "slack"`), when the bot was last mentioned
+  (from the Webhook events log), a note while no signing secret is saved, and **Limits** for the questions' own
+  (below, "Questions from Slack").
+- **Disconnect Slack**, behind a typed `slack`, deletes both secrets (`POST /api/console-settings/slack/disconnect`;
+  `slack: disconnected`). It is offered only where the secret store makes a secret on its first write
+  (`createsOnWrite`, providers/README.md), as the local store does: a store whose secrets its infrastructure made, as
+  Terraform makes AWS's, would be left without the one the webhooks Lambda reads, so there the keys are replaced
+  instead.
+
+**The channel picker**, in the dialog, on Change channel and on a repo's Settings (below), lists the workspace's
+channels that are not archived (`GET /api/console-settings/slack/channels?q=`, Slack's `conversations.list` with
+`public_channel,private_channel`), the bot's first, searchable by name, each saying whether the bot is in it. Like the
+member search on People, it reads at most two pages of 1,000 and keeps the list a minute, searching it in the console
+(`slack: channel list read`). In the dialog, before the token is saved, it lists with the pasted one (`POST` with
+`{"q", "botToken"}`: a token never goes in a URL). It needs the `channels:read` and `groups:read` scopes, which the
+manifest asks for. **An app made before them has neither**: Slack answers `missing_scope`, and the picker falls back
+to the channel's ID (`C…`, at the bottom of the channel's About tab), with a note to add the two scopes on the app's
+OAuth & Permissions page, reinstall it, and Replace keys with its token if Slack issued a new one.
 
 ### The decision brief
 
@@ -1697,18 +1771,9 @@ plain: angle brackets become look-alikes, `](` is split and `@` gets a
 zero-width space, so nothing in it can become a Slack link or mention. The PR
 comment puts the same space after each `@`, so a quote notifies nobody.
 
-To turn it on:
-
-1. A Slack app with a bot user and the `chat:write` scope, installed in the
-   workspace. Invite the bot to the channel (`/invite @<bot>`).
-2. The bot token (`xoxb-...`) on the Secrets & webhooks tab, as
-   `slack-bot-token`.
-3. The channel's ID (`C...`, at the bottom of the channel's About tab) in the
-   Slack card of the Console settings page. The console keeps it in
-   `state.json`, and an empty channel turns the posts off. A repo can have a
-   channel of its own on its Settings page (below).
-
-Both are read for each post, so neither needs a restart.
+To turn it on, use the Slack card's Set up Slack (above), and invite the bot to the channel (`/invite @<bot>`). The
+channel is kept in `state.json` (`settings.slackChannel`), and none turns the posts off. A repo can have a channel of
+its own on its Settings page (below). The token and the channel are read for each post, so neither needs a restart.
 
 ### A channel for each project
 
@@ -1726,7 +1791,8 @@ it says so and its field is off. It reads the channel with the page's view
 channel ID, never a name). It is kept in `state.json` under
 `settings.projectSlackChannels`, by project name, and removing an added repo
 drops it. A project's pull requests and their decision briefs go to its own
-channel when it has one, and to the Slack card's channel otherwise. A project
+channel when it has one, and to the Slack card's channel otherwise. Its channel is picked with the same channel
+picker as the Slack card's, falling back to the ID where the app lacks `channels:read` and `groups:read`. A project
 with neither has its pull requests left untracked, as every pull request was
 with no channel, and tracked once a channel is set; one tracked before its
 channel was cleared is still read, so it is dropped when it closes, and waits
@@ -1768,9 +1834,8 @@ settings, so Remove My Woodshed keeps it.
 - **To turn it on,** add the `users:read.email` bot scope: the Slack app's
   **OAuth & Permissions** page, Bot Token Scopes, then **Reinstall to
   Workspace** (Slack shows the banner once a scope is added). Reinstalling keeps
-  the bot token's value unless Slack issues a new one: copy the page's Bot User
-  OAuth Token onto the Secrets & webhooks tab as `slack-bot-token` if it
-  changed. Without the scope, the console logs `slack: call refused` with
+  the bot token's value unless Slack issues a new one: Replace keys on the Slack
+  card with the page's Bot User OAuth Token if it changed. Without the scope, the console logs `slack: call refused` with
   `missing_scope` for `users.lookupByEmail` and people stay "Not linked".
 
 For code that needs a person's Slack user, `slackUserFor(login)` on
@@ -1838,24 +1903,20 @@ anyone Slack will not say anything about.
    with its conversation once it has stopped. A mention in a new thread is a new
    question.
 5. It stops after 5 minutes without working, so soon after it answers, or 2
-   hours in all. Both are on the Console settings page's "Questions from Slack"
-   card, apart from the shared sessions' limits. One that failed, or stopped
+   hours in all. Both are under the Slack card's Questions row, behind Limits,
+   apart from the shared sessions' limits. One that failed, or stopped
    before posting any answer, says so in the thread. A stopped one is kept 7 days
    for follow-ups (the "no pull request" number on the Console settings page).
 
 A follow-up has to mention the bot too: the app reads mentions only
 (`app_mention`), not every message in a channel.
 
-To turn it on, on the same Slack app as the pull request posts:
-
-1. Bot token scopes: `app_mentions:read`, `chat:write`, `reactions:write`,
-   `users:read` and `users:read.email`. Reinstall the app if Slack asks, and put
-   the new bot token on the Secrets & webhooks tab as `slack-bot-token`.
-2. The app's **Signing Secret** (Basic Information) on the Secrets & webhooks
-   tab as `slack-signing-secret`.
-3. **Event Subscriptions**: on, with the `slack_events_url` Terraform output as
-   the Request URL (Slack checks it at once), and the bot event `app_mention`.
-4. Invite the bot to the channels where people should ask.
+To turn it on, on the same Slack app as the pull request posts: Set up Slack on the Slack card (above, "Setting it up:
+the Slack card"). An app made from its manifest already has the scopes (`app_mentions:read`, `chat:write`,
+`reactions:write`, `users:read` and `users:read.email` for questions) and Event Subscriptions with this console's
+Request URL (on AWS, the `slack_events_url` Terraform output; Slack checks it at once) and the bot event
+`app_mention`; paste its **Signing Secret** in the dialog's third step. An app made by hand needs the same, then
+Replace keys with its signing secret. Invite the bot to the channels where people should ask.
 
 ## QA sessions
 
@@ -1908,8 +1969,15 @@ card's:
 | Retention | Delete a merged or closed session after | 0 to 30 days | 3 |
 | Retention | Delete a finished session whose PR stays open after | 1 to 90 days | 14 |
 | Retention | Delete a paused session with no pull request after | 1 to 60 days | 7 |
-| Slack | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
-| Slack | Channel | a channel ID, or empty for no posts; a project with its own channel on its repo's Settings posts there instead | none |
+| Slack, Pull requests' Limits | Stop waiting for the review and the suite after | 1 to 30 days | 7 |
+| Slack, Pull requests' Limits | Wait for the QA check before the brief for at most | 0 to 180 minutes | 30 |
+| Slack, Pull requests | Channel | picked from the channel picker (a channel ID where the app cannot list them), or none for no posts; a project with its own channel on its repo's Settings posts there instead | none |
+| Slack, Questions' Limits | Questions running at once | 1 to 10 | 3 |
+| Slack, Questions' Limits | Stop a question's session when idle for | 1 to 120 minutes | 5 |
+| Slack, Questions' Limits | Stop a question's session after | 0.5 to 8 hours | 2 |
+
+The Slack card's Limits are shown once Slack is set up (above, "Setting it up: the Slack card"); each Limits saves its
+own values, as a card does.
 
 They live in `state.json` under `settings`, and the console reads them each
 time it uses one, so a change applies on its next tick with no restart. The

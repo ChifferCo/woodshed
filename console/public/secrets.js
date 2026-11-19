@@ -10,14 +10,12 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
   const CLIENT_SECRET_EFFECT = 'Sign-in with GitHub becomes available. The first sign-in that works makes it required on every page; '
     + 'until then nothing changes, so a wrong Callback URL in the App’s settings locks nobody out.';
 
-  const SLACK_EFFECT = 'The next pull request a session opens is posted with this bot, to the channel on the Settings page.';
-
   const RECEIVER = W.providerWords.webhookReceiver ?? 'the webhook receiver';
-  const SLACK_SIGNING_EFFECT = `${W.capitalised(RECEIVER)} checks each Slack event with it, from its next request: a mention of the bot then asks a question.`;
+  // Slack's two keys are set on Settings' Slack card, which checks the token with Slack first (slackSetup.mjs). They
+  // keep their names and their place in the secret store, so what reads them is unchanged.
+  const ON_SLACK_CARD = new Set(['slack-bot-token', 'slack-signing-secret']);
 
   function effectOf(name) {
-    if (name === 'slack-bot-token') return SLACK_EFFECT;
-    if (name === 'slack-signing-secret') return SLACK_SIGNING_EFFECT;
     if (name === 'github-reviewer-app-key') return 'The next review a session finishes is submitted as the reviewer App.';
     return name === 'github-app-client-secret' ? CLIENT_SECRET_EFFECT : SESSION_EFFECT;
   }
@@ -368,7 +366,9 @@ window.Woodshed.settingsPage('/secrets', (app, life) => {
         .map(([g, rows]) => h('section', { class: 'secret-group', 'aria-labelledby': `group-${g.id}` },
           h('h2', { id: `group-${g.id}`, class: 'label' }, g.title),
           h('p', { class: 'sub' }, g.note),
-          h('div', { class: 'secret-list' }, rows.map(secretRow)))),
+          h('div', { class: 'secret-list' }, rows.filter((s) => !ON_SLACK_CARD.has(s.name)).map(secretRow)),
+          g.id === 'console' && rows.some((s) => ON_SLACK_CARD.has(s.name))
+            && h('p', { class: 'sub slack-moved' }, 'Slack\'s bot token and signing secret are set on ', h('a', { href: '/console-settings#slack' }, 'Settings → Slack'), '.'))),
       h('p', { class: 'foot' }, 'The Postgres password is not here: RDS keeps and rotates it.')));
   }
 

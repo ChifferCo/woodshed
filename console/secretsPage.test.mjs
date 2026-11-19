@@ -80,3 +80,16 @@ test('a missing secret shows Set where the store makes it on its first write, an
   assert.deepEqual(buttonsOf(terraform, 'openai-api-key'), []);
   assert.match(textOf(terraform), /Missing in AWS: apply Terraform to create it/);
 });
+
+test('Slack\'s two keys are not listed: one line points to the Slack card, where they are set', async () => {
+  const app = await loadPage([
+    row('github-app-key', { group: 'console', kind: 'pem', readable: false }),
+    row('slack-bot-token', { group: 'console', readable: false }),
+    row('slack-signing-secret', { group: 'console', readable: false }),
+  ]);
+  const group = section(app, 'Console only');
+  assert.deepEqual(walk(group).filter((e) => e.className === 'secret-name').map(textOf), ['github-app-key']);
+  const note = walk(group).find((e) => e.className === 'sub slack-moved');
+  assert.equal(textOf(note), 'Slack\'s bot token and signing secret are set on Settings → Slack.');
+  assert.equal(walk(note).find((e) => e.tag === 'a').attrs.href, '/console-settings#slack');
+});

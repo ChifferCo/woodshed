@@ -89,6 +89,14 @@
 //   POST /api/access/ask|withdraw  a visitor, signed in but not on the list, asks to join or takes it back
 //   POST /api/console-settings   {"values": {"maxRunning": 6, ...}, "slackChannel": "C..."}   one card's changes, all or none
 //   POST /api/console-settings/webhooks  {"source": "github"|"slack", "off": true|false}   drop that source's webhooks (webhookSwitch.mjs)
+//   GET  /api/console-settings/slack   the Slack card: who the bot is (never a key), the channel, the events Request URL,
+//                                the app manifest and the embedding program's install option (slackSetup.mjs)
+//   POST /api/console-settings/slack   {"botToken"?, "signingSecret"?, "channel"?}   the Set up Slack dialog's save: an empty
+//                                field keeps its value, and a token is checked with Slack's auth.test before anything is kept
+//   POST /api/console-settings/slack/check   {"botToken"}   who a pasted token is, by auth.test, keeping nothing
+//   GET  /api/console-settings/slack/channels?q=   the channel picker: channels whose name has that text, and whether the bot
+//                                is in each; POST with {"q", "botToken"} lists them with a token pasted but not saved yet
+//   POST /api/console-settings/slack/disconnect  {"confirm": "slack"}   both Slack secrets deleted, where the store can make them again
 //   POST /api/console-settings/projects         {"repo": "owner/name", "name": "optional"}   add a repo sessions can start on (addedProjects.mjs)
 //   GET  /api/console-settings/projects/repos   the repos the GitHub App may reach that are not projects yet, for Add a repo
 //   POST /api/console-settings/projects/remove  {"name": "<project>"}   take an added repo off, with its repo settings
@@ -181,7 +189,7 @@ const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'publ
 // /, /all and a session's page are one page, session.js last.
 // The settings pages are one page too: each address loads every settings page's script, and common.js shows the one the
 // address names, then moves between them in place (settingsPage), so switching pages never reloads.
-const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
+const SETTINGS_SCRIPTS = ['dbRestoreStates.js', 'dbRestore.js', 'repoLayers.js', 'myRepoSettings.js', 'mySettings.js', 'slackSetup.js', 'consoleSettings.js', 'repoSettings.js', 'webhookSetup.js', 'secrets.js', 'people.js', 'events.js'];
 const SHELL_SCRIPTS = ['terminalCache.js', 'terminalScroll.cjs', 'terminalFind.cjs', 'terminal.js', 'dictation.js', 'launcher.js', 'sharedHome.js', 'messageBox.js', 'appShare.js', 'session.js'];
 const STATIC_FILES = {
   'style.css': 'text/css; charset=utf-8',
@@ -208,6 +216,7 @@ const STATIC_FILES = {
   'events.js': 'text/javascript; charset=utf-8',
   'secrets.js': 'text/javascript; charset=utf-8',
   'webhookSetup.js': 'text/javascript; charset=utf-8',
+  'slackSetup.js': 'text/javascript; charset=utf-8',
   'githubSetup.js': 'text/javascript; charset=utf-8',
   'login.js': 'text/javascript; charset=utf-8',
   'launcher.js': 'text/javascript; charset=utf-8',
@@ -239,6 +248,8 @@ const UPDATES_CHECK_PATH = `${UPDATES_PATH}/check`;
 const UPDATES_UPDATE_PATH = `${UPDATES_PATH}/update`;
 const PROJECT_COLOR_PATH = '/api/console-settings/projects/color';
 const PROJECT_CHANNEL_PATH = `${PROJECTS_PATH}/slack-channel`;
+const SLACK_SETUP_PATH = '/api/console-settings/slack';
+const SLACK_SETUP_WRITE_RE = /^\/api\/console-settings\/slack(?:\/(check|channels|disconnect))?$/;
 const PROJECT_TRIGGERS_PATH = `${PROJECTS_PATH}/triggers`;
 const MY_DEFAULT_PROJECT_PATH = '/api/my/projects/default';
 const MY_TOKEN_RE = /^\/api\/my\/claude-token(?:\/(remove|shared))?$/;
@@ -564,7 +575,7 @@ export function createHandler({
   people = null, slackPeople = null, claudeSettings = null, viewPrefs = null, attachments = null, qaRecordings = null, prChips = null, members = null, asks = null,
   dbRestore = null, githubSetup = null, reviewerApp = null, secrets = null, appShares = null, provider = null, appIdentity = null, databaseGate = null, projectAccess = null, addedProjects = null,
   projectColors = null, githubFor = null, trusted = null, userMenu = null, woodshedUpdate = null, codexModels = null, appPorts = null,
-  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, githubConnectHref = null, githubConnectAutomatic = false,
+  openaiTeamKey = null, repoSettings = null, repoTriggers = null, workflowLinks = null, slackSetup = null, githubConnectHref = null, githubConnectAutomatic = false,
 }) {
   const repoSettingsApi = repoSettings ? createRepoSettingsApi({ repoSettings, config, projectAccess, slackOf: repoSlack, triggersOf: repoTriggersView, myView: (login) => myView(login) }) : null;
   const hosts = knownHosts(config);
@@ -1661,6 +1672,64 @@ export function createHandler({
     }
   }
 
+  // When the bot was last mentioned, from the Webhook events log (kept a week): the first thing to look at when
+  // questions go quiet.
+  function lastMentionAt() {
+    let last = null;
+    for (const e of events.list()) if (e.type === 'mention' && (!last || e.handledAt > last)) last = e.handledAt;
+    return last;
+  }
+
+  async function slackSetupReply(res) {
+    if (!slackSetup) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+    return reply(res, 200, { ...(await slackSetup.view()), lastMention: lastMentionAt() });
+  }
+
+  // A pasted token goes in a POST's body, never in a URL, so the channel list with one is a POST too.
+  async function slackChannelsReply(res, { query, botToken = null }) {
+    if (!slackSetup) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+    try {
+      const found = await slackSetup.channels({ query: String(query ?? '').slice(0, 80), botToken });
+      if (!found) return reply(res, 409, { error: 'Paste the bot token first: the channels are listed with it.' });
+      if (found.error) return reply(res, 400, { error: `Slack would not list the channels (${found.error}).` });
+      return reply(res, 200, found);
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      console.error('console: Slack channels not listed', { message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'Slack did not answer; try again' });
+    }
+  }
+
+  async function slackSetupWrite(req, res, action, login) {
+    if (!slackSetup) return reply(res, 404, { error: 'this console posts nothing to Slack' });
+    let body;
+    try {
+      body = await readJson(req);
+    } catch (err) {
+      return reply(res, 400, { error: err.message });
+    }
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return reply(res, 400, { error: 'body must be a JSON object' });
+    const by = login ?? 'console';
+    try {
+      if (action === 'channels') return await slackChannelsReply(res, { query: body.q, botToken: body.botToken ?? null });
+      if (action === 'check') return reply(res, 200, await slackSetup.check(body.botToken));
+      if (action === 'disconnect') {
+        if (body.confirm !== 'slack') return reply(res, 400, { error: 'type slack to confirm' });
+        await slackSetup.disconnect({ by });
+      } else {
+        for (const key of ['botToken', 'signingSecret', 'channel']) {
+          if (body[key] !== undefined && typeof body[key] !== 'string') return reply(res, 400, { error: `${key} must be text` });
+        }
+        await slackSetup.save({ botToken: body.botToken, signingSecret: body.signingSecret, channel: body.channel, by });
+      }
+    } catch (err) {
+      if (err.shown) return reply(res, err.status ?? 400, { error: err.message });
+      console.error('console: Slack setup failed', { action: action ?? 'save', message: String(err?.message ?? err).split('\n')[0] });
+      return reply(res, 502, { error: 'Slack or the secret store did not answer; nothing more was changed. The console log says why' });
+    }
+    return slackSetupReply(res);
+  }
+
   // `receiving`: whether webhooks reach this console at all, by a queue or from the program it is embedded in. Each
   // source's switch is null where there is none: Slack's only where Slack questions are answered at all.
   function webhookState() {
@@ -1850,6 +1919,8 @@ export function createHandler({
     if (terminalWrite && ['upload', 'scroll', 'send'].includes(terminalWrite[2])) return terminalAction(req, res, terminalWrite, login);
     if (pathname === UPDATES_CHECK_PATH || pathname === UPDATES_UPDATE_PATH) return woodshedUpdateWrite(res, pathname, login);
     if (pathname === '/api/console-settings/webhooks') return webhookSwitchWrite(req, res, login);
+    const slackWrite = SLACK_SETUP_WRITE_RE.exec(pathname);
+    if (slackWrite) return slackSetupWrite(req, res, slackWrite[1] ?? null, login);
     if (pathname === '/api/my/reviews') return myReviewsWrite(req, res, login);
     if (pathname === '/api/console-settings' || pathname === '/api/console-settings/clean' || pathname === PROJECTS_PATH || pathname === `${PROJECTS_PATH}/remove` || pathname === PROJECT_COLOR_PATH || pathname === PROJECT_CHANNEL_PATH || pathname === PROJECT_TRIGGERS_PATH) return consoleSettingsWrite(req, res, pathname, login);
     if (PEOPLE_RE.test(pathname)) return peopleWrite(req, res, pathname, login);
@@ -2000,6 +2071,8 @@ export function createHandler({
     if (pathname === '/api/setup/github') return githubSetup ? reply(res, 200, await githubSetup.view()) : reply(res, 404, { error: 'this console has no secret store, so it cannot keep a GitHub App' });
     if (pathname === '/api/console-settings') return consoleSettingsReply(res);
     if (pathname === UPDATES_PATH) return woodshedUpdateReply(res);
+    if (pathname === SLACK_SETUP_PATH) return slackSetupReply(res);
+    if (pathname === `${SLACK_SETUP_PATH}/channels`) return slackChannelsReply(res, { query: url.searchParams.get('q') });
     if (pathname === `${PROJECTS_PATH}/repos`) return repoChoicesReply(res);
     if (pathname === '/api/people') return peopleReply(res);
     if (pathname === '/api/people/slack-search') return slackSearchReply(res, url.searchParams.get('q'));

@@ -1140,6 +1140,45 @@ dialog.machine .machine-foot { margin: 0; padding-top: 10px; }
 .invite-row { display: flex; flex-wrap: wrap; gap: 8px; max-width: 560px; }
 .invite-row .field { flex: 1 1 220px; font-family: var(--mono); }
 
+/* The Slack card (Console settings): a row each for the bot, pull requests and questions, and their Limits folded
+   under them. The Set up Slack dialog and the channel picker are public/slackSetup.js. */
+.slack-rows { display: flex; flex-direction: column; }
+.slack-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 16px; align-items: center; padding: 11px 0; border-top: 1px solid var(--line-soft); }
+.slack-row:first-child { border-top: 0; padding-top: 2px; }
+.slack-row .set-name { margin: 0; }
+.slack-row .sub { grid-column: 1; margin: 0; font-size: 13px; }
+.slack-row .slack-act { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; }
+.slack-row .slack-more { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
+.slack-limits { grid-column: 1 / -1; margin-top: 4px; padding-left: 14px; border-left: 2px solid var(--line-soft); }
+.slack-limits .set-rows { margin-bottom: 4px; }
+@media (max-width: 560px) { .slack-row { grid-template-columns: minmax(0, 1fr); } .slack-row .slack-act { grid-column: 1; grid-row: auto; justify-content: flex-start; } }
+.channel-pick { display: flex; flex-direction: column; gap: 6px; max-width: 560px; }
+.channel-list { display: flex; flex-direction: column; max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.channel-option { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 10px; padding: 7px 10px; border: 0; border-top: 1px solid var(--line-soft); background: transparent; color: inherit; font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.channel-option:first-child { border-top: 0; }
+.channel-option:hover, .channel-option:focus-visible { background: var(--slate-tint); }
+.channel-option[aria-selected="true"] { background: var(--amber-tint); font-weight: 600; }
+.channel-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
+.channel-empty, .channel-note:empty { margin: 0; padding: 8px 10px; }
+.channel-note:empty { display: none; }
+.channel-pick .sub { margin: 0; font-size: 12.5px; }
+.channel-pick .field.is-channel { width: 180px; max-width: 100%; }
+.slack-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 16px; }
+.slack-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 4px 12px; }
+.slack-step .step-n { color: var(--sub); }
+.slack-step-body { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.slack-step-body h3 { margin: 0; font-size: 14px; }
+.slack-step-body .sub, .slack-step-body .cap-note { margin: 0; }
+.slack-manifest { max-height: 160px; white-space: pre; overflow: auto; font-size: 12px; }
+.slack-options { display: flex; flex-direction: column; gap: 10px; }
+.slack-option { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 4px 12px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--ground); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.slack-option .radio { width: 16px; height: 16px; margin-top: 2px; border-radius: 50%; border: 1.5px solid var(--line); box-sizing: border-box; }
+.slack-option[aria-checked="true"] { border-color: var(--amber); box-shadow: inset 0 0 0 1px var(--amber); }
+.slack-option[aria-checked="true"] .radio { border: 5px solid var(--amber); }
+.slack-option[aria-disabled="true"] { cursor: not-allowed; background: var(--stopped); color: var(--sub); }
+.slack-option-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.slack-option .sub { grid-column: 2; font-size: 13px; }
+
 /* The setup card: what New session needs, on the rail's Mine view and in the pane. */
 .setup-card { margin: 8px; padding: 12px; border: 1px solid var(--amber); border-radius: 8px; background: var(--amber-tint); display: grid; gap: 10px; }
 .setup-card h3 { margin: 0; font-size: 14px; }
