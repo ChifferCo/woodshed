@@ -612,7 +612,7 @@ test('this install\'s own console holding the ports is not refused, and its pid 
     ['its environment', `WOODSHED_PORT=${port}\nWOODSHED_SESSION_API_PORT=${port + 1}\nWOODSHED_STATE_DIR=${home}/console\n`, ['./bin/woodshed', { cwd: home }]],
   ]) {
     fs.writeFileSync(path.join(home, 'stack.env'), stackEnv);
-    const own = spawn(start[0], { ...start[1], stdio: ['ignore', 'pipe', 'inherit'] });
+    const own = spawn(start[0], { ...start[1], stdio: ['ignore', 'pipe', 'ignore'], detached: true });
     await new Promise((resolve) => own.stdout.once('data', resolve));
     try {
       const pid = runInstallFunction(`checkPorts "${home}" "${home}/stack.env"`);
@@ -622,7 +622,8 @@ test('this install\'s own console holding the ports is not refused, and its pid 
       runInstallFunction(`stopOwnConsole ${pid} ${port}`);
       assert.equal(runInstallFunction(`portHolder ${port} || echo free`), 'free\n');
     } finally {
-      own.kill();
+      // The launcher's console child is in its group: kill both, so a failed assertion leaves nothing listening.
+      try { process.kill(-own.pid, 'SIGKILL'); } catch {}
     }
   }
 });
