@@ -94,6 +94,27 @@
   }
 
   /**
+   * The ?tab an entry's address asks for, as `login` reads it. The page writes ?tab into an entry itself (a remembered
+   * tab, a click), so on another login's entry only the ?tab it arrived with (`linkedTab`, a link followed or typed)
+   * still asks; the rest was that login's choice. An entry with no login (an older page, or a new one) is the reader's.
+   * @param {object|null} state  history.state
+   * @param {string|null} login  the page's woodshed-login meta
+   * @param {string|null} inAddress  the address's ?tab
+   */
+  function addressTab(state, login, inAddress) {
+    if (!inAddress) return null;
+    if (!state || !state.login || state.login === login) return inAddress;
+    return state.linkedTab === inAddress ? inAddress : null;
+  }
+  /**
+   * The ?tab an entry arrived with: its address's, when it has no state yet (a link followed, typed or pushed), else
+   * the one it kept.
+   */
+  function linkedTab(state, inAddress) {
+    return state ? (state.linkedTab ?? null) : (inAddress || null);
+  }
+
+  /**
    * Whether a list lookup answered for another login than the page was drawn for: the account changed in another
    * browser tab with no sign-out here, so nothing it answers may be kept under the page's login. Unknown on either
    * side (no sign-in, an older console) is no change.
@@ -163,5 +184,6 @@
     };
   }
 
-  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, otherLogin, lookups, memory };
+  return { KEY, TABS, LANDS_ON_REVIEW, known, shown, settle, picks, leftOn, entryTab, withEntryTab, addressTab, linkedTab,
+    otherLogin, lookups, memory };
 });

@@ -41,18 +41,28 @@
     // the tab it was last left on (sessionTabs.cjs); ?tab=agent asks for the Agent tab itself.
     // Back and Forward reach an entry that says which tab it showed (its history state, as Agent has no ?tab), so it
     // comes back as it was rather than as the memory now says.
-    const asked = tabMemory.asked(id, params.get('tab'), SessionTabs.entryTab(window.history.state, pageLogin));
+    // Another login's entry keeps only the ?tab it arrived with: one the page wrote there was that login's choice.
+    const state = window.history.state;
+    const arrivedWith = SessionTabs.linkedTab(state, params.get('tab'));
+    const inAddress = id ? SessionTabs.addressTab(state, pageLogin, params.get('tab')) : params.get('tab');
+    const dropped = Boolean(params.get('tab')) && !inAddress;
+    if (dropped) params.delete('tab');
+    const asked = tabMemory.asked(id, inAddress, SessionTabs.entryTab(state, pageLogin));
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
     if (id && asked) tabMemory.remember(id, tab);
     if (id && !params.get('tab') && tab !== 'agent') params.set('tab', tab);
     const query = params.toString();
-    if (id && asked) markEntry(`${pathname}${query ? `?${query}` : ''}`);
+    const address = `${pathname}${query ? `?${query}` : ''}`;
+    if (id && asked) markEntry(address, arrivedWith);
+    else if (id && dropped) window.history.replaceState({ ...state, login: pageLogin, tab: null, linkedTab: arrivedWith }, '', address);
   }
-  // This history entry's address, with the tab it shows in its state.
-  function markEntry(address) {
-    window.history.replaceState(SessionTabs.withEntryTab(window.history.state, tab, pageLogin), '', address);
+  // This history entry's address, with the tab it shows in its state (and the ?tab it arrived with, when given).
+  function markEntry(address, arrivedWith) {
+    const state = SessionTabs.withEntryTab(window.history.state, tab, pageLogin);
+    if (arrivedWith !== undefined) state.linkedTab = arrivedWith;
+    window.history.replaceState(state, '', address);
   }
   // This history entry's state alone, with the tab it keeps for Back and Forward (sessionTabs.cjs, leftOn): written as
   // the page draws a session, so an entry left by Back or Forward keeps it too, not only one left through a link.

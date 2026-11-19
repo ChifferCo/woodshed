@@ -254,3 +254,24 @@ test("a history entry's tab is read back only by the login that drew it", () => 
   assert.equal(tabs.entryTab({ tab: 'review' }, 'bob'), null);
   assert.equal(tabs.entryTab(null, 'bob'), null);
 });
+
+test("on another login's entry, only the ?tab it arrived with still asks", () => {
+  // Alice reopened a session from the rail with Review remembered: the page wrote ?tab=review, she followed no link.
+  const written = { tab: 'review', login: 'alice', linkedTab: tabs.linkedTab(null, null) };
+  assert.equal(tabs.addressTab(written, 'bob', 'review'), null, "Bob's Back: Alice's choice, not a link");
+  const bobs = tabs.memory(storage(), 'bob');
+  bobs.remember('aaaa1111', 'diff');
+  assert.equal(bobs.asked('aaaa1111', tabs.addressTab(written, 'bob', 'review'), tabs.entryTab(written, 'bob')), 'diff');
+  // Alice followed a link to ?tab=review: a deep link still opens Review for whoever comes back to it.
+  const linked = { tab: 'review', login: 'alice', linkedTab: tabs.linkedTab(null, 'review') };
+  assert.equal(tabs.addressTab(linked, 'bob', 'review'), 'review');
+  assert.equal(tabs.addressTab(linked, 'bob', 'diff'), null, 'a ?tab changed after it arrived was a choice');
+  // The reader's own entries, new ones and older pages' always count.
+  assert.equal(tabs.addressTab(written, 'alice', 'review'), 'review');
+  assert.equal(tabs.addressTab(null, 'bob', 'review'), 'review');
+  assert.equal(tabs.addressTab({ tab: 'review' }, 'bob', 'review'), 'review');
+  assert.equal(tabs.addressTab(written, 'bob', null), null);
+  // An entry keeps the ?tab it arrived with.
+  assert.equal(tabs.linkedTab({ linkedTab: 'review', tab: 'diff' }, 'diff'), 'review');
+  assert.equal(tabs.linkedTab({ tab: 'diff' }, 'diff'), null);
+});
