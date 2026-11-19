@@ -300,15 +300,18 @@ export function snapshotTreeish(review) {
  *
  * @returns {Promise<{ok: true, dir: string, files: number} | {ok: false, error: string}>}
  */
-export async function makeSnapshot({ repoDir, treeish, session }) {
+export async function makeSnapshot({ repoDir, treeish, session, listMaxBytes = 64 * 1024 * 1024 }) {
   sweepStaleSnapshots();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `woodshed-qa-${session}-`));
   const failed = (why) => {
     removeSnapshot(dir);
     return { ok: false, error: `could not copy the reviewed code (${why})` };
   };
-  const listed = await run('git', ['-C', repoDir, 'ls-tree', '-r', '-z', '--full-tree', treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS });
+  const listed = await run('git', ['-C', repoDir, 'ls-tree', '-r', '-z', '--full-tree', treeish], { timeoutMs: SNAPSHOT_TIMEOUT_MS, maxBytes: listMaxBytes });
   if (listed.status !== 0) return failed(`ls-tree: ${(listed.stderr || '').trim().slice(0, 200) || listed.status}`);
+  // Cut off at the runner's cap with a clean exit: a copy missing its last files
+  // would be answered from as if it were whole.
+  if (listed.truncated) return failed('the tree lists more files than the Q&A copies');
   const blobs = [];
   for (const entry of listed.stdout.split('\0')) {
     const m = /^(\d{6}) (\w+) ([0-9a-f]{40,64})\t(.+)$/s.exec(entry);
@@ -328,50 +331,72 @@ export async function makeSnapshot({ repoDir, treeish, session }) {
   return { ok: true, dir, files: blobs.length };
 }
 
-/** Every blob's bytes from one `cat-file --batch`, each written to its path in the order asked. */
+/**
+ * Every blob's bytes from one `cat-file --batch`, each written to its path in the
+ * order asked. Streamed: a blob's bytes go to its file as they arrive, so memory
+ * holds one chunk at a time, not a whole blob (a large binary the tree carries)
+ * nor a buffer grown by copying it again for each chunk.
+ */
 function writeBlobs({ repoDir, blobs }) {
   return new Promise((resolve, reject) => {
     if (!blobs.length) return resolve();
     const child = spawn('git', ['-C', repoDir, 'cat-file', '--batch'], { stdio: ['pipe', 'pipe', 'pipe'] });
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('timed out')); }, SNAPSHOT_TIMEOUT_MS);
-    let buf = Buffer.alloc(0);
+    const timer = setTimeout(() => finish(new Error('timed out')), SNAPSHOT_TIMEOUT_MS);
+    let head = Buffer.alloc(0);   // a header line arriving in pieces; never more than one line
     let next = 0;
-    let size = null;
+    let left = null;              // bytes of the current blob still to write; null between blobs
+    let trailer = false;          // the newline after a blob's bytes, still to skip
+    let fd = null;
     let stderr = '';
     let settled = false;
-    const finish = (err) => {
+    function finish(err) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (fd !== null) { try { fs.closeSync(fd); } catch {} fd = null; }
       if (err) { child.kill('SIGKILL'); reject(err); } else resolve();
-    };
+    }
+    function open(blob, size) {
+      fs.mkdirSync(path.dirname(blob.target), { recursive: true });
+      fd = fs.openSync(blob.target, 'w');
+      left = size;
+    }
+    function take(chunk) {
+      let at = 0;
+      while (at < chunk.length && !settled) {
+        if (trailer) {
+          at += 1;
+          trailer = false;
+          next += 1;
+          if (next === blobs.length) return finish();
+          continue;
+        }
+        if (left === null) {
+          const nl = chunk.indexOf(10, at);
+          if (nl === -1) { head = Buffer.concat([head, chunk.subarray(at)]); return; }
+          const header = Buffer.concat([head, chunk.subarray(at, nl)]).toString('utf8');
+          head = Buffer.alloc(0);
+          at = nl + 1;
+          const m = /^[0-9a-f]+ blob (\d+)$/.exec(header);
+          if (!m) return finish(new Error(`unexpected answer for ${blobs[next]?.sha?.slice(0, 12)}: ${header.slice(0, 80)}`));
+          open(blobs[next], Number(m[1]));
+        }
+        const n = Math.min(left, chunk.length - at);
+        if (n > 0) fs.writeSync(fd, chunk, at, n);
+        at += n;
+        left -= n;
+        if (left === 0) {
+          fs.closeSync(fd);
+          fd = null;
+          left = null;
+          trailer = true;
+        }
+      }
+    }
     child.stderr.on('data', (d) => { if (stderr.length < 2000) stderr += d; });
     child.on('error', finish);
     child.stdout.on('data', (chunk) => {
-      buf = buf.length ? Buffer.concat([buf, chunk]) : chunk;
-      try {
-        for (;;) {
-          if (size === null) {
-            const nl = buf.indexOf(10);
-            if (nl === -1) return;
-            const header = buf.subarray(0, nl).toString('utf8');
-            const m = /^[0-9a-f]+ blob (\d+)$/.exec(header);
-            if (!m) return finish(new Error(`unexpected answer for ${blobs[next]?.sha?.slice(0, 12)}: ${header.slice(0, 80)}`));
-            size = Number(m[1]);
-            buf = buf.subarray(nl + 1);
-          }
-          if (buf.length < size + 1) return;
-          const blob = blobs[next];
-          fs.mkdirSync(path.dirname(blob.target), { recursive: true });
-          fs.writeFileSync(blob.target, buf.subarray(0, size));
-          buf = buf.subarray(size + 1);
-          size = null;
-          next += 1;
-          if (next === blobs.length) return finish();
-        }
-      } catch (err) {
-        finish(err);
-      }
+      try { take(chunk); } catch (err) { finish(err); }
     });
     child.on('close', (code) => {
       if (next < blobs.length) finish(new Error(stderr.trim() || `git cat-file exited ${code} after ${next} of ${blobs.length}`));

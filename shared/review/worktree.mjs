@@ -721,7 +721,8 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
       };
     }
     const written = await git(worktreePath, ['write-tree'], INDEX_TIMEOUT_MS, env);
-    const treeSha = written.status === 0 && /^[0-9a-f]{40}$/.test((written.stdout || '').trim())
+    // 40 hex for SHA-1, 64 for a repository on SHA-256.
+    const treeSha = written.status === 0 && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test((written.stdout || '').trim())
       ? written.stdout.trim() : null;
     return { ok: true, patch: diffed.stdout || '', baseSha, headSha, treeSha, baseFetched };
   } finally {

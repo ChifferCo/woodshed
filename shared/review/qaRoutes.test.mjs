@@ -218,6 +218,38 @@ test('the copy is the tree as git stores it: no checkout filters, no export rule
   }
 });
 
+// Streamed to disk a chunk at a time: a large blob, an empty one and many small ones, across every chunk boundary,
+// come out byte for byte. And a listing the runner cut off fails the copy rather than leaving it short.
+test('the copy streams blobs of any size intact, and a cut-off listing fails it', async () => {
+  const repo = path.join(DIR, 'big');
+  fs.mkdirSync(path.join(repo, 'many'), { recursive: true });
+  const git = (...args) => execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  git('init', '-q');
+  const big = Buffer.alloc(20 * 1024 * 1024);
+  for (let i = 0; i < big.length; i += 1) big[i] = (i * 7 + (i >> 11)) & 0xff;
+  fs.writeFileSync(path.join(repo, 'big.bin'), big);
+  fs.writeFileSync(path.join(repo, 'empty.txt'), '');
+  for (let i = 0; i < 300; i += 1) fs.writeFileSync(path.join(repo, 'many', `f${i}.txt`), `file ${i}\n`.repeat(i % 7));
+  git('add', '-A');
+  git('commit', '-q', '-m', 'tree');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  const snap = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-cdcdcdcd' });
+  assert.equal(snap.ok, true, snap.error);
+  try {
+    assert.equal(snap.files, 302);
+    assert.ok(fs.readFileSync(path.join(snap.dir, 'big.bin')).equals(big), 'the large blob is intact');
+    assert.equal(fs.readFileSync(path.join(snap.dir, 'empty.txt'), 'utf8'), '');
+    for (const i of [0, 1, 6, 150, 299]) {
+      assert.equal(fs.readFileSync(path.join(snap.dir, 'many', `f${i}.txt`), 'utf8'), `file ${i}\n`.repeat(i % 7));
+    }
+  } finally {
+    removeSnapshot(snap.dir);
+  }
+  const cut = await makeSnapshot({ repoDir: repo, treeish: tree, session: 'claude-cdcdcdcd', listMaxBytes: 100 });
+  assert.deepEqual([cut.ok, /more files than/.test(cut.error)], [false, true]);
+  assert.deepEqual(fs.readdirSync(os.tmpdir()).filter((n) => n.startsWith('woodshed-qa-claude-cdcdcdcd-')), []);
+});
+
 test('copies a restart left behind are swept at the next copy, and a live one is not', () => {
   const tmp = fs.mkdtempSync(path.join(DIR, 'tmp-'));
   const stale = path.join(tmp, 'woodshed-qa-claude-12345678-old');
