@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   Refusal, answerApproval, answerQuestions, matchApproval, matchQuestion, matchReview, planMoves, readApproval, readPrompt,
-  readQuestionPicker, readTabs, typeMessage,
+  readQuestionPicker, readTabs, typeMessage, composerEmpty,
 } from './panePrompt.mjs';
 import { createPicker } from '../shared/__fixtures__/claudePicker.mjs';
 
@@ -355,4 +355,20 @@ test('a message that starts with a number is not taken for a menu, in the input 
   const io = { capture: async () => screens.shift() ?? typedIn, type: async () => done.push('type'), enter: async () => done.push('Enter') };
   assert.deepEqual(await typeMessage(io, '1. Ship it'), { sent: true });
   assert.deepEqual(done, ['type', 'Enter']);
+});
+
+test('the input box is empty when only dim text follows its mark, as claude and codex draw it', () => {
+  // From real captures with colours (tmux capture-pane -e -p), claude 2.1.328 and codex 0.167.
+  const rule = `\x1b[38;5;244m${'─'.repeat(60)}\x1b[39m`;
+  const footer = '\x1b[39m  \x1b[38;5;220m⏵⏵\x1b[39m \x1b[38;5;220mauto mode on\x1b[38;5;246m (shift+tab to cycle)\x1b[39m';
+  const claude = (box) => [rule, box, `\x1b[0m${rule}`, footer].join('\n');
+  assert.equal(composerEmpty(claude('\x1b[39m❯ \x1b[2mTry\x1b[0m\x1b[39m\x1b[49m \x1b[2m"fix typecheck errors"')), true, 'its suggestion, dim');
+  assert.equal(composerEmpty(claude('\x1b[39m❯ hello draft')), false, 'a draft');
+  assert.equal(composerEmpty(claude('\x1b[39m❯ hello \x1b[2mand a dim tail')), false, 'a draft with a suggestion after it');
+  const codex = (box) => [box, '\x1b[0m\x1b[39m\x1b[49m', '  \x1b[38;5;223mGPT-6.2-Sol default\x1b[39m · /tmp/fx/repo'].join('\n');
+  assert.equal(composerEmpty(codex('\x1b[1m›\x1b[0m\x1b[39m\x1b[49m \x1b[2mAsk Codex to do anything')), true, 'its placeholder, dim');
+  assert.equal(composerEmpty(codex('\x1b[1m›\x1b[0m\x1b[39m\x1b[49m hello draft')), false);
+  // codex's folder-trust menu: a highlighted row, no input box.
+  const trust = ['  decision will be saved.', '\x1b[1;7m› 1. Trust and continue', '\x1b[0m\x1b[39m\x1b[49m  2. Back to Agent Command Center', '  \x1b[1menter\x1b[0;2m continue · \x1b[0;1mesc\x1b[0;2m back'].join('\n');
+  assert.equal(composerEmpty(trust), null);
 });

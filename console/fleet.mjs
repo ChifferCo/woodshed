@@ -537,7 +537,10 @@ export function createFleet({
     return at === -1 ? list : [...list.slice(0, at), ...list.slice(at + 1)];
   }
 
-  /** @returns {Promise<'sent'|'queued'>} */
+  /**
+   * @returns {Promise<'sent'|'queued'|'in-box'>}  in-box: typed with no Enter (a prompt came up as it went in), so it sits
+   *   in the agent's box unsent, for the person to send or clear in the TUI tab; never typed again
+   */
   async function send(session, text) {
     // Behind the ones already waiting, in the order they were sent.
     if (!canType(session) || session.pendingMessages.length) {
@@ -547,7 +550,7 @@ export function createFleet({
     try {
       await statusd(session, 'POST', '/send', { body: { text } });
     } catch (err) {
-      if (inTheBox(session, err)) return 'sent';
+      if (inTheBox(session, err)) return 'in-box';
       // Busy is not a failure: hold() says it is held.
       if (!busyWhy(err)) console.warn('fleet: send failed, holding the message', { id: session.id, message: firstLine(err) });
       hold(session, text);

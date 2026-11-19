@@ -974,24 +974,25 @@ test('text left in the box with no Enter blocks the next message until the agent
   assert.equal(first.body.typed, true, 'it went in, with no Enter');
   const second = await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }));
   assert.equal(second.status, 409);
-  assert.equal(second.body.why, 'draft-in-box', 'not typed onto the end of the first');
+  assert.equal(second.body.why, 'box-in-use', 'not typed onto the end of the first');
   await pause(500);
   assert.equal(await got(), '', 'no Enter for either');
-  // Someone answers in the TUI tab and the agent takes the box: a hook fires, and the next can go.
+  // A hook firing does not empty the box: an edited or kept draft still blocks, until the box is empty.
   await setState('working');
-  const third = await call('POST', '/send', 'sess', JSON.stringify({ text: 'third' }));
-  assert.equal(third.body.why, 'working', 'past the draft, busy only with the turn');
+  await pause(300);
+  await setState('done');
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'third' }))).body.why, 'box-in-use');
 });
 
 test('a draft emptied in the TUI tab no longer blocks the next message', async (t) => {
-  // No hook fires and no turn starts when someone clears the box: its text gone from the screen is the sign.
+  // No hook fires and no turn starts when someone clears the box: the box read empty from the screen is the sign.
   const { call, tmux, got } = await promptPane(t, 'done', { menuOnInput: true });
   assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'first' }))).body.typed, true);
-  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }))).body.why, 'draft-in-box');
+  assert.equal((await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }))).body.why, 'box-in-use');
   await tmux('send-keys', '-t', 'claude', 'C-u');
   await pause(300);
   const after = await call('POST', '/send', 'sess', JSON.stringify({ text: 'second' }));
   assert.equal(after.status, 409, 'its menu came up again as this went in: no Enter');
-  assert.equal(after.body.typed, true, 'past the draft: typed this time');
+  assert.equal(after.body.typed, true, 'the box empty: typed this time');
   assert.equal(await got(), '', 'and no Enter for any of them');
 });

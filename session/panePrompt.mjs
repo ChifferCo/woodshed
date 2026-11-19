@@ -457,3 +457,53 @@ export async function typeMessage(io, text) {
   }
   return { sent: true };
 }
+
+// The agent's input box, read from a capture with its colours (`tmux capture-pane -e -p`). claude draws it as `❯ ` between
+// two rules, codex as `› ` over its footer. An empty one shows a suggestion or a placeholder in dim (SGR 2), never in
+// the plain colours a typed draft has (claude 2.1.328 and codex 0.167, captured): so the box is empty when nothing but
+// dim text follows its mark.
+const SGR = /\x1b\[([0-9;]*)m/g;
+
+/** The text of a line as drawn, leaving out what it draws dim. */
+export function undimmed(line) {
+  let dim = false;
+  let out = '';
+  let at = 0;
+  for (const m of line.matchAll(SGR)) {
+    if (!dim) out += line.slice(at, m.index);
+    const codes = m[1] === '' ? [0] : m[1].split(';').map(Number);
+    for (const c of codes) {
+      if (c === 2) dim = true;
+      else if (c === 0 || c === 22) dim = false;
+    }
+    at = m.index + m[0].length;
+  }
+  if (!dim) out += line.slice(at);
+  return out.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+}
+
+const PLAIN = (line) => line.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+const BOX_MARK = /^\s*[❯›]\s?/;
+const BOX_RULE = /^\s*─{10,}\s*$/;
+
+/**
+ * Whether the agent's input box is empty, from a capture with colours.
+ * @param {string} colored  `tmux capture-pane -e -p`
+ * @returns {boolean|null}  null when no input box is on screen (a menu, a screen of another program)
+ */
+export function composerEmpty(colored) {
+  const lines = linesOf(colored);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const plain = PLAIN(lines[i]);
+    if (!BOX_MARK.test(plain) || HIGHLIGHTED_ROW.test(plain)) continue;
+    // Its draft, to the rule under it (claude) or the first blank line (codex): every line with no dim text left.
+    let text = undimmed(lines[i]).replace(BOX_MARK, '');
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = PLAIN(lines[j]);
+      if (BOX_RULE.test(next) || !next.trim()) break;
+      text += undimmed(lines[j]);
+    }
+    return !text.replace(/\u00a0/g, ' ').trim();
+  }
+  return null;
+}

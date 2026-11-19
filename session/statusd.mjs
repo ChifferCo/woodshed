@@ -67,7 +67,7 @@ import { readDisk, readUsage, usageBetween } from './usage.mjs';
 import { readPlanUsage } from './planUsage.mjs';
 import { readCodexPlanUsage } from './codexPlanUsage.mjs';
 import { classifyCodexPane } from './codexState.mjs';
-import { Refusal, answerApproval, answerQuestions, readPrompt, typeMessage } from './panePrompt.mjs';
+import { Refusal, answerApproval, answerQuestions, composerEmpty, readPrompt, typeMessage } from './panePrompt.mjs';
 import { createReviewHost } from './reviewShed/host.mjs';
 import { createCodeEditor } from './codeEditor.mjs';
 import { readSessionDiff } from './sessionDiff.mjs';
@@ -824,7 +824,7 @@ async function startClaudeLogin() {
       const working = state === 'working' || (state === 'done' && !atPrompt(now));
       if (working || (state !== 'done' && state !== 'needs-you')) throw new Error(`claude is ${working ? 'working' : `not at its prompt (${state})`}: sign in once its turn ends`);
       if (!lastTaken(state, now.hook, now.pane)) throw new Error('claude has not started on the last message yet: sign in once its turn ends');
-      if (!draftCleared(state, now.hook, now.pane)) throw new Error('a message is in claude\'s box, unsent: send or clear it in the TUI tab first');
+      if (!(await boxEmpty())) throw new Error('claude\'s box holds text, unsent: send or clear it in the TUI tab first');
       const done = await send('/woodshed:remote-control');
       if (!done.sent) throw new Error(done.typed ? 'the command is in claude\'s box, not sent: send it from the TUI tab' : 'claude is asking something: answer it first, then sign in again');
     } finally {
@@ -917,7 +917,6 @@ const paneIo = {
 async function send(text) {
   const done = await typeMessage(paneIo, text);
   if (done.sent) lastSent = { at: Date.now(), seenWorking: false };
-  if (done.typed) unsentDraft = { at: Date.now(), text };
   if (done.sent) console.log('statusd: text sent to claude', { chars: text.length, paste: CODEX });
   else console.log('statusd: text not sent, a prompt is open', { kind: done.kind, typed: done.typed, chars: text.length });
   return done;
@@ -935,10 +934,16 @@ const TAKEN_MS = 20_000;
 let typing = false;
 // The last message sent, until the agent is seen taking it: a hook since its Enter, a pane seen working, or TAKEN_MS.
 let lastSent = null;
-// Text typed with no Enter after it (a prompt came up, or the Enter failed): it sits in the agent's box, and the next
-// message would be typed onto its end. Nothing is typed until the agent is seen taking it (someone sent or cleared it
-// in the TUI tab: a hook since, or a turn).
-let unsentDraft = null;
+// Nothing is typed into an input box that holds text: a draft someone is writing in the TUI tab, or one left with no
+// Enter (a prompt came up, the Enter failed). Its own text would be sent with the message, or the message typed onto
+// its end. The box is read from the screen with its colours (composerEmpty, panePrompt.mjs), so an edited draft still
+// counts and the box's own suggestion, drawn dim, does not.
+async function boxEmpty() {
+  const colored = (await run('tmux', ['capture-pane', '-e', '-p', '-t', TMUX_TARGET])).stdout;
+  // A prompt on screen is typeMessage's to refuse, as the prompt it is; no box found, the pane checks decide.
+  if (readPrompt(colored.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ''))) return true;
+  return composerEmpty(colored) !== false;
+}
 
 // At its prompt between turns: its state says done, and, for claude, whose state is its hooks', its screen agrees. A
 // stale hook can say done while the pane shows a turn running ("esc to interrupt") or a dialog: neither is the time
@@ -960,21 +965,6 @@ function lastTaken(state, hook, pane) {
   return false;
 }
 
-// The box was emptied in the TUI tab when the draft's start is no longer on screen. Its first words, which a wrapped
-// line does not split; kept in memory only, never logged.
-function draftGone(pane) {
-  const start = unsentDraft.text.replace(/\s+/g, ' ').trim().slice(0, 20);
-  return typeof pane === 'string' && !!start && !pane.replace(/\s+/g, ' ').includes(start);
-}
-
-function draftCleared(state, hook, pane) {
-  if (!unsentDraft) return true;
-  if (state === 'working' || (hook?.at ?? 0) > unsentDraft.at || draftGone(pane)) {
-    unsentDraft = null;
-    return true;
-  }
-  return false;
-}
 
 // The Claude home, as a gzipped tar streamed to the console's session API: a private session's for its owner alone,
 // a shared session's for its own next run.
@@ -1338,8 +1328,8 @@ async function handle(req, res) {
     try {
       const now = await agentState({ strict: true });
       const { state } = now;
-      if (!draftCleared(state, now.hook, now.pane)) {
-        return busy('draft-in-box', `a message is in ${agentName}'s box, unsent: send or clear it in the TUI tab, and this goes after it`);
+      if (!(await boxEmpty())) {
+        return busy('box-in-use', `${agentName}'s box holds text, unsent: send or clear it in the TUI tab, and this goes after it`);
       }
       // Mid-turn (its state, or its screen behind a stale hook), or the last message not yet taken (its turn may be
       // starting): it waits, to go in between turns.

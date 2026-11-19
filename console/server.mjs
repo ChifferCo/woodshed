@@ -1761,6 +1761,8 @@ export function createHandler({
       // Through the fleet, which holds it in the session's saved pendingMessages while the agent is busy (mid-turn, at a
       // prompt) and sends it once it is back at its prompt: kept across a console restart and a stop mid-turn.
       const outcome = await fleet.send(session, body.text);
+      // Typed with no Enter: not sent, and not to send again, since it is in the agent's box.
+      if (outcome === 'in-box') return reply(res, 409, { typed: true, error: 'it went into the agent\'s box but was not sent: a prompt came up as it was typed. Answer it, then send or clear the box in the TUI tab' });
       return reply(res, 200, { ok: true, held: outcome === 'queued' });
     }
     return toStatusd(req, res, session, { method: 'POST', path: '/scroll', body: { steps: body?.steps, pane: body?.pane } });
