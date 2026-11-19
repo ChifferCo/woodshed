@@ -160,7 +160,10 @@ function load(path, makePages = () => [], { me = null, hostPage = null } = {}) {
   const title = () => app.querySelector('h1')?.textContent ?? null;
   const current = () => side()?.querySelectorAll('a.side-item').filter((a) => a.getAttribute('aria-current') === 'page').map((a) => a.getAttribute('href'));
   const tabs = () => app.querySelector('nav.settings-tabs')?.querySelectorAll('a').map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('aria-current')]);
-  return { W, El, tabs, app, location, pushed, intervals, listeners, errors, shown, click, back, side, title, current, link: (href) => app.querySelectorAll('a').find((a) => a.getAttribute('href') === href) };
+  // Settings' tabs under its entry, in the side list and in the avatar menu: [label, href, aria-current] each.
+  const subs = (cls) => [...(side()?.querySelectorAll(`a.${cls}`) ?? []).map((a) => [a.textContent, a.getAttribute('href'), a.getAttribute('aria-current')])];
+  const settingsEntry = () => side()?.querySelectorAll('a.side-item').find((a) => a.textContent === '⚙Settings');
+  return { W, El, tabs, subs, settingsEntry, app, location, pushed, intervals, listeners, errors, shown, click, back, side, title, current, link: (href) => app.querySelectorAll('a').find((a) => a.getAttribute('href') === href) };
 }
 
 /** A made-up settings page: its title, links to the others, a 5-second timer and a window listener, as events.js has. */
@@ -293,7 +296,12 @@ test('a program\'s page shows in the settings frame, under Settings and its tabs
     ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
     ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page'],
   ], 'then the program\'s after them, the page\'s own marked, without the page drawing again');
-  assert.deepEqual(t.current(), ['/console-settings'], 'and Settings is the side list\'s current entry');
+  assert.deepEqual(t.current(), ['/orgs/acme/credits'], 'and in the side list Credits, under Settings, is the current entry');
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true', 'Settings itself the set the page is in');
+  assert.deepEqual(t.subs('side-sub'), [
+    ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page'],
+  ]);
   assert.equal(t.click(t.link('/console-settings')), false, 'the console\'s tab is not on this page: the browser loads it');
 });
 
@@ -302,7 +310,10 @@ test('someone who is not an admin sees the program\'s tabs alone, and Settings o
   const t = load('/orgs/acme/credits', () => [], { me: { login: 'sam', admin: false, settingsTabs: HOST_TABS }, hostPage: { current: '/orgs/acme/credits', body: new first.El('p') } });
   await answered();
   assert.deepEqual(t.tabs(), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']]);
-  assert.deepEqual(t.current(), ['/orgs/acme/members'], 'Settings, opening Members, is current on Credits');
+  assert.deepEqual(t.current(), ['/orgs/acme/credits'], 'Credits, under Settings, is current');
+  assert.equal(t.settingsEntry().getAttribute('href'), '/orgs/acme/members', 'Settings opens Members');
+  assert.deepEqual(t.subs('side-sub'), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']], 'the program\'s tabs alone under it');
+  assert.deepEqual(t.subs('menu-sub'), [['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', 'page']], 'and in the menu');
   assert.equal(t.side().querySelectorAll('a.side-item').find((a) => a.textContent.endsWith('Settings') && a.textContent !== '◉My settings')?.textContent, '⚙Settings', 'with Settings\' own icon');
   assert.deepEqual([...t.W.consoleLinks().map((l) => l.label)], ['Settings'], 'no People or Webhook events');
 });
@@ -311,4 +322,66 @@ test('with no tabs from a program, someone who is not an admin has no Console en
   const t = load('/settings', () => [], { me: { login: 'sam', admin: false } });
   await answered();
   assert.equal(t.W.consoleLinks().length, 0);
+  assert.deepEqual(t.subs('side-sub'), [], 'and no tabs under anything');
+  assert.deepEqual(t.subs('menu-sub'), []);
+});
+
+// The console's own pages, for an admin: General and Secrets & webhooks, as made-up settings pages, and My settings.
+function adminPages(path, me = { login: 'sam', admin: true, settingsTabs: HOST_TABS }) {
+  const started = [];
+  return load(path, (W, window) => [page('General', '/console-settings', started, W, window), page('Secrets', '/secrets', started, W, window),
+    page('My settings', '/settings', started, W, window), page('Webhook events', '/events', started, W, window)], { me });
+}
+
+test('on one of Settings\' pages its tabs open under it in the side list, the page\'s marked, and move in place', async () => {
+  const t = adminPages('/console-settings');
+  assert.deepEqual(t.subs('side-sub'), [], 'none until /api/me answers');
+  await answered();
+  const list = t.side();
+  assert.deepEqual(t.subs('side-sub'), [
+    ['General', '/console-settings', 'page'], ['Secrets & webhooks', '/secrets', null],
+    ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', null],
+  ], 'filled when /api/me answers, the page not drawn again');
+  assert.equal(t.side(), list);
+  assert.deepEqual(t.current(), ['/console-settings']);
+  assert.equal(t.settingsEntry().getAttribute('aria-current'), 'true');
+  const secrets = t.side().querySelectorAll('a.side-sub').find((a) => a.getAttribute('href') === '/secrets');
+  assert.equal(t.click(secrets), true, 'a click on a console tab is the page\'s, in place');
+  assert.equal(t.title(), 'Secrets');
+  assert.equal(t.side(), list, 'the same side list');
+  assert.deepEqual(t.subs('side-sub').map(([, href, mark]) => [href, mark]), [
+    ['/console-settings', null], ['/secrets', 'page'], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
+  ]);
+  assert.deepEqual(t.subs('menu-sub').map(([, href, mark]) => [href, mark]), [
+    ['/console-settings', null], ['/secrets', 'page'], ['/orgs/acme/members', null], ['/orgs/acme/credits', null],
+  ], 'and the menu\'s mark moves with it');
+  const members = t.side().querySelectorAll('a.side-sub').find((a) => a.getAttribute('href') === '/orgs/acme/members');
+  assert.equal(t.click(members), false, 'a program\'s tab is not on this page: the browser loads it');
+});
+
+test('on the other settings pages Settings stays one entry, and the avatar menu lists its tabs always', async () => {
+  for (const path of ['/settings', '/events']) {
+    const t = adminPages(path);
+    await answered();
+    assert.deepEqual(t.subs('side-sub'), [], `none under Settings on ${path}`);
+    assert.equal(t.settingsEntry().getAttribute('aria-current'), null);
+    assert.deepEqual(t.subs('menu-sub'), [
+      ['General', '/console-settings', null], ['Secrets & webhooks', '/secrets', null],
+      ['Members', '/orgs/acme/members', null], ['Credits', '/orgs/acme/credits', null],
+    ], `the menu has them on ${path}, none marked`);
+    const sub = t.side().querySelectorAll('a.menu-sub')[0];
+    assert.equal(sub.getAttribute('role'), 'menuitem');
+  }
+  const t = adminPages('/settings', { login: 'sam', admin: true });
+  await answered();
+  assert.deepEqual(t.subs('menu-sub').map(([label]) => label), ['General', 'Secrets & webhooks'], 'with no program, the console\'s two');
+  t.click(t.side().querySelectorAll('a.side-item').find((a) => a.getAttribute('href') === '/console-settings'));
+  assert.deepEqual(t.subs('side-sub').map(([label, , mark]) => [label, mark]), [['General', 'page'], ['Secrets & webhooks', null]], 'and opening Settings opens them');
+});
+
+test('a repo\'s own settings open Settings too, with General marked', async () => {
+  const t = load('/console-settings/repos/app', (W) => [[/^\/console-settings\/repos\//, (app, life) => app.replaceChildren(W.h('div', { class: 'page' }, life.nav('/console-settings')))]],
+    { me: { login: 'sam', admin: true } });
+  await answered();
+  assert.deepEqual(t.subs('side-sub'), [['General', '/console-settings', 'page'], ['Secrets & webhooks', '/secrets', null]]);
 });

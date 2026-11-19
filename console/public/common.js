@@ -1183,6 +1183,13 @@
     tabRow = row;
     return row;
   }
+  // Settings' tabs again, as links under its entry in the avatar menu and the side list, so its pages are found without
+  // opening Settings first. The one open is the page shown (a repo's own settings are General's); Settings itself is then
+  // `true`, the set the page is in, not the page.
+  function subItems(me, current, cls, extra = {}) {
+    return tabsOf(me).map((tab) => h('a', { class: cls, href: tab.href, ...extra, 'aria-current': tab.href === current ? 'page' : null }, tab.label));
+  }
+  const settingsMark = (link, current) => (!isCurrent(link, current) ? null : link.label === 'Settings' ? 'true' : 'page');
   // Behind a hosting proxy the host keeps who is in (and signs people in and out): there is no People page. Settings
   // also stays current on a host's tabs, and someone who is not an admin, given tabs, has Settings alone, opening the first.
   function consoleLinks(me) {
@@ -1229,7 +1236,11 @@
         // Under the name, what a program embedding the console says the person is in (server.mjs, menuOf).
         me.menuSubtitle && h('span', { class: 'user-sub' }, me.menuSubtitle)),
       h('span', { class: 'caret', 'aria-hidden': 'true' }, '▾'));
-    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': isCurrent(link, current) ? 'page' : null }, link.label, waitingOn(link, me));
+    const item = (link) => h('a', { class: 'menu-item', role: 'menuitem', href: link.href, 'aria-current': settingsMark(link, current) }, link.label, waitingOn(link, me));
+    // In the menu Settings' tabs are always under it: the menu is where people look for a page.
+    const consoleItem = (link) => (link.label === 'Settings'
+      ? [item(link), h('div', { class: 'menu-subs' }, subItems(me, current, 'menu-item menu-sub', { role: 'menuitem' }))]
+      : item(link));
     const note = me.hosted ? null : !me.login && me.available ? h('a', { class: 'nav-off', href: `/login?next=${encodeURIComponent(location.pathname)}` }, 'Sign in with GitHub to turn sign-in on')
       : !me.login && me.supported ? h('a', { class: 'nav-off', href: '/secrets', title: 'Set github-app-client-secret on the Secrets tab to turn it on' }, 'GitHub sign-in is off')
         : null;
@@ -1241,7 +1252,7 @@
         type: 'button', class: 'menu-item', role: 'menuitem', 'data-keys': 'keys',
         onclick: () => { setOpen(false); window.Woodshed.shell?.openKeys(); },
       }, 'Keyboard shortcuts', h('kbd', { class: 'menu-kbd' }, '?')),
-      consoleLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(item)],
+      consoleLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'Console'), consoleLinks(me).map(consoleItem)],
       workflowLinks(me).length > 0 && [h('div', { class: 'menu-label' }, 'GitHub Actions'), workflowLinks(me).map((link) =>
         h('a', { class: 'menu-item', role: 'menuitem', href: link.href, target: '_blank', rel: 'noopener noreferrer' }, link.label))],
       // Signing out drops what the rail page kept in this tab (session.js), so nobody signing in after sees it.
@@ -1301,10 +1312,14 @@
   // The settings list's Console group, filled once /api/me says you are an admin. One node, like userSlot.
   const consoleSlot = h('div', { class: 'side-console' });
   function fillConsoleSlot() {
-    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': isCurrent(link, navCurrent) ? 'page' : null },
+    const item = (link) => h('a', { class: 'side-item', href: link.href, 'aria-current': settingsMark(link, navCurrent) },
       h('span', { class: 'side-ico', 'aria-hidden': 'true' }, SETTINGS_ICONS[link.icon ?? link.href]), link.label, waitingOn(link, meNow));
-    const links = consoleLinks(meNow);
-    consoleSlot.replaceChildren(...(links.length ? [h('div', { class: 'side-group' }, 'Console'), ...links.map(item)] : []));
+    // On one of Settings' own pages its tabs open under it; on the others it stays one entry.
+    const entry = (link) => (link.label === 'Settings' && isCurrent(link, navCurrent)
+      ? [item(link), h('div', { class: 'side-subs' }, subItems(meNow, navCurrent, 'side-item side-sub'))]
+      : item(link));
+    const links = consoleLinks(meNow).flatMap(entry);
+    consoleSlot.replaceChildren(...(links.length ? [h('div', { class: 'side-group' }, 'Console'), ...links] : []));
   }
   fetch('/api/me', { cache: 'no-store' }).then((r) => r.json()).then(learnNames).then((me) => {
     meNow = me;
@@ -1327,8 +1342,15 @@
   let sideNav = null;
   function markCurrent(scope, selector) {
     for (const a of scope.querySelectorAll(selector)) {
+      // One of Settings' tabs is current on its own page alone.
+      if (a.matches('.menu-sub')) {
+        if (a.getAttribute('href') === navCurrent) a.setAttribute('aria-current', 'page');
+        else a.removeAttribute('aria-current');
+        continue;
+      }
       const link = [...MY_LINKS, ...consoleLinks(meNow)].find((l) => l.href === a.getAttribute('href'));
-      if (link && isCurrent(link, navCurrent)) a.setAttribute('aria-current', 'page');
+      const mark = link && settingsMark(link, navCurrent);
+      if (mark) a.setAttribute('aria-current', mark);
       else a.removeAttribute('aria-current');
     }
   }
