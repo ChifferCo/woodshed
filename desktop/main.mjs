@@ -142,6 +142,7 @@ async function applyChrome(contents) {
   chromeKeys.delete(contents);
   if (old) await contents.removeInsertedCSS(old).catch(() => {});
   if (css) chromeKeys.set(contents, await contents.insertCSS(css).catch(() => null));
+  if (mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents) fitMinWidth(mainWindow);
 }
 function addChrome(contents) {
   if (!chromeRules) return;
@@ -149,10 +150,21 @@ function addChrome(contents) {
 }
 // Zoom in, out or back, and the header's room with it.
 function zoomBy(step) {
-  const contents = BrowserWindow.getFocusedWindow()?.webContents;
+  const win = BrowserWindow.getFocusedWindow();
+  const contents = win?.webContents;
   if (!contents) return;
   contents.setZoomLevel(step === 0 ? 0 : Math.max(-3, Math.min(5, contents.getZoomLevel() + step * 0.5)));
   applyChrome(contents);
+}
+
+// Zoomed in, the page is narrower than the window: the main window's minimum grows with the zoom, so the page stays in
+// the desktop layout (900px), never the phone one under the lights. On each page too, since Chromium keeps a zoom.
+function fitMinWidth(win) {
+  const least = Math.ceil(MAC_MIN_WIDTH * Math.max(1, win.webContents.getZoomFactor()));
+  const [, minHeight] = win.getMinimumSize();
+  win.setMinimumSize(least, minHeight);
+  const [width, height] = win.getSize();
+  if (width < least) win.setSize(least, height);
 }
 
 function createMainWindow() {
@@ -357,6 +369,12 @@ async function finishSignIn(link) {
       const cookies = setCookies.map((header) => parseSetCookie(header, claimUrl)).filter(Boolean);
       if (!cookies.length) throw new Error('the console sent no session');
       for (const cookie of cookies) await session.defaultSession.cookies.set(cookie);
+      // A newer sign-in began while it was stored: that one's account is the person's, so this one is taken back out.
+      if (attempt !== signInAttempt || base !== consoleUrl) {
+        for (const cookie of cookies) await session.defaultSession.cookies.remove(cookie.url, cookie.name).catch(() => {});
+        console.log('woodshed-desktop: a sign-in stored after a newer one began, taken back out');
+        return;
+      }
     } catch (err) {
       error = `The sign-in could not be kept: ${err.message}`;
     }
@@ -406,6 +424,8 @@ let timer = null;
 // answers, so a slow answer from the last console can neither overwrite this one's state nor notify about its sessions.
 let generation = 0;
 let reading = false;
+// Reads in a row the console did not answer.
+let failures = 0;
 
 function forget() {
   seen = null;
@@ -417,6 +437,7 @@ function forget() {
 function startWatching() {
   generation += 1;
   reading = false;
+  failures = 0;
   forget();
   clearTimeout(timer);
   poll();
@@ -431,18 +452,32 @@ async function poll() {
   reading = true;
   let body = null;
   let signedOut = false;
+  let failure = null;
   try {
     // 15 s at most: a read that never answers would otherwise hold `reading`, and the badge and notifications with it.
     const res = await session.defaultSession.fetch(new URL('api/sessions', base).href, { credentials: 'include', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(POLL_TIMEOUT_MS) });
     // Signed out, or a page in place of JSON: nothing to count until the person signs in.
     if (res.ok && String(res.headers.get('content-type')).includes('json')) body = await res.json();
     else signedOut = res.status === 401 || res.status === 302 || res.status === 403 || res.ok;
-  } catch {
-    // The console did not answer: keep what the badge says until it does.
+  } catch (err) {
+    failure = err.name === 'TimeoutError' || err.name === 'AbortError' ? `no answer in ${POLL_TIMEOUT_MS / 1000} s` : err.message;
   } finally {
     if (mine === generation) reading = false;
   }
   if (mine !== generation || base !== consoleUrl) return;
+  // The console did not answer: said once for each run of failures. One miss keeps the badge, a console that misses three
+  // reads in a row (a minute) clears it, since it no longer says anything true.
+  if (failure) {
+    failures += 1;
+    if (failures === 1) console.warn('woodshed-desktop: sessions not read', { console: base, why: failure });
+    if (failures === 3) {
+      console.warn('woodshed-desktop: sessions not read three times, the badge cleared', { console: base, why: failure });
+      forget();
+    }
+    return;
+  }
+  if (failures) console.log('woodshed-desktop: sessions read again', { after: failures });
+  failures = 0;
   // Signed out: the badge and what was seen go, so signing in again (as anyone) starts from a first read.
   if (signedOut) {
     if (seen) console.log('woodshed-desktop: signed out, the badge cleared');
