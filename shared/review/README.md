@@ -398,7 +398,11 @@ URL only when it is `http(s)`. Widen that list rather than reaching for
   the first time the Q&A tab opens) runs rounds of `claude -p`: a newcomer, whose whole system prompt is a junior
   developer new to the codebase who knows none of its jargon (`--system-prompt`, `--tools ''`), asks up to six
   questions from the title, description, file list and overview; an answerer with the explain's containment (Read,
-  Grep and Glob in the worktree) answers them all in one run, quoting real code where it helps; the newcomer reads
+  Grep and Glob) answers them all in one run, quoting real code where it helps. Unlike every other run here, the
+  answerer does not read the live worktree: it reads a copy of the tree the diff was taken from (`snapshot`, the
+  scratch index's `write-tree` for a worktree review, or the head commit), which `git archive` extracts into a
+  scratch folder for the run and which is deleted after it, so its answers never quote code the diff beside them
+  lacks; the newcomer reads
   each answer and asks about what it did not follow, at most two per answer, and so on to three levels. A round with
   no follow-ups ends it, so most runs are four to six calls. Tools on the newcomer would defeat it: it would read the
   checkout and ask what a model that has read it thinks a newcomer should. `qa.json` holds a flat list whose
