@@ -363,6 +363,8 @@ test('a program embedding the console adds tabs to Settings, each a path on the 
     { label: 'Members', href: '/orgs/acme/members' },
     { label: 'Away', href: 'https://billing.example/' }, { label: 'Odd', href: '//elsewhere.example' },
     { label: 'Bad', href: 'javascript:alert(1)' }, { label: 'Slash', href: '/\\elsewhere.example' }, { href: '/no-label' },
+    // A browser drops the tab and the newline, which leaves `//elsewhere.example` and `//x`: another site.
+    { label: 'Tab', href: '/\t/elsewhere.example' }, { label: 'Newline', href: '/\n/x' },
     ...Array.from({ length: 12 }, (_, i) => ({ label: `Tab ${i}`, href: `/t/${i}` })),
   ]);
   const { port } = await hostedConsole(t, { extra: { settingsTabs } });
@@ -404,6 +406,8 @@ test('behind a hosting proxy, Sign out is the program\'s: it ends the sign-in, a
   assert.deepEqual([away.location, away.cookies], ['https://elsewhere.example/', []], 'an https address is the program\'s to name, as its menu links are');
   answer = { location: '//elsewhere.example' };
   assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).location, '/', 'anything else goes home');
+  answer = { location: '/\t/elsewhere.example' };
+  assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).location, '/', 'a tab in the path goes home: a browser drops it');
   answer = 'boom';
   t.mock.method(console, 'error', () => {});
   assert.equal((await post({ ...MEMBER(), origin: 'https://console.example' })).status, 500);
