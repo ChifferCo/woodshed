@@ -42,6 +42,9 @@ fs.writeFileSync(path.join(BIN, 'git'), `#!/bin/sh
 if [ "$WOODSHED_TEST_FAIL_WRITE_TREE" = 1 ]; then
   for a in "$@"; do [ "$a" = write-tree ] && { echo "fatal: injected write-tree failure" >&2; exit 128; }; done
 fi
+if [ -n "$WOODSHED_TEST_ORIGIN_URL" ] && [ "$1" = -C ] && [ "$3" = remote ] && [ "$4" = get-url ]; then
+  echo "$WOODSHED_TEST_ORIGIN_URL"; exit 0
+fi
 if [ "$WOODSHED_TEST_SLOW_WRITE_TREE" = 1 ]; then
   for a in "$@"; do [ "$a" = write-tree ] && sleep 1; done
 fi
@@ -672,6 +675,84 @@ test('a pull request diff is of the recorded head commit, whatever the branch po
   const { branchDiff } = await import('./worktree.mjs');
   const cut = await pullRequestDiff({ repoRoot: repo, baseRef: 'main', headSha: commitA, baseFetched: true, diff: (a) => branchDiff({ ...a, maxBytes: 40 }) });
   assert.deepEqual([cut.ok, cut.status, /larger than a review reads/.test(cut.error)], [false, 413, true]);
+});
+
+// A worktree's diff cut off at the runner's cap is refused like a branch's: it would parse as whole with files missing.
+test('a worktree diff past the cap is refused, not saved short', async () => {
+  const { worktreeDiff } = await import('./worktree.mjs');
+  const origin = path.join(DIR, 'wtcap-origin.git');
+  const repo = path.join(DIR, 'wtcap');
+  const g = (...args) => execFileSync(REAL_GIT, ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, repo], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'one\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'base'); g('push', '-q', 'origin', 'HEAD:main');
+  fs.writeFileSync(path.join(repo, 'a.txt'), 'two, and a longer line than the cap allows\n');
+  const indexFile = path.join(DIR, 'wtcap.index');
+  const whole = await worktreeDiff({ repoRoot: repo, worktreePath: repo, baseRef: 'main', indexFile });
+  assert.equal(whole.ok, true, whole.error);
+  const cut = await worktreeDiff({ repoRoot: repo, worktreePath: repo, baseRef: 'main', indexFile, maxBytes: 40 });
+  assert.deepEqual([cut.ok, cut.status, /larger than a review reads/.test(cut.error)], [false, 413, true]);
+});
+
+// A refresh saves the new diff before its record. When the record then fails to save, the old take's record (and its
+// Q&A) stays, beside the new diff: the diff must say it is another take's, so the page does not pair the two, and a Q&A
+// asked for the new diff is refused.
+test('a refresh whose record fails to save leaves the new diff naming its own take', async () => {
+  const session = 'claude-d0d0d0d0';
+  const origin = path.join(DIR, 'refresh-origin.git');
+  const repo = path.join(DIR, 'refresh-clone');
+  const wt = path.join(DIR, 'refresh-wt');
+  const g = (cwd, ...args) => execFileSync(REAL_GIT, ['-C', cwd, '-c', 'user.email=t@example.com', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { encoding: 'utf8' }).trim();
+  execFileSync(REAL_GIT, ['init', '-q', '--bare', '-b', 'main', origin]);
+  execFileSync(REAL_GIT, ['clone', '-q', origin, repo], { stdio: 'ignore' });
+  fs.writeFileSync(path.join(repo, 'base.txt'), 'base\n');
+  g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'base'); g(repo, 'push', '-q', 'origin', 'HEAD:main');
+  g(repo, 'remote', 'set-head', 'origin', 'main');
+  g(repo, 'checkout', '-q', '-b', 'feature');
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'one\n');
+  g(repo, 'add', '-A'); g(repo, 'commit', '-q', '-m', 'one'); g(repo, 'push', '-q', 'origin', 'HEAD:feature');
+  const first = g(repo, 'rev-parse', 'HEAD');
+  g(repo, 'worktree', 'add', '-q', '--detach', wt, first);
+  const takenAt = '2026-11-19T20:00:00.000Z';
+  writeSessionReview({
+    session,
+    review: {
+      kind: 'branch', pr: null, branch: 'feature', baseRef: 'main', headSha: first, reviewBranch: null,
+      worktree: wt, createdAt: takenAt, meta: { title: 'feature', body: '', headRefName: 'feature', baseRefName: 'main' },
+    },
+  });
+  writeDiff({ session, diff: { files: [{ path: 'f.txt', additions: 1, deletions: 0, status: 'added', hunks: [] }], createdAt: takenAt } });
+  fs.writeFileSync(path.join(process.env.WOODSHED_REVIEWS, session, 'qa.json'), JSON.stringify({
+    forDiff: takenAt, status: 'ready', items: [{ id: 'q1', parent: null, depth: 1, question: 'q', answer: 'about one' }],
+  }));
+  // The branch moves on, and the refresh's record will not save.
+  fs.writeFileSync(path.join(repo, 'f.txt'), 'two\n');
+  g(repo, 'commit', '-q', '-am', 'two'); g(repo, 'push', '-q', 'origin', 'HEAD:feature');
+  const ctx = {
+    reqId: 't', repoRoot: repo, log: () => {}, worktreePathFor: () => wt,
+    json: (res, status, body) => { res.status = status; res.body = body; },
+  };
+  const req = async (method, url) => { const res = {}; await handleReviewRequest({ method, url, headers: {} }, res, ctx); return res; };
+  process.env.WOODSHED_TEST_ORIGIN_URL = 'https://github.com/example-org/example-repo.git';
+  const realRenameSync = fs.renameSync;
+  fs.renameSync = (from, to, ...rest) => {
+    if (String(to).endsWith(`${session}/session.json`)) throw new Error('ENOSPC: injected');
+    return realRenameSync(from, to, ...rest);
+  };
+  let refreshed;
+  try { refreshed = await req('POST', `/reviews/${session}/refresh`); } finally {
+    fs.renameSync = realRenameSync;
+    delete process.env.WOODSHED_TEST_ORIGIN_URL;
+  }
+  assert.equal(refreshed.status, 500, JSON.stringify(refreshed.body));
+  assert.match(refreshed.body.error, /could not write review state: ENOSPC: injected/, 'it got as far as the record');
+  const diff = (await req('GET', `/reviews/${session}/diff`)).body;
+  const qa = (await req('GET', `/reviews/${session}/qa`)).body.qa;
+  assert.equal(qa.forDiff, takenAt, 'the old take\'s Q&A is still on disk with its record');
+  assert.notEqual(diff.createdAt, takenAt, 'the new diff names its own take, so the page does not pair it with that Q&A');
+  const asked = await req('POST', `/reviews/${session}/qa?forDiff=${encodeURIComponent(diff.createdAt)}`);
+  assert.deepEqual([asked.status, asked.body.code], [409, 'other-diff']);
 });
 
 test('a worktree review with no snapshot fails before anything is asked', async () => {

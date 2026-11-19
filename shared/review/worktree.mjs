@@ -41,12 +41,13 @@ function stagingRef(sessionId) {
   return `refs/bridge-session/${sessionId}`;
 }
 
-// `repoRoot` is really "whatever directory to run in" — the worktree review
-// passes a session's own worktree, which is a git directory in its own right.
+// What a diff cut off at the runner's cap is refused with, rather than reviewed with files missing.
 const TOO_LARGE = 'the diff is larger than a review reads (64 MiB): it would be shown with files missing';
 
-function git(repoRoot, args, timeoutMs = GIT_TIMEOUT_MS, env) {
-  return run('git', ['-C', repoRoot, ...args], env ? { timeoutMs, env } : { timeoutMs });
+// `repoRoot` is really "whatever directory to run in" — the worktree review
+// passes a session's own worktree, which is a git directory in its own right.
+function git(repoRoot, args, timeoutMs = GIT_TIMEOUT_MS, env, maxBytes) {
+  return run('git', ['-C', repoRoot, ...args], { timeoutMs, ...(env ? { env } : {}), ...(maxBytes ? { maxBytes } : {}) });
 }
 
 /**
@@ -654,7 +655,7 @@ const INDEX_TIMEOUT_MS = 120_000;
  * @returns {Promise<{ok: true, patch: string, baseSha: string, headSha: string, treeSha: string|null, treeError: string|null, baseFetched: boolean}
  *                 | {ok: false, status: number, error: string, stderr?: string}>}
  */
-export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile }) {
+export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile, maxBytes }) {
   if (!fs.existsSync(worktreePath)) {
     return { ok: false, status: 409, error: 'this session no longer has a worktree' };
   }
@@ -713,6 +714,7 @@ export async function worktreeDiff({ repoRoot, worktreePath, baseRef, indexFile 
       ['diff', '--cached', '--no-color', '--find-renames', baseSha],
       INDEX_TIMEOUT_MS,
       env,
+      maxBytes,
     );
     if (diffed.status !== 0) {
       return {
