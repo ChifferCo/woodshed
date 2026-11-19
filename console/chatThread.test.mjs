@@ -148,11 +148,11 @@ test('only http, https and mailto become links: a reply cannot make a javascript
 
 test('a sent message waits until the record holds it, then goes; one never seen goes after ten minutes', () => {
   const now = Date.parse(at);
-  const pending = [{ text: 'Run the tests', sentAt: now - 2000 }, { text: 'Then  push', sentAt: now - 1000 }];
+  // A file's path goes in the message itself (chat.js send), so the record holds the message as sent, its spaces aside.
+  const pending = [{ text: 'Run the tests', sentAt: now - 2000 }, { text: 'Then  push\n/tmp/uploads/a.png', sentAt: now - 1000 }];
   assert.equal(chat.stillPending(pending, [], now).length, 2);
   const held = [{ role: 'user', text: 'Run the tests', at: new Date(now - 1500).toISOString() }];
-  assert.deepEqual(chat.stillPending(pending, held, now).map((p) => p.text), ['Then  push']);
-  // The record can add to it (a file's path) and squash its spaces.
+  assert.deepEqual(chat.stillPending(pending, held, now).map((p) => p.text), ['Then  push\n/tmp/uploads/a.png']);
   const both = [...held, { role: 'user', text: 'Then push\n/tmp/uploads/a.png', at: new Date(now).toISOString() }];
   assert.deepEqual(chat.stillPending(pending, both, now), []);
   // The same words asked an hour ago are not this message.
@@ -297,4 +297,25 @@ test('one entry in the record settles one of two identical messages, on this rea
   assert.equal(again.length, 1, 'still waiting on the next read');
   const arrived = [...entries, { role: 'user', text: 'go on', at: '2026-11-19T12:01:00.000Z' }];
   assert.equal(chat.stillPending(again, arrived, sentAt + 60_000).length, 0, 'its own entry settles it');
+});
+
+test('the page\'s pending messages are kept as the same objects, so its sends go on updating them', () => {
+  const sentAt = Date.parse('2026-11-19T12:00:05.000Z');
+  const first = { text: 'go on', sentAt, state: 'sent', after: null };
+  const second = { text: 'go on', sentAt: sentAt + 1000, state: 'sending', after: null };
+  const left = chat.stillPending([first, second], [{ role: 'user', text: 'go on', at: '2026-11-19T12:00:06.000Z' }], sentAt + 2000);
+  assert.equal(left[0], second, 'the same bubble, not a copy');
+  assert.equal(second.after, '2026-11-19T12:00:06.000Z');
+});
+
+test('a longer message that starts the same never settles a queued one, and stripped control characters do not hold one forever', () => {
+  const sentAt = Date.parse('2026-11-19T12:00:05.000Z');
+  // The review's case: "Run the tests" queued, and "Run the tests and lint" submitted in the TUI tab.
+  const queued = { text: 'Run the tests', sentAt, state: 'held', after: null };
+  assert.equal(chat.stillPending([queued], [{ role: 'user', text: 'Run the tests and lint', at: '2026-11-19T12:00:06.000Z' }], sentAt + 1000).length, 1);
+  assert.equal(chat.stillPending([queued], [{ role: 'user', text: 'Run  the\ntests', at: '2026-11-19T12:00:06.000Z' }], sentAt + 1000).length, 0, 'whitespace aside');
+  // A control character statusd leaves out: the record holds the message without it.
+  const withNul = { text: 'fix it\u0000 now', sentAt, state: 'held', after: null };
+  assert.equal(chat.stillPending([withNul], [{ role: 'user', text: 'fix it now', at: '2026-11-19T12:00:06.000Z' }], sentAt + 1000).length, 0);
+  assert.equal(chat.typeable('a\r\nb\u001bc'), 'a\nbc');
 });

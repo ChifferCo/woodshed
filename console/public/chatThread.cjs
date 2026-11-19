@@ -282,23 +282,38 @@
    * @param {{text: string, sentAt: number}[]} pending
    * @param {{role: string, text: string, at: string|null}[]} entries
    */
+  /** A message as statusd types it (session/statusd.mjs, typeableText): CRLF made newlines, other control characters out. */
+  function typeable(text) {
+    return String(text ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+  }
+
+  // The record's text of a person's message against one sent from the page: the same, whitespace aside. Never a longer
+  // one that starts the same, which a message submitted in the TUI tab can be. Only an entry the record cut short (past
+  // its 8000 characters, marked …) is matched by its start.
+  function sameMessage(recorded, want) {
+    const got = squash(typeable(recorded));
+    if (got === want) return true;
+    return got.endsWith('…') && got.length > 8000 && want.startsWith(got.slice(0, -1));
+  }
+
   function stillPending(pending, entries, now = Date.now()) {
     const used = new Set();
     // The entry that settled a message is no later message's: each after it must be matched by an entry after that one,
     // on this read and the next (its `after` moves on), so one entry never settles two identical messages.
     let settledAt = null;
     const left = [];
-    for (const sent of pending) {
-      const p = settledAt && (sent.after == null || Date.parse(sent.after) < Date.parse(settledAt)) ? { ...sent, after: settledAt } : sent;
+    for (const p of pending) {
+      // On the bubble itself, which the page keeps and its send() goes on updating: never a copy.
+      if (settledAt && (p.after == null || Date.parse(p.after) < Date.parse(settledAt))) p.after = settledAt;
       // One the console holds waits as long as the agent's turn runs: it is let go only once the record holds it.
       if (p.state !== 'held' && p.state !== 'in-box' && now - p.sentAt > PENDING_MS) continue;
-      const want = squash(p.text);
+      const want = squash(typeable(p.text));
       // After the last message of the person's the record held when this one was sent (`after`, the session's own
       // clock): an earlier prompt that starts the same is never taken for it. A message from before `after` was kept
       // falls back on the page's clock, with room for the two clocks to differ.
       const later = (e) => (p.after !== undefined ? !!e.at && (p.after === null || Date.parse(e.at) > Date.parse(p.after))
         : !e.at || Date.parse(e.at) >= p.sentAt - 30_000);
-      const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user' && later(e) && squash(e.text).startsWith(want.slice(0, 200)));
+      const found = entries.findIndex((e, i) => !used.has(i) && e.role === 'user' && later(e) && sameMessage(e.text, want));
       if (found === -1) {
         left.push(p);
         continue;
@@ -486,5 +501,5 @@
     return null;
   }
 
-  return { lastUserAt, inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
+  return { typeable, lastUserAt, inBox, sendTimeoutMs, pendingLabel, notReady, oneAtATime, markdown, inline, items, toolKind, workSummary, turnChanges, stillPending, elapsed, turnStart, midTurn, endedByStop, canAnswer, answerBody, approvalText };
 });

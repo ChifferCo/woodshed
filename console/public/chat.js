@@ -254,7 +254,8 @@
         if (words) field.value = `${field.value.replace(/\s*$/, '')} ${words}`.trimStart();
       }
       const paths = mine().filter((f) => f.path).map((f) => f.path);
-      const text = [field.value.trim(), ...paths].filter(Boolean).join('\n');
+      // As statusd will type it (no control characters), so the bubble is the message the agent's record will hold.
+      const text = T.typeable([field.value.trim(), ...paths].filter(Boolean).join('\n'));
       if (!text) return;
       sending.add(id);
       // `after`: the last message of the person's in the record now, by the session's clock; only a later one can be
