@@ -83,7 +83,8 @@
 
   /**
    * The tabs kept for `login` in `storage` (sessionStorage), which may be missing or throw.
-   * @returns {{ asked(id: string|null, inAddress: string|null): string|null, remember(id: string, tab: string): void }}
+   * @returns {{ asked(id: string|null, inAddress: string|null, inEntry?: string|null): string|null,
+   *   remember(id: string, tab: string): void }}
    */
   function memory(storage, login) {
     let kept = {};
@@ -94,9 +95,10 @@
       kept = {};
     }
     return {
-      // The tab asked for: the address's, else the one this session was last left on, else none.
-      asked(id, inAddress) {
-        return inAddress || (id && Object.hasOwn(kept, id) ? kept[id] : null) || null;
+      // The tab asked for: the address's, else the one this history entry showed when it was left (Back and Forward
+      // reach it; Agent has no ?tab), else the one this session was last left on, else none.
+      asked(id, inAddress, inEntry = null) {
+        return inAddress || (id && inEntry) || (id && Object.hasOwn(kept, id) ? kept[id] : null) || null;
       },
       remember(id, tab) {
         if (!id || kept[id] === tab) return;

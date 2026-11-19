@@ -153,3 +153,13 @@ test('a newer lookup that failed does not make an older answer stale', () => {
   assert.equal(order.fresh(newer), true);
   assert.equal(order.stale(late), true);
 });
+
+test('Back to an entry gives the tab it showed, over what the session was left on since', () => {
+  const memory = tabs.memory(storage(), 'octocat');
+  // On Agent at the bare /s/<id>; the palette's Open the diff pushes ?tab=diff, which is remembered.
+  memory.remember('aaaa1111', 'diff');
+  assert.equal(memory.asked('aaaa1111', null, 'agent'), 'agent', 'Back: the entry left on Agent');
+  assert.equal(memory.asked('aaaa1111', 'diff', 'agent'), 'diff', 'the address wins over the entry');
+  assert.equal(memory.asked('aaaa1111', null, null), 'diff', 'a new entry (the rail) has none: the memory');
+  assert.equal(memory.asked(null, null, 'diff'), null, 'not a session page');
+});

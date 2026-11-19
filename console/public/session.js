@@ -39,15 +39,19 @@
     // Agent is claude's terminal and the default; ?tab=terminal is the plain shell, ?tab=review the review, ?tab=diff
     // the plain diff and ?tab=applog the app's logs. With no tab in the address (the rail's links), a session opens on
     // the tab it was last left on (sessionTabs.cjs); ?tab=agent asks for the Agent tab itself.
-    const asked = tabMemory.asked(id, params.get('tab'));
+    // Back and Forward reach an entry that says which tab it showed (its history state, as Agent has no ?tab), so it
+    // comes back as it was rather than as the memory now says.
+    const asked = tabMemory.asked(id, params.get('tab'), window.history.state?.tab);
     tab = SessionTabs.known(asked);
     landOnReview = !asked;
     heldTab = null;
     if (id && asked) tabMemory.remember(id, tab);
-    if (id && !params.get('tab') && tab !== 'agent') {
-      params.set('tab', tab);
-      window.history.replaceState(null, '', `${pathname}?${params}`);
-    }
+    if (id && !params.get('tab') && tab !== 'agent') params.set('tab', tab);
+    if (id && asked) markEntry(`${pathname}${params.size ? `?${params}` : ''}`);
+  }
+  // This history entry's address, with the tab it shows in its state.
+  function markEntry(address) {
+    window.history.replaceState({ ...window.history.state, tab }, '', address);
   }
   // The tab each session was last on, for this browser tab and the login signed in.
   const SessionTabs = window.WoodshedSessionTabs;
@@ -91,7 +95,11 @@
       window.location.href = url.href;
       return;
     }
-    if (url.href !== window.location.href) window.history.pushState(null, '', url.pathname + url.search);
+    if (url.href !== window.location.href) {
+      // The entry left behind keeps the tab it showed (a held one over the Agent standing in for it), for Back.
+      if (id) window.history.replaceState({ ...window.history.state, tab: heldTab || tab }, '');
+      window.history.pushState(null, '', url.pathname + url.search);
+    }
     moved();
   }
   function moved() {
@@ -1801,7 +1809,7 @@
     if (currentSession) (tab === 'terminal' ? shellPool : agentPool).refit(currentSession, false);
     if (tab === 'agent') url.searchParams.delete('tab');
     else url.searchParams.set('tab', tab);
-    window.history.replaceState(null, '', url);
+    markEntry(url);
     render();
   }
 
@@ -1935,7 +1943,7 @@
     if (settled.fellBack) {
       const url = new URL(window.location.href);
       url.searchParams.delete('tab');
-      window.history.replaceState(null, '', url);
+      markEntry(url);
       tabMemory.remember(s.id, tab);
     }
     if (hasShell && tab === 'terminal') shellPool.show(s);
@@ -1981,7 +1989,7 @@
     landOnReview = false;
     tab = 'review';
     tabMemory.remember(s.id, tab);
-    window.history.replaceState(null, '', `/s/${s.id}?tab=review`);
+    markEntry(`/s/${s.id}?tab=review`);
   }
 
   // What the last answers were, in this tab, so a page load draws the rail at once and refreshes it after, rather than
